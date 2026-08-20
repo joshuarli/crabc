@@ -4,11 +4,9 @@
 //! operation. It exercises path, descriptor, flag, mode, ownership, and typed
 //! error contracts without crossing into libc's process-global runtime state.
 
-use core::ffi::CStr;
-
 use bitflags::bitflags;
 
-use crate::{AsFd, BorrowedFd, OwnedFd, Result};
+use crate::{path::Arg, AsFd, BorrowedFd, OwnedFd, Result};
 
 /// `AT_FDCWD`, a directory token representing the current working directory.
 ///
@@ -18,6 +16,16 @@ pub const CWD: BorrowedFd<'static> =
     // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. See the
     // narrowly documented exception in `BorrowedFd::borrow_raw`.
     unsafe { BorrowedFd::borrow_raw(crabc_core::AT_FDCWD) };
+
+/// A special directory token which requires an absolute path.
+///
+/// Linux has no `AT_ABS` constant. Rustix conventionally passes `-EBADF`, a
+/// non-allocatable invalid descriptor, so an absolute path ignores `dirfd`
+/// while a relative path deterministically fails with `EBADF`.
+pub const ABS: BorrowedFd<'static> =
+    // SAFETY: `-EBADF` is a documented Rustix convention for `*at` operations
+    // and `BorrowedFd::borrow_raw` accepts this narrowly scoped token.
+    unsafe { BorrowedFd::borrow_raw(-9) };
 
 bitflags! {
     /// `O_*` flags accepted by [`openat`] on Linux/AArch64.
@@ -108,22 +116,24 @@ bitflags! {
 /// `crabc-core` implementation. A successful descriptor is returned as an
 /// RAII owner; a failure is returned directly as [`crate::Errno`].
 #[inline]
-pub fn openat<Fd: AsFd>(
+pub fn openat<P: Arg, Fd: AsFd>(
     dirfd: Fd,
-    path: &CStr,
+    path: P,
     oflags: OFlags,
     create_mode: Mode,
 ) -> Result<OwnedFd> {
     let dirfd = dirfd.as_fd();
-    crabc_core::fs::openat(
-        dirfd.as_raw_fd(),
-        path,
-        oflags.bits() as i32,
-        create_mode.bits(),
-    )
-    .map(|fd| {
-        // SAFETY: A successful `openat` returns a newly owned non-negative
-        // descriptor. This is the sole transfer into the RAII wrapper.
-        unsafe { OwnedFd::from_raw_fd(fd) }
+    path.into_with_c_str(|path| {
+        crabc_core::fs::openat(
+            dirfd.as_raw_fd(),
+            path,
+            oflags.bits() as i32,
+            create_mode.bits(),
+        )
+        .map(|fd| {
+            // SAFETY: A successful `openat` returns a newly owned non-negative
+            // descriptor. This is the sole transfer into the RAII wrapper.
+            unsafe { OwnedFd::from_raw_fd(fd) }
+        })
     })
 }

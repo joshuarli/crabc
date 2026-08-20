@@ -35,7 +35,7 @@ Commands:
   rust-std [options]  run the M9 stock Rust std musl-vs-crabc differential fixture
   rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
-  crabc-rs            run the M0 native Rust facade architecture/evidence gate
+  crabc-rs            run the M1 native Rust facade architecture/evidence gate
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports
@@ -71,6 +71,17 @@ ensure_image() {
 }
 
 run_in_container() {
+    local rustix_source_host="${CRABC_RUSTIX_SOURCE_HOST:-$ROOT_DIR/../rustix}"
+    local -a rustix_mount=()
+    if [ -d "$rustix_source_host" ]; then
+        # The comparison harness treats Rustix only as a pinned test oracle.
+        # Keep a user checkout read-only and expose its container path through
+        # an explicit variable; production Cargo manifests never name it.
+        rustix_mount=(
+            --env CRABC_RUSTIX_SOURCE=/opt/rustix
+            --volume "$rustix_source_host:/opt/rustix:ro"
+        )
+    fi
     docker run --rm --init \
         --platform "$PLATFORM" \
         --workdir /workspace \
@@ -80,6 +91,7 @@ run_in_container() {
         --volume "$ROOT_DIR:/workspace" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/opt/cargo" \
+        "${rustix_mount[@]}" \
         "$IMAGE" "$@"
 }
 
@@ -258,15 +270,18 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        # M0 proves one stateless vertical slice is shared directly by libc
-        # and crabc-rs. Keep the no-std, runtime, metadata, and assembly proof
-        # together so a later facade change cannot silently add a C/errno hop.
+        # M1 extends the direct seam through path arguments, typed receive
+        # buffers, descriptor ownership, and ioctl. Keep no-std, native,
+        # metadata, source-compatibility, and assembly evidence together so a
+        # later facade change cannot silently add a C/errno hop.
         run_in_container cargo check -p crabc-rs --no-default-features
-        run_in_container cargo test -p crabc-rs --test m0_direct
+        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation
         run_in_container cargo build -p crabc-rs --example m0_direct_probe --release --no-default-features
         run_in_container python3 compat/rustix/run.py --check
         run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
         run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'
+        run_in_container python3 compat/rustix/run.py source-compare \
+            --fixture compat/rustix/source/m1_foundation.rs
         run_in_container python3 compat/crabc-rs/verify_m0.py --target-dir target
         ;;
     abi-probe)

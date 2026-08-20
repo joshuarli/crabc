@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Validate the M0 Rustix/Crabc metadata and run isolated backend probes.
+"""Validate Rustix/Crabc metadata and run isolated backend probes.
 
 The default ``check`` mode only uses Python's standard library.  It validates
 the pinned Rustix provenance, correspondence records, and measured dynamic
-symbol inventory.  ``compare`` is a deliberately small execution skeleton for
-future source fixtures: callers provide one command per backend and each runs
-in a fresh temporary directory with the same deterministic environment.
+symbol inventory. ``source-compare`` compiles the same M1 source fixture in
+isolated candidate and pinned-Rustix projects, then compares their observable
+output in fresh deterministic working directories.
 
 This harness is test infrastructure.  It must not become a dependency of the
 production ``crabc-rs`` crate, and it never loads a local Rustix checkout.
@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -211,6 +212,9 @@ def validate_api(data: Mapping[str, Any], upstream: Mapping[str, Any]) -> dict[s
         require(rustix_name not in rustix_names, f"duplicate Rustix item: {rustix_name}")
         require(status in ALLOWED_API_STATUSES, f"{location} has unknown status: {status}")
         require(isinstance(entry["tests"], list) and entry["tests"], f"{location}.tests is empty")
+        for test_path in entry["tests"]:
+            require(isinstance(test_path, str) and test_path, f"{location}.tests has an empty path")
+            require((ROOT / test_path).is_file(), f"{location}.tests path does not exist: {test_path}")
         if status in {"intentional-divergence", "not-applicable"}:
             for key in ("reason", "tests", "documentation"):
                 require(entry.get(key), f"{location} {status} requires {key}")
@@ -358,6 +362,28 @@ class ProcessResult:
         }
 
 
+@dataclasses.dataclass(frozen=True)
+class BuildResult:
+    backend: str
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    executable: Path | None
+
+    def report(self) -> dict[str, Any]:
+        return {
+            "backend": self.backend,
+            "returncode": self.returncode,
+            "stdout_bytes": len(self.stdout),
+            "stdout_sha256": hashlib.sha256(self.stdout).hexdigest(),
+            "stdout_hex": self.stdout.hex(),
+            "stderr_bytes": len(self.stderr),
+            "stderr_sha256": hashlib.sha256(self.stderr).hexdigest(),
+            "stderr_hex": self.stderr.hex(),
+            "executable_built": self.executable is not None,
+        }
+
+
 def substitute_command(command: Sequence[str], fixture: Path, workdir: Path) -> list[str]:
     substitutions = {"{fixture}": str(fixture), "{workdir}": str(workdir)}
     rendered: list[str] = []
@@ -412,6 +438,165 @@ def display_fixture(path: Path) -> str:
         return resolved.name
 
 
+def checked_rustix_source(source: Path) -> Path:
+    """Return a writable-or-read-only pinned checkout suitable for a path dependency."""
+
+    source = source.resolve()
+    require(source.is_dir(), f"Rustix source checkout does not exist: {source}")
+    require((source / "Cargo.toml").is_file(), f"Rustix source is not a crate: {source}")
+    try:
+        result = subprocess.run(
+            ("git", "-C", str(source), "rev-parse", "HEAD"),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as error:
+        raise HarnessError(f"cannot inspect Rustix checkout: {error}") from error
+    require(result.returncode == 0, "cannot read Rustix checkout revision")
+    revision = result.stdout.decode("ascii", "replace").strip()
+    require(
+        revision == RUSTIX_REVISION,
+        f"Rustix checkout revision is {revision!r}, expected {RUSTIX_REVISION}",
+    )
+    return source
+
+
+def source_dependency(backend: str, rustix_source: Path | None) -> str:
+    """Render the one intentionally named `api` dependency for a fixture."""
+
+    if backend == "crabc-rs":
+        return (
+            "api = { package = \"crabc-rs\", path = "
+            + json.dumps(str(ROOT / "crabc-rs"))
+            + " }\n"
+        )
+    if backend == "rustix":
+        require(rustix_source is not None, "Rustix backend requires --rustix-source")
+        return (
+            "api = { package = \"rustix\", path = "
+            + json.dumps(str(rustix_source))
+            + ", features = [\"fs\"] }\n"
+        )
+    raise HarnessError(f"unknown source backend: {backend}")
+
+
+def compile_source_fixture(
+    fixture: Path,
+    backend: str,
+    rustix_source: Path | None,
+    target: str,
+    project_dir: Path,
+    timeout: float,
+) -> BuildResult:
+    """Compile a common source fixture in an isolated temporary Cargo project."""
+
+    require(timeout > 0, "timeout must be positive")
+    require(target == TARGET, f"source fixture target must be {TARGET}, not {target}")
+    fixture = fixture.resolve()
+    require(fixture.is_file(), f"fixture does not exist: {fixture}")
+    require(shutil.which("cargo"), "cargo is not available for source fixture compilation")
+
+    source = project_dir / "src"
+    source.mkdir(parents=True, exist_ok=False)
+    (source / "main.rs").write_bytes(fixture.read_bytes())
+    (project_dir / "Cargo.toml").write_text(
+        "[package]\n"
+        "name = \"crabc-rustix-source-fixture\"\n"
+        "version = \"0.0.0\"\n"
+        "edition = \"2021\"\n\n"
+        "[dependencies]\n"
+        + source_dependency(backend, rustix_source),
+        encoding="utf-8",
+    )
+    target_dir = project_dir / "target"
+    environment = os.environ.copy()
+    environment.update({"LC_ALL": "C", "LANG": "C", "TZ": "UTC"})
+    try:
+        result = subprocess.run(
+            (
+                "cargo",
+                "build",
+                "--quiet",
+                "--target",
+                target,
+                "--target-dir",
+                str(target_dir),
+            ),
+            cwd=project_dir,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        return BuildResult(backend, 124, error.stdout or b"", (error.stderr or b"") + b"\nHARNESS_TIMEOUT\n", None)
+    except OSError as error:
+        return BuildResult(backend, 127, b"", f"HARNESS_BUILD_EXEC_ERROR:{error.errno}\n".encode(), None)
+
+    executable = target_dir / target / "debug" / "crabc-rustix-source-fixture"
+    if result.returncode or not executable.is_file():
+        stderr = result.stderr
+        if not result.returncode:
+            stderr += b"\nHARNESS_BUILD_OUTPUT_MISSING\n"
+        return BuildResult(backend, result.returncode or 126, result.stdout, stderr, None)
+    return BuildResult(backend, 0, result.stdout, result.stderr, executable)
+
+
+def compare_source_fixture(
+    fixture: Path,
+    rustix_source: Path,
+    timeout: float,
+    target: str = TARGET,
+) -> dict[str, Any]:
+    """Build one source fixture twice, then compare isolated process results."""
+
+    require(timeout > 0, "timeout must be positive")
+    fixture = fixture.resolve()
+    require(fixture.is_file(), f"fixture does not exist: {fixture}")
+    rustix_source = checked_rustix_source(rustix_source)
+    with tempfile.TemporaryDirectory(prefix="crabc-rustix-source-rustix-") as rustix_project, tempfile.TemporaryDirectory(prefix="crabc-rustix-source-crabc-") as crabc_project, tempfile.TemporaryDirectory(prefix="crabc-rustix-run-rustix-") as rustix_dir, tempfile.TemporaryDirectory(prefix="crabc-rustix-run-crabc-") as crabc_dir:
+        rustix_build = compile_source_fixture(
+            fixture, "rustix", rustix_source, target, Path(rustix_project), timeout
+        )
+        crabc_build = compile_source_fixture(
+            fixture, "crabc-rs", None, target, Path(crabc_project), timeout
+        )
+        rustix_run = (
+            run_backend("rustix", [str(rustix_build.executable)], fixture, Path(rustix_dir), timeout)
+            if rustix_build.executable
+            else ProcessResult("rustix", rustix_build.returncode, b"", b"HARNESS_BUILD_FAILED\n")
+        )
+        crabc_run = (
+            run_backend("crabc-rs", [str(crabc_build.executable)], fixture, Path(crabc_dir), timeout)
+            if crabc_build.executable
+            else ProcessResult("crabc-rs", crabc_build.returncode, b"", b"HARNESS_BUILD_FAILED\n")
+        )
+    comparisons = {
+        "rustix_build_succeeded": rustix_build.executable is not None,
+        "crabc_rs_build_succeeded": crabc_build.executable is not None,
+        "returncode_match": rustix_run.returncode == crabc_run.returncode,
+        "stdout_match": rustix_run.stdout == crabc_run.stdout,
+        "stderr_match": rustix_run.stderr == crabc_run.stderr,
+    }
+    return {
+        "schema": "crabc.rustix-source-dual-backend/v1",
+        "target": target,
+        "fixture": display_fixture(fixture),
+        "rustix_revision": RUSTIX_REVISION,
+        "timeout_seconds": timeout,
+        "isolated_projects": True,
+        "isolated_working_directories": True,
+        "passed": all(comparisons.values()),
+        "comparisons": comparisons,
+        "rustix": {"build": rustix_build.report(), "run": rustix_run.report()},
+        "crabc_rs": {"build": crabc_build.report(), "run": crabc_run.report()},
+    }
+
+
 def compare_backends(
     fixture: Path,
     rustix_command: Sequence[str],
@@ -449,12 +634,18 @@ def write_report(path: Path, report: Mapping[str, Any]) -> None:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("check", "compare"), nargs="?", default="check")
+    parser.add_argument("mode", choices=("check", "compare", "source-compare"), nargs="?", default="check")
     parser.add_argument("--check", action="store_true", help="validate all M0 metadata (default)")
     parser.add_argument("--fixture", type=Path, help="fixture path for compare mode")
     parser.add_argument("--rustix-command", help="Rustix fixture command as one shell-style string; use {fixture}/{workdir} markers")
     parser.add_argument("--crabc-command", help="crabc-rs fixture command as one shell-style string; use {fixture}/{workdir} markers")
     parser.add_argument("--timeout", type=float, default=10.0, help="per-backend timeout in seconds")
+    parser.add_argument(
+        "--rustix-source",
+        type=Path,
+        help="pinned Rustix checkout for source-compare (or CRABC_RUSTIX_SOURCE)",
+    )
+    parser.add_argument("--target", default=TARGET, help="source-compare compilation target")
     parser.add_argument("--report", type=Path, help="optional JSON report destination")
     return parser.parse_args(argv)
 
@@ -464,7 +655,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.mode == "check" or args.check:
             report = validate_metadata()
-        else:
+        elif args.mode == "compare":
             require(args.fixture is not None, "compare requires --fixture")
             require(args.rustix_command, "compare requires --rustix-command")
             require(args.crabc_command, "compare requires --crabc-command")
@@ -474,10 +665,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             require(rustix_command, "--rustix-command is empty")
             require(crabc_command, "--crabc-command is empty")
             report = compare_backends(args.fixture, rustix_command, crabc_command, args.timeout)
+        else:
+            require(args.fixture is not None, "source-compare requires --fixture")
+            source = args.rustix_source or os.environ.get("CRABC_RUSTIX_SOURCE")
+            require(source is not None, "source-compare requires --rustix-source or CRABC_RUSTIX_SOURCE")
+            validate_metadata()
+            report = compare_source_fixture(args.fixture, Path(source), args.timeout, args.target)
         rendered = json.dumps(report, sort_keys=True, separators=(",", ":"))
         if args.report:
             write_report(args.report, report)
         print(rendered)
+        if args.mode == "source-compare" and not report.get("passed", True):
+            return 3
     except HarnessError as error:
         print(f"rustix harness: ERROR: {error}", file=sys.stderr)
         return 2

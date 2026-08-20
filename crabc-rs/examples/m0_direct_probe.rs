@@ -33,6 +33,12 @@ pub extern "C" fn crabc_rs_m0_direct_probe() -> i32 {
     if let Err(error) = io::write(&sink, b"M0") {
         return -error.raw();
     }
+    if let Err(error) = io::ioctl_fioclex(&sink) {
+        return -error.raw();
+    }
+    if let Err(error) = io::ioctl_fionclex(&sink) {
+        return -error.raw();
+    }
     drop(sink);
 
     let source = match fs::openat(CWD, source, OFlags::RDONLY, Mode::empty()) {

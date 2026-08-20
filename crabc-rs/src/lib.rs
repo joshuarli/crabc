@@ -16,12 +16,16 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
-mod fd;
+pub mod buffer;
+pub mod fd;
+pub mod ffi;
 pub mod fs;
 pub mod io;
+pub mod ioctl;
+pub mod path;
 
 pub use crabc_core::{Errno, Result};
-pub use fd::{AsFd, BorrowedFd, OwnedFd, RawFd};
+pub use fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
 #[cfg(test)]
 mod tests {

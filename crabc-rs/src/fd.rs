@@ -4,6 +4,51 @@ use core::marker::PhantomData;
 /// The Linux file-descriptor integer representation.
 pub type RawFd = i32;
 
+/// Extracts a raw descriptor without transferring ownership.
+///
+/// Prefer [`AsFd`] when the descriptor is passed to an operation: its returned
+/// borrow records the lifetime during which the descriptor stays open.
+pub trait AsRawFd {
+    /// Returns the descriptor while its current owner remains responsible for
+    /// closing it.
+    fn as_raw_fd(&self) -> RawFd;
+}
+
+/// Transfers ownership of a raw descriptor to the caller.
+pub trait IntoRawFd {
+    /// Consumes `self` and returns its uniquely owned descriptor.
+    fn into_raw_fd(self) -> RawFd;
+}
+
+/// Constructs an owner from a raw descriptor.
+pub trait FromRawFd {
+    /// Assumes unique ownership of an open descriptor.
+    ///
+    /// # Safety
+    ///
+    /// `fd` must be open, uniquely owned, and suitable for release by the
+    /// Linux `close` operation.
+    unsafe fn from_raw_fd(fd: RawFd) -> Self;
+}
+
+impl AsRawFd for RawFd {
+    fn as_raw_fd(&self) -> RawFd {
+        *self
+    }
+}
+
+impl IntoRawFd for RawFd {
+    fn into_raw_fd(self) -> RawFd {
+        self
+    }
+}
+
+impl FromRawFd for RawFd {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        fd
+    }
+}
+
 /// A borrowed, non-owning file descriptor.
 ///
 /// The lifetime records the requirement that some owner keeps the descriptor
@@ -25,13 +70,14 @@ impl<'fd> BorrowedFd<'fd> {
     /// `fd` must be a valid, open file descriptor, and the resource owner must
     /// keep it open for the entire lifetime of the returned value. The value
     /// must not be closed through another alias during that lifetime. The sole
-    /// exception is Linux's reserved `AT_FDCWD` token (`-100`), which is safe
-    /// to borrow for use as the directory argument to `*at` operations.
+    /// exceptions are Linux's reserved `AT_FDCWD` token (`-100`) and the
+    /// Rustix-compatible `ABS` token (`-EBADF`, `-9`). Both are safe to borrow
+    /// only as directory arguments to `*at` operations.
     #[must_use]
     pub const unsafe fn borrow_raw(fd: RawFd) -> Self {
         assert!(
-            fd >= 0 || fd == crabc_core::AT_FDCWD,
-            "a borrowed file descriptor must be open or AT_FDCWD"
+            fd >= 0 || fd == crabc_core::AT_FDCWD || fd == -9,
+            "a borrowed file descriptor must be open, AT_FDCWD, or ABS"
         );
 
         Self {
@@ -43,6 +89,12 @@ impl<'fd> BorrowedFd<'fd> {
     /// Returns the underlying descriptor without transferring ownership.
     #[must_use]
     pub const fn as_raw_fd(self) -> RawFd {
+        self.fd
+    }
+}
+
+impl AsRawFd for BorrowedFd<'_> {
+    fn as_raw_fd(&self) -> RawFd {
         self.fd
     }
 }
@@ -68,9 +120,22 @@ impl AsFd for BorrowedFd<'_> {
     }
 }
 
+#[cfg(not(feature = "std"))]
 impl<T: AsFd + ?Sized> AsFd for &T {
     fn as_fd(&self) -> BorrowedFd<'_> {
         (*self).as_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl<T: std::os::fd::AsFd + ?Sized> AsFd for &T {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        use std::os::fd::AsRawFd;
+
+        let fd = std::os::fd::AsFd::as_fd(*self);
+        // SAFETY: std's returned borrow keeps the underlying descriptor open
+        // for the duration of this method's resulting borrow.
+        unsafe { BorrowedFd::borrow_raw(fd.as_raw_fd()) }
     }
 }
 
@@ -113,6 +178,26 @@ impl OwnedFd {
         let fd = self.fd;
         core::mem::forget(self);
         fd
+    }
+}
+
+impl AsRawFd for OwnedFd {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd
+    }
+}
+
+impl IntoRawFd for OwnedFd {
+    fn into_raw_fd(self) -> RawFd {
+        OwnedFd::into_raw_fd(self)
+    }
+}
+
+impl FromRawFd for OwnedFd {
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        // SAFETY: This trait has the same ownership contract as the inherent
+        // constructor.
+        unsafe { OwnedFd::from_raw_fd(fd) }
     }
 }
 

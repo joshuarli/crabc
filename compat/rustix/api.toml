@@ -29,9 +29,9 @@ id = "io.errno"
 feature = "default"
 rustix = "io::Errno"
 crabc = "io::Errno"
-status = "implemented"
+status = "verified"
 compatibility = "native-equivalent"
-tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "io.read"
@@ -76,7 +76,79 @@ rustix = "fs::openat"
 crabc = "fs::openat"
 status = "verified"
 compatibility = "partial-source-compatible"
-tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/source/fs_openat.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/m0_direct.rs", "crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/fs_openat.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.special-fds"
+feature = "fs"
+rustix = "fs::{CWD,ABS}"
+crabc = "fs::{CWD,ABS}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "ffi.cstr"
+feature = "default"
+rustix = "ffi::{CStr,CString}"
+crabc = "ffi::{CStr,CString}"
+status = "implemented"
+compatibility = "partial-source-compatible"
+tests = ["crabc-rs/src/ffi.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "path.arg"
+feature = "fs"
+rustix = "path::Arg"
+crabc = "path::Arg"
+status = "implemented"
+compatibility = "partial-source-compatible"
+tests = ["crabc-rs/src/path.rs", "crabc-rs/tests/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "buffer.buffer"
+feature = "default"
+rustix = "buffer::Buffer"
+crabc = "buffer::Buffer"
+status = "implemented"
+compatibility = "partial-source-compatible"
+tests = ["crabc-rs/src/buffer.rs", "crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "io.close"
+feature = "default"
+rustix = "io::close"
+crabc = "io::close"
+status = "implemented"
+compatibility = "source-compatible"
+tests = ["crabc-rs/src/io.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "io.retry-on-intr"
+feature = "default"
+rustix = "io::retry_on_intr"
+crabc = "io::retry_on_intr"
+status = "implemented"
+compatibility = "source-compatible"
+tests = ["crabc-rs/src/io.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "ioctl.foundation"
+feature = "default"
+rustix = "ioctl::{ioctl,Ioctl,Opcode,Direction}"
+crabc = "ioctl::{ioctl,Ioctl,Opcode,Direction}"
+status = "implemented"
+compatibility = "partial-source-compatible"
+tests = ["crabc-rs/src/ioctl.rs", "crabc-rs/tests/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "io.ioctl-fd"
+feature = "default"
+rustix = "io::{ioctl_fioclex,ioctl_fionclex,ioctl_fionbio,ioctl_fionread}"
+crabc = "io::{ioctl_fioclex,ioctl_fionclex,ioctl_fionbio,ioctl_fionread}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.statat"

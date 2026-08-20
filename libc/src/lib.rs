@@ -6607,7 +6607,10 @@ unsafe fn sys_fcntl(fd: i32, cmd: i32, arg: i64) -> i64 {
 
 #[inline]
 unsafe fn sys_ioctl(fd: c_int, request: u32, arg: *mut u8) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_IOCTL, fd as i64, request as i64, arg as i64)
+    match crabc_core::io::ioctl_raw(fd, request, arg) {
+        Ok(value) => value as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]

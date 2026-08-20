@@ -66,5 +66,35 @@ class DualBackendTests(unittest.TestCase):
                 harness.compare_backends(missing, ["true"], ["true"], timeout=1.0)
 
 
+class SourceFixtureTests(unittest.TestCase):
+    def test_source_dependency_uses_a_fixed_api_alias(self) -> None:
+        candidate = harness.source_dependency("crabc-rs", None)
+        self.assertIn('api = { package = "crabc-rs"', candidate)
+        self.assertIn(str(ROOT / "crabc-rs"), candidate)
+
+        rustix = harness.source_dependency("rustix", Path("/opt/rustix"))
+        self.assertIn('api = { package = "rustix"', rustix)
+        self.assertIn('features = ["fs"]', rustix)
+
+    def test_source_fixture_rejects_a_non_target_build(self) -> None:
+        fixture = ROOT / "compat/rustix/source/m1_foundation.rs"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(harness.HarnessError):
+                harness.compile_source_fixture(
+                    fixture,
+                    "crabc-rs",
+                    None,
+                    "x86_64-unknown-linux-musl",
+                    Path(directory) / "project",
+                    timeout=1.0,
+                )
+
+    def test_source_compare_rejects_an_unpinned_checkout(self) -> None:
+        fixture = ROOT / "compat/rustix/source/m1_foundation.rs"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(harness.HarnessError):
+                harness.compare_source_fixture(fixture, Path(directory), timeout=1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

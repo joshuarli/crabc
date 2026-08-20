@@ -2644,7 +2644,11 @@ Do not start mass implementation before this is green.
 
 # 77. Milestone 1 — foundational rustix slice
 
-Verify:
+Status: **complete**.
+
+This slice establishes the narrow direct-kernel foundation for later Rustix
+coverage. It is not a claim of broader filesystem or system parity. The
+completed surface is:
 
 ```text
 Errno
@@ -2662,6 +2666,16 @@ rustix differential tests
 existing crabc libc tests
 optimized assembly
 ```
+
+The focused reproducible gate is `./scripts/dev.sh crabc-rs`. It performs the
+native M1 tests, a no-`std` AArch64 static probe, and a Python-stdlib-only
+source comparison against the pinned Rustix checkout. The unchanged workspace
+test suite remains the broader C-runtime regression gate.
+The source fixture is `compat/rustix/source/m1_foundation.rs`; it covers
+byte-preserving paths, descriptor ownership, direct I/O, special directory
+descriptors, and the FIOCLEX/FIONCLEX/FIONBIO/FIONREAD ioctl requests. The
+assembly proof requires direct Linux syscall 29 for ioctl and rejects calls to
+the public C ABI or TLS `errno` path.
 
 ---
 

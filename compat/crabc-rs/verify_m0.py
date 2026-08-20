@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the M0 native fixture stays off crabc's public C ABI.
+"""Verify that the M1 native fixture stays off crabc's public C ABI.
 
 The caller builds the no-std ``m0_direct_probe`` static library for native
 Linux/AArch64 and then points this checker at the target directory. Its archive
@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Sequence
 
 
-FORBIDDEN_PUBLIC_SYMBOLS = ("openat", "read", "write", "close", "__errno_location")
+FORBIDDEN_PUBLIC_SYMBOLS = ("openat", "read", "write", "close", "ioctl", "__errno_location")
 
 
 class VerificationError(ValueError):
-    """The fixture does not demonstrate the M0 direct-operation contract."""
+    """The fixture does not demonstrate the M1 direct-operation contract."""
 
 
 def require(condition: bool, message: str) -> None:
@@ -32,7 +32,7 @@ def require(condition: bool, message: str) -> None:
 
 def fixture_archive(target_dir: Path) -> Path:
     archive = target_dir / "release" / "examples" / "libm0_direct_probe.a"
-    require(archive.is_file(), f"M0 direct probe archive does not exist: {archive}")
+    require(archive.is_file(), f"M1 direct probe archive does not exist: {archive}")
     return archive
 
 
@@ -47,6 +47,10 @@ def tool_output(command: Sequence[str]) -> str:
 def inspect(readelf: str, disassembly: str) -> dict[str, object]:
     require("AArch64" in readelf, "fixture is not an AArch64 ELF binary")
     require(re.search(r"\bsvc\b", disassembly), "fixture contains no direct AArch64 svc instruction")
+    require(
+        re.search(r"mov\s+w8,\s+#0x1d\b[\s\S]{0,600}?\bsvc\b", disassembly),
+        "fixture contains no direct Linux/AArch64 ioctl syscall (number 29)",
+    )
 
     forbidden = tuple(
         symbol
@@ -60,6 +64,7 @@ def inspect(readelf: str, disassembly: str) -> dict[str, object]:
     return {
         "machine": "AArch64",
         "direct_svc": True,
+        "direct_ioctl_syscall": True,
         "forbidden_public_symbols": [],
     }
 
@@ -79,9 +84,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         readelf = tool_output((args.readelf, "--file-header", str(archive)))
         disassembly = tool_output((args.objdump, "--disassemble", "--demangle", str(archive)))
         report = inspect(readelf, disassembly)
-        print(f"M0 direct syscall proof: PASS ({archive}) {report}")
+        print(f"M1 direct syscall proof: PASS ({archive}) {report}")
     except VerificationError as error:
-        print(f"M0 direct syscall proof: ERROR: {error}", file=sys.stderr)
+        print(f"M1 direct syscall proof: ERROR: {error}", file=sys.stderr)
         return 2
     return 0
 
