@@ -33,6 +33,7 @@ LOADER_FEATURE_REPORT = ROOT_DIR / "compat/abi/crabc/aarch64/loader-features.jso
 LDSO_REPORT = ROOT_DIR / "compat/reports/ldso/latest.json"
 CORPUS_REPORT = ROOT_DIR / "compat/reports/corpus/latest.json"
 RUST_STD_REPORT = ROOT_DIR / "compat/reports/rust-std/latest.json"
+LTO_REPORT = ROOT_DIR / "compat/reports/lto/latest.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -186,6 +187,25 @@ def m9_report_state() -> dict[str, Any] | None:
     return report
 
 
+def m10_report_state() -> dict[str, Any] | None:
+    """Return Stage 16 evidence only when all four configured lanes are named."""
+
+    report = read_json(LTO_REPORT)
+    if report is None:
+        return None
+    if report.get("schema_version") != 1 or report.get("runner") != "compat/lto/run.py":
+        raise RuntimeError(f"unexpected M10 report identity in {LTO_REPORT}")
+    configurations = report.get("configurations")
+    if not isinstance(configurations, dict) or not set("ABCD").issubset(configurations):
+        raise RuntimeError(f"incomplete M10 configuration matrix in {LTO_REPORT}")
+    for key in "ABCD":
+        configuration = configurations[key]
+        if not isinstance(configuration, dict) or not isinstance(configuration.get("status"), str):
+            raise RuntimeError(f"invalid M10 configuration {key} in {LTO_REPORT}")
+    report["_path"] = str(LTO_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -212,6 +232,7 @@ def main() -> int:
     ldso = m7_report_state()
     corpus = m8_report_state()
     rust_std = m9_report_state()
+    lto = m10_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     lines = [
@@ -439,6 +460,75 @@ def main() -> int:
             )
         )
 
+    lines.extend(["", "## M10 LTO research", ""])
+    if lto is None:
+        lines.append("No Stage 16 LTO result. Run `./scripts/dev.sh lto`.")
+    else:
+        configurations = lto["configurations"]
+        built = sum(
+            configuration.get("status") == "built"
+            for configuration in configurations.values()
+            if isinstance(configuration, dict)
+        )
+        lines.append(
+            "Stage 16 static/build-std evidence matrix: "
+            f"**{lto.get('result', 'unknown')}** ({built}/4 built artifact/runtime lanes); "
+            f"report `{lto['_path']}`."
+        )
+        lines.append(
+            "`built` records an artifact and its run, not a whole-program claim. "
+            "An `invalid` lane is retained as evidence when its link map disproves the requested boundary."
+        )
+        rows: list[tuple[object, ...]] = []
+        for key in "ABCD":
+            configuration = configurations[key]
+            assert isinstance(configuration, dict)
+            build = configuration.get("build")
+            build = build if isinstance(build, dict) else {}
+            artifact = build.get("artifact")
+            artifact = artifact if isinstance(artifact, dict) else {}
+            runtime = build.get("runtime")
+            runtime = runtime if isinstance(runtime, dict) else {}
+            claims = build.get("claims")
+            claims = claims if isinstance(claims, dict) else {}
+            provenance = build.get("lto_provenance")
+            provenance = provenance if isinstance(provenance, dict) else {}
+            if key == "B":
+                boundary = (
+                    "crabc archive selected"
+                    if claims.get("static_crabc_linkage_proven") is True
+                    else "crabc archive unproven"
+                )
+            elif key == "D":
+                boundary = (
+                    "cross-boundary LTO proven"
+                    if claims.get("whole_program_lto_proven") is True
+                    else "cross-boundary LTO unproven"
+                )
+            elif provenance:
+                boundary = str(provenance.get("scope", "Rust/std evidence unavailable"))
+            else:
+                boundary = "static control"
+            rows.append(
+                (
+                    key,
+                    configuration.get("label", "unknown"),
+                    configuration.get("status", "unknown"),
+                    artifact.get("text_size_bytes", "n/a"),
+                    artifact.get("stripped_file_size_bytes", "n/a"),
+                    artifact.get("defined_global_symbol_count", "n/a"),
+                    runtime.get("status", "n/a"),
+                    boundary,
+                )
+            )
+        lines.append("")
+        lines.extend(
+            markdown_table(
+                ("case", "configuration", "status", ".text", "stripped ELF", "symbols", "run", "scope / boundary"),
+                rows,
+            )
+        )
+
     lines.extend(["", "## libc-test", ""])
     if not libc_test:
         lines.append("No structured libc-test result. Run `./scripts/dev.sh libc-test functional`.")
@@ -610,6 +700,17 @@ def main() -> int:
         unmeasured_frontier.append("real Alpine corpus")
     if rust_std is None:
         unmeasured_frontier.append("stock Rust `std` compatibility")
+    d_claims: dict[str, Any] = {}
+    if lto is not None:
+        d_configuration = lto["configurations"]["D"]
+        assert isinstance(d_configuration, dict)
+        d_build = d_configuration.get("build")
+        if isinstance(d_build, dict):
+            candidate_claims = d_build.get("claims")
+            if isinstance(candidate_claims, dict):
+                d_claims = candidate_claims
+    if d_claims.get("whole_program_lto_proven") is not True:
+        unmeasured_frontier.append("cross-boundary Rust/crabc LTO")
 
     lines.extend(
         [

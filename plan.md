@@ -2604,6 +2604,65 @@ python3 compat/rust-std/tests/test_runner.py        7/7 PASS
 
 Measure the whole-program Rust/LLVM optimization opportunity.
 
+### Progress — 2026-08-20 UTC
+
+Milestone 10 is **complete as an evidence milestone**. The new dependency-free
+Python runner, `compat/lto/run.py`, executes the four Stage 16 configurations
+inside the pinned native Linux/AArch64 image and writes a structured report at
+`compat/reports/lto/latest.json`. `./scripts/dev.sh lto` is the reproducible
+entry point and refreshes the compatibility dashboard.
+
+The matrix deliberately separates two controlled static C lanes from the
+normal Rust/build-std lanes. A links `fixtures/static.c` through pinned musl;
+B links the same object with explicit musl CRT/GCC support files and crabc's
+`libc.a`, then requires a bounded linker-map anchor for that exact candidate
+archive and absence of a selected musl `libc.a`. Both built a static AArch64
+ELF and exited zero. B's artifact is distinct from A (8,613,712 bytes versus
+71,688 bytes before stripping), has 885,064 bytes of `.text`, 1,465,168 bytes
+after stripping, and retains 1,627 defined global symbols. This proves the
+explicit archive-selection setup; it is not a claim that a minimal C probe
+measures all static Rust behavior.
+
+C builds the ordinary dependency-free Rust fixture with the pinned stock
+`-Z build-std=std,panic_abort` path, `opt-level=3`, one codegen unit, and the
+dynamic crabc loader/libc boundary. It built and exited zero; the inspected
+dynamic ELF has 253,892 bytes of `.text`, is 397,744 bytes after stripping,
+and retains 348 defined global symbols. Its `llvm-readelf` inspection records
+only that crabc is external/opaque to this Rust graph—no cross-boundary LTO
+claim follows from a dynamic link. Its inspected disassembly/symbol evidence
+still mentions the direct `getpid`, `write`, `malloc`, and `free` boundaries,
+so it supplies no wrapper-elimination claim.
+
+D requests static `build-std`, fat LTO, embedded bitcode, linker-plugin LTO,
+and clang/lld. The isolated crabc archive rebuild succeeded and contained 267
+`.llvmbc` markers. Its Rust artifact also built as a static ELF and exited
+zero, with Rust rlib bitcode observed. Crucially, the recorded LLD map selected
+Rust's self-contained musl `libc.a` and contained neither the rebuilt crabc
+archive path nor an `llvm-nm`-derived crabc archive-member anchor. D is
+therefore recorded as **invalid**, not as cross-boundary LTO: this topology
+does not establish that crabc participated, so
+`whole_program_lto_proven` remains false. The next optimization experiment
+must explicitly remove or replace Rust's self-contained musl archive before
+making that claim.
+
+For every produced artifact the runner retains `llvm-nm`, `llvm-readelf`, and
+`llvm-objdump` evidence, `.text`, stripped/full ELF size, retained-symbol
+count, exact linker/build input records, raw run timing, and `strace -f -c`
+syscall counts when available. It separately records whether the fixture's
+named helpers remain in inspected symbol/disassembly text; absence is bounded
+inlining/internalization evidence, not a cross-boundary claim. The RSS field
+is intentionally labeled a raw cumulative `RUSAGE_CHILDREN` delta, not an
+isolated process-peak benchmark.
+The harness does not normalize outputs or substitute glibc at any point.
+
+Final closure evidence:
+
+```text
+python3 compat/lto/tests/test_runner.py            11/11 PASS
+./scripts/dev.sh lto                               PARTIAL: A/B/C built and ran; D invalid by link-map evidence
+./scripts/dev.sh test                              workspace PASS
+```
+
 ## Milestone 11 — only then begin x86_64
 
 Reuse the same compatibility laboratory first.
