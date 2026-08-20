@@ -1,6 +1,6 @@
 # Implement `crabc-rs`: a complete idiomatic Rust interface to crabc
 
-You are extending an already mature macos aarch64 `crabc` implementation with a new public crate:
+You are extending the measured Linux/AArch64 `crabc` implementation with a new public crate:
 
 ```text
 crabc-rs
@@ -48,25 +48,34 @@ idiomatic Rust facade
 
 ---
 
-# Assumptions
+# Ground truth and assumptions
 
-Assume the preceding AArch64 crabc maturity project is complete.
+The target is **Linux/AArch64**. macOS/AArch64 is only a development host;
+all target builds and runtime measurements run in the native Linux/AArch64
+Docker laboratory.
 
-In particular, assume:
+Milestone 10.5 is the accepted C-runtime baseline for this work. It establishes
+the following bounded, reproducible evidence against pinned musl 1.2.6:
 
-* Linux AArch64 only;
-* crabc is already behaviorally mature against the chosen musl baseline;
-* libc ABI parity is established;
-* libc-test is effectively green;
-* pthread/TLS/signals/process behavior is mature;
-* resolver/networking behavior is mature;
-* stdio/text/math behavior is mature;
-* the crabc dynamic linker is mature;
-* representative unmodified Alpine AArch64 binaries work;
-* stock Rust `std` compatibility has been demonstrated;
-* the Docker/Alpine ARM64 compatibility laboratory already exists.
+| Area | Current evidence |
+| --- | --- |
+| Dynamic public ABI | 1,647 expected symbols; 1,668 candidate exports; no missing names or metadata mismatches; 21 documented candidate-only exports. |
+| libc-test | 420 total cases: 406 pass; no fail, build error, or timeout; 14 individually evidenced exceptions. |
+| OS/runtime | 10/10 selected OS profiles pass; pthread/TLS stress 10/10; signal/process 12/12; resolver/network 22 contract items. |
+| Loader | 20/20 bounded native-AArch64 pinned-musl differential cases; generated loader inventory is reproducible. |
+| ABI/header/static | 183/183 header declaration probes and 9 layout/constant probes pass; static archive comparison is retained as explicit informational triage, not a claim of archive identity. |
+| Real workloads | 34/34 Alpine raw comparisons, including 12 stateful Tier B–D cases; stock Rust `std` and a dependency-bearing Rust program match pinned musl exactly. |
+| LTO | The A/B/C scenarios built and ran; the D scenario is intentionally invalid by link-map evidence. Cross-boundary LTO is not claimed. |
 
-Do not reopen those foundational projects unless `crabc-rs` work discovers a real bug.
+This is a strong maturity baseline, not a proof that every possible musl
+interface or arbitrary DSO graph has been exercised. Keep musl as the C/POSIX
+semantic oracle. Rustix is an independent Rust API and behavior oracle only
+for the overlapping native-Rust surface; glibc and its semantics are not a
+compatibility oracle or fallback.
+
+Do not reopen these foundations merely to redesign them. Reopen a boundary only
+when `crabc-rs` work produces a focused regression or reveals a contract the
+current evidence does not cover.
 
 ---
 
@@ -87,8 +96,13 @@ Do not create cross-platform abstractions in anticipation of them.
 Target exactly:
 
 ```text
-Linux AArch64
+Linux AArch64, little-endian (`aarch64-unknown-linux-musl`)
 ```
+
+Linux arm64 is maintained little-endian only. `aarch64_be` is out of scope;
+do not add endian-parametric internal abstractions, build targets, fixtures, or
+compatibility branches in anticipation of it. Continue to encode protocol and
+on-disk byte order explicitly where the relevant interface requires it.
 
 Do not implement a new allocator.
 
@@ -174,6 +188,14 @@ Work in vertically verified slices.
 
 Before editing, inventory the mature crabc repository.
 
+At the start of this project, the workspace contains the loader binary, the
+`libc` crate (whose Rust crate name is `c` and whose artifacts are
+`libc.so`/`libc.a`), and the `ldso` crate. There is not yet a `crabc-rs` or
+`crabc-core` crate. `libc/src/lib.rs` is a monolithic `no_std` crate with
+incrementally included subsystem source; its direct syscall layer currently
+uses negative Linux errno values before the C facade converts them through
+`syscall_result` into C sentinel returns and TLS `errno`.
+
 Identify:
 
 * workspace crates;
@@ -200,6 +222,9 @@ Identify:
 Also inspect the current upstream rustix repository.
 
 Pin the exact rustix revision used as the initial design and test reference.
+The initial local review is against Rustix 1.1.4 at
+`cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec`; the checked-in pin must identify
+the upstream repository and revision, not a developer's absolute clone path.
 
 Record it in something like:
 
@@ -258,10 +283,10 @@ A production dependency graph must show:
 
 ```text
 crabc-rs
-   ↓
-shared crabc implementation
-   ↓
-kernel
+   ├── bitflags
+   └── shared crabc implementation
+          ↓
+        kernel
 ```
 
 not:
@@ -276,9 +301,13 @@ kernel
 
 ---
 
-# 4. Do not call crabc's C ABI from crabc-rs
+# 4. Do not call crabc's public C/POSIX ABI from crabc-rs
 
 Also non-negotiable.
+
+The strict rule applies to public libc/POSIX entry points and an `errno`
+round-trip. It is not an assertion that two separately linked Rust artifacts
+magically share process-global state.
 
 Bad:
 
@@ -302,7 +331,7 @@ This throws away the exact benefits we want from a native Rust facade:
 * `Result`;
 * inlining;
 * direct LLVM visibility;
-* no C ABI transition;
+* no public C ABI transition;
 * no errno TLS round-trip.
 
 Instead:
@@ -351,6 +380,32 @@ Result
 
 The underlying operation must only be implemented once.
 
+## Private singleton-runtime boundary
+
+Building a shared Rust `rlib` into both `libc.so` and an application does not
+make its Rust statics, TLS, or locks singleton process state. Stateless kernel
+operations can share source and invariants that way. Stateful capabilities
+cannot silently rely on it.
+
+For loader, `dlopen`/`dlsym`/`dlclose`, stdio, locale, resolver, environment,
+or pthread state, record the owner of the existing singleton state before
+exposing a Rust API. If a native facade must reach state owned by `libc.so` or
+`libldso.so`, it may use a narrowly versioned **private runtime ABI or handle
+boundary**. That exception must be explicit and must define:
+
+```text
+state owner
+wire types and ownership
+synchronization and TLS rules
+version/compatibility policy
+failure behavior
+focused boundary tests
+```
+
+It is never the public C/POSIX ABI, never an `errno` transport, and never a
+way to hide missing native coverage. Syscall-like APIs remain on the direct
+typed path above and must not cross this boundary.
+
 ---
 
 # 5. Introduce one shared implementation layer if necessary
@@ -368,6 +423,12 @@ or another name consistent with the repository.
 Its role is:
 
 > shared Rust implementation used by both libc and crabc-rs.
+
+Here, *shared* means shared source, types, and operation invariants. It does
+not imply shared process-singleton state after the `rlib` is linked into two
+artifacts. Keep the first extracted seam stateless and explicitly typed. For
+each later stateful capability, document its owner and either keep the complete
+state on one side or use the audited private runtime boundary from section 4.
 
 Do not make `crabc-core` a large public API commitment.
 
@@ -432,14 +493,16 @@ Do not sacrifice the proven C compatibility surface to make the Rust API cleaner
 
 ---
 
-# 7. Make `crabc-rs` `no_std`-capable
+# 7. Make `crabc-rs` std-first and `no_std`-capable
 
 The native facade should preserve crabc's low-level usefulness.
 
-Design it so:
+Follow Rustix's integration model: `std` is the default feature for ordinary
+Rust applications, and enables `alloc` plus standard-library interoperability.
+The core API must still compile without default features:
 
 ```text
-cargo check -p crabc-rs --no-default-features
+cargo check -p crabc-rs --target aarch64-unknown-linux-musl --no-default-features
 ```
 
 works in a meaningful `no_std` configuration.
@@ -460,7 +523,17 @@ alloc
 
 only behind an appropriate feature when an API genuinely requires owned allocation.
 
-Provide optional `std` integrations where useful.
+Make this feature shape explicit:
+
+```toml
+[features]
+default = ["std"]
+alloc = []
+std = ["alloc"]
+```
+
+`std` integrations are the normal experience, while the feature-minimal path
+remains a hard M0 compilation gate.
 
 Do not require `std` merely for:
 
@@ -482,15 +555,15 @@ unless there is a strong technical reason.
 
 This is foundational systems infrastructure.
 
-Target:
+The normal production graph is permitted one third-party package:
 
-```text
-0 normal third-party dependencies
+```toml
+bitflags = { version = "2.4.0", default-features = false }
 ```
 
-where practical.
-
-A tiny dependency such as `bitflags` is acceptable only if it clearly improves correctness/API quality enough to justify itself.
+Use it for typed bit-pattern APIs where it improves correctness and readability.
+Do not add further normal dependencies merely for convenience; each must have a
+documented architectural reason and corresponding dependency-graph review.
 
 Explicitly avoid:
 
@@ -518,7 +591,8 @@ Run:
 cargo tree -p crabc-rs -e normal
 ```
 
-as an acceptance gate.
+as an acceptance gate: it must show the shared crabc implementation and
+`bitflags`, but no other third-party normal dependency.
 
 ---
 
@@ -640,6 +714,29 @@ Create a machine-readable inventory such as:
 ```text
 compat/rustix/api.toml
 ```
+
+Keep its upstream pin beside the correspondence data, for example:
+
+```toml
+# compat/rustix/upstream.toml
+[rustix]
+repository = "https://github.com/bytecodealliance/rustix"
+version = "1.1.4"
+revision = "cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec"
+target = "aarch64-unknown-linux-musl"
+
+[profile]
+default_features = true
+features = [
+  "event", "fs", "mm", "mount", "net", "param", "pipe", "process",
+  "pty", "rand", "shm", "stdio", "system", "termios", "thread", "time",
+]
+excluded_features = ["runtime", "io_uring"]
+```
+
+The local Rustix clone is an inspection convenience. Fixtures must resolve a
+locked upstream source independently, and Rustix must remain absent from the
+production dependency graph.
 
 For every relevant Linux/AArch64 rustix API entry, record something like:
 
@@ -787,6 +884,11 @@ dependency alias → crabc-rs
 
 This gives concrete evidence of API compatibility.
 
+Compile the two variants as separate dependency-alias builds. This checks
+surface compatibility; it does not promise that their public Rust types are
+interchangeable in one process or that mutable process-global state can be
+shared between the two implementations.
+
 Do not rely only on hand-written correspondence tables.
 
 ---
@@ -813,6 +915,10 @@ time values within appropriate tolerances
 For destructive or process-global operations, run each backend in an isolated subprocess with equivalent initial conditions.
 
 Do not call rustix and crabc-rs sequentially against mutable shared state and pretend that is differential testing.
+
+Use the roles consistently: musl is the C/POSIX behavior oracle for crabc and
+the private runtime boundary; Rustix is the API/behavior comparator for the
+overlap. Do not use host glibc or public-network behavior as an oracle.
 
 ---
 
@@ -1110,6 +1216,13 @@ Result<T, Errno>
 
 The shared crabc implementation should naturally propagate an error value.
 
+The initial extraction must make this conversion explicit. Existing direct
+syscall helpers commonly carry negative Linux errno values until
+`syscall_result` converts them for the C facade. Normalize that representation
+to the typed native error at the shared-operation boundary, before either
+facade returns. Do not let the Rust facade inherit C sentinel/`errno`
+translation as an intermediate protocol.
+
 Only the C ABI facade should translate:
 
 ```text
@@ -1263,7 +1376,12 @@ It is no longer the roadmap.
 
 # 32. Generate a complete crabc capability inventory
 
-Start from the mature crabc ABI and implementation inventory.
+Start from the measured crabc ABI and implementation inventory. The initial
+machine-readable input is all 1,668 current candidate dynamic exports, with
+the 1,647-symbol pinned-musl public surface and 21 candidate-only exports
+preserved as distinct provenance classes. Add the checked loader/dlfcn runtime
+inventory so capabilities not adequately described by a single libc symbol are
+also visible.
 
 Every exported public libc symbol must be assigned to a semantic capability group.
 
@@ -1297,7 +1415,10 @@ rust_equivalent = "slice copying / ptr APIs"
 status = "verified"
 ```
 
-Every public crabc symbol must appear in this accounting.
+Every public crabc symbol must appear in this accounting, including the
+candidate-only exports, whose rationale must remain visible. Static archive
+`nm -A` triage is useful implementation evidence but is not a substitute for
+this dynamic C/Rust capability accounting.
 
 Zero unclassified symbols is a hard completion gate.
 
@@ -1559,7 +1680,8 @@ Reuse the existing deterministic DNS fixture.
 
 # 41. Dynamic loading
 
-Crabc contains a mature dynamic loader/dlfcn implementation.
+Crabc contains an audited dynamic loader/dlfcn implementation with bounded
+Linux/AArch64 evidence.
 
 Expose an idiomatic RAII API.
 
@@ -1578,6 +1700,12 @@ Properties:
 * arbitrary type interpretation remains unsafe;
 * errors are owned/typed rather than borrowed `dlerror()` globals;
 * flags are typed.
+
+The loader state is owned by `libldso.so`; the native API therefore must use
+the explicit private singleton-runtime boundary from section 4, rather than a
+second independently linked copy of loader state or the public `dl*`/`errno`
+facade. Define and test the handle ownership and loader-lock/TLS contract
+before this module is exposed.
 
 Cover:
 
@@ -1611,6 +1739,10 @@ If exposing it natively, build an RAII type such as:
 ```text
 CFile
 ```
+
+`FILE` state is libc-owned. Do not duplicate it through independently linked
+Rust statics; if this module crosses into existing `FILE` machinery, specify
+the private singleton-runtime handle boundary and ownership contract first.
 
 with methods for:
 
@@ -1898,9 +2030,10 @@ Requirements:
 * no rustix dependency anywhere;
 * `no_std` base should remain possible;
 * `alloc` should be separable where practical;
-* `std` should primarily add interoperability/conveniences.
+* `std` is enabled by default and should primarily add interoperability/conveniences.
 
-Do not overengineer feature topology when all code has zero external dependencies.
+Do not overengineer feature topology around the single approved `bitflags`
+dependency.
 
 ---
 
@@ -2000,7 +2133,7 @@ uninlined wrappers
 
 ---
 
-# 56. Explicitly prove there is no C ABI round-trip
+# 56. Explicitly prove there is no public C ABI/`errno` round-trip
 
 Create an automated assembly or symbol-level check for representative native functions.
 
@@ -2030,6 +2163,12 @@ clock_gettime
 where appropriate.
 
 This is a hard architectural acceptance criterion.
+
+The checker must also reject `__errno_location` and equivalent public C facade
+paths for these syscall-like representatives. Private singleton-runtime
+boundaries are not exemptions hidden from this check: list each separately in
+an exception ledger, identify its state owner and version, and run its focused
+boundary tests. They are never permitted for the representatives above.
 
 ---
 
@@ -2427,7 +2566,10 @@ crabc-rs
 
 as one feature-gated public facade.
 
-The only additional crate justified by this project is the internal shared implementation layer if needed.
+The only additional **workspace** crate justified by this project is the
+internal shared implementation layer if needed. `bitflags` is the one approved
+third-party normal dependency; do not turn that exception into a general
+crate-splitting or dependency-growth policy.
 
 Avoid a 20-crate micro-workspace.
 
@@ -2479,9 +2621,15 @@ crabc-rs crate exists
 
 no production rustix dependency
 
+default feature is std; no-default-features target check passes
+
+bitflags is the only third-party normal dependency
+
 shared implementation strategy proven
 
-representative operation does not traverse C ABI
+representative syscall-like operation does not traverse public C ABI or errno
+
+stateful capabilities name their singleton-state owner and private runtime boundary, if any
 
 rustix API manifest exists
 
@@ -2597,7 +2745,9 @@ differential suite green
 
 no production rustix dependency
 
-no C ABI round-trip
+no public C ABI/errno round-trip for syscall-like APIs
+
+private runtime-boundary exception ledger green
 ```
 
 Document deliberate exceptions.
@@ -2795,12 +2945,13 @@ libc facade
 crabc-rs facade
 ```
 
-No crabc-rs → C ABI round-trip.
+No crabc-rs → public C ABI/errno round-trip for syscall-like APIs. Any explicit
+private singleton-runtime boundary is versioned, owned, tested, and listed.
 
 ## Rustix
 
 ```text
-normal dependency: none
+normal dependency: bitflags only
 dev/test oracle: yes
 relevant Linux/AArch64 parity: documented and verified
 ```
