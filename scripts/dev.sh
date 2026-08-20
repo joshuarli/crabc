@@ -35,6 +35,7 @@ Commands:
   rust-std [options]  run the M9 stock Rust std musl-vs-crabc differential fixture
   rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
+  crabc-rs            run the M0 native Rust facade architecture/evidence gate
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports
@@ -250,6 +251,23 @@ case "$command" in
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/lto/run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    crabc-rs)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        # M0 proves one stateless vertical slice is shared directly by libc
+        # and crabc-rs. Keep the no-std, runtime, metadata, and assembly proof
+        # together so a later facade change cannot silently add a C/errno hop.
+        run_in_container cargo check -p crabc-rs --no-default-features
+        run_in_container cargo test -p crabc-rs --test m0_direct
+        run_in_container cargo build -p crabc-rs --example m0_direct_probe --release --no-default-features
+        run_in_container python3 compat/rustix/run.py --check
+        run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
+        run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'
+        run_in_container python3 compat/crabc-rs/verify_m0.py --target-dir target
         ;;
     abi-probe)
         ensure_image

@@ -1,0 +1,26 @@
+[package]
+name = "crabc-rs"
+version = "0.3.0"
+edition = "2021"
+description = "An idiomatic Rust interface to crabc"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mengzhuo/crabc"
+readme = "../README.md"
+
+[lib]
+name = "crabc_rs"
+path = "src/lib.rs"
+
+[[example]]
+name = "m0_direct_probe"
+path = "examples/m0_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[features]
+default = ["std"]
+alloc = []
+std = ["alloc"]
+
+[dependencies]
+crabc-core = { path = "../crabc-core" }
+bitflags = { version = "2.4.0", default-features = false }

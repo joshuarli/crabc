@@ -771,33 +771,42 @@ pub use sysnr::*;
 
 #[inline]
 unsafe fn sys_write(fd: i64, buf: *const u8, count: usize) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_WRITE, fd as i64, buf as i64, count as i64)
+    match crabc_core::io::write_raw(fd as c_int, buf, count) {
+        Ok(value) => value as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_READ, fd as i64, buf as i64, count as i64)
+    match crabc_core::io::read_raw(fd as c_int, buf, count) {
+        Ok(value) => value as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_open(path: *const u8, flags: i64, mode: i64) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_OPENAT, AT_FDCWD as i64, path as i64, flags as i64, mode as i64)
+    match crabc_core::fs::openat_raw(AT_FDCWD, path, flags as c_int, mode as c_uint) {
+        Ok(fd) => fd as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_openat(dirfd: c_int, path: *const u8, flags: c_int, mode: c_int) -> i64 {
-    <Arch as Syscalls>::syscall4(
-        SYS_OPENAT,
-        dirfd as i64,
-        path as i64,
-        flags as i64,
-        mode as i64,
-    )
+    match crabc_core::fs::openat_raw(dirfd, path, flags, mode as c_uint) {
+        Ok(fd) => fd as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_close(fd: i64) -> i64 {
-    <Arch as Syscalls>::syscall1(SYS_CLOSE, fd as i64)
+    match crabc_core::io::close(fd as c_int) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -846,6 +855,41 @@ unsafe fn syscall_result(result: i64) -> i64 {
         -1
     } else {
         result
+    }
+}
+
+// A typed operation extracted into crabc-core returns its failure directly.
+// Only this C facade translates that value into libc's sentinel/errno ABI.
+#[inline]
+unsafe fn c_result_usize(result: crabc_core::Result<usize>) -> i64 {
+    match result {
+        Ok(value) => value as i64,
+        Err(errno) => {
+            ERRNO = errno.raw();
+            -1
+        }
+    }
+}
+
+#[inline]
+unsafe fn c_result_unit(result: crabc_core::Result<()>) -> c_int {
+    match result {
+        Ok(()) => 0,
+        Err(errno) => {
+            ERRNO = errno.raw();
+            -1
+        }
+    }
+}
+
+#[inline]
+unsafe fn c_result_fd(result: crabc_core::Result<crabc_core::RawFd>) -> c_int {
+    match result {
+        Ok(fd) => fd,
+        Err(errno) => {
+            ERRNO = errno.raw();
+            -1
+        }
     }
 }
 
@@ -6420,7 +6464,7 @@ pub unsafe extern "C" fn iconv_close(_cd: IconvT) -> c_int { 0 }
 
 #[no_mangle]
 pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
-    syscall_result(sys_write(fd as i64, buf as *const u8, count)) as SSizeT
+    c_result_usize(crabc_core::io::write_raw(fd, buf.cast(), count)) as SSizeT
 }
 
 #[no_mangle]
@@ -6429,16 +6473,21 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSiz
     // Check both sides of the syscall so the ordinary EINTR result and errno
     // remain unchanged when no cancellation is pending.
     pthread_testcancel();
-    let result = sys_read(fd as i64, buf as *mut u8, count);
-    if result == -(EINTR as i64) {
+    let result = crabc_core::io::read_raw(fd, buf.cast(), count);
+    if matches!(result, Err(errno) if errno.raw() == EINTR) {
         pthread_testcancel();
     }
-    syscall_result(result) as SSizeT
+    c_result_usize(result) as SSizeT
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_int) -> c_int {
-    syscall_result(sys_open(path as *const u8, flags as i64, mode as i64)) as c_int
+    c_result_fd(crabc_core::fs::openat_raw(
+        AT_FDCWD,
+        path.cast(),
+        flags,
+        mode as c_uint,
+    )) as c_int
 }
 
 #[no_mangle]
@@ -6448,21 +6497,27 @@ pub unsafe extern "C" fn openat(
     flags: c_int,
     mode: c_int,
 ) -> c_int {
-    syscall_result(sys_openat(dirfd, path as *const u8, flags, mode)) as c_int
+    c_result_fd(crabc_core::fs::openat_raw(
+        dirfd,
+        path.cast(),
+        flags,
+        mode as c_uint,
+    )) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn creat(path: *const c_char, mode: c_uint) -> c_int {
-    syscall_result(sys_open(
-        path as *const u8,
-        (O_WRONLY | O_CREAT | O_TRUNC) as i64,
-        mode as i64,
+    c_result_fd(crabc_core::fs::openat_raw(
+        AT_FDCWD,
+        path.cast(),
+        O_WRONLY | O_CREAT | O_TRUNC,
+        mode,
     )) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn close(fd: c_int) -> c_int {
-    syscall_result(sys_close(fd as i64)) as c_int
+    c_result_unit(crabc_core::io::close(fd))
 }
 
 #[no_mangle]

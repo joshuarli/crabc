@@ -1,0 +1,389 @@
+# Initial Linux/AArch64 Rustix correspondence inventory.
+#
+# This is intentionally a bounded M0 seed, not a parity claim.  Entries become
+# ``implemented`` and then ``verified`` only after a native Rust facade and an
+# isolated dual-backend test exist.  ``crabc`` names the intended public Rust
+# path, not a call through the C/POSIX ABI.
+schema = "crabc.rustix-api/v1"
+target = "aarch64-unknown-linux-musl"
+upstream = "upstream.toml"
+
+[reference]
+repository = "https://github.com/bytecodealliance/rustix"
+version = "1.1.4"
+revision = "cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec"
+
+[policy]
+production_dependency = false
+comparison_backend = "rustix-linux-raw"
+candidate_backend = "crabc-rs-native"
+stateful_operations_require_isolated_process = true
+representative_operation = "fs::openat"
+representative_fixture = "compat/rustix/source/fs_openat.rs"
+representative_backend_boundary = "direct-crabc-core"
+direct_c_abi_errno_roundtrip = false
+forbidden_backend_layers = ["public libc/POSIX ABI", "TLS errno readback"]
+
+[[api]]
+id = "io.errno"
+feature = "default"
+rustix = "io::Errno"
+crabc = "io::Errno"
+status = "implemented"
+compatibility = "native-equivalent"
+tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "io.read"
+feature = "default"
+rustix = "io::read"
+crabc = "io::read"
+status = "implemented"
+compatibility = "native-equivalent"
+tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "io.write"
+feature = "default"
+rustix = "io::write"
+crabc = "io::write"
+status = "implemented"
+compatibility = "native-equivalent"
+tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fd.as-fd"
+feature = "default"
+rustix = "fd::AsFd"
+crabc = "fd::AsFd"
+status = "implemented"
+compatibility = "native-equivalent"
+tests = ["crabc-rs/src/lib.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fd.owned-fd"
+feature = "default"
+rustix = "fd::OwnedFd"
+crabc = "fd::OwnedFd"
+status = "implemented"
+compatibility = "native-equivalent"
+tests = ["crabc-rs/src/lib.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.openat"
+feature = "fs"
+rustix = "fs::openat"
+crabc = "fs::openat"
+status = "verified"
+compatibility = "partial-source-compatible"
+tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/source/fs_openat.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.statat"
+feature = "fs"
+rustix = "fs::statat"
+crabc = "fs::statat"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.fstat"
+feature = "fs"
+rustix = "fs::fstat"
+crabc = "fs::fstat"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.seek"
+feature = "fs"
+rustix = "fs::seek"
+crabc = "fs::seek"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.unlinkat"
+feature = "fs"
+rustix = "fs::unlinkat"
+crabc = "fs::unlinkat"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.fsync"
+feature = "fs"
+rustix = "fs::fsync"
+crabc = "fs::fsync"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "event.poll"
+feature = "event"
+rustix = "event::poll"
+crabc = "event::poll"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "event.epoll"
+feature = "event"
+rustix = "event::epoll::wait"
+crabc = "event::epoll::wait"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "pipe.pipe"
+feature = "pipe"
+rustix = "pipe::pipe"
+crabc = "pipe::pipe"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "pipe.splice"
+feature = "pipe"
+rustix = "pipe::splice"
+crabc = "pipe::splice"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "mm.mmap"
+feature = "mm"
+rustix = "mm::mmap"
+crabc = "mm::mmap"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "mm.munmap"
+feature = "mm"
+rustix = "mm::munmap"
+crabc = "mm::munmap"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "net.socket"
+feature = "net"
+rustix = "net::socket"
+crabc = "net::socket"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "net.socketpair"
+feature = "net"
+rustix = "net::socketpair"
+crabc = "net::socketpair"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "net.connect"
+feature = "net"
+rustix = "net::connect"
+crabc = "net::connect"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "net.send-recv"
+feature = "net"
+rustix = "net::send"
+crabc = "net::send/recv"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "param.page-size"
+feature = "param"
+rustix = "param::page_size"
+crabc = "param::page_size"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "rand.getrandom"
+feature = "rand"
+rustix = "rand::getrandom"
+crabc = "rand::getrandom"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "time.clock-gettime"
+feature = "time"
+rustix = "time::clock_gettime"
+crabc = "time::clock_gettime"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "time.timerfd"
+feature = "time"
+rustix = "time::timerfd_create"
+crabc = "time::timerfd_create"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "process.getpid"
+feature = "process"
+rustix = "process::getpid"
+crabc = "process::getpid"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "process.kill"
+feature = "process"
+rustix = "process::kill_process"
+crabc = "process::kill"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "process.wait"
+feature = "process"
+rustix = "process::wait"
+crabc = "process::wait"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "thread.gettid"
+feature = "thread"
+rustix = "thread::gettid"
+crabc = "thread::gettid"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "thread.sched-yield"
+feature = "thread"
+rustix = "thread::sched_yield"
+crabc = "thread::sched_yield"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "stdio.dup2-stdout"
+feature = "stdio"
+rustix = "stdio::dup2_stdout"
+crabc = "stdio::dup2_stdout"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "termios.isatty"
+feature = "termios"
+rustix = "termios::isatty"
+crabc = "termios::isatty"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "termios.tcgetattr"
+feature = "termios"
+rustix = "termios::tcgetattr"
+crabc = "termios::tcgetattr"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "system.uname"
+feature = "system"
+rustix = "system::uname"
+crabc = "system::uname"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "system.sysinfo"
+feature = "system"
+rustix = "system::sysinfo"
+crabc = "system::sysinfo"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "pty.openpt"
+feature = "pty"
+rustix = "pty::openpt"
+crabc = "pty::openpt"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "shm.open"
+feature = "shm"
+rustix = "shm::open"
+crabc = "shm::open"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "mount.mount"
+feature = "mount"
+rustix = "mount::mount"
+crabc = "mount::mount"
+status = "deferred"
+compatibility = "planned-source-compatible"
+tests = ["compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "io-uring.extended-linux"
+feature = "io_uring"
+rustix = "io_uring::*"
+crabc = ""
+status = "not-applicable"
+compatibility = "excluded-linux-extension"
+reason = "io_uring is an explicitly separate extended Linux surface, not M0 libc-native parity."
+tests = ["compat/rustix/tests/test_harness.py"]
+documentation = ["crabc-rs.md#14-treat-io_uring-separately"]
+
+[[api]]
+id = "runtime.internal"
+feature = "runtime"
+rustix = "runtime::*"
+crabc = ""
+status = "not-applicable"
+compatibility = "excluded-internal-api"
+reason = "Rustix runtime is undocumented and unstable; it is not an application-facing M0 API."
+tests = ["compat/rustix/tests/test_harness.py"]
+documentation = ["crabc-rs.md#12-create-a-rustix-correspondence-manifest"]

@@ -1,0 +1,14 @@
+[package]
+name = "crabc-core"
+version = "0.1.0"
+edition = "2021"
+description = "Internal typed Linux/AArch64 syscall primitives shared by crabc facades"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/mengzhuo/crabc"
+publish = false
+
+[lib]
+name = "crabc_core"
+
+[features]
+default = []

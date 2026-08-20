@@ -1,0 +1,40 @@
+# Immutable Rustix API/reference provenance for the M0 compatibility harness.
+#
+# This file names a repository and commit, never a developer checkout.  The
+# harness can therefore be run from a clean clone without depending on a
+# local absolute Rustix path.
+schema = "crabc.rustix-upstream/v1"
+
+[rustix]
+repository = "https://github.com/bytecodealliance/rustix"
+version = "1.1.4"
+revision = "cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec"
+target = "aarch64-unknown-linux-musl"
+
+[profile]
+default_features = true
+features = [
+  "event",
+  "fs",
+  "mm",
+  "mount",
+  "net",
+  "param",
+  "pipe",
+  "process",
+  "pty",
+  "rand",
+  "shm",
+  "stdio",
+  "system",
+  "termios",
+  "thread",
+  "time",
+]
+excluded_features = ["runtime", "io_uring"]
+
+[policy]
+# Rustix is an API and behavior oracle for compatibility tests only.  It must
+# not occur in the production crabc-rs dependency graph.
+production_dependency = false
+source_checkout = "pinned-by-repository-and-revision"
