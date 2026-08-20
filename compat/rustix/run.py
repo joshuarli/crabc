@@ -3,9 +3,9 @@
 
 The default ``check`` mode only uses Python's standard library.  It validates
 the pinned Rustix provenance, correspondence records, and measured dynamic
-symbol inventory. ``source-compare`` compiles the same M1 source fixture in
-isolated candidate and pinned-Rustix projects, then compares their observable
-output in fresh deterministic working directories.
+symbol inventory. ``source-compare`` compiles one or more common source
+fixtures in isolated candidate and pinned-Rustix projects, then compares their
+observable output in fresh deterministic working directories.
 
 This harness is test infrastructure.  It must not become a dependency of the
 production ``crabc-rs`` crate, and it never loads a local Rustix checkout.
@@ -636,7 +636,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("check", "compare", "source-compare"), nargs="?", default="check")
     parser.add_argument("--check", action="store_true", help="validate all M0 metadata (default)")
-    parser.add_argument("--fixture", type=Path, help="fixture path for compare mode")
+    parser.add_argument(
+        "--fixture",
+        type=Path,
+        action="append",
+        help="fixture path for compare mode; repeat for a source-compare suite",
+    )
     parser.add_argument("--rustix-command", help="Rustix fixture command as one shell-style string; use {fixture}/{workdir} markers")
     parser.add_argument("--crabc-command", help="crabc-rs fixture command as one shell-style string; use {fixture}/{workdir} markers")
     parser.add_argument("--timeout", type=float, default=10.0, help="per-backend timeout in seconds")
@@ -656,7 +661,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "check" or args.check:
             report = validate_metadata()
         elif args.mode == "compare":
-            require(args.fixture is not None, "compare requires --fixture")
+            require(args.fixture is not None and len(args.fixture) == 1, "compare requires exactly one --fixture")
             require(args.rustix_command, "compare requires --rustix-command")
             require(args.crabc_command, "compare requires --crabc-command")
             validate_metadata()
@@ -664,13 +669,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             crabc_command = shlex.split(args.crabc_command)
             require(rustix_command, "--rustix-command is empty")
             require(crabc_command, "--crabc-command is empty")
-            report = compare_backends(args.fixture, rustix_command, crabc_command, args.timeout)
+            report = compare_backends(args.fixture[0], rustix_command, crabc_command, args.timeout)
         else:
-            require(args.fixture is not None, "source-compare requires --fixture")
+            require(args.fixture, "source-compare requires at least one --fixture")
             source = args.rustix_source or os.environ.get("CRABC_RUSTIX_SOURCE")
             require(source is not None, "source-compare requires --rustix-source or CRABC_RUSTIX_SOURCE")
             validate_metadata()
-            report = compare_source_fixture(args.fixture, Path(source), args.timeout, args.target)
+            fixture_reports = [
+                compare_source_fixture(fixture, Path(source), args.timeout, args.target)
+                for fixture in args.fixture
+            ]
+            if len(fixture_reports) == 1:
+                report = fixture_reports[0]
+            else:
+                report = {
+                    "schema": "crabc.rustix-source-dual-backend-suite/v1",
+                    "target": args.target,
+                    "rustix_revision": RUSTIX_REVISION,
+                    "fixture_count": len(fixture_reports),
+                    "passed": all(report["passed"] for report in fixture_reports),
+                    "fixtures": fixture_reports,
+                }
         rendered = json.dumps(report, sort_keys=True, separators=(",", ":"))
         if args.report:
             write_report(args.report, report)

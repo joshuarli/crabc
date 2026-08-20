@@ -16,6 +16,11 @@ name = "m0_direct_probe"
 path = "examples/m0_direct_probe.rs"
 crate-type = ["staticlib"]
 
+[[example]]
+name = "m2_direct_probe"
+path = "examples/m2_direct_probe.rs"
+crate-type = ["staticlib"]
+
 [features]
 default = ["std"]
 alloc = []

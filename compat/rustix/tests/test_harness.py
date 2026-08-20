@@ -67,6 +67,24 @@ class DualBackendTests(unittest.TestCase):
 
 
 class SourceFixtureTests(unittest.TestCase):
+    def test_source_compare_accepts_an_ordered_fixture_suite(self) -> None:
+        args = harness.parse_args(
+            [
+                "source-compare",
+                "--fixture",
+                "compat/rustix/source/m2_statat.rs",
+                "--fixture",
+                "compat/rustix/source/m2_xattr.rs",
+            ]
+        )
+        self.assertEqual(
+            args.fixture,
+            [
+                Path("compat/rustix/source/m2_statat.rs"),
+                Path("compat/rustix/source/m2_xattr.rs"),
+            ],
+        )
+
     def test_source_dependency_uses_a_fixed_api_alias(self) -> None:
         candidate = harness.source_dependency("crabc-rs", None)
         self.assertIn('api = { package = "crabc-rs"', candidate)

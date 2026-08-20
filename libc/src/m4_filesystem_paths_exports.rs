@@ -94,7 +94,10 @@ unsafe fn m4_mknodat(
 
 #[inline]
 unsafe fn m4_flock(fd: c_int, operation: c_int) -> i64 {
-    <Arch as Syscalls>::syscall2(M4_SYS_FLOCK, fd as i64, operation as i64)
+    match crabc_core::fs::flock(fd, operation as u32) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]

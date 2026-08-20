@@ -2638,12 +2638,18 @@ pub unsafe extern "C" fn siglongjmp(env: *const c_ulong, val: c_int) -> ! {
 
 #[inline]
 unsafe fn sys_newfstatat(dirfd: i32, path: *const c_char, buf: *mut u8, flags: i32) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_NEWFSTATAT, dirfd as i64, path as i64, buf as i64, flags as i64)
+    match unsafe { crabc_core::fs::statat_raw(dirfd, path.cast(), buf, flags as u32) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_fstat(fd: i32, buf: *mut u8) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_FSTAT, fd as i64, buf as i64)
+    match unsafe { crabc_core::fs::fstat_raw(fd, buf) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -2658,7 +2664,10 @@ unsafe fn sys_setrlimit(resource: i32, rlim: *const u8) -> i64 {
 
 #[inline]
 unsafe fn sys_utimensat(dirfd: i32, path: *const c_char, times: *const u8, flags: i32) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_UTIMENSAT, dirfd as i64, path as i64, times as i64, flags as i64)
+    match unsafe { crabc_core::fs::utimensat_raw(dirfd, path.cast(), times, flags as u32) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 // ============================================================
@@ -6558,7 +6567,7 @@ const O_TRUNC: i32 = 512;
 const O_APPEND: i32 = 1024;
 const O_EXCL: i32 = 128;
 const O_NONBLOCK: i32 = 2048;
-const O_NOFOLLOW: i32 = 0x40000;
+const O_NOFOLLOW: i32 = 0x8000;
 const O_CLOEXEC: i32 = 0x80000;
 
 const F_GETFD: i32 = 1;
@@ -6602,7 +6611,10 @@ unsafe fn sys_dup3(oldfd: i32, newfd: i32, flags: i32) -> i64 {
 
 #[inline]
 unsafe fn sys_fcntl(fd: i32, cmd: i32, arg: i64) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_FCNTL, fd as i64, cmd as i64, arg as i64)
+    match unsafe { crabc_core::io::fcntl_raw(fd, cmd, arg as usize as *mut u8) } {
+        Ok(value) => value as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -6615,12 +6627,25 @@ unsafe fn sys_ioctl(fd: c_int, request: u32, arg: *mut u8) -> i64 {
 
 #[inline]
 unsafe fn sys_unlinkat(dirfd: i32, path: *const u8, flags: i32) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_UNLINKAT, dirfd as i64, path as i64, flags as i64)
+    // SAFETY: All callers pass public-C-ABI pathname pointers, which are
+    // NUL-terminated for the duration of this internal syscall wrapper.
+    let path = unsafe { core::ffi::CStr::from_ptr(path.cast()) };
+    match crabc_core::fs::unlinkat(dirfd, path, flags as u32) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_renameat2(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8, flags: u32) -> i64 {
-    <Arch as Syscalls>::syscall5(SYS_RENAMEAT2, olddirfd as i64, oldpath as i64, newdirfd as i64, newpath as i64, flags as i64)
+    // SAFETY: Public-C-ABI callers provide both NUL-terminated pathname
+    // pointers for the duration of this internal syscall wrapper.
+    let oldpath = unsafe { core::ffi::CStr::from_ptr(oldpath.cast()) };
+    let newpath = unsafe { core::ffi::CStr::from_ptr(newpath.cast()) };
+    match crabc_core::fs::renameat2(olddirfd, oldpath, newdirfd, newpath, flags) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 // ============================================================
@@ -13355,27 +13380,56 @@ unsafe fn sys_sync() {
 }
 
 unsafe fn sys_symlink(target: *const u8, linkpath: *const u8) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_SYMLINKAT, target as i64, AT_FDCWD as i64, linkpath as i64)
+    unsafe { sys_symlinkat(target, AT_FDCWD, linkpath) }
 }
 
 unsafe fn sys_symlinkat(target: *const u8, newdirfd: i32, linkpath: *const u8) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_SYMLINKAT, target as i64, newdirfd as i64, linkpath as i64)
+    // SAFETY: Public-C-ABI callers provide both NUL-terminated pathname
+    // pointers for the duration of this internal syscall wrapper.
+    let target = unsafe { core::ffi::CStr::from_ptr(target.cast()) };
+    let linkpath = unsafe { core::ffi::CStr::from_ptr(linkpath.cast()) };
+    match crabc_core::fs::symlinkat(target, newdirfd, linkpath) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 unsafe fn sys_readlinkat(dirfd: i32, path: *const u8, buf: *mut u8, bufsiz: usize) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_READLINKAT, dirfd as i64, path as i64, buf as i64, bufsiz as i64)
+    // SAFETY: Public-C-ABI callers provide a NUL-terminated pathname and
+    // writable output buffer for the duration of this internal wrapper.
+    let path = unsafe { core::ffi::CStr::from_ptr(path.cast()) };
+    match unsafe { crabc_core::fs::readlinkat_raw(dirfd, path, buf, bufsiz) } {
+        Ok(length) => length as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 unsafe fn sys_linkat(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8, flags: i32) -> i64 {
-    <Arch as Syscalls>::syscall5(SYS_LINKAT, olddirfd as i64, oldpath as i64, newdirfd as i64, newpath as i64, flags as i64)
+    // SAFETY: Public-C-ABI callers provide both NUL-terminated pathname
+    // pointers for the duration of this internal syscall wrapper.
+    let oldpath = unsafe { core::ffi::CStr::from_ptr(oldpath.cast()) };
+    let newpath = unsafe { core::ffi::CStr::from_ptr(newpath.cast()) };
+    match crabc_core::fs::linkat(olddirfd, oldpath, newdirfd, newpath, flags as u32) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 unsafe fn sys_fchmod(fd: i32, mode: u32) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_FCHMOD, fd as i64, mode as i64)
+    match crabc_core::fs::fchmod(fd, mode) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 unsafe fn sys_fchmodat(dirfd: i32, path: *const u8, mode: u32, flags: i32) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_FCHMODAT, dirfd as i64, path as i64, mode as i64, flags as i64)
+    // SAFETY: Public-C-ABI callers provide a NUL-terminated pathname pointer
+    // for the duration of this internal syscall wrapper.
+    let path = unsafe { core::ffi::CStr::from_ptr(path.cast()) };
+    match crabc_core::fs::fchmodat(dirfd, path, mode, flags as u32) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 unsafe fn sys_umask(mask: u32) -> u32 {
@@ -13415,7 +13469,13 @@ unsafe fn sys_getsid(pid: c_int) -> i64 {
 }
 
 unsafe fn sys_mkdirat(dirfd: i32, path: *const u8, mode: u32) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_MKDIRAT, dirfd as i64, path as i64, mode as i64)
+    // SAFETY: All callers pass public-C-ABI pathname pointers, which are
+    // NUL-terminated for the duration of this internal syscall wrapper.
+    let path = unsafe { core::ffi::CStr::from_ptr(path.cast()) };
+    match crabc_core::fs::mkdirat(dirfd, path, mode) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 // Public C ABI wrappers for unistd

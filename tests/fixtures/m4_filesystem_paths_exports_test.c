@@ -80,6 +80,9 @@ int main(void)
     CHECK(chdir(cwd_before) == 0, "restore cwd");
 
     CHECK(symlink(file_name, link_name) == 0, "symlink");
+    errno = 0;
+    CHECK(open(link_name, O_RDONLY | O_NOFOLLOW) == -1 && errno == ELOOP,
+          "open nofollow");
     CHECK(faccessat(AT_FDCWD, link_name, F_OK, AT_SYMLINK_NOFOLLOW) == 0,
           "faccessat2 flags");
     errno = 0;

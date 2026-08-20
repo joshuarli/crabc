@@ -2681,28 +2681,38 @@ the public C ABI or TLS `errno` path.
 
 # 78. Milestone 2 — filesystem
 
-Reach verified coverage for the relevant rustix filesystem surface.
+Status: **complete**.
 
-Include:
+The completed Linux/AArch64-little-endian slice is native Rust over
+`crabc-core`; it does not route syscall-like operations through the public C
+ABI or read TLS `errno`. The verified surface is:
 
 ```text
-open/openat/openat2 where supported
-stat family
-directory iteration
-links
-rename
-mkdir/unlink
-permissions
-timestamps
-xattrs where applicable
-advisory/locking operations
+open/openat/openat2 and Linux resolution flags
+stat/statat/lstat/fstat
+RawDir/RawDirEntry directory iteration
+hard links, symbolic links, bounded and allocating readlink
+rename/renameat/renameat_with
+mkdir/mkdirat/unlink/unlinkat/rmdir
+chmod/chmodat/fchmod
+utimensat/futimens
+path, no-follow-path, and descriptor extended attributes
+flock and fcntl whole-file advisory locks
 ```
 
-based on actual rustix and crabc inventories.
+`RawDir` retains the relevant historical regression constraints: caller-owned
+bounded storage, unaligned buffer support, short and malformed record
+rejection, 255-byte names, an entry borrow that prevents advancing while it is
+live, and kernel `EINVAL` propagation for an undersized buffer.
 
-Port historical directory-iteration regression cases.
-
-Do not advance merely because APIs compile.
+The reproducible gate remains `./scripts/dev.sh crabc-rs`. In addition to the
+M0/M1 checks, it runs the native M2 filesystem tests; source-compares the seven
+fixtures in `compat/rustix/source/m2_*.rs` against pinned Rustix; validates the
+expanded Python harness; and inspects a no-`std` AArch64 probe for direct
+`openat2`, metadata, directory, lock, and xattr syscalls while rejecting public
+C ABI and TLS-errno symbols. The existing C integration tests retain the C
+boundary evidence, including the corrected Linux/AArch64 `O_NOFOLLOW` value
+and xattr exports routed through the same stateless core seam.
 
 ---
 

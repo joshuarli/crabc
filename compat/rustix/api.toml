@@ -75,8 +75,26 @@ feature = "fs"
 rustix = "fs::openat"
 crabc = "fs::openat"
 status = "verified"
-compatibility = "partial-source-compatible"
-tests = ["crabc-rs/tests/m0_direct.rs", "crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/fs_openat.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m0_direct.rs", "crabc-rs/tests/m1_foundation.rs", "crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/fs_openat.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/source/m2_openat2.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.open"
+feature = "fs"
+rustix = "fs::open"
+crabc = "fs::open"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_openat2.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.openat2"
+feature = "fs"
+rustix = "fs::openat2"
+crabc = "fs::openat2"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_openat2.rs", "compat/crabc-rs/verify_m2.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.special-fds"
@@ -155,18 +173,18 @@ id = "fs.statat"
 feature = "fs"
 rustix = "fs::statat"
 crabc = "fs::statat"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.fstat"
 feature = "fs"
 rustix = "fs::fstat"
 crabc = "fs::fstat"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.seek"
@@ -182,9 +200,99 @@ id = "fs.unlinkat"
 feature = "fs"
 rustix = "fs::unlinkat"
 crabc = "fs::unlinkat"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.stat"
+feature = "fs"
+rustix = "fs::{stat,lstat}"
+crabc = "fs::{stat,lstat}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.mkdir-unlink"
+feature = "fs"
+rustix = "fs::{mkdir,mkdirat,unlink,rmdir}"
+crabc = "fs::{mkdir,mkdirat,unlink,rmdir}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/source/m2_locks.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.links"
+feature = "fs"
+rustix = "fs::{link,linkat,symlink,symlinkat}"
+crabc = "fs::{link,linkat,symlink,symlinkat}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.rename"
+feature = "fs"
+rustix = "fs::{rename,renameat,renameat_with}"
+crabc = "fs::{rename,renameat,renameat_with}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.readlink"
+feature = "fs"
+rustix = "fs::{readlink,readlinkat,readlinkat_raw}"
+crabc = "fs::{readlink,readlinkat,readlinkat_raw}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.permissions"
+feature = "fs"
+rustix = "fs::{chmod,chmodat,fchmod}"
+crabc = "fs::{chmod,chmodat,fchmod}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_metadata.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.timestamps"
+feature = "fs"
+rustix = "fs::{utimensat,futimens,Timespec,Timestamps}"
+crabc = "fs::{utimensat,futimens,Timespec,Timestamps}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_metadata.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.raw-dir"
+feature = "fs"
+rustix = "fs::{RawDir,RawDirEntry}"
+crabc = "fs::{RawDir,RawDirEntry}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_raw_dir.rs", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.xattr"
+feature = "fs"
+rustix = "fs::{XattrFlags,getxattr,lgetxattr,fgetxattr,setxattr,lsetxattr,fsetxattr,listxattr,llistxattr,flistxattr,removexattr,lremovexattr,fremovexattr}"
+crabc = "fs::{XattrFlags,getxattr,lgetxattr,fgetxattr,setxattr,lsetxattr,fsetxattr,listxattr,llistxattr,flistxattr,removexattr,lremovexattr,fremovexattr}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_xattr.rs", "tests/m4_extended_attributes_exports.rs", "compat/crabc-rs/verify_m2.py", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "fs.advisory-locks"
+feature = "fs"
+rustix = "fs::{FlockOperation,flock,fcntl_lock}"
+crabc = "fs::{FlockOperation,flock,fcntl_lock}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_locks.rs", "compat/crabc-rs/verify_m2.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.fsync"

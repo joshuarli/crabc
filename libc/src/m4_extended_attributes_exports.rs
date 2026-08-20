@@ -5,55 +5,13 @@
 // authority for attribute names, value sizes, flags, and filesystem errors;
 // syscall_result translates its negative errno convention at the C ABI.
 
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_SETXATTR: i64 = 188;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_LSETXATTR: i64 = 189;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_FSETXATTR: i64 = 190;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_GETXATTR: i64 = 191;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_LGETXATTR: i64 = 192;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_FGETXATTR: i64 = 193;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_LISTXATTR: i64 = 194;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_LLISTXATTR: i64 = 195;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_FLISTXATTR: i64 = 196;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_REMOVEXATTR: i64 = 197;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_LREMOVEXATTR: i64 = 198;
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_FREMOVEXATTR: i64 = 199;
-
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_SETXATTR: i64 = 5;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_LSETXATTR: i64 = 6;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_FSETXATTR: i64 = 7;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_GETXATTR: i64 = 8;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_LGETXATTR: i64 = 9;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_FGETXATTR: i64 = 10;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_LISTXATTR: i64 = 11;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_LLISTXATTR: i64 = 12;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_FLISTXATTR: i64 = 13;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_REMOVEXATTR: i64 = 14;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_LREMOVEXATTR: i64 = 15;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_FREMOVEXATTR: i64 = 16;
+#[inline]
+fn m4_core_result(result: crabc_core::Result<usize>) -> i64 {
+    match result {
+        Ok(value) => value as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
+}
 
 #[inline]
 unsafe fn m4_setxattr(
@@ -63,14 +21,11 @@ unsafe fn m4_setxattr(
     size: SizeT,
     flags: c_int,
 ) -> i64 {
-    <Arch as Syscalls>::syscall5(
-        M4_SYS_SETXATTR,
-        path as i64,
-        name as i64,
-        value as i64,
-        size as i64,
-        flags as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe {
+        crabc_core::fs::setxattr_raw(path.cast(), name.cast(), value.cast(), size, flags as u32)
+        .map(|_| 0)
+    })
 }
 
 #[inline]
@@ -81,14 +36,11 @@ unsafe fn m4_lsetxattr(
     size: SizeT,
     flags: c_int,
 ) -> i64 {
-    <Arch as Syscalls>::syscall5(
-        M4_SYS_LSETXATTR,
-        path as i64,
-        name as i64,
-        value as i64,
-        size as i64,
-        flags as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe {
+        crabc_core::fs::lsetxattr_raw(path.cast(), name.cast(), value.cast(), size, flags as u32)
+        .map(|_| 0)
+    })
 }
 
 #[inline]
@@ -99,14 +51,11 @@ unsafe fn m4_fsetxattr(
     size: SizeT,
     flags: c_int,
 ) -> i64 {
-    <Arch as Syscalls>::syscall5(
-        M4_SYS_FSETXATTR,
-        fd as i64,
-        name as i64,
-        value as i64,
-        size as i64,
-        flags as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe {
+        crabc_core::fs::fsetxattr_raw(fd, name.cast(), value.cast(), size, flags as u32)
+        .map(|_| 0)
+    })
 }
 
 #[inline]
@@ -116,13 +65,8 @@ unsafe fn m4_getxattr(
     value: *mut c_void,
     size: SizeT,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
-        M4_SYS_GETXATTR,
-        path as i64,
-        name as i64,
-        value as i64,
-        size as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::getxattr_raw(path.cast(), name.cast(), value.cast(), size) })
 }
 
 #[inline]
@@ -132,13 +76,8 @@ unsafe fn m4_lgetxattr(
     value: *mut c_void,
     size: SizeT,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
-        M4_SYS_LGETXATTR,
-        path as i64,
-        name as i64,
-        value as i64,
-        size as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::lgetxattr_raw(path.cast(), name.cast(), value.cast(), size) })
 }
 
 #[inline]
@@ -148,58 +87,44 @@ unsafe fn m4_fgetxattr(
     value: *mut c_void,
     size: SizeT,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
-        M4_SYS_FGETXATTR,
-        fd as i64,
-        name as i64,
-        value as i64,
-        size as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::fgetxattr_raw(fd, name.cast(), value.cast(), size) })
 }
 
 #[inline]
 unsafe fn m4_listxattr(path: *const c_char, list: *mut c_char, size: SizeT) -> i64 {
-    <Arch as Syscalls>::syscall3(
-        M4_SYS_LISTXATTR,
-        path as i64,
-        list as i64,
-        size as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::listxattr_raw(path.cast(), list.cast(), size) })
 }
 
 #[inline]
 unsafe fn m4_llistxattr(path: *const c_char, list: *mut c_char, size: SizeT) -> i64 {
-    <Arch as Syscalls>::syscall3(
-        M4_SYS_LLISTXATTR,
-        path as i64,
-        list as i64,
-        size as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::llistxattr_raw(path.cast(), list.cast(), size) })
 }
 
 #[inline]
 unsafe fn m4_flistxattr(fd: c_int, list: *mut c_char, size: SizeT) -> i64 {
-    <Arch as Syscalls>::syscall3(
-        M4_SYS_FLISTXATTR,
-        fd as i64,
-        list as i64,
-        size as i64,
-    )
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::flistxattr_raw(fd, list.cast(), size) })
 }
 
 #[inline]
 unsafe fn m4_removexattr(path: *const c_char, name: *const c_char) -> i64 {
-    <Arch as Syscalls>::syscall2(M4_SYS_REMOVEXATTR, path as i64, name as i64)
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::removexattr_raw(path.cast(), name.cast()).map(|_| 0) })
 }
 
 #[inline]
 unsafe fn m4_lremovexattr(path: *const c_char, name: *const c_char) -> i64 {
-    <Arch as Syscalls>::syscall2(M4_SYS_LREMOVEXATTR, path as i64, name as i64)
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::lremovexattr_raw(path.cast(), name.cast()).map(|_| 0) })
 }
 
 #[inline]
 unsafe fn m4_fremovexattr(fd: c_int, name: *const c_char) -> i64 {
-    <Arch as Syscalls>::syscall2(M4_SYS_FREMOVEXATTR, fd as i64, name as i64)
+    // SAFETY: The public C wrapper inherits C's xattr pointer contracts.
+    m4_core_result(unsafe { crabc_core::fs::fremovexattr_raw(fd, name.cast()).map(|_| 0) })
 }
 
 #[no_mangle]

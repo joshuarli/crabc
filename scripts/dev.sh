@@ -35,7 +35,7 @@ Commands:
   rust-std [options]  run the M9 stock Rust std musl-vs-crabc differential fixture
   rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
-  crabc-rs            run the M1 native Rust facade architecture/evidence gate
+  crabc-rs            run the M2 native Rust facade architecture/evidence gate
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports
@@ -270,19 +270,29 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        # M1 extends the direct seam through path arguments, typed receive
-        # buffers, descriptor ownership, and ioctl. Keep no-std, native,
-        # metadata, source-compatibility, and assembly evidence together so a
-        # later facade change cannot silently add a C/errno hop.
+        # M2 extends the direct seam through filesystem paths, metadata,
+        # directory records, links, permissions, timestamps, xattrs, and
+        # advisory locks. Keep no-std, native, metadata, source-compatibility,
+        # and assembly evidence together so a later facade change cannot
+        # silently add a C/errno hop.
         run_in_container cargo check -p crabc-rs --no-default-features
-        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation
-        run_in_container cargo build -p crabc-rs --example m0_direct_probe --release --no-default-features
+        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem
+        run_in_container cargo build -p crabc-rs --example m0_direct_probe --example m2_direct_probe --release --no-default-features
         run_in_container python3 compat/rustix/run.py --check
         run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
         run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'
         run_in_container python3 compat/rustix/run.py source-compare \
             --fixture compat/rustix/source/m1_foundation.rs
         run_in_container python3 compat/crabc-rs/verify_m0.py --target-dir target
+        run_in_container python3 compat/rustix/run.py source-compare \
+            --fixture compat/rustix/source/m2_statat.rs \
+            --fixture compat/rustix/source/m2_links.rs \
+            --fixture compat/rustix/source/m2_metadata.rs \
+            --fixture compat/rustix/source/m2_raw_dir.rs \
+            --fixture compat/rustix/source/m2_locks.rs \
+            --fixture compat/rustix/source/m2_openat2.rs \
+            --fixture compat/rustix/source/m2_xattr.rs
+        run_in_container python3 compat/crabc-rs/verify_m2.py --target-dir target
         ;;
     abi-probe)
         ensure_image

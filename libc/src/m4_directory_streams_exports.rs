@@ -56,7 +56,10 @@ unsafe fn m4_dir_errno(result: i64) -> c_int {
 
 #[inline]
 unsafe fn m4_getdents(fd: c_int, buf: *mut u8, len: usize) -> i64 {
-    <Arch as Syscalls>::syscall3(M4_SYS_GETDENTS64, fd as i64, buf as i64, len as i64)
+    match unsafe { crabc_core::fs::getdents64_raw(fd, buf, len) } {
+        Ok(length) => length as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]

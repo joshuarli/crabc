@@ -23,9 +23,11 @@ pub mod fs;
 pub mod io;
 pub mod ioctl;
 pub mod path;
+mod raw_dir;
 
 pub use crabc_core::{Errno, Result};
 pub use fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+pub use raw_dir::{RawDir, RawDirEntry};
 
 #[cfg(test)]
 mod tests {
