@@ -42,6 +42,13 @@ const DT_FINI_ARRAY: u64 = 26;
 const DT_INIT_ARRAYSZ: u64 = 27;
 const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_RUNPATH: u64 = 29;
+// DT_RELR packs base-relative pointer relocations into an address/bitmap
+// stream. Alpine package binaries use it to reduce the size of large PIE
+// relocation tables, so it is part of the ordinary musl ELF surface rather
+// than an optional linker optimization we can ignore.
+const DT_RELRSZ: u64 = 35;
+const DT_RELR: u64 = 36;
+const DT_RELRENT: u64 = 37;
 const DT_GNU_HASH: u64 = 0x6ffffef5;
 
 const R_X86_64_64: u64 = 1;
@@ -2238,7 +2245,9 @@ unsafe fn process_all_relocations() {
         if LOADED[i].relro_applied {
             continue;
         }
-        let (base, rela_off, rela_sz, jmprel_off, jmprel_sz) = relocation_info(i);
+        let (base, rela_off, rela_sz, jmprel_off, jmprel_sz, relr_off, relr_sz, relr_ent) =
+            relocation_info(i);
+        apply_relr_table(i, base, relr_off, relr_sz, relr_ent);
         apply_rela_table(i, base, rela_off, rela_sz, false);
         apply_rela_table(i, base, jmprel_off, jmprel_sz, false);
     }
@@ -2247,7 +2256,7 @@ unsafe fn process_all_relocations() {
         if LOADED[i].relro_applied {
             continue;
         }
-        let (base, rela_off, rela_sz, _, _) = relocation_info(i);
+        let (base, rela_off, rela_sz, _, _, _, _, _) = relocation_info(i);
         apply_rela_table(i, base, rela_off, rela_sz, true);
     }
 }
@@ -2272,7 +2281,7 @@ unsafe fn apply_relro() {
     }
 }
 
-unsafe fn relocation_info(i: usize) -> (u64, u64, u64, u64, u64) {
+unsafe fn relocation_info(i: usize) -> (u64, u64, u64, u64, u64, u64, u64, u64) {
     let obj = &LOADED[i];
     let base = obj.base;
     let dp = obj.dyn_addr;
@@ -2282,6 +2291,9 @@ unsafe fn relocation_info(i: usize) -> (u64, u64, u64, u64, u64) {
     let mut rela_sz: u64 = 0;
     let mut jmprel_off: u64 = 0;
     let mut jmprel_sz: u64 = 0;
+    let mut relr_off: u64 = 0;
+    let mut relr_sz: u64 = 0;
+    let mut relr_ent: u64 = 0;
 
     let mut pos = dp;
     while pos + 16 <= dyn_end {
@@ -2295,11 +2307,76 @@ unsafe fn relocation_info(i: usize) -> (u64, u64, u64, u64, u64) {
             DT_RELASZ => rela_sz = d_val,
             DT_JMPREL => jmprel_off = d_val,
             DT_PLTRELSZ => jmprel_sz = d_val,
+            DT_RELR => relr_off = d_val,
+            DT_RELRSZ => relr_sz = d_val,
+            DT_RELRENT => relr_ent = d_val,
             _ => {}
         }
         pos += 16;
     }
-    (base, rela_off, rela_sz, jmprel_off, jmprel_sz)
+    (
+        base,
+        rela_off,
+        rela_sz,
+        jmprel_off,
+        jmprel_sz,
+        relr_off,
+        relr_sz,
+        relr_ent,
+    )
+}
+
+/// Apply the ELF ``DT_RELR`` address/bitmap stream.
+///
+/// An even entry names one relocated pointer directly. An odd entry is a
+/// bitmap for the following 63 pointer-sized slots. Each recorded pointer is
+/// an in-place addend and therefore receives the object's load bias exactly
+/// once, before ordinary RELA relocations and before GNU_RELRO is sealed.
+unsafe fn apply_relr_table(
+    obj_idx: usize,
+    base: u64,
+    table_off: u64,
+    table_sz: u64,
+    table_ent: u64,
+) {
+    if table_sz == 0 {
+        return;
+    }
+    if table_ent != 8 || table_sz % table_ent != 0 {
+        die(86, b"relr", obj_idx);
+    }
+
+    let table = (base + table_off) as *const u64;
+    let count = (table_sz / table_ent) as usize;
+    let mut next_slot = 0u64;
+    let mut have_next_slot = false;
+
+    for i in 0..count {
+        let entry = core::ptr::read_unaligned(table.add(i));
+        if entry & 1 == 0 {
+            if entry & 7 != 0 {
+                die(86, b"relr", obj_idx);
+            }
+            next_slot = base.wrapping_add(entry);
+            let slot = next_slot as *mut u64;
+            *slot = (*slot).wrapping_add(base);
+            next_slot = next_slot.wrapping_add(8);
+            have_next_slot = true;
+            continue;
+        }
+
+        if !have_next_slot {
+            die(86, b"relr", obj_idx);
+        }
+        let bitmap = entry >> 1;
+        for bit in 0..63u64 {
+            if bitmap & (1u64 << bit) != 0 {
+                let slot = (next_slot + bit * 8) as *mut u64;
+                *slot = (*slot).wrapping_add(base);
+            }
+        }
+        next_slot = next_slot.wrapping_add(63 * 8);
+    }
 }
 
 /// Apply entries from one relocation table.

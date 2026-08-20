@@ -34,7 +34,7 @@
           {
             "tag": "INIT_ARRAY",
             "tag_value": "0x0000000000000019",
-            "value": "0x4e028"
+            "value": "0x4dff8"
           },
           {
             "tag": "INIT_ARRAYSZ",
@@ -84,7 +84,7 @@
           {
             "tag": "JMPREL",
             "tag_value": "0x0000000000000017",
-            "value": "0x2e18"
+            "value": "0x2e48"
           },
           {
             "tag": "RELA",
@@ -94,7 +94,7 @@
           {
             "tag": "RELASZ",
             "tag_value": "0x0000000000000008",
-            "value": "10080 (bytes)"
+            "value": "10128 (bytes)"
           },
           {
             "tag": "RELAENT",
@@ -114,7 +114,7 @@
           {
             "tag": "RELACOUNT",
             "tag_value": "0x000000006ffffff9",
-            "value": "419"
+            "value": "421"
           },
           {
             "tag": "NULL",
@@ -132,7 +132,7 @@
       "header": {
         "class": "ELF64",
         "data": "2's complement, little endian",
-        "entry_point": "0x3c50",
+        "entry_point": "0x3c80",
         "machine": "AArch64",
         "os_abi": "UNIX - System V",
         "program_header_count": "7",
@@ -153,9 +153,9 @@
       "program_headers": [
         {
           "alignment": "0x10000",
-          "file_size": "0x03ac0c",
+          "file_size": "0x03bfbc",
           "flags": "RE",
-          "memory_size": "0x03ac0c",
+          "memory_size": "0x03bfbc",
           "offset": "0x000000",
           "physical_address": "0x0000000000000000",
           "type": "LOAD",
@@ -163,13 +163,13 @@
         },
         {
           "alignment": "0x10000",
-          "file_size": "0x002028",
+          "file_size": "0x002058",
           "flags": "RW",
-          "memory_size": "0x004c38",
-          "offset": "0x03e028",
-          "physical_address": "0x000000000004e028",
+          "memory_size": "0x004c68",
+          "offset": "0x03dff8",
+          "physical_address": "0x000000000004dff8",
           "type": "LOAD",
-          "virtual_address": "0x000000000004e028"
+          "virtual_address": "0x000000000004dff8"
         },
         {
           "alignment": "0x8",
@@ -193,13 +193,13 @@
         },
         {
           "alignment": "0x4",
-          "file_size": "0x0015ac",
+          "file_size": "0x0015c4",
           "flags": "R",
-          "memory_size": "0x0015ac",
-          "offset": "0x032e30",
-          "physical_address": "0x0000000000032e30",
+          "memory_size": "0x0015c4",
+          "offset": "0x034168",
+          "physical_address": "0x0000000000034168",
           "type": "GNU_EH_FRAME",
-          "virtual_address": "0x0000000000032e30"
+          "virtual_address": "0x0000000000034168"
         },
         {
           "alignment": "0x10",
@@ -213,25 +213,25 @@
         },
         {
           "alignment": "0x1",
-          "file_size": "0x001fd8",
+          "file_size": "0x002008",
           "flags": "R",
-          "memory_size": "0x001fd8",
-          "offset": "0x03e028",
-          "physical_address": "0x000000000004e028",
+          "memory_size": "0x002008",
+          "offset": "0x03dff8",
+          "physical_address": "0x000000000004dff8",
           "type": "GNU_RELRO",
-          "virtual_address": "0x000000000004e028"
+          "virtual_address": "0x000000000004dff8"
         }
       ],
       "relocations": {
-        "entries": 421,
+        "entries": 423,
         "sections": [
           {
-            "declared_entries": 420,
+            "declared_entries": 422,
             "name": ".rela.dyn",
-            "observed_entries": 420,
+            "observed_entries": 422,
             "types": {
               "R_AARCH64_ABS64": 1,
-              "R_AARCH64_RELATIVE": 419
+              "R_AARCH64_RELATIVE": 421
             }
           },
           {
@@ -246,13 +246,13 @@
         "types": {
           "R_AARCH64_ABS64": 1,
           "R_AARCH64_JUMP_SLOT": 1,
-          "R_AARCH64_RELATIVE": 419
+          "R_AARCH64_RELATIVE": 421
         }
       }
     },
-    "sha256": "6c9ac45f9217e3e7d386f28dd049fd2e21abfcfc17bd18e27eae71851d247e9d",
+    "sha256": "9c374b54c48ea156d4be88abad98e4c54f1a88f750950ba46e8a064b79fe6912",
     "source": "ldso/src/lib.rs",
-    "source_sha256": "34e8b86fd34da275e1f3541fe6f3ad3fd64bd78076359bb57cb258c691d6dfd6"
+    "source_sha256": "aca534281bb9ce0e4270aafd758c6ed2a81a91d02b978e3b42b9f3d576d71cb1"
   },
   "features": [
     {
@@ -718,20 +718,29 @@
     {
       "description": "Process DT_RELR compressed relative relocations.",
       "name": "relr",
-      "note": "R_AARCH64_RELATIVE is present, but DT_RELR handling is not evidenced.",
+      "note": "The M8 corpus requires DT_RELR in real Alpine coreutils package binaries before it compares pinned musl and crabc outcomes.",
       "runtime_test_executed": false,
       "source_markers": [
         {
           "marker": "DT_RELR",
-          "occurrences": 0
+          "occurrences": 8
         },
         {
-          "marker": "R_AARCH64_RELATIVE",
-          "occurrences": 4
+          "marker": "DT_RELRENT",
+          "occurrences": 2
+        },
+        {
+          "marker": "apply_relr_table",
+          "occurrences": 2
         }
       ],
-      "state": "surface_only",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/corpus/run.py"
+        }
+      ],
       "verified": false
     },
     {
@@ -741,7 +750,7 @@
       "source_markers": [
         {
           "marker": "GNU_RELRO",
-          "occurrences": 5
+          "occurrences": 6
         },
         {
           "marker": "mprotect",

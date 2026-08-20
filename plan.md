@@ -2524,6 +2524,44 @@ python3 compat/ldso/tests/test_runner.py      3/3 PASS
 
 Drive unmodified AArch64 Alpine corpus through increasingly complex tiers.
 
+### Progress — 2026-08-20 UTC
+
+Milestone 8 is **complete**. The Python standard-library corpus harness in
+`compat/corpus/run.py` measures pinned Alpine 3.24.1 AArch64 packages from
+archive URLs, versions, and SHA-256 digests recorded in
+`compat/corpus/manifest.toml`. It exercises 22 cases across the planned A–D
+progression: core utilities; `grep`, `sed`, `file`, archive/compression, and
+SQLite tools; `curl`, OpenSSL, and SSH version paths; then Git and Python.
+Network-facing commands use only their local, non-network invocation paths.
+
+The package programs are not rebuilt. Docker cannot safely mount an isolated
+root in this environment, so the runner makes a disposable byte-copy of each
+package executable and changes only its `PT_INTERP` string. The kernel still
+executes the package binary directly, with its original `argv[0]` and
+`/proc/self/exe`; reference musl and candidate crabc runs share the same
+kernel, image files, non-libc DSOs, and identical `LD_LIBRARY_PATH` text.
+Only the staged loader/libc alias bytes differ. Raw exit status, stdout, and
+stderr must match exactly, and each report retains input and runtime digests.
+
+The first real coreutils programs exposed AArch64 `DT_RELR`, which is now
+relocated by `ldso` and retained as a real-corpus requirement. The full corpus
+also found and fixed the musl `printf` `%lc` contract and Linux/musl
+`sysconf(_SC_CLK_TCK) == 100` required by Python initialization. Both have
+focused integration regressions.
+
+Final closure evidence:
+
+```text
+python3 compat/corpus/tests/test_runner.py          10/10 PASS
+./scripts/dev.sh corpus --tier all --offline        22/22 PASS
+./scripts/dev.sh test --test stdio_wide_char_printf --test sysconf
+                                                    2/2 PASS
+./scripts/dev.sh ldso                               20/20 PASS
+./scripts/dev.sh test                               workspace PASS
+./scripts/dev.sh libc-test all                      406 PASS, 0 FAIL/BUILDERROR/TIMEOUT, 14 evidenced SKIP
+./scripts/dev.sh loader-inventory                   reproducible PASS
+```
+
 ## Milestone 9 — stock Rust std
 
 Prove normal Rust software can use crabc without a std fork.

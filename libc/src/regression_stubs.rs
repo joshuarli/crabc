@@ -37,6 +37,7 @@ pub unsafe extern "C" fn __libc_current_sigrtmax() -> c_int {
 }
 
 const _SC_PAGE_SIZE: c_int = 30;
+const _SC_CLK_TCK: c_int = 2;
 
 #[no_mangle]
 #[linkage = "weak"]
@@ -68,6 +69,10 @@ pub unsafe extern "C" fn munmap(addr: *mut c_void, len: usize) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn sysconf(name: c_int) -> c_long {
     match name {
+        // POSIX requires the number of clock ticks per second to be constant
+        // for a system.  musl exposes Linux's USER_HZ contract as 100; the
+        // Python runtime reads this during PyInit_posix and rejects failure.
+        _SC_CLK_TCK => 100,
         _SC_PAGE_SIZE => 4096,
         _ => {
             crate::__errno_location().write(EINVAL);

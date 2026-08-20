@@ -30,6 +30,7 @@ Commands:
   signal-process [case] run the isolated M6 signal/process comparison workload
   resolver-network [options] run the deterministic local M6 resolver/network workload
   ldso [options]      run the synthetic M7 loader differential suite
+  corpus [options]    run the pinned Alpine AArch64 package corpus (Tier A by default)
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports
@@ -207,6 +208,13 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/ldso/run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    corpus)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/corpus/run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
     abi-probe)

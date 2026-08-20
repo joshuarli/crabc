@@ -1,0 +1,273 @@
+# Reproducible input manifest for the real Alpine AArch64 corpus.
+#
+# The package archives are addressed by their immutable release URL and SHA-256
+# rather than by an apk repository's moving "latest" answer.  The development
+# image itself is pinned in compat/upstreams.toml and docker/Dockerfile.  The
+# runner extracts these archives without running package hooks, and takes the
+# non-libc DSOs from that pinned image unchanged.
+schema = 1
+alpine_release = "3.24.1"
+architecture = "aarch64"
+image = "alpine:3.24.1@sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18"
+musl_version = "1.2.6"
+
+[repository]
+base_url = "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64"
+
+# These are deliberately the package archives, not just package names.  The
+# versions and digests are from the pinned AArch64 v3.24 repository snapshot.
+[[packages]]
+name = "busybox"
+version = "1.37.0-r31"
+filename = "busybox-1.37.0-r31.apk"
+sha256 = "18e3490a6f024004b2b13dd4b54bd50ccd82894938023b2d4eab389a4edcba70"
+
+[[packages]]
+name = "coreutils"
+version = "9.11-r0"
+filename = "coreutils-9.11-r0.apk"
+sha256 = "956fa3cb70fbf556a3e11d3cc630e655e8d8ec855b12568302f9910f4deaf812"
+
+[[packages]]
+name = "coreutils-env"
+version = "9.11-r0"
+filename = "coreutils-env-9.11-r0.apk"
+sha256 = "f243dcfe52ce4f5f334a69f2c398052a4517f85e951095dfc49297845eed93d4"
+
+[[packages]]
+name = "grep"
+version = "3.12-r0"
+filename = "grep-3.12-r0.apk"
+sha256 = "6ae66e3dd756ccf136e3180ade3c647b91a6f300dc5fddbd02d769c0026c1e43"
+
+[[packages]]
+name = "sed"
+version = "4.9-r2"
+filename = "sed-4.9-r2.apk"
+sha256 = "0e5acbf1751703d8bb4d30c0cbc7e2abb3511edea618c7cbe7fb70e04946f174"
+
+[[packages]]
+name = "file"
+version = "5.47-r2"
+filename = "file-5.47-r2.apk"
+sha256 = "fb1ccc520c2e80cb1d3b739500826cedf4b35b8a43ff78aa683c6f6bd48dd3e5"
+
+[[packages]]
+name = "tar"
+version = "1.35-r5"
+filename = "tar-1.35-r5.apk"
+sha256 = "4172426271a516475f63be96208f77af7bd77966e7bffc2d0acb344ccf0a745d"
+
+[[packages]]
+name = "gzip"
+version = "1.14-r2"
+filename = "gzip-1.14-r2.apk"
+sha256 = "3ef2003831b407d54cbf1ec51aae8cb6affb676a2f554ab85c28e09fc0f64fa2"
+
+[[packages]]
+name = "zstd"
+version = "1.5.7-r2"
+filename = "zstd-1.5.7-r2.apk"
+sha256 = "0e4d6b9bcb7db12e3fcd580c6226a88884ddfa561ebc7f64285baef5e789b541"
+
+[[packages]]
+name = "sqlite"
+version = "3.53.2-r0"
+filename = "sqlite-3.53.2-r0.apk"
+sha256 = "614c56bd2417edda6f5e47c985f74f4f3494f0574be5dcb2438e62657c3e325d"
+
+[[packages]]
+name = "curl"
+version = "8.21.0-r0"
+filename = "curl-8.21.0-r0.apk"
+sha256 = "8304143bc6100db3e93199072c2c90f3cabcbdfeee805bcc1d53742dde97d6aa"
+
+[[packages]]
+name = "openssl"
+version = "3.5.7-r0"
+filename = "openssl-3.5.7-r0.apk"
+sha256 = "d024c35b869e5d4f92478affbcefe09c99c2ba2ada6816f6885b3fad1151cdbc"
+
+[[packages]]
+name = "openssh-client-default"
+version = "10.3_p1-r0"
+filename = "openssh-client-default-10.3_p1-r0.apk"
+sha256 = "69587399264f4d27c5d3b43728763488a0eacbd60754532e5ab87aaa5885e45f"
+
+[[packages]]
+name = "git"
+version = "2.54.0-r0"
+filename = "git-2.54.0-r0.apk"
+sha256 = "ea41e2f837f1f6a8b66e72a5ece0fc75cca44f76f49cf5500d467fc5627d0ab7"
+
+[[packages]]
+name = "python3"
+version = "3.14.7-r1"
+filename = "python3-3.14.7-r1.apk"
+sha256 = "78a3ca29b9443ab19d3092e71f485b185badb3aea9165e59d54c257dccc98a27"
+
+# The default invocation is Tier A.  `--tier all` exercises the complete
+# progression; each case remains a direct package binary, never libldso.so
+# with the package binary passed as an argument.
+[[cases]]
+id = "tier-a-true"
+tier = "A"
+package = "coreutils"
+path = "/bin/true"
+argv = ["true"]
+requires_dt_relr = true
+
+[[cases]]
+id = "tier-a-echo"
+tier = "A"
+package = "coreutils"
+path = "/bin/echo"
+argv = ["echo", "crabc-corpus"]
+requires_dt_relr = true
+
+[[cases]]
+id = "tier-a-cat"
+tier = "A"
+package = "coreutils"
+path = "/bin/cat"
+argv = ["cat"]
+stdin = "crabc corpus\n"
+requires_dt_relr = true
+
+[[cases]]
+id = "tier-a-mkdir"
+tier = "A"
+package = "coreutils"
+path = "/bin/mkdir"
+argv = ["mkdir", "-p", "/tmp/crabc-corpus-mkdir"]
+
+[[cases]]
+id = "tier-a-cp"
+tier = "A"
+package = "coreutils"
+path = "/bin/cp"
+argv = ["cp", "/tmp/crabc-corpus-input", "/tmp/crabc-corpus-output"]
+setup = [{ path = "/tmp/crabc-corpus-input", contents = "input\n" }]
+
+[[cases]]
+id = "tier-a-mv"
+tier = "A"
+package = "coreutils"
+path = "/bin/mv"
+argv = ["mv", "/tmp/crabc-corpus-input", "/tmp/crabc-corpus-moved"]
+setup = [{ path = "/tmp/crabc-corpus-input", contents = "input\n" }]
+
+[[cases]]
+id = "tier-a-rm"
+tier = "A"
+package = "coreutils"
+path = "/bin/rm"
+argv = ["rm", "/tmp/crabc-corpus-input"]
+setup = [{ path = "/tmp/crabc-corpus-input", contents = "input\n" }]
+
+[[cases]]
+id = "tier-a-printf"
+tier = "A"
+package = "coreutils"
+path = "/usr/bin/printf"
+argv = ["printf", "%s\\n", "crabc-corpus"]
+
+[[cases]]
+id = "tier-a-env"
+tier = "A"
+package = "coreutils-env"
+path = "/usr/bin/env"
+argv = ["env", "-i", "/bin/true"]
+
+[[cases]]
+id = "tier-a-sleep"
+tier = "A"
+package = "coreutils"
+path = "/bin/sleep"
+argv = ["sleep", "0"]
+
+[[cases]]
+id = "tier-b-grep"
+tier = "B"
+package = "grep"
+path = "/bin/grep"
+argv = ["grep", "needle", "/tmp/crabc-corpus-input"]
+setup = [{ path = "/tmp/crabc-corpus-input", contents = "needle\n" }]
+
+[[cases]]
+id = "tier-b-sed"
+tier = "B"
+package = "sed"
+path = "/bin/sed"
+argv = ["sed", "s/old/new/", "/tmp/crabc-corpus-input"]
+setup = [{ path = "/tmp/crabc-corpus-input", contents = "old\n" }]
+
+[[cases]]
+id = "tier-b-file"
+tier = "B"
+package = "file"
+path = "/usr/bin/file"
+argv = ["file", "/etc/alpine-release"]
+
+[[cases]]
+id = "tier-b-tar"
+tier = "B"
+package = "tar"
+path = "/bin/tar"
+argv = ["tar", "--version"]
+
+[[cases]]
+id = "tier-b-gzip"
+tier = "B"
+package = "gzip"
+path = "/bin/gzip"
+argv = ["gzip", "--version"]
+
+[[cases]]
+id = "tier-b-zstd"
+tier = "B"
+package = "zstd"
+path = "/usr/bin/zstd"
+argv = ["zstd", "--version"]
+
+[[cases]]
+id = "tier-b-sqlite"
+tier = "B"
+package = "sqlite"
+path = "/usr/bin/sqlite3"
+argv = ["sqlite3", "--version"]
+
+[[cases]]
+id = "tier-c-curl"
+tier = "C"
+package = "curl"
+path = "/usr/bin/curl"
+argv = ["curl", "--version"]
+
+[[cases]]
+id = "tier-c-openssl"
+tier = "C"
+package = "openssl"
+path = "/usr/bin/openssl"
+argv = ["openssl", "version"]
+
+[[cases]]
+id = "tier-c-ssh-version"
+tier = "C"
+package = "openssh-client-default"
+path = "/usr/bin/ssh"
+argv = ["ssh", "-V"]
+
+[[cases]]
+id = "tier-d-git"
+tier = "D"
+package = "git"
+path = "/usr/bin/git"
+argv = ["git", "--version"]
+
+[[cases]]
+id = "tier-d-python"
+tier = "D"
+package = "python3"
+path = "/usr/bin/python3"
+argv = ["python3", "-c", "print('crabc-corpus')"]

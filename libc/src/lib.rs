@@ -7618,6 +7618,24 @@ macro_rules! impl_format {
                             let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
                             ($write_str)(fbuf.as_ptr(), len); count += len;
                         }
+                        // Musl's narrow formatter treats `%lc` as the wide
+                        // character `C` conversion and emits its multibyte
+                        // representation, including field-width padding.
+                        (b'l', b'c') => {
+                            let ch = args.next_arg::<c_int>();
+                            let mut mb = [0u8; 4];
+                            let len = wcrtomb(mb.as_mut_ptr() as *mut c_char, ch as wchar_t, core::ptr::null_mut());
+                            if len == !0usize { return -1; }
+                            let pad = width.saturating_sub(len);
+                            if flags & FLAG_MINUS != 0 {
+                                ($write_str)(mb.as_ptr(), len);
+                                for _ in 0..pad { ($write_char)(b' '); }
+                            } else {
+                                for _ in 0..pad { ($write_char)(b' '); }
+                                ($write_str)(mb.as_ptr(), len);
+                            }
+                            count += len + pad;
+                        }
                         (b'l', b'f') | (b'l', b'F') | (b'l', b'e') | (b'l', b'E')
                         | (b'l', b'g') | (b'l', b'G') | (b'l', b'a') | (b'l', b'A') => {
                             let val = args.next_arg::<f64>();
@@ -8863,6 +8881,22 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                         let mut fbuf = [0u8; 32];
                         let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
                         ws_buf!(fbuf.as_ptr(), len);
+                    }
+                    // `%lc` is the narrow printf spelling for a wide
+                    // character converted to the current multibyte encoding.
+                    (b'l', b'c') => {
+                        let ch = args.next_arg::<c_int>();
+                        let mut mb = [0u8; 4];
+                        let len = wcrtomb(mb.as_mut_ptr() as *mut c_char, ch as wchar_t, core::ptr::null_mut());
+                        if len == !0usize { return -1; }
+                        let pad = width.saturating_sub(len);
+                        if flags & FLAG_MINUS != 0 {
+                            ws_buf!(mb.as_ptr(), len);
+                            for _ in 0..pad { wc!(b' '); }
+                        } else {
+                            for _ in 0..pad { wc!(b' '); }
+                            ws_buf!(mb.as_ptr(), len);
+                        }
                     }
                     (b'l', b'f') | (b'l', b'F') | (b'l', b'e') | (b'l', b'E')
                     | (b'l', b'g') | (b'l', b'G') | (b'l', b'a') | (b'l', b'A') => {

@@ -31,6 +31,7 @@ SIGNAL_PROCESS_REPORT = ROOT_DIR / "compat/reports/signal-process.json"
 RESOLVER_NETWORK_REPORT = ROOT_DIR / "compat/reports/resolver-network.json"
 LOADER_FEATURE_REPORT = ROOT_DIR / "compat/abi/crabc/aarch64/loader-features.json"
 LDSO_REPORT = ROOT_DIR / "compat/reports/ldso/latest.json"
+CORPUS_REPORT = ROOT_DIR / "compat/reports/corpus/latest.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -154,6 +155,21 @@ def m7_report_state() -> dict[str, Any] | None:
     return report
 
 
+def m8_report_state() -> dict[str, Any] | None:
+    """Return the real-package corpus report only with its strict identity."""
+
+    report = read_json(CORPUS_REPORT)
+    if report is None:
+        return None
+    if report.get("schema_version") != 1 or report.get("runner") != "compat/corpus/run.py":
+        raise RuntimeError(f"unexpected M8 report identity in {CORPUS_REPORT}")
+    cases = report.get("cases")
+    if not isinstance(cases, dict):
+        raise RuntimeError(f"M8 report has invalid cases in {CORPUS_REPORT}")
+    report["_path"] = str(CORPUS_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -178,6 +194,7 @@ def main() -> int:
     resolver_network = m6_report_state(RESOLVER_NETWORK_REPORT, "compat/resolver-network")
     loader_features = loader_feature_state()
     ldso = m7_report_state()
+    corpus = m8_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     lines = [
@@ -318,6 +335,45 @@ def main() -> int:
                     ("case", "result"),
                     [
                         (name, case.get("result", "unknown"))
+                        for name, case in sorted(cases.items())
+                        if isinstance(case, dict)
+                    ],
+                )
+            )
+
+    lines.extend(["", "## M8 real Alpine package corpus", ""])
+    if corpus is None:
+        lines.append("No real-package corpus result. Run `./scripts/dev.sh corpus`.")
+    else:
+        cases = corpus["cases"]
+        passed_cases = sum(
+            isinstance(case, dict) and case.get("result") == "pass" for case in cases.values()
+        )
+        lines.append(
+            f"Pinned Alpine {corpus.get('alpine_release', 'unknown')} AArch64 package corpus: "
+            f"**{'pass' if corpus.get('result') == 'pass' else 'FAIL'}** "
+            f"({passed_cases}/{len(cases)} cases); report `{corpus['_path']}`."
+        )
+        lines.append(
+            "Reference and candidate use the same kernel/image/non-libc DSOs; "
+            "the candidate is entered as the package binary through an interpreter "
+            "overlay, with raw stdout/stderr/status and no normalization."
+        )
+        if cases:
+            lines.append("")
+            lines.extend(
+                markdown_table(
+                    ("case", "tier", "package", "result", "status", "stdout", "stderr"),
+                    [
+                        (
+                            name,
+                            case.get("tier", "unknown"),
+                            case.get("package", "unknown"),
+                            case.get("result", "unknown"),
+                            "match" if case.get("status_match") is True else "DIFF",
+                            "match" if case.get("stdout_match") is True else "DIFF",
+                            "match" if case.get("stderr_match") is True else "DIFF",
+                        )
                         for name, case in sorted(cases.items())
                         if isinstance(case, dict)
                     ],
@@ -493,8 +549,12 @@ def main() -> int:
             "## Unmeasured frontier",
             "",
             "The selected POSIX, signal/process, and resolver/network contracts above are not full "
-            "standards conformance. Static candidate ABI parity, exhaustive header declaration/layout parity, "
-            "real Alpine corpus, and stock Rust `std` compatibility are not measured by this dashboard yet. "
+            "standards conformance.",
+            "Static candidate ABI parity, exhaustive header declaration/layout parity, "
+            + (
+                "real Alpine corpus, and " if corpus is None else ""
+            )
+            + "stock Rust `std` compatibility are not measured by this dashboard yet.",
             "The M7 synthetic suite measures bounded loader contracts; it is not a claim that arbitrary "
             "Alpine DSO graphs are supported.",
             "",

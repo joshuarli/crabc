@@ -442,10 +442,12 @@ _FEATURES: tuple[dict[str, Any], ...] = (
     {
         "name": "relr",
         "description": "Process DT_RELR compressed relative relocations.",
-        "markers": ("DT_RELR", "R_AARCH64_RELATIVE"),
-        "tests": (),
-        "state": "surface_only",
-        "note": "R_AARCH64_RELATIVE is present, but DT_RELR handling is not evidenced.",
+        "markers": ("DT_RELR", "DT_RELRENT", "apply_relr_table"),
+        "tests": ("compat/corpus/run.py",),
+        "note": (
+            "The M8 corpus requires DT_RELR in real Alpine coreutils package "
+            "binaries before it compares pinned musl and crabc outcomes."
+        ),
     },
     {
         "name": "relro",
