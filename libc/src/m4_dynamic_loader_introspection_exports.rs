@@ -28,6 +28,24 @@ pub static mut _dl_debug_addr: *mut c_void = core::ptr::null_mut();
 #[linkage = "weak"]
 pub unsafe extern "C" fn _dl_debug_state() {}
 
+// `libc.a` is also used for ordinary static executables, where the dynamic
+// linker object that provides this bridge is intentionally not linked.  Keep
+// the bridge weak at the libc boundary: a dynamic image still resolves it to
+// crabc's ldso, while static archive consumers can link without importing an
+// interpreter-only symbol.  `_dlstart` is only reached by the dynamic-loader
+// entry path; static crt1 startup enters `__libc_start_main` directly.
+extern "C" {
+    #[linkage = "weak"]
+    fn __ldso_dlstart() -> !;
+}
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    // The raw trampoline below names the bridge in assembly, so declare the
+    // relocation weak there as well as in Rust's extern declaration.
+    ".weak __ldso_dlstart",
+);
+
 // In musl `_dlstart` is the non-returning interpreter entry and receives the
 // initial process stack in the machine's raw entry convention.  Crabc's
 // interpreter is `libldso.so`, whose `_start` performs that work.  This libc

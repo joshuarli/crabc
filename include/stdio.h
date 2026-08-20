@@ -26,7 +26,9 @@ extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;
 
+#ifndef NULL
 #define NULL ((void*)0)
+#endif
 #define EOF (-1)
 
 #define SEEK_SET 0

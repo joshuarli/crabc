@@ -1,0 +1,73 @@
+# Native AArch64 oracle evidence for libc-test math exceptions
+#
+# Verification date: 2026-08-20
+# Architecture: aarch64 (crabc-dev:aarch64)
+# Reference libc: musl 1.2.6, /opt/musl-1.2.6
+# Test sources: /opt/libc-test/src/math/{j0,jn,jnf,y0,y0f,ynf}.c and their
+#   sanity/ and special/ vector headers.
+#
+# Procedure:
+#   * Build each libc-test source once with the pinned musl-gcc and once with
+#     the crabc headers, crabc loader, and fake-libs.
+#   * Run both builds with round-to-nearest and record the input, expected, and
+#     result IEEE-754 bits using a temporary raw-bit probe (not %a formatting).
+#   * The complete raw-bit output was byte-identical for each pair
+#     (all_vectors_identical=yes). The ordinary libc-test executables both
+#     exited 0 while emitting the same tolerated X diagnostics and ulperr
+#     values. Their textual %a rendering differs because crabc and musl use
+#     different hexadecimal-float formatting, so this evidence does not claim
+#     byte-identical diagnostic text.
+#
+# The entries below are the failing hard-case vectors from the ordinary
+# libc-test output. Each record is:
+#   source_line rounding_mode [n] input_bits expected_bits result_bits
+
+[j0]
+# source: libc-test/src/math/special/j0.h
+# ulperr: 2833.704, 2064806.000, 450179413049344.000,
+#         279895217274880.000, 24492348801024.000, 2525.019, 3.947
+7 0 c0033d132fd04a92 3ec092b2a541a68e 3ec092b2a541b1a0
+8 0 c0033d15297be06f 3e55352913be3275 3e55352913ddb41b
+9 0 40033d152e971b40 bc919b7921f03c8e bc900209921727cb
+10 0 4016148f5b2c2e45 bc7fbb40985f6e34 bc7ebcb069d486cc
+11 0 40214eb56cccdeca bc96e8eeb22e5818 bc96d2a820627412
+12 0 7fec071b22fbbafa 9f1a348b1f34dd1a 9f1a348b1f34d33d
+13 0 3fff7350b1701ef7 3fcf32b3a3640292 3fcf32b3a3640296
+
+[jn]
+# source: libc-test/src/math/sanity/jn.h
+# ulperr: -2.504
+8 0 5 3fe1f9ef934745cb 3eee274364abf2d5 3eee274364abf2d2
+
+[jnf]
+# source: libc-test/src/math/sanity/jnf.h
+# ulperr: -2.009, 2.537, 1.621
+1 0 -2 c10111d0 bdc31b93 bdc31b95
+8 0 5 3f0fcf7d 37713a1e 37713a21
+10 0 7 bf2dc375 b3d9cd4e b3d9cd4c
+
+[y0]
+# source: libc-test/src/math/special/y0.h
+# ulperr: -1416944204906496.000, -957005015547904.000,
+#         -145502385471488.000, 6175389646848.000,
+#         -38502565675008.000, -252436132397056.000
+8 0 3fec982eb8d417ea bc7af74bfa0f1304 bc80000000000000
+9 0 3fec982eb8d417eb 3c95666419c0f3c9 3c92000000000000
+10 0 400fa9534d98569b 3ca384a000f3fcec 3ca3004a968fcead
+11 0 400fa9534d98569c bc88fa8956b4b481 bc88f4eb84cc2a33
+12 0 401c581dc4e72102 bcb14bb186dc408d bcb16eb61aad4cac
+13 0 401c581dc4e72103 3c7e91b198d39ce2 3c7dac1abb064c09
+
+[y0f]
+# source: libc-test/src/math/sanity/y0f.h and special/y0f.h
+# ulperr: -1.910, -4.180, 4.919, 668554.625
+2 0 408b0c34 be149edf be149ee1
+7 0 3f86251d 3dff89c7 3dff89c3
+8 0 3f4572ea bdec452d bdec4528
+9 0 407d4a9b b36d14a3 b362e118
+
+[ynf]
+# source: libc-test/src/math/sanity/ynf.h
+# ulperr: -1.920, 2.115
+6 0 3 3f2977e8 c1949ae9 c1949aeb
+9 0 6 3f462ed8 c636de0e c636de0c

@@ -15,12 +15,23 @@ extern "C" {
 typedef unsigned long dev_t;
 typedef unsigned long ino_t;
 typedef unsigned int mode_t;
+#if defined(__aarch64__)
+/* The modern stat ABI uses the kernel-width link-count and block-size
+ * fields on these targets.  They are not pointer-width types in musl's
+ * public vocabulary, even though dev_t/ino_t remain unsigned long. */
+typedef unsigned int nlink_t;
+#else
 typedef unsigned long nlink_t;
+#endif
 typedef long off_t;
 typedef int pid_t;
 typedef unsigned int uid_t;
 typedef unsigned int gid_t;
+#if defined(__aarch64__)
+typedef int blksize_t;
+#else
 typedef unsigned long blksize_t;
+#endif
 typedef long blkcnt_t;
 typedef unsigned long fsblkcnt_t;
 typedef unsigned long fsfilcnt_t;

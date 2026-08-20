@@ -1,0 +1,52 @@
+# Native AArch64 oracle evidence for libc-test math exceptions
+#
+# Verification date: 2026-08-20
+# Reference: musl 1.2.6, /opt/musl-1.2.6
+# Test sources: /opt/libc-test/src/math/{acosh.c,asinh.c,sinh.c}, with
+#   src/math/special/{acosh.h,asinh.h} and src/math/crlibm/sinh.h.
+#
+# Each selected test executable returned status 0 under both musl and crabc.
+# The temporary bit harness included the exact upstream vector headers and
+# wrote input_bits/result_bits without printf formatting.  Every selected
+# line below was byte-identical between the two runs.
+
+[acosh]
+# 13 hard vectors: special/acosh.h T entries 8-20 (1-based)
+00 input_bits=0x3ff001f1c62cf304 result_bits=0x3f9f8d125ff71cc2
+01 input_bits=0x3ff00788c223616f result_bits=0x3faf0cb8ee812623
+02 input_bits=0x3ff007b7a37c7606 result_bits=0x3faf6cb68859ae2e
+03 input_bits=0x3ff01d173033243c result_bits=0x3fbe7e1b18d99378
+04 input_bits=0x3ff01d8f20e90409 result_bits=0x3fbebca3eea5cda3
+05 input_bits=0x3ff01ef6122e68be result_bits=0x3fbf74df150afc92
+06 input_bits=0x3ff06822faf07879 result_bits=0x3fcccd73cbc4af7a
+07 input_bits=0x3ff0691d1ad0b443 result_bits=0x3fccefd0e06ac498
+08 input_bits=0x3ff069d65411ec51 result_bits=0x3fcd0928b08facbc
+09 input_bits=0x3ff071d6b2713d08 result_bits=0x3fce1bc6a6c345ff
+10 input_bits=0x3ff0728405f5140c result_bits=0x3fce328ebe92b32e
+11 input_bits=0x3ff07bd2c5c01bcb result_bits=0x3fcf6513c44c1312
+12 input_bits=0x3ff1aae7c452c859 result_bits=0x3fdcf8d69288e384
+
+[asinh]
+# 18 hard vectors: special/asinh.h T entries 6-23 (1-based)
+00 input_bits=0x3fcfbdd0eedf8143 result_bits=0x3fcf6cc20d7a594c
+01 input_bits=0x3fcdf2723491f88f result_bits=0x3fcdae2c8444900a
+02 input_bits=0x3fcef675c6541305 result_bits=0x3fceab20432c959a
+03 input_bits=0x3fcf19df3a1722a9 result_bits=0x3fcecd8a7f621552
+04 input_bits=0x3fcf1af09dcfa7d6 result_bits=0x3fcece942815ceca
+05 input_bits=0x3fcf339ebbeac5ba result_bits=0x3fcee68f10a49c44
+06 input_bits=0x3fcf424275dc8787 result_bits=0x3fcef4c7fcb51c54
+07 input_bits=0x3fcf60d54a133665 result_bits=0x3fcf127a8dec0c1e
+08 input_bits=0x3fcfdccdaf285ffd result_bits=0x3fcf8ad4bed7af4a
+09 input_bits=0x3fcff5bec94924c7 result_bits=0x3fcfa30836c39498
+10 input_bits=0x3fd028e8fd61c8a5 result_bits=0x3fcffc55bd02e9e0
+11 input_bits=0x3fddc71794e1f137 result_bits=0x3fdccbd41a7d0588
+12 input_bits=0x3fddf308e177c3cb result_bits=0x3fdcf3a638145d78
+13 input_bits=0x3fdea94e1e267746 result_bits=0x3fdd9862533f65f4
+14 input_bits=0x3fdecd4f07608dc7 result_bits=0x3fddb8d6fdcc6d76
+15 input_bits=0x3fdf30656c78ee7e result_bits=0x3fde1204e364a188
+16 input_bits=0x3fdf5c0c6e41b969 result_bits=0x3fde393d3dc3b70c
+17 input_bits=0x3fe09c58725300e7 result_bits=0x3fdfe2c7f25fb174
+
+[sinh]
+# One hard vector: crlibm/sinh.h T entry 69 (1-based)
+00 input_bits=0x3fdd3e0d2f5d98d6 result_bits=0x3fde45428082fb8a

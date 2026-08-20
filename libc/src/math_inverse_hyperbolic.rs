@@ -12,8 +12,7 @@ pub extern "C" fn acosh(x: f64) -> f64 {
     // x < 1 is a domain error in the called sqrt/log operation.  Reducing
     // x-1 first also avoids cancellation close to x == 1.
     if e < 0x3ff + 1 {
-        let xm1 = x - 1.0;
-        return invhyper_log1p(xm1 + sqrt(xm1 * xm1 + 2.0 * xm1));
+        return invhyper_log1p(x - 1.0 + sqrt((x - 1.0) * (x - 1.0) + 2.0 * (x - 1.0)));
     }
     if e < 0x3ff + 26 {
         return log(2.0 * x - 1.0 / (x + sqrt(x * x - 1.0)));
@@ -31,8 +30,7 @@ pub extern "C" fn acoshf(x: f32) -> f32 {
     let a = asuint(x) & 0x7fff_ffff;
 
     if a < 0x3f800000 + (1 << 23) {
-        let xm1 = x - 1.0;
-        return invhyper_log1pf(xm1 + sqrtf(xm1 * xm1 + 2.0 * xm1));
+        return invhyper_log1pf(x - 1.0 + sqrtf((x - 1.0) * (x - 1.0) + 2.0 * (x - 1.0)));
     }
     if a < 0x3f800000 + (12 << 23) {
         return logf(2.0 * x - 1.0 / (x + sqrtf(x * x - 1.0)));

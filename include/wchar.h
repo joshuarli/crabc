@@ -12,7 +12,9 @@ extern "C" {
 #include <time.h>
 
 #ifndef NULL
+#ifndef NULL
 #define NULL ((void*)0)
+#endif
 #endif
 
 #ifndef WEOF

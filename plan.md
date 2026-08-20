@@ -2410,6 +2410,28 @@ headers parity
 libc-test green
 ```
 
+Completed on 2026-08-20. The Docker AArch64 ABI probe compares the nine
+selected public layout/value surfaces (`stat`, `termios`, `socket`, `fenv`,
+`complex`, `pthread`, signals/ucontext, TLS, and native `long double`) against
+pinned musl 1.2.6; all match. Its header inventory reports all 183 pinned
+public headers as `compile_ok`, with that compile-only evidence explicitly
+separated from the layout comparisons. The expanded candidate header tree
+includes the previously absent network, Linux UAPI, SCSI, ucontext, compiler,
+and system surfaces; focused candidate-vs-pinned tests cover their public
+constants, ioctl encodings, AArch64 layouts, and dependent types.
+
+`./scripts/dev.sh libc-test all` is green: 420 total, 406 PASS, and zero FAIL,
+BUILDERROR, or TIMEOUT. Fourteen exceptions remain individually evidenced:
+Docker overlay `regression/statvfs`, plus thirteen native-AArch64 math
+identities where pinned musl produces the same raw IEEE-754 results. The
+Python runner regenerates and executes exact-bit verifiers for every math
+exception on every run, so a current candidate regression becomes a failure
+instead of a skip. The full Docker workspace suite, ABI/header fixtures,
+Python harness tests, static `libc.a` linkage, and the M4 symbol ratchet all
+pass. The ratchet remains 1,647 expected dynamic symbols, 1,668 candidate
+symbols, zero missing names, zero metadata mismatches, and 21 baselined
+unexpected exports.
+
 ## Milestone 6 — standards + stress closure
 
 Require:

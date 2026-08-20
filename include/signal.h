@@ -8,6 +8,10 @@ extern "C" {
 #include <stddef.h>
 #include <sys/types.h>
 
+#if defined(_GNU_SOURCE)
+#define __ucontext ucontext
+#endif
+
 typedef void (*sighandler_t)(int);
 typedef int sig_atomic_t;
 
@@ -89,15 +93,19 @@ typedef struct __sigset_t {
 
 typedef struct __crabc_siginfo siginfo_t;
 
+/* musl's public record keeps the full 128-byte mask before flags/restorer;
+ * the Linux kernel syscall record has a different compact ordering. */
 struct sigaction {
     union {
         void (*sa_handler)(int);
         void (*sa_sigaction)(int, siginfo_t *, void *);
-    };
+    } __sa_handler;
+    sigset_t sa_mask;
     int sa_flags;
     void (*sa_restorer)(void);
-    sigset_t sa_mask;
 };
+#define sa_handler __sa_handler.sa_handler
+#define sa_sigaction __sa_handler.sa_sigaction
 
 struct sigaltstack {
     void *ss_sp;
@@ -107,10 +115,28 @@ struct sigaltstack {
 
 typedef struct sigaltstack stack_t;
 
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+typedef unsigned long greg_t;
+typedef unsigned long gregset_t[34];
+typedef struct {
+    __uint128_t vregs[32];
+    unsigned int fpsr;
+    unsigned int fpcr;
+} fpregset_t;
+typedef struct sigcontext {
+    unsigned long fault_address;
+    unsigned long regs[31];
+    unsigned long sp;
+    unsigned long pc;
+    unsigned long pstate;
+    long double __reserved[256];
+} mcontext_t;
+#else
 typedef struct { long double __regs[274]; } mcontext_t;
-typedef struct __crabc_ucontext {
+#endif
+typedef struct __ucontext {
     unsigned long uc_flags;
-    struct __crabc_ucontext *uc_link;
+    struct __ucontext *uc_link;
     stack_t uc_stack;
     sigset_t uc_sigmask;
     mcontext_t uc_mcontext;

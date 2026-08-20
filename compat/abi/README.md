@@ -124,3 +124,68 @@ The command writes the two JSON reports and then checks them again without
 writing. The candidate report includes the current `libldso.so` and
 `ldso/src/lib.rs` hashes, so it is evidence for that build only and must be
 regenerated after loader changes.
+
+## Selected public-layout probes
+
+Stage 5's first ABI evidence runner is
+[`../scripts/probe_aarch64_abi.py`](../scripts/probe_aarch64_abi.py). It is a
+Python standard-library harness that compiles the same `stat`, `termios`,
+`socket`, `fenv`, `complex`, `pthread`, `signals-ucontext`, `tls`, and
+`long-double` probes with the pinned musl headers and with the candidate
+public headers. Each executable runs against pinned musl so the reported
+values measure header/compiler ABI choices; this is not candidate runtime
+verification. The report separately records hashes and selected symbol
+coverage for pinned and candidate `libc.a` archives.
+
+The runner derives a `header_compile_coverage` inventory from every pinned
+public `.h` file, records the candidate counterpart status, and keeps
+candidate-only headers in a separate section. This inventory compiles an empty
+translation unit containing each header; its `compile_ok` status means only
+that both headers are consumable by the configured compiler. It does not
+compare declarations, constants, macros, or structure layouts. Missing
+candidates/counterparts and headers that do not compile remain explicit
+per-header statuses; they are not omitted from the report or treated as
+declaration parity.
+
+Coverage counts are disjoint: `pinned_count`, `candidate_count`,
+`compiled_count`, `missing_from_candidate_count`, and `candidate_only_count`
+describe the two trees separately. Candidate-only records use the explicit
+`candidate_only` status and do not inflate the pinned-header `missing_input`
+summary. `header_compile_coverage.archive_symbols` separately records required
+symbol evidence for resolver compatibility, stdio extensions, cache-control,
+I/O, and ucontext headers; absent symbols remain `incomplete` in that section.
+
+Only the named C probes under `probes` perform ABI comparison. They compile
+and execute value-emitting fixtures against pinned musl, and their
+`comparison.status == "match"` means the measured values agree. A compile-only
+header record must never be read as declaration or layout parity.
+
+Run it after the workspace build in the native development image:
+
+```sh
+./scripts/dev.sh abi-probe
+```
+
+The default report is `/tmp/crabc-aarch64-abi.json`; it is ephemeral and does
+not create a checkout artifact. Override the destination with `--output`, or
+override inputs/select a subset with
+`--musl-root`, `--candidate-include`, `--candidate-archive`, and repeated or
+comma-separated `--probe` options. Header compilation supplies the native Linux
+UAPI directory from `--uapi-include` (default `/usr/include`, or
+`LINUX_UAPI_INCLUDE`) to both the pinned and candidate compiler invocations;
+the selected path and availability are recorded under `inputs.linux_uapi`.
+A non-AArch64 host, missing input, or header that does not compile is
+represented by an explicit `unsupported`/`missing_input` status; a pinned
+header that cannot compile because an external UAPI header is absent remains a
+`reference_error`. Neither case is converted into a passing probe.
+
+The parser/report contract tests run without Docker:
+
+```sh
+python3 -m unittest discover -s compat/abi/tests -p 'test_*.py'
+```
+
+The pinned-only header closure and its explicit runtime blockers are recorded
+in [`header-surface-triage.md`](header-surface-triage.md).  The native probe's
+per-header compile records are the generated regression evidence for that
+triage; keep report outputs under `/tmp` when doing ad-hoc runs.

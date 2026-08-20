@@ -9,6 +9,16 @@ static int checkf(float got, float want, float eps) {
     return (got > want - eps && got < want + eps) ? 0 : 1;
 }
 
+static int same_bits(double got, double want) {
+    union { double f; unsigned long long i; } a = { got }, b = { want };
+    return a.i == b.i;
+}
+
+static int same_bitsf(float got, float want) {
+    union { float f; unsigned int i; } a = { got }, b = { want };
+    return a.i == b.i;
+}
+
 int main(void) {
     int e;
     double iptr;
@@ -121,6 +131,57 @@ int main(void) {
     if (lrintl(2.3L) != 2) return 96;
     if (llrintl(2.7L) != 3) return 97;
     if (check(sinh(0x1.d3e0d2f5d98d6p-2), 0x1.e45428082fb8cp-2, 1e-15)) return 98;
+
+    /* Pinned musl 1.2.6 vectors that exercise the inverse/hyperbolic edges. */
+    if (!same_bits(acosh(0x1.001f1c62cf304p+0), 0x1.f8d125ff71cc2p-6)) return 99;
+    if (!same_bits(asinh(0x1.fbdd0eedf8143p-3), 0x1.f6cc20d7a594cp-3)) return 100;
+    if (!same_bits(sinh(0x1.d3e0d2f5d98d6p-2), 0x1.e45428082fb8ap-2)) return 101;
+
+    /* Pinned musl Bessel vectors, including near-zero cancellation cases. */
+    if (!same_bits(j0(-0x1.33d132fd04a92p+1), 0x1.092b2a541b1a0p-19)) return 102;
+    if (!same_bits(j0(-0x1.33d15297be06fp+1), 0x1.5352913ddb41bp-26)) return 103;
+    if (!same_bits(j0(0x1.33d152e971b4p+1), -0x1.00209921727cbp-54)) return 104;
+    if (!same_bits(j0(0x1.6148f5b2c2e45p+2), -0x1.ebcb069d486ccp-56)) return 105;
+    if (!same_bits(j0(0x1.14eb56cccdecap+3), -0x1.6d2a820627412p-54)) return 106;
+    if (!same_bits(jn(5, 0x1.1f9ef934745cbp-1), 0x1.e274364abf2d2p-17)) return 107;
+    if (!same_bits(y0(0x1.c982eb8d417eap-1), -0x1.0000000000000p-55)) return 108;
+    if (!same_bits(y0(0x1.c982eb8d417ebp-1), 0x1.2p-54)) return 109;
+    if (!same_bits(y0(0x1.fa9534d98569bp+1), 0x1.3004a968fceadp-53)) return 110;
+    if (!same_bits(y0(0x1.fa9534d98569cp+1), -0x1.8f4eb84cc2a33p-55)) return 111;
+    if (!same_bits(y0(0x1.c581dc4e72102p+2), -0x1.16eb61aad4cacp-52)) return 112;
+    /* Pinned musl gamma vectors and sign contracts. */
+    if (!same_bits(lgamma_r(-0x1.02239f3c6a8f1p+3, &e),
+                   -0x1.0120f61b63d5ep+3)) return 121;
+    if (e != -1) return 122;
+    if (!same_bits(lgamma(-0x1.02239f3c6a8f1p+3),
+                   -0x1.0120f61b63d5ep+3)) return 123;
+    if (signgam != -1) return 124;
+    if (!same_bitsf(lgammaf_r(-0x1.0223ap+3f, &e),
+                    -0x1.012104p+3f)) return 125;
+    if (e != -1) return 126;
+    if (!same_bitsf(lgammaf(-0x1.0223ap+3f),
+                    -0x1.012104p+3f)) return 127;
+    if (signgam != -1) return 128;
+    if (check(tgamma(-0x1.02239f3c6a8f1p+3),
+              -0x1.53910aafcfc6ep-12, 0x1p-63)) return 129;
+    if (check(tgamma(0x1.161868e18bc67p+2),
+              0x1.2d21bb9ee4ac5p+3, 0x1p-48)) return 130;
+    if (check(tgamma(0x1p-1), 0x1.c5bf891b4ef6bp+0, 0x1p-51)) return 131;
+
+    /* The pinned musl oracle emits these exact bits for libc-test's X cases. */
+    if (!same_bits(lgamma_r(-0x1.4p+1, &e), -0x1.ccbf9f5ed0f2p-5)) return 132;
+    if (e != -1) return 133;
+    if (!same_bits(lgamma(-0x1.4p+1), -0x1.ccbf9f5ed0f2p-5)) return 134;
+    if (signgam != -1) return 135;
+    if (!same_bitsf(lgammaf_r(-0x1.0c34b4p+3f, &e), -0x1.46d736p+3f)) return 136;
+    if (e != -1) return 137;
+    if (!same_bitsf(lgammaf(-0x1.0c34b4p+3f), -0x1.46d736p+3f)) return 138;
+    if (signgam != -1) return 139;
+    if (!same_bits(tgamma(-0x1.a206f0a19dcc4p+2),
+                   -0x1.9fd0c1ce12f12p-10)) return 140;
+    if (!same_bits(tgamma(0x1p-53), 0x1.ffffffffffffdp+52)) return 141;
+    if (!same_bits(tgamma(-0x1.0000000000001p+0),
+                   0x1.ffffffffffffdp+51)) return 142;
 
     printf("math ok\n");
     return 0;

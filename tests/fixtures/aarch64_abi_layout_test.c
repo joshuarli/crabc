@@ -32,6 +32,20 @@ int main(void) {
            MINSIGSTKSZ, SIGSTKSZ);
     printf("sigset %zu %zu\n", sizeof(sigset_t), _Alignof(sigset_t));
 
+    printf("sigaction %zu %zu %zu %zu %zu %zu\n",
+           sizeof(struct sigaction), _Alignof(struct sigaction),
+           sizeof(((struct sigaction *)0)->sa_flags),
+           offsetof(struct sigaction, sa_mask),
+           offsetof(struct sigaction, sa_flags),
+           offsetof(struct sigaction, sa_restorer));
+
+    printf("mcontext %zu %zu %zu %zu %zu %zu %zu %zu %zu\n",
+           sizeof(mcontext_t), _Alignof(mcontext_t),
+           sizeof(gregset_t), sizeof(fpregset_t),
+           offsetof(mcontext_t, fault_address),
+           offsetof(mcontext_t, regs), offsetof(mcontext_t, sp),
+           offsetof(mcontext_t, pc), offsetof(mcontext_t, pstate));
+
     printf("pthread %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu %zu\n",
            sizeof(pthread_t), _Alignof(pthread_t),
            sizeof(pthread_attr_t), _Alignof(pthread_attr_t),

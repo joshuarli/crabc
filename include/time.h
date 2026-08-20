@@ -9,7 +9,9 @@ extern "C" {
 #include <locale.h>
 
 #ifndef NULL
+#ifndef NULL
 #define NULL ((void*)0)
+#endif
 #endif
 
 #define CLOCKS_PER_SEC 1000000L

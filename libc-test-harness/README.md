@@ -8,7 +8,7 @@ Builds and runs the [libc-test](https://git.musl-libc.org/cgit/libc-test) suite 
 2. Creates a `fake-libs/` directory with symlinks so the linker resolves `-lc`, `-lpthread`, `-lm`, etc. against our libc.so instead of musl's.
 3. Builds libc-test's `runtest.exe` and `libtest.a` as host tools (linked against musl).
 4. Compiles and links executable tests with `musl-gcc -L fake-libs/`, then runs them via `LD_LIBRARY_PATH=fake-libs/`. API checks instead use `gcc -nostdinc` with crabc's headers plus GCC's builtin headers, so a missing crabc header cannot silently fall back to musl.
-5. Categorizes results: **PASS**, **FAIL**, **BUILDERROR** (compile/link failure), **TIMEOUT** (30s), or an explicit **SKIP** only when the pinned musl oracle fails due to a documented Docker environment constraint.
+5. Categorizes results: **PASS**, **FAIL**, **BUILDERROR** (compile/link failure), **TIMEOUT** (30s), or an explicit **SKIP** only for a documented pinned-musl environment constraint or a narrowly identified matching reference expectation.
 
 ## Usage
 
@@ -61,6 +61,28 @@ python3 -m unittest discover -s libc-test-harness -p 'test_*.py'
 - **`regression/statvfs` is skipped on Docker's root overlay** — it reports zero
   inode capacity under both crabc and the pinned musl oracle. The structured
   event has `reason: "oracle_environment"`; do not treat it as a candidate pass.
+- **Native AArch64 `math/acosh`, `math/asinh`, and `math/sinh` are oracle
+  expectation skips** — pinned musl emits the same tolerated hard-rounding
+  diagnostics and result bits as crabc. The exception is deliberately limited
+  to those three identities, verified against the pinned sources on
+  2026-08-20, with bit-level evidence in
+  `oracle-evidence/math-aarch64-musl-1.2.6-2026-08-20.txt`.
+- **Native AArch64 `math/j0`, `math/jn`, `math/jnf`, `math/y0`, `math/y0f`,
+  and `math/ynf` are oracle expectation skips** — pinned musl and crabc emit
+  the same hard-case result bits and `ulperr` diagnostics. The exception is
+  limited to those six test identities, verified against the pinned sources on
+  2026-08-20. The raw-bit comparison is recorded in
+  `oracle-evidence/math-bessel-aarch64-musl-1.2.6-2026-08-20.txt`; textual
+  `%a` formatting is intentionally not used as the equality criterion. Before
+  recording each skip, the runner compiles and executes a raw-bit verifier from
+  that evidence; a compile, runtime, bit, or sign mismatch is reported as
+  **FAIL**, not hidden as a skip.
+- **Native AArch64 `math/lgamma`, `math/lgammaf`, `math/lgammaf_r`, and
+  `math/tgamma` are oracle expectation skips** — pinned musl and crabc emit
+  identical raw IEEE-754 bits for the remaining libc-test diagnostics listed
+  individually in the pinned source headers. `math/lgamma_r` is already
+  passing and is not part of this exception. Evidence is recorded in
+  `oracle-evidence/math-gamma-aarch64-musl-1.2.6-2026-08-20.txt`.
 
 ## Current measurements
 

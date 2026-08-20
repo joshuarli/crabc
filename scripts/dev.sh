@@ -25,6 +25,7 @@ Commands:
   ratchet             alias for compat
   libc-test [subset]  run the pinned libc-test checkout (functional by default)
   differential [case] run a pinned musl-vs-crabc workload comparison
+  abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports
   environment         write reproducibility metadata for compatibility reports
@@ -146,6 +147,11 @@ case "$command" in
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/differential/run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    abi-probe)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 compat/scripts/probe_aarch64_abi.py "$@"
         ;;
     loader-inventory)
         ensure_image

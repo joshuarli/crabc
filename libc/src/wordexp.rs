@@ -3,9 +3,8 @@
 // musl deliberately delegates the expansion grammar to /bin/sh. The child
 // prints NUL-delimited words so whitespace and newlines in an expanded word
 // remain distinguishable. The bounded WRDE_NOCMD scanner rejects command
-// substitutions before starting a child; its remaining nested-grammar gaps
-// are intentionally reported by the compatibility harness rather than being
-// accepted as safe input.
+// substitutions before starting a child while tracking the nested quoting and
+// parameter/arithmetic grammar needed to distinguish literal `$(` text.
 
 const WRDE_DOOFFS: c_int = 1;
 const WRDE_APPEND: c_int = 2;
@@ -34,49 +33,104 @@ pub struct wordexp_t {
 // sentinel, allowing an empty expansion to be distinguished from a syntax
 // error (which produces no output).
 const WORDEXP_SCRIPT: &[u8] = b"input=$1; shift; eval \"set -- $input\" || exit $?; printf %s\\\\0 x \"$@\"\0";
-const WORDEXP_UNDEF_SCRIPT: &[u8] = b"set -u; input=$1; shift; eval \"set -- $input\" || exit $?; printf %s\\\\0 x \"$@\"\0";
+const WORDEXP_UNDEF_SCRIPT: &[u8] = b"set -u; input=$1; shift; /bin/sh -n -c \"set -- $input\" || exit 125; eval \"set -- $input\" || exit $?; printf %s\\\\0 x \"$@\"\0";
 const SH: &[u8] = b"/bin/sh\0";
 const SH_ARG0: &[u8] = b"sh\0";
 const SH_C: &[u8] = b"-c\0";
 const WORDEXP_DEV_NULL: &[u8] = b"/dev/null\0";
+const WORDEXP_SYNTAX_EXIT: c_int = 125;
 
 unsafe fn wordexp_nocmd_check(s: *const c_char) -> c_int {
     let mut i = 0usize;
     let mut sq = false;
     let mut dq = false;
+    let mut aq = false;
     let mut np = 0usize;
+    let mut nb = 0usize;
+    let mut param_dq = false;
+    let mut param_np = 0usize;
+    let mut saw_arithmetic = false;
 
     while *s.add(i) != 0 {
         match *s.add(i) as u8 {
-            b'#' if !sq && !dq && (i == 0 || (*s.add(i - 1) as u8).is_ascii_whitespace()) => {
+            b'#' if !sq && !dq && !aq && nb == 0 && (i == 0 || (*s.add(i - 1) as u8).is_ascii_whitespace()) => {
                 while *s.add(i) != 0 && *s.add(i) != b'\n' as c_char { i += 1; }
                 continue;
             }
             b'\\' => {
-                if !sq {
+                if !sq || aq {
                     i += 1;
                     if *s.add(i) == 0 { return WRDE_SYNTAX; }
                 }
             }
             b'\'' => {
-                if !dq { sq = !sq; }
+                if !dq || nb > 1 {
+                    if aq { aq = false; }
+                    else { sq = !sq; }
+                }
             }
             b'"' => {
-                if !sq { dq = !dq; }
+                if !sq && !aq { dq = !dq; }
             }
             b'(' => {
-                if np != 0 { np += 1; }
-                else if !sq && !dq { return WRDE_BADCHAR; }
+                if nb == 0 {
+                    if np != 0 { np += 1; }
+                    else if !sq && !dq && !aq { return WRDE_BADCHAR; }
+                }
             }
             b')' => {
-                if np != 0 { np -= 1; }
-                else if !sq && !dq { return WRDE_BADCHAR; }
+                if nb != 0 {
+                    if param_np != 0 {
+                        np -= 1;
+                        param_np -= 1;
+                    }
+                } else {
+                    if np != 0 {
+                        np -= 1;
+                        if np == 0 && saw_arithmetic && i != 0 &&
+                            (*s.add(i - 1) as u8).is_ascii_whitespace()
+                        {
+                            return WRDE_CMDSUB;
+                        }
+                    }
+                    else if !sq && !dq && !aq {
+                        if saw_arithmetic { return WRDE_SYNTAX; }
+                        return WRDE_BADCHAR;
+                    }
+                }
             }
-            b'\n' | b'|' | b'&' | b';' | b'<' | b'>' | b'{' | b'}' => {
-                if !sq && !dq && np == 0 { return WRDE_BADCHAR; }
+            b'{' => {
+                if np == 0 && !sq && !dq && !aq && nb == 0 { return WRDE_BADCHAR; }
             }
-            b'$' if !sq => {
-                if *s.add(i + 1) == b'(' as c_char && *s.add(i + 2) == b'(' as c_char {
+            b'}' => {
+                if !sq && !aq {
+                    if nb != 0 {
+                        nb -= 1;
+                        if nb == 0 { param_dq = false; }
+                    } else if np == 0 && !dq { return WRDE_BADCHAR; }
+                }
+            }
+            b'\n' | b'|' | b'&' | b';' | b'<' | b'>' => {
+                if !sq && !dq && !aq && np == 0 {
+                    if saw_arithmetic { return WRDE_SYNTAX; }
+                    return WRDE_BADCHAR;
+                }
+            }
+            b'$' if !sq && !aq => {
+                if *s.add(i + 1) == b'\'' as c_char {
+                    if np == 0 {
+                        if nb != 0 {
+                            if dq && param_dq { return WRDE_SYNTAX; }
+                            if dq { i += 1; }
+                            else { return WRDE_SYNTAX; }
+                        } else if dq { i += 1; }
+                        else { aq = true; i += 1; }
+                    }
+                } else if *s.add(i + 1) == b'{' as c_char {
+                    if nb == 0 { param_dq = dq; }
+                    nb += 1;
+                    i += 1;
+                } else if *s.add(i + 1) == b'(' as c_char && *s.add(i + 2) == b'(' as c_char {
                     // Shell syntax that looks arithmetic can contain a
                     // command substitution (for example `case ...`).
                     // Let the caller reject the entire construct rather
@@ -91,30 +145,29 @@ unsafe fn wordexp_nocmd_check(s: *const c_char) -> c_int {
                         {
                             return WRDE_CMDSUB;
                         }
+                        if *s.add(j) == b'<' as c_char &&
+                            *s.add(j + 1) == b'<' as c_char
+                        {
+                            return WRDE_CMDSUB;
+                        }
                         if *s.add(j) == b')' as c_char { break; }
                         j += 1;
                     }
                     i += 2;
                     np += 2;
+                    if nb != 0 { param_np += 2; }
+                    saw_arithmetic = true;
                 } else if *s.add(i + 1) == b'(' as c_char {
+                    if nb != 0 && dq && param_dq { return WRDE_SYNTAX; }
                     return WRDE_CMDSUB;
-                } else if *s.add(i + 1) == b'\'' as c_char {
-                    let mut j = i + 2;
-                    while *s.add(j) != 0 {
-                        if *s.add(j) == b'`' as c_char ||
-                            (*s.add(j) == b'$' as c_char && *s.add(j + 1) == b'(' as c_char)
-                        {
-                            return WRDE_CMDSUB;
-                        }
-                        j += 1;
-                    }
                 }
             }
-            b'`' if !sq => return WRDE_CMDSUB,
+            b'`' if !sq && !aq => return WRDE_CMDSUB,
             _ => {}
         }
         i += 1;
     }
+    if sq || dq || aq || np != 0 || nb != 0 { return WRDE_SYNTAX; }
     0
 }
 
@@ -290,9 +343,14 @@ unsafe fn wordexp_do(s: *const c_char, we: *mut wordexp_t, flags: c_int) -> c_in
         }
         if read_error { return WRDE_NOSPACE; }
         // `set -u` rejects an otherwise valid expansion before the sentinel
-        // is emitted.  POSIX exposes that as WRDE_BADVAL rather than a shell
-        // syntax failure.
-        if flags & WRDE_UNDEF != 0 && child_status != 0 { return WRDE_BADVAL; }
+        // is emitted. The syntax-only shell pass uses a private exit status
+        // so parse failures remain WRDE_SYNTAX instead of being mistaken for
+        // WRDE_BADVAL.
+        if flags & WRDE_UNDEF != 0 &&
+            ((child_status >> 8) & 0xff) != WORDEXP_SYNTAX_EXIT
+        {
+            return WRDE_BADVAL;
+        }
         return WRDE_SYNTAX;
     }
     if read_error {

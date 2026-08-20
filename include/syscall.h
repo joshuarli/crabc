@@ -1,2 +1,6 @@
-// Add to include/unistd.h or include/sys/syscall.h:
-long syscall(long, ...);
+#ifndef _CRABC_SYSCALL_H
+#define _CRABC_SYSCALL_H
+
+#include <sys/syscall.h>
+
+#endif

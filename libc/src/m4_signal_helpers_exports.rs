@@ -104,9 +104,9 @@ pub unsafe extern "C" fn siginterrupt(sig: c_int, flag: c_int) -> c_int {
         return -1;
     }
     if flag != 0 {
-        action.sa_flags &= !SA_RESTART;
+        action.sa_flags &= !(SA_RESTART as c_int);
     } else {
-        action.sa_flags |= SA_RESTART;
+        action.sa_flags |= SA_RESTART as c_int;
     }
     sigaction(sig, &action, core::ptr::null_mut())
 }
@@ -116,8 +116,9 @@ pub unsafe extern "C" fn sigignore(sig: c_int) -> c_int {
     let action = sigaction {
         sa_handler: SIG_IGN,
         sa_flags: 0,
+        __sa_flags_padding: 0,
         sa_restorer: 0,
-        sa_mask: [0],
+        sa_mask: [0; PUBLIC_SIGSET_WORDS],
     };
     sigaction(sig, &action, core::ptr::null_mut())
 }
@@ -144,8 +145,9 @@ pub unsafe extern "C" fn sigset(sig: c_int, handler: usize) -> usize {
         let action = sigaction {
             sa_handler: handler,
             sa_flags: 0,
+            __sa_flags_padding: 0,
             sa_restorer: 0,
-            sa_mask: [0],
+            sa_mask: [0; PUBLIC_SIGSET_WORDS],
         };
         if sigaction(sig, &action, &mut old_action) < 0 {
             return SIG_ERR;

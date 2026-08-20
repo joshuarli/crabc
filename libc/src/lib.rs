@@ -22,6 +22,8 @@ include!("math_hyperbolic.rs");
 include!("math_inverse_hyperbolic.rs");
 include!("math_invtrig.rs");
 include!("math_lrint.rs");
+include!("math_bessel.rs");
+include!("math_gamma.rs");
 include!("math_compat.rs");
 
 // ============================================================
@@ -1817,12 +1819,27 @@ pub struct stack_t {
 #[repr(C)]
 pub struct sigaction {
     pub sa_handler: usize,
-    pub sa_flags: c_ulong,
+    pub sa_mask: [c_ulong; PUBLIC_SIGSET_WORDS],
+    pub sa_flags: c_int,
+    // C's int flag is followed by ABI padding before the pointer field.
+    __sa_flags_padding: c_int,
     pub sa_restorer: usize,
-    pub sa_mask: [c_ulong; 1],
 }
 
 pub type SigSetT = c_ulong;
+const PUBLIC_SIGSET_WORDS: usize = 16;
+
+// Linux's rt_sigaction syscall uses the compact kernel record, while the
+// public AArch64 musl struct carries a 128-byte sigset before flags/restorer.
+// Keep the two layouts distinct so C callers see musl's ABI and the syscall
+// still receives its 8-byte kernel mask.
+#[repr(C)]
+struct KernelSigAction {
+    sa_handler: usize,
+    sa_flags: c_ulong,
+    sa_restorer: usize,
+    sa_mask: [c_ulong; 1],
+}
 
 #[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
@@ -1857,8 +1874,8 @@ extern "C" {
 
 #[inline]
 unsafe fn sys_rt_sigaction(sig: c_int,
-    act: *const sigaction,
-    oldact: *mut sigaction,
+    act: *const KernelSigAction,
+    oldact: *mut KernelSigAction,
     sigsetsize: usize,) -> i64 {
     <Arch as Syscalls>::syscall4(SYS_RT_SIGACTION, sig as i64, act as i64, oldact as i64, sigsetsize as i64)
 }
@@ -1955,23 +1972,37 @@ pub unsafe extern "C" fn sigaction(
     act: *const sigaction,
     oldact: *mut sigaction,
 ) -> c_int {
-    let kact: sigaction;
+    let kact: KernelSigAction;
+    let mut kold: KernelSigAction = core::mem::zeroed();
     let act_ptr = if act.is_null() {
         core::ptr::null()
     } else {
-        kact = sigaction {
+        kact = KernelSigAction {
             sa_handler: (*act).sa_handler,
-            sa_flags: (*act).sa_flags | SA_RESTORER,
+            sa_flags: ((*act).sa_flags as c_uint) as c_ulong | SA_RESTORER,
             sa_restorer: sig_restorer as *const () as usize,
-            sa_mask: (*act).sa_mask,
+            sa_mask: [(*act).sa_mask[0]],
         };
-        &kact as *const sigaction
+        &kact as *const KernelSigAction
     };
-    let r = sys_rt_sigaction(signum, act_ptr, oldact, core::mem::size_of::<SigSetT>());
+    let old_ptr = if oldact.is_null() {
+        core::ptr::null_mut()
+    } else {
+        &mut kold as *mut KernelSigAction
+    };
+    let r = sys_rt_sigaction(signum, act_ptr, old_ptr, core::mem::size_of::<SigSetT>());
     if r < 0 {
         ERRNO = (-r) as c_int;
         -1
     } else {
+        if !oldact.is_null() {
+            (*oldact).sa_handler = kold.sa_handler;
+            (*oldact).sa_mask = [0; PUBLIC_SIGSET_WORDS];
+            (*oldact).sa_mask[0] = kold.sa_mask[0];
+            (*oldact).sa_flags = (kold.sa_flags as c_uint) as c_int;
+            (*oldact).__sa_flags_padding = 0;
+            (*oldact).sa_restorer = kold.sa_restorer;
+        }
         0
     }
 }
@@ -1980,15 +2011,17 @@ pub unsafe extern "C" fn sigaction(
 pub unsafe extern "C" fn signal(signum: c_int, handler: usize) -> usize {
     let act = sigaction {
         sa_handler: handler,
-        sa_flags: SA_RESTORER,
+        sa_mask: [0; PUBLIC_SIGSET_WORDS],
+        sa_flags: (SA_RESTORER as c_uint) as c_int,
+        __sa_flags_padding: 0,
         sa_restorer: sig_restorer as *const () as usize,
-        sa_mask: [0],
     };
     let mut old = sigaction {
         sa_handler: 0,
+        sa_mask: [0; PUBLIC_SIGSET_WORDS],
         sa_flags: 0,
+        __sa_flags_padding: 0,
         sa_restorer: 0,
-        sa_mask: [0],
     };
     if sigaction(signum, &act, &mut old) == -1 {
         SIG_ERR
@@ -5001,13 +5034,13 @@ static CANCEL_INIT: AtomicI32 = AtomicI32::new(0);
 
 unsafe fn ensure_cancel_handler() {
     if CANCEL_INIT.swap(1, Ordering::AcqRel) == 0 {
-        let act = sigaction {
+        let act = KernelSigAction {
             sa_handler: cancel_handler as *const () as usize,
             sa_flags: SA_RESTORER,
             sa_restorer: sig_restorer as *const () as usize,
             sa_mask: [!0u64],
         };
-        sys_rt_sigaction(SIGCANCEL, &act as *const sigaction, core::ptr::null_mut(), 8);
+        sys_rt_sigaction(SIGCANCEL, &act, core::ptr::null_mut(), 8);
     }
 }
 
@@ -12058,14 +12091,14 @@ pub unsafe extern "C" fn system(cmd: *const c_char) -> c_int {
         }
     }
 
-    let sa_ignore = sigaction {
+    let sa_ignore = KernelSigAction {
         sa_handler: SIG_IGN,
         sa_flags: SA_RESTORER,
         sa_restorer: sig_restorer as *const () as usize,
         sa_mask: [0],
     };
-    let mut oldint: sigaction = core::mem::zeroed();
-    let mut oldquit: sigaction = core::mem::zeroed();
+    let mut oldint: KernelSigAction = core::mem::zeroed();
+    let mut oldquit: KernelSigAction = core::mem::zeroed();
 
     sys_rt_sigaction(SIGINT, &sa_ignore, &mut oldint, 8);
     sys_rt_sigaction(SIGQUIT, &sa_ignore, &mut oldquit, 8);

@@ -1,0 +1,45 @@
+# Native AArch64 oracle evidence for remaining libc-test gamma diagnostics
+#
+# Verification date: 2026-08-20
+# Architecture: aarch64 (crabc-dev:aarch64)
+# Reference libc: musl 1.2.6, /opt/musl-1.2.6
+# Sources: /opt/libc-test/src/math/{sanity, special}/{lgamma,lgammaf,lgammaf_r,tgamma}.h
+#
+# The temporary raw-bit probe compiled the exact selected inputs with pinned
+# musl headers and with crabc headers, then ran the reference executable and
+# the crabc executable through the pinned musl toolchain.  Each output line was
+# byte-identical between the two runs.  These are the remaining libc-test X
+# diagnostics in the four listed tests; lgamma_r is intentionally not included
+# because its test is already passing.
+
+[lgamma]
+# source: special/lgamma.h:145
+# T(RN, -0x1.4p+1, -0x1.ccbf9f5ed0f16p-5, -0x1.dc4f24p-2, -1, INEXACT)
+00 input_bits=0xc004000000000000 result_bits=0xbfaccbf9f5ed0f20 signgam=-1
+
+[lgammaf]
+# source: sanity/lgammaf.h:3
+# T(RN, -0x1.0c34b4p+3, -0x1.46d732p+3, 0x1.83dafep-2, -1, INEXACT)
+00 input_bits=0xc1061a5a result_bits=0xc1236b9b signgam=-1
+
+[lgammaf_r]
+# source: sanity/lgammaf_r.h:3
+# T(RN, -0x1.0c34b4p+3, -0x1.46d732p+3, 0x1.83dafep-2, -1, INEXACT)
+00 input_bits=0xc1061a5a result_bits=0xc1236b9b sign=-1
+
+[tgamma]
+# source: sanity/tgamma.h:4
+# T(RN, -0x1.a206f0a19dcc4p+2, -0x1.9fd0c1ce12f14p-10, -0x1.9c637p-2, INEXACT)
+00 input_bits=0xc01a206f0a19dcc4 result_bits=0xbf59fd0c1ce12f12
+# source: sanity/tgamma.h:7
+# T(RN, -0x1.a05cc754481d1p-2, -0x1.d9a22b2f3f253p+1, -0x1.4d79f4p-2, INEXACT)
+01 input_bits=0xbfda05cc754481d1 result_bits=0xc00d9a22b2f3f251
+# source: special/tgamma.h:47
+# T(RN, 0x1p-53, 0x1.fffffffffffffp+52, -0x1.b0ee6p-2, INEXACT)
+02 input_bits=0x3ca0000000000000 result_bits=0x433ffffffffffffd
+# source: special/tgamma.h:60
+# T(RN, -0x1.0000000000001p+0, 0x1.fffffffffffffp+51, -0x1.3c467ep-3, INEXACT)
+03 input_bits=0xbff0000000000001 result_bits=0x432ffffffffffffd
+# source: special/tgamma.h:62
+# T(RN, -0x1.0000000000003p+0, 0x1.5555555555554p+50, 0x1.6e642cp-2, INEXACT)
+04 input_bits=0xbff0000000000003 result_bits=0x4315555555555552

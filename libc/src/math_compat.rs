@@ -313,28 +313,26 @@ pub extern "C" fn ilogbf(x: f32) -> c_int {
 compat_long_to_int!(ilogbl, libm::ilogb, c_int);
 
 #[no_mangle]
-pub extern "C" fn j0(x: f64) -> f64 { libm::j0(x) }
-#[no_mangle]
-pub extern "C" fn j0f(x: f32) -> f32 { libm::j0f(x) }
-#[no_mangle]
 pub extern "C" fn j1(x: f64) -> f64 { libm::j1(x) }
 #[no_mangle]
 pub extern "C" fn j1f(x: f32) -> f32 { libm::j1f(x) }
 #[no_mangle]
-pub extern "C" fn jn(n: c_int, x: f64) -> f64 { libm::jn(n, x) }
+pub extern "C" fn j0f(x: f32) -> f32 { libm::j0f(x) }
 #[no_mangle]
 pub extern "C" fn jnf(n: c_int, x: f32) -> f32 { libm::jnf(n, x) }
-#[no_mangle]
-pub extern "C" fn y0(x: f64) -> f64 {
-    if x == 0.0 { return __math_divzero(1); }
-    if x < 0.0 { return __math_invalid(x); }
-    libm::y0(x)
-}
 #[no_mangle]
 pub extern "C" fn y0f(x: f32) -> f32 {
     if x == 0.0 { return __math_divzerof(1); }
     if x < 0.0 { return __math_invalidf(x); }
     libm::y0f(x)
+}
+#[no_mangle]
+pub extern "C" fn ynf(n: c_int, x: f32) -> f32 {
+    if x == 0.0 {
+        return __math_divzerof(if n < 0 && (n & 1) != 0 { 0 } else { 1 });
+    }
+    if x < 0.0 { return __math_invalidf(x); }
+    libm::ynf(n, x)
 }
 #[no_mangle]
 pub extern "C" fn y1(x: f64) -> f64 {
@@ -348,22 +346,6 @@ pub extern "C" fn y1f(x: f32) -> f32 {
     if x < 0.0 { return __math_invalidf(x); }
     libm::y1f(x)
 }
-#[no_mangle]
-pub extern "C" fn yn(n: c_int, x: f64) -> f64 {
-    if x == 0.0 {
-        return __math_divzero(if n < 0 && (-n & 1) != 0 { 0 } else { 1 });
-    }
-    if x < 0.0 { return __math_invalid(x); }
-    libm::yn(n, x)
-}
-#[no_mangle]
-pub extern "C" fn ynf(n: c_int, x: f32) -> f32 {
-    if x == 0.0 {
-        return __math_divzerof(if n < 0 && (-n & 1) != 0 { 0 } else { 1 });
-    }
-    if x < 0.0 { return __math_invalidf(x); }
-    libm::ynf(n, x)
-}
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
@@ -374,44 +356,7 @@ pub unsafe extern "C" fn ldexpl(x: f128, exponent: c_int) -> f128 {
     ldexp(x as f64, exponent) as f128
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn lgamma(x: f64) -> f64 {
-    let (value, sign) = libm::lgamma_r(x);
-    signgam = sign;
-    __signgam = sign;
-    value
-}
-#[no_mangle]
-pub unsafe extern "C" fn lgammaf(x: f32) -> f32 {
-    let (value, sign) = libm::lgammaf_r(x);
-    signgam = sign;
-    __signgam = sign;
-    value
-}
 compat_long_unary!(lgammal, libm::lgamma);
-
-unsafe fn lgamma_r_impl(x: f64, sign: *mut c_int) -> f64 {
-    let (value, signum) = libm::lgamma_r(x);
-    if !sign.is_null() { *sign = signum; }
-    value
-}
-
-unsafe fn lgammaf_r_impl(x: f32, sign: *mut c_int) -> f32 {
-    let (value, signum) = libm::lgammaf_r(x);
-    if !sign.is_null() { *sign = signum; }
-    value
-}
-
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn lgamma_r(x: f64, sign: *mut c_int) -> f64 {
-    lgamma_r_impl(x, sign)
-}
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn lgammaf_r(x: f32, sign: *mut c_int) -> f32 {
-    lgammaf_r_impl(x, sign)
-}
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 #[linkage = "weak"]
@@ -669,11 +614,6 @@ pub unsafe extern "C" fn sincosl(x: f128, sin_out: *mut f128, cos_out: *mut f128
     if !cos_out.is_null() { *cos_out = cos_value as f128; }
 }
 
-#[no_mangle]
-pub extern "C" fn tgamma(x: f64) -> f64 {
-    if x < 0.0 && x == trunc(x) { return __math_invalid(x); }
-    libm::tgamma(x)
-}
 #[no_mangle]
 pub extern "C" fn tgammaf(x: f32) -> f32 {
     if x < 0.0 && x == truncf(x) { return __math_invalidf(x); }
