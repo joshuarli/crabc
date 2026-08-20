@@ -31,6 +31,7 @@ Commands:
   resolver-network [options] run the deterministic local M6 resolver/network workload
   ldso [options]      run the synthetic M7 loader differential suite
   corpus [options]    run the pinned Alpine AArch64 package corpus (Tier A by default)
+  rust-std [options]  run the M9 stock Rust std musl-vs-crabc differential fixture
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports
@@ -215,6 +216,13 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/corpus/run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    rust-std)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/rust-std/run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
     abi-probe)

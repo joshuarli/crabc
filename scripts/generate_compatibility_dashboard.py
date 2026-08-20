@@ -32,6 +32,7 @@ RESOLVER_NETWORK_REPORT = ROOT_DIR / "compat/reports/resolver-network.json"
 LOADER_FEATURE_REPORT = ROOT_DIR / "compat/abi/crabc/aarch64/loader-features.json"
 LDSO_REPORT = ROOT_DIR / "compat/reports/ldso/latest.json"
 CORPUS_REPORT = ROOT_DIR / "compat/reports/corpus/latest.json"
+RUST_STD_REPORT = ROOT_DIR / "compat/reports/rust-std/latest.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -170,6 +171,21 @@ def m8_report_state() -> dict[str, Any] | None:
     return report
 
 
+def m9_report_state() -> dict[str, Any] | None:
+    """Return stock-Rust evidence only when its raw-comparison identity holds."""
+
+    report = read_json(RUST_STD_REPORT)
+    if report is None:
+        return None
+    if report.get("schema_version") != 1 or report.get("runner") != "compat/rust-std/run.py":
+        raise RuntimeError(f"unexpected M9 report identity in {RUST_STD_REPORT}")
+    comparison = report.get("comparison")
+    if report.get("result") == "pass" and not isinstance(comparison, dict):
+        raise RuntimeError(f"M9 pass report has invalid comparison in {RUST_STD_REPORT}")
+    report["_path"] = str(RUST_STD_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -195,6 +211,7 @@ def main() -> int:
     loader_features = loader_feature_state()
     ldso = m7_report_state()
     corpus = m8_report_state()
+    rust_std = m9_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     lines = [
@@ -380,6 +397,48 @@ def main() -> int:
                 )
             )
 
+    lines.extend(["", "## M9 stock Rust std", ""])
+    if rust_std is None:
+        lines.append("No stock Rust std result. Run `./scripts/dev.sh rust-std`.")
+    else:
+        comparison = rust_std.get("comparison")
+        if not isinstance(comparison, dict):
+            raise RuntimeError(f"invalid M9 comparison in {rust_std['_path']}")
+        build = rust_std.get("build")
+        if not isinstance(build, dict):
+            raise RuntimeError(f"invalid M9 build record in {rust_std['_path']}")
+        passes = comparison.get("passed") is True
+        lines.append(
+            "Pinned stock Rust std (`-Z build-std`) musl-vs-crabc fixture: "
+            f"**{'pass' if rust_std.get('result') == 'pass' and passes else 'FAIL'}** "
+            f"(1/1 normal Rust workload); report `{rust_std['_path']}`."
+        )
+        lines.append(
+            "The same dynamic AArch64 PIE runs as the kernel program under the pinned musl "
+            "or crabc interpreter; its raw status, stdout, and stderr are compared without normalization."
+        )
+        lines.append("")
+        lines.extend(
+            markdown_table(
+                ("metric", "result"),
+                [
+                    (
+                        "stock std built with `-Z build-std`",
+                        "pass" if build.get("returncode") == 0 else "FAIL",
+                    ),
+                    (
+                        "dynamic musl ABI executable",
+                        "pass"
+                        if "libc.musl-aarch64.so.1" in str(build.get("dynamic_section", ""))
+                        else "FAIL",
+                    ),
+                    ("status", "match" if comparison.get("status_match") is True else "DIFF"),
+                    ("stdout", "match" if comparison.get("stdout_match") is True else "DIFF"),
+                    ("stderr", "match" if comparison.get("stderr_match") is True else "DIFF"),
+                ],
+            )
+        )
+
     lines.extend(["", "## libc-test", ""])
     if not libc_test:
         lines.append("No structured libc-test result. Run `./scripts/dev.sh libc-test functional`.")
@@ -543,6 +602,15 @@ def main() -> int:
             f"report `{resolver_network['_path']}`."
         )
 
+    unmeasured_frontier = [
+        "Static candidate ABI parity",
+        "exhaustive header declaration/layout parity",
+    ]
+    if corpus is None:
+        unmeasured_frontier.append("real Alpine corpus")
+    if rust_std is None:
+        unmeasured_frontier.append("stock Rust `std` compatibility")
+
     lines.extend(
         [
             "",
@@ -550,11 +618,7 @@ def main() -> int:
             "",
             "The selected POSIX, signal/process, and resolver/network contracts above are not full "
             "standards conformance.",
-            "Static candidate ABI parity, exhaustive header declaration/layout parity, "
-            + (
-                "real Alpine corpus, and " if corpus is None else ""
-            )
-            + "stock Rust `std` compatibility are not measured by this dashboard yet.",
+            ", ".join(unmeasured_frontier) + " are not measured by this dashboard yet.",
             "The M7 synthetic suite measures bounded loader contracts; it is not a claim that arbitrary "
             "Alpine DSO graphs are supported.",
             "",

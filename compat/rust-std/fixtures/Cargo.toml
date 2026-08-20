@@ -1,0 +1,9 @@
+[package]
+name = "crabc-rust-std-fixture"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+panic = "abort"
+
+[workspace]

@@ -2566,6 +2566,40 @@ python3 compat/corpus/tests/test_runner.py          10/10 PASS
 
 Prove normal Rust software can use crabc without a std fork.
 
+### Progress — 2026-08-20 UTC
+
+Milestone 9 is **complete**. `compat/rust-std/run.py` builds the ordinary,
+dependency-free crate in `compat/rust-std/fixtures/` with the pinned
+`nightly-2026-07-24` Rust source tree and stock
+`-Z build-std=std,panic_abort`. The build is an isolated temporary Cargo
+project, uses the pinned musl-gcc specs, disables musl's default `crt-static`,
+and produces one dynamic AArch64 PIE. No Rust `std` fork and no crabc-specific
+application source are involved.
+
+That identical compiled program is entered by the kernel twice after only its
+disposable `PT_INTERP` copy is changed: once through pinned musl and once
+through crabc. Both runs share one explicit environment, kernel, and staged
+Alpine `libgcc_s`; the `libc.musl-aarch64.so.1` loader-search filename is
+populated by the corresponding pinned-musl or crabc libc bytes. This is the
+canonical `DT_NEEDED` name requested by both the Rust executable and
+`libgcc_s`, not an `LD_PRELOAD` workaround. Status, stdout, and stderr are
+compared byte-for-byte and artifact/toolchain/digest evidence is retained at
+`compat/reports/rust-std/latest.json`.
+
+The normal Rust workload verifies allocation plus `Vec`/`String`, files and
+directories, environment and time, local TCP/UDP/DNS, threads with
+`Mutex`/`Condvar`, process spawn with a captured child pipe, and stdio. It is
+one meaningful vertical slice, not a claim that all Rust software or all
+Rust/FFI interfaces are covered.
+
+Final closure evidence:
+
+```text
+python3 compat/rust-std/tests/test_runner.py        7/7 PASS
+./scripts/dev.sh rust-std                           1/1 PASS, exact raw comparison
+./scripts/dev.sh test                               workspace PASS
+```
+
 ## Milestone 10 — LTO research
 
 Measure the whole-program Rust/LLVM optimization opportunity.
