@@ -182,7 +182,11 @@ def main() -> int:
                     ("missing", symbols["missing"], "expected musl name absent from crabc"),
                     ("unexpected", symbols["unexpected"], "crabc public name absent from musl"),
                     ("implemented", "not measured", "an export does not prove implementation"),
-                    ("verified", 0, "no subsystem has the full verification evidence yet"),
+                    (
+                        "verified",
+                        "not measured",
+                        "symbol-level verification is not inferred from subsystem evidence",
+                    ),
                 ],
             )
         )

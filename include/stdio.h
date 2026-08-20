@@ -9,7 +9,17 @@ extern "C" {
 #endif
 
 typedef struct _FILE FILE;
-typedef long long fpos_t;
+
+/*
+ * musl's fpos_t is intentionally a 16-byte opaque value.  The first eight
+ * bytes carry the file offset today, while the union's array/alignment arms
+ * keep the public ABI stable for callers that store or pass fpos_t objects.
+ */
+typedef union {
+    char __opaque[16];
+    long long __lldata;
+    double __align;
+} fpos_t;
 
 extern FILE *stdin;
 extern FILE *stdout;

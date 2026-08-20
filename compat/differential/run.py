@@ -28,8 +28,19 @@ from pathlib import Path
 MUSL_VERSION = "1.2.6"
 DEFAULT_MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
 DEFAULT_CASE = "foundational"
-CASES = (DEFAULT_CASE,)
-ERRNO_PATTERN = re.compile(rb"^foundational: errno=([0-9]+) .*$")
+CASES = (DEFAULT_CASE, "string-memory", "allocator", "fd-filesystem")
+
+
+def errno_pattern(case: str) -> re.Pattern[bytes]:
+    """Return the exact success marker expected from one workload.
+
+    Workloads are free to print additional diagnostic output on failure, but a
+    successful comparison must contain exactly one marker for its own case.
+    That keeps errno a first-class comparison without allowing one workload's
+    output to accidentally satisfy another's parser.
+    """
+
+    return re.compile(("^" + re.escape(case) + r": errno=([0-9]+) .*$").encode("ascii"))
 
 
 class RunnerError(Exception):
@@ -202,8 +213,9 @@ def stream_diff(name: str, reference: bytes, candidate: bytes) -> None:
         )
 
 
-def errno_marker(stream: bytes) -> list[int]:
-    return [int(match.group(1)) for line in stream.splitlines() if (match := ERRNO_PATTERN.match(line))]
+def errno_marker(case: str, stream: bytes) -> list[int]:
+    pattern = errno_pattern(case)
+    return [int(match.group(1)) for line in stream.splitlines() if (match := pattern.match(line))]
 
 
 def stream_snapshot(stream: bytes) -> dict[str, object]:
@@ -277,8 +289,8 @@ def compare_outputs(
         stream_diff("stderr", reference_stderr, candidate_stderr)
         passed = False
 
-    reference_errno = errno_marker(reference_stdout)
-    candidate_errno = errno_marker(candidate_stdout)
+    reference_errno = errno_marker(case, reference_stdout)
+    candidate_errno = errno_marker(case, candidate_stdout)
     errno_match = len(reference_errno) == 1 and len(candidate_errno) == 1
     if not errno_match:
         print(
@@ -372,6 +384,10 @@ def run(args: argparse.Namespace) -> bool:
                 "-O2",
                 "-Wall",
                 "-Wextra",
+                # The workload must execute the linked libc symbols. Compiler
+                # builtins would otherwise turn a matching source test into a
+                # test of the compiler rather than musl versus crabc.
+                "-fno-builtin",
                 "-fPIE",
                 "-I",
                 str(musl_root / "include"),

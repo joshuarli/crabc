@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 int open(const char *, int, ...);
+int openat(int, const char *, int, ...);
 int creat(const char *, unsigned int);
 int fcntl(int, int, ...);
 

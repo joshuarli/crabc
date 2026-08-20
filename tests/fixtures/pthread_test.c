@@ -15,15 +15,17 @@ static void *worker(void *arg) {
 }
 
 int main(void) {
-    pthread_t t1, t2;
+    pthread_t threads[10];
 
     pthread_mutex_init(&mutex, NULL);
-    pthread_create(&t1, NULL, worker, NULL);
-    pthread_create(&t2, NULL, worker, NULL);
-    pthread_join(t1, NULL);
-    pthread_join(t2, NULL);
+    pthread_mutex_lock(&mutex);
+    for (int i = 0; i < 10; i++)
+        pthread_create(&threads[i], NULL, worker, NULL);
+    pthread_mutex_unlock(&mutex);
+    for (int i = 0; i < 10; i++)
+        pthread_join(threads[i], NULL);
 
-    if (counter == 20000) {
+    if (counter == 100000) {
         printf("pthread ok\n");
         return 0;
     }

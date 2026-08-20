@@ -29,19 +29,6 @@ pub unsafe extern "C" fn munmap(addr: *mut c_void, len: usize) -> c_int {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pread(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize {
-    crate::syscall(
-        SYS_PREAD64,
-        fd as c_long,
-        buf as c_long,
-        count as c_long,
-        offset as c_long,
-        0,
-        0,
-    ) as isize
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn sysconf(name: c_int) -> c_long {
     match name {
         _SC_PAGE_SIZE => 4096,

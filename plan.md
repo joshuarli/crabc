@@ -2009,6 +2009,68 @@ basic synchronization
 basic stdio
 ```
 
+### Progress — 2026-08-20 UTC
+
+Milestone 1 is **complete**. The verified foundation is intentionally a
+bounded AArch64 runtime slice, not a claim that the remaining libc surface is
+complete.
+
+Implemented and verified in this slice:
+
+- Syscall failures now use one errno translation path, and `errno` is TLS.
+  Focused coverage checks invalid descriptor, clock, path, and stat calls in
+  both the initial and a pthread-created thread.
+- String and memory behavior has focused boundary coverage plus a pinned-musl
+  differential workload for overlapping `memmove`, bounded searches,
+  `strncpy` padding, zero-length concatenation, `strlcpy`/`strlcat`, and
+  overlapping substring searches.
+- The allocator records allocation metadata independently of page alignment.
+  It now has checked size arithmetic, correct `realloc` preservation semantics,
+  aligned allocation, `posix_memalign`, and musl-compatible non-multiple sizes
+  for `aligned_alloc`.
+- Basic FD/filesystem work includes `openat`, `pread`, `pwrite`, `lstat`, and
+  `fstatat`, with correct syscall errno conversion and an AArch64 `struct stat`
+  layout. The public `fstatat` symbol is weak, matching musl metadata.
+- The AArch64 public ABI probe compares `FILE`, pthread opaque types,
+  `sigset_t`, signal-stack constants, and `struct stat` layouts directly with
+  pinned musl headers.
+- TLS initialization, 4 KiB TLS alignment, and `dlopen` TLS now work for the
+  loading thread and for a thread that predated the DSO. Dynamic TLS images are
+  relocated before they are copied, and dynamic AArch64 TLS descriptors expand
+  an older thread before calculating their TP-relative result.
+- Basic pthread synchronization retains the existing focused coverage and now
+  has a 10-thread mutex-contention regression. A mutex waiter can no longer
+  transform an unlocked mutex into an ownerless wait state. The upstream
+  `pthread_cond-smasher` was re-executed 1,000 times natively after this fix.
+- Existing process, clock, environment, pthread, and stdio integration tests
+  remain green; the libc-test functional suite independently exercises their
+  ordinary C call paths.
+
+The Python differential runner now disables compiler builtins and supports
+four exact, unnormalized workloads: `foundational`, `string-memory`,
+`allocator`, and `fd-filesystem`. All four pass against pinned musl 1.2.6.
+The `libc-test` development command now builds the workspace before invoking
+the Python runner, ensuring a report cannot accidentally describe stale
+artifacts.
+
+Final validation for this milestone:
+
+```text
+focused foundation integration tests: PASS
+pthread_cond-smasher native stress (1,000 executions): PASS
+musl differential (4 workloads): PASS
+symbol compatibility ratchet: PASS (690 candidate exports; no regression)
+libc-test functional: 72 PASS, 1 FAIL, 1 BUILDERROR
+libc-test regression: 66 PASS, 1 FAIL, 0 BUILDERROR, 1 oracle-environment SKIP
+libc-test API:        20 PASS, 0 FAIL, 59 BUILDERROR (strict crabc-header mode)
+```
+
+The remaining functional `strtold` failure and `wordexp` build error are math
+and shell-expansion work for later slices. `regression/sigaltstack` is a real
+signal-stack failure and remains outside this foundation milestone. The API
+BUILDERRORs are concentrated in unimplemented headers/interfaces; they are
+the intended input to Milestone 2's test-unlock work.
+
 ## Milestone 2 — Eliminate test blindness
 
 Use test-unlock analysis to expand surface until:

@@ -77,10 +77,12 @@ struct stat {
 #define S_IXOTH 0001
 
 #define AT_FDCWD (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
 
 int stat(const char *, struct stat *);
 int fstat(int, struct stat *);
 int lstat(const char *, struct stat *);
+int fstatat(int, const char *, struct stat *, int);
 int fchmod(int, unsigned int);
 int mkdir(const char *, unsigned int);
 int mkfifo(const char *, unsigned int);

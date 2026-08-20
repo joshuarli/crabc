@@ -4,7 +4,12 @@
 #include <stddef.h>
 #include <time.h>
 
-typedef unsigned long sigset_t;
+#ifndef _SIGSET_T_DEFINED
+#define _SIGSET_T_DEFINED
+typedef struct __sigset_t {
+    unsigned long __bits[128 / sizeof(unsigned long)];
+} sigset_t;
+#endif
 
 typedef unsigned long pthread_t;
 
@@ -17,16 +22,51 @@ typedef struct { unsigned __attr; } pthread_condattr_t;
 typedef struct { unsigned __attr[2]; } pthread_rwlockattr_t;
 typedef struct { unsigned __attr; } pthread_barrierattr_t;
 
-typedef struct { int __i[10]; } pthread_mutex_t;
-typedef struct { int __i[12]; } pthread_cond_t;
-typedef struct { int __i[14]; } pthread_rwlock_t;
-typedef struct { int __i[8]; } pthread_barrier_t;
+/*
+ * These unions are not implementation detail from an ABI perspective:
+ * pointer members give the opaque objects their required AArch64 alignment
+ * while preserving musl's int-array storage used by the implementation.
+ */
+typedef struct {
+    union {
+        int __i[10];
+        volatile int __vi[10];
+        volatile void *volatile __p[5];
+    } __u;
+} pthread_mutex_t;
+typedef struct {
+    union {
+        int __i[12];
+        volatile int __vi[12];
+        void *__p[6];
+    } __u;
+} pthread_cond_t;
+typedef struct {
+    union {
+        int __i[14];
+        volatile int __vi[14];
+        void *__p[7];
+    } __u;
+} pthread_rwlock_t;
+typedef struct {
+    union {
+        int __i[8];
+        volatile int __vi[8];
+        void *__p[4];
+    } __u;
+} pthread_barrier_t;
 
 typedef int pthread_spinlock_t;
 typedef int pthread_once_t;
 typedef unsigned pthread_key_t;
 
-typedef struct { int __i[14]; } pthread_attr_t;
+typedef struct {
+    union {
+        int __i[14];
+        volatile int __vi[14];
+        unsigned long __s[7];
+    } __u;
+} pthread_attr_t;
 
 #define PTHREAD_CREATE_JOINABLE 0
 #define PTHREAD_CREATE_DETACHED 1
@@ -62,9 +102,9 @@ typedef struct { int __i[14]; } pthread_attr_t;
 
 #define PTHREAD_ONCE_INIT 0
 
-#define PTHREAD_MUTEX_INITIALIZER {{0}}
-#define PTHREAD_RWLOCK_INITIALIZER {{0}}
-#define PTHREAD_COND_INITIALIZER {{0}}
+#define PTHREAD_MUTEX_INITIALIZER {{{0}}}
+#define PTHREAD_RWLOCK_INITIALIZER {{{0}}}
+#define PTHREAD_COND_INITIALIZER {{{0}}}
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                    void *(*start_routine)(void *), void *arg);

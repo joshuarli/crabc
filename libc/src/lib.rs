@@ -2,6 +2,7 @@
 #![feature(c_variadic)]
 #![feature(linkage)]
 #![feature(f128)]
+#![feature(thread_local)]
 #![allow(dead_code, non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, VaList};
@@ -49,6 +50,7 @@ const EOVERFLOW: c_int = 75;
 const EOWNERDEAD: c_int = 130;
 const ENOTRECOVERABLE: c_int = 131;
 
+#[thread_local]
 static mut ERRNO: c_int = 0;
 
 #[no_mangle]
@@ -534,6 +536,7 @@ mod sysnr {
     pub const SYS_CLONE: i64 = 56;
     pub const SYS_PPOLL: i64 = 271;
     pub const SYS_PREAD64: i64 = 17;
+    pub const SYS_PWRITE64: i64 = 18;
 }
 #[cfg(target_arch = "aarch64")]
 mod sysnr {
@@ -640,6 +643,7 @@ mod sysnr {
     pub const SYS_CLONE: i64 = 220;
     pub const SYS_PPOLL: i64 = 73;
     pub const SYS_PREAD64: i64 = 67;
+    pub const SYS_PWRITE64: i64 = 68;
 }
 // riscv64 uses the same new-style syscall table as aarch64
 #[cfg(target_arch = "riscv64")]
@@ -742,6 +746,7 @@ mod sysnr {
     pub const SYS_CLONE: i64 = 220;
     pub const SYS_PPOLL: i64 = 73;
     pub const SYS_PREAD64: i64 = 67;
+    pub const SYS_PWRITE64: i64 = 68;
 }
 pub use sysnr::*;
 
@@ -765,13 +770,34 @@ unsafe fn sys_open(path: *const u8, flags: i64, mode: i64) -> i64 {
 }
 
 #[inline]
-unsafe fn sys_close(fd: i64) {
-    let _ = <Arch as Syscalls>::syscall1(SYS_CLOSE, fd as i64);
+unsafe fn sys_openat(dirfd: c_int, path: *const u8, flags: c_int, mode: c_int) -> i64 {
+    <Arch as Syscalls>::syscall4(
+        SYS_OPENAT,
+        dirfd as i64,
+        path as i64,
+        flags as i64,
+        mode as i64,
+    )
+}
+
+#[inline]
+unsafe fn sys_close(fd: i64) -> i64 {
+    <Arch as Syscalls>::syscall1(SYS_CLOSE, fd as i64)
 }
 
 #[inline]
 unsafe fn sys_lseek(fd: i64, offset: i64, whence: i64) -> i64 {
     <Arch as Syscalls>::syscall3(SYS_LSEEK, fd as i64, offset as i64, whence as i64)
+}
+
+#[inline]
+unsafe fn sys_pread64(fd: c_int, buf: *mut u8, count: usize, offset: i64) -> i64 {
+    <Arch as Syscalls>::syscall4(SYS_PREAD64, fd as i64, buf as i64, count as i64, offset)
+}
+
+#[inline]
+unsafe fn sys_pwrite64(fd: c_int, buf: *const u8, count: usize, offset: i64) -> i64 {
+    <Arch as Syscalls>::syscall4(SYS_PWRITE64, fd as i64, buf as i64, count as i64, offset)
 }
 
 unsafe fn sys_mmap(
@@ -792,6 +818,20 @@ unsafe fn sys_mmap(
 
 unsafe fn sys_munmap(addr: *mut u8, length: usize) -> i64 {
     <Arch as Syscalls>::syscall2(SYS_MUNMAP, addr as i64, length as i64)
+}
+
+// Linux syscall wrappers return a negative errno in the range -4095..-1.
+// Public libc entry points convert that kernel convention to -1 and publish
+// the positive errno through __errno_location, while internal sys_* helpers
+// retain the raw result for callers that need to inspect it.
+#[inline]
+unsafe fn syscall_result(result: i64) -> i64 {
+    if result < 0 && result >= -4095 {
+        ERRNO = (-result) as c_int;
+        -1
+    } else {
+        result
+    }
 }
 
 // ============================================================
@@ -1854,7 +1894,7 @@ unsafe fn sys_clock_gettime(clockid: c_int, ts: *mut timespec) -> i64 {
 
 #[no_mangle]
 pub unsafe extern "C" fn clock_gettime(clockid: c_int, ts: *mut timespec) -> c_int {
-    if sys_clock_gettime(clockid, ts) < 0 { -1 } else { 0 }
+    if syscall_result(sys_clock_gettime(clockid, ts)) < 0 { -1 } else { 0 }
 }
 
 #[no_mangle]
@@ -2757,6 +2797,28 @@ pub unsafe extern "C" fn posix_spawnattr_destroy(_attr: *mut posix_spawnattr_t) 
 // sys/stat.h: stat / fstat / utimensat / futimens
 // ============================================================
 
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+pub struct Stat {
+    pub st_dev: u64,
+    pub st_ino: u64,
+    pub st_mode: u32,
+    pub st_nlink: u32,
+    pub st_uid: u32,
+    pub st_gid: u32,
+    pub st_rdev: u64,
+    _pad0: u64,
+    pub st_size: i64,
+    pub st_blksize: i32,
+    _pad1: i32,
+    pub st_blocks: i64,
+    pub st_atim: timespec,
+    pub st_mtim: timespec,
+    pub st_ctim: timespec,
+    _unused: [u32; 2],
+}
+
+#[cfg(not(target_arch = "aarch64"))]
 #[repr(C)]
 pub struct Stat {
     pub st_dev: u64,
@@ -2786,6 +2848,7 @@ pub const S_IFIFO: u32 = 0o010000;
 pub const S_IFSOCK: u32 = 0o140000;
 
 pub const AT_FDCWD: i32 = -100;
+pub const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 
 #[no_mangle]
 pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut Stat) -> c_int {
@@ -2800,6 +2863,24 @@ pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut Stat) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn fstat(fd: c_int, buf: *mut Stat) -> c_int {
     let r = sys_fstat(fd, buf as *mut u8);
+    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn lstat(path: *const c_char, buf: *mut Stat) -> c_int {
+    let r = sys_newfstatat(AT_FDCWD, path, buf as *mut u8, AT_SYMLINK_NOFOLLOW);
+    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+}
+
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn fstatat(
+    dirfd: c_int,
+    path: *const c_char,
+    buf: *mut Stat,
+    flags: c_int,
+) -> c_int {
+    let r = sys_newfstatat(dirfd, path, buf as *mut u8, flags);
     if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
 }
 
@@ -3994,7 +4075,14 @@ unsafe fn mutex_lock_internal(m: *mut pthread_mutex_t, abs_timeout: *const times
         }
         a_fetch_add(&raw mut (*m).__i[2], 1);
         let val = a_load(&raw const (*m).__i[1]);
-        a_cas(&raw mut (*m).__i[1], val, val | (1i32 << 31));
+        // Never turn an unlocked mutex into a waiters-marked value. If the
+        // owner released it between trylock and this wait setup, retry the
+        // acquisition path; waiting on `0x80000000` would strand the thread
+        // because no owner exists to issue the next wake.
+        if val == 0 || a_cas(&raw mut (*m).__i[1], val, val | (1i32 << 31)) != val {
+            a_fetch_sub(&raw mut (*m).__i[2], 1);
+            continue;
+        }
         let e = futex_timedwait(&raw mut (*m).__i[1], val | (1i32 << 31), abs_timeout);
         a_fetch_sub(&raw mut (*m).__i[2], 1);
         if e != 0 && e != EINTR { return e; }
@@ -4093,6 +4181,7 @@ pub unsafe extern "C" fn pthread_cond_destroy(_cond: *mut pthread_cond_t) -> c_i
 pub unsafe extern "C" fn pthread_cond_wait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t) -> c_int {
     pthread_cond_timedwait(cond, mutex, core::ptr::null())
 }
+
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_timedwait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t, abs_timeout: *const timespec) -> c_int {
     pthread_testcancel();
@@ -5785,28 +5874,66 @@ pub unsafe extern "C" fn iconv_close(_cd: IconvT) -> c_int { 0 }
 
 #[no_mangle]
 pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
-    sys_write(fd as i64, buf as *const u8, count) as SSizeT
+    syscall_result(sys_write(fd as i64, buf as *const u8, count)) as SSizeT
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
-    sys_read(fd as i64, buf as *mut u8, count) as SSizeT
+    syscall_result(sys_read(fd as i64, buf as *mut u8, count)) as SSizeT
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_int) -> c_int {
-    sys_open(path as *const u8, flags as i64, mode as i64) as c_int
+    syscall_result(sys_open(path as *const u8, flags as i64, mode as i64)) as c_int
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn openat(
+    dirfd: c_int,
+    path: *const c_char,
+    flags: c_int,
+    mode: c_int,
+) -> c_int {
+    syscall_result(sys_openat(dirfd, path as *const u8, flags, mode)) as c_int
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn creat(path: *const c_char, mode: c_uint) -> c_int {
+    syscall_result(sys_open(
+        path as *const u8,
+        (O_WRONLY | O_CREAT | O_TRUNC) as i64,
+        mode as i64,
+    )) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn close(fd: c_int) -> c_int {
-    sys_close(fd as i64);
-    0
+    syscall_result(sys_close(fd as i64)) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
-    sys_lseek(fd as i64, offset, whence as i64)
+    syscall_result(sys_lseek(fd as i64, offset, whence as i64))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pread(
+    fd: c_int,
+    buf: *mut c_void,
+    count: SizeT,
+    offset: i64,
+) -> SSizeT {
+    syscall_result(sys_pread64(fd, buf as *mut u8, count, offset)) as SSizeT
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pwrite(
+    fd: c_int,
+    buf: *const c_void,
+    count: SizeT,
+    offset: i64,
+) -> SSizeT {
+    syscall_result(sys_pwrite64(fd, buf as *const u8, count, offset)) as SSizeT
 }
 
 // ============================================================
@@ -8675,34 +8802,98 @@ pub unsafe extern "C" fn rename(old: *const c_char, new_: *const c_char) -> c_in
 }
 
 // ============================================================
-// Allocator: mmap-backed bump allocator
-// ponytail: per-page mmap, free is a no-op, leaks on realloc
+// Allocator: mmap-backed independent allocations
+//
+// Each allocation carries its mapping base, mapping size, and requested size.
+// The requested size is deliberately distinct from the page-rounded mapping:
+// realloc may copy only bytes that belong to the caller's old object.  The
+// mapping base lets aligned allocations keep an interior header immediately
+// before their returned pointer while still releasing the full mapping.
 // ============================================================
 
 const MMAP_FAILED: *mut u8 = !0usize as *mut u8;
 const PAGE: usize = 4096;
+const MALLOC_ALIGNMENT: usize = 16;
 
-#[no_mangle]
-pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
-    // C requires malloc(0) to return either NULL or a unique non-NULL pointer
-    // that can be passed to free. Return a one-page allocation for uniqueness.
-    let alloc_size = if size == 0 { 1 } else { size };
-    // Layout: [alloc_size: usize][data]
-    let total = alloc_size + core::mem::size_of::<usize>();
-    let pages = (total + PAGE - 1) & !(PAGE - 1);
-    let ptr = sys_mmap(
+#[repr(C)]
+struct AllocationHeader {
+    mapping_base: *mut u8,
+    mapping_size: usize,
+    requested_size: usize,
+}
+
+#[inline]
+fn is_power_of_two(value: usize) -> bool {
+    value != 0 && (value & (value - 1)) == 0
+}
+
+unsafe fn allocate(size: SizeT, requested_alignment: usize) -> *mut c_void {
+    let header_alignment = core::mem::align_of::<AllocationHeader>();
+    let alignment = if requested_alignment < header_alignment {
+        header_alignment
+    } else {
+        requested_alignment
+    };
+    if !is_power_of_two(alignment) {
+        ERRNO = EINVAL;
+        return null_mut();
+    }
+
+    // A zero-size allocation is still a separately freeable object.  Its
+    // logical requested size remains zero so realloc never copies bytes the
+    // caller did not own.
+    let payload_size = if size == 0 { 1 } else { size };
+    let metadata_and_payload = match core::mem::size_of::<AllocationHeader>()
+        .checked_add(payload_size)
+    {
+        Some(value) => value,
+        None => {
+            ERRNO = ENOMEM;
+            return null_mut();
+        }
+    };
+    let with_alignment_slack = match metadata_and_payload.checked_add(alignment - 1) {
+        Some(value) => value,
+        None => {
+            ERRNO = ENOMEM;
+            return null_mut();
+        }
+    };
+    let rounded_input = match with_alignment_slack.checked_add(PAGE - 1) {
+        Some(value) => value,
+        None => {
+            ERRNO = ENOMEM;
+            return null_mut();
+        }
+    };
+    let mapping_size = rounded_input & !(PAGE - 1);
+    let mapping_base = sys_mmap(
         null_mut(),
-        pages,
+        mapping_size,
         PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS,
         -1,
         0,
     );
-    if ptr == MMAP_FAILED {
+    if mapping_base == MMAP_FAILED {
         return null_mut();
     }
-    *(ptr as *mut usize) = pages;
-    ptr.add(core::mem::size_of::<usize>()) as *mut c_void
+
+    let first_payload = mapping_base.add(core::mem::size_of::<AllocationHeader>()) as usize;
+    let user_address = (first_payload + alignment - 1) & !(alignment - 1);
+    let header = (user_address - core::mem::size_of::<AllocationHeader>())
+        as *mut AllocationHeader;
+    header.write(AllocationHeader {
+        mapping_base,
+        mapping_size,
+        requested_size: size,
+    });
+    user_address as *mut c_void
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
+    allocate(size, MALLOC_ALIGNMENT)
 }
 
 #[no_mangle]
@@ -8710,14 +8901,21 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     if ptr.is_null() {
         return;
     }
-    let header = (ptr as *mut u8).sub(core::mem::size_of::<usize>());
-    let pages = *(header as *const usize);
-    sys_munmap(header, pages);
+    let header = (ptr as *mut u8).sub(core::mem::size_of::<AllocationHeader>())
+        as *const AllocationHeader;
+    let allocation = header.read();
+    let _ = sys_munmap(allocation.mapping_base, allocation.mapping_size);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
-    let total = count.saturating_mul(size);
+    let total = match count.checked_mul(size) {
+        Some(value) => value,
+        None => {
+            ERRNO = ENOMEM;
+            return null_mut();
+        }
+    };
     let ptr = malloc(total);
     if !ptr.is_null() {
         core::ptr::write_bytes(ptr as *mut u8, 0, total);
@@ -8734,21 +8932,50 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_vo
         free(ptr);
         return null_mut();
     }
-    let header = (ptr as *mut u8).sub(core::mem::size_of::<usize>());
-    let old_pages = *(header as *const usize);
-    let old_data_size = old_pages - core::mem::size_of::<usize>();
+    let header = (ptr as *mut u8).sub(core::mem::size_of::<AllocationHeader>())
+        as *const AllocationHeader;
+    let old_size = (*header).requested_size;
     let new_ptr = malloc(new_size);
     if new_ptr.is_null() {
         return null_mut();
     }
-    let copy_size = if old_data_size < new_size {
-        old_data_size
+    let copy_size = if old_size < new_size {
+        old_size
     } else {
         new_size
     };
     core::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size);
     free(ptr);
     new_ptr
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void {
+    // musl's aligned_alloc is its memalign entry point: it requires a valid
+    // power-of-two alignment, but does not reject a size that is not an exact
+    // multiple of that alignment.
+    if !is_power_of_two(alignment) {
+        ERRNO = EINVAL;
+        return null_mut();
+    }
+    allocate(size, alignment)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn posix_memalign(
+    result: *mut *mut c_void,
+    alignment: SizeT,
+    size: SizeT,
+) -> c_int {
+    if result.is_null() || !is_power_of_two(alignment) || alignment % core::mem::size_of::<*mut c_void>() != 0 {
+        return EINVAL;
+    }
+    let allocation = allocate(size, alignment);
+    if allocation.is_null() {
+        return ENOMEM;
+    }
+    result.write(allocation);
+    0
 }
 
 // ============================================================

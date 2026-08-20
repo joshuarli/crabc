@@ -132,6 +132,10 @@ case "$command" in
         ;;
     libc-test)
         ensure_image
+        # The Python runner deliberately reuses existing artifacts when they
+        # exist. Build here so a harness invocation always measures the
+        # checked-out source rather than an earlier compatibility run.
+        run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 libc-test-harness/runner.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py

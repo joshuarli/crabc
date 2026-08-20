@@ -168,11 +168,23 @@ static mut LOADED: [LoadedObject; MAX_LOADED] = [EMPTY_OBJ; MAX_LOADED];
 static mut LOADED_COUNT: usize = 0;
 
 static mut TLS_TOTAL_SIZE: usize = 0;
+// The logical end of placed TLS modules.  ``TLS_TOTAL_SIZE`` is deliberately
+// a larger allocated capacity so a newly loaded DSO can extend the layout
+// without discarding the static modules that have already been initialized.
+static mut TLS_USED_SIZE: usize = 0;
+// On AArch64, TP must retain the strongest static TLS alignment.  The TCB
+// lives below TP, so a fixed 256-byte TCB alone is insufficient when an
+// executable has, for example, a 4 KiB-aligned local-exec TLS variable.
+static mut TLS_TP_OFFSET: usize = TCB_SIZE;
 static mut TLS_LAYOUT_OFFSET: [usize; MAX_LOADED] = [0; MAX_LOADED];
 static mut TLS_FILESZ: [u64; MAX_LOADED] = [0; MAX_LOADED];
 static mut TLS_MEMSZ: [u64; MAX_LOADED] = [0; MAX_LOADED];
 static mut TLS_IMAGE: [*const u8; MAX_LOADED] = [core::ptr::null(); MAX_LOADED];
 static mut TLS_MODULE_COUNT: usize = 0;
+// Modules present before the initial TLS block is created can use a fixed
+// TP-relative descriptor. A module loaded later must consult the current
+// thread because pre-existing threads do not yet contain its TLS image.
+static mut TLS_STATIC_MODULE_COUNT: usize = 0;
 static mut TLS_GENERATION: u64 = 1;
 static mut TLS_OLD_TOTAL: usize = 0;
 static mut TLS_OLD_MODULE_COUNT: usize = 0;
@@ -1701,7 +1713,7 @@ unsafe fn tls_var_area_offset_from_block() -> usize {
     #[cfg(target_arch = "x86_64")]
     { 0 }
     #[cfg(target_arch = "aarch64")]
-    { TCB_SIZE }
+    { TLS_TP_OFFSET }
     #[cfg(target_arch = "riscv64")]
     { TCB_SIZE }
 }
@@ -1719,7 +1731,7 @@ unsafe fn tls_tp_offset_from_block() -> usize {
     #[cfg(target_arch = "x86_64")]
     { TLS_TOTAL_SIZE }
     #[cfg(target_arch = "aarch64")]
-    { TCB_SIZE }
+    { TLS_TP_OFFSET }
     #[cfg(target_arch = "riscv64")]
     { TCB_SIZE }
 }
@@ -1737,7 +1749,7 @@ unsafe fn tls_tcb_offset_from_tp() -> isize {
     #[cfg(target_arch = "x86_64")]
     { 0 }
     #[cfg(target_arch = "aarch64")]
-    { -(TCB_SIZE as isize) }
+    { -(TLS_TP_OFFSET as isize) }
     #[cfg(target_arch = "riscv64")]
     { -(TCB_SIZE as isize) }
 }
@@ -1919,6 +1931,23 @@ unsafe fn apply_rela_table(
         } else if r_type == R_AARCH64_TLSDESC || r_type == R_RISCV_TLSDESC {
             let fs_off = tls_tprel_offset(obj_idx, r_sym_idx, r_addend);
             let desc = slot as *mut [u64; 2];
+            #[cfg(target_arch = "aarch64")]
+            if obj_idx >= TLS_STATIC_MODULE_COUNT {
+                let module = if r_sym_idx == 0 {
+                    obj_idx
+                } else {
+                    resolve_symbol_module(obj_idx, r_sym_idx)
+                };
+                let offset = (tls_sym_offset(obj_idx, r_sym_idx) as i64 + r_addend) as usize;
+                if module >= (1usize << (usize::BITS as usize - TLSDESC_MODULE_SHIFT))
+                    || offset > TLSDESC_OFFSET_MASK
+                {
+                    die(94, b"tlsdesc", offset);
+                }
+                (*desc)[0] = __tlsdesc_dynamic as *const () as u64;
+                (*desc)[1] = ((module << TLSDESC_MODULE_SHIFT) | offset) as u64;
+                continue;
+            }
             (*desc)[0] = __tlsdesc_static as *const () as u64;
             (*desc)[1] = fs_off as u64;
         }
@@ -1959,6 +1988,27 @@ unsafe extern "C" fn __tlsdesc_static(desc: *const u64) -> u64 {
     arg
 }
 
+/// AArch64 stores the descriptor argument in one machine word. `MAX_LOADED`
+/// is deliberately small, leaving 56 bits for a TLS symbol offset and making
+/// this encoding lossless for every addressable TLS image in this loader.
+const TLSDESC_MODULE_SHIFT: usize = 56;
+const TLSDESC_OFFSET_MASK: usize = (1usize << TLSDESC_MODULE_SHIFT) - 1;
+
+/// Resolve TLS from a DSO loaded after threads may already exist. The call to
+/// `__tls_get_addr` expands an older thread's TLS block before the returned
+/// address is converted back to the TP-relative value the AArch64 TLSDESC ABI
+/// expects.
+#[no_mangle]
+unsafe extern "C" fn __tlsdesc_dynamic(desc: *const u64) -> u64 {
+    let encoded = core::ptr::read_unaligned(desc.add(1)) as usize;
+    let index = TlsIndex {
+        ti_module: encoded >> TLSDESC_MODULE_SHIFT,
+        ti_offset: encoded & TLSDESC_OFFSET_MASK,
+    };
+    let address = __tls_get_addr(&index) as usize;
+    address.wrapping_sub(read_tp()) as u64
+}
+
 unsafe fn tls_lock() {
     while TLS_LOCK.swap(true, Ordering::Acquire) {}
 }
@@ -1968,7 +2018,7 @@ unsafe fn tls_unlock() {
 }
 
 unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) {
-    let total = TLS_TOTAL_SIZE + TCB_SIZE;
+    let total = TLS_TOTAL_SIZE + tls_tp_offset_from_block();
     let block = sys_mmap(
         core::ptr::null_mut(),
         total,
@@ -2006,39 +2056,53 @@ unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) {
     write_tp(block.add(tls_tp_offset_from_block()) as usize);
 }
 
-unsafe fn update_tls_for_new_module(idx: usize) {
+/// Reserve a dynamic TLS module in the process layout. The caller holds the
+/// resulting lock until its relocations have made its TLS image usable, then
+/// completes the update with `initialize_new_module_tls`.
+unsafe fn register_tls_for_new_module(idx: usize) -> Option<(usize, usize)> {
     let obj = &LOADED[idx];
     if obj.tls_memsz == 0 {
-        return;
+        return None;
     }
     tls_lock();
     let old_total = TLS_TOTAL_SIZE;
     let old_module_count = TLS_MODULE_COUNT;
     let align = if obj.tls_align > 0 { obj.tls_align as usize } else { 1 };
 
-    let mut highest_end: usize = 0;
-    for i in 0..old_module_count {
-        let block_size = ((TLS_MEMSZ[i] as usize + align - 1) / align) * align;
-        let end = TLS_LAYOUT_OFFSET[i] + block_size;
-        if end > highest_end {
-            highest_end = end;
-        }
+    // Existing modules retain their original alignments.  Reusing the new
+    // module's alignment for every prior module could move their offsets;
+    // replacing TLS_TOTAL_SIZE with that recomputed end then shrank the live
+    // block to a few bytes during dlopen.  TLS_USED_SIZE is the monotonic
+    // logical frontier, while TLS_TOTAL_SIZE remains its allocation capacity.
+    let new_offset = (TLS_USED_SIZE + align - 1) & !(align - 1);
+    let new_used = new_offset + obj.tls_memsz as usize;
+    if new_used > TLS_TOTAL_SIZE {
+        let doubled = new_used.saturating_mul(2);
+        let minimum = if doubled < 4096 { 4096 } else { doubled };
+        TLS_TOTAL_SIZE = (minimum + 4095) & !4095;
     }
-
-    let new_offset = (highest_end + align - 1) & !(align - 1);
+    #[cfg(target_arch = "aarch64")]
+    if align > TLS_TP_OFFSET {
+        TLS_TP_OFFSET = align;
+    }
     TLS_LAYOUT_OFFSET[idx] = new_offset;
     TLS_FILESZ[idx] = obj.tls_filesz;
     TLS_MEMSZ[idx] = obj.tls_memsz;
     TLS_IMAGE[idx] = obj.tls_image;
-    TLS_TOTAL_SIZE = new_offset + obj.tls_memsz as usize;
+    TLS_USED_SIZE = new_used;
     TLS_MODULE_COUNT = LOADED_COUNT;
     TLS_GENERATION = TLS_GENERATION.wrapping_add(1);
     if TLS_GENERATION == 0 {
         TLS_GENERATION = 1;
     }
 
-    expand_thread_tls(old_total, old_module_count);
+    Some((old_total, old_module_count))
+}
 
+/// Copy the relocated image of a newly registered TLS module into this
+/// thread, then let other threads observe the new generation.
+unsafe fn initialize_new_module_tls(old_total: usize, old_module_count: usize) {
+    expand_thread_tls(old_total, old_module_count);
     TLS_OLD_TOTAL = old_total;
     TLS_OLD_MODULE_COUNT = old_module_count;
     tls_unlock();
@@ -2150,8 +2214,14 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     let idx = LOADED_COUNT - 1;
     set_loaded_name(idx, filename, name_len);
     LOADED[idx].global = (flags & RTLD_GLOBAL) != 0;
+    // TLS descriptors need the final module offset, while the TLS image can
+    // contain ordinary relocations. Reserve the layout, relocate the image,
+    // then copy that relocated image into the current thread's TLS block.
+    let tls_update = register_tls_for_new_module(idx);
     process_all_relocations();
-    update_tls_for_new_module(idx);
+    if let Some((old_total, old_module_count)) = tls_update {
+        initialize_new_module_tls(old_total, old_module_count);
+    }
     run_constructors_for(idx);
     &mut LOADED[idx] as *mut LoadedObject as *mut u8
 }
@@ -2214,9 +2284,15 @@ pub unsafe extern "C" fn __ldso_dlerror() -> *const u8 {
 
 unsafe fn compute_tls_layout() {
     let mut total: usize = 0;
+    #[cfg(target_arch = "aarch64")]
+    let mut tp_alignment: usize = TCB_SIZE;
     for i in 0..LOADED_COUNT {
         let obj = &LOADED[i];
         let align = if obj.tls_align > 0 { obj.tls_align as usize } else { 1 };
+        #[cfg(target_arch = "aarch64")]
+        if align > tp_alignment {
+            tp_alignment = align;
+        }
         let block_size = ((obj.tls_memsz as usize + align - 1) / align) * align;
         total += block_size;
     }
@@ -2227,10 +2303,13 @@ unsafe fn compute_tls_layout() {
     TLS_TOTAL_SIZE = (total + 4095) & !4095;
     #[cfg(target_arch = "aarch64")]
     {
-        // AArch64 uses the TLS_ABOVE_TP layout: the variable area is at positive
-        // offsets from TP, with a fixed gap at the start. The linker expects
-        // module offsets to maintain the same alignment congruence as the image
-        // address in the file so that each TLS symbol is correctly aligned.
+        TLS_TP_OFFSET = tp_alignment;
+        // AArch64 uses TLS_ABOVE_TP: static TLS starts at a positive offset
+        // from TP.  The static linker has already encoded those offsets in
+        // local-exec instructions, so the first module must begin at the next
+        // boundary of its PT_TLS alignment *relative to TP*.  Matching the
+        // file-image address here is wrong when the TCB itself is not aligned
+        // to that boundary (for example a 4 KiB-aligned TLS variable).
         const GAP_ABOVE_TP: usize = 16;
         let mut offset = GAP_ABOVE_TP;
         for i in 0..LOADED_COUNT {
@@ -2243,12 +2322,7 @@ unsafe fn compute_tls_layout() {
                 continue;
             }
             let align = if obj.tls_align > 0 { obj.tls_align as usize } else { 1 };
-            let image = obj.tls_image as usize;
-            // The variable area base is block + TCB_SIZE. Since the block is
-            // page-aligned, its residue modulo align is TCB_SIZE % align.
-            let var_base_mod = TCB_SIZE % align;
-            let desired = image.wrapping_sub(var_base_mod).wrapping_sub(offset) & (align - 1);
-            offset += desired;
+            offset = (offset + align - 1) & !(align - 1);
             TLS_LAYOUT_OFFSET[i] = offset;
             TLS_FILESZ[i] = obj.tls_filesz;
             TLS_MEMSZ[i] = obj.tls_memsz;
@@ -2256,6 +2330,7 @@ unsafe fn compute_tls_layout() {
             let block_size = ((obj.tls_memsz as usize + align - 1) / align) * align;
             offset += block_size;
         }
+        TLS_USED_SIZE = offset;
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -2281,6 +2356,7 @@ unsafe fn compute_tls_layout() {
             TLS_MEMSZ[i] = obj.tls_memsz;
             TLS_IMAGE[i] = obj.tls_image;
         }
+        TLS_USED_SIZE = TLS_TOTAL_SIZE - end;
     }
 
     #[cfg(target_arch = "riscv64")]
@@ -2308,6 +2384,7 @@ unsafe fn compute_tls_layout() {
             let block_size = ((obj.tls_memsz as usize + align - 1) / align) * align;
             offset += block_size;
         }
+        TLS_USED_SIZE = offset;
     }
 
     TLS_MODULE_COUNT = LOADED_COUNT;
@@ -2364,7 +2441,7 @@ pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut u8 {
 
 #[no_mangle]
 pub unsafe extern "C" fn __rc_create_thread_tls() -> *mut u8 {
-    let total = TLS_TOTAL_SIZE + TCB_SIZE;
+    let total = TLS_TOTAL_SIZE + tls_tp_offset_from_block();
     if total == 0 {
         return core::ptr::null_mut();
     }
@@ -2384,12 +2461,12 @@ pub unsafe extern "C" fn __rc_create_thread_tls() -> *mut u8 {
 
 #[no_mangle]
 pub unsafe extern "C" fn __rc_tls_block_size() -> usize {
-    TLS_TOTAL_SIZE + TCB_SIZE
+    TLS_TOTAL_SIZE + tls_tp_offset_from_block()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn __rc_tls_base_offset() -> usize {
-    tls_var_area_offset_from_tp() + tls_var_area_offset_from_block()
+    tls_tp_offset_from_block()
 }
 
 unsafe fn register_self(ldso_base: u64) {
@@ -2785,6 +2862,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     }
 
     compute_tls_layout();
+    TLS_STATIC_MODULE_COUNT = TLS_MODULE_COUNT;
     TLS_OLD_TOTAL = TLS_TOTAL_SIZE;
     TLS_OLD_MODULE_COUNT = TLS_MODULE_COUNT;
 
@@ -2794,7 +2872,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     // Always allocate a TCB so that %fs-relative accesses (e.g. stack canary
     // at %fs:0x28) work even when there is no TLS data in the binary.
     {
-        let alloc_size = TLS_TOTAL_SIZE + TCB_SIZE;
+        let alloc_size = TLS_TOTAL_SIZE + tls_tp_offset_from_block();
         let tls_block = sys_mmap(
             core::ptr::null_mut(),
             alloc_size,

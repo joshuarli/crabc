@@ -42,6 +42,12 @@ Cargo.lock
 /tests/fixtures/net_test
 /tests/fixtures/wave4_test
 /tests/fixtures/wave5_test
+/tests/fixtures/aarch64_abi_layout_test
+/tests/fixtures/allocator_test
+/tests/fixtures/errno_syscall_test
+/tests/fixtures/fd_filesystem_test
+/tests/fixtures/ldso_dynamic_tls_test
+/tests/fixtures/ldso_tls_alignment_test
 
 # libc-test harness generated files
 /libc-test-harness/build/

@@ -67,15 +67,22 @@ typedef void (*sighandler_t)(int);
 
 #define SS_ONSTACK    1
 #define SS_DISABLE    2
+#if defined(__aarch64__)
+#define MINSIGSTKSZ   6144
+#define SIGSTKSZ      12288
+#else
 #define MINSIGSTKSZ   2048
 #define SIGSTKSZ      8192
+#endif
 
 #define SI_USER   0
 #define SI_TKILL  (-6)
 
 #ifndef _SIGSET_T_DEFINED
 #define _SIGSET_T_DEFINED
-typedef unsigned long sigset_t;
+typedef struct __sigset_t {
+    unsigned long __bits[128 / sizeof(unsigned long)];
+} sigset_t;
 #endif
 
 struct sigaction {
