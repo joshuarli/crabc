@@ -308,9 +308,18 @@ id = "event.poll"
 feature = "event"
 rustix = "event::poll"
 crabc = "event::poll"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_event.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "event.eventfd"
+feature = "event"
+rustix = "event::{eventfd,EventfdFlags}"
+crabc = "event::{eventfd,EventfdFlags}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_event.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "event.epoll"
@@ -326,9 +335,9 @@ id = "pipe.pipe"
 feature = "pipe"
 rustix = "pipe::pipe"
 crabc = "pipe::pipe"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_time_pipe_random.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "pipe.splice"
@@ -342,20 +351,20 @@ tests = ["compat/rustix/tests/test_harness.py"]
 [[api]]
 id = "mm.mmap"
 feature = "mm"
-rustix = "mm::mmap"
-crabc = "mm::mmap"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+rustix = "mm::{mmap_anonymous,mprotect}"
+crabc = "mm::{mmap_anonymous,mprotect}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "mm.munmap"
 feature = "mm"
 rustix = "mm::munmap"
 crabc = "mm::munmap"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.socket"
@@ -371,9 +380,9 @@ id = "net.socketpair"
 feature = "net"
 rustix = "net::socketpair"
 crabc = "net::socketpair"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.connect"
@@ -387,11 +396,11 @@ tests = ["compat/rustix/tests/test_harness.py"]
 [[api]]
 id = "net.send-recv"
 feature = "net"
-rustix = "net::send"
-crabc = "net::send/recv"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+rustix = "net::{send,recv}"
+crabc = "net::{send,recv}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "param.page-size"
@@ -407,18 +416,18 @@ id = "rand.getrandom"
 feature = "rand"
 rustix = "rand::getrandom"
 crabc = "rand::getrandom"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_time_pipe_random.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.clock-gettime"
 feature = "time"
-rustix = "time::clock_gettime"
-crabc = "time::clock_gettime"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+rustix = "time::{ClockId,clock_gettime,clock_getres}"
+crabc = "time::{ClockId,clock_gettime,clock_getres}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_time_pipe_random.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.timerfd"

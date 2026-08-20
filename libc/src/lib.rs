@@ -832,16 +832,22 @@ unsafe fn sys_mmap(
     fd: i32,
     offset: i64,
 ) -> *mut u8 {
-    let result = <Arch as Syscalls>::syscall6(SYS_MMAP, addr as i64, length as i64, prot as i64, flags as i64, fd as i64, offset);
-    if result < 0 && result > -4096 {
-        ERRNO = (-result) as c_int;
-        return MMAP_FAILED;
+    match unsafe {
+        crabc_core::mm::mmap_raw(addr, length, prot as u32, flags as u32, fd, offset as u64)
+    } {
+        Ok(mapping) => mapping,
+        Err(errno) => {
+            ERRNO = errno.raw();
+            MMAP_FAILED
+        }
     }
-    result as *mut u8
 }
 
 unsafe fn sys_munmap(addr: *mut u8, length: usize) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_MUNMAP, addr as i64, length as i64)
+    match unsafe { crabc_core::mm::munmap_raw(addr, length) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 // Linux syscall wrappers return a negative errno in the range -4095..-1.
@@ -1971,7 +1977,10 @@ const CLOCK_MONOTONIC: c_int = 1;
 
 #[inline]
 unsafe fn sys_clock_gettime(clockid: c_int, ts: *mut timespec) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_CLOCK_GETTIME, clockid as i64, ts as i64)
+    match unsafe { crabc_core::time::clock_gettime_raw(clockid, ts.cast()) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[no_mangle]
@@ -3180,7 +3189,10 @@ unsafe fn sys_socket(domain: c_int, ty: c_int, protocol: c_int) -> i64 {
 
 #[inline]
 unsafe fn sys_socketpair(domain: c_int, ty: c_int, protocol: c_int, sv: *mut c_int) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_SOCKETPAIR, domain as i64, ty as i64, protocol as i64, sv as i64)
+    match unsafe { crabc_core::net::socketpair_raw(domain, ty as u32, protocol, sv) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -3210,7 +3222,12 @@ unsafe fn sys_sendto(fd: c_int,
     flags: c_int,
     addr: *const sockaddr,
     addrlen: c_uint,) -> i64 {
-    <Arch as Syscalls>::syscall6(SYS_SENDTO, fd as i64, buf as i64, len as i64, flags as i64, addr as i64, addrlen as i64)
+    match unsafe {
+        crabc_core::net::sendto_raw(fd, buf.cast(), len, flags as u32, addr.cast(), addrlen)
+    } {
+        Ok(length) => length as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -3220,7 +3237,12 @@ unsafe fn sys_recvfrom(fd: c_int,
     flags: c_int,
     addr: *mut sockaddr,
     addrlen: *mut c_uint,) -> i64 {
-    <Arch as Syscalls>::syscall6(SYS_RECVFROM, fd as i64, buf as i64, len as i64, flags as i64, addr as i64, addrlen as i64)
+    match unsafe {
+        crabc_core::net::recvfrom_raw(fd, buf.cast(), len, flags as u32, addr.cast(), addrlen)
+    } {
+        Ok(length) => length as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -6601,7 +6623,10 @@ struct winsize {
 
 #[inline]
 unsafe fn sys_pipe2(fds: *mut c_int, flags: i32) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_PIPE2, fds as i64, flags as i64)
+    match unsafe { crabc_core::pipe::pipe2_raw(fds, flags as u32) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -12175,7 +12200,10 @@ pub unsafe extern "C" fn ctime_r(t: *const TimeT, buf: *mut c_char) -> *mut c_ch
 // ============================================================
 
 unsafe fn sys_clock_getres(clockid: c_int, ts: *mut timespec) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_CLOCK_GETRES, clockid as i64, ts as i64)
+    match unsafe { crabc_core::time::clock_getres_raw(clockid, ts.cast()) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 unsafe fn sys_clock_settime(clockid: c_int, ts: *const timespec) -> i64 {

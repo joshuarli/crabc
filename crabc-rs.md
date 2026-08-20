@@ -2731,6 +2731,25 @@ memory mapping
 
 Keep rustix differential testing active.
 
+**Complete.** M3 is deliberately a vertical kernel slice, not a claim that
+every broad Rustix subsystem API is already present. Its native, direct-core
+surface is `pipe::{pipe,pipe_with}`, `rand::getrandom`, known
+`time::{ClockId,clock_gettime,clock_getres}`, `event::{eventfd,poll}`, Unix
+`net::{socketpair,send,recv}`, and
+`mm::{mmap_anonymous,mprotect,munmap}`. All use Linux/AArch64 syscalls through
+`crabc-core`; no native path calls public C/POSIX entry points or reads TLS
+`errno`.
+
+`./scripts/dev.sh crabc-rs` now builds the no-`std` M3 probe, checks the M3
+Rust tests, source-compares three isolated fixtures against pinned Rustix, and
+requires direct AArch64 evidence for `eventfd2`, `pipe2`, `ppoll`, clock,
+socket-pair/send/receive, mapping, protection, unmapping, and random syscalls.
+Existing C wrappers for the overlapping operations route through the same core
+seams and retain C-only errno/sentinel conversion. Broader interfaces such as
+epoll, splice, timerfd, file-backed mappings, Internet address handling,
+connect/accept, and socket options remain explicitly deferred in the Rustix
+manifest for later verified vertical slices.
+
 ---
 
 # 80. Milestone 4 — process/system surface

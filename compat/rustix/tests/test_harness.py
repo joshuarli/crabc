@@ -92,7 +92,10 @@ class SourceFixtureTests(unittest.TestCase):
 
         rustix = harness.source_dependency("rustix", Path("/opt/rustix"))
         self.assertIn('api = { package = "rustix"', rustix)
-        self.assertIn('features = ["fs"]', rustix)
+        self.assertIn(
+            'features = ["event", "fs", "mm", "net", "pipe", "rand", "time"]',
+            rustix,
+        )
 
     def test_source_fixture_rejects_a_non_target_build(self) -> None:
         fixture = ROOT / "compat/rustix/source/m1_foundation.rs"

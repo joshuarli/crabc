@@ -61,16 +61,20 @@ unsafe fn m4_ppoll(
     sigmask: *const c_void,
 ) -> i64 {
     // Linux's kernel sigset is one unsigned long even though the public
-    // userspace sigset_t reserves space for 1024 signals.  SigSetT is the
+    // userspace sigset_t reserves space for 1024 signals. SigSetT is the
     // kernel-sized representation used by this crate's signal syscalls.
-    <Arch as Syscalls>::syscall5(
-        SYS_PPOLL,
-        fds as i64,
-        nfds as i64,
-        timeout as i64,
-        sigmask as i64,
-        core::mem::size_of::<SigSetT>() as i64,
-    )
+    match unsafe {
+        crabc_core::event::ppoll_raw(
+            fds.cast(),
+            nfds,
+            timeout.cast(),
+            sigmask.cast(),
+            core::mem::size_of::<SigSetT>(),
+        )
+    } {
+        Ok(ready) => ready as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -189,11 +193,13 @@ pub unsafe extern "C" fn epoll_pwait(
 
 #[no_mangle]
 pub unsafe extern "C" fn eventfd(initval: c_uint, flags: c_int) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall2(
-        M4_SYS_EVENTFD2,
-        initval as i64,
-        flags as i64,
-    )) as c_int
+    match crabc_core::event::eventfd(initval, flags as c_uint) {
+        Ok(fd) => fd,
+        Err(errno) => {
+            ERRNO = errno.raw();
+            -1
+        }
+    }
 }
 
 #[no_mangle]

@@ -3,19 +3,12 @@
 // `getentropy` has the BSD 256-byte atomic request limit. It may need more
 // than one kernel read, and EINTR is retried without exposing partial success.
 
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_GETRANDOM: i64 = 318;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_GETRANDOM: i64 = 278;
-
 #[inline]
 unsafe fn m4_getrandom_raw(buffer: *mut c_void, length: usize, flags: c_uint) -> i64 {
-    <Arch as Syscalls>::syscall3(
-        M4_SYS_GETRANDOM,
-        buffer as i64,
-        length as i64,
-        flags as i64,
-    )
+    match unsafe { crabc_core::rand::getrandom_raw(buffer.cast(), length, flags) } {
+        Ok(length) => length as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[no_mangle]

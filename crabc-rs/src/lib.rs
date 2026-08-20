@@ -17,12 +17,18 @@ extern crate alloc;
 extern crate std;
 
 pub mod buffer;
+pub mod event;
 pub mod fd;
 pub mod ffi;
 pub mod fs;
 pub mod io;
 pub mod ioctl;
+pub mod mm;
+pub mod net;
 pub mod path;
+pub mod pipe;
+pub mod rand;
+pub mod time;
 mod raw_dir;
 
 pub use crabc_core::{Errno, Result};

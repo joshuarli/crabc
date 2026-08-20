@@ -54,7 +54,10 @@ const M4_MREMAP_FIXED: c_int = 2;
 
 #[inline]
 unsafe fn m4_mprotect(addr: *mut c_void, len: SizeT, prot: c_int) -> i64 {
-    <Arch as Syscalls>::syscall3(M4_SYS_MPROTECT, addr as i64, len as i64, prot as i64)
+    match unsafe { crabc_core::mm::mprotect_raw(addr.cast(), len, prot as u32) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]

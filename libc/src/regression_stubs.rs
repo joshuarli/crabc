@@ -49,21 +49,27 @@ pub unsafe extern "C" fn mmap(
     fd: c_int,
     off: i64,
 ) -> *mut c_void {
-    crate::syscall(
-        SYS_MMAP,
-        addr as c_long,
-        len as c_long,
-        prot as c_long,
-        flags as c_long,
-        fd as c_long,
-        off as c_long,
-    ) as *mut c_void
+    match unsafe {
+        crabc_core::mm::mmap_raw(addr.cast(), len, prot as u32, flags as u32, fd, off as u64)
+    } {
+        Ok(mapping) => mapping.cast(),
+        Err(errno) => {
+            ERRNO = errno.raw();
+            MMAP_FAILED.cast()
+        }
+    }
 }
 
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn munmap(addr: *mut c_void, len: usize) -> c_int {
-    crate::syscall(SYS_MUNMAP, addr as c_long, len as c_long, 0, 0, 0, 0) as c_int
+    match unsafe { crabc_core::mm::munmap_raw(addr.cast(), len) } {
+        Ok(()) => 0,
+        Err(errno) => {
+            ERRNO = errno.raw();
+            -1
+        }
+    }
 }
 
 #[no_mangle]

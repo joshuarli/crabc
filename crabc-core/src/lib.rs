@@ -15,6 +15,7 @@ compile_error!("crabc-core supports Linux/AArch64 little-endian only");
 use core::arch::asm;
 use core::ffi::CStr;
 use core::fmt;
+use core::mem::MaybeUninit;
 use core::num::NonZeroI32;
 
 /// A positive Linux errno value returned by a direct kernel operation.
@@ -267,6 +268,18 @@ const SYS_FLISTXATTR: usize = 13;
 const SYS_REMOVEXATTR: usize = 14;
 const SYS_LREMOVEXATTR: usize = 15;
 const SYS_FREMOVEXATTR: usize = 16;
+const SYS_PIPE2: usize = 59;
+const SYS_CLOCK_GETTIME: usize = 113;
+const SYS_CLOCK_GETRES: usize = 114;
+const SYS_GETRANDOM: usize = 278;
+const SYS_EVENTFD2: usize = 19;
+const SYS_PPOLL: usize = 73;
+const SYS_SOCKETPAIR: usize = 199;
+const SYS_SENDTO: usize = 206;
+const SYS_RECVFROM: usize = 207;
+const SYS_MUNMAP: usize = 215;
+const SYS_MMAP: usize = 222;
+const SYS_MPROTECT: usize = 226;
 
 #[inline(always)]
 unsafe fn syscall1(number: usize, arg0: usize) -> isize {
@@ -362,6 +375,34 @@ unsafe fn syscall5(
             in("x2") arg2,
             in("x3") arg3,
             in("x4") arg4,
+            options(nostack),
+        );
+    }
+    result
+}
+
+#[inline(always)]
+unsafe fn syscall6(
+    number: usize,
+    arg0: usize,
+    arg1: usize,
+    arg2: usize,
+    arg3: usize,
+    arg4: usize,
+    arg5: usize,
+) -> isize {
+    let result: isize;
+    // SAFETY: See `syscall1`; x1 through x5 carry the remaining arguments.
+    unsafe {
+        asm!(
+            "svc #0",
+            in("x8") number,
+            inlateout("x0") arg0 => result,
+            in("x1") arg1,
+            in("x2") arg2,
+            in("x3") arg3,
+            in("x4") arg4,
+            in("x5") arg5,
             options(nostack),
         );
     }
@@ -1103,6 +1144,306 @@ pub mod fs {
         // SAFETY: The caller supplies the name memory contract; Linux
         // validates descriptor and filesystem support.
         decode(unsafe { syscall2(SYS_FREMOVEXATTR, fd as usize, name as usize) }).map(|_| ())
+    }
+}
+
+/// Direct pipe operations.
+pub mod pipe {
+    use super::{decode, syscall2, MaybeUninit, RawFd, Result, SYS_PIPE2};
+
+    /// Creates a pipe in caller-provided Linux `int[2]` storage without using
+    /// libc or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `fds` must either point to writable storage for two Linux `int` values
+    /// or be a pointer the caller intentionally passes through to the kernel.
+    /// The latter preserves the C ABI's `EFAULT` behavior for an invalid
+    /// pointer.
+    #[inline]
+    pub unsafe fn pipe2_raw(fds: *mut RawFd, flags: u32) -> Result<()> {
+        // SAFETY: The caller owns the pointer contract. Linux validates both
+        // the output storage and the supplied flags.
+        decode(unsafe { syscall2(SYS_PIPE2, fds as usize, flags as usize) }).map(|_| ())
+    }
+
+    /// Creates a pipe with Linux `pipe2` without using libc or TLS `errno`.
+    #[inline]
+    pub fn pipe2(flags: u32) -> Result<(RawFd, RawFd)> {
+        let mut fds = MaybeUninit::<[RawFd; 2]>::uninit();
+        // SAFETY: `fds` provides writable storage for exactly two Linux C
+        // ints. A successful pipe2 initializes both descriptors.
+        unsafe { pipe2_raw(fds.as_mut_ptr().cast(), flags)? };
+        // SAFETY: Linux pipe2 initialized both descriptors on the successful
+        // return above; each is a newly owned non-negative descriptor.
+        let [reader, writer] = unsafe { fds.assume_init() };
+        Ok((reader, writer))
+    }
+}
+
+/// Direct kernel random-source operations.
+pub mod rand {
+    use super::{decode, syscall3, Result, SYS_GETRANDOM};
+
+    /// Reads random bytes without using libc or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be writable for `length` bytes unless `length` is zero.
+    #[inline]
+    pub unsafe fn getrandom_raw(buffer: *mut u8, length: usize, flags: u32) -> Result<usize> {
+        // SAFETY: The caller supplies the output-memory contract; Linux
+        // validates the random-source flags.
+        decode(unsafe { syscall3(SYS_GETRANDOM, buffer as usize, length, flags as usize) })
+    }
+}
+
+/// Direct stateless clock queries.
+pub mod time {
+    use super::{decode, syscall2, Result, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME};
+
+    /// Queries a Linux clock without using libc, vDSO dispatch, or TLS
+    /// `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `timespec` must be writable for one Linux/AArch64 `struct timespec`.
+    #[inline]
+    pub unsafe fn clock_gettime_raw(clock_id: i32, timespec: *mut u8) -> Result<()> {
+        // SAFETY: The caller supplies exact output storage for the kernel
+        // timespec layout; Linux validates the clock identifier.
+        decode(unsafe { syscall2(SYS_CLOCK_GETTIME, clock_id as usize, timespec as usize) })
+            .map(|_| ())
+    }
+
+    /// Queries the resolution of a Linux clock without using libc, vDSO
+    /// dispatch, or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `timespec` must be writable for one Linux/AArch64 `struct timespec`.
+    #[inline]
+    pub unsafe fn clock_getres_raw(clock_id: i32, timespec: *mut u8) -> Result<()> {
+        // SAFETY: The caller supplies exact output storage for the kernel
+        // timespec layout; Linux validates the clock identifier.
+        decode(unsafe { syscall2(SYS_CLOCK_GETRES, clock_id as usize, timespec as usize) })
+            .map(|_| ())
+    }
+}
+
+/// Direct event-descriptor and polling operations.
+pub mod event {
+    use super::{decode, syscall2, syscall5, RawFd, Result, SYS_EVENTFD2, SYS_PPOLL};
+
+    /// Creates a Linux event descriptor without using libc or TLS `errno`.
+    #[inline]
+    pub fn eventfd(initval: u32, flags: u32) -> Result<RawFd> {
+        // SAFETY: Linux validates the initial value and flags.
+        decode(unsafe { syscall2(SYS_EVENTFD2, initval as usize, flags as usize) })
+            .map(|fd| fd as RawFd)
+    }
+
+    /// Waits for events using the Linux `ppoll` ABI without libc or TLS
+    /// `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `fds` must point to `nfds` writable Linux `struct pollfd` records (or
+    /// be deliberately forwarded as an invalid C ABI pointer). When non-null,
+    /// `timeout` must point to one Linux/AArch64 `timespec`. `sigmask` and
+    /// `sigsetsize` must form a valid Linux kernel signal-mask argument.
+    #[inline]
+    pub unsafe fn ppoll_raw(
+        fds: *mut u8,
+        nfds: usize,
+        timeout: *const u8,
+        sigmask: *const u8,
+        sigsetsize: usize,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns all pointed-to Linux ABI layouts. Linux
+        // validates their values and returns the ready descriptor count.
+        decode(unsafe {
+            syscall5(
+                SYS_PPOLL,
+                fds as usize,
+                nfds,
+                timeout as usize,
+                sigmask as usize,
+                sigsetsize,
+            )
+        })
+    }
+}
+
+/// Direct, connection-oriented Linux socket operations.
+pub mod net {
+    use super::{
+        decode, syscall4, syscall6, MaybeUninit, RawFd, Result, SYS_RECVFROM, SYS_SENDTO,
+        SYS_SOCKETPAIR,
+    };
+
+    /// Creates a socket pair in caller-provided Linux `int[2]` storage.
+    ///
+    /// # Safety
+    ///
+    /// `sockets` must point to writable storage for two Linux `int` values or
+    /// be a pointer deliberately forwarded to preserve C ABI `EFAULT`
+    /// behavior.
+    #[inline]
+    pub unsafe fn socketpair_raw(
+        domain: i32,
+        type_and_flags: u32,
+        protocol: i32,
+        sockets: *mut RawFd,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the output-pointer contract. Linux validates
+        // the domain, type/flags, and protocol.
+        decode(unsafe {
+            syscall4(
+                SYS_SOCKETPAIR,
+                domain as usize,
+                type_and_flags as usize,
+                protocol as usize,
+                sockets as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Creates a socket pair without using libc or TLS `errno`.
+    #[inline]
+    pub fn socketpair(
+        domain: i32,
+        type_and_flags: u32,
+        protocol: i32,
+    ) -> Result<(RawFd, RawFd)> {
+        let mut sockets = MaybeUninit::<[RawFd; 2]>::uninit();
+        // SAFETY: `sockets` supplies output storage for exactly two Linux
+        // descriptors and a successful syscall initializes both values.
+        unsafe { socketpair_raw(domain, type_and_flags, protocol, sockets.as_mut_ptr().cast())? };
+        // SAFETY: The successful syscall above initialized both descriptors.
+        let [first, second] = unsafe { sockets.assume_init() };
+        Ok((first, second))
+    }
+
+    /// Sends bytes with the Linux `sendto` ABI.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be readable for `length` bytes. When non-null, `address`
+    /// must point to a readable Linux `sockaddr` of `address_length` bytes.
+    #[inline]
+    pub unsafe fn sendto_raw(
+        socket: RawFd,
+        buffer: *const u8,
+        length: usize,
+        flags: u32,
+        address: *const u8,
+        address_length: u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns the buffer and optional address contracts.
+        decode(unsafe {
+            syscall6(
+                SYS_SENDTO,
+                socket as usize,
+                buffer as usize,
+                length,
+                flags as usize,
+                address as usize,
+                address_length as usize,
+            )
+        })
+    }
+
+    /// Receives bytes with the Linux `recvfrom` ABI.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be writable for `length` bytes. The optional address and
+    /// address-length pointers must satisfy the Linux `recvfrom` ABI.
+    #[inline]
+    pub unsafe fn recvfrom_raw(
+        socket: RawFd,
+        buffer: *mut u8,
+        length: usize,
+        flags: u32,
+        address: *mut u8,
+        address_length: *mut u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns every output-pointer contract.
+        decode(unsafe {
+            syscall6(
+                SYS_RECVFROM,
+                socket as usize,
+                buffer as usize,
+                length,
+                flags as usize,
+                address as usize,
+                address_length as usize,
+            )
+        })
+    }
+}
+
+/// Direct Linux virtual-memory operations.
+pub mod mm {
+    use super::{decode, syscall2, syscall3, syscall6, RawFd, Result, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP};
+
+    /// Creates a mapping with the Linux/AArch64 `mmap` ABI.
+    ///
+    /// # Safety
+    ///
+    /// The caller must uphold Linux mapping requirements and Rust pointer
+    /// provenance/reference invariants for `address` and the returned range.
+    #[inline]
+    pub unsafe fn mmap_raw(
+        address: *mut u8,
+        length: usize,
+        protection: u32,
+        flags: u32,
+        fd: RawFd,
+        offset: u64,
+    ) -> Result<*mut u8> {
+        // SAFETY: The caller owns the mapping contract. `decode` recognizes
+        // only the Linux error range, so valid high-address mappings remain
+        // successful pointer values.
+        decode(unsafe {
+            syscall6(
+                SYS_MMAP,
+                address as usize,
+                length,
+                protection as usize,
+                flags as usize,
+                fd as usize,
+                offset as usize,
+            )
+        })
+        .map(|address| address as *mut u8)
+    }
+
+    /// Removes a Linux mapping.
+    ///
+    /// # Safety
+    ///
+    /// The mapped range must be valid for unmapping and have no remaining Rust
+    /// references.
+    #[inline]
+    pub unsafe fn munmap_raw(address: *mut u8, length: usize) -> Result<()> {
+        // SAFETY: The caller owns the mapping lifetime/provenance contract.
+        decode(unsafe { syscall2(SYS_MUNMAP, address as usize, length) }).map(|_| ())
+    }
+
+    /// Changes Linux mapping protection.
+    ///
+    /// # Safety
+    ///
+    /// The range must be a valid mapped range, and the caller must preserve
+    /// Rust's reference invariants after changing access permissions.
+    #[inline]
+    pub unsafe fn mprotect_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
+        // SAFETY: The caller owns the mapped-range and provenance contracts.
+        decode(unsafe { syscall3(SYS_MPROTECT, address as usize, length, flags as usize) })
+            .map(|_| ())
     }
 }
 
