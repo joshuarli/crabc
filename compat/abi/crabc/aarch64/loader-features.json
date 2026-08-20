@@ -34,7 +34,7 @@
           {
             "tag": "INIT_ARRAY",
             "tag_value": "0x0000000000000019",
-            "value": "0x4e318"
+            "value": "0x4e028"
           },
           {
             "tag": "INIT_ARRAYSZ",
@@ -49,17 +49,17 @@
           {
             "tag": "STRTAB",
             "tag_value": "0x0000000000000005",
-            "value": "0x4a0"
+            "value": "0x560"
           },
           {
             "tag": "SYMTAB",
             "tag_value": "0x0000000000000006",
-            "value": "0x2c0"
+            "value": "0x2d8"
           },
           {
             "tag": "STRSZ",
             "tag_value": "0x000000000000000a",
-            "value": "225 (bytes)"
+            "value": "340 (bytes)"
           },
           {
             "tag": "SYMENT",
@@ -69,7 +69,7 @@
           {
             "tag": "PLTGOT",
             "tag_value": "0x0000000000000003",
-            "value": "0x4fe90"
+            "value": "0x4fe58"
           },
           {
             "tag": "PLTRELSZ",
@@ -84,17 +84,17 @@
           {
             "tag": "JMPREL",
             "tag_value": "0x0000000000000017",
-            "value": "0x2970"
+            "value": "0x2e18"
           },
           {
             "tag": "RELA",
             "tag_value": "0x0000000000000007",
-            "value": "0x588"
+            "value": "0x6b8"
           },
           {
             "tag": "RELASZ",
             "tag_value": "0x0000000000000008",
-            "value": "9192 (bytes)"
+            "value": "10080 (bytes)"
           },
           {
             "tag": "RELAENT",
@@ -114,7 +114,7 @@
           {
             "tag": "RELACOUNT",
             "tag_value": "0x000000006ffffff9",
-            "value": "382"
+            "value": "419"
           },
           {
             "tag": "NULL",
@@ -124,15 +124,15 @@
         ]
       },
       "dynamic_symbols": {
-        "public_defined": 15,
+        "public_defined": 22,
         "tables": {
-          ".dynsym": 20
+          ".dynsym": 27
         }
       },
       "header": {
         "class": "ELF64",
         "data": "2's complement, little endian",
-        "entry_point": "0x37b0",
+        "entry_point": "0x3c50",
         "machine": "AArch64",
         "os_abi": "UNIX - System V",
         "program_header_count": "7",
@@ -153,9 +153,9 @@
       "program_headers": [
         {
           "alignment": "0x10000",
-          "file_size": "0x03849c",
+          "file_size": "0x03ac0c",
           "flags": "RE",
-          "memory_size": "0x03849c",
+          "memory_size": "0x03ac0c",
           "offset": "0x000000",
           "physical_address": "0x0000000000000000",
           "type": "LOAD",
@@ -163,23 +163,23 @@
         },
         {
           "alignment": "0x10000",
-          "file_size": "0x001d00",
+          "file_size": "0x002028",
           "flags": "RW",
-          "memory_size": "0x003878",
-          "offset": "0x03e318",
-          "physical_address": "0x000000000004e318",
+          "memory_size": "0x004c38",
+          "offset": "0x03e028",
+          "physical_address": "0x000000000004e028",
           "type": "LOAD",
-          "virtual_address": "0x000000000004e318"
+          "virtual_address": "0x000000000004e028"
         },
         {
           "alignment": "0x8",
           "file_size": "0x000170",
           "flags": "RW",
           "memory_size": "0x000170",
-          "offset": "0x03fd20",
-          "physical_address": "0x000000000004fd20",
+          "offset": "0x03fce8",
+          "physical_address": "0x000000000004fce8",
           "type": "DYNAMIC",
-          "virtual_address": "0x000000000004fd20"
+          "virtual_address": "0x000000000004fce8"
         },
         {
           "alignment": "0x4",
@@ -193,13 +193,13 @@
         },
         {
           "alignment": "0x4",
-          "file_size": "0x0014bc",
+          "file_size": "0x0015ac",
           "flags": "R",
-          "memory_size": "0x0014bc",
-          "offset": "0x030c30",
-          "physical_address": "0x0000000000030c30",
+          "memory_size": "0x0015ac",
+          "offset": "0x032e30",
+          "physical_address": "0x0000000000032e30",
           "type": "GNU_EH_FRAME",
-          "virtual_address": "0x0000000000030c30"
+          "virtual_address": "0x0000000000032e30"
         },
         {
           "alignment": "0x10",
@@ -213,25 +213,25 @@
         },
         {
           "alignment": "0x1",
-          "file_size": "0x001ce8",
+          "file_size": "0x001fd8",
           "flags": "R",
-          "memory_size": "0x001ce8",
-          "offset": "0x03e318",
-          "physical_address": "0x000000000004e318",
+          "memory_size": "0x001fd8",
+          "offset": "0x03e028",
+          "physical_address": "0x000000000004e028",
           "type": "GNU_RELRO",
-          "virtual_address": "0x000000000004e318"
+          "virtual_address": "0x000000000004e028"
         }
       ],
       "relocations": {
-        "entries": 384,
+        "entries": 421,
         "sections": [
           {
-            "declared_entries": 383,
+            "declared_entries": 420,
             "name": ".rela.dyn",
-            "observed_entries": 383,
+            "observed_entries": 420,
             "types": {
               "R_AARCH64_ABS64": 1,
-              "R_AARCH64_RELATIVE": 382
+              "R_AARCH64_RELATIVE": 419
             }
           },
           {
@@ -246,13 +246,13 @@
         "types": {
           "R_AARCH64_ABS64": 1,
           "R_AARCH64_JUMP_SLOT": 1,
-          "R_AARCH64_RELATIVE": 382
+          "R_AARCH64_RELATIVE": 419
         }
       }
     },
-    "sha256": "50d396682aed6f1926153a75478d795456672c50d1f8d7316e52a1e9d0e12f73",
+    "sha256": "6c9ac45f9217e3e7d386f28dd049fd2e21abfcfc17bd18e27eae71851d247e9d",
     "source": "ldso/src/lib.rs",
-    "source_sha256": "b1407c3f03bfae9028b923c6d06ab9edd1b060cbaee7d420e488cb78a7ee4229"
+    "source_sha256": "34e8b86fd34da275e1f3541fe6f3ad3fd64bd78076359bb57cb258c691d6dfd6"
   },
   "features": [
     {
@@ -292,7 +292,7 @@
         },
         {
           "marker": "PT_LOAD",
-          "occurrences": 5
+          "occurrences": 6
         }
       ],
       "state": "source_and_test_target",
@@ -304,6 +304,10 @@
         {
           "exists": true,
           "path": "tests/ldso_interp.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
@@ -315,15 +319,15 @@
       "source_markers": [
         {
           "marker": "DT_NEEDED",
-          "occurrences": 5
+          "occurrences": 17
         },
         {
           "marker": "find_library_fd",
-          "occurrences": 3
+          "occurrences": 2
         },
         {
           "marker": "load_dso_from_fd",
-          "occurrences": 3
+          "occurrences": 2
         }
       ],
       "state": "source_and_test_target",
@@ -331,6 +335,10 @@
         {
           "exists": true,
           "path": "tests/ldso_deps.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
@@ -342,11 +350,11 @@
       "source_markers": [
         {
           "marker": "resolve_symbol",
-          "occurrences": 20
+          "occurrences": 22
         },
         {
           "marker": "lookup_symbol_in_object",
-          "occurrences": 4
+          "occurrences": 5
         },
         {
           "marker": "resolve_copy_source",
@@ -358,18 +366,22 @@
         {
           "exists": true,
           "path": "tests/ldso_deps.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
     },
     {
-      "description": "Process DT_INIT and DT_INIT_ARRAY callbacks for loaded objects.",
+      "description": "Dispatch init arrays while retaining musl's inert legacy DT_INIT tags.",
       "name": "constructors",
       "runtime_test_executed": false,
       "source_markers": [
         {
           "marker": "run_constructors",
-          "occurrences": 5
+          "occurrences": 6
         },
         {
           "marker": "DT_INIT_ARRAY",
@@ -377,21 +389,43 @@
         },
         {
           "marker": "DT_INIT",
-          "occurrences": 9
+          "occurrences": 10
         }
       ],
-      "state": "source_only",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
-      "description": "Process DT_FINI and DT_FINI_ARRAY callbacks at unload/exit.",
+      "description": "Dispatch fini arrays while retaining musl's inert legacy DT_FINI tags.",
       "name": "destructors",
-      "note": "DT_FINI constants exist, but no loader destructor traversal is evidenced.",
       "runtime_test_executed": false,
-      "source_markers": [],
-      "state": "surface_only",
-      "test_targets": [],
+      "source_markers": [
+        {
+          "marker": "run_destructors_for",
+          "occurrences": 2
+        },
+        {
+          "marker": "DT_FINI_ARRAY",
+          "occurrences": 4
+        },
+        {
+          "marker": "DT_FINI",
+          "occurrences": 7
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
@@ -401,7 +435,7 @@
       "source_markers": [
         {
           "marker": "PT_TLS",
-          "occurrences": 3
+          "occurrences": 5
         },
         {
           "marker": "compute_tls_layout",
@@ -409,7 +443,7 @@
         },
         {
           "marker": "__tls_get_addr",
-          "occurrences": 3
+          "occurrences": 7
         }
       ],
       "state": "source_and_test_target",
@@ -417,6 +451,10 @@
         {
           "exists": true,
           "path": "tests/ldso_tls.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
@@ -427,7 +465,7 @@
       "runtime_test_executed": false,
       "source_markers": [
         {
-          "marker": "update_tls_for_new_module",
+          "marker": "register_tls_for_new_module",
           "occurrences": 2
         },
         {
@@ -444,6 +482,10 @@
         {
           "exists": true,
           "path": "tests/dso_tls.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
@@ -455,19 +497,24 @@
       "source_markers": [
         {
           "marker": "DT_RUNPATH",
-          "occurrences": 2
+          "occurrences": 4
         },
         {
           "marker": "DT_RPATH",
-          "occurrences": 2
+          "occurrences": 4
         },
         {
           "marker": "$ORIGIN",
-          "occurrences": 1
+          "occurrences": 2
         }
       ],
-      "state": "source_only",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
@@ -477,11 +524,11 @@
       "source_markers": [
         {
           "marker": "LD_LIBRARY_PATH",
-          "occurrences": 7
+          "occurrences": 8
         },
         {
           "marker": "find_env",
-          "occurrences": 2
+          "occurrences": 3
         }
       ],
       "state": "source_and_test_target",
@@ -489,6 +536,10 @@
         {
           "exists": true,
           "path": "tests/ldso_deps.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
@@ -496,16 +547,20 @@
     {
       "description": "Honor the LD_PRELOAD interposition contract.",
       "name": "ld_preload",
-      "note": "No LD_PRELOAD path is currently evidenced in the loader source.",
       "runtime_test_executed": false,
       "source_markers": [
         {
           "marker": "LD_PRELOAD",
-          "occurrences": 0
+          "occurrences": 3
         }
       ],
-      "state": "not_evidenced",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
@@ -526,32 +581,68 @@
           "occurrences": 2
         }
       ],
-      "state": "source_only",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
-      "description": "Unload a DSO and run its finalization contract.",
+      "description": "Close a DSO handle and run musl-compatible finalization.",
       "name": "dlclose",
-      "note": "The current callback returns success without unloading the object.",
+      "note": "Pinned musl retains a finalized mapping for a later reopen.",
       "runtime_test_executed": false,
       "source_markers": [
         {
           "marker": "__ldso_dlclose",
           "occurrences": 2
+        },
+        {
+          "marker": "run_destructors_for",
+          "occurrences": 2
+        },
+        {
+          "marker": "finalized",
+          "occurrences": 9
         }
       ],
-      "state": "surface_only",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
       "description": "Provide loader introspection APIs for object and program-header enumeration.",
       "name": "dladdr_dl_iterate_phdr",
       "runtime_test_executed": false,
-      "source_markers": [],
-      "state": "not_evidenced",
-      "test_targets": [],
+      "source_markers": [
+        {
+          "marker": "__ldso_dl_iterate_phdr",
+          "occurrences": 2
+        },
+        {
+          "marker": "__ldso_dladdr",
+          "occurrences": 2
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/m4_dynamic_loader_introspection.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
@@ -576,8 +667,13 @@
           "occurrences": 3
         }
       ],
-      "state": "source_only",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
@@ -611,6 +707,10 @@
         {
           "exists": true,
           "path": "tests/ldso_tls.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
@@ -641,21 +741,25 @@
       "source_markers": [
         {
           "marker": "GNU_RELRO",
-          "occurrences": 0
+          "occurrences": 5
         },
         {
           "marker": "mprotect",
-          "occurrences": 0
+          "occurrences": 2
         }
       ],
-      "state": "not_evidenced",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     },
     {
       "description": "Preserve startup auxiliary-vector values needed by the runtime.",
       "name": "auxv_and_vdso",
-      "note": "This records auxv handling only; vDSO discovery is a separate unmeasured feature.",
       "runtime_test_executed": false,
       "source_markers": [
         {
@@ -669,6 +773,10 @@
         {
           "marker": "AT_BASE",
           "occurrences": 5
+        },
+        {
+          "marker": "AT_SYSINFO_EHDR",
+          "occurrences": 3
         }
       ],
       "state": "source_and_test_target",
@@ -676,26 +784,35 @@
         {
           "exists": true,
           "path": "tests/ldso_startup.rs"
+        },
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
         }
       ],
       "verified": false
     },
     {
-      "description": "Discover and expose the kernel vDSO to loaded programs.",
+      "description": "Preserve and expose the kernel vDSO ELF base through auxv.",
       "name": "vdso_discovery",
       "runtime_test_executed": false,
       "source_markers": [
         {
           "marker": "AT_SYSINFO_EHDR",
-          "occurrences": 0
+          "occurrences": 3
         },
         {
-          "marker": "vDSO",
-          "occurrences": 0
+          "marker": "build_and_jump",
+          "occurrences": 2
         }
       ],
-      "state": "not_evidenced",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "compat/ldso/run.py"
+        }
+      ],
       "verified": false
     }
   ],

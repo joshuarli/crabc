@@ -30,6 +30,7 @@ PTHREAD_STRESS_REPORT = ROOT_DIR / "compat/reports/pthread-stress/latest.json"
 SIGNAL_PROCESS_REPORT = ROOT_DIR / "compat/reports/signal-process.json"
 RESOLVER_NETWORK_REPORT = ROOT_DIR / "compat/reports/resolver-network.json"
 LOADER_FEATURE_REPORT = ROOT_DIR / "compat/abi/crabc/aarch64/loader-features.json"
+LDSO_REPORT = ROOT_DIR / "compat/reports/ldso/latest.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,6 +139,21 @@ def m6_report_state(path: Path, expected_runner: str) -> dict[str, Any] | None:
     return report
 
 
+def m7_report_state() -> dict[str, Any] | None:
+    """Return the synthetic loader report only when it has its runner identity."""
+
+    report = read_json(LDSO_REPORT)
+    if report is None:
+        return None
+    if report.get("schema") != 1 or report.get("runner") != "compat/ldso/run.py":
+        raise RuntimeError(f"unexpected M7 report identity in {LDSO_REPORT}")
+    cases = report.get("cases")
+    if report.get("result") == "pass" and not isinstance(cases, dict):
+        raise RuntimeError(f"M7 pass report has invalid cases in {LDSO_REPORT}")
+    report["_path"] = str(LDSO_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -161,6 +177,7 @@ def main() -> int:
     signal_process = m6_report_state(SIGNAL_PROCESS_REPORT, "crabc-signal-process")
     resolver_network = m6_report_state(RESOLVER_NETWORK_REPORT, "compat/resolver-network")
     loader_features = loader_feature_state()
+    ldso = m7_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     lines = [
@@ -276,6 +293,36 @@ def main() -> int:
                 ],
             )
         )
+
+    lines.extend(["", "## M7 synthetic loader differential evidence", ""])
+    if ldso is None:
+        lines.append("No synthetic loader result. Run `./scripts/dev.sh ldso`.")
+    else:
+        cases = ldso.get("cases", {})
+        if not isinstance(cases, dict):
+            raise RuntimeError(f"invalid M7 cases in {ldso['_path']}")
+        passed = all(
+            isinstance(case, dict) and case.get("result") == "pass"
+            for case in cases.values()
+        )
+        lines.append(
+            f"Synthetic AArch64 loader comparison: "
+            f"**{'pass' if ldso.get('result') == 'pass' and passed else 'FAIL'}** "
+            f"({len(cases)} case(s), timeout={ldso.get('timeout_seconds', 'unknown')}s); "
+            f"report `{ldso['_path']}`."
+        )
+        if cases:
+            lines.append("")
+            lines.extend(
+                markdown_table(
+                    ("case", "result"),
+                    [
+                        (name, case.get("result", "unknown"))
+                        for name, case in sorted(cases.items())
+                        if isinstance(case, dict)
+                    ],
+                )
+            )
 
     lines.extend(["", "## libc-test", ""])
     if not libc_test:
@@ -447,8 +494,9 @@ def main() -> int:
             "",
             "The selected POSIX, signal/process, and resolver/network contracts above are not full "
             "standards conformance. Static candidate ABI parity, exhaustive header declaration/layout parity, "
-            "loader runtime-slice results, real Alpine corpus, and stock Rust `std` compatibility are not measured by this dashboard yet. "
-            "The focused loader stderr-isolation regression is passing, but it is not a verified loader slice.",
+            "real Alpine corpus, and stock Rust `std` compatibility are not measured by this dashboard yet. "
+            "The M7 synthetic suite measures bounded loader contracts; it is not a claim that arbitrary "
+            "Alpine DSO graphs are supported.",
             "",
         ]
     )

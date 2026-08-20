@@ -19,6 +19,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_TLS: u32 = 7;
+const PT_GNU_RELRO: u32 = 0x6474e552;
 const PF_R: u32 = 4;
 const PF_W: u32 = 2;
 const PF_X: u32 = 1;
@@ -93,6 +94,7 @@ const AT_GID: u64 = 13;
 const AT_EGID: u64 = 14;
 const AT_SECURE: u64 = 23;
 const AT_RANDOM: u64 = 25;
+const AT_SYSINFO_EHDR: u64 = 33;
 
 const PROT_READ: i32 = 1;
 const PROT_WRITE: i32 = 2;
@@ -130,6 +132,15 @@ struct LoadedObject {
     sym_count: usize,
     strtab: *const u8,
     strsz: usize,
+    search_path: *const u8,
+    search_path_len: usize,
+    relro_addr: u64,
+    relro_size: u64,
+    relro_applied: bool,
+    dependencies: [usize; MAX_LOADED],
+    dependency_count: usize,
+    constructing: bool,
+    constructed: bool,
     dyn_addr: usize,
     dyn_memsz: usize,
     tls_image: *const u8,
@@ -141,7 +152,19 @@ struct LoadedObject {
     init_array_sz: u64,
     init_present: bool,
     init_array_present: bool,
+    fini: u64,
+    fini_array: u64,
+    fini_array_sz: u64,
+    fini_present: bool,
+    fini_array_present: bool,
     global: bool,
+    // Initial objects are permanently resident (`usize::MAX`). Runtime
+    // handles use an ordinary reference count. musl preserves a finalized
+    // mapping for a later reopen, so `finalized` gates fini execution rather
+    // than eagerly tearing down its loader metadata.
+    ref_count: usize,
+    active: bool,
+    finalized: bool,
     file_identity_valid: bool,
     file_dev: u64,
     file_ino: u64,
@@ -154,6 +177,15 @@ const EMPTY_OBJ: LoadedObject = LoadedObject {
     sym_count: 0,
     strtab: core::ptr::null(),
     strsz: 0,
+    search_path: core::ptr::null(),
+    search_path_len: 0,
+    relro_addr: 0,
+    relro_size: 0,
+    relro_applied: false,
+    dependencies: [0; MAX_LOADED],
+    dependency_count: 0,
+    constructing: false,
+    constructed: false,
     dyn_addr: 0,
     dyn_memsz: 0,
     tls_image: core::ptr::null(),
@@ -165,7 +197,15 @@ const EMPTY_OBJ: LoadedObject = LoadedObject {
     init_array_sz: 0,
     init_present: false,
     init_array_present: false,
+    fini: 0,
+    fini_array: 0,
+    fini_array_sz: 0,
+    fini_present: false,
+    fini_array_present: false,
     global: false,
+    ref_count: 0,
+    active: false,
+    finalized: false,
     file_identity_valid: false,
     file_dev: 0,
     file_ino: 0,
@@ -1091,6 +1131,7 @@ mod sysnr {
     pub const SYS_FSTAT: i64 = 5;
     pub const SYS_LSEEK: i64 = 8;
     pub const SYS_MMAP: i64 = 9;
+    pub const SYS_MPROTECT: i64 = 10;
     pub const SYS_MUNMAP: i64 = 11;
     pub const SYS_READLINKAT: i64 = 267;
     pub const SYS_ARCH_PRCTL: i64 = 158;
@@ -1105,6 +1146,7 @@ mod sysnr {
     pub const SYS_FSTAT: i64 = 80;
     pub const SYS_LSEEK: i64 = 62;
     pub const SYS_MMAP: i64 = 222;
+    pub const SYS_MPROTECT: i64 = 226;
     pub const SYS_MUNMAP: i64 = 215;
     pub const SYS_READLINKAT: i64 = 78;
     pub const SYS_EXIT: i64 = 93;
@@ -1167,6 +1209,11 @@ fn sys_mmap(
         return MAP_FAILED as *mut u8;
     }
     result as *mut u8
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn sys_mprotect(addr: *mut u8, length: usize, prot: i32) -> i64 {
+    unsafe { <Arch as Syscalls>::syscall3(SYS_MPROTECT, addr as i64, length as i64, prot as i64) }
 }
 
 fn sys_exit(code: i32) -> ! {
@@ -1305,6 +1352,8 @@ unsafe fn try_open_expanded(
     dir_len: usize,
     lib_name: *const u8,
     lib_name_len: usize,
+    origin_dir: *const u8,
+    origin_len: usize,
 ) -> i64 {
     if dir_len >= 7 {
         let origin = b"$ORIGIN";
@@ -1319,13 +1368,13 @@ unsafe fn try_open_expanded(
         }
         if matches {
             let rem_len = dir_len - 7;
-            if ORIGIN_LEN + rem_len + 1 + lib_name_len >= 512 {
+            if origin_len + rem_len + 1 + lib_name_len >= 512 {
                 return -1;
             }
             let mut pos = 0;
             let mut i = 0;
-            while i < ORIGIN_LEN {
-                path_buf[pos] = ORIGIN_DIR[i];
+            while i < origin_len {
+                path_buf[pos] = *origin_dir.add(i);
                 pos += 1;
                 i += 1;
             }
@@ -1354,8 +1403,10 @@ unsafe fn find_library_fd(
     lib_name: *const u8,
     lib_name_len: usize,
     ld_path: Option<*const u8>,
+    parent: Option<usize>,
 ) -> i64 {
     let mut path_buf = [0u8; 512];
+    let mut origin = [0u8; 256];
 
     if lib_name_len > 0 {
         let fd = sys_open(lib_name);
@@ -1385,9 +1436,47 @@ unsafe fn find_library_fd(
         }
     }
 
-    if RUNPATH_LEN > 0 {
-        let rp = RUNPATH;
-        let rp_len = RUNPATH_LEN;
+    let (rp, rp_len, origin_ptr, origin_len) = if let Some(idx) = parent {
+        if idx >= LOADED_COUNT {
+            (core::ptr::null(), 0, core::ptr::null(), 0)
+        } else {
+            let name = &LOADED[idx].name;
+            let mut name_len = 0usize;
+            while name_len < name.len() && name[name_len] != 0 {
+                name_len += 1;
+            }
+            let mut slash = name_len;
+            while slash > 0 {
+                slash -= 1;
+                if name[slash] == b'/' {
+                    break;
+                }
+            }
+            let origin_len = if name_len > 0 && name[slash] == b'/' {
+                if slash == 0 { 1 } else { slash }
+            } else {
+                0
+            };
+            for i in 0..origin_len {
+                origin[i] = name[i];
+            }
+            (
+                LOADED[idx].search_path,
+                LOADED[idx].search_path_len,
+                origin.as_ptr(),
+                origin_len,
+            )
+        }
+    } else {
+        (
+            RUNPATH,
+            RUNPATH_LEN,
+            core::ptr::addr_of!(ORIGIN_DIR).cast::<u8>(),
+            ORIGIN_LEN,
+        )
+    };
+
+    if rp_len > 0 {
         let mut start = 0usize;
         while start < rp_len {
             let mut end = start;
@@ -1395,7 +1484,15 @@ unsafe fn find_library_fd(
                 end += 1;
             }
             if end > start {
-                let fd = try_open_expanded(&mut path_buf, rp.add(start), end - start, lib_name, lib_name_len);
+                let fd = try_open_expanded(
+                    &mut path_buf,
+                    rp.add(start),
+                    end - start,
+                    lib_name,
+                    lib_name_len,
+                    origin_ptr,
+                    origin_len,
+                );
                 if fd >= 0 {
                     return fd;
                 }
@@ -1455,7 +1552,14 @@ fn sys_munmap(addr: *mut u8, length: usize) -> i64 {
     unsafe { <Arch as Syscalls>::syscall2(SYS_MUNMAP, addr as i64, length as i64) }
 }
 
-unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
+unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
+    // The loaded-object array is the authoritative dependency graph.  Refuse
+    // a new mapping before touching address space when its bounded capacity is
+    // exhausted; returning a base without registering the object would leave
+    // subsequent relocation and TLS passes with an incoherent graph.
+    if LOADED_COUNT >= MAX_LOADED {
+        return None;
+    }
     let identity = file_identity(fd);
     let mut buf = [0u8; 4096];
     let n = sys_read(fd, buf.as_mut_ptr(), buf.len());
@@ -1525,32 +1629,28 @@ unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
     }
 
     const PAGE: u64 = 4096;
-    let total_size = ((max_vaddr_end + PAGE - 1) & !(PAGE - 1)) as usize;
+    let image_start = min_vaddr & !(PAGE - 1);
+    let image_end = (max_vaddr_end + PAGE - 1) & !(PAGE - 1);
+    let total_size = (image_end - image_start) as usize;
 
-    // ponytail: ASLR may place our own stack or the executable at the
-    // desired base. Probe for a free span before committing with MAP_FIXED.
-    let mut base = desired_base;
-    let actual_base = loop {
-        let probe = sys_mmap(
-            base as *mut u8,
-            total_size,
-            PROT_NONE,
-            MAP_PRIVATE | MAP_ANONYMOUS,
-            -1,
-            0,
-        );
-        if probe as usize == base as usize {
-            sys_munmap(probe, total_size);
-            break base;
-        }
-        if probe as usize != MAP_FAILED {
-            sys_munmap(probe, total_size);
-        }
-        base += DSO_BASE_STRIDE;
-        if base > desired_base + DSO_BASE_STRIDE * 16 {
-            return None;
-        }
-    };
+    // Ask the kernel for an unhinted temporary reservation. Releasing that
+    // exact span before the MAP_FIXED segment overlays preserves the kernel's
+    // per-process ASLR choice while still giving the ELF image one coherent
+    // load bias. A fixed synthetic base made every process expose identical
+    // dladdr addresses, which is neither musl-compatible nor safe.
+    let reservation = sys_mmap(
+        core::ptr::null_mut(),
+        total_size,
+        PROT_NONE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+    if reservation as usize == MAP_FAILED {
+        return None;
+    }
+    let actual_base = (reservation as u64).wrapping_sub(image_start);
+    sys_munmap(reservation, total_size);
 
     let tls_image = (actual_base + tls_vaddr) as *const u8;
 
@@ -1601,13 +1701,17 @@ unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
     // Find PT_DYNAMIC
     let mut dyn_vaddr: u64 = 0;
     let mut dyn_memsz: u64 = 0;
+    let mut relro_vaddr: u64 = 0;
+    let mut relro_memsz: u64 = 0;
     for i in 0..e_phnum {
         let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
         let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
         if p_type == PT_DYNAMIC {
             dyn_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
             dyn_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
-            break;
+        } else if p_type == PT_GNU_RELRO {
+            relro_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
+            relro_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
         }
     }
     if dyn_vaddr == 0 {
@@ -1626,6 +1730,15 @@ unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
     let mut dt_init_array_sz: u64 = 0;
     let mut dt_init_present = false;
     let mut dt_init_array_present = false;
+    let mut dt_fini: u64 = 0;
+    let mut dt_fini_array: u64 = 0;
+    let mut dt_fini_array_sz: u64 = 0;
+    let mut dt_fini_present = false;
+    let mut dt_fini_array_present = false;
+    let mut dt_runpath_off: u64 = 0;
+    let mut dt_runpath_present = false;
+    let mut dt_rpath_off: u64 = 0;
+    let mut dt_rpath_present = false;
     let mut dt_gnu_hash: u64 = 0;
     let mut dt_hash: u64 = 0;
     let mut dp = dyn_addr;
@@ -1644,6 +1757,11 @@ unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
             DT_INIT => { dt_init = d_val; dt_init_present = true; }
             DT_INIT_ARRAY => { dt_init_array = d_val; dt_init_array_present = true; }
             DT_INIT_ARRAYSZ => dt_init_array_sz = d_val,
+            DT_FINI => { dt_fini = d_val; dt_fini_present = true; }
+            DT_FINI_ARRAY => { dt_fini_array = d_val; dt_fini_array_present = true; }
+            DT_FINI_ARRAYSZ => dt_fini_array_sz = d_val,
+            DT_RUNPATH => { dt_runpath_off = d_val; dt_runpath_present = true; }
+            DT_RPATH => { dt_rpath_off = d_val; dt_rpath_present = true; }
             _ => {}
         }
         dp += 16;
@@ -1652,6 +1770,25 @@ unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
     let symtab_ptr = (actual_base + dt_symtab) as *const u8;
     let strtab_ptr = (actual_base + dt_strtab) as *const u8;
     let strsz = dt_strsz as usize;
+    let search_path_offset = if dt_runpath_present {
+        Some(dt_runpath_off as usize)
+    } else if dt_rpath_present {
+        Some(dt_rpath_off as usize)
+    } else {
+        None
+    };
+    let (search_path, search_path_len) = if let Some(offset) = search_path_offset {
+        if offset >= strsz {
+            return None;
+        }
+        let path = strtab_ptr.add(offset);
+        let Some(len) = dynamic_string_len(path, strsz - offset) else {
+            return None;
+        };
+        (path, len)
+    } else {
+        (core::ptr::null(), 0)
+    };
 
     let mut sym_count: usize = 0;
     if dt_gnu_hash != 0 {
@@ -1662,34 +1799,198 @@ unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
         sym_count = ((dt_strtab - dt_symtab) / SYMTAB_ENT_SIZE as u64) as usize;
     }
 
-    if LOADED_COUNT < MAX_LOADED {
-        LOADED[LOADED_COUNT] = LoadedObject {
-            base: actual_base,
-            symtab: symtab_ptr,
-            sym_count,
-            strtab: strtab_ptr,
-            strsz,
-            dyn_addr,
-            dyn_memsz: dyn_memsz as usize,
-            tls_image,
-            tls_filesz,
-            tls_memsz,
-            tls_align,
-            init: actual_base + dt_init,
-            init_array: actual_base + dt_init_array,
-            init_array_sz: dt_init_array_sz,
-            init_present: dt_init_present,
-            init_array_present: dt_init_array_present,
-            global: false,
-            file_identity_valid: identity.is_some(),
-            file_dev: identity.map_or(0, |id| id.dev),
-            file_ino: identity.map_or(0, |id| id.ino),
-            name: [0; 256],
-        };
-        LOADED_COUNT += 1;
-    }
+    LOADED[LOADED_COUNT] = LoadedObject {
+        base: actual_base,
+        symtab: symtab_ptr,
+        sym_count,
+        strtab: strtab_ptr,
+        strsz,
+        search_path,
+        search_path_len,
+        relro_addr: actual_base + relro_vaddr,
+        relro_size: relro_memsz,
+        relro_applied: false,
+        dependencies: [0; MAX_LOADED],
+        dependency_count: 0,
+        constructing: false,
+        constructed: false,
+        dyn_addr,
+        dyn_memsz: dyn_memsz as usize,
+        tls_image,
+        tls_filesz,
+        tls_memsz,
+        tls_align,
+        init: actual_base + dt_init,
+        init_array: actual_base + dt_init_array,
+        init_array_sz: dt_init_array_sz,
+        init_present: dt_init_present,
+        init_array_present: dt_init_array_present,
+        fini: actual_base + dt_fini,
+        fini_array: actual_base + dt_fini_array,
+        fini_array_sz: dt_fini_array_sz,
+        fini_present: dt_fini_present,
+        fini_array_present: dt_fini_array_present,
+        global: false,
+        ref_count: 0,
+        active: true,
+        finalized: false,
+        file_identity_valid: identity.is_some(),
+        file_dev: identity.map_or(0, |id| id.dev),
+        file_ino: identity.map_or(0, |id| id.ino),
+        name: [0; 256],
+    };
+    LOADED_COUNT += 1;
 
     Some(actual_base)
+}
+
+/// Return the length of a dynamic-string-table entry only if its terminating
+/// NUL lies inside the recorded table. Dynamic `DT_NEEDED` values are untrusted
+/// ELF offsets; using the general unbounded C-string helper here could let a
+/// malformed DSO make the loader walk beyond its own mapping.
+unsafe fn dynamic_string_len(string: *const u8, available: usize) -> Option<usize> {
+    for len in 0..available {
+        if *string.add(len) == 0 {
+            return Some(len);
+        }
+    }
+    None
+}
+
+/// Load one named DSO and its complete direct/transitive `DT_NEEDED` closure.
+///
+/// Identity deduplication happens before recursing, which makes this safe for
+/// ordinary dependency diamonds and bounded cycles: a back-edge observes its
+/// already registered parent instead of mapping it again. The object is
+/// registered before its children so relocations can resolve symbols exported
+/// by a cyclic peer after the whole closure has been discovered.
+unsafe fn load_named_with_dependencies(
+    name: *const u8,
+    name_len: usize,
+    ld_path: Option<*const u8>,
+) -> Option<usize> {
+    load_named_with_dependencies_from_parent(name, name_len, ld_path, None)
+}
+
+unsafe fn load_named_with_dependencies_from_parent(
+    name: *const u8,
+    name_len: usize,
+    ld_path: Option<*const u8>,
+    parent: Option<usize>,
+) -> Option<usize> {
+    let fd = find_library_fd(name, name_len, ld_path, parent);
+    if fd < 0 {
+        return None;
+    }
+    if let Some(identity) = file_identity(fd) {
+        if let Some(idx) = loaded_object_by_identity(identity) {
+            sys_close(fd);
+            return Some(idx);
+        }
+    }
+    let desired_base = DSO_BASE_START + (LOADED_COUNT as u64) * DSO_BASE_STRIDE;
+    if load_dso_from_fd(fd, desired_base).is_none() {
+        sys_close(fd);
+        return None;
+    }
+    sys_close(fd);
+    let idx = LOADED_COUNT - 1;
+    set_loaded_name(idx, name, name_len);
+    if !load_needed_dependencies(idx, ld_path) {
+        return None;
+    }
+    Some(idx)
+}
+
+/// Record an already-discovered dependency edge for constructor ordering.
+/// The graph is bounded with the same fixed capacity as the loaded-object
+/// table, and duplicate DT_NEEDED entries do not create duplicate callbacks.
+unsafe fn record_dependency(parent: usize, child: usize) {
+    if parent >= LOADED_COUNT || child >= LOADED_COUNT || parent == child {
+        return;
+    }
+    let count = LOADED[parent].dependency_count;
+    for i in 0..count {
+        if LOADED[parent].dependencies[i] == child {
+            return;
+        }
+    }
+    if count < MAX_LOADED {
+        LOADED[parent].dependencies[count] = child;
+        LOADED[parent].dependency_count = count + 1;
+    }
+}
+
+/// Discover and load every `DT_NEEDED` edge directly named by one object.
+/// The direct child search starts with `LD_LIBRARY_PATH`, then uses the
+/// parent's `DT_RUNPATH`/`DT_RPATH` with that DSO's own `$ORIGIN`. What matters
+/// here is that every discovered ELF edge becomes part of the same relocation
+/// graph before relocation begins.
+unsafe fn load_needed_dependencies(idx: usize, ld_path: Option<*const u8>) -> bool {
+    if idx >= LOADED_COUNT {
+        return false;
+    }
+    let dyn_addr = LOADED[idx].dyn_addr;
+    let dyn_end = dyn_addr.saturating_add(LOADED[idx].dyn_memsz);
+    let strtab = LOADED[idx].strtab;
+    let strsz = LOADED[idx].strsz;
+    if strtab.is_null() || strsz == 0 {
+        return false;
+    }
+
+    let mut pos = dyn_addr;
+    while pos + 16 <= dyn_end {
+        let tag = u64::from_le_bytes(core::ptr::read_unaligned(pos as *const [u8; 8]));
+        let value = u64::from_le_bytes(core::ptr::read_unaligned((pos + 8) as *const [u8; 8]));
+        if tag == DT_NULL {
+            break;
+        }
+        if tag == DT_NEEDED {
+            let offset = value as usize;
+            if offset >= strsz {
+                return false;
+            }
+            let name = strtab.add(offset);
+            let Some(name_len) = dynamic_string_len(name, strsz - offset) else {
+                return false;
+            };
+            let Some(child) = load_named_with_dependencies_from_parent(name, name_len, ld_path, Some(idx)) else {
+                return false;
+            };
+            record_dependency(idx, child);
+        }
+        pos += 16;
+    }
+    true
+}
+
+/// Load the whitespace- or colon-separated `LD_PRELOAD` list before ordinary
+/// startup dependencies are relocated. Entries are made global immediately so
+/// the existing lookup order (main, preload, then DT_NEEDED) gives musl's
+/// intended interposition result without a special relocation-only path.
+unsafe fn load_preload_list(list: *const u8, ld_path: Option<*const u8>) -> bool {
+    let list_len = str_len(list);
+    let mut start = 0usize;
+    while start < list_len {
+        while start < list_len && (*list.add(start) == b':' || *list.add(start) == b' ') {
+            start += 1;
+        }
+        if start == list_len {
+            break;
+        }
+        let mut end = start;
+        while end < list_len && *list.add(end) != b':' && *list.add(end) != b' ' {
+            end += 1;
+        }
+        let name = list.add(start);
+        let Some(idx) = load_named_with_dependencies(name, end - start, ld_path) else {
+            return false;
+        };
+        LOADED[idx].global = true;
+        record_dependency(0, idx);
+        start = end;
+    }
+    true
 }
 
 // ============================================================
@@ -1934,14 +2235,40 @@ unsafe fn tls_tcb_offset_from_tp() -> isize {
 unsafe fn process_all_relocations() {
     // First pass: non-COPY relocations so source symbols have final values.
     for i in 0..LOADED_COUNT {
+        if LOADED[i].relro_applied {
+            continue;
+        }
         let (base, rela_off, rela_sz, jmprel_off, jmprel_sz) = relocation_info(i);
         apply_rela_table(i, base, rela_off, rela_sz, false);
         apply_rela_table(i, base, jmprel_off, jmprel_sz, false);
     }
     // Second pass: COPY relocations copy initialized data into the executable.
     for i in 0..LOADED_COUNT {
+        if LOADED[i].relro_applied {
+            continue;
+        }
         let (base, rela_off, rela_sz, _, _) = relocation_info(i);
         apply_rela_table(i, base, rela_off, rela_sz, true);
+    }
+}
+
+/// Lock every mapped GNU_RELRO span after all relocations that may touch it.
+/// A later `dlopen` only relocates newly mapped objects; applying RELRO also
+/// makes prior objects ineligible for the relocation pass above.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+unsafe fn apply_relro() {
+    const PAGE: u64 = 4096;
+    for i in 0..LOADED_COUNT {
+        let obj = &mut LOADED[i];
+        if obj.relro_applied || obj.relro_size == 0 {
+            continue;
+        }
+        let start = obj.relro_addr & !(PAGE - 1);
+        let end = (obj.relro_addr + obj.relro_size + PAGE - 1) & !(PAGE - 1);
+        if end <= start || sys_mprotect(start as *mut u8, (end - start) as usize, PROT_READ) < 0 {
+            die(90, b"relro", i);
+        }
+        obj.relro_applied = true;
     }
 }
 
@@ -2127,21 +2454,61 @@ unsafe fn apply_rela_table(
 }
 
 unsafe fn run_constructors() {
+    // The executable records its preload and DT_NEEDED roots in loader search
+    // order. Recursing from it gives every direct/transitive dependency a
+    // chance to initialize before the consumer, without reversing unrelated
+    // sibling objects merely because of their registration order.
     for i in 0..LOADED_COUNT {
         run_constructors_for(i);
     }
 }
 
 unsafe fn run_constructors_for(idx: usize) {
-    let obj = &LOADED[idx];
-    if obj.init_present && obj.init != 0 && obj.init != obj.base {
-        let f: extern "C" fn() = core::mem::transmute(obj.init);
-        f();
+    if idx >= LOADED_COUNT || !LOADED[idx].active || LOADED[idx].constructed || LOADED[idx].constructing {
+        return;
     }
-    if obj.init_array_present && obj.init_array != 0 && obj.init_array_sz >= 8 {
-        let count = (obj.init_array_sz / 8) as usize;
+    // Mark before descending so a cyclic DT_NEEDED edge cannot recurse
+    // forever. The cycle's remaining object finishes its callbacks first.
+    LOADED[idx].constructing = true;
+    let dependency_count = LOADED[idx].dependency_count;
+    for i in 0..dependency_count {
+        run_constructors_for(LOADED[idx].dependencies[i]);
+    }
+    let init_array_present = LOADED[idx].init_array_present;
+    let init_array = LOADED[idx].init_array;
+    let init_array_sz = LOADED[idx].init_array_sz;
+    // Pinned musl preserves legacy DT_INIT tags in an ELF object but does not
+    // dispatch them on this dlopen path. Its observable constructor contract
+    // is the init-array sequence below, so do not infer execution from the
+    // presence of the legacy dynamic tag.
+    if init_array_present && init_array != 0 && init_array_sz >= 8 {
+        let count = (init_array_sz / 8) as usize;
         for j in 0..count {
-            let entry = (obj.init_array as *const u8).add(j * 8);
+            let entry = (init_array as *const u8).add(j * 8);
+            let fp = u64::from_le_bytes(core::ptr::read_unaligned(entry as *const [u8; 8]));
+            if fp != 0 {
+                let f: extern "C" fn() = core::mem::transmute(fp);
+                f();
+            }
+        }
+    }
+    LOADED[idx].constructed = true;
+    LOADED[idx].constructing = false;
+}
+
+/// Finalize one active DSO using pinned musl's dlclose contract: fini-array
+/// entries run in reverse order, while a legacy DT_FINI tag remains inert.
+/// This is invoked when a runtime handle's final reference is closed.
+unsafe fn run_destructors_for(idx: usize) {
+    if idx >= LOADED_COUNT || !LOADED[idx].active {
+        return;
+    }
+    let obj = &LOADED[idx];
+    if obj.fini_array_present && obj.fini_array != 0 && obj.fini_array_sz >= 8 {
+        let mut count = (obj.fini_array_sz / 8) as usize;
+        while count > 0 {
+            count -= 1;
+            let entry = (obj.fini_array as *const u8).add(count * 8);
             let fp = u64::from_le_bytes(core::ptr::read_unaligned(entry as *const [u8; 8]));
             if fp != 0 {
                 let f: extern "C" fn() = core::mem::transmute(fp);
@@ -2372,6 +2739,9 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     publish_debug_state(RT_ADD);
     let name_len = str_len(filename);
     if let Some(idx) = loaded_object_by_name(filename, name_len) {
+        if LOADED[idx].ref_count != usize::MAX {
+            LOADED[idx].ref_count = LOADED[idx].ref_count.saturating_add(1);
+        }
         LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
         publish_debug_state(RT_CONSISTENT);
         return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
@@ -2381,40 +2751,39 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     } else {
         Some(LD_LIBRARY_PATH)
     };
-    let fd = find_library_fd(filename, name_len, ld);
-    if fd < 0 {
-        set_dlerror(b"dlopen: cannot open file\0");
-        publish_debug_state(RT_CONSISTENT);
-        return core::ptr::null_mut();
-    }
-    if let Some(identity) = file_identity(fd) {
-        if let Some(idx) = loaded_object_by_identity(identity) {
-            sys_close(fd);
-            LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
-            publish_debug_state(RT_CONSISTENT);
-            return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
-        }
-    }
-    let desired = DSO_BASE_START + (LOADED_COUNT as u64) * DSO_BASE_STRIDE;
-    let _base = match load_dso_from_fd(fd, desired) {
-        Some(b) => b,
+    let first_new = LOADED_COUNT;
+    let idx = match load_named_with_dependencies(filename, name_len, ld) {
+        Some(idx) => idx,
         None => {
-            sys_close(fd);
-            set_dlerror(b"dlopen: failed to load\0");
+            // A failed recursive closure must not remain visible to later
+            // dlsym/relocation calls. Its anonymous mappings are harmless
+            // process-local leakage on this error path, but its metadata is
+            // rolled back before reporting the musl-style dlopen failure.
+            LOADED_COUNT = first_new;
+            set_dlerror(b"dlopen: failed to load dependency graph\0");
             publish_debug_state(RT_CONSISTENT);
             return core::ptr::null_mut();
         }
     };
-    sys_close(fd);
-    let idx = LOADED_COUNT - 1;
+    if idx < first_new {
+        if LOADED[idx].ref_count != usize::MAX {
+            LOADED[idx].ref_count = LOADED[idx].ref_count.saturating_add(1);
+        }
+        LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
+        publish_debug_state(RT_CONSISTENT);
+        return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
+    }
     set_loaded_name(idx, filename, name_len);
     LOADED[idx].global = (flags & RTLD_GLOBAL) != 0;
-    DL_ADDS = DL_ADDS.wrapping_add(1);
+    LOADED[idx].ref_count = 1;
+    DL_ADDS = DL_ADDS.wrapping_add((LOADED_COUNT - first_new) as u64);
     // TLS descriptors need the final module offset, while the TLS image can
     // contain ordinary relocations. Reserve the layout, relocate the image,
     // then copy that relocated image into the current thread's TLS block.
     let tls_update = register_tls_for_new_module(idx);
     process_all_relocations();
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    apply_relro();
     if let Some((old_total, old_module_count)) = tls_update {
         initialize_new_module_tls(old_total, old_module_count);
     }
@@ -2482,7 +2851,39 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn __ldso_dlclose(_handle: *mut u8) -> i32 {
+pub unsafe extern "C" fn __ldso_dlclose(handle: *mut u8) -> i32 {
+    // `dlopen(NULL, ...)` returns the permanent global process handle. musl
+    // accepts `dlclose` for it as a no-op; it is not an address inside LOADED.
+    if handle == DL_GLOBAL_SENTINEL {
+        return 0;
+    }
+    let Some(idx) = loaded_handle_index(handle) else {
+        set_dlerror(b"dlclose: invalid handle\0");
+        return -1;
+    };
+    if LOADED[idx].ref_count == usize::MAX {
+        // Startup objects are permanently retained, as musl does for its
+        // global process scope. A handle obtained for one still closes
+        // successfully without unmapping the process runtime.
+        return 0;
+    }
+    if LOADED[idx].ref_count == 0 {
+        set_dlerror(b"dlclose: invalid handle\0");
+        return -1;
+    }
+    LOADED[idx].ref_count -= 1;
+    if LOADED[idx].ref_count == 0 {
+        if !LOADED[idx].finalized {
+            publish_debug_state(RT_DELETE);
+            run_destructors_for(idx);
+            // musl invokes the finalizer but retains the mapping. A later
+            // dlopen of the same identity reuses its initialized image rather
+            // than replaying constructors. Preserve that observable lifecycle
+            // while recording that this object's fini hooks are one-shot.
+            LOADED[idx].finalized = true;
+            publish_debug_state(RT_CONSISTENT);
+        }
+    }
     0
 }
 
@@ -2497,7 +2898,7 @@ pub unsafe extern "C" fn __ldso_dlerror() -> *const u8 {
 }
 
 unsafe fn loaded_object_phdrs(idx: usize) -> Option<(*const u8, usize)> {
-    if idx >= LOADED_COUNT {
+    if idx >= LOADED_COUNT || !LOADED[idx].active {
         return None;
     }
     let base = LOADED[idx].base as usize;
@@ -2537,7 +2938,7 @@ unsafe fn loaded_object_contains(idx: usize, address: usize) -> bool {
 }
 
 unsafe fn loaded_object_tls_data(idx: usize) -> *mut u8 {
-    if idx >= LOADED_COUNT || LOADED[idx].tls_memsz == 0 {
+    if idx >= LOADED_COUNT || !LOADED[idx].active || LOADED[idx].tls_memsz == 0 {
         return core::ptr::null_mut();
     }
     let base = read_tp().wrapping_sub(tls_var_area_offset_from_tp());
@@ -2551,6 +2952,9 @@ pub unsafe extern "C" fn __ldso_dl_iterate_phdr(
     data: *mut u8,
 ) -> i32 {
     for i in 0..LOADED_COUNT {
+        if !LOADED[i].active {
+            continue;
+        }
         let Some((phdr, phnum)) = loaded_object_phdrs(i) else {
             continue;
         };
@@ -2942,13 +3346,17 @@ unsafe fn register_self(ldso_base: u64) {
     let e_phnum = u16::from_le_bytes(core::ptr::read_unaligned(ehdr.add(56) as *const [u8; 2])) as usize;
     let mut dyn_vaddr: u64 = 0;
     let mut dyn_memsz: u64 = 0;
+    let mut relro_vaddr: u64 = 0;
+    let mut relro_memsz: u64 = 0;
     for i in 0..e_phnum {
         let ph = ehdr.add(e_phoff as usize + i * PHDR_SIZE);
         let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
         if p_type == PT_DYNAMIC {
             dyn_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
             dyn_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
-            break;
+        } else if p_type == PT_GNU_RELRO {
+            relro_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
+            relro_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
         }
     }
     if dyn_vaddr == 0 {
@@ -2987,6 +3395,15 @@ unsafe fn register_self(ldso_base: u64) {
             sym_count,
             strtab: strtab_ptr,
             strsz: dt_strsz as usize,
+            search_path: core::ptr::null(),
+            search_path_len: 0,
+            relro_addr: ldso_base + relro_vaddr,
+            relro_size: relro_memsz,
+            relro_applied: false,
+            dependencies: [0; MAX_LOADED],
+            dependency_count: 0,
+            constructing: false,
+            constructed: false,
             dyn_addr,
             dyn_memsz: dyn_memsz as usize,
             tls_image: core::ptr::null(),
@@ -2998,7 +3415,15 @@ unsafe fn register_self(ldso_base: u64) {
             init_array_sz: 0,
             init_present: false,
             init_array_present: false,
+            fini: 0,
+            fini_array: 0,
+            fini_array_sz: 0,
+            fini_present: false,
+            fini_array_present: false,
             global: false,
+            ref_count: usize::MAX,
+            active: true,
+            finalized: false,
             file_identity_valid: false,
             file_dev: 0,
             file_ino: 0,
@@ -3025,7 +3450,7 @@ unsafe fn loaded_object_by_name(name: *const u8, name_len: usize) -> Option<usiz
         return None;
     }
     for i in 0..LOADED_COUNT {
-        if LOADED[i].name[0] == 0 {
+        if !LOADED[i].active || LOADED[i].name[0] == 0 {
             continue;
         }
         if str_eq(name, name_len, LOADED[i].name.as_ptr()) {
@@ -3038,7 +3463,8 @@ unsafe fn loaded_object_by_name(name: *const u8, name_len: usize) -> Option<usiz
 unsafe fn loaded_object_by_identity(identity: FileIdentity) -> Option<usize> {
     for i in 0..LOADED_COUNT {
         let obj = &LOADED[i];
-        if obj.file_identity_valid
+        if obj.active
+            && obj.file_identity_valid
             && obj.file_dev == identity.dev
             && obj.file_ino == identity.ino
         {
@@ -3098,6 +3524,17 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     let e_phoff = u64::from_le_bytes(buf[32..40].try_into().unwrap());
     let e_phnum = u16::from_le_bytes(buf[56..58].try_into().unwrap());
     let e_entry = u64::from_le_bytes(buf[24..32].try_into().unwrap());
+    let mut exec_relro_vaddr = 0u64;
+    let mut exec_relro_memsz = 0u64;
+    for i in 0..e_phnum as usize {
+        let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
+        let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
+        if p_type == PT_GNU_RELRO {
+            exec_relro_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
+            exec_relro_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
+            break;
+        }
+    }
 
     // 3. Map executable's PT_LOAD segments at a safe base address.
     //    PIE p_vaddr often starts at 0 which is below mmap_min_addr on CI.
@@ -3117,28 +3554,25 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         let end = p_vaddr + p_memsz;
         if end > max_vaddr_end { max_vaddr_end = end; }
     }
-    let total_size = ((max_vaddr_end - min_vaddr + page - 1) & !(page - 1)) as usize;
-    // ponytail: mmap_min_addr is typically 65536; probe upward to find free span
-    let desired = if min_vaddr < 0x10000 { 0x10000 } else { min_vaddr };
-    let mut probe_addr = desired;
-    let load_start = loop {
-        let probe = sys_mmap(
-            probe_addr as *mut u8, total_size,
-            PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0,
-        );
-        if probe as usize == probe_addr as usize {
-            sys_munmap(probe, total_size);
-            break probe_addr;
-        }
-        if probe as usize != MAP_FAILED {
-            sys_munmap(probe, total_size);
-        }
-        probe_addr += DSO_BASE_STRIDE;
-        if probe_addr > desired + DSO_BASE_STRIDE * 16 {
-            die(95, b"map_exec", probe_addr as usize);
-        }
-    };
-    let exec_base = load_start - min_vaddr;
+    let image_start = min_vaddr & !(page - 1);
+    let image_end = (max_vaddr_end + page - 1) & !(page - 1);
+    let total_size = (image_end - image_start) as usize;
+    // The main PIE deserves the same kernel-selected load bias as DSOs. The
+    // old fixed low-address probe made its dladdr base repeat in every process
+    // and bypassed normal Linux ASLR entirely.
+    let reservation = sys_mmap(
+        core::ptr::null_mut(),
+        total_size,
+        PROT_NONE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+    if reservation as usize == MAP_FAILED {
+        die(95, b"map_exec", total_size);
+    }
+    let exec_base = (reservation as u64).wrapping_sub(image_start);
+    sys_munmap(reservation, total_size);
 
     for i in 0..e_phnum as usize {
         let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
@@ -3309,6 +3743,15 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         sym_count: exec_sym_count,
         strtab: (exec_base + dt_strtab) as *const u8,
         strsz: dt_strsz as usize,
+        search_path: core::ptr::null(),
+        search_path_len: 0,
+        relro_addr: exec_base + exec_relro_vaddr,
+        relro_size: exec_relro_memsz,
+        relro_applied: false,
+        dependencies: [0; MAX_LOADED],
+        dependency_count: 0,
+        constructing: false,
+        constructed: false,
         dyn_addr: (exec_base + dyn_vaddr) as usize,
         dyn_memsz: dyn_memsz as usize,
         tls_image: exec_tls_image,
@@ -3320,7 +3763,15 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         init_array_sz: dt_init_array_sz,
         init_present: dt_init_present,
         init_array_present: dt_init_array_present,
+        fini: 0,
+        fini_array: 0,
+        fini_array_sz: 0,
+        fini_present: false,
+        fini_array_present: false,
         global: true,
+        ref_count: usize::MAX,
+        active: true,
+        finalized: false,
         file_identity_valid: exec_identity.is_some(),
         file_dev: exec_identity.map_or(0, |id| id.dev),
         file_ino: exec_identity.map_or(0, |id| id.ino),
@@ -3335,26 +3786,23 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     }
     register_self(ldso_base);
 
+    // `LD_PRELOAD` belongs ahead of the executable's DT_NEEDED graph: its
+    // definitions must already be visible when the ordinary dependencies'
+    // PLT/GOT relocations are resolved. Preserve the kernel envp pointer until
+    // after this point; the replacement application stack is built later.
+    if let Some(preload) = find_env(sp, b"LD_PRELOAD=") {
+        if !load_preload_list(preload, ld_path) {
+            die(87, b"preload_graph", 0);
+        }
+    }
+
     // 5. Load each DT_NEEDED DSO
     for i in 0..needed_count {
         let (name_ptr, name_len) = needed_names[i];
-        let lib_fd = find_library_fd(name_ptr, name_len, ld_path);
-        if lib_fd < 0 {
-            die(89, b"needed_fd", i);
-        }
-        if let Some(identity) = file_identity(lib_fd) {
-            if loaded_object_by_identity(identity).is_some() {
-                sys_close(lib_fd);
-                continue;
-            }
-        }
-        let desired_base = DSO_BASE_START + (i as u64) * DSO_BASE_STRIDE;
-        if load_dso_from_fd(lib_fd, desired_base).is_none() {
-            sys_close(lib_fd);
-            die(88, b"load_dso", desired_base as usize);
-        }
-        sys_close(lib_fd);
-        set_loaded_name(LOADED_COUNT - 1, name_ptr, name_len);
+        let Some(child) = load_named_with_dependencies(name_ptr, name_len, ld_path) else {
+            die(89, b"needed_graph", i);
+        };
+        record_dependency(0, child);
     }
 
     compute_tls_layout();
@@ -3364,6 +3812,8 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
 
     process_all_relocations();
     register_dlopen_callbacks();
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    apply_relro();
 
     // Always allocate a TCB so that %fs-relative accesses (e.g. stack canary
     // at %fs:0x28) work even when there is no TLS data in the binary.
@@ -3417,6 +3867,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
 struct OrigAuxv {
     at_base: u64,
     at_random: *const u8,
+    at_sysinfo_ehdr: u64,
     at_secure: u64,
     at_uid: u64,
     at_euid: u64,
@@ -3428,6 +3879,7 @@ unsafe fn read_orig_auxv(orig_sp: usize, envc: usize) -> OrigAuxv {
     let mut out = OrigAuxv {
         at_base: 0,
         at_random: core::ptr::null(),
+        at_sysinfo_ehdr: 0,
         at_secure: 0,
         at_uid: 0,
         at_euid: 0,
@@ -3448,6 +3900,7 @@ unsafe fn read_orig_auxv(orig_sp: usize, envc: usize) -> OrigAuxv {
         match tag {
             AT_BASE => out.at_base = val,
             AT_RANDOM => out.at_random = val as *const u8,
+            AT_SYSINFO_EHDR => out.at_sysinfo_ehdr = val,
             AT_SECURE => out.at_secure = val,
             AT_UID => out.at_uid = val,
             AT_EUID => out.at_euid = val,
@@ -3531,7 +3984,7 @@ unsafe fn build_and_jump(entry: u64, phdr_addr: u64, phnum: u16, orig_sp: usize)
         *(sp as *mut u64) = 0;
     }
 
-    const AUXV_ENTRIES: usize = 13;
+    const AUXV_ENTRIES: usize = 14;
     sp -= AUXV_ENTRIES * 16;
     let aux = sp as *mut u64;
     *aux.add(0) = AT_PHDR;
@@ -3558,8 +4011,10 @@ unsafe fn build_and_jump(entry: u64, phdr_addr: u64, phnum: u16, orig_sp: usize)
     *aux.add(21) = orig_auxv.at_gid;
     *aux.add(22) = AT_EGID;
     *aux.add(23) = orig_auxv.at_egid;
-    *aux.add(24) = AT_NULL;
-    *aux.add(25) = 0;
+    *aux.add(24) = AT_SYSINFO_EHDR;
+    *aux.add(25) = orig_auxv.at_sysinfo_ehdr;
+    *aux.add(26) = AT_NULL;
+    *aux.add(27) = 0;
 
     sp -= (max_env + 1) * 8;
     for i in 0..max_env {
