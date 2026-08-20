@@ -3,3 +3,10 @@ RUST_TEST_THREADS = "1"
 
 [build]
 rustflags = ["-C", "link-dead-code"]
+
+# Rust's built-in musl target defaults to crt-static, which forbids the
+# cdylib artifacts that are the libc and dynamic loader. The native AArch64
+# Docker image links against the separately pinned musl 1.2.6 reference, so
+# opt into dynamic artifacts while preserving the project-wide dead-code flag.
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "link-dead-code", "-C", "target-feature=-crt-static"]

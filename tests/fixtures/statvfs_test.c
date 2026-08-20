@@ -26,8 +26,10 @@ int main(void) {
         return 4;
     }
 
-    if (buf.f_files == 0) {
-        fprintf(stderr, "f_files is zero\n");
+    /* Overlay filesystems may report zero when inode capacity is unknown.
+     * That is also what the pinned musl oracle exposes in Docker. */
+    if (buf.f_files != 0 && buf.f_files < buf.f_ffree) {
+        fprintf(stderr, "f_ffree > f_files\n");
         return 5;
     }
 

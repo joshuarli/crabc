@@ -1,0 +1,726 @@
+{
+  "architecture": "aarch64",
+  "candidate": {
+    "artifact": "target/debug/libldso.so",
+    "elf": {
+      "dynamic": {
+        "tag_names": [
+          "SYMBOLIC",
+          "INIT_ARRAY",
+          "INIT_ARRAYSZ",
+          "GNU_HASH",
+          "STRTAB",
+          "SYMTAB",
+          "STRSZ",
+          "SYMENT",
+          "PLTGOT",
+          "PLTRELSZ",
+          "PLTREL",
+          "JMPREL",
+          "RELA",
+          "RELASZ",
+          "RELAENT",
+          "FLAGS",
+          "FLAGS_1",
+          "RELACOUNT",
+          "NULL"
+        ],
+        "tags": [
+          {
+            "tag": "SYMBOLIC",
+            "tag_value": "0x0000000000000010",
+            "value": "0x0"
+          },
+          {
+            "tag": "INIT_ARRAY",
+            "tag_value": "0x0000000000000019",
+            "value": "0x4e318"
+          },
+          {
+            "tag": "INIT_ARRAYSZ",
+            "tag_value": "0x000000000000001b",
+            "value": "16 (bytes)"
+          },
+          {
+            "tag": "GNU_HASH",
+            "tag_value": "0x000000006ffffef5",
+            "value": "0x1f0"
+          },
+          {
+            "tag": "STRTAB",
+            "tag_value": "0x0000000000000005",
+            "value": "0x4a0"
+          },
+          {
+            "tag": "SYMTAB",
+            "tag_value": "0x0000000000000006",
+            "value": "0x2c0"
+          },
+          {
+            "tag": "STRSZ",
+            "tag_value": "0x000000000000000a",
+            "value": "225 (bytes)"
+          },
+          {
+            "tag": "SYMENT",
+            "tag_value": "0x000000000000000b",
+            "value": "24 (bytes)"
+          },
+          {
+            "tag": "PLTGOT",
+            "tag_value": "0x0000000000000003",
+            "value": "0x4fe90"
+          },
+          {
+            "tag": "PLTRELSZ",
+            "tag_value": "0x0000000000000002",
+            "value": "24 (bytes)"
+          },
+          {
+            "tag": "PLTREL",
+            "tag_value": "0x0000000000000014",
+            "value": "RELA"
+          },
+          {
+            "tag": "JMPREL",
+            "tag_value": "0x0000000000000017",
+            "value": "0x2970"
+          },
+          {
+            "tag": "RELA",
+            "tag_value": "0x0000000000000007",
+            "value": "0x588"
+          },
+          {
+            "tag": "RELASZ",
+            "tag_value": "0x0000000000000008",
+            "value": "9192 (bytes)"
+          },
+          {
+            "tag": "RELAENT",
+            "tag_value": "0x0000000000000009",
+            "value": "24 (bytes)"
+          },
+          {
+            "tag": "FLAGS",
+            "tag_value": "0x000000000000001e",
+            "value": "SYMBOLIC BIND_NOW"
+          },
+          {
+            "tag": "FLAGS_1",
+            "tag_value": "0x000000006ffffffb",
+            "value": "Flags: NOW"
+          },
+          {
+            "tag": "RELACOUNT",
+            "tag_value": "0x000000006ffffff9",
+            "value": "382"
+          },
+          {
+            "tag": "NULL",
+            "tag_value": "0x0000000000000000",
+            "value": "0x0"
+          }
+        ]
+      },
+      "dynamic_symbols": {
+        "public_defined": 15,
+        "tables": {
+          ".dynsym": 20
+        }
+      },
+      "header": {
+        "class": "ELF64",
+        "data": "2's complement, little endian",
+        "entry_point": "0x37b0",
+        "machine": "AArch64",
+        "os_abi": "UNIX - System V",
+        "program_header_count": "7",
+        "program_header_entry_size": "56 (bytes)",
+        "program_header_offset": "64 (bytes into file)",
+        "section_header_count": "30",
+        "type": "DYN (Shared object file)",
+        "version": "1 (current)"
+      },
+      "program_header_types": {
+        "DYNAMIC": 1,
+        "GNU_EH_FRAME": 1,
+        "GNU_RELRO": 1,
+        "GNU_STACK": 1,
+        "LOAD": 2,
+        "NOTE": 1
+      },
+      "program_headers": [
+        {
+          "alignment": "0x10000",
+          "file_size": "0x03849c",
+          "flags": "RE",
+          "memory_size": "0x03849c",
+          "offset": "0x000000",
+          "physical_address": "0x0000000000000000",
+          "type": "LOAD",
+          "virtual_address": "0x0000000000000000"
+        },
+        {
+          "alignment": "0x10000",
+          "file_size": "0x001d00",
+          "flags": "RW",
+          "memory_size": "0x003878",
+          "offset": "0x03e318",
+          "physical_address": "0x000000000004e318",
+          "type": "LOAD",
+          "virtual_address": "0x000000000004e318"
+        },
+        {
+          "alignment": "0x8",
+          "file_size": "0x000170",
+          "flags": "RW",
+          "memory_size": "0x000170",
+          "offset": "0x03fd20",
+          "physical_address": "0x000000000004fd20",
+          "type": "DYNAMIC",
+          "virtual_address": "0x000000000004fd20"
+        },
+        {
+          "alignment": "0x4",
+          "file_size": "0x000024",
+          "flags": "R",
+          "memory_size": "0x000024",
+          "offset": "0x0001c8",
+          "physical_address": "0x00000000000001c8",
+          "type": "NOTE",
+          "virtual_address": "0x00000000000001c8"
+        },
+        {
+          "alignment": "0x4",
+          "file_size": "0x0014bc",
+          "flags": "R",
+          "memory_size": "0x0014bc",
+          "offset": "0x030c30",
+          "physical_address": "0x0000000000030c30",
+          "type": "GNU_EH_FRAME",
+          "virtual_address": "0x0000000000030c30"
+        },
+        {
+          "alignment": "0x10",
+          "file_size": "0x000000",
+          "flags": "RW",
+          "memory_size": "0x000000",
+          "offset": "0x000000",
+          "physical_address": "0x0000000000000000",
+          "type": "GNU_STACK",
+          "virtual_address": "0x0000000000000000"
+        },
+        {
+          "alignment": "0x1",
+          "file_size": "0x001ce8",
+          "flags": "R",
+          "memory_size": "0x001ce8",
+          "offset": "0x03e318",
+          "physical_address": "0x000000000004e318",
+          "type": "GNU_RELRO",
+          "virtual_address": "0x000000000004e318"
+        }
+      ],
+      "relocations": {
+        "entries": 384,
+        "sections": [
+          {
+            "declared_entries": 383,
+            "name": ".rela.dyn",
+            "observed_entries": 383,
+            "types": {
+              "R_AARCH64_ABS64": 1,
+              "R_AARCH64_RELATIVE": 382
+            }
+          },
+          {
+            "declared_entries": 1,
+            "name": ".rela.plt",
+            "observed_entries": 1,
+            "types": {
+              "R_AARCH64_JUMP_SLOT": 1
+            }
+          }
+        ],
+        "types": {
+          "R_AARCH64_ABS64": 1,
+          "R_AARCH64_JUMP_SLOT": 1,
+          "R_AARCH64_RELATIVE": 382
+        }
+      }
+    },
+    "sha256": "50d396682aed6f1926153a75478d795456672c50d1f8d7316e52a1e9d0e12f73",
+    "source": "ldso/src/lib.rs",
+    "source_sha256": "b1407c3f03bfae9028b923c6d06ab9edd1b060cbaee7d420e488cb78a7ee4229"
+  },
+  "features": [
+    {
+      "description": "AArch64 _start finds and applies the loader's relative relocations.",
+      "name": "self_relocation",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "aarch64 _start",
+          "occurrences": 1
+        },
+        {
+          "marker": "R_AARCH64_RELATIVE",
+          "occurrences": 4
+        },
+        {
+          "marker": "run_main",
+          "occurrences": 17
+        }
+      ],
+      "state": "source_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Map a PIE executable, preserve its entry metadata, and transfer control.",
+      "name": "basic_pie_loading",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "load_and_jump",
+          "occurrences": 2
+        },
+        {
+          "marker": "MAP_FIXED",
+          "occurrences": 7
+        },
+        {
+          "marker": "PT_LOAD",
+          "occurrences": 5
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_real_binary.rs"
+        },
+        {
+          "exists": true,
+          "path": "tests/ldso_interp.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Read DT_NEEDED and load dependent shared objects.",
+      "name": "dt_needed_graph",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "DT_NEEDED",
+          "occurrences": 5
+        },
+        {
+          "marker": "find_library_fd",
+          "occurrences": 3
+        },
+        {
+          "marker": "load_dso_from_fd",
+          "occurrences": 3
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_deps.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Resolve symbols across the loaded-object set.",
+      "name": "symbol_lookup",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "resolve_symbol",
+          "occurrences": 20
+        },
+        {
+          "marker": "lookup_symbol_in_object",
+          "occurrences": 4
+        },
+        {
+          "marker": "resolve_copy_source",
+          "occurrences": 3
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_deps.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Process DT_INIT and DT_INIT_ARRAY callbacks for loaded objects.",
+      "name": "constructors",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "run_constructors",
+          "occurrences": 5
+        },
+        {
+          "marker": "DT_INIT_ARRAY",
+          "occurrences": 6
+        },
+        {
+          "marker": "DT_INIT",
+          "occurrences": 9
+        }
+      ],
+      "state": "source_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Process DT_FINI and DT_FINI_ARRAY callbacks at unload/exit.",
+      "name": "destructors",
+      "note": "DT_FINI constants exist, but no loader destructor traversal is evidenced.",
+      "runtime_test_executed": false,
+      "source_markers": [],
+      "state": "surface_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Build the initial TLS image and provide __tls_get_addr.",
+      "name": "initial_tls",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "PT_TLS",
+          "occurrences": 3
+        },
+        {
+          "marker": "compute_tls_layout",
+          "occurrences": 2
+        },
+        {
+          "marker": "__tls_get_addr",
+          "occurrences": 3
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_tls.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Expand thread TLS when a later DSO introduces a TLS module.",
+      "name": "late_loaded_tls",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "update_tls_for_new_module",
+          "occurrences": 2
+        },
+        {
+          "marker": "expand_thread_tls",
+          "occurrences": 3
+        },
+        {
+          "marker": "TLS_GENERATION",
+          "occurrences": 9
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/dso_tls.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Search RUNPATH/RPATH entries and expand $ORIGIN.",
+      "name": "rpath_runpath_origin",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "DT_RUNPATH",
+          "occurrences": 2
+        },
+        {
+          "marker": "DT_RPATH",
+          "occurrences": 2
+        },
+        {
+          "marker": "$ORIGIN",
+          "occurrences": 1
+        }
+      ],
+      "state": "source_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Search LD_LIBRARY_PATH while resolving dependencies.",
+      "name": "ld_library_path",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "LD_LIBRARY_PATH",
+          "occurrences": 7
+        },
+        {
+          "marker": "find_env",
+          "occurrences": 2
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_deps.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Honor the LD_PRELOAD interposition contract.",
+      "name": "ld_preload",
+      "note": "No LD_PRELOAD path is currently evidenced in the loader source.",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "LD_PRELOAD",
+          "occurrences": 0
+        }
+      ],
+      "state": "not_evidenced",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Expose the loader callbacks used by crabc dlopen/dlsym/dlerror.",
+      "name": "dlopen_dlsym_dlerror",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "__ldso_dlopen",
+          "occurrences": 2
+        },
+        {
+          "marker": "__ldso_dlsym",
+          "occurrences": 2
+        },
+        {
+          "marker": "__ldso_dlerror",
+          "occurrences": 2
+        }
+      ],
+      "state": "source_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Unload a DSO and run its finalization contract.",
+      "name": "dlclose",
+      "note": "The current callback returns success without unloading the object.",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "__ldso_dlclose",
+          "occurrences": 2
+        }
+      ],
+      "state": "surface_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Provide loader introspection APIs for object and program-header enumeration.",
+      "name": "dladdr_dl_iterate_phdr",
+      "runtime_test_executed": false,
+      "source_markers": [],
+      "state": "not_evidenced",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Derive dynamic symbol bounds from SYSV and GNU hash tables.",
+      "name": "sysv_and_gnu_hash",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "DT_HASH",
+          "occurrences": 3
+        },
+        {
+          "marker": "DT_GNU_HASH",
+          "occurrences": 3
+        },
+        {
+          "marker": "sym_count_from_hash",
+          "occurrences": 3
+        },
+        {
+          "marker": "sym_count_from_gnu_hash",
+          "occurrences": 3
+        }
+      ],
+      "state": "source_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Apply the AArch64 RELA and TLS relocation classes present in the loader.",
+      "name": "aarch64_relocations",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "apply_rela_table",
+          "occurrences": 4
+        },
+        {
+          "marker": "R_AARCH64_ABS64",
+          "occurrences": 2
+        },
+        {
+          "marker": "R_AARCH64_JUMP_SLOT",
+          "occurrences": 2
+        },
+        {
+          "marker": "R_AARCH64_TLSDESC",
+          "occurrences": 2
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_real_binary.rs"
+        },
+        {
+          "exists": true,
+          "path": "tests/ldso_tls.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Process DT_RELR compressed relative relocations.",
+      "name": "relr",
+      "note": "R_AARCH64_RELATIVE is present, but DT_RELR handling is not evidenced.",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "DT_RELR",
+          "occurrences": 0
+        },
+        {
+          "marker": "R_AARCH64_RELATIVE",
+          "occurrences": 4
+        }
+      ],
+      "state": "surface_only",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Apply final read-only protection to GNU_RELRO ranges.",
+      "name": "relro",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "GNU_RELRO",
+          "occurrences": 0
+        },
+        {
+          "marker": "mprotect",
+          "occurrences": 0
+        }
+      ],
+      "state": "not_evidenced",
+      "test_targets": [],
+      "verified": false
+    },
+    {
+      "description": "Preserve startup auxiliary-vector values needed by the runtime.",
+      "name": "auxv_and_vdso",
+      "note": "This records auxv handling only; vDSO discovery is a separate unmeasured feature.",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "AT_PHDR",
+          "occurrences": 2
+        },
+        {
+          "marker": "AT_RANDOM",
+          "occurrences": 4
+        },
+        {
+          "marker": "AT_BASE",
+          "occurrences": 5
+        }
+      ],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_startup.rs"
+        }
+      ],
+      "verified": false
+    },
+    {
+      "description": "Discover and expose the kernel vDSO to loaded programs.",
+      "name": "vdso_discovery",
+      "runtime_test_executed": false,
+      "source_markers": [
+        {
+          "marker": "AT_SYSINFO_EHDR",
+          "occurrences": 0
+        },
+        {
+          "marker": "vDSO",
+          "occurrences": 0
+        }
+      ],
+      "state": "not_evidenced",
+      "test_targets": [],
+      "verified": false
+    }
+  ],
+  "inventory": "crabc.loader.aarch64.features/v1",
+  "provenance": {
+    "readelf_commands": [
+      "readelf -hW",
+      "readelf -lW",
+      "readelf -dW",
+      "readelf -rW",
+      "readelf --dyn-syms --wide"
+    ],
+    "script": "compat/scripts/generate-aarch64-loader-inventory.py"
+  },
+  "schema_version": 1,
+  "target": "aarch64-unknown-linux-musl",
+  "verification": {
+    "note": "This inventory is evidence about the current crabc tree, not a musl parity claim. Run the documented native AArch64 tests to produce runtime evidence; this generator never marks a feature verified.",
+    "runtime_tests_executed": false,
+    "state_vocabulary": {
+      "not_evidenced": "No implementation marker was found in the inspected source.",
+      "source_and_test_target": "Source markers and a test target are present; no test pass is asserted.",
+      "source_only": "Source markers are present; no focused test target is recorded.",
+      "surface_only": "A name or constant exists, but implementation evidence is intentionally insufficient."
+    },
+    "verified": false
+  }
+}

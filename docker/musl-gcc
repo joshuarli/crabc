@@ -1,0 +1,3 @@
+#!/bin/sh
+# Native GCC wrapper generated from musl's own musl-gcc.specs.sh output.
+exec gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"

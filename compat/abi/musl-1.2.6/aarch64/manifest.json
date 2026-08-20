@@ -1,0 +1,73 @@
+{
+  "architecture": "aarch64",
+  "baseline": "musl 1.2.6",
+  "dynamic": {
+    "columns": [
+      "name",
+      "type",
+      "binding",
+      "visibility",
+      "size",
+      "value",
+      "section_index",
+      "version"
+    ],
+    "file": "libc.so.dynamic.tsv",
+    "records": 1647,
+    "unique_names": 1647
+  },
+  "generator": {
+    "archive_command": "ar t",
+    "dynamic_command": "readelf --wide --dyn-syms",
+    "schema": "crabc.aarch64-musl-abi/v1",
+    "script": "compat/scripts/generate-aarch64-musl-abi.py",
+    "static_command": "nm -A -g --defined-only --format=posix"
+  },
+  "headers": {
+    "arch_internal_records": 34,
+    "columns": [
+      "path",
+      "interface",
+      "bytes",
+      "lines",
+      "sha256"
+    ],
+    "file": "headers.tsv",
+    "public_records": 183,
+    "records": 217,
+    "schema": "crabc.aarch64-musl-headers/v1"
+  },
+  "interpreter": {
+    "file": "lib/ld-musl-aarch64.so.1",
+    "relationship": "symlink to libc.so",
+    "sha256": "32e99962c8b88a9d70595c1fb77f130779f3becfb84f5ee86014fdd97d031323",
+    "target": "libc.so"
+  },
+  "musl_source": {
+    "libc_a": {
+      "file": "lib/libc.a",
+      "sha256": "44f33b9575e67780565aa0ca8cafc165c7faede83cbeb26c2bad83952c98ad76"
+    },
+    "libc_so": {
+      "file": "lib/libc.so",
+      "sha256": "32e99962c8b88a9d70595c1fb77f130779f3becfb84f5ee86014fdd97d031323"
+    },
+    "release": "1.2.6",
+    "tarball_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
+  },
+  "static": {
+    "archive_members": 1349,
+    "columns": [
+      "name",
+      "archive_member",
+      "nm_type",
+      "binding",
+      "value",
+      "size"
+    ],
+    "file": "libc.a.static.tsv",
+    "records": 2004,
+    "unique_names": 1939
+  },
+  "target": "aarch64-unknown-linux-musl"
+}

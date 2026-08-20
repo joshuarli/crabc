@@ -1,0 +1,284 @@
+{
+  "architecture": "aarch64",
+  "elf": {
+    "dynamic": {
+      "tag_names": [
+        "INIT",
+        "FINI",
+        "HASH",
+        "GNU_HASH",
+        "STRTAB",
+        "SYMTAB",
+        "STRSZ",
+        "SYMENT",
+        "PLTGOT",
+        "PLTRELSZ",
+        "PLTREL",
+        "JMPREL",
+        "RELA",
+        "RELASZ",
+        "RELAENT",
+        "FLAGS",
+        "FLAGS_1",
+        "RELACOUNT",
+        "NULL"
+      ],
+      "tags": [
+        {
+          "tag": "INIT",
+          "tag_value": "0x000000000000000c",
+          "value": "0x20110"
+        },
+        {
+          "tag": "FINI",
+          "tag_value": "0x000000000000000d",
+          "value": "0x20c14"
+        },
+        {
+          "tag": "HASH",
+          "tag_value": "0x0000000000000004",
+          "value": "0x1f0"
+        },
+        {
+          "tag": "GNU_HASH",
+          "tag_value": "0x000000006ffffef5",
+          "value": "0x2be0"
+        },
+        {
+          "tag": "STRTAB",
+          "tag_value": "0x0000000000000005",
+          "value": "0xf878"
+        },
+        {
+          "tag": "SYMTAB",
+          "tag_value": "0x0000000000000006",
+          "value": "0x5dc8"
+        },
+        {
+          "tag": "STRSZ",
+          "tag_value": "0x000000000000000a",
+          "value": "15139 (bytes)"
+        },
+        {
+          "tag": "SYMENT",
+          "tag_value": "0x000000000000000b",
+          "value": "24 (bytes)"
+        },
+        {
+          "tag": "PLTGOT",
+          "tag_value": "0x0000000000000003",
+          "value": "0xbff18"
+        },
+        {
+          "tag": "PLTRELSZ",
+          "tag_value": "0x0000000000000002",
+          "value": "144 (bytes)"
+        },
+        {
+          "tag": "PLTREL",
+          "tag_value": "0x0000000000000014",
+          "value": "RELA"
+        },
+        {
+          "tag": "JMPREL",
+          "tag_value": "0x0000000000000017",
+          "value": "0x13ca0"
+        },
+        {
+          "tag": "RELA",
+          "tag_value": "0x0000000000000007",
+          "value": "0x133a0"
+        },
+        {
+          "tag": "RELASZ",
+          "tag_value": "0x0000000000000008",
+          "value": "2304 (bytes)"
+        },
+        {
+          "tag": "RELAENT",
+          "tag_value": "0x0000000000000009",
+          "value": "24 (bytes)"
+        },
+        {
+          "tag": "FLAGS",
+          "tag_value": "0x000000000000001e",
+          "value": "BIND_NOW"
+        },
+        {
+          "tag": "FLAGS_1",
+          "tag_value": "0x000000006ffffffb",
+          "value": "Flags: NOW"
+        },
+        {
+          "tag": "RELACOUNT",
+          "tag_value": "0x000000006ffffff9",
+          "value": "80"
+        },
+        {
+          "tag": "NULL",
+          "tag_value": "0x0000000000000000",
+          "value": "0x0"
+        }
+      ]
+    },
+    "dynamic_symbols": {
+      "public_defined": 1647,
+      "tables": {
+        ".dynsym": 1650
+      }
+    },
+    "header": {
+      "class": "ELF64",
+      "data": "2's complement, little endian",
+      "entry_point": "0x689f8",
+      "machine": "AArch64",
+      "os_abi": "UNIX - System V",
+      "program_header_count": "7",
+      "program_header_entry_size": "56 (bytes)",
+      "program_header_offset": "64 (bytes into file)",
+      "section_header_count": "22",
+      "type": "DYN (Shared object file)",
+      "version": "1 (current)"
+    },
+    "program_header_types": {
+      "DYNAMIC": 1,
+      "GNU_EH_FRAME": 1,
+      "GNU_RELRO": 1,
+      "GNU_STACK": 1,
+      "LOAD": 2,
+      "NOTE": 1
+    },
+    "program_headers": [
+      {
+        "alignment": "0x10000",
+        "file_size": "0x0a0d34",
+        "flags": "RE",
+        "memory_size": "0x0a0d34",
+        "offset": "0x000000",
+        "physical_address": "0x0000000000000000",
+        "type": "LOAD",
+        "virtual_address": "0x0000000000000000"
+      },
+      {
+        "alignment": "0x10000",
+        "file_size": "0x0008c4",
+        "flags": "RW",
+        "memory_size": "0x0033e0",
+        "offset": "0x0afb40",
+        "physical_address": "0x00000000000bfb40",
+        "type": "LOAD",
+        "virtual_address": "0x00000000000bfb40"
+      },
+      {
+        "alignment": "0x8",
+        "file_size": "0x000170",
+        "flags": "RW",
+        "memory_size": "0x000170",
+        "offset": "0x0afda8",
+        "physical_address": "0x00000000000bfda8",
+        "type": "DYNAMIC",
+        "virtual_address": "0x00000000000bfda8"
+      },
+      {
+        "alignment": "0x4",
+        "file_size": "0x000024",
+        "flags": "R",
+        "memory_size": "0x000024",
+        "offset": "0x0001c8",
+        "physical_address": "0x00000000000001c8",
+        "type": "NOTE",
+        "virtual_address": "0x00000000000001c8"
+      },
+      {
+        "alignment": "0x4",
+        "file_size": "0x0000b4",
+        "flags": "R",
+        "memory_size": "0x0000b4",
+        "offset": "0x0a0918",
+        "physical_address": "0x00000000000a0918",
+        "type": "GNU_EH_FRAME",
+        "virtual_address": "0x00000000000a0918"
+      },
+      {
+        "alignment": "0x10",
+        "file_size": "0x000000",
+        "flags": "RW",
+        "memory_size": "0x000000",
+        "offset": "0x000000",
+        "physical_address": "0x0000000000000000",
+        "type": "GNU_STACK",
+        "virtual_address": "0x0000000000000000"
+      },
+      {
+        "alignment": "0x1",
+        "file_size": "0x0004c0",
+        "flags": "R",
+        "memory_size": "0x0004c0",
+        "offset": "0x0afb40",
+        "physical_address": "0x00000000000bfb40",
+        "type": "GNU_RELRO",
+        "virtual_address": "0x00000000000bfb40"
+      }
+    ],
+    "relocations": {
+      "entries": 102,
+      "sections": [
+        {
+          "declared_entries": 96,
+          "name": ".rela.dyn",
+          "observed_entries": 96,
+          "types": {
+            "R_AARCH64_GLOB_DAT": 16,
+            "R_AARCH64_RELATIVE": 80
+          }
+        },
+        {
+          "declared_entries": 6,
+          "name": ".rela.plt",
+          "observed_entries": 6,
+          "types": {
+            "R_AARCH64_JUMP_SLOT": 6
+          }
+        }
+      ],
+      "types": {
+        "R_AARCH64_GLOB_DAT": 16,
+        "R_AARCH64_JUMP_SLOT": 6,
+        "R_AARCH64_RELATIVE": 80
+      }
+    }
+  },
+  "inventory": "crabc.musl.aarch64.loader-runtime/v1",
+  "provenance": {
+    "commands": [
+      "readelf -hW",
+      "readelf -lW",
+      "readelf -dW",
+      "readelf -rW",
+      "readelf --dyn-syms --wide"
+    ],
+    "script": "compat/scripts/generate-aarch64-loader-inventory.py"
+  },
+  "reference": {
+    "libc": {
+      "installation_path": "lib/libc.so",
+      "sha256": "32e99962c8b88a9d70595c1fb77f130779f3becfb84f5ee86014fdd97d031323"
+    },
+    "loader": {
+      "installation_path": "lib/ld-musl-aarch64.so.1",
+      "resolved_path": "lib/libc.so",
+      "sha256": "32e99962c8b88a9d70595c1fb77f130779f3becfb84f5ee86014fdd97d031323",
+      "symlink": true,
+      "symlink_target": "/opt/musl-1.2.6/lib/libc.so"
+    },
+    "musl_tarball_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
+    "musl_version": "1.2.6"
+  },
+  "runtime_contract": {
+    "interpreter_basename": "ld-musl-aarch64.so.1",
+    "loader_and_libc_are_one_shared_object": true,
+    "note": "This is the reference ELF/runtime shape. It is not a claim that crabc's separate libldso.so has equivalent behavior."
+  },
+  "schema_version": 1,
+  "target": "aarch64-unknown-linux-musl"
+}

@@ -19,11 +19,17 @@ fn static_hello_links_against_libc_a() {
     } else {
         "x86_64"
     };
-    let musl_lib = format!("/usr/lib/{}-linux-musl", arch);
+    // Docker development deliberately keeps the pinned musl oracle outside
+    // Alpine's system libc. Direct-host CI retains the conventional fallback.
+    let musl_lib = std::env::var("MUSL_REFERENCE_LIBDIR")
+        .unwrap_or_else(|_| format!("/usr/lib/{}-linux-musl", arch));
 
     let status = Command::new("musl-gcc")
         .args([
             "-static",
+            // Alpine GCC defaults to PIE. This fixture exercises crabc's
+            // conventional static libc.a startup path, not static-PIE.
+            "-no-pie",
             "-nostdlib",
             "-fno-stack-protector",
             &format!("{}/crt1.o", musl_lib),
@@ -45,7 +51,7 @@ fn static_hello_links_against_libc_a() {
     let file_info = String::from_utf8_lossy(&file_out.stdout);
     assert!(
         file_info.contains("statically linked"),
-        "binary is not statically linked: {}",
+        "binary is not a static executable: {}",
         file_info
     );
 

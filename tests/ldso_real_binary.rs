@@ -43,4 +43,9 @@ fn ldso_runs_real_printf_binary() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "hello\n");
+    assert_eq!(
+        output.stderr,
+        b"",
+        "a successfully started program must not receive loader diagnostics on stderr"
+    );
 }

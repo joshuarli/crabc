@@ -287,6 +287,8 @@ Provide a small interface such as:
 ./scripts/dev.sh libc-test
 ./scripts/dev.sh differential
 ./scripts/dev.sh compat
+./scripts/dev.sh dashboard
+./scripts/dev.sh loader-inventory
 ./scripts/dev.sh corpus
 ./scripts/dev.sh bench
 ./scripts/dev.sh mature
@@ -431,6 +433,7 @@ PASS
 FAIL
 BUILDERROR
 TIMEOUT
+SKIP (only when the pinned musl oracle proves an environment limitation)
 ```
 
 and machine-readable failure causes where possible.
@@ -1832,6 +1835,7 @@ libc-test:
     FAIL
     BUILDERROR
     TIMEOUT
+    SKIP
 
 differential:
     pass
@@ -1928,6 +1932,65 @@ compatibility ratchet
 ```
 
 Do not undertake mass symbol work before this exists.
+
+### Progress — 2026-08-20 UTC
+
+The core laboratory is operational on native Docker `linux/arm64` and is
+intentionally Python-based where a harness needs control flow or structured
+reporting. The reproducible environment is pinned to Alpine 3.24.1, Rust
+`nightly-2026-07-24`, and musl 1.2.6; exact source revisions are in
+[`compat/upstreams.toml`](compat/upstreams.toml).
+
+Completed evidence:
+
+- `./scripts/dev.sh image`, `build`, `test`, `symbols`, `compat`,
+  `libc-test`, `differential`, `loader-inventory`, and `dashboard` run in the
+  native ARM64 image.
+  The full workspace test currently reaches, but does not satisfy, the legacy
+  Wave 5 expectation of 73 functional passes and zero failures.
+- The musl ABI inventory is mechanically reproducible: 1,647 public dynamic
+  `libc.so` records, 2,004 `libc.a` records (1,939 unique names), and 217
+  installed headers (183 public plus 34 architecture-internal).
+- The musl loader/runtime shape and crabc loader feature surface are separately
+  reproducible. The candidate report inventories 20 feature slices without
+  claiming runtime verification; eight have a focused test target.
+- The public dynamic-symbol ratchet is active. Its current baseline measures
+  683 crabc exports, 590 exact kind/binding/visibility matches, 985 missing
+  musl names, 72 metadata mismatches, and 21 unexpected names. A ratchet run
+  reports zero regressions; this is not a claim of implementation parity.
+- The libc-test execution loop and structured report parser are Python
+  standard-library code. They retain per-test results and build a
+  `missing symbol -> blocked tests` graph. Oracle-proven Docker constraints
+  are explicit `SKIP` events, never candidate passes.
+- The foundational differential workload compares exit status, stdout, raw
+  stderr, and errno against musl. It currently passes with zero normalization.
+  Successful crabc loader startup is covered by a focused regression requiring
+  empty application stderr.
+- [`COMPATIBILITY.md`](COMPATIBILITY.md) is generated from the structured
+  reports and distinguishes exported, implemented, and verified states.
+
+Current measurements are recorded in `COMPATIBILITY.md` rather than duplicated
+as a moving headline here. At this checkpoint the latest results are:
+
+```text
+libc-test functional: 69 PASS, 4 FAIL, 1 BUILDERROR
+libc-test API:        20 PASS, 0 FAIL, 59 BUILDERROR (strict crabc-header mode)
+libc-test regression: 66 PASS, 1 FAIL, 0 BUILDERROR, 1 oracle-environment SKIP
+differential:         foundational PASS
+```
+
+The first implementation work should use this evidence, not symbol count
+alone. The immediate real blockers are `wordexp`/`wordfree`; current functional
+behavior failures are `strtold` and TLS/dlopen paths. `regression/sigaltstack`
+also remains a real failure. A previous functional rerun exposed an
+`ipc_shm` timestamp discrepancy, so that case should be treated as a possible
+flake until reproduced and explained.
+
+Milestone 0 is **complete**. Its inventories deliberately stop short of
+claiming header declaration/layout parity or loader runtime behavior; those
+are verification work for later vertical slices. The dashboard correctly
+reports POSIX, real-Alpine corpus, stock Rust `std`, static candidate ABI
+coverage, and loader runtime-slice results as unmeasured.
 
 ## Milestone 1 — Foundation verified
 

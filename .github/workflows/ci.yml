@@ -8,47 +8,31 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TEST_THREADS: "1"
 
 jobs:
-  build-and-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            os: ubuntu-latest
-          - arch: aarch64
-            os: ubuntu-24.04-arm
-    runs-on: ${{ matrix.os }}
+  aarch64-compatibility-laboratory:
+    # The project matures on native Linux/AArch64 first. All compilation and
+    # oracle tooling live in the same pinned Docker image used on Apple
+    # Silicon development hosts.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Build the pinned native development image
+        run: ./scripts/dev.sh image
 
-      - name: Install musl-tools
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build crabc
+        run: ./scripts/dev.sh build
 
-      - name: Cache cargo registry
-        uses: actions/cache@v6
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Exercise loader startup without application stderr leakage
+        run: ./scripts/dev.sh test --test ldso_real_binary
 
-      - name: Fetch libc-test sources
-        run: git clone --depth 1 https://github.com/kraj/libc-test /tmp/libc-test
+      - name: Enforce public-dynamic-symbol compatibility ratchet
+        run: ./scripts/dev.sh compat
 
-      - name: Build all artifacts
-        run: cargo build --workspace
+      - name: Compare foundational behavior with pinned musl
+        run: ./scripts/dev.sh differential foundational
 
-      - name: Run integration tests
-        run: cargo test --workspace
-
-      - name: Run libc-test harness (informational)
+      - name: Capture upstream functional evidence
         continue-on-error: true
-        env:
-          LIBC_TEST_DIR: /tmp/libc-test
-        run: |
-          cd libc-test-harness
-          ./run.sh functional
+        run: ./scripts/dev.sh libc-test functional

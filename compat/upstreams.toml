@@ -1,0 +1,26 @@
+# Every normal development command uses the versions below; no tool fetches an
+# upstream default branch. Sources not used by docker/Dockerfile are registered
+# here now so their future harnesses can be made reproducible without changing
+# the compatibility baseline.
+
+[environment]
+platform = "linux/arm64"
+alpine_image = "alpine:3.24.1@sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f03a68fa3d18"
+rust_toolchain = "nightly-2026-07-24"
+
+[musl]
+version = "1.2.6"
+source = "https://musl.libc.org/releases/musl-1.2.6.tar.gz"
+sha256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
+
+[libc_test]
+repository = "https://repo.or.cz/libc-test.git"
+revision = "123433158bf985d7eb3b4072e32121b9e32a1a1a"
+
+[os_test]
+repository = "https://gitlab.com/sortix/os-test.git"
+revision = "5e9456d510612f83b6ec8b1a0c06d6b1303a2512"
+
+[libc_bench]
+repository = "https://git.musl-libc.org/git/libc-bench"
+revision = "b6b2ce5f9f87a09b14499cb00c600c601f022634"

@@ -49,3 +49,10 @@ Cargo.lock
 /libc-test-harness/reports/
 /libc-test-harness/cc-wrapper.sh
 /libc-test-harness/initial-report.txt
+
+# Dockerized AArch64 development reports. These are generated from the pinned
+# musl oracle by scripts/check-symbols.sh and retained locally for inspection.
+/compat/reports/
+
+# Python compatibility harness bytecode.
+__pycache__/

@@ -1921,15 +1921,6 @@ unsafe fn apply_rela_table(
             let desc = slot as *mut [u64; 2];
             (*desc)[0] = __tlsdesc_static as *const () as u64;
             (*desc)[1] = fs_off as u64;
-            if cfg!(debug_assertions) {
-                write_stderr(b"ldso: TLSDESC slot=");
-                write_hex_stderr(slot as usize);
-                write_stderr(b" resolver=");
-                write_hex_stderr(__tlsdesc_static as *const () as usize);
-                write_stderr(b" offset=");
-                write_hex_stderr(fs_off as usize);
-                write_stderr(b"\n");
-            }
         }
     }
 }
@@ -1965,13 +1956,6 @@ unsafe fn run_constructors_for(idx: usize) {
 #[no_mangle]
 unsafe extern "C" fn __tlsdesc_static(desc: *const u64) -> u64 {
     let arg = core::ptr::read_unaligned(desc.add(1));
-    if cfg!(debug_assertions) {
-        write_stderr(b"ldso: __tlsdesc_static desc=");
-        write_hex_stderr(desc as usize);
-        write_stderr(b" arg=");
-        write_hex_stderr(arg as usize);
-        write_stderr(b"\n");
-    }
     arg
 }
 
@@ -2241,12 +2225,6 @@ unsafe fn compute_tls_layout() {
     }
     total += total;
     TLS_TOTAL_SIZE = (total + 4095) & !4095;
-
-    if cfg!(debug_assertions) {
-        write_stderr(b"ldso: compute_tls_layout total=");
-        write_hex_stderr(TLS_TOTAL_SIZE);
-        write_stderr(b"\n");
-    }
     #[cfg(target_arch = "aarch64")]
     {
         // AArch64 uses the TLS_ABOVE_TP layout: the variable area is at positive
@@ -2272,13 +2250,6 @@ unsafe fn compute_tls_layout() {
             let desired = image.wrapping_sub(var_base_mod).wrapping_sub(offset) & (align - 1);
             offset += desired;
             TLS_LAYOUT_OFFSET[i] = offset;
-            if cfg!(debug_assertions) {
-                write_stderr(b"ldso: TLS module ");
-                write_hex_stderr(i);
-                write_stderr(b" offset=");
-                write_hex_stderr(offset);
-                write_stderr(b"\n");
-            }
             TLS_FILESZ[i] = obj.tls_filesz;
             TLS_MEMSZ[i] = obj.tls_memsz;
             TLS_IMAGE[i] = obj.tls_image;
@@ -2331,13 +2302,6 @@ unsafe fn compute_tls_layout() {
             let desired = image.wrapping_sub(var_base_mod).wrapping_sub(offset) & (align - 1);
             offset += desired;
             TLS_LAYOUT_OFFSET[i] = offset;
-            if cfg!(debug_assertions) {
-                write_stderr(b"ldso: TLS module ");
-                write_hex_stderr(i);
-                write_stderr(b" offset=");
-                write_hex_stderr(offset);
-                write_stderr(b"\n");
-            }
             TLS_FILESZ[i] = obj.tls_filesz;
             TLS_MEMSZ[i] = obj.tls_memsz;
             TLS_IMAGE[i] = obj.tls_image;
@@ -2863,7 +2827,6 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
 
     run_constructors();
 
-        write_stderr(b"JUMP base="); write_hex_stderr(exec_base as usize); write_stderr(b" e_entry="); write_hex_stderr(e_entry as usize); write_stderr(b" target="); write_hex_stderr((exec_base + e_entry) as usize); write_stderr(b"\n");
     let phdr_addr = exec_base + e_phoff;
     build_and_jump(exec_base + e_entry, phdr_addr, e_phnum, sp)
 }
