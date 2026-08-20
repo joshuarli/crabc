@@ -5,7 +5,7 @@
 #![feature(thread_local)]
 #![allow(dead_code, non_camel_case_types)]
 
-use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, VaList};
+use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, VaArgSafe, VaList};
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
@@ -25,6 +25,11 @@ include!("math_lrint.rs");
 include!("math_bessel.rs");
 include!("math_gamma.rs");
 include!("math_compat.rs");
+include!("math_f128.rs");
+
+// This is a Linux mmap syscall sentinel, used by thread, semaphore, and AIO
+// mappings. It is deliberately independent from the malloc implementation.
+const MMAP_FAILED: *mut u8 = !0usize as *mut u8;
 
 // ============================================================
 // errno
@@ -2663,6 +2668,23 @@ unsafe fn sys_getegid() -> i64 {
 #[no_mangle]
 pub unsafe extern "C" fn fork() -> c_int {
     __fork_handler(-1);
+    // Follow musl's fork boundary: once the prepare handlers have run, hold
+    // every signal across the raw clone syscall and the child/parent state
+    // transition. A fork from a signal handler must not return through a
+    // signal trampoline while another asynchronously delivered handler can
+    // observe the half-reset child state (libc-test regression/raise-race).
+    let all_signals: SigSetT = !0;
+    let mut old_signal_mask: SigSetT = 0;
+    let signals_blocked = sys_rt_sigprocmask(
+        SIG_BLOCK,
+        &all_signals,
+        &mut old_signal_mask,
+        core::mem::size_of::<SigSetT>(),
+    ) == 0;
+    // Save the calling thread's parent TID before clone. In the child that
+    // value still identifies the copied current-thread slot, while gettid()
+    // has changed to the child TID.
+    let parent_tid = sys_gettid() as c_int;
     // Honor RLIMIT_NPROC even when running as root, where the kernel
     // would otherwise bypass the limit. This matches the libc-test
     // expectation that fork fails with EAGAIN when the limit is zero.
@@ -2678,9 +2700,18 @@ pub unsafe extern "C" fn fork() -> c_int {
     };
     let errno_save = if ret < 0 { (-ret) as c_int } else { ERRNO };
     if ret == 0 {
+        reset_thread_registry_after_fork(parent_tid);
         __fork_handler(1);
     } else {
         __fork_handler(0);
+    }
+    if signals_blocked {
+        let _ = sys_rt_sigprocmask(
+            SIG_SETMASK,
+            &old_signal_mask,
+            core::ptr::null_mut(),
+            core::mem::size_of::<SigSetT>(),
+        );
     }
     if ret < 0 {
         ERRNO = errno_save;
@@ -3623,9 +3654,55 @@ static mut THREADS: [Thread; MAX_THREADS] = [Thread {
         pending: core::ptr::null_mut(),
     },
 }; MAX_THREADS];
+// Kept for the in-crate clone tests' table-reset hook. Runtime slot allocation
+// scans and claims free entries directly, so this counter is not a capacity
+// gate for pthread lifecycle operations.
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(0);
 static mut KEY_DTORS: [Option<unsafe extern "C" fn(*mut c_void)>; PTHREAD_KEYS_MAX] = [None; PTHREAD_KEYS_MAX];
 static NEXT_KEY: AtomicUsize = AtomicUsize::new(0);
+
+/// Reset the fixed thread-slot registry in a post-fork child.
+///
+/// `fork` leaves only the calling kernel thread alive, but the child inherits
+/// the parent's copied registry, including positive TIDs for threads that no
+/// longer exist in the child.  Those stale entries would make
+/// `pthread_exit` believe another thread is active and skip the `exit()` path
+/// that runs atexit handlers. Discard every stale slot, but retain the copied
+/// caller slot when known: a pthread-created caller may still be returning
+/// through a signal frame on that stack/TLS allocation.
+unsafe fn reset_thread_registry_after_fork(parent_tid: c_int) {
+    let base = core::ptr::addr_of_mut!(THREADS[0]);
+    let child_tid = sys_gettid() as c_int;
+    let mut current = core::ptr::null_mut();
+    for i in 0..MAX_THREADS {
+        let slot = base.add(i);
+        if parent_tid > 0 && a_load(&raw const (*slot).tid) == parent_tid {
+            current = slot;
+            break;
+        }
+    }
+    for i in 0..MAX_THREADS {
+        let slot = base.add(i);
+        if slot == current {
+            continue;
+        }
+        core::ptr::write_bytes(slot, 0, 1);
+        (*slot).tid = -1;
+        (*slot).detach_state = DT_JOINABLE;
+        (*slot).cancel_state = PTHREAD_CANCEL_ENABLE;
+        (*slot).cancel_type = PTHREAD_CANCEL_DEFERRED;
+    }
+    if !current.is_null() {
+        // A pthread-created caller still uses this slot's stack, TLS, and
+        // cancellation fields while unwinding the signal/fork call. Preserve
+        // that live state and only publish its new child TID.
+        a_store(&raw mut (*current).tid, child_tid);
+        a_store(&raw mut (*current).detach_state, DT_JOINABLE);
+    }
+    NEXT_SLOT.store(0, Ordering::SeqCst);
+    // If a foreign caller had no registered slot, defer registration until its
+    // first later pthread operation. `fork` may itself run in a signal handler.
+}
 
 // ponytail: futex helpers
 unsafe fn futex_wait(addr: *mut c_int, expected: c_int) -> c_int {
@@ -3711,10 +3788,105 @@ unsafe fn spinlock_unlock(lock: *mut c_int, waiters: *mut c_int) {
     if a_load(waiters) > 0 { futex_wake(lock, 1); }
 }
 
+unsafe fn initialize_thread_slot(slot: &mut Thread) {
+    slot.detach_state = DT_JOINABLE;
+    slot.result = core::ptr::null_mut();
+    slot.cancel = 0;
+    slot.cancel_state = PTHREAD_CANCEL_ENABLE;
+    slot.cancel_type = PTHREAD_CANCEL_DEFERRED;
+    slot.user_fn = 0;
+    slot.user_arg = core::ptr::null_mut();
+    slot.stack = core::ptr::null_mut();
+    slot.stack_size = 0;
+    slot.fs_base = core::ptr::null_mut();
+    core::ptr::write_bytes(slot.tsd.as_mut_ptr(), 0, PTHREAD_KEYS_MAX);
+    slot.cancelbuf = core::ptr::null_mut();
+    slot.robust_list = robust_list_head {
+        list: robust_list { next: core::ptr::null_mut() },
+        futex_offset: 0,
+        pending: core::ptr::null_mut(),
+    };
+}
+
+unsafe fn release_thread_slot(slot: &mut Thread) {
+    let stack = slot.stack;
+    let stack_size = slot.stack_size;
+    let fs_base = slot.fs_base;
+    if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
+    if !fs_base.is_null() {
+        let block_size = __rc_tls_block_size();
+        let base_offset = __rc_tls_base_offset();
+        if block_size > 0 { sys_munmap(fs_base.sub(base_offset), block_size); }
+    }
+    initialize_thread_slot(slot);
+    // Publish the free marker last, after all fields are reset. A creator
+    // claiming -1 can then safely initialize the slot without racing stale
+    // stack/TLS pointers from the previous owner.
+    a_store(&raw mut slot.tid, -1);
+}
+
+/// Reclaim detached threads only after the kernel has cleared their TID.
+///
+/// An exiting joinable worker publishes `DT_EXITED` before invoking `exit`,
+/// while a detached worker retains `DT_DETACHED`. Only the latter is eligible
+/// for automatic reclamation: a completed joinable thread must remain
+/// joinable until `pthread_join` or an explicit `pthread_detach`. In either
+/// case, `CLONE_CHILD_CLEARTID` changes `tid` to zero after the thread has
+/// stopped using that stack; the creator-side scan waits for that ordering and
+/// claims the slot with `DT_EXITING` before releasing its mappings.
+unsafe fn reclaim_exited_threads() {
+    let base = core::ptr::addr_of_mut!(THREADS[0]);
+    for i in 0..MAX_THREADS {
+        let slot = &mut *base.add(i);
+        let state = a_load(&raw const slot.detach_state);
+        if state != DT_DETACHED { continue; }
+        if a_load(&raw const slot.tid) != 0 { continue; }
+        if a_cas(&raw mut slot.detach_state, state, DT_EXITING) != state { continue; }
+        // Once the state claim succeeds, tid==0 means the kernel has finished
+        // the child-cleartid operation and this context is safe to unmap.
+        if a_load(&raw const slot.tid) == 0 {
+            release_thread_slot(slot);
+        } else {
+            // This should not occur on Linux, but leave the slot reclaimable
+            // rather than freeing a mapping while the child may still run.
+            a_store(&raw mut slot.detach_state, state);
+        }
+    }
+}
+
+/// Publish a thread's exit without turning an already-detached slot back into
+/// the joinable-exited state. A creator may detach concurrently with the last
+/// user instruction, so the transition must be a CAS rather than a plain
+/// store.
+unsafe fn publish_thread_exit(slot: &mut Thread) {
+    loop {
+        let state = a_load(&raw const slot.detach_state);
+        match state {
+            DT_JOINABLE => {
+                if a_cas(&raw mut slot.detach_state, DT_JOINABLE, DT_EXITED) == DT_JOINABLE {
+                    return;
+                }
+            }
+            // Preserve a successful detach. The creator-side reclaimer
+            // recognizes DT_DETACHED once the kernel clears tid.
+            DT_DETACHED | DT_EXITED => return,
+            _ => return,
+        }
+    }
+}
+
 unsafe fn alloc_thread_slot() -> Option<&'static mut Thread> {
-    let idx = NEXT_SLOT.fetch_add(1, Ordering::SeqCst);
-    if idx >= MAX_THREADS { return None; }
-    Some(&mut THREADS[idx])
+    reclaim_exited_threads();
+    let base = core::ptr::addr_of_mut!(THREADS[0]);
+    for i in 0..MAX_THREADS {
+        let slot = &mut *base.add(i);
+        // -2 reserves a slot while its mapping and clone arguments are set up.
+        if a_cas(&raw mut slot.tid, -1, -2) == -1 {
+            initialize_thread_slot(slot);
+            return Some(slot);
+        }
+    }
+    None
 }
 
 unsafe fn run_key_dtors(slot: &mut Thread) {
@@ -3745,7 +3917,7 @@ unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
     let ret = user_fn(slot.user_arg);
     run_key_dtors(slot);
     slot.result = ret;
-    a_store(&raw mut slot.detach_state, DT_EXITED);
+    publish_thread_exit(slot);
     futex_wake(&raw mut slot.detach_state, 1);
     sys_exit_thread(0)
 }
@@ -3778,16 +3950,20 @@ pub unsafe extern "C" fn pthread_self() -> PthreadT {
     for i in 0..MAX_THREADS {
         let slot = base.add(i);
         if core::ptr::read_volatile(&raw const (*slot).tid) == me {
-            return slot as PthreadT;
+            return slot as *mut Thread as PthreadT;
         }
     }
+    // A caller may be the safe creator context for detached exits, so make
+    // reclaimed slots available before lazily registering this thread.
+    reclaim_exited_threads();
     // ponytail: register main thread lazily in first free slot
-    let idx = NEXT_SLOT.fetch_add(1, Ordering::SeqCst);
-    if idx < MAX_THREADS {
-        let slot = &raw mut THREADS[idx];
-        (*slot).tid = me;
-        (*slot).detach_state = DT_JOINABLE;
-        return slot as PthreadT;
+    for i in 0..MAX_THREADS {
+        let slot = &mut *base.add(i);
+        if a_cas(&raw mut slot.tid, -1, -2) == -1 {
+            initialize_thread_slot(slot);
+            a_store(&raw mut slot.tid, me);
+            return slot as *mut Thread as PthreadT;
+        }
     }
     0
 }
@@ -3809,6 +3985,11 @@ pub unsafe extern "C" fn pthread_create(
     if start_routine == 0 || thread.is_null() { return EINVAL; }
     let Some(slot_ref) = alloc_thread_slot() else { return EAGAIN; };
     let slot = slot_ref as *mut Thread;
+    let detach_state = if !attr.is_null() && (*attr).__i[6] == PTHREAD_CREATE_DETACHED {
+        DT_DETACHED
+    } else {
+        DT_JOINABLE
+    };
     let stack_size = if !attr.is_null() {
         let s = *((*attr).__i.as_ptr() as *const usize);
         if s > 0 { s } else { STACK_SIZE }
@@ -3818,16 +3999,25 @@ pub unsafe extern "C" fn pthread_create(
         m4_pthread_default_stack_size()
     };
     let stack = sys_mmap(null_mut(), stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if stack == MMAP_FAILED { return EAGAIN; }
+    if stack == MMAP_FAILED {
+        release_thread_slot(&mut *slot);
+        return EAGAIN;
+    }
     let fs_base = __rc_create_thread_tls();
-    if fs_base.is_null() { sys_munmap(stack, stack_size); return EAGAIN; }
-    (*slot).detach_state = DT_JOINABLE;
+    if fs_base.is_null() {
+        sys_munmap(stack, stack_size);
+        release_thread_slot(&mut *slot);
+        return EAGAIN;
+    }
+    // Set the requested state before clone: a very short-lived detached child
+    // may finish before the parent returns from this call.
+    (*slot).detach_state = detach_state;
     (*slot).result = core::ptr::null_mut();
     (*slot).cancel = 0;
     (*slot).cancel_state = PTHREAD_CANCEL_ENABLE;
     (*slot).cancel_type = PTHREAD_CANCEL_DEFERRED;
     core::ptr::write_bytes((*slot).tsd.as_mut_ptr(), 0, PTHREAD_KEYS_MAX);
-    (*slot).tid = 1;
+    a_store(&raw mut (*slot).tid, 1);
     (*slot).user_fn = start_routine;
     (*slot).user_arg = arg;
     (*slot).stack = stack;
@@ -3839,13 +4029,8 @@ pub unsafe extern "C" fn pthread_create(
         | CLONE_SYSVSEM | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID | CLONE_SETTLS;
     let tid = __rc_clone(thread_entry as *const () as usize, stack_top, flags, slot as *mut c_void, tid_ptr, fs_base as c_ulong, tid_ptr);
     if tid < 0 {
-        (*slot).tid = -1;
-        sys_munmap(stack, stack_size);
-        sys_munmap(fs_base.sub(__rc_tls_base_offset()), __rc_tls_block_size());
+        release_thread_slot(&mut *slot);
         return EAGAIN;
-    }
-    if !attr.is_null() && (*attr).__i[6] == PTHREAD_CREATE_DETACHED {
-        (*slot).detach_state = DT_DETACHED;
     }
     *thread = slot as PthreadT;
     0
@@ -3856,7 +4041,7 @@ pub unsafe extern "C" fn pthread_create(
 pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void) -> c_int {
     let slot = thread as *mut Thread;
     if slot.is_null() { return EINVAL; }
-    if (*slot).detach_state == DT_DETACHED { return EINVAL; }
+    if a_load(&raw const (*slot).detach_state) == DT_DETACHED { return EINVAL; }
     let tid_ptr = &raw mut (*slot).tid;
     loop {
         pthread_testcancel();
@@ -3866,18 +4051,11 @@ pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void
         sys_futex(tid_ptr, FUTEX_WAIT, tid, null_mut(), null_mut(), 0);
         pthread_testcancel();
     }
+    if a_cas(&raw mut (*slot).detach_state, DT_EXITED, DT_EXITING) != DT_EXITED {
+        return EINVAL;
+    }
     if !retval.is_null() { *retval = (*slot).result; }
-    let stack = (*slot).stack;
-    let stack_size = (*slot).stack_size;
-    let fs_base = (*slot).fs_base;
-    (*slot).tid = -1;
-    (*slot).detach_state = DT_JOINABLE;
-    (*slot).result = core::ptr::null_mut();
-    (*slot).stack = core::ptr::null_mut();
-    (*slot).stack_size = 0;
-    (*slot).fs_base = core::ptr::null_mut();
-    if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
-    if !fs_base.is_null() { let bs = __rc_tls_block_size(); let bo = __rc_tls_base_offset(); if bs > 0 { sys_munmap(fs_base.sub(bo), bs); } }
+    release_thread_slot(&mut *slot);
     0
 }
 
@@ -3886,19 +4064,27 @@ pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void
 pub unsafe extern "C" fn pthread_detach(thread: PthreadT) -> c_int {
     let slot = thread as *mut Thread;
     if slot.is_null() { return EINVAL; }
-    let old = a_cas(&raw mut (*slot).detach_state, DT_JOINABLE, DT_DETACHED);
-    if old == DT_EXITED {
-        let stack = (*slot).stack;
-        let stack_size = (*slot).stack_size;
-        let fs_base = (*slot).fs_base;
-        (*slot).tid = -1;
-        (*slot).stack = core::ptr::null_mut();
-        (*slot).stack_size = 0;
-        (*slot).fs_base = core::ptr::null_mut();
-        if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
-        if !fs_base.is_null() { let bs = __rc_tls_block_size(); let bo = __rc_tls_base_offset(); sys_munmap(fs_base.sub(bo), bs); }
+    loop {
+        let state = a_load(&raw const (*slot).detach_state);
+        match state {
+            DT_JOINABLE => {
+                if a_cas(&raw mut (*slot).detach_state, DT_JOINABLE, DT_DETACHED) == DT_JOINABLE {
+                    return 0;
+                }
+            }
+            DT_EXITED => {
+                if a_load(&raw const (*slot).tid) == 0 {
+                    if a_cas(&raw mut (*slot).detach_state, DT_EXITED, DT_EXITING) == DT_EXITED {
+                        release_thread_slot(&mut *slot);
+                        return 0;
+                    }
+                } else if a_cas(&raw mut (*slot).detach_state, DT_EXITED, DT_DETACHED) == DT_EXITED {
+                    return 0;
+                }
+            }
+            _ => return EINVAL,
+        }
     }
-    0
 }
 
 #[no_mangle]
@@ -3908,8 +4094,8 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
         run_cleanup_handlers(slot);
         run_key_dtors(slot);
         slot.result = retval;
-        slot.detach_state = DT_EXITED;
-        futex_wake(&slot.detach_state as *const c_int as *mut c_int, 1);
+        publish_thread_exit(slot);
+        futex_wake(&raw mut slot.detach_state, 1);
 
         // If this is the last thread, run atexit handlers via exit().
         let mut active = 0usize;
@@ -5007,8 +5193,9 @@ unsafe fn run_cleanup_handlers(slot: &mut Thread) {
 unsafe fn do_cancel() -> ! {
     if let Some(slot) = find_thread() {
         run_cleanup_handlers(slot);
+        run_key_dtors(slot);
         slot.result = !0usize as *mut c_void; // PTHREAD_CANCELED
-        slot.detach_state = DT_EXITED;
+        publish_thread_exit(slot);
         futex_wake(&raw mut slot.detach_state, 1);
     }
     sys_exit_thread(0);
@@ -6036,7 +6223,15 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: SizeT) -> S
 
 #[no_mangle]
 pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
-    syscall_result(sys_read(fd as i64, buf as *mut u8, count)) as SSizeT
+    // A deferred cancellation signal interrupts a blocking read with EINTR.
+    // Check both sides of the syscall so the ordinary EINTR result and errno
+    // remain unchanged when no cancellation is pending.
+    pthread_testcancel();
+    let result = sys_read(fd as i64, buf as *mut u8, count);
+    if result == -(EINTR as i64) {
+        pthread_testcancel();
+    }
+    syscall_result(result) as SSizeT
 }
 
 #[no_mangle]
@@ -6116,6 +6311,14 @@ const F_SETFL: i32 = 4;
 const F_GETLK: i32 = 5;
 const F_SETLK: i32 = 6;
 const F_SETLKW: i32 = 7;
+// Linux open-file-description locks use the same struct flock ABI as the
+// process-associated lock commands above, but have distinct command values.
+// Keep them in the pointer-bearing fcntl arm below; passing the vararg as the
+// default integer argument makes the kernel interpret it as a null pointer
+// and returns EFAULT.
+const F_OFD_GETLK: i32 = 36;
+const F_OFD_SETLK: i32 = 37;
+const F_OFD_SETLKW: i32 = 38;
 const F_DUPFD: i32 = 0;
 const F_DUPFD_CLOEXEC: i32 = 1030;
 const FD_CLOEXEC: i32 = 1;
@@ -6299,9 +6502,13 @@ unsafe fn buf_ptr(f: *mut FILE) -> *mut u8 {
 }
 
 unsafe extern "C" fn __stdio_read(f: *mut FILE, buf: *mut u8, len: usize) -> usize {
+    pthread_testcancel();
     let n = sys_read((*f).fd as i64, buf, len);
     if n <= 0 {
         if n == 0 { (*f).flags |= F_EOF; } else { (*f).flags |= F_ERR; (*f)._err = 1; }
+        // Publish the FILE error/EOF state before acting on cancellation, so
+        // cleanup can safely close a stream after an interrupted read.
+        pthread_testcancel();
         return 0;
     }
     n as usize
@@ -6907,10 +7114,273 @@ pub unsafe extern "C" fn fwrite(
 // printf / fprintf / vprintf / vfprintf / dprintf / vdprintf
 // ============================================================
 
+// `printf` positional arguments are not a different ABI: they are a second
+// cursor over the same `va_list`.  Keep the argument kinds found in the
+// format so that a positional lookup can skip the preceding values using the
+// correct register class (in particular, `%Lf` is not an integer slot).
+#[derive(Copy, Clone)]
+enum PrintfArgKind {
+    Unused,
+    Int,
+    UInt,
+    Long,
+    ULong,
+    LongLong,
+    ULongLong,
+    Pointer,
+    Double,
+    LongDouble,
+}
+
+// Rust deliberately does not expose `VaArgSafe` for `f128` yet. AArch64's C
+// ABI passes binary128 varargs in the floating-point save area, so reading the
+// value as an integer argument selects the wrong register class. This mirrors
+// AAPCS64's 16-byte FP `va_arg` step on the Linux target used by crabc.
+#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
+#[repr(C)]
+struct PrintfAarch64VaList {
+    stack: *const c_void,
+    gr_top: *const c_void,
+    vr_top: *const c_void,
+    gr_offs: i32,
+    vr_offs: i32,
+}
+
+#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
+unsafe fn printf_next_aarch64_f128(args: &mut VaList<'_>) -> f128 {
+    let inner = &mut *(args as *mut VaList<'_> as *mut PrintfAarch64VaList);
+    let address = if inner.vr_offs <= -16 {
+        let offset = inner.vr_offs;
+        inner.vr_offs += 16;
+        (inner.vr_top as *const u8).offset(offset as isize)
+    } else {
+        let address = ((inner.stack as usize).wrapping_add(15) & !15) as *const u8;
+        inner.stack = address.add(16) as *const c_void;
+        address
+    };
+    let lo = *(address as *const u64);
+    let hi = *(address.add(8) as *const u64);
+    f128::from_bits(((hi as u128) << 64) | lo as u128)
+}
+
+unsafe fn printf_set_arg_kind(
+    kinds: &mut [PrintfArgKind; 64], position: usize, kind: PrintfArgKind,
+) {
+    if position > 0 && position < kinds.len() {
+        kinds[position] = kind;
+    }
+}
+
+unsafe fn printf_conversion_kind(len: u8, spec: u8) -> Option<PrintfArgKind> {
+    match spec {
+        b'd' | b'i' => Some(match len {
+            b'l' | b'z' | b't' => PrintfArgKind::Long,
+            b'j' => PrintfArgKind::LongLong,
+            _ => PrintfArgKind::Int,
+        }),
+        b'u' | b'o' | b'x' | b'X' => Some(match len {
+            b'l' | b'z' | b't' => PrintfArgKind::ULong,
+            b'j' => PrintfArgKind::ULongLong,
+            _ => PrintfArgKind::UInt,
+        }),
+        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => Some(
+            if len == b'L' { PrintfArgKind::LongDouble } else { PrintfArgKind::Double }
+        ),
+        b'c' => Some(PrintfArgKind::Int),
+        b's' | b'p' | b'n' => Some(PrintfArgKind::Pointer),
+        _ => None,
+    }
+}
+
+unsafe fn printf_collect_arg_kinds(fmt: *const c_char) -> [PrintfArgKind; 64] {
+    let mut kinds = [PrintfArgKind::Unused; 64];
+    let mut i = 0usize;
+    let mut next_position = 1usize;
+    while *fmt.add(i) != 0 {
+        if *fmt.add(i) as u8 != b'%' { i += 1; continue; }
+        i += 1;
+        if *fmt.add(i) as u8 == b'%' { i += 1; continue; }
+
+        // A leading N$ selects the conversion argument.  If there is no '$',
+        // leave the digits for the ordinary field-width parser below.
+        let mut conversion_position = None;
+        let mut number = 0usize;
+        let mut p = i;
+        while (*fmt.add(p) as u8).is_ascii_digit() {
+            number = number.saturating_mul(10).saturating_add((*fmt.add(p) as u8 - b'0') as usize);
+            p += 1;
+        }
+        if number > 0 && *fmt.add(p) as u8 == b'$' {
+            conversion_position = Some(number);
+            i = p + 1;
+        }
+
+        loop {
+            match *fmt.add(i) as u8 {
+                b'-' | b'+' | b' ' | b'0' | b'#' => i += 1,
+                _ => break,
+            }
+        }
+
+        // A '*' consumes an integer argument and may itself be positional.
+        if *fmt.add(i) as u8 == b'*' {
+            i += 1;
+            let mut width_position = None;
+            let mut n = 0usize;
+            let mut q = i;
+            while (*fmt.add(q) as u8).is_ascii_digit() {
+                n = n.saturating_mul(10).saturating_add((*fmt.add(q) as u8 - b'0') as usize);
+                q += 1;
+            }
+            if n > 0 && *fmt.add(q) as u8 == b'$' {
+                width_position = Some(n);
+                i = q + 1;
+            }
+            let position = width_position.unwrap_or_else(|| { let p = next_position; next_position += 1; p });
+            printf_set_arg_kind(&mut kinds, position, PrintfArgKind::Int);
+        } else {
+            while (*fmt.add(i) as u8).is_ascii_digit() { i += 1; }
+        }
+
+        if *fmt.add(i) as u8 == b'.' {
+            i += 1;
+            if *fmt.add(i) as u8 == b'*' {
+                i += 1;
+                let mut precision_position = None;
+                let mut n = 0usize;
+                let mut q = i;
+                while (*fmt.add(q) as u8).is_ascii_digit() {
+                    n = n.saturating_mul(10).saturating_add((*fmt.add(q) as u8 - b'0') as usize);
+                    q += 1;
+                }
+                if n > 0 && *fmt.add(q) as u8 == b'$' {
+                    precision_position = Some(n);
+                    i = q + 1;
+                }
+                let position = precision_position.unwrap_or_else(|| { let p = next_position; next_position += 1; p });
+                printf_set_arg_kind(&mut kinds, position, PrintfArgKind::Int);
+            } else {
+                while (*fmt.add(i) as u8).is_ascii_digit() { i += 1; }
+            }
+        }
+
+        let mut len = 0u8;
+        match *fmt.add(i) as u8 {
+            b'h' | b'l' | b'j' | b'z' | b't' | b'L' => {
+                len = *fmt.add(i) as u8;
+                i += 1;
+                if (len == b'h' && *fmt.add(i) as u8 == b'h')
+                    || (len == b'l' && *fmt.add(i) as u8 == b'l')
+                {
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        let spec = *fmt.add(i) as u8;
+        if let Some(kind) = printf_conversion_kind(len, spec) {
+            let position = conversion_position.unwrap_or_else(|| { let p = next_position; next_position += 1; p });
+            printf_set_arg_kind(&mut kinds, position, kind);
+        }
+        if spec == 0 { break; }
+        i += 1;
+    }
+    kinds
+}
+
+struct PrintfArgs<'a> {
+    cursor: VaList<'a>,
+    base: VaList<'a>,
+    kinds: [PrintfArgKind; 64],
+    selected: Option<usize>,
+}
+
+impl<'a> PrintfArgs<'a> {
+    unsafe fn new(args: &VaList<'a>, fmt: *const c_char) -> Self {
+        Self { cursor: args.clone(), base: args.clone(), kinds: printf_collect_arg_kinds(fmt), selected: None }
+    }
+
+    unsafe fn skip_arg(kind: PrintfArgKind, args: &mut VaList<'a>) {
+        match kind {
+            PrintfArgKind::Unused => {}
+            PrintfArgKind::Int => { let _ = args.next_arg::<c_int>(); }
+            PrintfArgKind::UInt => { let _ = args.next_arg::<c_uint>(); }
+            PrintfArgKind::Long => { let _ = args.next_arg::<c_long>(); }
+            PrintfArgKind::ULong => { let _ = args.next_arg::<c_ulong>(); }
+            PrintfArgKind::LongLong => { let _ = args.next_arg::<c_longlong>(); }
+            PrintfArgKind::ULongLong => { let _ = args.next_arg::<c_ulonglong>(); }
+            PrintfArgKind::Pointer => { let _ = args.next_arg::<*mut c_void>(); }
+            PrintfArgKind::Double => { let _ = args.next_arg::<f64>(); }
+            PrintfArgKind::LongDouble => {
+                #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
+                { let _ = printf_next_aarch64_f128(args); }
+                #[cfg(target_arch = "riscv64")]
+                { let _ = args.next_arg::<u64>(); let _ = args.next_arg::<u64>(); }
+                #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+                { let _ = args.next_arg::<u64>(); let _ = args.next_arg::<u64>(); }
+                #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
+                { let _ = args.next_arg::<f64>(); }
+            }
+        }
+    }
+
+    unsafe fn positioned(&self, position: usize) -> VaList<'a> {
+        let mut args = self.base.clone();
+        let end = position.min(self.kinds.len() - 1);
+        for index in 1..end { Self::skip_arg(self.kinds[index], &mut args); }
+        args
+    }
+
+    unsafe fn arg<T: VaArgSafe>(&mut self, position: Option<usize>) -> T {
+        match position {
+            Some(position) => self.positioned(position).next_arg::<T>(),
+            None => self.cursor.next_arg::<T>(),
+        }
+    }
+
+    unsafe fn select(&mut self, position: Option<usize>) {
+        self.selected = position;
+    }
+
+    // Keep the existing formatting branches readable: each conversion selects
+    // its positional slot once, and the old `next_arg` calls then use that
+    // slot instead of consuming the sequential cursor.
+    unsafe fn next_arg<T: VaArgSafe>(&mut self) -> T {
+        let position = self.selected.take();
+        self.arg(position)
+    }
+
+    unsafe fn long_double(&mut self, position: Option<usize>) -> f64 {
+        let mut args = match position {
+            Some(position) => self.positioned(position),
+            None => self.cursor.clone(),
+        };
+        #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
+        let value = printf_next_aarch64_f128(&mut args) as f64;
+        #[cfg(target_arch = "riscv64")]
+        let value = {
+            let lo = args.next_arg::<u64>();
+            let hi = args.next_arg::<u64>();
+            f128::from_bits(((hi as u128) << 64) | lo as u128) as f64
+        };
+        #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
+        let value = {
+            let lo = args.next_arg::<u64>();
+            let hi = args.next_arg::<u64>();
+            f128::from_bits(((hi as u128) << 64) | lo as u128) as f64
+        };
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
+        let value = args.next_arg::<f64>();
+        if position.is_none() { self.cursor = args; }
+        value
+    }
+}
+
 macro_rules! impl_format {
     ($fmt:expr, $args:expr, $write_char:expr, $write_str:expr) => {{
         let fmt = $fmt;
-        let args = &mut $args;
+        let va_args = &mut $args;
+        let args = &mut PrintfArgs::new(&*va_args, fmt);
         let mut count: usize = 0;
         let mut i = 0usize;
         loop {
@@ -6921,6 +7391,19 @@ macro_rules! impl_format {
                 count += 1; i += 1; continue;
             }
             i += 1;
+            // Parse an optional N$ conversion argument before flags.  Digits
+            // without '$' remain ordinary field width digits.
+            let mut arg_position = None;
+            let mut arg_number = 0usize;
+            let mut arg_probe = i;
+            while (*fmt.add(arg_probe) as u8) >= b'0' && (*fmt.add(arg_probe) as u8) <= b'9' {
+                arg_number = arg_number.saturating_mul(10).saturating_add((*fmt.add(arg_probe) as u8 - b'0') as usize);
+                arg_probe += 1;
+            }
+            if arg_number > 0 && *fmt.add(arg_probe) as u8 == b'$' {
+                arg_position = Some(arg_number);
+                i = arg_probe + 1;
+            }
             // Parse flags
             let mut flags: u8 = 0;
             loop {
@@ -6936,8 +7419,27 @@ macro_rules! impl_format {
             }
             // Parse width
             let mut width: usize = 0;
+            let mut width_position = None;
             if *fmt.add(i) as u8 == b'*' {
-                width = args.next_arg::<c_int>() as usize; i += 1;
+                i += 1;
+                let mut width_number = 0usize;
+                let mut width_probe = i;
+                while (*fmt.add(width_probe) as u8) >= b'0' && (*fmt.add(width_probe) as u8) <= b'9' {
+                    width_number = width_number.saturating_mul(10).saturating_add((*fmt.add(width_probe) as u8 - b'0') as usize);
+                    width_probe += 1;
+                }
+                if width_number > 0 && *fmt.add(width_probe) as u8 == b'$' {
+                    width_position = Some(width_number);
+                    i = width_probe + 1;
+                }
+                args.select(width_position);
+                let width_arg = args.next_arg::<c_int>();
+                if width_arg < 0 {
+                    flags |= FLAG_MINUS;
+                    width = width_arg.wrapping_neg() as i64 as usize;
+                } else {
+                    width = width_arg as usize;
+                }
             } else {
                 while (*fmt.add(i) as u8) >= b'0' && (*fmt.add(i) as u8) <= b'9' {
                     width = width * 10 + ((*fmt.add(i) as u8) - b'0') as usize; i += 1;
@@ -6945,10 +7447,23 @@ macro_rules! impl_format {
             }
             // Parse precision
             let mut precision: i32 = -1;
+            let mut precision_position = None;
             if *fmt.add(i) as u8 == b'.' {
                 i += 1;
                 if *fmt.add(i) as u8 == b'*' {
-                    precision = args.next_arg::<c_int>(); i += 1;
+                    i += 1;
+                    let mut precision_number = 0usize;
+                    let mut precision_probe = i;
+                    while (*fmt.add(precision_probe) as u8) >= b'0' && (*fmt.add(precision_probe) as u8) <= b'9' {
+                        precision_number = precision_number.saturating_mul(10).saturating_add((*fmt.add(precision_probe) as u8 - b'0') as usize);
+                        precision_probe += 1;
+                    }
+                    if precision_number > 0 && *fmt.add(precision_probe) as u8 == b'$' {
+                        precision_position = Some(precision_number);
+                        i = precision_probe + 1;
+                    }
+                    args.select(precision_position);
+                    precision = args.next_arg::<c_int>();
                 } else {
                     precision = 0;
                     while (*fmt.add(i) as u8) >= b'0' && (*fmt.add(i) as u8) <= b'9' {
@@ -6956,6 +7471,7 @@ macro_rules! impl_format {
                     }
                 }
             }
+            args.select(arg_position);
             // Parse length modifier
             let len_mod = *fmt.add(i) as u8;
             let spec: u8;
@@ -6970,6 +7486,17 @@ macro_rules! impl_format {
                         (b'h', b'h', b'n') => {
                             let p = args.next_arg::<*mut c_void>();
                             if !p.is_null() { *(p as *mut u8) = count as u8; }
+                        }
+                        (b'h', b'h', b'd') | (b'h', b'h', b'i') => {
+                            let raw = args.next_arg::<c_int>();
+                            let val = if len_mod2 == b'h' { raw as i8 as c_int } else { raw as i16 as c_int };
+                            let neg = val < 0;
+                            let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                            let b = format_u64(abs);
+                            let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                            let mut fbuf = [0u8; 32];
+                            let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                            ($write_str)(fbuf.as_ptr(), len); count += len;
                         }
                         (b'l', b'l', b'n') => {
                             let p = args.next_arg::<*mut c_void>();
@@ -7008,6 +7535,17 @@ macro_rules! impl_format {
                             let p = args.next_arg::<*mut c_void>();
                             if !p.is_null() { *(p as *mut u16) = count as u16; }
                         }
+                        (b'h', b'd') | (b'h', b'i') => {
+                            let raw = args.next_arg::<c_int>();
+                            let val = raw as i16 as c_int;
+                            let neg = val < 0;
+                            let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                            let b = format_u64(abs);
+                            let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                            let mut fbuf = [0u8; 32];
+                            let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                            ($write_str)(fbuf.as_ptr(), len); count += len;
+                        }
                         (b'l', b'n') => {
                             let p = args.next_arg::<*mut c_void>();
                             if !p.is_null() { *(p as *mut c_long) = count as c_long; }
@@ -7028,6 +7566,26 @@ macro_rules! impl_format {
                             let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
                             let mut fbuf = [0u8; 32];
                             let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                            ($write_str)(fbuf.as_ptr(), len); count += len;
+                        }
+                        // `z` selects the signed/unsigned size type. On
+                        // Linux AArch64 that is the native pointer-width
+                        // type, not an unsupported format escape.
+                        (b'z', b'd') | (b'z', b'i') => {
+                            let val = args.next_arg::<SSizeT>();
+                            let neg = val < 0;
+                            let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                            let b = format_u64(abs);
+                            let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                            let mut fbuf = [0u8; 32];
+                            let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                            ($write_str)(fbuf.as_ptr(), len); count += len;
+                        }
+                        (b'z', b'u') => {
+                            let val = args.next_arg::<SizeT>();
+                            let b = format_u64(val as u64);
+                            let mut fbuf = [0u8; 32];
+                            let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, false);
                             ($write_str)(fbuf.as_ptr(), len); count += len;
                         }
                         (b'l', b'u') => {
@@ -7073,15 +7631,7 @@ macro_rules! impl_format {
                         }
                         (b'L', b'f') | (b'L', b'F') | (b'L', b'e') | (b'L', b'E')
                         | (b'L', b'g') | (b'L', b'G') | (b'L', b'a') | (b'L', b'A') => {
-                            #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-                            let val = {
-                                let lo: u64 = args.next_arg::<u64>();
-                                let hi: u64 = args.next_arg::<u64>();
-                                let combined: u128 = ((hi as u128) << 64) | (lo as u128);
-                                f128::from_bits(combined) as f64
-                            };
-                            #[cfg(target_arch = "x86_64")]
-                            let val = args.next_arg::<f64>();
+                            let val = args.long_double(arg_position);
                             let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
                             let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
                             let mut fbuf = [0u8; 4224];
@@ -7909,7 +8459,11 @@ unsafe fn fmt_hex_float(dst: *mut u8, val: f64, precision: i32, _flags: u8, uppe
 
     // Extract p hex digits from mantissa bits
     let frac_start = pos;
-    let mut rm = m << 4; // next nibble starts at bit 48
+    // The hidden leading one was already emitted above.  Start with the
+    // stored mantissa so the first fractional nibble is bits 51..48; starting
+    // from `m << 4` would skip those four bits and produce `0x1.bfd` instead
+    // of `0x1.6bfd` for values whose mantissa begins with `0x6`.
+    let mut rm = m & 0x000FFFFFFFFFFFFF;
     for _ in 0..p {
         let nib = ((rm >> 48) & 0xF) as u8;
         *dst.add(pos) = hex_digit_char(nib, lc); pos += 1;
@@ -7978,7 +8532,19 @@ unsafe fn apply_width_flags(
         return len;
     }
     let pad = width - len;
-    let pad_char = if flags & FLAG_ZERO != 0 && flags & FLAG_MINUS == 0 { b'0' } else { b' ' };
+    // The zero flag is ignored for the spelling of infinity and NaN.  This is
+    // also why sign-aware zero padding below must not turn `%09f` into
+    // `000000inf`.
+    let special = if len >= 3 {
+        let start = if *buf == b'+' || *buf == b'-' || *buf == b' ' { 1 } else { 0 };
+        if len - start >= 3 {
+            let a = *buf.add(start) | 0x20;
+            let b = *buf.add(start + 1) | 0x20;
+            let c = *buf.add(start + 2) | 0x20;
+            (a == b'i' && b == b'n' && c == b'f') || (a == b'n' && b == b'a' && c == b'n')
+        } else { false }
+    } else { false };
+    let pad_char = if flags & FLAG_ZERO != 0 && flags & FLAG_MINUS == 0 && !special { b'0' } else { b' ' };
     if flags & FLAG_MINUS != 0 {
         // Left align
         core::ptr::copy_nonoverlapping(buf, dst, len);
@@ -8054,6 +8620,8 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, fmt: *const c_char, mut args: VaLis
 // ============================================================
 
 unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut VaList<'_>) -> c_int {
+    let va_args = &*args;
+    let mut args = PrintfArgs::new(va_args, fmt);
     let mut pos = 0usize;
     let mut i = 0usize;
     let mut count = 0usize;
@@ -8080,6 +8648,17 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
         if c == 0 { break; }
         if c != b'%' { wc!(c); i += 1; continue; }
         i += 1;
+        let mut arg_position = None;
+        let mut arg_number = 0usize;
+        let mut arg_probe = i;
+        while (*fmt.add(arg_probe) as u8) >= b'0' && (*fmt.add(arg_probe) as u8) <= b'9' {
+            arg_number = arg_number.saturating_mul(10).saturating_add((*fmt.add(arg_probe) as u8 - b'0') as usize);
+            arg_probe += 1;
+        }
+        if arg_number > 0 && *fmt.add(arg_probe) as u8 == b'$' {
+            arg_position = Some(arg_number);
+            i = arg_probe + 1;
+        }
         // Parse flags
         let mut flags: u8 = 0;
         loop {
@@ -8095,8 +8674,27 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
         }
         // Parse width
         let mut width: usize = 0;
+        let mut width_position = None;
         if *fmt.add(i) as u8 == b'*' {
-            width = args.next_arg::<c_int>() as usize; i += 1;
+            i += 1;
+            let mut width_number = 0usize;
+            let mut width_probe = i;
+            while (*fmt.add(width_probe) as u8) >= b'0' && (*fmt.add(width_probe) as u8) <= b'9' {
+                width_number = width_number.saturating_mul(10).saturating_add((*fmt.add(width_probe) as u8 - b'0') as usize);
+                width_probe += 1;
+            }
+            if width_number > 0 && *fmt.add(width_probe) as u8 == b'$' {
+                width_position = Some(width_number);
+                i = width_probe + 1;
+            }
+            args.select(width_position);
+            let width_arg = args.next_arg::<c_int>();
+            if width_arg < 0 {
+                flags |= FLAG_MINUS;
+                width = width_arg.wrapping_neg() as i64 as usize;
+            } else {
+                width = width_arg as usize;
+            }
         } else {
             while (*fmt.add(i) as u8) >= b'0' && (*fmt.add(i) as u8) <= b'9' {
                 width = width * 10 + ((*fmt.add(i) as u8) - b'0') as usize; i += 1;
@@ -8104,10 +8702,23 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
         }
         // Parse precision
         let mut precision: i32 = -1;
+        let mut precision_position = None;
         if *fmt.add(i) as u8 == b'.' {
             i += 1;
             if *fmt.add(i) as u8 == b'*' {
-                precision = args.next_arg::<c_int>(); i += 1;
+                i += 1;
+                let mut precision_number = 0usize;
+                let mut precision_probe = i;
+                while (*fmt.add(precision_probe) as u8) >= b'0' && (*fmt.add(precision_probe) as u8) <= b'9' {
+                    precision_number = precision_number.saturating_mul(10).saturating_add((*fmt.add(precision_probe) as u8 - b'0') as usize);
+                    precision_probe += 1;
+                }
+                if precision_number > 0 && *fmt.add(precision_probe) as u8 == b'$' {
+                    precision_position = Some(precision_number);
+                    i = precision_probe + 1;
+                }
+                args.select(precision_position);
+                precision = args.next_arg::<c_int>();
             } else {
                 precision = 0;
                 while (*fmt.add(i) as u8) >= b'0' && (*fmt.add(i) as u8) <= b'9' {
@@ -8115,6 +8726,7 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                 }
             }
         }
+        args.select(arg_position);
         // Parse length modifier
         let len_mod = *fmt.add(i) as u8;
         let spec: u8;
@@ -8128,6 +8740,17 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                     (b'h', b'h', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
                         if !p.is_null() { *(p as *mut u8) = count as u8; }
+                    }
+                    (b'h', b'h', b'd') | (b'h', b'h', b'i') => {
+                        let raw = args.next_arg::<c_int>();
+                        let val = raw as i8 as c_int;
+                        let neg = val < 0;
+                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let b = format_u64(abs);
+                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let mut fbuf = [0u8; 32];
+                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'l', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
@@ -8166,6 +8789,17 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                         let p = args.next_arg::<*mut c_void>();
                         if !p.is_null() { *(p as *mut u16) = count as u16; }
                     }
+                    (b'h', b'd') | (b'h', b'i') => {
+                        let raw = args.next_arg::<c_int>();
+                        let val = raw as i16 as c_int;
+                        let neg = val < 0;
+                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let b = format_u64(abs);
+                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let mut fbuf = [0u8; 32];
+                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        ws_buf!(fbuf.as_ptr(), len);
+                    }
                     (b'l', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
                         if !p.is_null() { *(p as *mut c_long) = count as c_long; }
@@ -8179,6 +8813,18 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                         if !p.is_null() { *(p as *mut c_ulonglong) = count as c_ulonglong; }
                     }
                     (b'l', b'd') | (b'l', b'i') => {
+                        let val = args.next_arg::<c_long>();
+                        let neg = val < 0;
+                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let b = format_u64(abs);
+                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let mut fbuf = [0u8; 32];
+                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        ws_buf!(fbuf.as_ptr(), len);
+                    }
+                    // `%zd` is the signed size counterpart to `%zu`; os-test
+                    // uses it when reporting the result of a PTY read.
+                    (b'z', b'd') | (b'z', b'i') => {
                         let val = args.next_arg::<c_long>();
                         let neg = val < 0;
                         let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
@@ -8231,15 +8877,7 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                     }
                     (b'L', b'f') | (b'L', b'F') | (b'L', b'e') | (b'L', b'E')
                     | (b'L', b'g') | (b'L', b'G') | (b'L', b'a') | (b'L', b'A') => {
-                        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-                        let val = {
-                            let lo: u64 = args.next_arg::<u64>();
-                            let hi: u64 = args.next_arg::<u64>();
-                            let combined: u128 = ((hi as u128) << 64) | (lo as u128);
-                            f128::from_bits(combined) as f64
-                        };
-                        #[cfg(target_arch = "x86_64")]
-                        let val = args.next_arg::<f64>();
+                        let val = args.long_double(arg_position);
                         let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
                         let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
                         let mut fbuf = [0u8; 4224];
@@ -8978,183 +9616,9 @@ pub unsafe extern "C" fn rename(old: *const c_char, new_: *const c_char) -> c_in
     if r == 0 { 0 } else { ERRNO = (-r) as c_int; -1 }
 }
 
-// ============================================================
-// Allocator: mmap-backed independent allocations
-//
-// Each allocation carries its mapping base, mapping size, and requested size.
-// The requested size is deliberately distinct from the page-rounded mapping:
-// realloc may copy only bytes that belong to the caller's old object.  The
-// mapping base lets aligned allocations keep an interior header immediately
-// before their returned pointer while still releasing the full mapping.
-// ============================================================
-
-const MMAP_FAILED: *mut u8 = !0usize as *mut u8;
-const PAGE: usize = 4096;
-const MALLOC_ALIGNMENT: usize = 16;
-
-#[repr(C)]
-struct AllocationHeader {
-    mapping_base: *mut u8,
-    mapping_size: usize,
-    requested_size: usize,
-}
-
-#[inline]
-fn is_power_of_two(value: usize) -> bool {
-    value != 0 && (value & (value - 1)) == 0
-}
-
-unsafe fn allocate(size: SizeT, requested_alignment: usize) -> *mut c_void {
-    let header_alignment = core::mem::align_of::<AllocationHeader>();
-    let alignment = if requested_alignment < header_alignment {
-        header_alignment
-    } else {
-        requested_alignment
-    };
-    if !is_power_of_two(alignment) {
-        ERRNO = EINVAL;
-        return null_mut();
-    }
-
-    // A zero-size allocation is still a separately freeable object.  Its
-    // logical requested size remains zero so realloc never copies bytes the
-    // caller did not own.
-    let payload_size = if size == 0 { 1 } else { size };
-    let metadata_and_payload = match core::mem::size_of::<AllocationHeader>()
-        .checked_add(payload_size)
-    {
-        Some(value) => value,
-        None => {
-            ERRNO = ENOMEM;
-            return null_mut();
-        }
-    };
-    let with_alignment_slack = match metadata_and_payload.checked_add(alignment - 1) {
-        Some(value) => value,
-        None => {
-            ERRNO = ENOMEM;
-            return null_mut();
-        }
-    };
-    let rounded_input = match with_alignment_slack.checked_add(PAGE - 1) {
-        Some(value) => value,
-        None => {
-            ERRNO = ENOMEM;
-            return null_mut();
-        }
-    };
-    let mapping_size = rounded_input & !(PAGE - 1);
-    let mapping_base = sys_mmap(
-        null_mut(),
-        mapping_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0,
-    );
-    if mapping_base == MMAP_FAILED {
-        return null_mut();
-    }
-
-    let first_payload = mapping_base.add(core::mem::size_of::<AllocationHeader>()) as usize;
-    let user_address = (first_payload + alignment - 1) & !(alignment - 1);
-    let header = (user_address - core::mem::size_of::<AllocationHeader>())
-        as *mut AllocationHeader;
-    header.write(AllocationHeader {
-        mapping_base,
-        mapping_size,
-        requested_size: size,
-    });
-    user_address as *mut c_void
-}
-
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
-    allocate(size, MALLOC_ALIGNMENT)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn free(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    let header = (ptr as *mut u8).sub(core::mem::size_of::<AllocationHeader>())
-        as *const AllocationHeader;
-    let allocation = header.read();
-    let _ = sys_munmap(allocation.mapping_base, allocation.mapping_size);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn calloc(count: SizeT, size: SizeT) -> *mut c_void {
-    let total = match count.checked_mul(size) {
-        Some(value) => value,
-        None => {
-            ERRNO = ENOMEM;
-            return null_mut();
-        }
-    };
-    let ptr = malloc(total);
-    if !ptr.is_null() {
-        core::ptr::write_bytes(ptr as *mut u8, 0, total);
-    }
-    ptr
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn realloc(ptr: *mut c_void, new_size: SizeT) -> *mut c_void {
-    if ptr.is_null() {
-        return malloc(new_size);
-    }
-    if new_size == 0 {
-        free(ptr);
-        return null_mut();
-    }
-    let header = (ptr as *mut u8).sub(core::mem::size_of::<AllocationHeader>())
-        as *const AllocationHeader;
-    let old_size = (*header).requested_size;
-    let new_ptr = malloc(new_size);
-    if new_ptr.is_null() {
-        return null_mut();
-    }
-    let copy_size = if old_size < new_size {
-        old_size
-    } else {
-        new_size
-    };
-    core::ptr::copy_nonoverlapping(ptr as *const u8, new_ptr as *mut u8, copy_size);
-    free(ptr);
-    new_ptr
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn aligned_alloc(alignment: SizeT, size: SizeT) -> *mut c_void {
-    // musl's aligned_alloc is its memalign entry point: it requires a valid
-    // power-of-two alignment, but does not reject a size that is not an exact
-    // multiple of that alignment.
-    if !is_power_of_two(alignment) {
-        ERRNO = EINVAL;
-        return null_mut();
-    }
-    allocate(size, alignment)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn posix_memalign(
-    result: *mut *mut c_void,
-    alignment: SizeT,
-    size: SizeT,
-) -> c_int {
-    if result.is_null() || !is_power_of_two(alignment) || alignment % core::mem::size_of::<*mut c_void>() != 0 {
-        return EINVAL;
-    }
-    let allocation = allocate(size, alignment);
-    if allocation.is_null() {
-        return ENOMEM;
-    }
-    result.write(allocation);
-    0
-}
+// Allocator internals are deliberately delegated to mimalloc. The wrapper
+// below owns only the public musl-compatible C allocation contract.
+include!("allocator_mimalloc.rs");
 
 // ============================================================
 // Process: exit / _exit / _Exit
@@ -12706,7 +13170,7 @@ pub unsafe extern "C" fn fcntl(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
             let arg = args.next_arg::<c_int>();
             sys_fcntl(fd, cmd, arg as i64)
         }
-        F_GETLK | F_SETLK | F_SETLKW => {
+        F_GETLK | F_SETLK | F_SETLKW | F_OFD_GETLK | F_OFD_SETLK | F_OFD_SETLKW => {
             let arg = args.next_arg::<*mut c_void>();
             sys_fcntl(fd, cmd, arg as i64)
         }
@@ -15744,6 +16208,9 @@ include!("m4_posix_spawn_attrs_exports.rs");
 include!("m4_admin_syscalls_exports.rs");
 include!("m4_socket_messages_exports.rs");
 include!("m4_complex_basic_exports.rs");
+include!("math_f128_complex_exp_log.rs");
+include!("math_f128_complex_inverse.rs");
+include!("math_f128_complex_primary.rs");
 include!("m4_host_process_exports.rs");
 include!("m4_filesystem_stats_exports.rs");
 include!("m4_signal_helpers_exports.rs");

@@ -1,6 +1,7 @@
 #ifndef _POLL_H
 #define _POLL_H
 
+#include <features.h>
 #include <sys/types.h>
 
 typedef unsigned long nfds_t;
@@ -23,5 +24,12 @@ struct pollfd {
 #define POLLNVAL 0x0020
 
 int poll(struct pollfd [], nfds_t, int);
+
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#include <signal.h>
+#include <time.h>
+int ppoll(struct pollfd [], nfds_t, const struct timespec *restrict,
+          const sigset_t *restrict);
+#endif
 
 #endif

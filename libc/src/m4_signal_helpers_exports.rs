@@ -195,18 +195,22 @@ unsafe fn m4_siginfo_write_i32(info: &mut [u8; 128], offset: usize, value: c_int
 #[no_mangle]
 pub unsafe extern "C" fn sigqueue(pid: c_int, sig: c_int, value: M4Sigval) -> c_int {
     let mut info = [0u8; 128];
-    // Linux's siginfo_t common/rt fields are: signo at 0, code at 8,
-    // sender pid/uid at 12/16, and sigval at 20.
+    // Linux AArch64 aligns the _sifields union to eight bytes. Its queued
+    // signal variant therefore has signo/errno/code at 0/4/8, padding at 12,
+    // sender pid/uid at 16/20, and sigval at 24. Keeping the value at the
+    // union's actual ABI offset is essential for SA_SIGINFO handlers: a
+    // misaligned value can still deliver SI_QUEUE while silently replacing the
+    // caller's sival_int with padding.
     m4_siginfo_write_i32(&mut info, 0, sig);
     m4_siginfo_write_i32(&mut info, 8, -1); // SI_QUEUE
-    m4_siginfo_write_i32(&mut info, 12, getpid());
+    m4_siginfo_write_i32(&mut info, 16, getpid());
     core::ptr::write_unaligned(
-        info.as_mut_ptr().add(16) as *mut c_uint,
+        info.as_mut_ptr().add(20) as *mut c_uint,
         getuid(),
     );
     core::ptr::copy_nonoverlapping(
         &value as *const M4Sigval as *const u8,
-        info.as_mut_ptr().add(20),
+        info.as_mut_ptr().add(24),
         core::mem::size_of::<M4Sigval>(),
     );
     syscall_result(m4_rt_sigqueueinfo(pid, sig, info.as_ptr())) as c_int

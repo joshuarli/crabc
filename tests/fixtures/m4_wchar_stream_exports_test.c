@@ -14,23 +14,23 @@ int main(void)
     wchar_t tokens[] = L",first::second";
     wchar_t *save = NULL;
     wchar_t *token;
-    mbstate_t state = 0;
+    mbstate_t state = { 0 };
 
     if (mbsnrtowcs(wide, &cursor, strlen(input), 4, &state) != 3 ||
         cursor != input + strlen(input) || wide[0] != L'A' || wide[1] != 0xe9 ||
         wide[2] != L'B')
         return 1;
     wide_cursor = wide;
-    state = 0;
+    state = (mbstate_t){ 0 };
     if (wcsnrtombs(bytes, &wide_cursor, 3, sizeof bytes, &state) != strlen(input) ||
         wide_cursor != wide + 3 || memcmp(bytes, input, strlen(input)))
         return 2;
     cursor = input;
-    state = 0;
+    state = (mbstate_t){ 0 };
     if (mbsnrtowcs(wide, &cursor, strlen(input), 1, &state) != 1 ||
         cursor != input + 1 || wide[0] != L'A')
         return 3;
-    state = 0;
+    state = (mbstate_t){ 0 };
     if (mbsnrtowcs(wide, &incomplete, 1, 4, &state) != 0 ||
         incomplete != incomplete_begin)
         return 4;

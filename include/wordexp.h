@@ -1,7 +1,9 @@
 #ifndef _WORDEXP_H
 #define _WORDEXP_H
 
-#include <stddef.h>
+#include <features.h>
+#define __NEED_size_t
+#include <bits/alltypes.h>
 
 typedef struct {
     size_t we_wordc;

@@ -1,7 +1,10 @@
 #ifndef _REGEX_H
 #define _REGEX_H
 
-#include <stddef.h>
+#include <features.h>
+#define __NEED_size_t
+#define __NEED_regoff_t
+#include <bits/alltypes.h>
 
 typedef long regoff_t;
 typedef struct { size_t re_nsub; void *__opaque[7]; } regex_t;

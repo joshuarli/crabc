@@ -2,6 +2,7 @@
 #include "stdio.h"
 #include "errno.h"
 #include <sys/mman.h>
+#include <unistd.h>
 
 static void *mmap_anon(size_t size) {
     return mmap(NULL, size, PROT_READ | PROT_WRITE,

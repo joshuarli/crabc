@@ -235,6 +235,7 @@ compat_long_unary!(asinhl, libm::asinh);
 compat_long_unary!(asinl, libm::asin);
 compat_long_unary!(atanhl, libm::atanh);
 compat_long_unary!(atanl, libm::atan);
+#[cfg(target_arch = "x86_64")]
 compat_long_binary!(atan2l, libm::atan2);
 compat_long_unary!(cbrtl, libm::cbrt);
 compat_long_unary!(ceill, ceil);
@@ -253,6 +254,7 @@ compat_long_unary!(floorl, floor);
 compat_long_binary!(fmaxl, libm::fmax);
 compat_long_binary!(fminl, libm::fmin);
 compat_long_binary!(fmodl, fmod);
+#[cfg(target_arch = "x86_64")]
 compat_long_binary!(hypotl, hypot);
 compat_long_unary!(log10l, log10);
 compat_long_unary!(log1pl, libm::log1p);

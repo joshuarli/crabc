@@ -1,7 +1,12 @@
 #ifndef _STDINT_H
 #define _STDINT_H
 
-#include <stddef.h>
+#include <features.h>
+
+#ifndef __DEFINED_ptrdiff_t
+#define __DEFINED_ptrdiff_t
+typedef __PTRDIFF_TYPE__ ptrdiff_t;
+#endif
 
 typedef signed char int8_t;
 typedef short int16_t;
@@ -79,10 +84,16 @@ typedef unsigned long uintmax_t;
 #define SIG_ATOMIC_MIN (-2147483647-1)
 #define SIG_ATOMIC_MAX 2147483647
 #define SIZE_MAX UINT64_MAX
-#define WCHAR_MIN 0
-#define WCHAR_MAX 4294967295U
 #define WINT_MIN 0U
 #define WINT_MAX 4294967295U
+
+#if L'\0'-1 > 0
+#define WCHAR_MAX (0xffffffffu+L'\0')
+#define WCHAR_MIN (0+L'\0')
+#else
+#define WCHAR_MAX (0x7fffffff+L'\0')
+#define WCHAR_MIN (-1-0x7fffffff+L'\0')
+#endif
 
 #define INT8_C(c) c
 #define INT16_C(c) c

@@ -1,7 +1,7 @@
 #ifndef _THREADS_H
 #define _THREADS_H
 
-#include <pthread.h>
+#include <sys/types.h>
 #include <time.h>
 
 #ifdef __cplusplus

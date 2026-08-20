@@ -35,6 +35,11 @@ int ioctl(int, unsigned long, ...);
 #define FIOCLEX 0x5451
 #define FIONCLEX 0x5450
 
+/* Controlling-terminal requests are Linux ABI constants exposed by musl's
+ * ioctl vocabulary; they are usable in every feature profile. */
+#define TIOCSCTTY 0x540e
+#define TIOCNOTTY 0x5422
+
 /* Linux network-interface requests. */
 #define SIOCGIFNAME  0x8910
 #define SIOCGIFCONF  0x8912

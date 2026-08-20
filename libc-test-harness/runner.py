@@ -199,6 +199,18 @@ BASE_CFLAGS = (
     "-D_FILE_OFFSET_BITS=64",
 )
 
+# libc-test's API probe names two optional/legacy constants unconditionally,
+# while musl 1.2.6 intentionally does not expose either one.  Keep the
+# upstream probe intact and compile a per-run copy that uses the conventional
+# availability guards.  This is deliberately a source adaptation, not an
+# oracle skip: every other declaration in api/unistd.c remains a strict
+# crabc-header check.  Do not add names here unless the pinned musl header is
+# rechecked first.
+API_UNISTD_OPTIONAL_CONSTANTS = (
+    "_PC_TIMESTAMP_RESOLUTION",
+    "_SC_XOPEN_UUCP",
+)
+
 
 def replace_symlink(target: Path, link: Path) -> None:
     """Replace one known harness link without following a broken symlink."""
@@ -561,6 +573,29 @@ def api_header_flags(crabc_dir: Path) -> list[str]:
     ]
 
 
+def prepare_api_unistd_source(source: Path, directory_build: Path) -> Path:
+    """Guard the two libc-test unistd constants absent from pinned musl.
+
+    The explicit match count makes an upstream-source change a harness error
+    rather than silently broadening or removing this narrow adaptation.
+    """
+
+    if source.name != "unistd.c":
+        return source
+    contents = source.read_text(encoding="utf-8")
+    for constant in API_UNISTD_OPTIONAL_CONSTANTS:
+        check = f"C({constant})"
+        if contents.count(check) != 1:
+            raise RuntimeError(
+                f"expected exactly one {check} in pinned libc-test api/unistd.c"
+            )
+        contents = contents.replace(check, f"#ifdef {constant}\n{check}\n#endif")
+    prepared = directory_build / "prepared-source" / source.name
+    prepared.parent.mkdir(parents=True, exist_ok=True)
+    prepared.write_text(contents, encoding="utf-8")
+    return prepared
+
+
 def setup_crabc(script_dir: Path, crabc_dir: Path, libc_so: Path, ldso_so: Path) -> tuple[Path, Path, Path]:
     fake_libs = script_dir / "fake-libs"
     build_dir = script_dir / "build"
@@ -896,8 +931,22 @@ def run_subset(subset: str, script_dir: Path, crabc_dir: Path, libc_test_dir: Pa
             compile_error = directory_build / f"{base}.o.err"
             compiler = "gcc" if directory == "api" else "musl-gcc"
             directory_api_flags = strict_api_flags if directory == "api" else []
+            compile_source = (
+                prepare_api_unistd_source(source, directory_build)
+                if directory == "api"
+                else source
+            )
             compile_status = execute(
-                [compiler, *directory_api_flags, *flags, *extra_flags, "-c", "-o", str(object_file), str(source)],
+                [
+                    compiler,
+                    *directory_api_flags,
+                    *flags,
+                    *extra_flags,
+                    "-c",
+                    "-o",
+                    str(object_file),
+                    str(compile_source),
+                ],
                 stderr_path=compile_error,
             )
             if compile_status != 0:

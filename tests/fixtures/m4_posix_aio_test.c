@@ -3,6 +3,7 @@
 #include <aio.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -14,6 +15,17 @@
             return (code); \
         } \
     } while (0)
+
+static pthread_mutex_t callback_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t callback_cond = PTHREAD_COND_INITIALIZER;
+
+static void aio_callback(union sigval value)
+{
+    pthread_mutex_lock(&callback_mutex);
+    ++*(int *)value.sival_ptr;
+    pthread_cond_signal(&callback_cond);
+    pthread_mutex_unlock(&callback_mutex);
+}
 
 int main(void)
 {
@@ -30,6 +42,8 @@ int main(void)
     struct aiocb list_read = { 0 };
     struct aiocb nowait_read = { 0 };
     struct aiocb list_error = { 0 };
+    struct sigevent async_event = { 0 };
+    int callback_seen = 0;
     const struct aiocb *wait_list[2];
     struct aiocb *list[2];
     struct timespec no_wait = { 0, 0 };
@@ -59,7 +73,20 @@ int main(void)
     write_cb.aio_buf = write_data;
     write_cb.aio_nbytes = 4;
     write_cb.aio_lio_opcode = LIO_WRITE;
-    CHECK(aio_write(&write_cb) == 0, 8);
+    async_event.sigev_notify = SIGEV_THREAD;
+    async_event.sigev_notify_function = aio_callback;
+    async_event.sigev_value.sival_ptr = &callback_seen;
+    write_cb.aio_sigevent = async_event;
+    pthread_mutex_lock(&callback_mutex);
+    int submit_result = aio_write(&write_cb);
+    pthread_mutex_unlock(&callback_mutex);
+    CHECK(submit_result == 0, 31);
+    pthread_mutex_lock(&callback_mutex);
+    while (callback_seen == 0)
+        pthread_cond_wait(&callback_cond, &callback_mutex);
+    int callback_result = callback_seen;
+    pthread_mutex_unlock(&callback_mutex);
+    CHECK(callback_result == 1, 32);
     CHECK(aio_error(&write_cb) == 0 && aio_return(&write_cb) == 4, 9);
     CHECK(pread(fd, verify, 4, 0) == 4 && memcmp(verify, "AIO!", 4) == 0, 10);
     CHECK(aio_cancel(fd, &write_cb) == AIO_ALLDONE, 11);

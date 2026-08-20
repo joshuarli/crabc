@@ -66,6 +66,19 @@ struct M4AioSigevent {
 const M4_AIO_SIGEV_SIGNAL: c_int = 0;
 const M4_AIO_SIGEV_THREAD: c_int = 2;
 
+type M4AioNotifyFn = unsafe extern "C" fn(M4AioSigval);
+
+// A SIGEV_THREAD notification outlives the aio_submit call.  Do not pass the
+// caller's sigevent (which is commonly embedded in a stack aiocb) to the
+// detached thread; copy the callback and value into an owned mapping instead.
+#[repr(C)]
+struct M4AioNotifyTask {
+    notify: M4AioNotifyFn,
+    value: M4AioSigval,
+}
+
+const M4_AIO_NOTIFY_MAPPING_SIZE: usize = core::mem::size_of::<M4AioNotifyTask>();
+
 #[inline]
 unsafe fn m4_aio_cb(cb: *mut c_void) -> *mut M4AioCb {
     cb as *mut M4AioCb
@@ -99,12 +112,24 @@ unsafe fn m4_aio_return_value(cb: *const M4AioCb) -> isize {
     core::ptr::read_volatile(core::ptr::addr_of!((*cb).__ret))
 }
 
+unsafe extern "C" fn m4_aio_notify_thread(arg: *mut c_void) -> *mut c_void {
+    let task = arg as *mut M4AioNotifyTask;
+    let notify = (*task).notify;
+    let value = (*task).value;
+    // The callback and sigval have been copied out, so the task's mapping can
+    // be released before entering user code.  This also makes the ownership
+    // boundary explicit if the callback blocks or retains its sigval pointer.
+    let _ = sys_munmap(task as *mut u8, M4_AIO_NOTIFY_MAPPING_SIZE);
+    notify(value);
+    core::ptr::null_mut()
+}
+
 // Notify the optional per-request sigevent after the completion fields have
-// become visible.  SIGEV_THREAD callbacks run synchronously because this
-// implementation has no worker thread; they still receive the caller's
-// sigev_value.  SIGEV_SIGNAL uses the real process signal path.  A zeroed
-// sigevent has signo 0, for which raise is the required harmless validation
-// syscall, matching the usual zero-initialized aiocb use case.
+// become visible.  SIGEV_THREAD is dispatched through a detached pthread so
+// the callback never runs inline on the submitting thread.
+// SIGEV_SIGNAL uses the real process signal path.  A zeroed sigevent has signo
+// 0, for which raise is the required harmless validation syscall, matching the
+// usual zero-initialized aiocb use case.
 unsafe fn m4_aio_notify(event: *const u8) {
     if event.is_null() {
         return;
@@ -115,13 +140,49 @@ unsafe fn m4_aio_notify(event: *const u8) {
             let _ = raise((*event).sigev_signo);
         }
         M4_AIO_SIGEV_THREAD => {
-            type NotifyFn = unsafe extern "C" fn(M4AioSigval);
             let notify = core::ptr::read_unaligned(
-                (*event).__tail.as_ptr() as *const Option<NotifyFn>,
+                (*event).__tail.as_ptr() as *const Option<M4AioNotifyFn>,
             );
-            if let Some(notify) = notify {
-                notify((*event).sigev_value);
+            let Some(notify) = notify else {
+                return;
+            };
+            let attributes = core::ptr::read_unaligned(
+                (*event).__tail.as_ptr().add(core::mem::size_of::<*mut c_void>())
+                    as *const *const pthread_attr_t,
+            );
+            let task = sys_mmap(
+                core::ptr::null_mut(),
+                M4_AIO_NOTIFY_MAPPING_SIZE,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            if task == MMAP_FAILED {
+                return;
             }
+            let task = task as *mut M4AioNotifyTask;
+            (*task).notify = notify;
+            (*task).value = (*event).sigev_value;
+
+            let mut thread: PthreadT = 0;
+            let result = pthread_create(
+                &mut thread,
+                attributes,
+                m4_aio_notify_thread as *const () as usize,
+                task as *mut c_void,
+            );
+            if result != 0 {
+                let _ = sys_munmap(task as *mut u8, M4_AIO_NOTIFY_MAPPING_SIZE);
+                return;
+            }
+            // Ownership transferred to the child with a successful create;
+            // never reclaim task here, even if detach races an already-exited
+            // child and reports an error.  The child always unmaps its task.
+            // SIGEV_THREAD notifications are detached by definition.  The
+            // existing pthread implementation safely handles both a live and
+            // an already-exited child here.
+            let _ = pthread_detach(thread);
         }
         _ => {}
     }

@@ -1,4 +1,6 @@
+#include "arpa/inet.h"
 #include "sys/socket.h"
+#include "sys/wait.h"
 #include "unistd.h"
 #include "stdio.h"
 #include "stdlib.h"

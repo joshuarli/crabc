@@ -1,28 +1,16 @@
 #ifndef _SPAWN_H
 #define _SPAWN_H
 
+#include <features.h>
+#include <sys/types.h>
+#define __NEED_sigset_t
+#include <bits/alltypes.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <sched.h>
-
-#ifndef _SIGSET_T_DEFINED
-#define _SIGSET_T_DEFINED
-typedef struct __sigset_t {
-    unsigned long __bits[128 / sizeof(unsigned long)];
-} sigset_t;
-#endif
-
-#ifndef _PID_T_DEFINED
-#define _PID_T_DEFINED
-typedef int pid_t;
-#endif
-
-#ifndef _MODE_T_DEFINED
-#define _MODE_T_DEFINED
-typedef unsigned int mode_t;
-#endif
+struct sched_param;
 
 #define POSIX_SPAWN_RESETIDS    1
 #define POSIX_SPAWN_SETPGROUP   2
@@ -30,7 +18,10 @@ typedef unsigned int mode_t;
 #define POSIX_SPAWN_SETSIGMASK  8
 #define POSIX_SPAWN_SETSCHEDPARAM 16
 #define POSIX_SPAWN_SETSCHEDULER  32
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define POSIX_SPAWN_USEVFORK    64
+#endif
+#define POSIX_SPAWN_SETSID      128
 
 typedef struct {
 	int __pad0[2];
@@ -72,8 +63,10 @@ int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t *);
 int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *__restrict, int, const char *__restrict, int, mode_t);
 int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *, int);
 int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *, int, int);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *__restrict, const char *__restrict);
 int posix_spawn_file_actions_addfchdir_np(posix_spawn_file_actions_t *, int);
+#endif
 
 #ifdef __cplusplus
 }

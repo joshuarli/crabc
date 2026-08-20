@@ -44,6 +44,26 @@ int main(void)
         return fail("realloc-overflow");
     free(shrunk);
 
+    small = malloc(4);
+    if (small == NULL)
+        return fail("realloc-zero-setup");
+    grown = realloc(small, 0);
+    if (grown == NULL)
+        return fail("realloc-zero");
+    free(grown);
+
+    grown = calloc(17, sizeof(unsigned long));
+    if (grown == NULL)
+        return fail("calloc");
+    for (i = 0; i < 17 * sizeof(unsigned long); ++i) {
+        if (grown[i] != 0)
+            return fail("calloc-zero");
+    }
+    errno = EAGAIN;
+    free(grown);
+    if (errno != EAGAIN)
+        return fail("free-errno");
+
     errno = 0;
     if (calloc((size_t)-1, 2) != NULL || errno != ENOMEM)
         return fail("calloc-overflow");

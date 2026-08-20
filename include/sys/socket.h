@@ -26,8 +26,10 @@ struct sockaddr_storage {
 #define AF_UNIX   1
 #define AF_INET   2
 #define AF_INET6 10
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define AF_NETLINK 16
 #define AF_PACKET 17
+#endif
 
 #define SOCK_STREAM 1
 #define SOCK_DGRAM  2
@@ -57,6 +59,8 @@ struct sockaddr_storage {
 #define SO_SNDLOWAT 19
 #define SO_SNDTIMEO 21
 #define SO_TYPE 3
+#define SO_PROTOCOL 38
+#define SO_DOMAIN 39
 #define SOMAXCONN 128
 #define MSG_OOB 1
 #define MSG_PEEK 2
@@ -65,7 +69,9 @@ struct sockaddr_storage {
 #define MSG_TRUNC 0x20
 #define MSG_EOR 0x80
 #define MSG_WAITALL 0x100
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define MSG_WAITFORONE 0x10000
+#endif
 #define MSG_NOSIGNAL 0x4000
 #define MSG_CMSG_CLOEXEC 0x40000000
 #define SCM_RIGHTS 1
@@ -103,17 +109,20 @@ struct cmsghdr {
     int cmsg_type;
 };
 struct linger { int l_onoff; int l_linger; };
-#define CMSG_ALIGN(len) (((len) + sizeof(long) - 1) & ~(sizeof(long) - 1))
-#define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
-#define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
-#define CMSG_DATA(cmsg) ((unsigned char *)(cmsg) + CMSG_ALIGN(sizeof(struct cmsghdr)))
+#define __CMSG_ALIGN(len) (((len) + sizeof(long) - 1) & ~(sizeof(long) - 1))
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define CMSG_ALIGN(len) __CMSG_ALIGN(len)
+#endif
+#define CMSG_SPACE(len) (__CMSG_ALIGN(sizeof(struct cmsghdr)) + __CMSG_ALIGN(len))
+#define CMSG_LEN(len) (__CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_DATA(cmsg) ((unsigned char *)(cmsg) + __CMSG_ALIGN(sizeof(struct cmsghdr)))
 #define CMSG_FIRSTHDR(msg) ((msg)->msg_controllen >= sizeof(struct cmsghdr) ? (struct cmsghdr *)(msg)->msg_control : (struct cmsghdr *)0)
 #define CMSG_NXTHDR(msg, cmsg) \
     ((cmsg)->cmsg_len < sizeof(struct cmsghdr) || \
-     (unsigned char *)(cmsg) + CMSG_ALIGN((cmsg)->cmsg_len) + sizeof(struct cmsghdr) > \
+     (unsigned char *)(cmsg) + __CMSG_ALIGN((cmsg)->cmsg_len) + sizeof(struct cmsghdr) > \
          (unsigned char *)(msg)->msg_control + (msg)->msg_controllen \
          ? (struct cmsghdr *)0 \
-         : (struct cmsghdr *)((unsigned char *)(cmsg) + CMSG_ALIGN((cmsg)->cmsg_len)))
+         : (struct cmsghdr *)((unsigned char *)(cmsg) + __CMSG_ALIGN((cmsg)->cmsg_len)))
 
 #ifdef _GNU_SOURCE
 struct timespec;
@@ -146,11 +155,6 @@ int shutdown(int, int);
 int setsockopt(int, int, int, const void *, socklen_t);
 int getsockname(int, struct sockaddr *, socklen_t *);
 int sockatmark(int);
-
-unsigned int htonl(unsigned int);
-unsigned int ntohl(unsigned int);
-unsigned short htons(unsigned short);
-unsigned short ntohs(unsigned short);
 
 #ifdef __cplusplus
 }

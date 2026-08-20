@@ -158,16 +158,16 @@ pub extern "C" fn cpowf(z: M4ComplexFloat, c: M4ComplexFloat) -> M4ComplexFloat 
 }
 
 // x86_64 follows musl's 64-bit long-double ABI, so cpowl is the same ABI as
-// cpow.  AArch64/riscv64 carry binary128 complex values across the public
-// boundary; use the existing f64 compatibility boundary after preserving
-// that layout.
+// cpow.  AArch64 uses the native binary128 implementation in
+// math_f128_complex_exp_log.rs; RISC-V retains the f64 compatibility boundary
+// after preserving its binary128 layout.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub extern "C" fn cpowl(z: M4ComplexLong, c: M4ComplexLong) -> M4ComplexLong {
     m4_cpow_double(z, c)
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(target_arch = "riscv64")]
 #[no_mangle]
 pub extern "C" fn cpowl(z: M4ComplexLong, c: M4ComplexLong) -> M4ComplexLong {
     // musl's cpowl.c uses cexpl(c * clogl(z)) for binary128 long double.

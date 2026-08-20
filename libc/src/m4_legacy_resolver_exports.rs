@@ -15,6 +15,13 @@ const M4R_SOCK_STREAM: c_int = 1;
 const M4R_SOCK_DGRAM: c_int = 2;
 const M4R_IPPROTO_TCP: c_int = 6;
 const M4R_IPPROTO_UDP: c_int = 17;
+const M4R_POLLIN: i16 = 0x0001;
+const M4R_POLLOUT: i16 = 0x0004;
+const M4R_POLLERR: i16 = 0x0008;
+const M4R_POLLHUP: i16 = 0x0010;
+const M4R_POLLNVAL: i16 = 0x0020;
+const M4R_SO_ERROR: c_int = 4;
+const M4R_MSG_NOSIGNAL: c_int = 0x4000;
 const M4R_DNS_PORT: u16 = 53u16.to_be();
 const M4R_DNS_MAX_NAME: usize = 255;
 const M4R_DNS_MAX_PACKET: usize = 65535;
@@ -480,7 +487,261 @@ pub unsafe extern "C" fn dn_comp(
 unsafe fn m4r_dns_response_ok(answer: *const u8, length: usize, query_id: u16) -> bool {
     if answer.is_null() || length < 12 { return false; }
     let id = ((*answer as u16) << 8) | (*answer.add(1) as u16);
-    id == query_id && (*answer.add(2) & 0x80) != 0
+    let questions = ((*answer.add(4) as u16) << 8) | (*answer.add(5) as u16);
+    id == query_id && (*answer.add(2) & 0x80) != 0 && questions != 0
+}
+
+#[inline]
+unsafe fn m4r_dns_response_truncated(answer: *const u8, length: usize) -> bool {
+    !answer.is_null() && length >= 4 && (*answer.add(2) & 0x02) != 0
+}
+
+// A nameserver may send unrelated, truncated, or wrong-transaction packets
+// before the response for this query.  Keep the UDP socket open and consume
+// those packets until the configured deadline; abandoning the socket after
+// the first malformed datagram incorrectly skips a valid response from the
+// same nameserver.
+unsafe fn m4r_dns_udp_exchange(
+    fd: c_int,
+    answer: *mut u8,
+    answer_length: usize,
+    query_id: u16,
+    timeout_ms: c_int,
+) -> c_int {
+    if answer.is_null() || answer_length < 12 || timeout_ms <= 0 {
+        return -1;
+    }
+    let start = match m4r_dns_now_millis() {
+        Some(value) => value,
+        None => return -1,
+    };
+    let deadline = start.saturating_add(timeout_ms as i64);
+    loop {
+        if !m4r_dns_wait(fd, M4R_POLLIN, deadline) {
+            return -1;
+        }
+        let received = recvfrom(
+            fd,
+            answer as *mut c_void,
+            answer_length,
+            0,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        );
+        if received < 0 {
+            if ERRNO == EINTR {
+                continue;
+            }
+            return -1;
+        }
+        let received_length = received as usize;
+        if received_length < 12 || !m4r_dns_response_ok(answer, received_length, query_id) {
+            continue;
+        }
+        return received.min(c_int::MAX as isize) as c_int;
+    }
+}
+
+// The TCP retry uses a nonblocking socket so a nameserver that accepts a
+// connection but never completes it cannot pin the resolver indefinitely.
+// Every poll and partial read/write is charged against one monotonic deadline
+// derived from the configured UDP retransmission timeout.
+unsafe fn m4r_dns_now_millis() -> Option<i64> {
+    let mut now = timespec { tv_sec: 0, tv_nsec: 0 };
+    if sys_clock_gettime(CLOCK_MONOTONIC, &mut now) < 0 {
+        return None;
+    }
+    Some(
+        (now.tv_sec as i64)
+            .saturating_mul(1000)
+            .saturating_add((now.tv_nsec as i64) / 1_000_000),
+    )
+}
+
+unsafe fn m4r_dns_remaining_millis(deadline: i64) -> Option<c_int> {
+    let now = m4r_dns_now_millis()?;
+    if now >= deadline {
+        return Some(0);
+    }
+    Some((deadline - now).min(c_int::MAX as i64) as c_int)
+}
+
+unsafe fn m4r_dns_wait(fd: c_int, events: i16, deadline: i64) -> bool {
+    loop {
+        let timeout = match m4r_dns_remaining_millis(deadline) {
+            Some(value) if value > 0 => value,
+            _ => return false,
+        };
+        let mut descriptor = M4PollFd { fd, events, revents: 0 };
+        let result = poll(&mut descriptor, 1, timeout);
+        if result > 0 {
+            return (descriptor.revents & (events | M4R_POLLERR | M4R_POLLHUP | M4R_POLLNVAL)) != 0;
+        }
+        if result == 0 {
+            return false;
+        }
+        if ERRNO != EINTR {
+            return false;
+        }
+    }
+}
+
+unsafe fn m4r_dns_send_all(fd: c_int, buffer: *const u8, length: usize, deadline: i64) -> bool {
+    let mut offset = 0usize;
+    while offset < length {
+        if !matches!(m4r_dns_remaining_millis(deadline), Some(value) if value > 0) {
+            return false;
+        }
+        let result = send(
+            fd,
+            buffer.add(offset) as *const c_void,
+            length - offset,
+            M4R_MSG_NOSIGNAL,
+        );
+        if result > 0 {
+            offset = offset.saturating_add(result as usize);
+            continue;
+        }
+        if result == 0 {
+            return false;
+        }
+        if ERRNO == EINTR {
+            continue;
+        }
+        if ERRNO != EAGAIN {
+            return false;
+        }
+        if !m4r_dns_wait(fd, M4R_POLLOUT, deadline) {
+            return false;
+        }
+    }
+    true
+}
+
+unsafe fn m4r_dns_recv_all(fd: c_int, buffer: *mut u8, length: usize, deadline: i64) -> bool {
+    let mut offset = 0usize;
+    while offset < length {
+        if !matches!(m4r_dns_remaining_millis(deadline), Some(value) if value > 0) {
+            return false;
+        }
+        let result = recv(fd, buffer.add(offset) as *mut c_void, length - offset, 0);
+        if result > 0 {
+            offset = offset.saturating_add(result as usize);
+            continue;
+        }
+        if result == 0 {
+            return false;
+        }
+        if ERRNO == EINTR {
+            continue;
+        }
+        if ERRNO != EAGAIN {
+            return false;
+        }
+        if !m4r_dns_wait(fd, M4R_POLLIN, deadline) {
+            return false;
+        }
+    }
+    true
+}
+
+unsafe fn m4r_dns_tcp_exchange(
+    family: c_int,
+    target: *const sockaddr,
+    target_length: c_uint,
+    query: *const u8,
+    query_length: usize,
+    answer: *mut u8,
+    answer_length: usize,
+    query_id: u16,
+    timeout_ms: c_int,
+) -> c_int {
+    if target.is_null() || query.is_null() || answer.is_null() ||
+        query_length > u16::MAX as usize || answer_length < 12 || timeout_ms <= 0 {
+        return -1;
+    }
+    let start = match m4r_dns_now_millis() {
+        Some(value) => value,
+        None => return -1,
+    };
+    let deadline = start.saturating_add(timeout_ms as i64);
+    let fd = socket(family, M4R_SOCK_STREAM, 0);
+    if fd < 0 {
+        return -1;
+    }
+    let old_flags = sys_fcntl(fd, F_GETFL, 0);
+    if old_flags < 0 || sys_fcntl(fd, F_SETFL, old_flags | O_NONBLOCK as i64) < 0 {
+        close(fd);
+        return -1;
+    }
+
+    let mut connect_result = sys_connect(fd, target, target_length);
+    while connect_result == -(EINTR_VAL as i64) {
+        if !m4r_dns_wait(fd, M4R_POLLOUT, deadline) {
+            close(fd);
+            return -1;
+        }
+        connect_result = sys_connect(fd, target, target_length);
+    }
+    if connect_result < 0 && connect_result != -(EINPROGRESS_VAL as i64) &&
+        connect_result != -(EALREADY_VAL as i64)
+    {
+        close(fd);
+        return -1;
+    }
+    if connect_result < 0 {
+        if !m4r_dns_wait(fd, M4R_POLLOUT, deadline) {
+            close(fd);
+            return -1;
+        }
+        let mut socket_error: c_int = 0;
+        let mut option_length = core::mem::size_of::<c_int>() as c_uint;
+        if getsockopt(
+            fd,
+            SOL_SOCKET,
+            M4R_SO_ERROR,
+            &mut socket_error as *mut c_int as *mut c_void,
+            &mut option_length,
+        ) != 0 || socket_error != 0 {
+            close(fd);
+            return -1;
+        }
+    }
+
+    // DNS-over-TCP frames both directions with a two-byte network-order
+    // payload length. Send the header and query separately so no large stack
+    // copy is needed; m4r_dns_send_all handles short writes for each part.
+    let frame_length = [(query_length >> 8) as u8, query_length as u8];
+    if !m4r_dns_send_all(fd, frame_length.as_ptr(), frame_length.len(), deadline) ||
+        !m4r_dns_send_all(fd, query, query_length, deadline)
+    {
+        close(fd);
+        return -1;
+    }
+    let mut response_length_bytes = [0u8; 2];
+    if !m4r_dns_recv_all(fd, response_length_bytes.as_mut_ptr(), 2, deadline) {
+        close(fd);
+        return -1;
+    }
+    let response_length = ((response_length_bytes[0] as usize) << 8) |
+        response_length_bytes[1] as usize;
+    if response_length < 12 || response_length > answer_length ||
+        response_length > M4R_DNS_MAX_PACKET
+    {
+        close(fd);
+        return -1;
+    }
+    if !m4r_dns_recv_all(fd, answer, response_length, deadline) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    if !m4r_dns_response_ok(answer, response_length, query_id) ||
+        m4r_dns_response_truncated(answer, response_length)
+    {
+        return -1;
+    }
+    response_length.min(c_int::MAX as usize) as c_int
 }
 
 #[no_mangle]
@@ -513,20 +774,33 @@ pub unsafe extern "C" fn res_send(query: *const u8, querylen: c_int, answer: *mu
             core::mem::size_of::<M4RSockaddrIn>() as c_uint,
         );
         if sent == querylen as isize {
-            let mut pfd = M4PollFd { fd, events: 1, revents: 0 };
-            let ready = poll(&mut pfd, 1, timeout_ms);
-            if ready > 0 && (pfd.revents & 1) != 0 {
-                let received = recvfrom(
-                    fd,
-                    answer as *mut c_void,
-                    answer_len,
-                    0,
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                );
-                close(fd);
-                if received >= 12 && m4r_dns_response_ok(answer, received as usize, query_id) {
-                    return received.min(c_int::MAX as isize) as c_int;
+            let received = m4r_dns_udp_exchange(
+                fd,
+                answer,
+                answer_len,
+                query_id,
+                timeout_ms,
+            );
+            if received >= 0 {
+                if m4r_dns_response_truncated(answer, received as usize) {
+                    let tcp_received = m4r_dns_tcp_exchange(
+                        M4R_AF_INET,
+                        target as *const M4RSockaddrIn as *const sockaddr,
+                        core::mem::size_of::<M4RSockaddrIn>() as c_uint,
+                        query,
+                        query_len,
+                        answer,
+                        answer_len,
+                        query_id,
+                        timeout_ms,
+                    );
+                    close(fd);
+                    if tcp_received >= 0 {
+                        return tcp_received;
+                    }
+                } else {
+                    close(fd);
+                    return received;
                 }
             } else {
                 close(fd);
@@ -550,20 +824,33 @@ pub unsafe extern "C" fn res_send(query: *const u8, querylen: c_int, answer: *mu
                 core::mem::size_of::<M4RSockaddrIn6>() as c_uint,
             );
             if sent == querylen as isize {
-                let mut pfd = M4PollFd { fd, events: 1, revents: 0 };
-                let ready = poll(&mut pfd, 1, timeout_ms);
-                if ready > 0 && (pfd.revents & 1) != 0 {
-                    let received = recvfrom(
-                        fd,
-                        answer as *mut c_void,
-                        answer_len,
-                        0,
-                        core::ptr::null_mut(),
-                        core::ptr::null_mut(),
-                    );
-                    close(fd);
-                    if received >= 12 && m4r_dns_response_ok(answer, received as usize, query_id) {
-                        return received.min(c_int::MAX as isize) as c_int;
+                let received = m4r_dns_udp_exchange(
+                    fd,
+                    answer,
+                    answer_len,
+                    query_id,
+                    timeout_ms,
+                );
+                if received >= 0 {
+                    if m4r_dns_response_truncated(answer, received as usize) {
+                        let tcp_received = m4r_dns_tcp_exchange(
+                            M4R_AF_INET6,
+                            target as *const M4RSockaddrIn6 as *const sockaddr,
+                            core::mem::size_of::<M4RSockaddrIn6>() as c_uint,
+                            query,
+                            query_len,
+                            answer,
+                            answer_len,
+                            query_id,
+                            timeout_ms,
+                        );
+                        close(fd);
+                        if tcp_received >= 0 {
+                            return tcp_received;
+                        }
+                    } else {
+                        close(fd);
+                        return received;
                     }
                 } else {
                     close(fd);
@@ -732,6 +1019,19 @@ unsafe fn m4r_parse_dns_addresses(answer: *const u8, length: usize, wanted_type:
     true
 }
 
+// getaddrinfo follows the resolver search policy for a bare host name.  A
+// direct res_query would only ask for "name." and would never try the
+// configured search domains; res_search preserves the absolute/FQDN path and
+// applies the existing M4R ndots/search state for relative names.
+unsafe fn m4r_lookup_dns(
+    name: *const c_char,
+    type_: c_int,
+    answer: *mut u8,
+    answer_length: c_int,
+) -> c_int {
+    res_search(name, M4R_NS_CLASS_IN, type_, answer, answer_length)
+}
+
 unsafe fn m4r_lookup_host(name: *const c_char, family: c_int, list: *mut M4RAddress, count: *mut usize) {
     if name.is_null() { return; }
     if family == M4R_AF_UNSPEC || family == M4R_AF_INET {
@@ -764,11 +1064,11 @@ unsafe fn m4r_lookup_host(name: *const c_char, family: c_int, list: *mut M4RAddr
     }
     let mut answer = [0u8; M4R_DNS_ANSWER_PACKET];
     if (family == M4R_AF_UNSPEC || family == M4R_AF_INET) && !has_v4 {
-        let length = res_query(name, M4R_NS_CLASS_IN, M4R_NS_TYPE_A, answer.as_mut_ptr(), answer.len() as c_int);
+        let length = m4r_lookup_dns(name, M4R_NS_TYPE_A, answer.as_mut_ptr(), answer.len() as c_int);
         if length >= 0 { m4r_parse_dns_addresses(answer.as_ptr(), length as usize, M4R_NS_TYPE_A, list, count); }
     }
     if (family == M4R_AF_UNSPEC || family == M4R_AF_INET6) && !has_v6 {
-        let length = res_query(name, M4R_NS_CLASS_IN, M4R_NS_TYPE_AAAA, answer.as_mut_ptr(), answer.len() as c_int);
+        let length = m4r_lookup_dns(name, M4R_NS_TYPE_AAAA, answer.as_mut_ptr(), answer.len() as c_int);
         if length >= 0 { m4r_parse_dns_addresses(answer.as_ptr(), length as usize, M4R_NS_TYPE_AAAA, list, count); }
     }
 }

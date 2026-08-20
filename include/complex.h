@@ -5,6 +5,19 @@
 #define _Complex_I (1.0fi)
 #define I _Complex_I
 
+#if __STDC_VERSION__ >= 201112L
+#if defined(_Imaginary_I)
+#define __CRABC_CMPLX(x, y, t) ((t)(x) + _Imaginary_I*(t)(y))
+#elif defined(__clang__)
+#define __CRABC_CMPLX(x, y, t) (+(_Complex t){ (t)(x), (t)(y) })
+#else
+#define __CRABC_CMPLX(x, y, t) (__builtin_complex((t)(x), (t)(y)))
+#endif
+#define CMPLX(x, y) __CRABC_CMPLX(x, y, double)
+#define CMPLXF(x, y) __CRABC_CMPLX(x, y, float)
+#define CMPLXL(x, y) __CRABC_CMPLX(x, y, long double)
+#endif
+
 #define __CRABC_COMPLEX_DECL(name) \
 double complex name(double complex); \
 float complex name##f(float complex); \

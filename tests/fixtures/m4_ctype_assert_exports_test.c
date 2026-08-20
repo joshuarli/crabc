@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 extern const unsigned short **__ctype_b_loc(void);

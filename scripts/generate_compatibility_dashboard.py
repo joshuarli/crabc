@@ -25,6 +25,10 @@ SYMBOL_REPORT_DIR = ROOT_DIR / "compat/reports/symbols"
 RATCHET_REPORT = ROOT_DIR / "compat/reports/ratchet.json"
 LIBC_TEST_REPORT_DIR = ROOT_DIR / "libc-test-harness/reports"
 DIFFERENTIAL_REPORT_DIR = ROOT_DIR / "compat/reports/differential"
+OS_TEST_REPORT = ROOT_DIR / "compat/reports/os-test/latest.json"
+PTHREAD_STRESS_REPORT = ROOT_DIR / "compat/reports/pthread-stress/latest.json"
+SIGNAL_PROCESS_REPORT = ROOT_DIR / "compat/reports/signal-process.json"
+RESOLVER_NETWORK_REPORT = ROOT_DIR / "compat/reports/resolver-network.json"
 LOADER_FEATURE_REPORT = ROOT_DIR / "compat/abi/crabc/aarch64/loader-features.json"
 
 
@@ -121,6 +125,19 @@ def loader_feature_state() -> dict[str, Any] | None:
     return read_json(LOADER_FEATURE_REPORT)
 
 
+def m6_report_state(path: Path, expected_runner: str) -> dict[str, Any] | None:
+    """Return a named M6 report only when it is structurally identifiable."""
+
+    report = read_json(path)
+    if report is None:
+        return None
+    runner = report.get("runner", report.get("harness"))
+    if runner != expected_runner:
+        raise RuntimeError(f"unexpected M6 report identity in {path}: {runner!r}")
+    report["_path"] = str(path.relative_to(ROOT_DIR))
+    return report
+
+
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -139,6 +156,10 @@ def main() -> int:
     ratchet = read_json(RATCHET_REPORT)
     libc_test = libc_test_states()
     differential = differential_state()
+    os_test = m6_report_state(OS_TEST_REPORT, "pinned-os-test")
+    pthread_stress = m6_report_state(PTHREAD_STRESS_REPORT, "crabc-pthread-stress")
+    signal_process = m6_report_state(SIGNAL_PROCESS_REPORT, "crabc-signal-process")
+    resolver_network = m6_report_state(RESOLVER_NETWORK_REPORT, "compat/resolver-network")
     loader_features = loader_feature_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -308,12 +329,124 @@ def main() -> int:
             )
         )
 
+    lines.extend(["", "## M6 standards and stress evidence", ""])
+    if os_test is None:
+        lines.append("No pinned os-test profile result. Run `./scripts/dev.sh os-test`.")
+    else:
+        suites = os_test.get("suites", [])
+        if not isinstance(suites, list):
+            raise RuntimeError(f"invalid os-test suites in {os_test['_path']}")
+        passed = sum(item.get("passed") is True for item in suites if isinstance(item, dict))
+        lines.append(
+            f"Pinned os-test ({os_test.get('os_test_revision', 'unknown')}): "
+            f"**{'pass' if os_test.get('passed') is True else 'FAIL'}** "
+            f"({passed}/{len(suites)} selected suite(s)); report `{os_test['_path']}`."
+        )
+        if suites:
+            lines.append("")
+            lines.extend(
+                markdown_table(
+                    (
+                        "suite",
+                        "oracle",
+                        "result",
+                        "source contract",
+                        "outcome differences",
+                        "raw runtime differences",
+                        "crabc source failures",
+                        "musl source failures",
+                        "source improvements",
+                    ),
+                    [
+                        (
+                            item.get("suite", "unknown"),
+                            item.get("oracle", "pinned-musl-differential"),
+                            item.get("result", "unknown"),
+                            (
+                                item.get("source_contract_passed")
+                                if item.get("source_contract_passed") is not None
+                                else "n/a"
+                            ),
+                            item.get("difference_count", "unknown"),
+                            item.get("runtime_difference_count", "unknown"),
+                            item.get("candidate_source_failure_count", 0),
+                            item.get("musl_source_failure_count", 0),
+                            item.get("source_improvement_count", 0),
+                        )
+                        for item in suites
+                        if isinstance(item, dict)
+                    ],
+                )
+            )
+
+    if pthread_stress is None:
+        lines.append("\nNo pthread/TLS stress result. Run `./scripts/dev.sh pthread-stress`.")
+    else:
+        comparisons = pthread_stress.get("comparisons", {})
+        exact_streams = (
+            comparisons.get("all_exit_status_match") is True
+            and comparisons.get("all_stdout_match") is True
+            and comparisons.get("all_stderr_match") is True
+            and comparisons.get("all_completed") is True
+            if isinstance(comparisons, dict)
+            else False
+        )
+        lines.append(
+            f"\nPthread/TLS stress differential: "
+            f"**{'pass' if pthread_stress.get('passed') is True else 'FAIL'}** "
+            f"({pthread_stress.get('completed_iterations', 'unknown')}/"
+            f"{pthread_stress.get('iteration_count', 'unknown')} iterations, "
+            f"timeout={pthread_stress.get('timeout_seconds', 'unknown')}s, "
+            f"exact streams={exact_streams}, source improvements="
+            f"{pthread_stress.get('source_improvement_count', 0)}); "
+            f"report `{pthread_stress['_path']}`."
+        )
+
+    if signal_process is None:
+        lines.append("\nNo signal/process result. Run `./scripts/dev.sh signal-process`.")
+    else:
+        cases = signal_process.get("cases", {})
+        case_count = len(cases) if isinstance(cases, dict) else "unknown"
+        comparisons = signal_process.get("comparisons", {})
+        exact_streams = (
+            comparisons.get("all_exit_status_match") is True
+            and comparisons.get("all_stdout_match") is True
+            and comparisons.get("all_stderr_match") is True
+            if isinstance(comparisons, dict)
+            else False
+        )
+        lines.append(
+            f"\nSignal/process isolated comparison: "
+            f"**{'pass' if signal_process.get('passed') is True else 'FAIL'}** "
+            f"({case_count} subcase(s), exact streams={exact_streams}); "
+            f"report `{signal_process['_path']}`."
+        )
+
+    if resolver_network is None:
+        lines.append("\nNo deterministic resolver/network result. Run `./scripts/dev.sh resolver-network`.")
+    else:
+        contract = resolver_network.get("contract", {})
+        expected_subcases = contract.get("expected_subcases", []) if isinstance(contract, dict) else []
+        case_count = len(expected_subcases) if isinstance(expected_subcases, list) else "unknown"
+        dns_server = resolver_network.get("dns_server", {})
+        event_contract = dns_server.get("event_contract", {}) if isinstance(dns_server, dict) else {}
+        event_contract_passed = (
+            event_contract.get("passed") is True if isinstance(event_contract, dict) else False
+        )
+        lines.append(
+            f"\nDeterministic local resolver/network comparison: "
+            f"**{'pass' if resolver_network.get('passed') is True else 'FAIL'}** "
+            f"({case_count} contract item(s), DNS event contract={event_contract_passed}); "
+            f"report `{resolver_network['_path']}`."
+        )
+
     lines.extend(
         [
             "",
             "## Unmeasured frontier",
             "",
-            "POSIX-suite outcomes, static candidate ABI parity, header declaration/layout parity, "
+            "The selected POSIX, signal/process, and resolver/network contracts above are not full "
+            "standards conformance. Static candidate ABI parity, exhaustive header declaration/layout parity, "
             "loader runtime-slice results, real Alpine corpus, and stock Rust `std` compatibility are not measured by this dashboard yet. "
             "The focused loader stderr-isolation regression is passing, but it is not a verified loader slice.",
             "",

@@ -544,7 +544,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
     // musl treats the historical zero alignment as the allocator's natural
     // alignment; nonzero values use aligned_alloc's power-of-two checks.
     if alignment == 0 {
-        allocate(size, MALLOC_ALIGNMENT)
+        malloc(size)
     } else {
         aligned_alloc(alignment, size)
     }
@@ -552,7 +552,10 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
 
 #[no_mangle]
 pub unsafe extern "C" fn valloc(size: usize) -> *mut c_void {
-    memalign(PAGE, size)
+    // Linux AArch64's base page is 4 KiB. This legacy interface is only an
+    // alignment wrapper around the selected allocator, not an allocator
+    // implementation detail.
+    memalign(4096, size)
 }
 
 #[no_mangle]
@@ -560,9 +563,7 @@ pub unsafe extern "C" fn malloc_usable_size(ptr: *mut c_void) -> usize {
     if ptr.is_null() {
         return 0;
     }
-    let header = (ptr as *mut u8).sub(core::mem::size_of::<AllocationHeader>())
-        as *const AllocationHeader;
-    (*header).requested_size
+    libmimalloc_sys::mi_usable_size(ptr)
 }
 
 #[no_mangle]

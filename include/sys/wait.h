@@ -22,6 +22,7 @@ typedef enum { P_ALL = 0, P_PID = 1, P_PGID = 2 } idtype_t;
 #define WIFSTOPPED(s) (((s) & 0xff) == 0x7f)
 #define WSTOPSIG(s) WEXITSTATUS(s)
 #define WTERMSIG(s) ((s) & 0x7f)
+#define WCOREDUMP(s) ((s) & 0x80)
 #define WIFCONTINUED(s) ((s) == 0xffff)
 
 pid_t wait(int *);

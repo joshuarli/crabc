@@ -1,6 +1,7 @@
 #ifndef _DIRENT_H
 #define _DIRENT_H
 
+#include <features.h>
 #include <sys/types.h>
 
 typedef struct __dirstream DIR;
@@ -32,8 +33,10 @@ struct posix_dent {
 #define DT_LNK 10
 #define DT_SOCK 12
 #define DT_WHT 14
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define IFTODT(mode) (((mode) >> 12) & 017)
 #define DTTOIF(type) ((type) << 12)
+#endif
 
 int alphasort(const struct dirent **, const struct dirent **);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
@@ -48,8 +51,10 @@ int readdir_r(DIR *restrict, struct dirent *restrict, struct dirent **restrict);
 int scandir(const char *, struct dirent ***, int (*)(const struct dirent *),
     int (*)(const struct dirent **, const struct dirent **));
 void rewinddir(DIR *);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 void seekdir(DIR *, long);
 long telldir(DIR *);
+#endif
 ssize_t posix_getdents(int, void *, size_t, int);
 
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)

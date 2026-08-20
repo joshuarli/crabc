@@ -128,7 +128,6 @@ static int sigqueue_case(void)
     sigset_t mask;
     siginfo_t info;
     union sigval value;
-    unsigned char *raw = (unsigned char *)&info;
     int code, sender, queued_value;
 
     memset(&mask, 0, sizeof mask);
@@ -141,9 +140,9 @@ static int sigqueue_case(void)
         return 41;
     if (sigwaitinfo(&mask, &info) != SIGUSR1)
         return 42;
-    memcpy(&code, raw + 8, sizeof code);
-    memcpy(&sender, raw + 12, sizeof sender);
-    memcpy(&queued_value, raw + 20, sizeof queued_value);
+    code = info.si_code;
+    sender = info.si_pid;
+    queued_value = info.si_value.sival_int;
     if (code != SI_QUEUE || sender != (int)getpid() || queued_value != 0x1234)
         return 43;
     if (sigprocmask(SIG_UNBLOCK, &mask, NULL) != 0)

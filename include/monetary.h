@@ -1,10 +1,19 @@
 #ifndef _MONETARY_H
 #define _MONETARY_H
 
-#include <locale.h>
-#include <sys/types.h>
+#include <features.h>
+#define __NEED_size_t
+#define __NEED_ssize_t
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define __NEED_locale_t
+#endif
+#include <bits/alltypes.h>
 
 ssize_t strfmon(char *restrict, size_t, const char *restrict, ...);
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 ssize_t strfmon_l(char *restrict, size_t, locale_t, const char *restrict, ...);
+#endif
 
 #endif

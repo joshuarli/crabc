@@ -1,4 +1,5 @@
 #include "unistd.h"
+#include "sys/wait.h"
 #include "pthread_atfork.h"
 
 static int prepare_seq[10], parent_seq[10], child_seq[10];

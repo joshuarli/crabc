@@ -1,6 +1,8 @@
 #ifndef _LIMITS_H
 #define _LIMITS_H
 
+#include <features.h>
+
 /* musl 1.2.6 AArch64 limits used by the strict public-header contract. */
 #define BC_BASE_MAX 99
 #define BC_DIM_MAX 2048
@@ -37,6 +39,7 @@
 #define _POSIX_SIGQUEUE_MAX 32
 #define _POSIX_SSIZE_MAX 32767
 #define _POSIX_STREAM_MAX 8
+#define _POSIX_SS_REPL_MAX 4
 #define _POSIX_SYMLINK_MAX 255
 #define _POSIX_SYMLOOP_MAX 8
 #define _POSIX_THREAD_DESTRUCTOR_ITERATIONS 4
@@ -62,6 +65,20 @@
 #define PATH_MAX 4096
 #define PIPE_BUF 4096
 #define FILESIZEBITS 64
+#define ARG_MAX 131072
+#define DELAYTIMER_MAX 0x7fffffff
+#define HOST_NAME_MAX 255
+#define IOV_MAX 1024
+#define LOGIN_NAME_MAX 256
+#define MQ_PRIO_MAX 32768
+#define PTHREAD_DESTRUCTOR_ITERATIONS 4
+#define PTHREAD_KEYS_MAX 128
+#define PTHREAD_STACK_MIN 2048
+#define SEM_NSEMS_MAX 256
+#define SEM_VALUE_MAX 0x7fffffff
+#define SYMLOOP_MAX 40
+#define TTY_NAME_MAX 32
+#define TZNAME_MAX 6
 
 #define CHAR_BIT 8
 #define CHAR_MAX 255
@@ -86,10 +103,14 @@
 #define USHRT_MAX 0xffff
 #define WORD_BIT 32
 #define NL_ARGMAX 9
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define NL_LANGMAX 32
+#endif
 #define NL_MSGMAX 32767
 #define NL_SETMAX 255
 #define NL_TEXTMAX 2048
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define NZERO 20
+#endif
 
 #endif

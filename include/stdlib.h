@@ -1,8 +1,11 @@
 #ifndef _STDLIB_H
 #define _STDLIB_H
 
-#include <stddef.h>
-#include <wchar.h>
+#include <features.h>
+
+#define __NEED_size_t
+#define __NEED_wchar_t
+#include <bits/alltypes.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,6 +69,7 @@ lldiv_t lldiv(long long, long long);
 void srand(unsigned);
 int rand(void);
 
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 long lrand48(void);
 long mrand48(void);
 long nrand48(unsigned short *);
@@ -79,12 +83,14 @@ void srandom(unsigned);
 long random(void);
 char *initstate(unsigned, char *, size_t);
 char *setstate(char *);
+#endif
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int getloadavg(double *, int);
+#endif
 
 void *malloc(size_t);
 void *calloc(size_t, size_t);
 void *realloc(void *, size_t);
-void *reallocarray(void *, size_t, size_t);
 void free(void *);
 void *aligned_alloc(size_t, size_t);
 int posix_memalign(void **, size_t, size_t);
@@ -98,15 +104,18 @@ _Noreturn void quick_exit(int);
 
 char *getenv(const char *);
 int setenv(const char *, const char *, int);
-int putenv(char *);
 int unsetenv(const char *);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+int putenv(char *);
+#endif
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int clearenv(void);
+#endif
 
 int system(const char *);
 
 void *bsearch(const void *, const void *, size_t, size_t, int (*)(const void *, const void *));
 void qsort(void *, size_t, size_t, int (*)(const void *, const void *));
-void qsort_r(void *, size_t, size_t, int (*)(const void *, const void *, void *), void *);
 
 int mblen(const char *, size_t);
 int mbtowc(wchar_t *__restrict, const char *__restrict, size_t);
@@ -116,15 +125,37 @@ size_t wcstombs(char *__restrict, const wchar_t *__restrict, size_t);
 
 int getsubopt(char **, char *const *, char **);
 char *mkdtemp(char *);
+int mkstemp(char *);
+int mkostemp(char *, int);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 long a64l(const char *);
 int grantpt(int);
 char *l64a(long);
 char *ptsname(int);
-int ptsname_r(int, char *, size_t);
+#endif
+
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 char *realpath(const char *restrict, char *restrict);
+#endif
+#if defined(_GNU_SOURCE)
+int ptsname_r(int, char *, size_t);
+#endif
+
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define WCOREDUMP(s) ((s) & 0x80)
+void *reallocarray(void *, size_t, size_t);
+void qsort_r(void *, size_t, size_t,
+             int (*)(const void *, const void *, void *), void *);
+#endif
+
+#ifdef _GNU_SOURCE
+char *secure_getenv(const char *);
+#endif
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 void setkey(const char *);
 int unlockpt(int);
 int posix_openpt(int);
+#endif
 
 #ifdef _GNU_SOURCE
 char *ecvt(double, int, int *, int *);

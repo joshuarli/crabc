@@ -7,8 +7,8 @@ typedef int nl_item;
 #define NL_SETD 1
 #define NL_CAT_LOCALE 1
 
-nl_catd catopen(const char *name, int oflag);
-int catclose(nl_catd catd);
-char *catgets(nl_catd catd, int set_id, int msg_id, const char *s);
+nl_catd catopen(const char *, int);
+int catclose(nl_catd);
+char *catgets(nl_catd, int, int, const char *);
 
 #endif

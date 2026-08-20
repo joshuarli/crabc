@@ -1,6 +1,7 @@
 #ifndef _SYS_STAT_H
 #define _SYS_STAT_H
 
+#include <features.h>
 #include <sys/types.h>
 #include <time.h>
 
@@ -87,9 +88,12 @@ struct stat {
 #define S_TYPEISMQ(buf) 0
 #define S_TYPEISSEM(buf) 0
 #define S_TYPEISSHM(buf) 0
+#define S_TYPEISTMO(buf) 0
 
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define AT_FDCWD (-100)
 #define AT_SYMLINK_NOFOLLOW 0x100
+#endif
 
 int stat(const char *, struct stat *);
 int fstat(int, struct stat *);
@@ -98,13 +102,17 @@ int fstatat(int, const char *, struct stat *, int);
 mode_t umask(mode_t);
 int fchmod(int, unsigned int);
 int fchmodat(int, const char *, mode_t, int);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int lchmod(const char *, mode_t);
+#endif
 int mkdir(const char *, unsigned int);
 int mkdirat(int, const char *, mode_t);
 int mkfifo(const char *, unsigned int);
 int mkfifoat(int, const char *, mode_t);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int mknod(const char *, mode_t, dev_t);
 int mknodat(int, const char *, mode_t, dev_t);
+#endif
 int chmod(const char *, unsigned int);
 int utimensat(int, const char *, const struct timespec[2], int);
 int futimens(int, const struct timespec[2]);

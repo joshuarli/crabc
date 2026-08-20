@@ -2,7 +2,8 @@
 #define _INTTYPES_H
 
 #include <stdint.h>
-#include <wchar.h>
+#define __NEED_wchar_t
+#include <bits/alltypes.h>
 
 typedef struct { intmax_t quot, rem; } imaxdiv_t;
 

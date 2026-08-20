@@ -10,6 +10,7 @@ ARG RUST_TOOLCHAIN=nightly-2026-07-24
 ARG MUSL_VERSION=1.2.6
 ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
 ARG LIBC_TEST_REV=123433158bf985d7eb3b4072e32121b9e32a1a1a
+ARG OS_TEST_REV=5e9456d510612f83b6ec8b1a0c06d6b1303a2512
 
 ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
@@ -72,6 +73,16 @@ RUN git clone https://repo.or.cz/libc-test.git /opt/libc-test \
     && cd /opt/libc-test \
     && git checkout --detach "${LIBC_TEST_REV}" \
     && test "$(git rev-parse HEAD)" = "${LIBC_TEST_REV}" \
+    && rm -rf .git
+
+# os-test is an independent, pinned POSIX-oriented oracle.  It remains
+# outside the workspace so the Python runner can copy it into isolated
+# temporary directories without mutating source or relying on host files.
+RUN git clone https://gitlab.com/sortix/os-test.git /opt/os-test \
+    && cd /opt/os-test \
+    && git checkout --detach "${OS_TEST_REV}" \
+    && test "$(git rev-parse HEAD)" = "${OS_TEST_REV}" \
+    && printf '%s\n' "${OS_TEST_REV}" > .crabc-revision \
     && rm -rf .git
 
 WORKDIR /workspace

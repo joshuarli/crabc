@@ -1,5 +1,15 @@
-#ifndef LOCALE_H
-#define LOCALE_H
+#ifndef _LOCALE_H
+#define _LOCALE_H
+
+#include <features.h>
+
+#if __cplusplus >= 201103L
+#define NULL nullptr
+#elif defined(__cplusplus)
+#define NULL 0L
+#else
+#define NULL ((void*)0)
+#endif
 
 #define LC_CTYPE    0
 #define LC_NUMERIC  1
@@ -8,12 +18,6 @@
 #define LC_MONETARY 4
 #define LC_MESSAGES 5
 #define LC_ALL      6
-
-#ifndef NULL
-#ifndef NULL
-#define NULL ((void *)0)
-#endif
-#endif
 
 struct lconv {
     char *decimal_point;
@@ -42,13 +46,14 @@ struct lconv {
     char int_n_sign_posn;
 };
 
-#ifndef _LOCALE_T_DEFINED
-#define _LOCALE_T_DEFINED
-typedef void *locale_t;
-#endif
+char *setlocale(int, const char *);
+struct lconv *localeconv(void);
 
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define __NEED_locale_t
+#include <bits/alltypes.h>
 #define LC_GLOBAL_LOCALE ((locale_t)-1)
-
 #define LC_CTYPE_MASK    (1<<LC_CTYPE)
 #define LC_NUMERIC_MASK  (1<<LC_NUMERIC)
 #define LC_TIME_MASK     (1<<LC_TIME)
@@ -56,13 +61,10 @@ typedef void *locale_t;
 #define LC_MONETARY_MASK (1<<LC_MONETARY)
 #define LC_MESSAGES_MASK (1<<LC_MESSAGES)
 #define LC_ALL_MASK      0x7fffffff
-
-char *setlocale(int category, const char *locale);
-struct lconv *localeconv(void);
-
-locale_t newlocale(int mask, const char *name, locale_t base);
-void freelocale(locale_t loc);
-locale_t uselocale(locale_t loc);
-locale_t duplocale(locale_t loc);
+locale_t newlocale(int, const char *, locale_t);
+void freelocale(locale_t);
+locale_t uselocale(locale_t);
+locale_t duplocale(locale_t);
+#endif
 
 #endif

@@ -122,9 +122,30 @@ Existing RISC-V code may remain temporarily if harmless, but:
 * do not spend engineering effort preserving it;
 * do not design abstractions around it.
 
+## Allocator scope exception
+
+`crabc` does not implement or tune its own malloc allocator. Allocator
+internals are explicitly out of scope for every milestone; use mimalloc as the
+allocator implementation for now. The public allocation API and observable C
+contract (`malloc`, `free`, `realloc`, alignment, overflow, and failure
+behavior) remain in scope and must continue to be tested at that boundary.
+
+This is the sole subsystem exception. All other interfaces and behavioral
+requirements in this plan remain in scope.
+
 ---
 
 # The most important sequencing rule
+
+## Compatibility authority
+
+musl libc is the golden compatibility example for crabc. Follow musl's public
+interfaces, ABI, and behavior unless the POSIX/C specification requires a
+more precise interpretation. Do not use glibc declarations, extensions, or
+semantics as an implementation fallback or an oracle; a host-glibc result is
+never compatibility evidence. This includes behavior inferred from glibc:
+when musl and glibc differ, preserve the musl contract rather than bridging
+the difference with a glibc compatibility path.
 
 Do **not** begin with:
 
@@ -885,6 +906,10 @@ signal
 stdio
 udp/networking
 ```
+
+For the `malloc` entry, test the public allocation contract against the
+mimalloc-backed implementation; do not treat allocator algorithms or
+performance tuning as crabc work.
 
 Run it against both musl and crabc where useful.
 
@@ -2283,7 +2308,7 @@ zero metadata mismatches.
 
 The latest tranche extends the terminal boundary with window-size, speed, and
 real pseudo-terminal allocation/session helpers; supplies GNU long-option
-parsing; and closes the glibc ctype/assertion ABI surface, legacy diagnostics,
+parsing; and closes musl-compatible legacy ctype/assertion entry points, legacy diagnostics,
 effective-ID filesystem checks, ISO99 scanner aliases, directory comparators,
 and Linux's musl-compatible gettext fallback. These paths have focused C
 fixtures through `libldso.so`, including child-process exit/error output,
@@ -2443,6 +2468,29 @@ signal/process stress
 resolver/network correctness
 ```
 
+Completed 2026-08-20. M6 remains musl-first: all implementation and runtime
+comparison evidence uses pinned musl 1.2.6. The only narrower source contract
+is the selected current POSIX namespace test, used to remove legacy names that
+current XSI no longer requires; it is not a glibc oracle or compatibility path.
+Allocator internals remain deliberately mimalloc-backed under the allocator
+scope exception, while the observable C allocation contract is tested.
+
+`./scripts/dev.sh os-test` passes all ten selected suites (`include`,
+`namespace`, `basic`, `io`, `limits`, `malloc`, `process`, `pty`, `signal`,
+and `stdio`). The bounded musl differential pthread/TLS stress run passes
+10/10 iterations, the isolated signal/process comparison passes 12/12
+subcases, and the deterministic loopback resolver/network comparison passes
+all 22 contract items.
+
+Fork child-state repair preserves the live calling worker slot while clearing
+stale sibling slots. The upstream `pthread_exit-dtor` and `raise-race`
+regressions now pass. Final `./scripts/dev.sh libc-test all` evidence is 420
+total cases: 406 PASS, zero FAIL/BUILDERROR/TIMEOUT, and 14 individually
+evidenced exceptions; the strict API subset is 79/79. The workspace suite,
+Python harness tests, AArch64 ABI probe, and symbol ratchet all pass. The
+ratchet records 1,647 reference exports, 1,668 candidate exports, no missing
+or metadata-mismatched symbols, and 21 baselined candidate-only exports.
+
 ## Milestone 7 — dynamic loader maturity
 
 Require synthetic DSO/relocation/TLS/dlopen suite green.
@@ -2564,6 +2612,7 @@ Only after Gates A–J should x86_64 become active implementation scope.
 12. **No x86_64 work until ARM64 maturity.**
 13. **No RISC-V work.**
 14. **No premature cross-architecture abstraction framework.**
+15. **Use musl, never glibc, as the libc compatibility authority.**
 
 ---
 

@@ -25,6 +25,10 @@ Commands:
   ratchet             alias for compat
   libc-test [subset]  run the pinned libc-test checkout (functional by default)
   differential [case] run a pinned musl-vs-crabc workload comparison
+  os-test [options]   run the pinned POSIX os-test M6 profile against musl and crabc
+  pthread-stress [options] run bounded pthread/TLS stress against musl and crabc
+  signal-process [case] run the isolated M6 signal/process comparison workload
+  resolver-network [options] run the deterministic local M6 resolver/network workload
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports
@@ -66,6 +70,27 @@ run_in_container() {
         --env CARGO_HOME=/opt/cargo \
         --env LIBC_TEST_DIR=/opt/libc-test \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/opt/cargo" \
+        "$IMAGE" "$@"
+}
+
+# Resolver evidence must not inherit Docker's host-derived DNS configuration.
+# This private network namespace has only loopback, and Docker writes an
+# isolated regular /etc/resolv.conf pointing at the fixture. The Python runner
+# verifies that boundary before temporarily installing its three loopback
+# nameservers and restores the file before it exits.
+run_in_resolver_container() {
+    docker run --rm --init \
+        --platform "$PLATFORM" \
+        --network none \
+        --dns 127.0.0.1 \
+        --workdir /workspace \
+        --env CARGO_HOME=/opt/cargo \
+        --env LIBC_TEST_DIR=/opt/libc-test \
+        --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
+        --env CRABC_RESOLVER_NETWORK_ISOLATED=1 \
         --volume "$ROOT_DIR:/workspace" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/opt/cargo" \
@@ -147,6 +172,34 @@ case "$command" in
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/differential/run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    os-test)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/os-test/run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    pthread-stress)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/pthread-stress/run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    signal-process)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/signal-process/run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    resolver-network)
+        ensure_image
+        run_in_resolver_container cargo build --workspace
+        run_in_resolver_container python3 scripts/collect_environment.py
+        run_in_resolver_container python3 compat/resolver-network/run.py "$@"
+        run_in_resolver_container python3 scripts/generate_compatibility_dashboard.py
         ;;
     abi-probe)
         ensure_image

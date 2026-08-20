@@ -40,6 +40,7 @@ struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 #define ONLRET 0000040
 #define OFDEL 0000200
 #define OFILL 0000100
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define NLDLY 0000400
 #define NL0 0000000
 #define NL1 0000400
@@ -62,6 +63,7 @@ struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 #define FFDLY 0100000
 #define FF0 0000000
 #define FF1 0100000
+#endif
 #define B0 0000000
 #define B50 0000001
 #define B75 0000002

@@ -45,23 +45,12 @@ struct M4CloneStartArgs {
 
 // __post_Fork(0) equivalent for crabc's fixed thread-slot registry.  A
 // non-CLONE_VM clone has only one live thread in the child, but the copied
-// registry still contains the parent's TIDs and lock state.  Clear those
-// slots, register the child as the sole current thread, then release the
-// child copy of the abort lock before restoring the caller's signal mask.
+// registry still contains the parent's TIDs and lock state. Clear those slots
+// before releasing the child copy of the abort lock and restoring the caller's
+// signal mask; the child registers itself lazily on its first pthread call.
 unsafe fn m4_clone_post_fork(ret: i64) {
     if ret == 0 {
-        let base = core::ptr::addr_of_mut!(THREADS[0]);
-        core::ptr::write_bytes(base, 0, MAX_THREADS);
-        for i in 0..MAX_THREADS {
-            (*base.add(i)).tid = -1;
-            (*base.add(i)).detach_state = DT_JOINABLE;
-            (*base.add(i)).cancel_state = PTHREAD_CANCEL_ENABLE;
-            (*base.add(i)).cancel_type = PTHREAD_CANCEL_DEFERRED;
-        }
-        NEXT_SLOT.store(0, Ordering::SeqCst);
-        // pthread_self() installs the child's TID in slot zero after the
-        // inherited parent slots have been discarded.
-        let _ = pthread_self();
+        reset_thread_registry_after_fork(-1);
     }
     m4_clone_unlock_abort();
 }

@@ -95,7 +95,9 @@ int main(void)
 
     aligned = memalign(64, 19);
     CHECK(aligned != NULL && ((uintptr_t)aligned % 64) == 0 &&
-              malloc_usable_size(aligned) == 19, "memalign");
+              // mimalloc owns allocation size classes; this legacy query is
+              // only required to report space the caller may use.
+              malloc_usable_size(aligned) >= 19, "memalign");
     free(aligned);
     page_aligned = valloc(7);
     CHECK(page_aligned != NULL && ((uintptr_t)page_aligned % 4096) == 0, "valloc");

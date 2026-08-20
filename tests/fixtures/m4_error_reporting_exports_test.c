@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -64,6 +65,14 @@ int main(void)
 
     /* Pin the diagnostic prefix so the integration assertion is stable. */
     __progname = "m4err";
+
+    /* PTY diagnostics use ssize_t's `%zd` spelling when reporting read EOF. */
+    {
+        char size_message[16];
+        CHECK(snprintf(size_message, sizeof size_message, "%zd", (ssize_t)7) == 1 &&
+                  strcmp(size_message, "7") == 0,
+              "size format");
+    }
 
     errno = ENOENT;
     warn("warn %s", "one");

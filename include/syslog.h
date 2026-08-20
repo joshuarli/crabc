@@ -1,11 +1,11 @@
 #ifndef _SYSLOG_H
 #define _SYSLOG_H
 
+#include <features.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <stdarg.h>
 
 #define LOG_EMERG   0
 #define LOG_ALERT   1
@@ -62,7 +62,12 @@ void closelog(void);
 void openlog(const char *, int, int);
 int setlogmask(int);
 void syslog(int, const char *, ...);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define _PATH_LOG "/dev/log"
+#define __NEED_va_list
+#include <bits/alltypes.h>
 void vsyslog(int, const char *, va_list);
+#endif
 
 #ifdef __cplusplus
 }

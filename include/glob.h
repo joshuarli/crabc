@@ -1,7 +1,9 @@
 #ifndef _GLOB_H
 #define _GLOB_H
 
-#include <stddef.h>
+#include <features.h>
+#define __NEED_size_t
+#include <bits/alltypes.h>
 
 typedef struct {
     size_t gl_pathc;

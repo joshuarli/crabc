@@ -1,10 +1,16 @@
 #ifndef _MQUEUE_H
 #define _MQUEUE_H
 
-#include <fcntl.h>
 #include <sys/types.h>
-#include <time.h>
-#include <signal.h>
+
+struct sigevent;
+#ifndef __DEFINED_struct_timespec
+#define __DEFINED_struct_timespec
+struct timespec {
+    long tv_sec;
+    long tv_nsec;
+};
+#endif
 
 #ifdef __cplusplus
 extern "C" {

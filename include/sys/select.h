@@ -1,9 +1,19 @@
 #ifndef _SYS_SELECT_H
 #define _SYS_SELECT_H
 
+#include <features.h>
 #include <sys/types.h>
 #include <time.h>
-#include <signal.h>
+#define __NEED_sigset_t
+#include <bits/alltypes.h>
+
+#ifndef __DEFINED_struct_timeval
+#define __DEFINED_struct_timeval
+struct timeval {
+    time_t tv_sec;
+    suseconds_t tv_usec;
+};
+#endif
 
 #define FD_SETSIZE 1024
 typedef struct { unsigned long fds_bits[FD_SETSIZE / (8 * sizeof(unsigned long))]; } fd_set;

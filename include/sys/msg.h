@@ -6,7 +6,6 @@ extern "C" {
 #endif
 
 #include <sys/ipc.h>
-#include <stddef.h>
 #include <sys/types.h>
 
 typedef unsigned long msgqnum_t;
@@ -26,8 +25,8 @@ struct msqid_ds {
 };
 
 #define MSG_NOERROR 010000
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define MSG_EXCEPT  020000
-
 #define MSG_STAT (11 | (IPC_STAT & 0x100))
 #define MSG_INFO 12
 #define MSG_STAT_ANY (13 | (IPC_STAT & 0x100))
@@ -36,16 +35,12 @@ struct msginfo {
 	int msgpool, msgmap, msgmax, msgmnb, msgmni, msgssz, msgtql;
 	unsigned short msgseg;
 };
+#endif
 
 int msgctl(int, int, struct msqid_ds *);
 int msgget(key_t, int);
 ssize_t msgrcv(int, void *, size_t, long, int);
 int msgsnd(int, const void *, size_t, int);
-
-struct msgbuf {
-	long mtype;
-	char mtext[1];
-};
 
 #ifdef __cplusplus
 }

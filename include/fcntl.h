@@ -1,8 +1,8 @@
 #ifndef _FCNTL_H
 #define _FCNTL_H
 
+#include <features.h>
 #include <sys/types.h>
-#include <sys/stat.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +35,11 @@ int fcntl(int, int, ...);
 #define F_SETLKW 7
 #define F_SETOWN 8
 #define F_GETOWN 9
+#define F_SETOWN_EX 15
+#define F_GETOWN_EX 16
+#define F_OFD_GETLK 36
+#define F_OFD_SETLK 37
+#define F_OFD_SETLKW 38
 #define F_DUPFD_CLOEXEC 1030
 
 #define FD_CLOEXEC 1
@@ -57,9 +62,13 @@ int fcntl(int, int, ...);
 #define SEEK_END 2
 
 #define AT_EACCESS 0x200
+#define AT_FDCWD (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_SYMLINK_FOLLOW 0x400
 #define AT_REMOVEDIR 0x200
+#ifdef _GNU_SOURCE
 #define AT_EMPTY_PATH 0x1000
+#endif
 
 #define POSIX_FADV_NORMAL 0
 #define POSIX_FADV_RANDOM 1
@@ -67,6 +76,25 @@ int fcntl(int, int, ...);
 #define POSIX_FADV_WILLNEED 3
 #define POSIX_FADV_DONTNEED 4
 #define POSIX_FADV_NOREUSE 5
+
+/* File mode bits are part of the fcntl.h interface as well as sys/stat.h. */
+#ifndef S_IRUSR
+#define S_ISUID 04000
+#define S_ISGID 02000
+#define S_ISVTX 01000
+#define S_IRUSR 0400
+#define S_IWUSR 0200
+#define S_IXUSR 0100
+#define S_IRWXU 0700
+#define S_IRGRP 0040
+#define S_IWGRP 0020
+#define S_IXGRP 0010
+#define S_IRWXG 0070
+#define S_IROTH 0004
+#define S_IWOTH 0002
+#define S_IXOTH 0001
+#define S_IRWXO 0007
+#endif
 
 struct flock {
     short l_type;
@@ -80,6 +108,16 @@ int posix_fadvise(int, off_t, off_t, int);
 int posix_fallocate(int, off_t, off_t);
 
 #ifdef _GNU_SOURCE
+#define F_OWNER_TID 0
+#define F_OWNER_PID 1
+#define F_OWNER_PGRP 2
+#define F_OWNER_GID 2
+
+struct f_owner_ex {
+    int type;
+    pid_t pid;
+};
+
 struct file_handle {
     unsigned int handle_bytes;
     int handle_type;

@@ -5,8 +5,10 @@
 extern "C" {
 #endif
 
-#include <stddef.h>
-#include <wchar.h>
+#include <features.h>
+#define __NEED_size_t
+#define __NEED_mbstate_t
+#include <bits/alltypes.h>
 
 typedef unsigned short char16_t;
 typedef unsigned int char32_t;

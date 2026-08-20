@@ -5,9 +5,18 @@
 extern "C" {
 #endif
 
-#include <fcntl.h>
 #include <stddef.h>
-#include <time.h>
+
+#define O_CREAT 64
+#define O_EXCL 128
+
+#ifndef __DEFINED_struct_timespec
+#define __DEFINED_struct_timespec
+struct timespec {
+    long tv_sec;
+    long tv_nsec;
+};
+#endif
 
 typedef struct { int __val[8]; } sem_t;
 

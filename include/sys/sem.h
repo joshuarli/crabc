@@ -5,9 +5,9 @@
 extern "C" {
 #endif
 
+#include <features.h>
 #include <sys/ipc.h>
 #include <sys/types.h>
-#include <time.h>
 
 #define SEM_UNDO	0x1000
 #define GETPID		11
@@ -58,7 +58,10 @@ struct sembuf {
 int semctl(int, int, int, ...);
 int semget(key_t, int, int);
 int semop(int, struct sembuf *, size_t);
+#ifdef _GNU_SOURCE
+struct timespec;
 int semtimedop(int, struct sembuf *, size_t, const struct timespec *);
+#endif
 
 #ifdef __cplusplus
 }

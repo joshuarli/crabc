@@ -2,10 +2,9 @@
 //
 // The formulas and exceptional-value branches follow musl's src/complex
 // implementations.  Double and float use crabc's already-ported real
-// elementary functions.  The AArch64 long-double ABI is binary128; the rest
-// of this libc currently provides real long-double compatibility through its
-// f64 implementations, so the long complex entry points use the same
-// explicit conversion boundary as the existing real long-double exports.
+// elementary functions.  AArch64's binary128 long-double entry points use the
+// native implementations in the math_f128_complex_* modules below; RISC-V
+// retains the f64 compatibility boundary used by the existing real exports.
 
 #[inline]
 fn m4_cd(re: f64, im: f64) -> M4ComplexDouble {
@@ -155,7 +154,9 @@ fn m4_csinh_double(z: M4ComplexDouble) -> M4ComplexDouble {
         return m4_cd(y - y, x * (y - y));
     }
     if is_inf(x) {
-        if is_inf(y) {
+        // musl's exponent test covers NaN as well as infinity here:
+        // sinh(+-Inf + iNaN) is +-Inf + iNaN.
+        if !y.is_finite() {
             return m4_cd(x * x, x * (y - y));
         }
         return m4_cd(x * cos(y), f64::INFINITY * sin(y));
@@ -200,7 +201,8 @@ fn m4_ccosh_double(z: M4ComplexDouble) -> M4ComplexDouble {
         return m4_cd(y - y, x * (y - y));
     }
     if is_inf(x) {
-        if is_inf(y) {
+        // Keep the NaN-imaginary branch alongside infinity, as in musl.
+        if !y.is_finite() {
             return m4_cd(x * x, x * (y - y));
         }
         return m4_cd((x * x) * cos(y), x * sin(y));
@@ -335,21 +337,19 @@ fn m4_cf_sqrt(z: M4ComplexFloat) -> M4ComplexFloat {
         }
         return m4_cf(a, copysignf(b - b, b));
     }
-    let threshold = f32::MAX / (1.0 + 1.4142135);
-    let scale = a.abs() >= threshold || b.abs() >= threshold;
-    let (a, b) = if scale { (a * 0.25, b * 0.25) } else { (a, b) };
+    // Keep the Algorithm 312 intermediates in double precision, as musl's
+    // csqrtf does.  Rounding the hypot/sqrt expression in float first can
+    // move a result onto the rejected side of the generated one-ulp interval.
+    let a = a as f64;
+    let b = b as f64;
     let result = if a >= 0.0 {
-        let t = sqrtf((a + hypotf(a, b)) * 0.5);
-        m4_cf(t, b / (2.0 * t))
+        let t = sqrt((a + hypot(a, b)) * 0.5);
+        m4_cf(t as f32, (b / (2.0 * t)) as f32)
     } else {
-        let t = sqrtf((-a + hypotf(a, b)) * 0.5);
-        m4_cf(b.abs() / (2.0 * t), copysignf(t, b))
+        let t = sqrt((-a + hypot(a, b)) * 0.5);
+        m4_cf((b.abs() / (2.0 * t)) as f32, copysignf(t as f32, b as f32))
     };
-    if scale {
-        m4_cf(result.re * 2.0, result.im * 2.0)
-    } else {
-        result
-    }
+    result
 }
 
 #[inline]
@@ -408,7 +408,7 @@ fn m4_csinh_float(z: M4ComplexFloat) -> M4ComplexFloat {
         return m4_cf(y - y, x * (y - y));
     }
     if is_inff(x) {
-        if is_inff(y) {
+        if !y.is_finite() {
             return m4_cf(x * x, x * (y - y));
         }
         return m4_cf(x * cosf(y), f32::INFINITY * sinf(y));
@@ -451,7 +451,7 @@ fn m4_ccosh_float(z: M4ComplexFloat) -> M4ComplexFloat {
         return m4_cf(y - y, x * (y - y));
     }
     if is_inff(x) {
-        if is_inff(y) {
+        if !y.is_finite() {
             return m4_cf(x * x, x * (y - y));
         }
         return m4_cf((x * x) * cosf(y), x * sinf(y));
@@ -727,8 +727,8 @@ pub extern "C" fn catanhf(z: M4ComplexFloat) -> M4ComplexFloat {
 }
 
 // x86_64 uses the 64-bit long-double ABI, so these are aliases at the ABI
-// boundary.  AArch64/riscv64 preserve their binary128 argument/result layout
-// and use the same explicit f64 compatibility boundary as math_compat.rs.
+// boundary.  AArch64 uses native binary128 implementations below.  RISC-V
+// retains the preexisting f64 compatibility boundary used by math_compat.rs.
 #[cfg(target_arch = "x86_64")]
 macro_rules! m4_long_complex_aliases {
     ($($name:ident => $helper:ident),* $(,)?) => {
@@ -760,19 +760,19 @@ m4_long_complex_aliases!(
     catanhl => catanh,
 );
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(target_arch = "riscv64")]
 #[inline]
 fn m4_cl_to_double(z: M4ComplexLong) -> M4ComplexDouble {
     m4_cd(z.re as f64, z.im as f64)
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(target_arch = "riscv64")]
 #[inline]
 fn m4_cl_from_double(z: M4ComplexDouble) -> M4ComplexLong {
     M4ComplexLong { re: z.re as f128, im: z.im as f128 }
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(target_arch = "riscv64")]
 macro_rules! m4_long_complex_compat {
     ($($name:ident => $helper:ident),* $(,)?) => {
         $(
@@ -784,7 +784,7 @@ macro_rules! m4_long_complex_compat {
     };
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(target_arch = "riscv64")]
 m4_long_complex_compat!(
     cexpl => m4_cd_exp,
     clogl => m4_cd_clog,
@@ -802,3 +802,29 @@ m4_long_complex_compat!(
     cacoshl => m4_cacosh_double,
     catanhl => m4_catanh_double,
 );
+
+// The native AArch64 long-double ABI is binary128. These inverse functions
+// therefore bypass the legacy f64 compatibility aliases above.
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn casinl(z: M4ComplexLong) -> M4ComplexLong { m6_f128_casin(z) }
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn cacosl(z: M4ComplexLong) -> M4ComplexLong { m6_f128_cacos(z) }
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn catanl(z: M4ComplexLong) -> M4ComplexLong { m6_f128_catan(z) }
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn casinhl(z: M4ComplexLong) -> M4ComplexLong { m6_f128_casinh(z) }
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn cacoshl(z: M4ComplexLong) -> M4ComplexLong { m6_f128_cacosh(z) }
+
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn catanhl(z: M4ComplexLong) -> M4ComplexLong { m6_f128_catanh(z) }

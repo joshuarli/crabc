@@ -76,6 +76,13 @@ int main(void) {
     double complex neg_sqrt = csqrt(-4.0 - 0.0 * I);
     if (creal(neg_sqrt) != 0.0 || cimag(neg_sqrt) != -2.0) return 18;
 
+    double complex double_inf_nan = CMPLX(INFINITY, NAN);
+    double complex double_nan_inf = CMPLX(NAN, INFINITY);
+    if (!isinf(creal(csinh(double_inf_nan))) || !isnan(cimag(csinh(double_inf_nan)))) return 43;
+    if (!isinf(creal(ccosh(double_inf_nan))) || !isnan(cimag(ccosh(double_inf_nan)))) return 44;
+    if (!isnan(creal(csin(double_nan_inf))) || !isinf(cimag(csin(double_nan_inf)))) return 45;
+    if (!isinf(creal(ccos(double_nan_inf))) || !isnan(cimag(ccos(double_nan_inf)))) return 46;
+
     // Exercise the float and long-double ABI variants as exported symbols.
     float complex zf = 0.75f + 0.5f * I;
     if (!close_complexf(cexpf(zf), 1.8578423f, 1.0149438f, 2e-5f)) return 19;
@@ -95,6 +102,17 @@ int main(void) {
     if (!close_complexf(cacoshf(1.0f + 0.0f * I), 0.0f, 0.0f, 2e-5f)) return 32;
     if (!close_complexf(catanhf(0.0f + 0.0f * I), 0.0f, 0.0f, 2e-5f)) return 33;
 
+    // Regression coverage for musl's double-precision csqrtf intermediates
+    // and its infinity-plus-NaN complex branches.
+    float complex rounded_sqrt = csqrtf(CMPLXF(90.01f, -12.34f));
+    if (crealf(rounded_sqrt) != 0x1.304dfep+3f) return 47;
+    float complex float_inf_nan = CMPLXF(INFINITY, NAN);
+    float complex float_nan_inf = CMPLXF(NAN, INFINITY);
+    if (!isinf(crealf(csinhf(float_inf_nan))) || !isnan(cimagf(csinhf(float_inf_nan)))) return 48;
+    if (!isinf(crealf(ccoshf(float_inf_nan))) || !isnan(cimagf(ccoshf(float_inf_nan)))) return 49;
+    if (!isnan(crealf(csinf(float_nan_inf))) || !isinf(cimagf(csinf(float_nan_inf)))) return 50;
+    if (!isinf(crealf(ccosf(float_nan_inf))) || !isnan(cimagf(ccosf(float_nan_inf)))) return 51;
+
     long double complex zl = 3.0L + 4.0L * I;
     if (!close_complexl(cexpl(0.0L + pi_2 * I), 0.0L, 1.0L, 1e-12L)) return 34;
     if (!close_complexl(clogl(zl), 1.6094379124341003L,
@@ -106,6 +124,23 @@ int main(void) {
     if (!close_complexl(casinhl(0.0L + 0.0L * I), 0.0L, 0.0L, 1e-12L)) return 40;
     if (!close_complexl(cacoshl(1.0L + 0.0L * I), 0.0L, 0.0L, 1e-12L)) return 41;
     if (!close_complexl(catanhl(0.0L + 0.0L * I), 0.0L, 0.0L, 1e-12L)) return 42;
+
+    long double complex long_inf_nan = CMPLXL(INFINITY, NAN);
+    long double complex long_nan_inf = CMPLXL(NAN, INFINITY);
+    if (!isinf(creall(csinhl(long_inf_nan))) || !isnan(cimagl(csinhl(long_inf_nan)))) return 52;
+    if (!isinf(creall(ccoshl(long_inf_nan))) || !isnan(cimagl(ccoshl(long_inf_nan)))) return 53;
+    if (!isnan(creall(csinl(long_nan_inf))) || !isinf(cimagl(csinl(long_nan_inf)))) return 54;
+    if (!isinf(creall(ccosl(long_nan_inf))) || !isnan(cimagl(ccosl(long_nan_inf)))) return 55;
+
+    // Regression: musl propagates a real NaN through both components of the
+    // binary128 inverse-complex identities, including the zero-imaginary
+    // boundary and the casinh/cacosh rotations derived from it.
+    long double complex long_nan_zero = CMPLXL(NAN, 0.0L);
+    long double complex long_zero_nan = CMPLXL(0.0L, NAN);
+    if (!isnan(creall(casinl(long_nan_zero))) || !isnan(cimagl(casinl(long_nan_zero)))) return 56;
+    if (!isnan(creall(cacosl(long_nan_zero))) || !isnan(cimagl(cacosl(long_nan_zero)))) return 57;
+    if (!isnan(creall(casinhl(long_zero_nan))) || !isnan(cimagl(casinhl(long_zero_nan)))) return 58;
+    if (!isnan(creall(cacoshl(long_nan_zero))) || !isnan(cimagl(cacoshl(long_nan_zero)))) return 59;
 
     puts("m4 complex transcendental exports ok");
     return 0;

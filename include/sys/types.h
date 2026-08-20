@@ -6,7 +6,12 @@
  * these definitions here avoids subtly incompatible private copies in the
  * individual POSIX headers: consumers routinely include only sys/types.h.
  */
-#include <stddef.h>
+#include <features.h>
+
+#ifndef __DEFINED_size_t
+#define __DEFINED_size_t
+typedef __SIZE_TYPE__ size_t;
+#endif
 
 #ifdef __cplusplus
 extern "C" {

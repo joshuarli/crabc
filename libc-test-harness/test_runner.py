@@ -181,6 +181,34 @@ class RunnerTests(unittest.TestCase):
             self.assertNotIn("-nostdinc", functional_command)
             self.assertIn("-nostdinc", api_command)
 
+    def test_api_unistd_constants_are_guarded_only_in_prepared_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "unistd.c"
+            original = "C(_PC_TIMESTAMP_RESOLUTION)\nC(_SC_XOPEN_UUCP)\n"
+            source.write_text(original)
+
+            prepared = runner.prepare_api_unistd_source(source, root / "build")
+
+            self.assertEqual(source.read_text(), original)
+            self.assertEqual(
+                prepared.read_text(),
+                "#ifdef _PC_TIMESTAMP_RESOLUTION\n"
+                "C(_PC_TIMESTAMP_RESOLUTION)\n"
+                "#endif\n"
+                "#ifdef _SC_XOPEN_UUCP\n"
+                "C(_SC_XOPEN_UUCP)\n"
+                "#endif\n",
+            )
+
+    def test_api_unistd_preparation_rejects_an_unexpected_upstream_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "unistd.c"
+            source.write_text("C(_PC_TIMESTAMP_RESOLUTION)\n")
+
+            with self.assertRaisesRegex(RuntimeError, "_SC_XOPEN_UUCP"):
+                runner.prepare_api_unistd_source(source, Path(directory) / "build")
+
     def test_raw_bit_evidence_rejects_non_nearest_rounding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory) / "bad.txt"

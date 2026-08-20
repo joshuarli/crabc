@@ -1,9 +1,14 @@
 #ifndef _UNISTD_H
 #define _UNISTD_H
 
-#include <stddef.h>
+#include <features.h>
 #include <sys/types.h>
 #include <stdint.h>
+
+#ifndef __DEFINED_size_t
+#define __DEFINED_size_t
+typedef __SIZE_TYPE__ size_t;
+#endif
 
 /* POSIX option and selector values from the pinned musl AArch64 ABI. */
 #define _POSIX_VERSION 200809L
@@ -51,6 +56,11 @@
 #define R_OK 4
 #define W_OK 2
 #define X_OK 1
+
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
 #define _CS_PATH 0
 #define _CS_POSIX_V7_ILP32_OFF32_CFLAGS 1132
 #define _CS_POSIX_V7_ILP32_OFF32_LDFLAGS 1133
@@ -145,6 +155,8 @@
 #define _SC_MQ_OPEN_MAX 27
 #define _SC_MQ_PRIO_MAX 28
 #define _SC_NGROUPS_MAX 3
+#define _SC_NPROCESSORS_CONF 83
+#define _SC_NPROCESSORS_ONLN 84
 #define _SC_OPEN_MAX 4
 #define _SC_PAGE_SIZE 30
 #define _SC_PAGESIZE 30
@@ -217,15 +229,13 @@
 #define STDIN_FILENO 0
 #define STDOUT_FILENO 1
 #define _POSIX_VDISABLE 0
-#define _POSIX_V7_ILP32_OFFBIG (-1)
-#define _POSIX_V7_ILP32_OFF32 (-1)
 #define _POSIX_V7_LP64_OFF64 1
-#define _POSIX_V7_LPBIG_OFFBIG (-1)
-#define _PC_TIMESTAMP_RESOLUTION 23
-#define _SC_XOPEN_UUCP 90
+#define POSIX_CLOSE_RESTART 0
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
+#define SEEK_DATA 3
+#define SEEK_HOLE 4
 
 #ifdef __cplusplus
 extern "C" {
@@ -240,22 +250,35 @@ typedef unsigned int uid_t;
 typedef unsigned int gid_t;
 
 int fork(void);
+pid_t _Fork(void);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 pid_t vfork(void);
+#endif
 int execve(const char *, char *const [], char *const []);
 int execl(const char *, const char *, ...);
 int execle(const char *, const char *, ...);
 int execlp(const char *, const char *, ...);
 int execv(const char *, char *const []);
 int execvp(const char *, char *const []);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int execvpe(const char *, char *const [], char *const []);
-int wait(int *);
-int waitpid(int, int *, int);
+#endif
 pid_t getpid(void);
 pid_t getppid(void);
 uid_t getuid(void);
 gid_t getgid(void);
 uid_t geteuid(void);
 gid_t getegid(void);
+
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+int getentropy(void *, size_t);
+#endif
+#ifdef _GNU_SOURCE
+int setresuid(uid_t, uid_t, uid_t);
+int setresgid(gid_t, gid_t, gid_t);
+int getresuid(uid_t *, uid_t *, uid_t *);
+int getresgid(gid_t *, gid_t *, gid_t *);
+#endif
 
 int close(int);
 int posix_close(int, int);
@@ -266,7 +289,10 @@ ssize_t pwrite(int, const void *, size_t, off_t);
 void _exit(int) __attribute__((noreturn));
 
 unsigned int sleep(unsigned int);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) \
+ || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE+0 < 700)
 int usleep(unsigned int);
+#endif
 
 int pipe(int *);
 int pipe2(int *, int);
@@ -278,26 +304,34 @@ int access(const char *, int);
 int unlink(const char *);
 int rmdir(const char *);
 int chdir(const char *);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int chroot(const char *);
 int acct(const char *);
 int vhangup(void);
+#endif
 char *getcwd(char *, size_t);
 int gethostname(char *, size_t);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int getpagesize(void);
+#endif
 int truncate(const char *, off_t);
 int ftruncate(int, off_t);
 off_t lseek(int, off_t, int);
 
 struct timespec;
 
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 long syscall(long, ...);
+#endif
 
 int nanosleep(const struct timespec *, struct timespec *);
 unsigned int alarm(unsigned int);
 int pause(void);
 int fsync(int);
 int fdatasync(int);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 void sync(void);
+#endif
 
 int symlink(const char *, const char *);
 ssize_t readlink(const char *, char *, size_t);
@@ -306,7 +340,9 @@ int chmod(const char *, unsigned int);
 int fchmod(int, unsigned int);
 unsigned int umask(unsigned int);
 int isatty(int);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int issetugid(void);
+#endif
 char *ttyname(int);
 char *getlogin(void);
 int getgroups(int, unsigned int *);
@@ -314,39 +350,50 @@ int setuid(unsigned int);
 int setgid(unsigned int);
 int seteuid(unsigned int);
 int setegid(unsigned int);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int setreuid(unsigned int, unsigned int);
 int setregid(unsigned int, unsigned int);
+#endif
 pid_t setsid(void);
 int setpgid(pid_t, pid_t);
 pid_t getpgid(pid_t);
 pid_t getsid(pid_t);
 pid_t getpgrp(void);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int setpgrp(void);
-int mkstemp(char *);
+#endif
 int mkdir(const char *, unsigned int);
 
+#ifdef _GNU_SOURCE
 extern char **environ;
+#endif
 extern char *optarg;
 extern int opterr;
 extern int optind;
 extern int optopt;
 
 int chown(const char *, uid_t, gid_t);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int brk(void *);
 void *sbrk(intptr_t);
+#endif
 size_t confstr(int, char *, size_t);
 int faccessat(int, const char *, int, int);
 int fchdir(int);
 int fchown(int, uid_t, gid_t);
 int fchownat(int, const char *, uid_t, gid_t, int);
 int fexecve(int, char *const [], char *const []);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int eaccess(const char *, int);
 int euidaccess(const char *, int);
+#endif
 long fpathconf(int, int);
 int getlogin_r(char *, size_t);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 char *getusershell(void);
 void setusershell(void);
 void endusershell(void);
+#endif
 int getopt(int, char *const [], const char *);
 int lchown(const char *, uid_t, gid_t);
 int linkat(int, const char *, int, const char *, int);
@@ -358,24 +405,15 @@ pid_t tcgetpgrp(int);
 int tcsetpgrp(int, pid_t);
 int ttyname_r(int, char *, size_t);
 int unlinkat(int, const char *, int);
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 char *crypt(const char *, const char *);
 void encrypt(char [], int);
+#endif
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 long gethostid(void);
 int lockf(int, int, off_t);
 int nice(int);
 void swab(const void *restrict, void *restrict, ssize_t);
-
-#ifndef WIFEXITED
-#define WIFEXITED(s)   (((s) & 0x7f) == 0)
-#endif
-#ifndef WEXITSTATUS
-#define WEXITSTATUS(s) (((s) & 0xff00) >> 8)
-#endif
-#ifndef WIFSIGNALED
-#define WIFSIGNALED(s) (((s) & 0x7f) != 0 && (((s) & 0x7f) != 0x7f))
-#endif
-#ifndef WTERMSIG
-#define WTERMSIG(s)    ((s) & 0x7f)
 #endif
 
 #ifdef __cplusplus

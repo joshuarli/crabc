@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <locale.h>
 #include <stdio.h>
 #include <string.h>
 #include <uchar.h>
@@ -6,6 +7,12 @@
 static int bytes_equal(const char *actual, const unsigned char *expected, size_t n)
 {
     return memcmp(actual, expected, n) == 0;
+}
+
+static int state_is_zero(const mbstate_t *state)
+{
+    mbstate_t zero = { 0 };
+    return memcmp(state, &zero, sizeof zero) == 0;
 }
 
 int main(void)
@@ -17,11 +24,11 @@ int main(void)
     if (!setlocale(LC_CTYPE, "C.UTF-8")) return 1;
 
     /* UTF-16 high/low surrogates carry state across separate calls. */
-    if (c16rtomb(out, 0xd83c, &state) != 0 || !state) return 2;
-    if (c16rtomb(out, 0xdf4c, &state) != 4 || state != 0) return 3;
+    if (c16rtomb(out, 0xd83c, &state) != 0 || state_is_zero(&state)) return 2;
+    if (c16rtomb(out, 0xdf4c, &state) != 4 || !state_is_zero(&state)) return 3;
     if (!bytes_equal(out, banana, sizeof banana)) return 4;
     errno = 0;
-    if (c16rtomb(out, 0xdf4c, &state) != (size_t)-1 || errno != EILSEQ || state != 0)
+    if (c16rtomb(out, 0xdf4c, &state) != (size_t)-1 || errno != EILSEQ || !state_is_zero(&state))
         return 5;
     if (c16rtomb(out, 0x00df, &state) != 2 || out[0] != (char)0xc3 || out[1] != (char)0x9f)
         return 6;
@@ -32,7 +39,7 @@ int main(void)
     char16_t c16 = 0;
     if (mbrtoc16(&c16, (const char *)banana, sizeof banana, &state) != 4 || c16 != 0xd83c)
         return 7;
-    if (mbrtoc16(&c16, "ignored", 7, &state) != (size_t)-3 || c16 != 0xdf4c || state != 0)
+    if (mbrtoc16(&c16, "ignored", 7, &state) != (size_t)-3 || c16 != 0xdf4c || !state_is_zero(&state))
         return 8;
     if (mbrtoc16(&c16, "A", 1, &state) != 1 || c16 != 0x41)
         return 9;

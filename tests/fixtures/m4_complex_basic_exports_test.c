@@ -1,4 +1,5 @@
 #include <complex.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -43,6 +44,19 @@ int main(void) {
     if (!close_long_double(cargl(zl), -0.9272952180016122L)) return 12;
     long double complex cl = conjl(zl);
     if (creall(cl) != 3.0L || cimagl(cl) != 4.0L) return 13;
+
+#if LDBL_MANT_DIG == 113
+    // Keep one native binary128 probe here: the generated os-test cases use
+    // these same double-origin inputs and reject an f64-backed *l result by
+    // checking the narrow native-precision interval.
+    long double complex precision_z = CMPLXL(90.01, 13.37);
+    long double precision_abs = cabsl(precision_z);
+    if (!(0xb.5fec0f535325c22p+3L < precision_abs &&
+          precision_abs < 0xb.5fec0f535325c24p+3L)) return 21;
+    long double precision_arg = cargl(precision_z);
+    if (!(0x9.6fff98f3e8e5142p-6L < precision_arg &&
+          precision_arg < 0x9.6fff98f3e8e5144p-6L)) return 22;
+#endif
 
     // cproj preserves finite values but maps an infinite component to
     // (+infinity, signed zero), including the sign of an infinite imaginary

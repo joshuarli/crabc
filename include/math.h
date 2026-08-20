@@ -1,6 +1,9 @@
-#ifndef MATH_H
-#define MATH_H
+#ifndef _MATH_H
+#define _MATH_H
 
+#include <features.h>
+
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define M_E        2.71828182845904523536
 #define M_LOG2E    1.44269504088896340736
 #define M_LOG10E   0.434294481903251827651
@@ -14,7 +17,13 @@
 #define M_2_SQRTPI 1.12837916709551257390
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.707106781186547524401
+#endif
+/* POSIX.1-2024 removes this legacy XSI macro. Keep the historic X/Open
+ * namespace and the BSD extension namespace without copying musl's current
+ * XSI-800 overexposure. */
+#if defined(_BSD_SOURCE) || (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 800)
 #define MAXFLOAT 3.40282346638528859812e+38F
+#endif
 
 #define NAN       __builtin_nanf("")
 #define INFINITY  __builtin_inff()
@@ -34,13 +43,20 @@
 #define MATH_ERREXCEPT 2
 #define math_errhandling MATH_ERRNO
 
+/* AArch64 provides fused multiply-add for binary32 and binary64. These
+ * performance indicators belong to `<math.h>` in the public C interface. */
+#define FP_FAST_FMA 1
+#define FP_FAST_FMAF 1
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef float  float_t;
 typedef double double_t;
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 extern int signgam;
+#endif
 
 static __inline unsigned __FLOAT_BITS(float __f)
 {
@@ -141,6 +157,7 @@ long double acosl(long double);
 double      acosh(double);
 float       acoshf(float);
 long double acoshl(long double);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 double drem(double, double);
 float dremf(float, float);
 double exp10(double);
@@ -161,6 +178,7 @@ int finite(double);
 int finitef(float);
 double significand(double);
 float significandf(float);
+#endif
 double      asin(double);
 float       asinf(float);
 long double asinl(long double);
@@ -242,9 +260,11 @@ long double ldexpl(long double, int);
 double      lgamma(double);
 float       lgammaf(float);
 long double lgammal(long double);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 double      lgamma_r(double, int *);
 float       lgammaf_r(float, int *);
 long double lgammal_r(long double, int *);
+#endif
 long long   llrint(double);
 long long   llrintf(float);
 long long   llrintl(long double);
@@ -275,6 +295,9 @@ long        lroundl(long double);
 double      modf(double, double *);
 float       modff(float, float *);
 long double modfl(long double, long double *);
+double      nan(const char *);
+float       nanf(const char *);
+long double nanl(const char *);
 double      nearbyint(double);
 float       nearbyintf(float);
 long double nearbyintl(long double);
@@ -327,18 +350,22 @@ double      trunc(double);
 float       truncf(float);
 long double truncl(long double);
 
+#if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 double      j0(double);
-float       j0f(float);
 double      j1(double);
-float       j1f(float);
 double      jn(int, double);
-float       jnf(int, float);
 double      y0(double);
-float       y0f(float);
 double      y1(double);
-float       y1f(float);
 double      yn(int, double);
+#endif
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+float       j0f(float);
+float       j1f(float);
+float       jnf(int, float);
+float       y0f(float);
+float       y1f(float);
 float       ynf(int, float);
+#endif
 
 #ifdef __cplusplus
 }
