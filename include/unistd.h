@@ -85,6 +85,7 @@
 #define _PC_PATH_MAX 4
 #define _PC_PIPE_BUF 5
 #define _PC_PRIO_IO 11
+#define _PC_SOCK_MAXBUF 12
 #define _PC_REC_INCR_XFER_SIZE 14
 #define _PC_REC_MAX_XFER_SIZE 15
 #define _PC_REC_MIN_XFER_SIZE 16
@@ -246,6 +247,7 @@ int execle(const char *, const char *, ...);
 int execlp(const char *, const char *, ...);
 int execv(const char *, char *const []);
 int execvp(const char *, char *const []);
+int execvpe(const char *, char *const [], char *const []);
 int wait(int *);
 int waitpid(int, int *, int);
 pid_t getpid(void);
@@ -256,6 +258,7 @@ uid_t geteuid(void);
 gid_t getegid(void);
 
 int close(int);
+int posix_close(int, int);
 ssize_t read(int, void *, size_t);
 ssize_t write(int, const void *, size_t);
 ssize_t pread(int, void *, size_t, off_t);
@@ -275,6 +278,9 @@ int access(const char *, int);
 int unlink(const char *);
 int rmdir(const char *);
 int chdir(const char *);
+int chroot(const char *);
+int acct(const char *);
+int vhangup(void);
 char *getcwd(char *, size_t);
 int gethostname(char *, size_t);
 int getpagesize(void);
@@ -300,6 +306,7 @@ int chmod(const char *, unsigned int);
 int fchmod(int, unsigned int);
 unsigned int umask(unsigned int);
 int isatty(int);
+int issetugid(void);
 char *ttyname(int);
 char *getlogin(void);
 int getgroups(int, unsigned int *);
@@ -325,14 +332,21 @@ extern int optind;
 extern int optopt;
 
 int chown(const char *, uid_t, gid_t);
+int brk(void *);
+void *sbrk(intptr_t);
 size_t confstr(int, char *, size_t);
 int faccessat(int, const char *, int, int);
 int fchdir(int);
 int fchown(int, uid_t, gid_t);
 int fchownat(int, const char *, uid_t, gid_t, int);
 int fexecve(int, char *const [], char *const []);
+int eaccess(const char *, int);
+int euidaccess(const char *, int);
 long fpathconf(int, int);
 int getlogin_r(char *, size_t);
+char *getusershell(void);
+void setusershell(void);
+void endusershell(void);
 int getopt(int, char *const [], const char *);
 int lchown(const char *, uid_t, gid_t);
 int linkat(int, const char *, int, const char *, int);
@@ -351,10 +365,18 @@ int lockf(int, int, off_t);
 int nice(int);
 void swab(const void *restrict, void *restrict, ssize_t);
 
+#ifndef WIFEXITED
 #define WIFEXITED(s)   (((s) & 0x7f) == 0)
+#endif
+#ifndef WEXITSTATUS
 #define WEXITSTATUS(s) (((s) & 0xff00) >> 8)
+#endif
+#ifndef WIFSIGNALED
 #define WIFSIGNALED(s) (((s) & 0x7f) != 0 && (((s) & 0x7f) != 0x7f))
+#endif
+#ifndef WTERMSIG
 #define WTERMSIG(s)    ((s) & 0x7f)
+#endif
 
 #ifdef __cplusplus
 }

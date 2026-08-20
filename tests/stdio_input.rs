@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::fs::File;
 use std::io::Write;
 use std::process::Command;
@@ -14,7 +17,7 @@ fn stdio_input_functions_under_libc_so() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("stdio_input_test.c");
-    let bin = fixtures.join("stdio_input_test");
+    let bin = test_support::TempArtifact::new("stdio_input_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",
@@ -35,7 +38,7 @@ fn stdio_input_functions_under_libc_so() {
         .expect("failed to run musl-gcc for stdio_input_test");
     assert!(status.success(), "musl-gcc stdio_input_test compilation failed");
 
-    let input_path = fixtures.join("stdio_input_test.txt");
+    let input_path = test_support::TempArtifact::new("stdio_input_test.txt");
     {
         let mut f = File::create(&input_path).expect("create input file");
         f.write_all(b"hi\nxy\nz").expect("write input");

@@ -20,5 +20,10 @@ int getpwnam_r(const char *, struct passwd *, char *, size_t, struct passwd **);
 struct passwd *getpwuid(uid_t);
 int getpwuid_r(uid_t, struct passwd *, char *, size_t, struct passwd **);
 void setpwent(void);
+#ifdef _GNU_SOURCE
+#include <stdio.h>
+struct passwd *fgetpwent(FILE *);
+int putpwent(const struct passwd *, FILE *);
+#endif
 
 #endif

@@ -13,8 +13,12 @@ typedef enum { P_ALL = 0, P_PID = 1, P_PGID = 2 } idtype_t;
 #define WCONTINUED 8
 #define WNOWAIT 0x01000000
 #define WEXITSTATUS(s) (((s) & 0xff00) >> 8)
+#ifndef WIFEXITED
 #define WIFEXITED(s) (((s) & 0x7f) == 0)
-#define WIFSIGNALED(s) (((s) & 0x7f) && ((s) & 0x7f) != 0x7f)
+#endif
+#ifndef WIFSIGNALED
+#define WIFSIGNALED(s) (((s) & 0x7f) != 0 && (((s) & 0x7f) != 0x7f))
+#endif
 #define WIFSTOPPED(s) (((s) & 0xff) == 0x7f)
 #define WSTOPSIG(s) WEXITSTATUS(s)
 #define WTERMSIG(s) ((s) & 0x7f)

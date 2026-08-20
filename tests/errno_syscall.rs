@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -11,7 +14,7 @@ fn errno_is_thread_local_and_fd_wrappers_translate_failures() {
     assert!(lib_dir.join("libc.so").exists(), "libc.so not found");
 
     let src = fixtures.join("errno_syscall_test.c");
-    let bin = fixtures.join("errno_syscall_test");
+    let bin = test_support::TempArtifact::new("errno_syscall_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

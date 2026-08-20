@@ -1,5 +1,6 @@
 // musl src/network/dn_expand.c
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn dn_expand(
     base: *const u8,
     end: *const u8,

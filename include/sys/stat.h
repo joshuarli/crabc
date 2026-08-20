@@ -98,6 +98,7 @@ int fstatat(int, const char *, struct stat *, int);
 mode_t umask(mode_t);
 int fchmod(int, unsigned int);
 int fchmodat(int, const char *, mode_t, int);
+int lchmod(const char *, mode_t);
 int mkdir(const char *, unsigned int);
 int mkdirat(int, const char *, mode_t);
 int mkfifo(const char *, unsigned int);

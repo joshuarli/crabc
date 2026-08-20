@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -8,7 +11,7 @@ fn allocator_contract_under_libc_so() {
     let target = root.join("target/debug");
     let ldso = target.join("libldso.so");
     let source = fixtures.join("allocator_test.c");
-    let binary = fixtures.join("allocator_test");
+    let binary = test_support::TempArtifact::new("allocator_test");
 
     assert!(ldso.exists(), "libldso.so not found");
     assert!(target.join("libc.so").exists(), "libc.so not found");

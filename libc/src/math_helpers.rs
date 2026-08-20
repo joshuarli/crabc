@@ -193,10 +193,11 @@ pub fn __math_uflowf(sign: u32) -> f32 {
 }
 
 #[no_mangle]
-pub static mut signgam: c_int = 0;
+pub static mut __signgam: c_int = 0;
 
 #[no_mangle]
-pub static mut __signgam: c_int = 0;
+#[linkage = "weak"]
+pub static mut signgam: c_int = 0;
 
 pub const FP_NAN: c_int = 0;
 pub const FP_INFINITE: c_int = 1;
@@ -233,14 +234,26 @@ pub unsafe extern "C" fn __fpclassifyf(x: f32) -> c_int {
     }
 }
 
-#[inline]
-pub fn __signbit(x: f64) -> c_int {
+#[no_mangle]
+pub extern "C" fn __signbit(x: f64) -> c_int {
     ((asuint64(x) >> 63) & 1) as c_int
 }
 
-#[inline]
-pub fn __signbitf(x: f32) -> c_int {
+#[no_mangle]
+pub extern "C" fn __signbitf(x: f32) -> c_int {
     ((asuint(x) >> 31) & 1) as c_int
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub extern "C" fn __signbitl(x: f64) -> c_int {
+    __signbit(x)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[no_mangle]
+pub extern "C" fn __signbitl(x: f128) -> c_int {
+    ((x.to_bits() >> 127) & 1) as c_int
 }
 
 #[inline]

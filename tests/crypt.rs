@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -56,10 +59,10 @@ int main() {
 }
 "#;
 
-    let src_path = manifest_dir.join("tests/fixtures/crypt_test.c");
+    let src_path = test_support::TempArtifact::new("crypt_test.c");
     std::fs::write(&src_path, test_src).expect("failed to write crypt test source");
 
-    let bin_path = manifest_dir.join("tests/fixtures/crypt_test");
+    let bin_path = test_support::TempArtifact::new("crypt_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE", "-pie", "-D_GNU_SOURCE",

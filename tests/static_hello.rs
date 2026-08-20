@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -9,7 +12,7 @@ fn static_hello_links_against_libc_a() {
     assert!(libc_a.exists(), "libc.a not found at {}", libc_a.display());
 
     let hello_src = fixtures.join("hello.c");
-    let hello_bin = fixtures.join("hello_static");
+    let hello_bin = test_support::TempArtifact::new("hello_static");
 
     // CRT paths differ by architecture
     let arch = if cfg!(target_arch = "aarch64") {

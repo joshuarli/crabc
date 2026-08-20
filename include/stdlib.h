@@ -23,10 +23,18 @@ size_t __ctype_get_mb_cur_max(void);
 
 #define RAND_MAX (0x7fffffff)
 
+#ifndef WEXITSTATUS
 #define WEXITSTATUS(s) (((s) & 0xff00) >> 8)
+#endif
+#ifndef WIFEXITED
 #define WIFEXITED(s) (((s) & 0x7f) == 0)
-#define WIFSIGNALED(s) (((s) & 0x7f) && ((s) & 0x7f) != 0x7f)
+#endif
+#ifndef WIFSIGNALED
+#define WIFSIGNALED(s) (((s) & 0x7f) != 0 && (((s) & 0x7f) != 0x7f))
+#endif
+#ifndef WTERMSIG
 #define WTERMSIG(s) ((s) & 0x7f)
+#endif
 #define WIFSTOPPED(s) (((s) & 0xff) == 0x7f)
 #define WSTOPSIG(s) WEXITSTATUS(s)
 #define WIFCONTINUED(s) ((s) == 0xffff)
@@ -69,18 +77,22 @@ void srandom(unsigned);
 long random(void);
 char *initstate(unsigned, char *, size_t);
 char *setstate(char *);
+int getloadavg(double *, int);
 
 void *malloc(size_t);
 void *calloc(size_t, size_t);
 void *realloc(void *, size_t);
+void *reallocarray(void *, size_t, size_t);
 void free(void *);
 void *aligned_alloc(size_t, size_t);
 int posix_memalign(void **, size_t, size_t);
 
 _Noreturn void abort(void);
 int atexit(void (*)(void));
+int at_quick_exit(void (*)(void));
 _Noreturn void exit(int);
 _Noreturn void _Exit(int);
+_Noreturn void quick_exit(int);
 
 char *getenv(const char *);
 int setenv(const char *, const char *, int);
@@ -106,10 +118,17 @@ long a64l(const char *);
 int grantpt(int);
 char *l64a(long);
 char *ptsname(int);
+int ptsname_r(int, char *, size_t);
 char *realpath(const char *restrict, char *restrict);
 void setkey(const char *);
 int unlockpt(int);
 int posix_openpt(int);
+
+#ifdef _GNU_SOURCE
+char *ecvt(double, int, int *, int *);
+char *fcvt(double, int, int *, int *);
+char *gcvt(double, int, char *);
+#endif
 
 #ifdef __cplusplus
 }

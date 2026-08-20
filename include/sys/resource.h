@@ -66,6 +66,10 @@ int getrlimit(int, struct rlimit *);
 int setrlimit(int, const struct rlimit *);
 int getrusage(int, struct rusage *);
 
+#ifdef _GNU_SOURCE
+int prlimit(pid_t, int, const struct rlimit *, struct rlimit *);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

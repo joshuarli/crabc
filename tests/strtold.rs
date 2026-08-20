@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn strtold_preserves_long_double_precision() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("strtold_test.c");
-    let bin = fixtures.join("strtold_test");
+    let bin = test_support::TempArtifact::new("strtold_test");
     let mut args = vec![
         "-fPIE".to_string(),
         "-pie".to_string(),

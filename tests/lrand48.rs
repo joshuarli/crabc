@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn lrand48_musl_vectors_under_libldso() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("lrand48_test.c");
-    let bin = fixtures.join("lrand48_test");
+    let bin = test_support::TempArtifact::new("lrand48_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

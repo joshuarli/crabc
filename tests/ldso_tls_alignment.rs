@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -8,7 +11,7 @@ fn ldso_preserves_static_tls_initializers_and_alignment() {
     let target = root.join("target/debug");
     let ldso = target.join("libldso.so");
     let source = fixtures.join("ldso_tls_alignment_test.c");
-    let binary = fixtures.join("ldso_tls_alignment_test");
+    let binary = test_support::TempArtifact::new("ldso_tls_alignment_test");
 
     assert!(ldso.exists(), "libldso.so not found");
     let status = Command::new("musl-gcc")

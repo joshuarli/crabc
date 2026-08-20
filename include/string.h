@@ -16,6 +16,8 @@ int bcmp(const void *, const void *, size_t);
 void *memchr(const void *, int, size_t);
 void *memccpy(void *restrict, const void *restrict, int, size_t);
 void *memrchr(const void *, int, size_t);
+void *mempcpy(void *restrict, const void *restrict, size_t);
+void explicit_bzero(void *, size_t);
 
 size_t strlen(const char *);
 size_t strnlen(const char *, size_t);
@@ -41,6 +43,8 @@ int strcoll_l(const char *, const char *, locale_t);
 size_t strxfrm_l(char *, const char *, size_t, locale_t);
 char *strdup(const char *);
 char *strndup(const char *, size_t);
+char *strcasestr(const char *, const char *);
+char *strsep(char **, const char *);
 char *strsignal(int);
 char *strerror_l(int, locale_t);
 

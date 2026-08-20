@@ -8,6 +8,7 @@ typedef unsigned int speed_t;
 typedef unsigned int tcflag_t;
 #define NCCS 32
 struct termios { tcflag_t c_iflag, c_oflag, c_cflag, c_lflag; cc_t c_line; cc_t c_cc[NCCS]; speed_t __ispeed, __ospeed; };
+struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 
 #define VEOF 4
 #define VEOL 11
@@ -112,12 +113,17 @@ speed_t cfgetispeed(const struct termios *);
 speed_t cfgetospeed(const struct termios *);
 int cfsetispeed(struct termios *, speed_t);
 int cfsetospeed(struct termios *, speed_t);
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+int cfsetspeed(struct termios *, speed_t);
+#endif
 int tcdrain(int);
 int tcflow(int, int);
 int tcflush(int, int);
 int tcgetattr(int, struct termios *);
+int tcgetwinsize(int, struct winsize *);
 pid_t tcgetsid(int);
 int tcsendbreak(int, int);
 int tcsetattr(int, int, const struct termios *);
+int tcsetwinsize(int, const struct winsize *);
 
 #endif

@@ -58,6 +58,11 @@
 #define _XOPEN_NAME_MAX 255
 #define _XOPEN_PATH_MAX 1024
 
+#define NAME_MAX 255
+#define PATH_MAX 4096
+#define PIPE_BUF 4096
+#define FILESIZEBITS 64
+
 #define CHAR_BIT 8
 #define CHAR_MAX 255
 #define CHAR_MIN 0

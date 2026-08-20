@@ -471,6 +471,7 @@ mod sysnr {
     pub const SYS_SEMGET: i64 = 64;
     pub const SYS_SEMOP: i64 = 65;
     pub const SYS_SEMCTL: i64 = 66;
+    pub const SYS_SEMTIMEDOP: i64 = 220;
     pub const SYS_SHMDT: i64 = 67;
     pub const SYS_MSGGET: i64 = 68;
     pub const SYS_MSGSND: i64 = 69;
@@ -490,6 +491,7 @@ mod sysnr {
     pub const SYS_SETGID: i64 = 106;
     pub const SYS_SETPGID: i64 = 109;
     pub const SYS_GETGROUPS: i64 = 115;
+    pub const SYS_SETGROUPS: i64 = 116;
     pub const SYS_GETPGID: i64 = 121;
     pub const SYS_GETSID: i64 = 124;
     pub const SYS_RT_SIGPENDING: i64 = 127;
@@ -580,6 +582,7 @@ mod sysnr {
     pub const SYS_SEMGET: i64 = 190;
     pub const SYS_SEMOP: i64 = 193;
     pub const SYS_SEMCTL: i64 = 191;
+    pub const SYS_SEMTIMEDOP: i64 = 192;
     pub const SYS_SHMDT: i64 = 197;
     pub const SYS_MSGGET: i64 = 186;
     pub const SYS_MSGSND: i64 = 189;
@@ -599,6 +602,7 @@ mod sysnr {
     pub const SYS_SETGID: i64 = 144;
     pub const SYS_SETPGID: i64 = 154;
     pub const SYS_GETGROUPS: i64 = 158;
+    pub const SYS_SETGROUPS: i64 = 159;
     pub const SYS_GETPGID: i64 = 155;
     pub const SYS_GETSID: i64 = 156;
     pub const SYS_RT_SIGPENDING: i64 = 136;
@@ -684,6 +688,7 @@ mod sysnr {
     pub const SYS_SEMGET: i64 = 190;
     pub const SYS_SEMOP: i64 = 193;
     pub const SYS_SEMCTL: i64 = 191;
+    pub const SYS_SEMTIMEDOP: i64 = 192;
     pub const SYS_SHMDT: i64 = 197;
     pub const SYS_MSGGET: i64 = 186;
     pub const SYS_MSGSND: i64 = 189;
@@ -1188,6 +1193,7 @@ pub unsafe extern "C" fn memchr(s: *const u8, c: c_int, n: usize) -> *mut u8 {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn memrchr(s: *const u8, c: c_int, n: usize) -> *mut u8 {
     let target = c as u8;
     let mut i = n;
@@ -1902,6 +1908,7 @@ unsafe fn sys_clock_gettime(clockid: c_int, ts: *mut timespec) -> i64 {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn clock_gettime(clockid: c_int, ts: *mut timespec) -> c_int {
     if syscall_result(sys_clock_gettime(clockid, ts)) < 0 { -1 } else { 0 }
 }
@@ -1942,6 +1949,7 @@ unsafe fn sys_getpid() -> i64 {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn sigaction(
     signum: c_int,
     act: *const sigaction,
@@ -2174,6 +2182,23 @@ pub unsafe extern "C" fn setjmp(env: *mut c_ulong) -> c_int {
     0
 }
 
+// musl exports these three spellings to the same implementation.  Keep the
+// aliases as direct branches: calling setjmp through a Rust wrapper would
+// save the wrapper's frame instead of the caller's frame.
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe extern "C" fn __setjmp(_env: *mut c_ulong) -> c_int {
+    core::arch::naked_asm!("jmp setjmp");
+}
+
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe extern "C" fn _setjmp(_env: *mut c_ulong) -> c_int {
+    core::arch::naked_asm!("jmp setjmp");
+}
+
 #[no_mangle]
 #[inline(never)]
 #[cfg(target_arch = "x86_64")]
@@ -2197,6 +2222,13 @@ pub unsafe extern "C" fn longjmp(env: *const c_ulong, val: c_int) -> ! {
 
 #[no_mangle]
 #[unsafe(naked)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe extern "C" fn _longjmp(_env: *const c_ulong, _val: c_int) -> ! {
+    core::arch::naked_asm!("jmp longjmp");
+}
+
+#[no_mangle]
+#[unsafe(naked)]
 #[cfg(target_arch = "aarch64")]
 pub unsafe extern "C" fn setjmp(env: *mut c_ulong) -> c_int {
     core::arch::naked_asm!(
@@ -2215,6 +2247,20 @@ pub unsafe extern "C" fn setjmp(env: *mut c_ulong) -> c_int {
         "mov x0, #0",
         "ret",
     );
+}
+
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(target_arch = "aarch64")]
+pub unsafe extern "C" fn __setjmp(_env: *mut c_ulong) -> c_int {
+    core::arch::naked_asm!("b setjmp");
+}
+
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(target_arch = "aarch64")]
+pub unsafe extern "C" fn _setjmp(_env: *mut c_ulong) -> c_int {
+    core::arch::naked_asm!("b setjmp");
 }
 
 #[no_mangle]
@@ -2245,6 +2291,13 @@ pub unsafe extern "C" fn longjmp(env: *const c_ulong, val: c_int) -> ! {
 
 #[no_mangle]
 #[unsafe(naked)]
+#[cfg(target_arch = "aarch64")]
+pub unsafe extern "C" fn _longjmp(_env: *const c_ulong, _val: c_int) -> ! {
+    core::arch::naked_asm!("b longjmp");
+}
+
+#[no_mangle]
+#[unsafe(naked)]
 #[cfg(target_arch = "riscv64")]
 pub unsafe extern "C" fn setjmp(env: *mut c_ulong) -> c_int {
     core::arch::naked_asm!(
@@ -2265,6 +2318,20 @@ pub unsafe extern "C" fn setjmp(env: *mut c_ulong) -> c_int {
         "li a0, 0",
         "ret",
     );
+}
+
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(target_arch = "riscv64")]
+pub unsafe extern "C" fn __setjmp(_env: *mut c_ulong) -> c_int {
+    core::arch::naked_asm!("tail setjmp");
+}
+
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(target_arch = "riscv64")]
+pub unsafe extern "C" fn _setjmp(_env: *mut c_ulong) -> c_int {
+    core::arch::naked_asm!("tail setjmp");
 }
 
 #[no_mangle]
@@ -2293,6 +2360,13 @@ pub unsafe extern "C" fn longjmp(env: *const c_ulong, val: c_int) -> ! {
         in("a1") ret,
         options(noreturn),
     );
+}
+
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(target_arch = "riscv64")]
+pub unsafe extern "C" fn _longjmp(_env: *const c_ulong, _val: c_int) -> ! {
+    core::arch::naked_asm!("tail longjmp");
 }
 
 // ponytail: sigsetjmp is implemented in raw assembly because the Rust compiler
@@ -2683,7 +2757,8 @@ pub unsafe extern "C" fn posix_spawn_file_actions_init(fa: *mut posix_spawn_file
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_destroy(_fa: *mut posix_spawn_file_actions_t) -> c_int {
+pub unsafe extern "C" fn posix_spawn_file_actions_destroy(fa: *mut posix_spawn_file_actions_t) -> c_int {
+    m4_spawn_destroy_linked_actions(fa);
     0
 }
 
@@ -2708,8 +2783,8 @@ pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(fa: *mut posix_spawn_f
     spawn_fa_add(fa, 1, oldfd, newfd)
 }
 
-unsafe fn spawn_apply_actions(fa: *const posix_spawn_file_actions_t) {
-    if fa.is_null() { return; }
+unsafe fn spawn_apply_actions(fa: *const posix_spawn_file_actions_t) -> c_int {
+    if fa.is_null() { return 0; }
     let count = (*fa).__pad0[0] as usize;
     for i in 0..count {
         let base = i * 3;
@@ -2719,6 +2794,7 @@ unsafe fn spawn_apply_actions(fa: *const posix_spawn_file_actions_t) {
             _ => {}
         }
     }
+    m4_spawn_apply_linked_actions(fa)
 }
 
 // ponytail: PATH search using stack buffer, O(n) scan per entry
@@ -2771,7 +2847,9 @@ pub unsafe extern "C" fn posix_spawnp(
     }
     if child == 0 {
         // child: apply file actions then exec
-        spawn_apply_actions(fa);
+        if spawn_apply_actions(fa) != 0 {
+            _exit(127);
+        }
         let actual_envp = if envp.is_null() { __environ as *const *const c_char } else { envp };
         spawn_execvp(file, argv, actual_envp);
         // unreachable: spawn_execvp always calls _exit
@@ -2873,6 +2951,7 @@ pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut Stat) -> c_int {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn fstat(fd: c_int, buf: *mut Stat) -> c_int {
     let r = sys_fstat(fd, buf as *mut u8);
     if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
@@ -3659,6 +3738,7 @@ unsafe fn find_thread() -> Option<&'static mut Thread> {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_self() -> PthreadT {
     let me = sys_gettid() as c_int;
     let base = core::ptr::addr_of_mut!(THREADS[0]);
@@ -3680,11 +3760,13 @@ pub unsafe extern "C" fn pthread_self() -> PthreadT {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_equal(t1: PthreadT, t2: PthreadT) -> c_int {
     (t1 == t2) as c_int
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_create(
     thread: *mut PthreadT,
     attr: *const pthread_attr_t,
@@ -3697,7 +3779,11 @@ pub unsafe extern "C" fn pthread_create(
     let stack_size = if !attr.is_null() {
         let s = *((*attr).__i.as_ptr() as *const usize);
         if s > 0 { s } else { STACK_SIZE }
-    } else { STACK_SIZE };
+    } else {
+        // Nonportable default attributes are process state: an omitted attr
+        // must consume the same selected stack size as pthread_attr_init.
+        m4_pthread_default_stack_size()
+    };
     let stack = sys_mmap(null_mut(), stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if stack == MMAP_FAILED { return EAGAIN; }
     let fs_base = __rc_create_thread_tls();
@@ -3733,6 +3819,7 @@ pub unsafe extern "C" fn pthread_create(
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void) -> c_int {
     let slot = thread as *mut Thread;
     if slot.is_null() { return EINVAL; }
@@ -3762,6 +3849,7 @@ pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_detach(thread: PthreadT) -> c_int {
     let slot = thread as *mut Thread;
     if slot.is_null() { return EINVAL; }
@@ -3781,6 +3869,7 @@ pub unsafe extern "C" fn pthread_detach(thread: PthreadT) -> c_int {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
     if let Some(slot) = find_thread() {
         run_cleanup_handlers(slot);
@@ -3807,8 +3896,8 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_init(attr: *mut pthread_attr_t) -> c_int {
     core::ptr::write_bytes(attr, 0, 1);
-    *((*attr).__i.as_mut_ptr() as *mut usize) = STACK_SIZE;
-    *((*attr).__i.as_mut_ptr().add(2) as *mut usize) = 4096;
+    *((*attr).__i.as_mut_ptr() as *mut usize) = m4_pthread_default_stack_size();
+    *((*attr).__i.as_mut_ptr().add(2) as *mut usize) = m4_pthread_default_guard_size();
     (*attr).__i[6] = PTHREAD_CREATE_JOINABLE;
     (*attr).__i[7] = PTHREAD_INHERIT_SCHED;
     0
@@ -4110,18 +4199,22 @@ pub unsafe extern "C" fn pthread_mutex_init(mutex: *mut pthread_mutex_t, attr: *
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_destroy(_mutex: *mut pthread_mutex_t) -> c_int { 0 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_int {
     mutex_lock_internal(mutex, core::ptr::null())
 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut pthread_mutex_t) -> c_int {
     mutex_trylock(mutex)
 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_mutex_timedlock(mutex: *mut pthread_mutex_t, abs_timeout: *const timespec) -> c_int {
     mutex_lock_internal(mutex, abs_timeout)
 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut pthread_mutex_t) -> c_int {
     let type_ = (*mutex).__i[0];
     let base_type = type_ & MUTEX_TYPE_MASK;
@@ -4195,6 +4288,7 @@ pub unsafe extern "C" fn pthread_cond_wait(cond: *mut pthread_cond_t, mutex: *mu
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_cond_timedwait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t, abs_timeout: *const timespec) -> c_int {
     pthread_testcancel();
     let seq_ptr = &raw mut (*cond).__i[2];
@@ -4301,18 +4395,25 @@ pub unsafe extern "C" fn pthread_rwlock_init(rw: *mut pthread_rwlock_t, attr: *c
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_destroy(_rw: *mut pthread_rwlock_t) -> c_int { 0 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_rdlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_timedrdlock(rw, core::ptr::null()) }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_tryrdlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_tryrdlock(rw) }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_timedrdlock(rw: *mut pthread_rwlock_t, t: *const timespec) -> c_int { rwlock_timedrdlock(rw, t) }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_wrlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_timedwrlock(rw, core::ptr::null()) }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_trywrlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_trywrlock(rw) }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_timedwrlock(rw: *mut pthread_rwlock_t, t: *const timespec) -> c_int { rwlock_timedwrlock(rw, t) }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_unlock(rw: *mut pthread_rwlock_t) -> c_int {
     loop {
         let val = a_load(&raw const (*rw).__i[0]);
@@ -4799,6 +4900,7 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
 
 // --- pthread_once ---
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_once(control: *mut pthread_once_t, init_routine: Option<unsafe extern "C" fn()>) -> c_int {
     if a_load(control) == 2 { return 0; }
     loop {
@@ -4817,6 +4919,7 @@ pub unsafe extern "C" fn pthread_once(control: *mut pthread_once_t, init_routine
 
 // --- pthread_key_* ---
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_key_create(key: *mut pthread_key_t, dtor: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int {
     let start = NEXT_KEY.load(Ordering::Relaxed);
     let mut j = start;
@@ -4832,6 +4935,7 @@ pub unsafe extern "C" fn pthread_key_create(key: *mut pthread_key_t, dtor: Optio
     }
 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_key_delete(key: pthread_key_t) -> c_int {
     KEY_DTORS[key as usize] = None;
     for i in 0..MAX_THREADS {
@@ -4840,6 +4944,7 @@ pub unsafe extern "C" fn pthread_key_delete(key: pthread_key_t) -> c_int {
     0
 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_getspecific(key: pthread_key_t) -> *mut c_void {
     if let Some(slot) = find_thread() { slot.tsd[key as usize] } else { core::ptr::null_mut() }
 }
@@ -4919,6 +5024,7 @@ pub unsafe extern "C" fn pthread_cancel(thread: PthreadT) -> c_int {
     0
 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_int) -> c_int {
     if state != PTHREAD_CANCEL_ENABLE && state != PTHREAD_CANCEL_DISABLE { return EINVAL; }
     if let Some(slot) = find_thread() {
@@ -4937,6 +5043,7 @@ pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, oldtype: *mut c_int
     } else { EINVAL }
 }
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn pthread_testcancel() {
     if let Some(slot) = find_thread() {
         if slot.cancel != 0 && slot.cancel_state == PTHREAD_CANCEL_ENABLE {
@@ -5100,6 +5207,7 @@ const C_LOCALE: locale_t = core::ptr::addr_of_mut!(C_LOCALE_STORAGE) as locale_t
 const LC_GLOBAL_LOCALE: locale_t = usize::MAX as locale_t;
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn newlocale(_mask: c_int, name: *const c_char, base: locale_t) -> locale_t {
     if !name.is_null() && *name != 0 {
         let n = name as *const u8;
@@ -5120,6 +5228,7 @@ pub unsafe extern "C" fn newlocale(_mask: c_int, name: *const c_char, base: loca
 pub unsafe extern "C" fn freelocale(_loc: locale_t) {}
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn uselocale(loc: locale_t) -> locale_t {
     let old = CURRENT_LOCALE;
     if !loc.is_null() {
@@ -5129,6 +5238,7 @@ pub unsafe extern "C" fn uselocale(loc: locale_t) -> locale_t {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn duplocale(loc: locale_t) -> locale_t {
     if loc.is_null() {
         return core::ptr::null_mut();
@@ -5165,6 +5275,7 @@ unsafe fn langinfo_str(table: *const u8, mut idx: c_int) -> *mut c_char {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn nl_langinfo(item: c_int) -> *mut c_char {
     if item == NL_ITEM_CODESET {
         return if LOCALE_CTYPE_UTF8 {
@@ -5925,6 +6036,7 @@ pub unsafe extern "C" fn close(fd: c_int) -> c_int {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
     syscall_result(sys_lseek(fd as i64, offset, whence as i64))
 }
@@ -6288,6 +6400,7 @@ pub unsafe extern "C" fn fopen(filename: *const c_char, mode: *const c_char) -> 
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut FILE {
     if fd < 0 || mode.is_null() { ERRNO = EINVAL; return core::ptr::null_mut(); }
     let m = *mode;
@@ -6453,6 +6566,7 @@ pub unsafe extern "C" fn rewind(stream: *mut FILE) {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn fseeko(stream: *mut FILE, offset: i64, whence: c_int) -> c_int {
     if whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END {
         ERRNO = EINVAL;
@@ -6487,6 +6601,7 @@ pub unsafe extern "C" fn fseeko(stream: *mut FILE, offset: i64, whence: c_int) -
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn ftello(stream: *mut FILE) -> i64 {
     let f = &mut *stream;
     if f.flags & F_APP != 0 && !f.wpos.is_null() && f.wpos != f.wbase {
@@ -6656,7 +6771,8 @@ unsafe fn write_str(fd: c_int, s: *const u8, len: usize) {
     }
 }
 
-unsafe fn __overflow(f: *mut FILE, c: c_int) -> c_int {
+#[no_mangle]
+pub unsafe extern "C" fn __overflow(f: *mut FILE, c: c_int) -> c_int {
     if (*f).wpos.is_null() {
         (*f).wbase = (*f).buf;
         (*f).wpos = (*f).buf;
@@ -6676,6 +6792,10 @@ unsafe fn __overflow(f: *mut FILE, c: c_int) -> c_int {
     if c == (*f).lbf || (*f).wpos >= (*f).wend { let _ = flush_buf(f); }
     c
 }
+
+// The musl ABI marks this stdio extension protected: it must remain callable
+// by applications while internal libc calls bind to this implementation.
+core::arch::global_asm!(".protected __overflow");
 
 #[no_mangle]
 pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
@@ -8701,6 +8821,17 @@ pub unsafe extern "C" fn getdelim(
     len as isize
 }
 
+// musl keeps this internal spelling as a weak entry point for code built
+// against its headers. It deliberately delegates to the public operation so
+// allocation, stream state, and errno behavior cannot diverge.
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn __getdelim(
+    lineptr: *mut *mut c_char, n: *mut usize, delim: c_int, stream: *mut FILE,
+) -> isize {
+    getdelim(lineptr, n, delim, stream)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn getline(lineptr: *mut *mut c_char, n: *mut usize, stream: *mut FILE) -> isize {
     getdelim(lineptr, n, b'\n' as c_int, stream)
@@ -8905,6 +9036,7 @@ unsafe fn allocate(size: SizeT, requested_alignment: usize) -> *mut c_void {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
     allocate(size, MALLOC_ALIGNMENT)
 }
@@ -9254,6 +9386,7 @@ pub unsafe extern "C" fn __qsort_r(
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn qsort_r(
     base: *mut c_void,
     nel: usize,
@@ -9393,7 +9526,7 @@ unsafe fn env_rm_add(old: *mut c_char, mut new: *mut c_char) {
     }
 }
 
-unsafe fn strchrnul(s: *const u8, c: u8) -> *const u8 {
+unsafe fn strchrnul_impl(s: *const u8, c: u8) -> *const u8 {
     let mut p = s;
     while *p != 0 && *p != c {
         p = p.add(1);
@@ -9402,12 +9535,18 @@ unsafe fn strchrnul(s: *const u8, c: u8) -> *const u8 {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
+    strchrnul_impl(s as *const u8, c as u8) as *mut c_char
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
     if __environ.is_null() || name.is_null() {
         return core::ptr::null_mut();
     }
     let name = name as *const u8;
-    let l = strchrnul(name, b'=') as usize - name as usize;
+    let l = strchrnul_impl(name, b'=') as usize - name as usize;
     if l == 0 || *name.add(l) != 0 {
         return core::ptr::null_mut();
     }
@@ -9433,7 +9572,7 @@ pub unsafe extern "C" fn setenv(
         return -1;
     }
     let var = var as *const u8;
-    let l1 = strchrnul(var, b'=') as usize - var as usize;
+    let l1 = strchrnul_impl(var, b'=') as usize - var as usize;
     if l1 == 0 || *var.add(l1) != 0 {
         ERRNO = EINVAL;
         return -1;
@@ -9479,7 +9618,7 @@ unsafe fn putenv_internal(s: *mut c_char, l: usize, r: *mut c_char) -> c_int {
     *newenv.add(i + 1) = core::ptr::null_mut();
     // ponytail: don't free old __environ (may not be from our malloc)
     __environ = newenv;
-    environ = __environ;
+    sync_environ();
     if !r.is_null() {
         env_rm_add(core::ptr::null_mut(), r);
     }
@@ -9489,7 +9628,7 @@ unsafe fn putenv_internal(s: *mut c_char, l: usize, r: *mut c_char) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn putenv(s: *mut c_char) -> c_int {
     if s.is_null() { return -1; }
-    let l = strchrnul(s as *const u8, b'=') as usize - s as *const u8 as usize;
+    let l = strchrnul_impl(s as *const u8, b'=') as usize - s as *const u8 as usize;
     if l == 0 || *s.add(l) as u8 == 0 {
         return unsetenv(s);
     }
@@ -9503,7 +9642,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
         return -1;
     }
     let name = name as *const u8;
-    let l = strchrnul(name, b'=') as usize - name as usize;
+    let l = strchrnul_impl(name, b'=') as usize - name as usize;
     if l == 0 || *name.add(l) != 0 {
         ERRNO = EINVAL;
         return -1;
@@ -9527,7 +9666,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
     if eo != e {
         *eo = core::ptr::null_mut();
     }
-    environ = __environ;
+    sync_environ();
     0
 }
 
@@ -9535,7 +9674,7 @@ pub unsafe extern "C" fn unsetenv(name: *const c_char) -> c_int {
 pub unsafe extern "C" fn clearenv() -> c_int {
     let e = __environ;
     __environ = core::ptr::null_mut();
-    environ = core::ptr::null_mut();
+    sync_environ();
     if !e.is_null() {
         let mut p = e;
         while !(*p).is_null() {
@@ -11121,6 +11260,7 @@ pub unsafe extern "C" fn gmtime(t: *const TimeT) -> *mut tm {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn gmtime_r(t: *const TimeT, tm: *mut tm) -> *mut tm {
     if !secs_to_tm(*t as i64, &mut *tm) { ERRNO = EOVERFLOW; return core::ptr::null_mut(); }
     (*tm).tm_isdst = 0;
@@ -11133,6 +11273,7 @@ pub unsafe extern "C" fn gmtime_r(t: *const TimeT, tm: *mut tm) -> *mut tm {
 pub unsafe extern "C" fn localtime(t: *const TimeT) -> *mut tm { gmtime(t) }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn localtime_r(t: *const TimeT, tm: *mut tm) -> *mut tm { gmtime_r(t, tm) }
 
 #[no_mangle]
@@ -11166,6 +11307,7 @@ pub unsafe extern "C" fn asctime(tm: *const tm) -> *mut c_char {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn asctime_r(tm: *const tm, buf: *mut c_char) -> *mut c_char {
     let wday = if (*tm).tm_wday >= 0 && (*tm).tm_wday < 7 { (*tm).tm_wday as usize } else { 0 };
     let mon = if (*tm).tm_mon >= 0 && (*tm).tm_mon < 12 { (*tm).tm_mon as usize } else { 0 };
@@ -11235,6 +11377,7 @@ pub unsafe extern "C" fn clock_getres(clockid: c_int, ts: *mut timespec) -> c_in
 pub unsafe extern "C" fn clock_settime(clockid: c_int, ts: *const timespec) -> c_int { if sys_clock_settime(clockid, ts) < 0 { -1 } else { 0 } }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn clock_nanosleep(clockid: c_int, flags: c_int, req: *const timespec, rem: *mut timespec) -> c_int {
     let r = sys_clock_nanosleep(clockid, flags, req, rem);
     if r < 0 { (-r) as c_int } else { 0 }
@@ -11863,16 +12006,30 @@ pub unsafe extern "C" fn strptime(s: *const c_char, fmt: *const c_char, tm: *mut
 // ============================================================
 
 #[no_mangle]
+pub static mut __daylight: c_int = 0;
+#[no_mangle]
+pub static mut __timezone: c_long = 0;
+#[no_mangle]
+pub static mut __tzname: [*mut c_char; 2] = [b"UTC\0".as_ptr() as *mut c_char, b"UTC\0".as_ptr() as *mut c_char];
+
+#[no_mangle]
+#[linkage = "weak"]
 pub static mut daylight: c_int = 0;
 #[no_mangle]
+#[linkage = "weak"]
 pub static mut timezone: c_long = 0;
 #[no_mangle]
+#[linkage = "weak"]
 pub static mut tzname: [*mut c_char; 2] = [b"UTC\0".as_ptr() as *mut c_char, b"UTC\0".as_ptr() as *mut c_char];
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn tzset() {
-    daylight = 0;
-    timezone = 0;
+    __daylight = 0;
+    __timezone = 0;
+    daylight = __daylight;
+    timezone = __timezone;
+    tzname = __tzname;
 }
 
 // ============================================================
@@ -12265,13 +12422,23 @@ pub unsafe extern "C" fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: usi
     0
 }
 
-// ponytail: `environ` alias for tests that use extern char **environ
+// Keep the public environment spellings synchronized with the loader-owned
+// internal pointer on every libc mutation path.
 #[no_mangle]
+#[linkage = "weak"]
 pub static mut environ: *mut *mut c_char = core::ptr::null_mut();
+#[no_mangle]
+#[linkage = "weak"]
+pub static mut _environ: *mut *mut c_char = core::ptr::null_mut();
+#[no_mangle]
+#[linkage = "weak"]
+pub static mut ___environ: *mut *mut c_char = core::ptr::null_mut();
 
-// keep environ in sync with __environ
+#[inline]
 unsafe fn sync_environ() {
     environ = __environ;
+    _environ = __environ;
+    ___environ = __environ;
 }
 
 // ============================================================
@@ -12428,6 +12595,10 @@ unsafe fn sys_getgroups(size: i32, list: *mut c_uint) -> i64 {
     <Arch as Syscalls>::syscall2(SYS_GETGROUPS, size as i64, list as i64)
 }
 
+unsafe fn sys_setgroups(size: usize, list: *const c_uint) -> i64 {
+    <Arch as Syscalls>::syscall2(SYS_SETGROUPS, size as i64, list as i64)
+}
+
 unsafe fn sys_setuid(uid: c_uint) -> i64 {
     <Arch as Syscalls>::syscall1(SYS_SETUID, uid as i64)
 }
@@ -12487,6 +12658,7 @@ pub unsafe extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int {
     let r = sys_dup3(oldfd, newfd, flags);
     if r < 0 { ERRNO = (-r) as c_int; return -1; }
@@ -12692,19 +12864,99 @@ pub unsafe extern "C" fn umask(mask: c_uint) -> c_uint {
 #[no_mangle]
 pub unsafe extern "C" fn isatty(fd: c_int) -> c_int {
     let mut ws: winsize = core::mem::zeroed();
-    if sys_ioctl(fd, TIOCGWINSZ, &mut ws as *mut winsize as *mut u8) == 0 { 1 } else { 0 }
+    let result = sys_ioctl(fd, TIOCGWINSZ, &mut ws as *mut winsize as *mut u8);
+    if result < 0 {
+        ERRNO = (-result) as c_int;
+        0
+    } else {
+        1
+    }
 }
 
-// ponytail: ttyname - stub, not critical
+// musl resolves a terminal through /proc/self/fd and then compares device and
+// inode with the original descriptor.  The comparison prevents a changed or
+// synthetic procfs link from being reported as the terminal name.
+static mut TTYNAME_RESULT: [c_char; 32] = [0; 32];
+
 #[no_mangle]
-pub unsafe extern "C" fn ttyname(_fd: c_int) -> *mut c_char {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn ttyname_r(fd: c_int, name: *mut c_char, size: usize) -> c_int {
+    if isatty(fd) == 0 {
+        return ERRNO;
+    }
+
+    let mut proc_name = [0u8; 32];
+    let prefix = b"/proc/self/fd/";
+    proc_name[..prefix.len()].copy_from_slice(prefix);
+    let mut value = fd as u32;
+    let mut digits = [0u8; 10];
+    let mut digit_count = 0usize;
+    loop {
+        digits[digit_count] = (value % 10) as u8;
+        digit_count += 1;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    let mut index = 0usize;
+    while index < digit_count {
+        proc_name[prefix.len() + index] = b'0' + digits[digit_count - index - 1];
+        index += 1;
+    }
+
+    let length = readlink(
+        proc_name.as_ptr() as *const c_char,
+        name,
+        size,
+    );
+    if length < 0 {
+        return ERRNO;
+    }
+    if length as usize == size {
+        return ERANGE_VAL;
+    }
+    *name.add(length as usize) = 0;
+
+    let mut named: Stat = core::mem::zeroed();
+    let mut descriptor: Stat = core::mem::zeroed();
+    if stat(name, &mut named) != 0 || fstat(fd, &mut descriptor) != 0 {
+        return ERRNO;
+    }
+    if named.st_dev != descriptor.st_dev || named.st_ino != descriptor.st_ino {
+        return ENODEV_VAL;
+    }
+    0
 }
 
-// ponytail: getlogin - stub
+#[no_mangle]
+pub unsafe extern "C" fn ttyname(fd: c_int) -> *mut c_char {
+    let result = core::ptr::addr_of_mut!(TTYNAME_RESULT).cast();
+    if ttyname_r(fd, result, 32) != 0 {
+        core::ptr::null_mut()
+    } else {
+        result
+    }
+}
+
+// musl intentionally treats LOGNAME as the login name source.  It does not
+// invent a passwd-derived identity when the session environment lacks it.
 #[no_mangle]
 pub unsafe extern "C" fn getlogin() -> *mut c_char {
-    b"root\0".as_ptr() as *mut c_char
+    getenv(b"LOGNAME\0".as_ptr() as *const c_char)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn getlogin_r(name: *mut c_char, size: usize) -> c_int {
+    let login = getlogin();
+    if login.is_null() {
+        return ENXIO_VAL;
+    }
+    let length = strlen(login);
+    if length >= size {
+        return ERANGE_VAL;
+    }
+    core::ptr::copy_nonoverlapping(login, name, length + 1);
+    0
 }
 
 #[no_mangle]
@@ -12712,6 +12964,13 @@ pub unsafe extern "C" fn getgroups(size: c_int, list: *mut c_uint) -> c_int {
     let r = sys_getgroups(size, list);
     if r < 0 { ERRNO = (-r) as c_int; return -1; }
     r as c_int
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn setgroups(size: usize, list: *const c_uint) -> c_int {
+    let r = sys_setgroups(size, list);
+    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    0
 }
 
 #[no_mangle]
@@ -13099,6 +13358,7 @@ pub unsafe extern "C" fn inet_ntop(af: c_int, a: *const c_void, s: *mut c_char, 
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn inet_aton(s: *const c_char, dest: *mut c_void) -> c_int {
     let a = dest as *mut u8;
     let mut p = s as *const u8;
@@ -14147,16 +14407,19 @@ pub unsafe extern "C" fn hsearch(item: HSearchEntry, action: c_int) -> *mut HSea
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn hcreate_r(nel: usize, htab: *mut HSearchData) -> c_int {
     hcreate_r_impl(nel, htab)
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn hdestroy_r(htab: *mut HSearchData) {
     hdestroy_r_impl(htab);
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn hsearch_r(item: HSearchEntry, action: c_int, retval: *mut *mut HSearchEntry, htab: *mut HSearchData) -> c_int {
     hsearch_r_impl(item, action, retval, htab)
 }
@@ -15252,6 +15515,7 @@ pub unsafe extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> c
 pub static mut __auxv: *const usize = core::ptr::null();
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
     let mut p = __auxv;
     if p.is_null() {
@@ -15269,6 +15533,11 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn __getauxval(type_: c_ulong) -> c_ulong {
+    getauxval(type_)
+}
+
 type MainFn = unsafe extern "C" fn(c_int, *const *const c_char, *const *const c_char) -> c_int;
 type InitFn = unsafe extern "C" fn();
 
@@ -15284,8 +15553,11 @@ pub unsafe extern "C" fn __libc_start_main(
 ) -> ! {
     let envp = argv.add((argc + 1) as usize);
     __environ = envp as *mut *mut c_char;
-    environ = __environ; // sync environ alias
+    sync_environ();
     __stdio_init();
+    if argc > 0 && !argv.is_null() {
+        m4_set_program_names(*argv);
+    }
 
     let mut set: SigSetT = 0;
     sigemptyset(&mut set);
@@ -15390,6 +15662,7 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
 }
 
 include!("crypt_impl.rs");
+include!("m4_legacy_des_exports.rs");
 include!("statvfs.rs");
 include!("daemon.rs");
 include!("dn_expand.rs");
@@ -15401,6 +15674,77 @@ include!("fenv.rs");
 include!("locale_ctype.rs");
 include!("regression_stubs.rs");
 include!("wordexp.rs");
+include!("m4_locale_exports.rs");
+include!("m4_syscall_exports.rs");
+include!("m4_stdio_exports.rs");
+include!("m4_decimal_conversions.rs");
+include!("m4_cookie_stream_exports.rs");
+include!("m4_string_exports.rs");
+include!("m4_io_exports.rs");
+include!("m4_ioctl_exports.rs");
+include!("m4_scalar_exports.rs");
+include!("m4_filesystem_paths_exports.rs");
+include!("m4_file_handle_exports.rs");
+include!("m4_ptrace_exports.rs");
+include!("m4_c11_threads_exports.rs");
+include!("m4_wchar_exports.rs");
+include!("m4_compat_exports.rs");
+include!("m4_memory_vm_exports.rs");
+include!("m4_terminal_exports.rs");
+include!("m4_poll_events_exports.rs");
+include!("m4_integer_numeric_exports.rs");
+include!("m4_select_exports.rs");
+include!("m4_system_utils_exports.rs");
+include!("m4_unicode_encoders_exports.rs");
+include!("m4_random_exports.rs");
+include!("m4_timer_signal_fds_exports.rs");
+include!("m4_posix_timers_exports.rs");
+include!("m4_time_extensions_exports.rs");
+include!("m4_getdate_exports.rs");
+include!("m4_legacy_formatting_exports.rs");
+include!("m4_clock_administration_exports.rs");
+include!("m4_sched_affinity_exports.rs");
+include!("m4_extended_attributes_exports.rs");
+include!("m4_directory_streams_exports.rs");
+include!("m4_filesystem_traversal_exports.rs");
+include!("m4_posix_spawn_attrs_exports.rs");
+include!("m4_admin_syscalls_exports.rs");
+include!("m4_socket_messages_exports.rs");
+include!("m4_complex_basic_exports.rs");
+include!("m4_host_process_exports.rs");
+include!("m4_filesystem_stats_exports.rs");
+include!("m4_signal_helpers_exports.rs");
+include!("m4_program_utils_exports.rs");
+include!("m4_system_information_exports.rs");
+include!("m4_getopt_exports.rs");
+include!("m4_error_reporting_exports.rs");
+include!("m4_gettext_exports.rs");
+include!("m4_admin_kernel_exports.rs");
+include!("m4_network_globals_exports.rs");
+include!("m4_network_databases_exports.rs");
+include!("m4_legacy_resolver_exports.rs");
+include!("m4_ether_exports.rs");
+include!("m4_usershell_exports.rs");
+include!("m4_utmp_databases.rs");
+include!("m4_shadow_exports.rs");
+include!("m4_identity_exports.rs");
+include!("m4_fanotify_exports.rs");
+include!("m4_quick_exit_exports.rs");
+include!("m4_mqueue_exports.rs");
+include!("m4_clone_exports.rs");
+include!("m4_process_control_exports.rs");
+include!("m4_complex_transcendentals_exports.rs");
+include!("m4_complex_powers_exports.rs");
+include!("m4_break_exports.rs");
+include!("m4_wchar_stream_exports.rs");
+include!("m4_wmemstream_exports.rs");
+include!("m4_pthread_extensions.rs");
+include!("m4_semtimedop_exports.rs");
+include!("m4_posix_aio_exports.rs");
+include!("m4_dynamic_loader_introspection_exports.rs");
+include!("m4_loader_startup_exports.rs");
+include!("m4_init_fini_exports.rs");
+include!("m4_tls_get_addr.rs");
 
 // ============================================================
 // regex.h

@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 use std::sync::Mutex;
 
@@ -16,7 +19,7 @@ fn pthread_functions_under_libc_so() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("pthread_test.c");
-    let bin = fixtures.join("pthread_test");
+    let bin = test_support::TempArtifact::new("pthread_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",
@@ -62,7 +65,7 @@ fn pthread_full_test() {
     assert!(ldso_path.exists(), "libldso.so not found");
 
     let src = fixtures.join("pthread_full_test.c");
-    let bin = fixtures.join("pthread_full_test");
+    let bin = test_support::TempArtifact::new("pthread_full_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE", "-pie",

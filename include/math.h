@@ -74,27 +74,7 @@ static __inline int __fpclassify(double __f)
     return FP_NORMAL;
 }
 
-static __inline int __fpclassifyl(long double __f)
-{
-#if defined(__aarch64__) || defined(__riscv)
-    // IEEE quad: sign(1) exponent(15) mantissa(112)
-    unsigned long long __hi, __lo;
-    __builtin_memcpy(&__lo, &__f, 8);
-    __builtin_memcpy(&__hi, (const char *)&__f + 8, 8);
-    int __e = (__hi >> 48) & 0x7fff;
-    unsigned long long __m = (__hi & 0x0000ffffffffffffULL) | __lo;
-    if (!__e) return __m ? FP_SUBNORMAL : FP_ZERO;
-    if (__e == 0x7fff) return __m ? FP_NAN : FP_INFINITE;
-    return FP_NORMAL;
-#else
-    union { long double __f; struct { unsigned long long __m; unsigned short __e; unsigned short __pad; } __i; } __u = { __f };
-    int __e = __u.__i.__e & 0x7fff;
-    unsigned long long __m = __u.__i.__m;
-    if (!__e) return __m ? FP_SUBNORMAL : FP_ZERO;
-    if (__e == 0x7fff) return (__m & 0x7fffffffffffffffULL) ? FP_NAN : FP_INFINITE;
-    return FP_NORMAL;
-#endif
-}
+int __fpclassifyl(long double);
 
 static __inline int __signbitf(float __f)
 {
@@ -177,6 +157,10 @@ void sincosl(long double, long double *, long double *);
 double nan(const char *);
 float nanf(const char *);
 long double nanl(const char *);
+int finite(double);
+int finitef(float);
+double significand(double);
+float significandf(float);
 double      asin(double);
 float       asinf(float);
 long double asinl(long double);

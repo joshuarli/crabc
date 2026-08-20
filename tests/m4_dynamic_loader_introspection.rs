@@ -1,0 +1,45 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
+use std::process::Command;
+
+#[test]
+fn dynamic_loader_introspection_reports_real_objects() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join("tests/fixtures/m4_dynamic_loader_introspection_test.c");
+    let binary = test_support::TempArtifact::new("crabc-m4-dynamic-loader-introspection");
+    let target = root.join("target/debug");
+    let ldso = target.join("libldso.so");
+
+    let status = Command::new("musl-gcc")
+        .args([
+            "-fPIE",
+            "-pie",
+            "-I",
+            root.join("include").to_str().unwrap(),
+            source.to_str().unwrap(),
+            "-Wl,--dynamic-linker",
+            ldso.to_str().unwrap(),
+            "-L",
+            target.to_str().unwrap(),
+            "-Wl,--allow-shlib-undefined",
+            "-lc",
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .status()
+        .expect("failed to compile dynamic-loader introspection fixture");
+    assert!(status.success(), "fixture compilation failed");
+
+    let output = Command::new(&binary)
+        .env("LD_LIBRARY_PATH", target)
+        .output()
+        .expect("failed to run dynamic-loader introspection fixture");
+    assert!(
+        output.status.success(),
+        "fixture exited with {:?}; stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"ok\n");
+}

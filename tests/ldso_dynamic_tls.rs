@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -7,8 +10,9 @@ fn ldso_initializes_dlopen_tls_for_existing_threads() {
     let include = manifest_dir.join("include");
     let target = manifest_dir.join("target/debug");
     let ldso = target.join("libldso.so");
-    let dso = target.join("libdynamic_tls.so");
-    let binary = fixtures.join("ldso_dynamic_tls_test");
+    let dso = test_support::TempArtifact::new("libdynamic_tls.so");
+    let temp_dir = dso.parent();
+    let binary = test_support::TempArtifact::new("ldso_dynamic_tls_test");
 
     let status = Command::new("musl-gcc")
         .args([
@@ -45,7 +49,7 @@ fn ldso_initializes_dlopen_tls_for_existing_threads() {
     assert!(status.success(), "dynamic TLS test executable compilation failed");
 
     let output = Command::new(&binary)
-        .env("LD_LIBRARY_PATH", target)
+        .env("LD_LIBRARY_PATH", format!("{}:{}", temp_dir.display(), target.display()))
         .output()
         .expect("failed to run dynamic TLS test executable");
     assert!(

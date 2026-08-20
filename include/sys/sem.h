@@ -7,6 +7,7 @@ extern "C" {
 
 #include <sys/ipc.h>
 #include <sys/types.h>
+#include <time.h>
 
 #define SEM_UNDO	0x1000
 #define GETPID		11

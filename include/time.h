@@ -27,6 +27,7 @@ extern "C" {
 #define CLOCK_TAI               11
 
 #define TIMER_ABSTIME 1
+#define TIME_UTC 1
 
 
 #ifndef __DEFINED_struct_timespec
@@ -89,6 +90,7 @@ int clock_getres(int, struct timespec *);
 int clock_gettime(int, struct timespec *);
 int clock_settime(int, const struct timespec *);
 int clock_nanosleep(int, int, const struct timespec *, struct timespec *);
+int timespec_get(struct timespec *, int);
 int clock_getcpuclockid(pid_t, clockid_t *);
 size_t strftime_l(char *, size_t, const char *, const struct tm *, locale_t);
 int timer_create(clockid_t, struct sigevent *, timer_t *);
@@ -98,6 +100,7 @@ int timer_gettime(timer_t, struct itimerspec *);
 int timer_settime(timer_t, int, const struct itimerspec *, struct itimerspec *);
 
 int gettimeofday(struct timeval *, void *);
+int stime(const time_t *);
 
 void tzset(void);
 extern int daylight;

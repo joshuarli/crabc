@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn net_functions_under_libc_so() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("net_test.c");
-    let bin = fixtures.join("net_test");
+    let bin = test_support::TempArtifact::new("net_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

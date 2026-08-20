@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -11,7 +14,7 @@ fn statvfs_under_libc_so() {
     assert!(manifest_dir.join("target/debug/libc.so").exists(), "libc.so not found");
 
     let src = fixtures.join("statvfs_test.c");
-    let bin = fixtures.join("statvfs_test");
+    let bin = test_support::TempArtifact::new("statvfs_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

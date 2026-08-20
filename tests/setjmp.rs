@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn setjmp_longjmp_under_libc_so() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("setjmp_test.c");
-    let bin = fixtures.join("setjmp_test");
+    let bin = test_support::TempArtifact::new("setjmp_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",
@@ -25,7 +28,7 @@ fn setjmp_longjmp_under_libc_so() {
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
-                        "-lc",
+            "-lc",
             "-o",
             bin.to_str().unwrap(),
         ])
@@ -44,5 +47,8 @@ fn setjmp_longjmp_under_libc_so() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "setjmp ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "setjmp aliases ok\n"
+    );
 }

@@ -1,10 +1,13 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
 fn loader_runs_tiny_pie() {
     let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let tiny_src = fixtures.join("tiny.c");
-    let tiny_bin = fixtures.join("tiny");
+    let tiny_bin = test_support::TempArtifact::new("tiny");
 
     let status = Command::new("musl-gcc")
         .args([

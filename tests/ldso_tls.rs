@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -5,7 +8,7 @@ fn ldso_sets_up_tls() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixtures = manifest_dir.join("tests/fixtures");
     let tlstest_src = fixtures.join("tlstest.c");
-    let tlstest_bin = fixtures.join("tlstest");
+    let tlstest_bin = test_support::TempArtifact::new("tlstest");
 
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
     assert!(ldso_path.exists(), "libldso.so not found at {}", ldso_path.display());

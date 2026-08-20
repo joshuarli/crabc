@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -10,7 +13,7 @@ fn dn_expand_under_libc_so() {
     assert!(ldso_path.exists(), "libldso.so not found");
 
     let src = fixtures.join("dn_expand_test.c");
-    let bin = fixtures.join("dn_expand_test");
+    let bin = test_support::TempArtifact::new("dn_expand_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

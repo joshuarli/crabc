@@ -9,6 +9,40 @@
 // every *l entry point below has a target-specific ABI-correct declaration.
 // ============================================================
 
+// musl keeps __fpclassifyl as a real ABI entry point.  crabc follows the
+// target C ABI: x86_64 is configured with binary64 long double, while
+// AArch64 and riscv64 pass IEEE binary128 in registers/stack slots described
+// by Rust's f128.  Classify the representation directly so subnormals and
+// non-canonical NaNs do not get narrowed through f64.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub extern "C" fn __fpclassifyl(x: f64) -> c_int {
+    let bits = x.to_bits();
+    let exponent = (bits >> 52) & 0x7ff;
+    if exponent == 0 {
+        if (bits << 1) != 0 { FP_SUBNORMAL } else { FP_ZERO }
+    } else if exponent == 0x7ff {
+        if (bits << 12) != 0 { FP_NAN } else { FP_INFINITE }
+    } else {
+        FP_NORMAL
+    }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[no_mangle]
+pub extern "C" fn __fpclassifyl(x: f128) -> c_int {
+    let bits = x.to_bits();
+    let exponent = (bits >> 112) & 0x7fff;
+    let fraction = bits & ((1u128 << 112) - 1);
+    if exponent == 0 {
+        if fraction != 0 { FP_SUBNORMAL } else { FP_ZERO }
+    } else if exponent == 0x7fff {
+        if fraction != 0 { FP_NAN } else { FP_INFINITE }
+    } else {
+        FP_NORMAL
+    }
+}
+
 macro_rules! compat_unary {
     ($double:ident, $float:ident, $double_impl:path, $float_impl:path) => {
         #[no_mangle]
@@ -34,6 +68,19 @@ macro_rules! compat_long_unary {
         pub extern "C" fn $long(x: f64) -> f64 { $implementation(x) }
         #[cfg(not(target_arch = "x86_64"))]
         #[no_mangle]
+        pub extern "C" fn $long(x: f128) -> f128 { $implementation(x as f64) as f128 }
+    };
+}
+
+macro_rules! compat_long_unary_weak {
+    ($long:ident, $implementation:path) => {
+        #[cfg(target_arch = "x86_64")]
+        #[no_mangle]
+        #[linkage = "weak"]
+        pub extern "C" fn $long(x: f64) -> f64 { $implementation(x) }
+        #[cfg(not(target_arch = "x86_64"))]
+        #[no_mangle]
+        #[linkage = "weak"]
         pub extern "C" fn $long(x: f128) -> f128 { $implementation(x as f64) as f128 }
     };
 }
@@ -223,8 +270,10 @@ compat_long_unary!(tanl, tan);
 compat_long_unary!(truncl, trunc);
 
 #[no_mangle]
+#[linkage = "weak"]
 pub extern "C" fn drem(x: f64, y: f64) -> f64 { libm::remainder(x, y) }
 #[no_mangle]
+#[linkage = "weak"]
 pub extern "C" fn dremf(x: f32, y: f32) -> f32 { libm::remainderf(x, y) }
 
 #[no_mangle]
@@ -233,10 +282,12 @@ pub extern "C" fn exp10(x: f64) -> f64 { libm::pow(10.0, x) }
 pub extern "C" fn exp10f(x: f32) -> f32 { libm::powf(10.0, x) }
 compat_long_unary!(exp10l, exp10);
 #[no_mangle]
+#[linkage = "weak"]
 pub extern "C" fn pow10(x: f64) -> f64 { exp10(x) }
 #[no_mangle]
+#[linkage = "weak"]
 pub extern "C" fn pow10f(x: f32) -> f32 { exp10f(x) }
-compat_long_unary!(pow10l, exp10);
+compat_long_unary_weak!(pow10l, exp10);
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
@@ -338,25 +389,49 @@ pub unsafe extern "C" fn lgammaf(x: f32) -> f32 {
     value
 }
 compat_long_unary!(lgammal, libm::lgamma);
-#[no_mangle]
-pub unsafe extern "C" fn lgamma_r(x: f64, sign: *mut c_int) -> f64 {
+
+unsafe fn lgamma_r_impl(x: f64, sign: *mut c_int) -> f64 {
     let (value, signum) = libm::lgamma_r(x);
     if !sign.is_null() { *sign = signum; }
     value
 }
-#[no_mangle]
-pub unsafe extern "C" fn lgammaf_r(x: f32, sign: *mut c_int) -> f32 {
+
+unsafe fn lgammaf_r_impl(x: f32, sign: *mut c_int) -> f32 {
     let (value, signum) = libm::lgammaf_r(x);
     if !sign.is_null() { *sign = signum; }
     value
 }
+
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn lgamma_r(x: f64, sign: *mut c_int) -> f64 {
+    lgamma_r_impl(x, sign)
+}
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn lgammaf_r(x: f32, sign: *mut c_int) -> f32 {
+    lgammaf_r_impl(x, sign)
+}
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub unsafe extern "C" fn lgammal_r(x: f64, sign: *mut c_int) -> f64 { lgamma_r(x, sign) }
+#[linkage = "weak"]
+pub unsafe extern "C" fn lgammal_r(x: f64, sign: *mut c_int) -> f64 { lgamma_r_impl(x, sign) }
 #[cfg(not(target_arch = "x86_64"))]
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn lgammal_r(x: f128, sign: *mut c_int) -> f128 {
-    lgamma_r(x as f64, sign) as f128
+    lgamma_r_impl(x as f64, sign) as f128
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn __lgammal_r(x: f64, sign: *mut c_int) -> f64 {
+    lgamma_r_impl(x, sign)
+}
+#[cfg(not(target_arch = "x86_64"))]
+#[no_mangle]
+pub unsafe extern "C" fn __lgammal_r(x: f128, sign: *mut c_int) -> f128 {
+    lgamma_r_impl(x as f64, sign) as f128
 }
 
 #[no_mangle]

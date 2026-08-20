@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(linkage)]
 #![allow(dead_code, deref_nullptr)]
 
 use core::ffi::{c_char, c_void};
@@ -116,6 +117,8 @@ const MAX_LOADED: usize = 16;
 const TCB_SIZE: usize = 256;
 const DSO_BASE_START: u64 = 0x200000000;
 const DSO_BASE_STRIDE: u64 = 0x100000000;
+const RTLD_DI_LINKMAP: i32 = 2;
+const STT_TLS: u8 = 6;
 
 // ============================================================
 // Loaded object tracking
@@ -172,6 +175,102 @@ const EMPTY_OBJ: LoadedObject = LoadedObject {
 // Safety: only accessed from single-threaded _start -> run_main
 static mut LOADED: [LoadedObject; MAX_LOADED] = [EMPTY_OBJ; MAX_LOADED];
 static mut LOADED_COUNT: usize = 0;
+
+// These layouts are the public ELF/link.h ABI.  The arrays are kept beside
+// LOADED so a dlinfo result remains stable even though dlopen handles retain
+// their historical LoadedObject representation for dlsym/dlclose.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LdsoDlPhdrInfo {
+    dlpi_addr: usize,
+    dlpi_name: *const u8,
+    dlpi_phdr: *const u8,
+    dlpi_phnum: u16,
+    dlpi_adds: u64,
+    dlpi_subs: u64,
+    dlpi_tls_modid: usize,
+    dlpi_tls_data: *mut u8,
+}
+
+#[repr(C)]
+pub struct LdsoDladdrResult {
+    fname: *const u8,
+    fbase: usize,
+    sname: *const u8,
+    saddr: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LdsoLinkMap {
+    l_addr: usize,
+    l_name: *mut u8,
+    l_ld: *mut u8,
+    l_next: *mut LdsoLinkMap,
+    l_prev: *mut LdsoLinkMap,
+}
+
+const EMPTY_LINK_MAP: LdsoLinkMap = LdsoLinkMap {
+    l_addr: 0,
+    l_name: core::ptr::null_mut(),
+    l_ld: core::ptr::null_mut(),
+    l_next: core::ptr::null_mut(),
+    l_prev: core::ptr::null_mut(),
+};
+
+static mut LINK_MAPS: [LdsoLinkMap; MAX_LOADED] = [EMPTY_LINK_MAP; MAX_LOADED];
+// musl's dl_phdr_info exposes process-wide load/unload counters.  This
+// loader keeps unload as a no-op, so only successful post-startup additions
+// advance the observable state.
+static mut DL_ADDS: u64 = 0;
+static mut DL_SUBS: u64 = 0;
+
+// musl exposes the loader's debugger rendezvous through `_dl_debug_addr`.
+// Its private `struct debug` has the same C layout as the public `struct
+// r_debug` in link.h: the debugger observes the current link-map head, the
+// breakpoint hook, the load/unload state, and the interpreter base.  Keep the
+// object in ldso, beside the authoritative LOADED/LINK_MAPS state, rather than
+// synthesizing a callback-only compatibility object in libc.
+const RT_CONSISTENT: i32 = 0;
+const RT_ADD: i32 = 1;
+const RT_DELETE: i32 = 2;
+
+#[repr(C)]
+pub struct LdsoDebug {
+    pub r_version: i32,
+    pub r_map: *mut LdsoLinkMap,
+    pub r_brk: usize,
+    pub r_state: i32,
+    pub r_ldbase: usize,
+}
+
+static mut LDSO_DEBUG: LdsoDebug = LdsoDebug {
+    r_version: 1,
+    r_map: core::ptr::null_mut(),
+    r_brk: 0,
+    r_state: RT_CONSISTENT,
+    r_ldbase: 0,
+};
+
+/// Pointer-valued object required by musl's loader/debugger ABI.
+///
+/// The pointer is relocated by the same self-relative relocation pass as the
+/// rest of ldso's data.  Its pointee is updated from LOADED/LINK_MAPS whenever
+/// the loader reaches a debugger-visible state transition.
+#[no_mangle]
+pub static mut _dl_debug_addr: *mut LdsoDebug = core::ptr::addr_of_mut!(LDSO_DEBUG);
+
+static mut LDSO_BASE: usize = 0;
+
+/// Debugger rendezvous hook from musl's loader ABI.
+///
+/// The default hook is deliberately inert, as in musl.  Debuggers replace or
+/// instrument the rendezvous through the `r_brk` address in `_dl_debug_addr`;
+/// ldso still calls this weak definition at each state transition so the hook
+/// is a real part of loader progress rather than an uncallable placeholder.
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn _dl_debug_state() {}
 
 static mut TLS_TOTAL_SIZE: usize = 0;
 // The logical end of placed TLS modules.  ``TLS_TOTAL_SIZE`` is deliberately
@@ -500,6 +599,16 @@ core::arch::global_asm!(
 // ============================================================
 // Entry point
 // ============================================================
+
+// Keep a named, default-visible raw-entry bridge for libc's `_dlstart` GOT
+// trampoline.  This is deliberately a naked tail branch: it preserves the
+// initial stack/register convention and must never be called as a C function.
+#[no_mangle]
+#[unsafe(naked)]
+#[cfg(all(target_arch = "aarch64", not(test)))]
+pub unsafe extern "C" fn __ldso_dlstart() -> ! {
+    core::arch::naked_asm!("b _start");
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn run_main(sp: usize, ldso_base: u64) -> ! {
@@ -1615,7 +1724,30 @@ unsafe fn resolve_symbol_with_size(name: *const u8, exclude: usize) -> (u64, usi
     if name_len == 0 {
         return (0, 0);
     }
+    if str_eq(name, name_len, b"__ldso_dlstart\0".as_ptr()) {
+        // The interpreter image is not part of LOADED: it is already running
+        // before the main executable and DT_NEEDED objects are registered.
+        // Resolve this libc GOT trampoline target explicitly to the named raw
+        // entry bridge rather than leaving its GLOB_DAT slot at zero.
+        #[cfg(all(not(test), target_arch = "aarch64"))]
+        return (__ldso_dlstart as *const () as usize as u64, 0);
+        #[cfg(not(all(not(test), target_arch = "aarch64")))]
+        return (0, 0);
+    }
     if str_eq(name, name_len, b"__tls_get_addr\0".as_ptr()) {
+        // Prefer libc's public ABI shim once it is loaded.  This makes normal
+        // GD-model relocations exercise the same registration bridge as a
+        // direct libc caller.  The loader's implementation remains the
+        // fallback for startup configurations that do not provide libc's
+        // exported symbol (and is deliberately skipped here to avoid picking
+        // the ldso self-image before libc).
+        let internal = __tls_get_addr as *const () as usize;
+        for i in 0..LOADED_COUNT {
+            let candidate = lookup_symbol_in_object(i, name, name_len);
+            if candidate != 0 && candidate as usize != internal {
+                return (candidate, 0);
+            }
+        }
         return ((__tls_get_addr as *const () as usize) as u64, 0);
     }
     if str_eq(name, name_len, b"__rc_create_thread_tls\0".as_ptr()) {
@@ -1916,7 +2048,7 @@ unsafe fn apply_rela_table(
                 } else {
                     resolve_symbol_module(obj_idx, r_sym_idx)
                 };
-                *slot = module as u64;
+                *slot = (module + 1) as u64;
             }
             #[cfg(target_arch = "riscv64")]
             R_RISCV_TLS_DTPREL64 => {
@@ -1944,7 +2076,7 @@ unsafe fn apply_rela_table(
                 } else {
                     resolve_symbol_module(obj_idx, r_sym_idx)
                 };
-                *slot = module as u64;
+                *slot = (module + 1) as u64;
             }
             R_X86_64_DTPOFF64 | R_AARCH64_TLS_DTPREL64 => {
                 let off = (tls_sym_offset(obj_idx, r_sym_idx) as i64 + r_addend) as u64;
@@ -1985,7 +2117,7 @@ unsafe fn apply_rela_table(
                     die(94, b"tlsdesc", offset);
                 }
                 (*desc)[0] = __tlsdesc_dynamic as *const () as u64;
-                (*desc)[1] = ((module << TLSDESC_MODULE_SHIFT) | offset) as u64;
+                (*desc)[1] = (((module + 1) << TLSDESC_MODULE_SHIFT) | offset) as u64;
                 continue;
             }
             (*desc)[0] = __tlsdesc_static as *const () as u64;
@@ -2191,13 +2323,23 @@ unsafe fn set_dlerror(msg: &[u8]) {
 }
 
 const DL_GLOBAL_SENTINEL: *mut u8 = 1usize as *mut u8;
+// This handle is never exposed through dlfcn.h.  libc uses it only through
+// the established ldso dlsym callback to obtain typed internal operations
+// without adding more public registration symbols to libc.so.
+const DL_PRIVATE_SENTINEL: *mut u8 = 2usize as *mut u8;
 
 type LdsoDlopenFn = unsafe extern "C" fn(*const u8, i32) -> *mut u8;
 type LdsoDlsymFn = unsafe extern "C" fn(*mut u8, *const u8) -> *mut u8;
 type LdsoDlcloseFn = unsafe extern "C" fn(*mut u8) -> i32;
 type LdsoDlerrorFn = unsafe extern "C" fn() -> *const u8;
+pub type LdsoIterateCallback = unsafe extern "C" fn(*mut LdsoDlPhdrInfo, usize, *mut u8) -> i32;
 
 unsafe fn register_dlopen_callbacks() {
+    let debug_addr = resolve_symbol(b"_dl_debug_addr\0".as_ptr());
+    if debug_addr != 0 {
+        core::ptr::write(debug_addr as *mut *mut u8, _dl_debug_addr as *mut u8);
+    }
+
     let reg_open = resolve_symbol(b"__ldso_register_dlopen\0".as_ptr());
     if reg_open != 0 {
         let f: extern "C" fn(LdsoDlopenFn) = core::mem::transmute(reg_open);
@@ -2218,6 +2360,7 @@ unsafe fn register_dlopen_callbacks() {
         let f: extern "C" fn(LdsoDlerrorFn) = core::mem::transmute(reg_error);
         f(__ldso_dlerror as LdsoDlerrorFn);
     }
+
 }
 
 #[no_mangle]
@@ -2226,9 +2369,11 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     if filename.is_null() {
         return DL_GLOBAL_SENTINEL;
     }
+    publish_debug_state(RT_ADD);
     let name_len = str_len(filename);
     if let Some(idx) = loaded_object_by_name(filename, name_len) {
         LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
+        publish_debug_state(RT_CONSISTENT);
         return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
     }
     let ld = if LD_LIBRARY_PATH.is_null() {
@@ -2239,12 +2384,14 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     let fd = find_library_fd(filename, name_len, ld);
     if fd < 0 {
         set_dlerror(b"dlopen: cannot open file\0");
+        publish_debug_state(RT_CONSISTENT);
         return core::ptr::null_mut();
     }
     if let Some(identity) = file_identity(fd) {
         if let Some(idx) = loaded_object_by_identity(identity) {
             sys_close(fd);
             LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
+            publish_debug_state(RT_CONSISTENT);
             return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
         }
     }
@@ -2254,6 +2401,7 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
         None => {
             sys_close(fd);
             set_dlerror(b"dlopen: failed to load\0");
+            publish_debug_state(RT_CONSISTENT);
             return core::ptr::null_mut();
         }
     };
@@ -2261,6 +2409,7 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     let idx = LOADED_COUNT - 1;
     set_loaded_name(idx, filename, name_len);
     LOADED[idx].global = (flags & RTLD_GLOBAL) != 0;
+    DL_ADDS = DL_ADDS.wrapping_add(1);
     // TLS descriptors need the final module offset, while the TLS image can
     // contain ordinary relocations. Reserve the layout, relocate the image,
     // then copy that relocated image into the current thread's TLS block.
@@ -2270,6 +2419,7 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
         initialize_new_module_tls(old_total, old_module_count);
     }
     run_constructors_for(idx);
+    publish_debug_state(RT_CONSISTENT);
     &mut LOADED[idx] as *mut LoadedObject as *mut u8
 }
 
@@ -2281,6 +2431,23 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
         return core::ptr::null_mut();
     }
     let name_len = str_len(symbol);
+    if handle == DL_PRIVATE_SENTINEL {
+        let private = if str_eq(symbol, name_len, b"__crabc_ldso_iterate_phdr\0".as_ptr()) {
+            __ldso_dl_iterate_phdr as *mut u8
+        } else if str_eq(symbol, name_len, b"__crabc_ldso_dladdr\0".as_ptr()) {
+            __ldso_dladdr as *mut u8
+        } else if str_eq(symbol, name_len, b"__crabc_ldso_dlinfo\0".as_ptr()) {
+            __ldso_dlinfo as *mut u8
+        } else if str_eq(symbol, name_len, b"__crabc_ldso_tls_get_addr\0".as_ptr()) {
+            __ldso_tls_get_addr as *mut u8
+        } else {
+            core::ptr::null_mut()
+        };
+        if private.is_null() {
+            set_dlerror(b"dlsym: symbol not found\0");
+        }
+        return private;
+    }
     let mut result: u64 = 0;
     if handle == DL_GLOBAL_SENTINEL {
         for i in 0..LOADED_COUNT {
@@ -2327,6 +2494,220 @@ pub unsafe extern "C" fn __ldso_dlerror() -> *const u8 {
     } else {
         core::ptr::null()
     }
+}
+
+unsafe fn loaded_object_phdrs(idx: usize) -> Option<(*const u8, usize)> {
+    if idx >= LOADED_COUNT {
+        return None;
+    }
+    let base = LOADED[idx].base as usize;
+    let ehdr = base as *const u8;
+    if *ehdr != 0x7f || *ehdr.add(1) != b'E' || *ehdr.add(2) != b'L' || *ehdr.add(3) != b'F' {
+        return None;
+    }
+    let phoff = u64::from_le_bytes(core::ptr::read_unaligned(ehdr.add(32) as *const [u8; 8])) as usize;
+    let phentsize = u16::from_le_bytes(core::ptr::read_unaligned(ehdr.add(54) as *const [u8; 2])) as usize;
+    let phnum = u16::from_le_bytes(core::ptr::read_unaligned(ehdr.add(56) as *const [u8; 2])) as usize;
+    if phentsize != PHDR_SIZE || phnum == 0 {
+        return None;
+    }
+    Some((ehdr.add(phoff), phnum))
+}
+
+unsafe fn loaded_object_contains(idx: usize, address: usize) -> bool {
+    let Some((phdr, phnum)) = loaded_object_phdrs(idx) else {
+        return false;
+    };
+    let base = LOADED[idx].base as usize;
+    for i in 0..phnum {
+        let ph = phdr.add(i * PHDR_SIZE);
+        let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
+        if p_type != PT_LOAD {
+            continue;
+        }
+        let vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8])) as usize;
+        let memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8])) as usize;
+        let start = base.wrapping_add(vaddr);
+        let end = start.wrapping_add(memsz);
+        if address >= start && address < end {
+            return true;
+        }
+    }
+    false
+}
+
+unsafe fn loaded_object_tls_data(idx: usize) -> *mut u8 {
+    if idx >= LOADED_COUNT || LOADED[idx].tls_memsz == 0 {
+        return core::ptr::null_mut();
+    }
+    let base = read_tp().wrapping_sub(tls_var_area_offset_from_tp());
+    base.wrapping_add(TLS_LAYOUT_OFFSET[idx]) as *mut u8
+}
+
+/// Invoke a public dl_iterate_phdr callback over the loader's stable snapshot.
+#[no_mangle]
+pub unsafe extern "C" fn __ldso_dl_iterate_phdr(
+    callback: LdsoIterateCallback,
+    data: *mut u8,
+) -> i32 {
+    for i in 0..LOADED_COUNT {
+        let Some((phdr, phnum)) = loaded_object_phdrs(i) else {
+            continue;
+        };
+        let info = LdsoDlPhdrInfo {
+            dlpi_addr: LOADED[i].base as usize,
+            dlpi_name: LOADED[i].name.as_ptr(),
+            dlpi_phdr: phdr,
+            dlpi_phnum: phnum as u16,
+            dlpi_adds: DL_ADDS,
+            dlpi_subs: DL_SUBS,
+            dlpi_tls_modid: if LOADED[i].tls_memsz == 0 { 0 } else { i + 1 },
+            dlpi_tls_data: loaded_object_tls_data(i),
+        };
+        let mut info = info;
+        let result = callback(
+            core::ptr::addr_of_mut!(info),
+            core::mem::size_of::<LdsoDlPhdrInfo>(),
+            data,
+        );
+        if result != 0 {
+            return result;
+        }
+    }
+    0
+}
+
+/// Resolve an address to its containing loaded object and nearest dynamic
+/// symbol.  The dynamic symbol table is the same table used for relocation,
+/// so addresses reported here are post-relocation addresses.
+#[no_mangle]
+pub unsafe extern "C" fn __ldso_dladdr(
+    address: *const u8,
+    result: *mut LdsoDladdrResult,
+) -> i32 {
+    if address.is_null() || result.is_null() {
+        return 0;
+    }
+    (*result).fname = core::ptr::null();
+    (*result).fbase = 0;
+    (*result).sname = core::ptr::null();
+    (*result).saddr = 0;
+
+    let address = address as usize;
+    for i in 0..LOADED_COUNT {
+        if !loaded_object_contains(i, address) {
+            continue;
+        }
+        let obj = &LOADED[i];
+        (*result).fname = obj.name.as_ptr();
+        (*result).fbase = obj.base as usize;
+
+        if obj.symtab.is_null() || obj.strtab.is_null() {
+            return 1;
+        }
+
+        let mut best_addr = 0usize;
+        let mut best_name = core::ptr::null();
+        for sym_idx in 1..obj.sym_count {
+            let sym = obj.symtab.add(sym_idx * SYMTAB_ENT_SIZE);
+            let name_off = u32::from_le_bytes(core::ptr::read_unaligned(sym as *const [u8; 4])) as usize;
+            let info = *sym.add(4);
+            let shndx = u16::from_le_bytes(core::ptr::read_unaligned(sym.add(6) as *const [u8; 2]));
+            let value = u64::from_le_bytes(core::ptr::read_unaligned(sym.add(8) as *const [u8; 8])) as usize;
+            if shndx == 0 || value == 0 || (info & 0x0f) == STT_TLS || name_off >= obj.strsz {
+                continue;
+            }
+            let symbol_addr = (obj.base as usize).wrapping_add(value);
+            if symbol_addr <= address && symbol_addr >= best_addr {
+                best_addr = symbol_addr;
+                best_name = obj.strtab.add(name_off);
+            }
+        }
+        (*result).sname = best_name;
+        (*result).saddr = best_addr;
+        return 1;
+    }
+    0
+}
+
+unsafe fn loaded_handle_index(handle: *mut u8) -> Option<usize> {
+    if handle.is_null() || handle == DL_GLOBAL_SENTINEL {
+        return None;
+    }
+    let first = core::ptr::addr_of!(LOADED) as usize;
+    let handle = handle as usize;
+    let span = core::mem::size_of::<LoadedObject>() * LOADED_COUNT;
+    if handle < first || handle >= first.saturating_add(span) {
+        return None;
+    }
+    let offset = handle - first;
+    let stride = core::mem::size_of::<LoadedObject>();
+    if stride == 0 || offset % stride != 0 {
+        return None;
+    }
+    let idx = offset / stride;
+    if idx < LOADED_COUNT { Some(idx) } else { None }
+}
+
+unsafe fn refresh_link_maps() {
+    for i in 0..LOADED_COUNT {
+        LINK_MAPS[i] = LdsoLinkMap {
+            l_addr: LOADED[i].base as usize,
+            l_name: LOADED[i].name.as_mut_ptr(),
+            l_ld: LOADED[i].dyn_addr as *mut u8,
+            l_next: core::ptr::null_mut(),
+            l_prev: core::ptr::null_mut(),
+        };
+    }
+    for i in 0..LOADED_COUNT {
+        if i > 0 {
+            LINK_MAPS[i].l_prev = core::ptr::addr_of_mut!(LINK_MAPS[i - 1]);
+        }
+        if i + 1 < LOADED_COUNT {
+            LINK_MAPS[i].l_next = core::ptr::addr_of_mut!(LINK_MAPS[i + 1]);
+        }
+    }
+}
+
+/// Publish the loader's current rendezvous state and notify debuggers.
+///
+/// `LINK_MAPS` is rebuilt from `LOADED` before the callback observes the
+/// state, so `r_map` and every next/prev link describe the same snapshot as
+/// crabc's dl* introspection APIs.  The initial CONSISTENT notification is
+/// emitted only after startup relocation/TLS/constructors; runtime additions
+/// bracket the actual dlopen mutation with RT_ADD and RT_CONSISTENT.
+unsafe fn publish_debug_state(state: i32) {
+    refresh_link_maps();
+    let debug = core::ptr::addr_of_mut!(LDSO_DEBUG);
+    (*debug).r_version = 1;
+    (*debug).r_map = if LOADED_COUNT == 0 {
+        core::ptr::null_mut()
+    } else {
+        core::ptr::addr_of_mut!(LINK_MAPS[0])
+    };
+    (*debug).r_brk = _dl_debug_state as *const () as usize;
+    (*debug).r_state = state;
+    (*debug).r_ldbase = LDSO_BASE;
+    _dl_debug_state();
+}
+
+/// Implement RTLD_DI_LINKMAP for handles returned by the existing dlopen
+/// bridge.  Unsupported requests and invalid handles use musl's -1 result.
+#[no_mangle]
+pub unsafe extern "C" fn __ldso_dlinfo(
+    handle: *mut u8,
+    request: i32,
+    arg: *mut u8,
+) -> i32 {
+    if request != RTLD_DI_LINKMAP || arg.is_null() {
+        return -1;
+    }
+    let Some(idx) = loaded_handle_index(handle) else {
+        return -1;
+    };
+    refresh_link_maps();
+    *(arg as *mut *mut LdsoLinkMap) = core::ptr::addr_of_mut!(LINK_MAPS[idx]);
+    0
 }
 
 unsafe fn compute_tls_layout() {
@@ -2466,10 +2847,45 @@ pub struct TlsIndex {
     ti_offset: usize,
 }
 
+/// Bridge the public musl TLS index ABI to the loader's TLS state.  The
+/// pointed-to index uses the standard one-based module IDs; the internal
+/// resolver performs the checked conversion to its zero-based layout arrays.
+unsafe extern "C" fn __ldso_tls_get_addr(ti: *const u8) -> *mut u8 {
+    if ti.is_null() {
+        return core::ptr::null_mut();
+    }
+    let public = ti as *const usize;
+    let module = core::ptr::read_unaligned(public);
+    if module == 0 || module > LOADED_COUNT {
+        return core::ptr::null_mut();
+    }
+    let index = TlsIndex {
+        ti_module: module,
+        ti_offset: core::ptr::read_unaligned(public.add(1)),
+    };
+    __tls_get_addr(&index)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut u8 {
-    let module = (*ti).ti_module;
+    if ti.is_null() {
+        return core::ptr::null_mut();
+    }
+    // The ELF ABI reserves module zero and numbers TLS modules from one. The
+    // layout arrays remain indexed by the corresponding zero-based loaded
+    // object, so convert only after validating the public module number.
+    let module_id = (*ti).ti_module;
     let offset = (*ti).ti_offset;
+    if module_id == 0 || module_id > TLS_MODULE_COUNT {
+        return core::ptr::null_mut();
+    }
+    let module = module_id - 1;
+    // A module without PT_TLS has no addressable TLS block.  Do not impose a
+    // byte-range check on `ti_offset`: the ABI passes symbol/addend offsets,
+    // and the allocated image may include alignment padding beyond p_memsz.
+    if TLS_MEMSZ[module] == 0 {
+        return core::ptr::null_mut();
+    }
     let fs_base = read_tp();
     let tcb = (fs_base as isize + tls_tcb_offset_from_tp()) as *mut u8;
     let thread_gen = core::ptr::read_unaligned((tcb as *const u64).add(1));
@@ -2517,6 +2933,7 @@ pub unsafe extern "C" fn __rc_tls_base_offset() -> usize {
 }
 
 unsafe fn register_self(ldso_base: u64) {
+    LDSO_BASE = ldso_base as usize;
     let ehdr = ldso_base as *const u8;
     if *ehdr != 0x7f || *ehdr.add(1) != b'E' {
         return;
@@ -2910,6 +3327,12 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         name: [0; 256],
     };
     LOADED_COUNT = 1;
+    // dladdr/dl_iterate_phdr report the invocation path for the main object,
+    // matching the name exposed by musl rather than an empty DT_NEEDED name.
+    let argv0 = *((sp + 8) as *const u64) as *const u8;
+    if !argv0.is_null() {
+        set_loaded_name(0, argv0, str_len(argv0));
+    }
     register_self(ldso_base);
 
     // 5. Load each DT_NEEDED DSO
@@ -2977,6 +3400,11 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     }
 
     run_constructors();
+
+    // Publish the complete post-relocation object graph.  This mirrors musl's
+    // initial RT_CONSISTENT rendezvous and leaves `_dl_debug_addr` pointing at
+    // the same map snapshot that runtime dl* queries use.
+    publish_debug_state(RT_CONSISTENT);
 
     let phdr_addr = exec_base + e_phoff;
     build_and_jump(exec_base + e_entry, phdr_addr, e_phnum, sp)

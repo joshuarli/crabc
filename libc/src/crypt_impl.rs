@@ -856,6 +856,7 @@ pub unsafe extern "C" fn crypt(key: *const c_char, setting: *const c_char) -> *m
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn crypt_r(key: *const c_char, setting: *const c_char, data: *mut crate::c_void) -> *mut c_char {
     __crypt_r(key, setting, data)
 }

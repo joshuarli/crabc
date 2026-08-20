@@ -2201,6 +2201,205 @@ Now close remaining isolated/advanced API surface.
 
 No fake stubs.
 
+### Progress — 2026-08-20 UTC
+
+M4 is complete. Every expected AArch64 public dynamic symbol now has the
+required name, kind, binding, and visibility, and the additions remain backed
+by focused runtime fixtures rather than link-only declarations. The final
+dynamic-symbol inventory is:
+
+```text
+expected public exports: 1,647
+crabc exports:           1,668
+missing:                     0
+unexpected (baselined):     21
+ELF metadata mismatches:     0
+```
+
+The completed first tranche covers locale/locale-aware ctype and wide-string
+entry points, existing math ABI helpers, `*at` filesystem/process calls,
+vector/file/pipe I/O, filesystem path operations, unlocked and ISO99 stdio
+entry points, C11 threads, wide-character operations, string/memory
+compatibility operations, scalar bit/math helpers, historical `__xstat` and
+`__strto*` entry points, terminal control, VM operations, polling/event
+descriptors, select-family calls, integer/NaN utilities, C11 UTF-16/UTF-32
+state conversions, GNU stdio extensions, and legacy priority/signal helpers.
+The second tranche adds kernel random sources, timer/signal descriptors,
+`timespec_get`, scheduling and CPU-affinity calls, Linux extended attributes,
+and directory streams. The additions use the existing implementation or raw
+Linux syscall path where appropriate, preserve the C errno versus direct-error
+boundary, and have C fixtures run through `libldso.so`. The polling fixture
+also locks in AArch64's naturally aligned `epoll_event` ABI, distinct from
+x86_64's packed layout; the directory fixture caught and corrected the public
+AArch64 `O_DIRECTORY` constant before it could mask that slice.
+
+The current tranche also closes POSIX spawn attribute/action accessors and
+administrative kernel interfaces. Spawn file actions are heap-backed and are
+applied in their declared order by the child path; their C fixture verifies
+the direct-error accessor contract. Administrative wrappers retain kernel
+authorization errors rather than manufacturing privileged success.
+
+Advanced socket messaging is now covered by accept/peer/socket-option calls,
+scatter-gather and batched messages, SCM_RIGHTS control data, and `sockatmark`.
+The fixture treats the kernel's urgent-mark position as intentionally
+non-deterministic for an OOB-only stream (confirmed against musl), while still
+requiring a successful ioctl and a received urgent byte.
+
+The newest verified cohort implements C99's basic complex primitives (with
+binary128 long-double handling), host/process identity and resource calls,
+filesystem timestamp/statfs operations, signal-set and signal-disposition
+helpers, Linux system-memory/load/CPU information, and program utilities such
+as secure environment lookup, path/temporary-file helpers, allocation
+compatibility, byte/word stream helpers, and tty password input. Every added
+boundary has a Docker AArch64 fixture; the symbol report again has zero metadata
+mismatches.
+
+`getopt` now supplies its musl-facing parser state, reset spellings, weak
+POSIX entry point, and startup-derived program-name globals; its fixture covers
+clustered and required arguments, reset semantics, error reporting state, and
+the executable-name contract. A separate ownership/identity slice adds real
+`chown`/`fchown`/`fchownat`/`lchown`, `chroot`, and filesystem UID/GID wrappers,
+testing both kernel error propagation and safe non-mutating identity queries.
+
+Complex transcendentals now cover the C99 double, float, and ABI-correct
+long-double entry points, including branch-sensitive square root, logarithm,
+trigonometric, hyperbolic, and inverse forms. POSIX message queues use the
+native Linux queue syscalls with POSIX-name translation, attributes, timed
+operations, notification, and safe cleanup coverage. Process-control work now
+covers process groups, `waitid` state transitions, scheduler queries and
+authorization errors, and pthread CPU-clock IDs. Resolver compatibility
+globals (`in6addr_*`, `h_errno`) and their error strings, plus C11 quick-exit
+handlers, have their own runtime fixtures. That checkpoint measured 1,378
+candidate exports, 290 missing expected symbols, and zero metadata mismatches.
+
+The next integrated tranche adds actual filesystem-aware `pathconf` and
+`fpathconf`, POSIX `confstr` truncation semantics, historical `ulimit`, raw
+program-break operations, bounded multibyte/wide-character conversions and
+wide tokenization, plus advanced vectored and directory I/O (`preadv2`,
+`pwritev2`, `getdents`, and the POSIX direct-error wrappers). Its fixtures
+cover both resumption/error behavior and real filesystem state. The current
+ratchet measures 1,397 candidate exports, 271 missing expected symbols, and
+zero metadata mismatches.
+
+The latest tranche extends the terminal boundary with window-size, speed, and
+real pseudo-terminal allocation/session helpers; supplies GNU long-option
+parsing; and closes the glibc ctype/assertion ABI surface, legacy diagnostics,
+effective-ID filesystem checks, ISO99 scanner aliases, directory comparators,
+and Linux's musl-compatible gettext fallback. These paths have focused C
+fixtures through `libldso.so`, including child-process exit/error output,
+terminal I/O, parser ambiguity and permutation, assertion diagnostics, and
+gettext binding/query state. The current AArch64 ratchet is 1,442 candidate
+exports, 226 missing expected symbols, and zero ELF metadata mismatches.
+
+The newest additions cover DNS packet wire-format parsing and compression
+validation, Linux resource/capability syscalls, generic `ioctl`, supplementary
+group validation, legacy line/wide-stdio helpers, and POSIX process timers.
+Their fixtures run against `libldso.so` and exercise malformed DNS messages,
+capability version errors, resource-copy semantics, `ioctl` requests, and
+timer lifecycle/error boundaries. The current AArch64 ratchet is 1,471
+candidate exports, 197 missing expected symbols, and zero ELF metadata
+mismatches.
+
+The newest cohort adds full exec-family PATH and shell-fallback behavior,
+syslog transport and mask state, the protected stdio refill entry point, and
+wide standard-output wrappers. The loader fixtures execute child replacement
+processes, verify errno selection and `fexecve`, check syslog's musl-formatted
+`LOG_PERROR` output, and cover wide/byte stream boundaries. The current
+AArch64 ratchet is 1,485 candidate exports, 183 missing expected symbols, and
+zero ELF metadata mismatches.
+
+The current checkpoint also supplies the weak locale-aware `strftime_l` ABI
+entry point. crabc presently implements the C/POSIX time locale, so the entry
+point intentionally delegates to the already-tested bounded `strftime`
+implementation while preserving its format, calendar, and output-size
+contract. Its loader fixture exercises the public spelling directly. The
+current AArch64 ratchet is 1,486 candidate exports, 182 missing expected
+symbols, and zero ELF metadata mismatches.
+
+The latest network and terminal tranche adds netlink-backed interface-name
+enumeration and ioctl point lookups, strict Ethernet text conversion plus real
+`/etc/ethers` lookup behavior, and musl-style pseudo-terminal name resolution
+that verifies the procfs target's device identity. Each boundary has a loader
+fixture covering a real success path, lifecycle/ownership where applicable,
+and a deterministic invalid-input or kernel-error path. The current AArch64
+ratchet is 1,498 candidate exports, 170 missing expected symbols, and zero ELF
+metadata mismatches.
+
+The current database-cursor slice adds `getusershell`, `setusershell`, and
+`endusershell` with the real `/etc/shells` source, including rewind and
+close/reopen behavior. The loader fixture verifies the same first entry across
+those state transitions. The current AArch64 ratchet is 1,501 candidate
+exports, 167 missing expected symbols, and zero ELF metadata mismatches.
+
+The latest real-state utilities add `tempnam` via an exclusive-create/unlink
+name reservation and `getifaddrs`/`freeifaddrs` via two-pass rtnetlink dumps.
+The latter provides owned AF_PACKET, IPv4, and IPv6 records with address,
+netmask, broadcast/destination, flag, and interface-name fields. Loader tests
+cover temporary-name ownership, link-list traversal, kernel-family layouts,
+and the null-argument error contract. The current AArch64 ratchet is 1,504
+candidate exports, 164 missing expected symbols, and zero ELF metadata
+mismatches.
+
+The latest behavioral cohort completes callback-backed and stateful interfaces
+without hiding their real effects. `fopencookie` now preserves musl's callback
+buffering, read-ahead, seek, close, and error contract; `open_wmemstream`
+publishes an owned, NUL-terminated wide-character buffer after flush/close;
+and `cuserid` derives its bounded result from the effective UID's passwd
+record. Filesystem traversal now implements `GLOB_TILDE`/`GLOB_TILDE_CHECK`
+against HOME and the passwd database, along with `FTW_CHDIR` restoration even
+when callbacks change directories or abort. The passwd and group databases
+now provide real lookup, reentrant, enumeration, stream, and membership APIs
+from `/etc/passwd` and `/etc/group`; `initgroups` is exercised only in a child
+so the harness credentials remain intact. Finally, the Linux administrative
+cohort provides raw, errno-preserving wrappers for accounting, module, log,
+mount, quota, reboot, swap, and terminal-hangup syscalls, using safe invalid
+probes and an isolated child where required. Focused Docker loader fixtures
+pass together, and the current AArch64 ratchet is 1,546 candidate exports,
+122 missing expected symbols, and zero ELF metadata mismatches.
+
+The next stateful cohort adds real shadow and utmp/utmpx database behavior,
+effective-login lookup, password-database advisory locking, native file-handle
+and ptrace boundaries, and the nonportable pthread attribute/name/join APIs.
+It also completes the legacy file-backed hosts, networks, protocols, and
+services interfaces (including their reentrant forms), the Linux clock
+administration syscalls, timed SysV semaphore operation, and POSIX AIO. AIO
+uses immediate completion backed by the actual positional/current-offset I/O
+syscalls, so each `aiocb` still exposes a real completion/error/return
+lifecycle rather than fabricated success. The focused loader suite verifies
+database cursor/ownership behavior, lock visibility across a child process,
+kernel error order under missing clock privileges, AIO operation failures and
+list semantics, and the required weak compatibility aliases. At this
+checkpoint the AArch64 inventory is 1,643 candidate exports, 25 missing
+expected symbols, and zero ELF metadata mismatches.
+
+Resolver closure now supplies the process resolver state, `/etc/resolv.conf`
+nameserver discovery, bounded DNS query encoding/UDP transport/response
+handling, `getaddrinfo`/`getnameinfo`, and DNS name compression. Numeric and
+file-backed hosts/services cases have Docker loader evidence without relying
+on external network reachability. The historical `ecvt`, `fcvt`, and `gcvt`
+interfaces share their required static-result ownership and preserve musl's
+precision limits, rounding, sign, decimal-point, and special-value behavior.
+
+M4 closure adds the remaining formatting/date, clone, startup, debugger
+rendezvous, public TLS, and init/fini ABI surfaces. `__dls2b` and `__dls3`
+install only the bounded libc process state they own; ELF mapping, relocation,
+TLS allocation, constructors, and the final entry transfer remain ldso's
+responsibility. The debugger view is ldso's real `r_debug`/link-map state,
+published at initial and runtime rendezvous transitions. The public
+`__tls_get_addr` follows the one-based ELF module-ID ABI and delegates to the
+loader-owned TLS layout. `_dlstart` is an AArch64 raw-stack trampoline rather
+than a callable C stub, while `_init` and `_fini` retain musl's weak dummy
+ABI without CRT-generated strong replacements.
+
+The final Docker report is 1,647 expected symbols, 1,668 candidate symbols,
+zero missing names, and zero metadata mismatches. Its 21 unexpected names are
+the pre-existing ratchet baseline; `./scripts/dev.sh compat` reports no new
+unexpected exports or ABI regressions. Focused Docker coverage passes for
+`getdate`, legacy formatting, clone, setjmp aliases, loader startup/debugger
+state, loader introspection, public TLS resolution, weak init/fini, and real
+loader startup. This completes M4's symbol-surface gate without representing
+unimplemented behavior as a successful call.
+
 ## Milestone 5 — ABI + libc-test closure
 
 Require:

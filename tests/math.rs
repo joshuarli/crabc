@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn math_functions_under_libc_so() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("math_test.c");
-    let bin = fixtures.join("math_test");
+    let bin = test_support::TempArtifact::new("math_test");
     let mut args = vec![
         "-fPIE".to_string(),
         "-pie".to_string(),

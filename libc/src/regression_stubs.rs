@@ -1,9 +1,45 @@
 // Stubs and minimal implementations for symbols required by libc-test
 // regression cases that currently fail to link.
 
+// Keep the diagnostic and termination sequence byte-for-byte compatible with
+// musl's src/exit/assert.c.  In particular, fprintf writes to stderr before
+// abort raises SIGABRT; callers rely on the child being terminated after the
+// complete assertion line has been emitted.
+#[no_mangle]
+pub unsafe extern "C" fn __assert_fail(
+    expr: *const c_char,
+    file: *const c_char,
+    line: c_int,
+    func: *const c_char,
+) -> ! {
+    let format = b"Assertion failed: %s (%s: %s: %d)\n\0";
+    let _ = fprintf(
+        stderr,
+        format.as_ptr() as *const c_char,
+        expr,
+        file,
+        func,
+        line,
+    );
+    // crabc's current stderr stream is backed by a buffer; musl configures
+    // stderr unbuffered, so flush explicitly to preserve the observable
+    // diagnostic-before-abort guarantee.
+    let _ = fflush(stderr);
+    abort()
+}
+
+// Linux's signal namespace is fixed by this libc's _NSIG == 65 ABI.  Keep
+// this as a function export (rather than only a header constant), matching
+// musl's runtime SIGRTMAX macro and allowing existing binaries to resolve it.
+#[no_mangle]
+pub unsafe extern "C" fn __libc_current_sigrtmax() -> c_int {
+    _NSIG - 1
+}
+
 const _SC_PAGE_SIZE: c_int = 30;
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn mmap(
     addr: *mut c_void,
     len: usize,
@@ -24,6 +60,7 @@ pub unsafe extern "C" fn mmap(
 }
 
 #[no_mangle]
+#[linkage = "weak"]
 pub unsafe extern "C" fn munmap(addr: *mut c_void, len: usize) -> c_int {
     crate::syscall(SYS_MUNMAP, addr as c_long, len as c_long, 0, 0, 0, 0) as c_int
 }
@@ -37,6 +74,204 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> c_long {
             -1
         }
     }
+}
+
+// ============================================================
+// POSIX path/configuration interfaces
+// ============================================================
+
+// Linux exposes the filesystem-dependent pathconf values through statfs(2).
+// Keep this private layout local instead of depending on a public statfs
+// header: the kernel ABI is 64-bit on all targets supported by this crate.
+#[repr(C)]
+struct M4PathStatfs {
+    f_type: c_ulong,
+    f_bsize: c_ulong,
+    f_blocks: u64,
+    f_bfree: u64,
+    f_bavail: u64,
+    f_files: u64,
+    f_ffree: u64,
+    f_fsid: [c_int; 2],
+    f_namelen: c_ulong,
+    f_frsize: c_ulong,
+    f_flags: c_ulong,
+    f_spare: [c_ulong; 4],
+}
+
+const M4_PC_LINK_MAX: c_int = 0;
+const M4_PC_MAX_CANON: c_int = 1;
+const M4_PC_MAX_INPUT: c_int = 2;
+const M4_PC_NAME_MAX: c_int = 3;
+const M4_PC_PATH_MAX: c_int = 4;
+const M4_PC_PIPE_BUF: c_int = 5;
+const M4_PC_CHOWN_RESTRICTED: c_int = 6;
+const M4_PC_NO_TRUNC: c_int = 7;
+const M4_PC_VDISABLE: c_int = 8;
+const M4_PC_SYNC_IO: c_int = 9;
+const M4_PC_ASYNC_IO: c_int = 10;
+const M4_PC_PRIO_IO: c_int = 11;
+const M4_PC_SOCK_MAXBUF: c_int = 12;
+const M4_PC_FILESIZEBITS: c_int = 13;
+const M4_PC_REC_INCR_XFER_SIZE: c_int = 14;
+const M4_PC_REC_MAX_XFER_SIZE: c_int = 15;
+const M4_PC_REC_MIN_XFER_SIZE: c_int = 16;
+const M4_PC_REC_XFER_ALIGN: c_int = 17;
+const M4_PC_ALLOC_SIZE_MIN: c_int = 18;
+const M4_PC_SYMLINK_MAX: c_int = 19;
+const M4_PC_2_SYMLINKS: c_int = 20;
+
+#[inline]
+fn m4_pathconf_name_valid(name: c_int) -> bool {
+    name >= M4_PC_LINK_MAX && name <= M4_PC_2_SYMLINKS
+}
+
+#[inline]
+unsafe fn m4_pathconf_statfs(path: *const c_char, buf: *mut M4PathStatfs) -> c_int {
+    let result = <Arch as Syscalls>::syscall2(SYS_STATFS, path as i64, buf as i64);
+    if result < 0 {
+        syscall_result(result) as c_int
+    } else {
+        0
+    }
+}
+
+#[inline]
+unsafe fn m4_fpathconf_statfs(fd: c_int, buf: *mut M4PathStatfs) -> c_int {
+    let result = <Arch as Syscalls>::syscall2(SYS_FSTATFS, fd as i64, buf as i64);
+    if result < 0 {
+        syscall_result(result) as c_int
+    } else {
+        0
+    }
+}
+
+// Return the fixed POSIX value for a selector whose value does not vary by
+// Linux filesystem.  A negative result denotes an indeterminate value; in
+// that case errno intentionally remains untouched, as required by POSIX.
+#[inline]
+unsafe fn m4_pathconf_value(name: c_int, fs: &M4PathStatfs) -> c_long {
+    match name {
+        M4_PC_LINK_MAX => 8,
+        M4_PC_MAX_CANON => 255,
+        M4_PC_MAX_INPUT => 255,
+        // statfs.f_namelen is the filesystem's actual component limit.  This
+        // is the key distinction from a universal NAME_MAX constant.
+        M4_PC_NAME_MAX => fs.f_namelen as c_long,
+        M4_PC_PATH_MAX => 4096,
+        M4_PC_PIPE_BUF => 4096,
+        M4_PC_CHOWN_RESTRICTED => 1,
+        M4_PC_NO_TRUNC => 1,
+        M4_PC_VDISABLE => 0,
+        M4_PC_SYNC_IO => 1,
+        M4_PC_ASYNC_IO => -1,
+        M4_PC_PRIO_IO => -1,
+        M4_PC_SOCK_MAXBUF => -1,
+        M4_PC_FILESIZEBITS => 64,
+        // Linux filesystems expose their preferred block size through statfs;
+        // use it for transfer/allocation granularity where it is available.
+        M4_PC_REC_INCR_XFER_SIZE
+        | M4_PC_REC_MAX_XFER_SIZE
+        | M4_PC_REC_MIN_XFER_SIZE
+        | M4_PC_REC_XFER_ALIGN
+        | M4_PC_ALLOC_SIZE_MIN => {
+            if fs.f_bsize == 0 {
+                4096
+            } else if fs.f_bsize > c_long::MAX as c_ulong {
+                c_long::MAX
+            } else {
+                fs.f_bsize as c_long
+            }
+        }
+        M4_PC_SYMLINK_MAX => -1,
+        M4_PC_2_SYMLINKS => 1,
+        _ => {
+            // Callers validate the selector before reaching this helper.
+            ERRNO = EINVAL;
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> usize {
+    // The POSIX environment strings are intentionally empty in this libc;
+    // _CS_PATH is the one configured value musl exposes.
+    let value: &[u8] = if name == 0 {
+        b"/bin:/usr/bin\0"
+    } else if name == 1 || name == 5 || (name >= 1116 && name <= 1151) {
+        b"\0"
+    } else {
+        ERRNO = EINVAL;
+        return 0;
+    };
+
+    let value_len = value.len() - 1;
+    if !buf.is_null() && len != 0 {
+        let copy_len = if len - 1 < value_len {
+            len - 1
+        } else {
+            value_len
+        };
+        core::ptr::copy_nonoverlapping(value.as_ptr(), buf as *mut u8, copy_len);
+        *buf.add(copy_len) = 0;
+    }
+    value_len + 1
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> c_long {
+    if !m4_pathconf_name_valid(name) {
+        ERRNO = EINVAL;
+        return -1;
+    }
+
+    let mut fs: M4PathStatfs = core::mem::zeroed();
+    if m4_fpathconf_statfs(fd, &mut fs) < 0 {
+        return -1;
+    }
+    m4_pathconf_value(name, &fs)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> c_long {
+    if !m4_pathconf_name_valid(name) {
+        ERRNO = EINVAL;
+        return -1;
+    }
+
+    let mut fs: M4PathStatfs = core::mem::zeroed();
+    if m4_pathconf_statfs(path, &mut fs) < 0 {
+        return -1;
+    }
+    m4_pathconf_value(name, &fs)
+}
+
+const M4_UL_GETFSIZE: c_int = 1;
+const M4_UL_SETFSIZE: c_int = 2;
+
+#[no_mangle]
+pub unsafe extern "C" fn ulimit(cmd: c_int, mut args: ...) -> c_long {
+    let mut limit: Rlimit = core::mem::zeroed();
+    if getrlimit(RLIMIT_FSIZE, &mut limit) != 0 {
+        return -1;
+    }
+
+    if cmd == M4_UL_SETFSIZE {
+        let blocks: c_long = args.next_arg();
+        // musl's historical ABI measures file size in 512-byte blocks.  The
+        // cast before multiplication preserves the unsigned rlim_t behavior
+        // for callers passing the full representable long range.
+        limit.rlim_cur = (blocks as u64).wrapping_mul(512);
+        if setrlimit(RLIMIT_FSIZE, &limit) != 0 {
+            return -1;
+        }
+    } else if cmd != M4_UL_GETFSIZE {
+        // musl treats unknown commands like UL_GETFSIZE and reports the
+        // current limit; no errno is manufactured for this legacy interface.
+    }
+
+    (limit.rlim_cur / 512) as c_long
 }
 
 #[no_mangle]
@@ -170,18 +405,4 @@ pub unsafe extern "C" fn mkdtemp(template: *mut c_char) -> *mut c_char {
 #[no_mangle]
 pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
     mktemp_internal(template, None)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn getpwnam_r(
-    _name: *const c_char,
-    _pwd: *mut c_void,
-    _buf: *mut c_char,
-    _buflen: usize,
-    result: *mut *mut c_void,
-) -> c_int {
-    if !result.is_null() {
-        *result = core::ptr::null_mut();
-    }
-    0
 }

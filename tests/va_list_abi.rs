@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn va_list_abi_under_libldso() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("va_list_abi_test.c");
-    let bin = fixtures.join("va_list_abi_test");
+    let bin = test_support::TempArtifact::new("va_list_abi_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

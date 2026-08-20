@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn ldso_runs_real_printf_binary() {
     assert!(libc_path.exists(), "libc.so not found at {}", libc_path.display());
 
     let hello_src = fixtures.join("hello.c");
-    let hello_bin = fixtures.join("hello");
+    let hello_bin = test_support::TempArtifact::new("hello");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

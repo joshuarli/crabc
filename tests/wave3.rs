@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn wave3_regressions_under_libc_so() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("wave3_test.c");
-    let bin = fixtures.join("wave3_test");
+    let bin = test_support::TempArtifact::new("wave3_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

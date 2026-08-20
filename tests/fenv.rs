@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -11,7 +14,7 @@ fn fenv_round_and_except_under_libldso() {
     assert!(ldso_path.exists(), "libldso.so not found");
 
     let src = fixtures.join("fenv_test.c");
-    let bin = fixtures.join("fenv_test");
+    let bin = test_support::TempArtifact::new("fenv_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

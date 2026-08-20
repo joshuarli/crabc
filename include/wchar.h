@@ -52,6 +52,7 @@ size_t wcsnlen(const wchar_t *, size_t);
 size_t wcsxfrm(wchar_t *, const wchar_t *, size_t);
 int wcscoll(const wchar_t *, const wchar_t *);
 size_t wcsftime(wchar_t *restrict, size_t, const wchar_t *restrict, const struct tm *restrict);
+size_t wcsftime_l(wchar_t *restrict, size_t, const wchar_t *restrict, const struct tm *restrict, locale_t);
 wchar_t *wcstok(wchar_t *restrict, const wchar_t *restrict, wchar_t **restrict);
 
 /* Multibyte/wide conversions */
@@ -82,6 +83,7 @@ unsigned long wcstoumax(const wchar_t *, wchar_t **, int);
 /* Wide stdio */
 wint_t fgetwc(FILE *);
 wchar_t *fgetws(wchar_t *restrict, int, FILE *restrict);
+wchar_t *fgetws_unlocked(wchar_t *restrict, int, FILE *restrict);
 wint_t getwchar(void);
 wint_t fputwc(wchar_t, FILE *);
 wint_t putwchar(wchar_t);

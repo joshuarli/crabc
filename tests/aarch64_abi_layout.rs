@@ -4,6 +4,8 @@
 //! public headers and once with the musl 1.2.6 reference installed by the
 //! native AArch64 Docker image.  The resulting runtime records make size,
 //! alignment, offsets, and signal-stack constants observable to the test.
+#[path = "common/mod.rs"]
+mod test_support;
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 #[test]
@@ -20,9 +22,8 @@ fn public_aarch64_layout_matches_pinned_musl() {
         "pinned musl include directory is unavailable; run this test in scripts/dev.sh test"
     );
 
-    let output_dir = manifest_dir.join("target/debug");
-    let custom_bin = output_dir.join("aarch64_abi_layout_custom");
-    let oracle_bin = output_dir.join("aarch64_abi_layout_musl");
+    let custom_bin = test_support::TempArtifact::new("aarch64_abi_layout_custom");
+    let oracle_bin = test_support::TempArtifact::new("aarch64_abi_layout_musl");
 
     let mut custom = Command::new("musl-gcc");
     custom.args([

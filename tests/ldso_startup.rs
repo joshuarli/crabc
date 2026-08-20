@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn ldso_startup_argv_env() {
     assert!(libc_path.exists(), "libc.so not found");
 
     let src = fixtures.join("startup_argv_env.c");
-    let bin = fixtures.join("startup_argv_env");
+    let bin = test_support::TempArtifact::new("startup_argv_env");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

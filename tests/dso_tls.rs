@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -5,14 +8,14 @@ fn dso_tls_works_in_main_and_pthread_threads() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
-
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
     let libc_path = manifest_dir.join("target/debug/libc.so");
     assert!(ldso_path.exists(), "libldso.so not found");
     assert!(libc_path.exists(), "libc.so not found");
 
     let libtls_src = fixtures.join("libtls.c");
-    let libtls_so = manifest_dir.join("target/debug/libtls.so");
+    let libtls_so = test_support::TempArtifact::new("libtls.so");
+    let temp_dir = libtls_so.parent();
     let status = Command::new("musl-gcc")
         .args([
             "-shared",
@@ -26,7 +29,7 @@ fn dso_tls_works_in_main_and_pthread_threads() {
     assert!(status.success(), "musl-gcc libtls.so compilation failed");
 
     let src = fixtures.join("dso_tls_test.c");
-    let bin = fixtures.join("dso_tls_test");
+    let bin = test_support::TempArtifact::new("dso_tls_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",
@@ -36,7 +39,7 @@ fn dso_tls_works_in_main_and_pthread_threads() {
             "-Wl,--dynamic-linker",
             ldso_path.to_str().unwrap(),
             "-L",
-            manifest_dir.join("target/debug").to_str().unwrap(),
+            temp_dir.to_str().unwrap(),
             src.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
             "-ltls",
@@ -73,7 +76,10 @@ fn dso_tls_works_in_main_and_pthread_threads() {
     eprintln!("dso_tls_test disassembly:\n{}", String::from_utf8_lossy(&objdump.stdout));
 
     let output = Command::new(&bin)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            format!("{}:{}", temp_dir.display(), manifest_dir.join("target/debug").display()),
+        )
         .output()
         .expect("failed to run dso_tls_test");
 

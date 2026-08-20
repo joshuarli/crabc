@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -7,7 +10,7 @@ fn ldso_deduplicates_needed_symlink_aliases() {
     let fake_libs = manifest_dir.join("libc-test-harness/fake-libs");
     let target = manifest_dir.join("target/debug");
     let ldso_path = target.join("libldso.so");
-    let bin = fixtures.join("ldso_alias_dedup_test");
+    let bin = test_support::TempArtifact::new("ldso_alias_dedup_test");
 
     assert!(fake_libs.is_dir(), "fake library directory is missing");
     assert!(ldso_path.exists(), "libldso.so not found");

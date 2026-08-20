@@ -54,6 +54,7 @@ int fclose(FILE *);
 int setvbuf(FILE *, char *, int, size_t);
 void setbuf(FILE *, char *);
 void setbuffer(FILE *, char *, size_t);
+void setlinebuf(FILE *);
 int fflush(FILE *);
 
 /* Wide orientation */
@@ -120,6 +121,7 @@ int vfscanf(FILE *, const char *, va_list);
 int vsscanf(const char *, const char *, va_list);
 
 /* Line input */
+char *fgetln(FILE *, size_t *);
 ssize_t getdelim(char **restrict, size_t *restrict, int, FILE *restrict);
 ssize_t getline(char **restrict, size_t *restrict, FILE *restrict);
 
@@ -145,6 +147,28 @@ void perror(const char *);
 /* Memory streams */
 FILE *open_memstream(char **, size_t *);
 FILE *fmemopen(void *, size_t, const char *);
+
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define L_cuserid 20
+char *cuserid(char *);
+#endif
+
+/* GNU callback-backed streams */
+#ifdef _GNU_SOURCE
+typedef ssize_t (cookie_read_function_t)(void *, char *, size_t);
+typedef ssize_t (cookie_write_function_t)(void *, const char *, size_t);
+typedef int (cookie_seek_function_t)(void *, off_t *, int);
+typedef int (cookie_close_function_t)(void *);
+
+typedef struct _IO_cookie_io_functions_t {
+    cookie_read_function_t *read;
+    cookie_write_function_t *write;
+    cookie_seek_function_t *seek;
+    cookie_close_function_t *close;
+} cookie_io_functions_t;
+
+FILE *fopencookie(void *, const char *, cookie_io_functions_t);
+#endif
 
 /* mkstemp */
 int mkstemp(char *);

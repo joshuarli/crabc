@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -5,7 +8,7 @@ fn ldso_runs_tiny_pie() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixtures = manifest_dir.join("tests/fixtures");
     let tiny_src = fixtures.join("tiny.c");
-    let tiny_bin = fixtures.join("tiny_ldso");
+    let tiny_bin = test_support::TempArtifact::new("tiny_ldso");
 
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
     assert!(ldso_path.exists(), "libldso.so not found at {}", ldso_path.display());

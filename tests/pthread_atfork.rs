@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,7 @@ fn pthread_atfork_handlers_fire_in_order() {
     assert!(ldso_path.exists(), "libldso.so not found");
 
     let src = fixtures.join("pthread_atfork_test.c");
-    let bin = fixtures.join("pthread_atfork_test");
+    let bin = test_support::TempArtifact::new("pthread_atfork_test");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",

@@ -118,6 +118,8 @@ pthread_t pthread_self(void);
 int pthread_equal(pthread_t t1, pthread_t t2);
 int pthread_atfork(void (*)(void), void (*)(void), void (*)(void));
 int pthread_setschedprio(pthread_t, int);
+int pthread_getschedparam(pthread_t, int *, struct sched_param *);
+int pthread_setschedparam(pthread_t, int, const struct sched_param *);
 int pthread_getcpuclockid(pthread_t, clockid_t *);
 
 int pthread_cancel(pthread_t thread);
@@ -145,6 +147,8 @@ int pthread_mutex_lock(pthread_mutex_t *mutex);
 int pthread_mutex_trylock(pthread_mutex_t *mutex);
 int pthread_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *abstime);
 int pthread_mutex_unlock(pthread_mutex_t *mutex);
+int pthread_mutex_getprioceiling(const pthread_mutex_t *, int *);
+int pthread_mutex_setprioceiling(pthread_mutex_t *, int, int *);
 
 int pthread_condattr_init(pthread_condattr_t *attr);
 int pthread_condattr_destroy(pthread_condattr_t *attr);
@@ -196,6 +200,9 @@ int pthread_key_delete(pthread_key_t key);
 void *pthread_getspecific(pthread_key_t key);
 int pthread_setspecific(pthread_key_t key, const void *value);
 
+int pthread_getconcurrency(void);
+int pthread_setconcurrency(int);
+
 int pthread_attr_init(pthread_attr_t *attr);
 int pthread_attr_destroy(pthread_attr_t *attr);
 int pthread_attr_setdetachstate(pthread_attr_t *attr, int detachstate);
@@ -217,6 +224,16 @@ int pthread_attr_getschedparam(const pthread_attr_t *attr, struct sched_param *p
 
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
 int pthread_kill(pthread_t thread, int sig);
+
+#ifdef _GNU_SOURCE
+int pthread_getattr_np(pthread_t, pthread_attr_t *);
+int pthread_setname_np(pthread_t, const char *);
+int pthread_getname_np(pthread_t, char *, size_t);
+int pthread_getattr_default_np(pthread_attr_t *);
+int pthread_setattr_default_np(const pthread_attr_t *);
+int pthread_tryjoin_np(pthread_t, void **);
+int pthread_timedjoin_np(pthread_t, void **, const struct timespec *);
+#endif
 
 struct __ptcb {
 	void (*__f)(void *);

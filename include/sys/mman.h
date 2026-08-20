@@ -28,6 +28,12 @@ int munlockall(void);
 int msync(void *, size_t, int);
 int posix_madvise(void *, size_t, int);
 
+#ifdef _GNU_SOURCE
+int mlock2(const void *, size_t, unsigned);
+int remap_file_pages(void *, size_t, int, size_t, int);
+#define MLOCK_ONFAULT 0x01U
+#endif
+
 #define MS_ASYNC 1
 #define MS_INVALIDATE 2
 #define MS_SYNC 4

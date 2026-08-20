@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+#include <sched.h>
+
 #ifndef _SIGSET_T_DEFINED
 #define _SIGSET_T_DEFINED
 typedef struct __sigset_t {
@@ -60,12 +62,18 @@ int posix_spawnattr_setsigmask(posix_spawnattr_t *__restrict, const sigset_t *__
 int posix_spawnattr_getsigmask(const posix_spawnattr_t *__restrict, sigset_t *__restrict);
 int posix_spawnattr_setsigdefault(posix_spawnattr_t *__restrict, const sigset_t *__restrict);
 int posix_spawnattr_getsigdefault(const posix_spawnattr_t *__restrict, sigset_t *__restrict);
+int posix_spawnattr_setschedparam(posix_spawnattr_t *__restrict, const struct sched_param *__restrict);
+int posix_spawnattr_getschedparam(const posix_spawnattr_t *__restrict, struct sched_param *__restrict);
+int posix_spawnattr_setschedpolicy(posix_spawnattr_t *, int);
+int posix_spawnattr_getschedpolicy(const posix_spawnattr_t *, int *);
 
 int posix_spawn_file_actions_init(posix_spawn_file_actions_t *);
 int posix_spawn_file_actions_destroy(posix_spawn_file_actions_t *);
 int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *__restrict, int, const char *__restrict, int, mode_t);
 int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *, int);
 int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *, int, int);
+int posix_spawn_file_actions_addchdir_np(posix_spawn_file_actions_t *__restrict, const char *__restrict);
+int posix_spawn_file_actions_addfchdir_np(posix_spawn_file_actions_t *, int);
 
 #ifdef __cplusplus
 }

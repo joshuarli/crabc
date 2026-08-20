@@ -1,3 +1,6 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
 use std::process::Command;
 
 #[test]
@@ -12,7 +15,8 @@ fn ldso_runs_pie_with_dependency() {
 
     // Build libfoo.so
     let libfoo_src = fixtures.join("libfoo.c");
-    let libfoo_so = fixtures.join("libfoo.so");
+    let libfoo_so = test_support::TempArtifact::new("libfoo.so");
+    let temp_dir = libfoo_so.parent();
     let status = Command::new("musl-gcc")
         .args([
             "-shared",
@@ -27,7 +31,7 @@ fn ldso_runs_pie_with_dependency() {
 
     // Build needfoo (PIE, nostdlib, nostartfiles, dynamic-linker=ldso, -lfoo)
     let needfoo_src = fixtures.join("needfoo.c");
-    let needfoo_bin = fixtures.join("needfoo");
+    let needfoo_bin = test_support::TempArtifact::new("needfoo");
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",
@@ -37,7 +41,7 @@ fn ldso_runs_pie_with_dependency() {
             "-Wl,--dynamic-linker",
             ldso_path.to_str().unwrap(),
             "-L",
-            fixtures.to_str().unwrap(),
+            temp_dir.to_str().unwrap(),
             needfoo_src.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
             "-lfoo",
@@ -48,9 +52,9 @@ fn ldso_runs_pie_with_dependency() {
         .expect("failed to run musl-gcc for needfoo");
     assert!(status.success(), "musl-gcc needfoo compilation failed");
 
-    // Run needfoo with LD_LIBRARY_PATH pointing at fixtures
+    // Run needfoo with LD_LIBRARY_PATH pointing at the temporary dependency.
     let output = Command::new(&needfoo_bin)
-        .env("LD_LIBRARY_PATH", fixtures.to_str().unwrap())
+        .env("LD_LIBRARY_PATH", temp_dir.to_str().unwrap())
         .output()
         .expect("failed to run needfoo");
 
