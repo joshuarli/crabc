@@ -6,10 +6,7 @@ extern "C" {
 #endif
 
 #include <sys/ipc.h>
-#include <stddef.h>
-
-typedef long time_t;
-typedef int pid_t;
+#include <sys/types.h>
 
 #define SEM_UNDO	0x1000
 #define GETPID		11

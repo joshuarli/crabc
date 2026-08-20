@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <time.h>
+#include <sys/types.h>
 
 #ifndef _SIGSET_T_DEFINED
 #define _SIGSET_T_DEFINED
@@ -11,12 +12,12 @@ typedef struct __sigset_t {
 } sigset_t;
 #endif
 
-typedef unsigned long pthread_t;
-
 struct sched_param {
     int sched_priority;
 };
 
+#ifndef _PTHREAD_TYPES_DEFINED
+#define _PTHREAD_TYPES_DEFINED
 typedef struct { unsigned __attr; } pthread_mutexattr_t;
 typedef struct { unsigned __attr; } pthread_condattr_t;
 typedef struct { unsigned __attr[2]; } pthread_rwlockattr_t;
@@ -67,6 +68,7 @@ typedef struct {
         unsigned long __s[7];
     } __u;
 } pthread_attr_t;
+#endif
 
 #define PTHREAD_CREATE_JOINABLE 0
 #define PTHREAD_CREATE_DETACHED 1
@@ -93,6 +95,7 @@ typedef struct {
 #define PTHREAD_CANCELED ((void *)-1)
 
 #define PTHREAD_MUTEX_ROBUST 1
+#define PTHREAD_MUTEX_STALLED 0
 
 #define PTHREAD_PRIO_NONE 0
 #define PTHREAD_PRIO_INHERIT 1
@@ -113,6 +116,9 @@ int pthread_join(pthread_t thread, void **retval);
 void pthread_exit(void *retval) __attribute__((__noreturn__));
 pthread_t pthread_self(void);
 int pthread_equal(pthread_t t1, pthread_t t2);
+int pthread_atfork(void (*)(void), void (*)(void), void (*)(void));
+int pthread_setschedprio(pthread_t, int);
+int pthread_getcpuclockid(pthread_t, clockid_t *);
 
 int pthread_cancel(pthread_t thread);
 int pthread_setcancelstate(int state, int *oldstate);

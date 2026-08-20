@@ -9,6 +9,10 @@
 #define LC_MESSAGES 5
 #define LC_ALL      6
 
+#ifndef NULL
+#define NULL ((void *)0)
+#endif
+
 struct lconv {
     char *decimal_point;
     char *thousands_sep;
@@ -36,7 +40,10 @@ struct lconv {
     char int_n_sign_posn;
 };
 
+#ifndef _LOCALE_T_DEFINED
+#define _LOCALE_T_DEFINED
 typedef void *locale_t;
+#endif
 
 #define LC_GLOBAL_LOCALE ((locale_t)-1)
 

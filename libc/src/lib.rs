@@ -1771,7 +1771,14 @@ pub const SA_RESETHAND: c_ulong = 0x80000000;
 
 pub const SS_ONSTACK: c_int = 1;
 pub const SS_DISABLE: c_int = 2;
+// Linux AArch64 ABI sizes, matching the public signal.h contract and musl.
+#[cfg(target_arch = "aarch64")]
+pub const MINSIGSTKSZ: usize = 6144;
+#[cfg(target_arch = "aarch64")]
+pub const SIGSTKSZ: usize = 12288;
+#[cfg(not(target_arch = "aarch64"))]
 pub const MINSIGSTKSZ: usize = 2048;
+#[cfg(not(target_arch = "aarch64"))]
 pub const SIGSTKSZ: usize = 8192;
 
 pub const SI_USER: c_int = 0;

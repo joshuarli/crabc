@@ -139,6 +139,9 @@ struct LoadedObject {
     init_present: bool,
     init_array_present: bool,
     global: bool,
+    file_identity_valid: bool,
+    file_dev: u64,
+    file_ino: u64,
     name: [u8; 256],
 }
 
@@ -160,6 +163,9 @@ const EMPTY_OBJ: LoadedObject = LoadedObject {
     init_present: false,
     init_array_present: false,
     global: false,
+    file_identity_valid: false,
+    file_dev: 0,
+    file_ino: 0,
     name: [0; 256],
 };
 
@@ -973,6 +979,7 @@ mod sysnr {
     pub const SYS_WRITE: i64 = 1;
     pub const SYS_OPENAT: i64 = 257;
     pub const SYS_CLOSE: i64 = 3;
+    pub const SYS_FSTAT: i64 = 5;
     pub const SYS_LSEEK: i64 = 8;
     pub const SYS_MMAP: i64 = 9;
     pub const SYS_MUNMAP: i64 = 11;
@@ -986,6 +993,7 @@ mod sysnr {
     pub const SYS_WRITE: i64 = 64;
     pub const SYS_OPENAT: i64 = 56;
     pub const SYS_CLOSE: i64 = 57;
+    pub const SYS_FSTAT: i64 = 80;
     pub const SYS_LSEEK: i64 = 62;
     pub const SYS_MMAP: i64 = 222;
     pub const SYS_MUNMAP: i64 = 215;
@@ -998,6 +1006,7 @@ mod sysnr {
     pub const SYS_WRITE: i64 = 64;
     pub const SYS_OPENAT: i64 = 56;
     pub const SYS_CLOSE: i64 = 57;
+    pub const SYS_FSTAT: i64 = 80;
     pub const SYS_LSEEK: i64 = 62;
     pub const SYS_MMAP: i64 = 222;
     pub const SYS_MUNMAP: i64 = 215;
@@ -1022,6 +1031,10 @@ fn sys_readlink(path: *const u8, buf: *mut u8, bufsz: usize) -> i64 {
 
 fn sys_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
     unsafe { <Arch as Syscalls>::syscall3(SYS_READ, fd, buf as i64, count as i64) }
+}
+
+fn sys_fstat(fd: i64, buf: *mut u8) -> i64 {
+    unsafe { <Arch as Syscalls>::syscall2(SYS_FSTAT, fd, buf as i64) }
 }
 
 fn sys_write(fd: i64, buf: *const u8, count: usize) -> i64 {
@@ -1304,6 +1317,29 @@ unsafe fn find_library_fd(
 // DSO loading
 // ============================================================
 
+#[derive(Copy, Clone)]
+struct FileIdentity {
+    dev: u64,
+    ino: u64,
+}
+
+/// Read the kernel file identity for an open DSO.  Symlink aliases resolve to
+/// the same `(st_dev, st_ino)` pair, while distinct files remain distinct even
+/// when their DT_NEEDED names happen to match.
+fn file_identity(fd: i64) -> Option<FileIdentity> {
+    // The first two fields of Linux's x86_64, AArch64, and RISC-V stat
+    // layouts are st_dev and st_ino.  Keep the buffer private to the loader;
+    // no libc struct layout is needed at this boundary.
+    let mut stat = [0u8; 128];
+    if sys_fstat(fd, stat.as_mut_ptr()) < 0 {
+        return None;
+    }
+    Some(FileIdentity {
+        dev: u64::from_ne_bytes(stat[0..8].try_into().unwrap()),
+        ino: u64::from_ne_bytes(stat[8..16].try_into().unwrap()),
+    })
+}
+
 /// Load a shared object from an already-open fd at the given base address.
 /// Registers it in the LOADED array. Returns true on success.
 fn sys_munmap(addr: *mut u8, length: usize) -> i64 {
@@ -1311,6 +1347,7 @@ fn sys_munmap(addr: *mut u8, length: usize) -> i64 {
 }
 
 unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
+    let identity = file_identity(fd);
     let mut buf = [0u8; 4096];
     let n = sys_read(fd, buf.as_mut_ptr(), buf.len());
     if n < 64 {
@@ -1535,6 +1572,9 @@ unsafe fn load_dso_from_fd(fd: i64, desired_base: u64) -> Option<u64> {
             init_present: dt_init_present,
             init_array_present: dt_init_array_present,
             global: false,
+            file_identity_valid: identity.is_some(),
+            file_dev: identity.map_or(0, |id| id.dev),
+            file_ino: identity.map_or(0, |id| id.ino),
             name: [0; 256],
         };
         LOADED_COUNT += 1;
@@ -2201,6 +2241,13 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
         set_dlerror(b"dlopen: cannot open file\0");
         return core::ptr::null_mut();
     }
+    if let Some(identity) = file_identity(fd) {
+        if let Some(idx) = loaded_object_by_identity(identity) {
+            sys_close(fd);
+            LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
+            return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
+        }
+    }
     let desired = DSO_BASE_START + (LOADED_COUNT as u64) * DSO_BASE_STRIDE;
     let _base = match load_dso_from_fd(fd, desired) {
         Some(b) => b,
@@ -2535,6 +2582,9 @@ unsafe fn register_self(ldso_base: u64) {
             init_present: false,
             init_array_present: false,
             global: false,
+            file_identity_valid: false,
+            file_dev: 0,
+            file_ino: 0,
             name: [0; 256],
         };
         LOADED_COUNT += 1;
@@ -2568,6 +2618,19 @@ unsafe fn loaded_object_by_name(name: *const u8, name_len: usize) -> Option<usiz
     None
 }
 
+unsafe fn loaded_object_by_identity(identity: FileIdentity) -> Option<usize> {
+    for i in 0..LOADED_COUNT {
+        let obj = &LOADED[i];
+        if obj.file_identity_valid
+            && obj.file_dev == identity.dev
+            && obj.file_ino == identity.ino
+        {
+            return Some(i);
+        }
+    }
+    None
+}
+
 // ============================================================
 // Main flow: load executable + dependencies, relocate, jump
 // ============================================================
@@ -2583,6 +2646,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     if fd < 0 {
         die(99, b"open_exe", fd as usize);
     }
+    let exec_identity = file_identity(fd);
     {
         let mut exe_path = [0u8; 256];
         let r = sys_readlink(proc_exe.as_ptr(), exe_path.as_mut_ptr(), exe_path.len());
@@ -2840,6 +2904,9 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         init_present: dt_init_present,
         init_array_present: dt_init_array_present,
         global: true,
+        file_identity_valid: exec_identity.is_some(),
+        file_dev: exec_identity.map_or(0, |id| id.dev),
+        file_ino: exec_identity.map_or(0, |id| id.ino),
         name: [0; 256],
     };
     LOADED_COUNT = 1;
@@ -2851,6 +2918,12 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         let lib_fd = find_library_fd(name_ptr, name_len, ld_path);
         if lib_fd < 0 {
             die(89, b"needed_fd", i);
+        }
+        if let Some(identity) = file_identity(lib_fd) {
+            if loaded_object_by_identity(identity).is_some() {
+                sys_close(lib_fd);
+                continue;
+            }
         }
         let desired_base = DSO_BASE_START + (i as u64) * DSO_BASE_STRIDE;
         if load_dso_from_fd(lib_fd, desired_base).is_none() {

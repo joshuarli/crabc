@@ -5,12 +5,7 @@
 extern "C" {
 #endif
 
-#include <stddef.h>
-
-typedef int key_t;
-typedef unsigned int uid_t;
-typedef unsigned int gid_t;
-typedef unsigned int mode_t;
+#include <sys/types.h>
 
 struct ipc_perm {
 	key_t key;

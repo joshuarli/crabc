@@ -5,7 +5,8 @@
 extern "C" {
 #endif
 
-#include <stddef.h>
+#include <sys/types.h>
+#include <locale.h>
 
 #ifndef NULL
 #define NULL ((void*)0)
@@ -27,9 +28,6 @@ extern "C" {
 
 #define TIMER_ABSTIME 1
 
-typedef long time_t;
-typedef long clock_t;
-typedef int clockid_t;
 
 #ifndef __DEFINED_struct_timespec
 #define __DEFINED_struct_timespec
@@ -45,6 +43,13 @@ struct timeval {
     long tv_sec;
     long tv_usec;
 };
+
+struct itimerspec {
+    struct timespec it_interval;
+    struct timespec it_value;
+};
+
+struct sigevent;
 #endif
 
 struct tm {
@@ -67,6 +72,8 @@ double difftime(time_t, time_t);
 time_t mktime(struct tm *);
 size_t strftime(char *, size_t, const char *, const struct tm *);
 char *strptime(const char *, const char *, struct tm *);
+struct tm *getdate(const char *);
+extern int getdate_err;
 struct tm *gmtime(const time_t *);
 struct tm *localtime(const time_t *);
 struct tm *gmtime_r(const time_t *, struct tm *);
@@ -82,6 +89,13 @@ int clock_getres(int, struct timespec *);
 int clock_gettime(int, struct timespec *);
 int clock_settime(int, const struct timespec *);
 int clock_nanosleep(int, int, const struct timespec *, struct timespec *);
+int clock_getcpuclockid(pid_t, clockid_t *);
+size_t strftime_l(char *, size_t, const char *, const struct tm *, locale_t);
+int timer_create(clockid_t, struct sigevent *, timer_t *);
+int timer_delete(timer_t);
+int timer_getoverrun(timer_t);
+int timer_gettime(timer_t, struct itimerspec *);
+int timer_settime(timer_t, int, const struct itimerspec *, struct itimerspec *);
 
 int gettimeofday(struct timeval *, void *);
 

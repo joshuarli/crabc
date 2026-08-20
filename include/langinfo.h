@@ -1,6 +1,10 @@
 #ifndef _LANGINFO_H
 #define _LANGINFO_H
 
+#include <locale.h>
+
+typedef int nl_item;
+
 #define ABDAY_1 0x20000
 #define ABDAY_2 0x20001
 #define ABDAY_3 0x20002
@@ -63,7 +67,9 @@
 #define THOUSEP 0x10001
 #define YESEXPR 0x50000
 #define NOEXPR 0x50001
+#define CRNCYSTR 0x4000f
 
 char *nl_langinfo(int item);
+char *nl_langinfo_l(nl_item, locale_t);
 
 #endif

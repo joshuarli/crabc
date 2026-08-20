@@ -2,6 +2,7 @@
 #define _STDLIB_H
 
 #include <stddef.h>
+#include <wchar.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,11 +16,22 @@ typedef struct { long long quot, rem; } lldiv_t;
 
 #define EXIT_FAILURE 1
 #define EXIT_SUCCESS 0
+#define MB_LEN_MAX 4
 
 size_t __ctype_get_mb_cur_max(void);
 #define MB_CUR_MAX (__ctype_get_mb_cur_max())
 
 #define RAND_MAX (0x7fffffff)
+
+#define WEXITSTATUS(s) (((s) & 0xff00) >> 8)
+#define WIFEXITED(s) (((s) & 0x7f) == 0)
+#define WIFSIGNALED(s) (((s) & 0x7f) && ((s) & 0x7f) != 0x7f)
+#define WTERMSIG(s) ((s) & 0x7f)
+#define WIFSTOPPED(s) (((s) & 0xff) == 0x7f)
+#define WSTOPSIG(s) WEXITSTATUS(s)
+#define WIFCONTINUED(s) ((s) == 0xffff)
+#define WNOHANG 1
+#define WUNTRACED 2
 
 int atoi(const char *);
 long atol(const char *);
@@ -83,10 +95,21 @@ void qsort(void *, size_t, size_t, int (*)(const void *, const void *));
 void qsort_r(void *, size_t, size_t, int (*)(const void *, const void *, void *), void *);
 
 int mblen(const char *, size_t);
-int mbtowc(int *__restrict, const char *__restrict, size_t);
-int wctomb(char *, int);
+int mbtowc(wchar_t *__restrict, const char *__restrict, size_t);
+int wctomb(char *, wchar_t);
 size_t mbstowcs(wchar_t *__restrict, const char *__restrict, size_t);
 size_t wcstombs(char *__restrict, const wchar_t *__restrict, size_t);
+
+int getsubopt(char **, char *const *, char **);
+char *mkdtemp(char *);
+long a64l(const char *);
+int grantpt(int);
+char *l64a(long);
+char *ptsname(int);
+char *realpath(const char *restrict, char *restrict);
+void setkey(const char *);
+int unlockpt(int);
+int posix_openpt(int);
 
 #ifdef __cplusplus
 }

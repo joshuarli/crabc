@@ -2083,6 +2083,51 @@ while closing each newly testable subsystem vertically.
 
 This milestone does **not** require 100% symbol parity.
 
+### M2 completion evidence — 2026-08-20
+
+The strict public-header surface is now fully reachable: the pinned
+`libc-test` API suite passes all 79 source-compilation checks in strict
+crabc-header mode (`gcc -nostdinc` with crabc's headers and GCC builtin
+headers). This removes the prior 59 API BUILDERRORs and makes missing or
+incompatible declarations visible without silently borrowing host musl
+headers.
+
+This is deliberately **source-interface evidence**, not a claim that every
+declared function is exported or behaviorally complete. For example,
+`wordexp.h` now has its public contract so API clients compile, while
+`wordexp` remains an explicit link-time gap; a partial shell-wrapper
+implementation was rejected because upstream grammar coverage exposed an
+unsafe success path. Likewise, the math header now compiles its consumers,
+but the unimplemented math symbols remain Milestone 3 behavioral work.
+
+The newly exercised runtime boundaries that were brought into this milestone
+are closed vertically:
+
+- `sigaltstack` uses the Linux AArch64 ABI values (`MINSIGSTKSZ` 6144 and
+  `SIGSTKSZ` 12288), and focused coverage verifies that the kernel rejects a
+  one-byte-too-small alternate stack with `ENOMEM`.
+- The loader identifies DSOs by `(st_dev, st_ino)` before loading them. This
+  prevents the harness's `libpthread.so`, `libm.so`, `librt.so`, and related
+  symlink aliases of `libc.so` from being mapped as separate libc instances.
+  The focused alias fixture forces seven DT_NEEDED aliases and checks the
+  process mapping result.
+
+Final validation for this milestone:
+
+```text
+libc-test API (strict crabc headers): 79 PASS, 0 FAIL, 0 BUILDERROR
+focused signal integration test:      PASS
+focused loader-alias integration test: PASS
+libc-test regression:                 67 PASS, 0 FAIL, 0 BUILDERROR, 1 pinned-musl overlay SKIP
+libc-test functional:                 72 PASS, 1 FAIL, 1 BUILDERROR
+```
+
+The remaining functional failure is `strtold`; the remaining functional
+BUILDERROR is `wordexp`. Both are intentionally retained as named M3 runtime
+work rather than obscured by declarations or fake exports. The M2 header
+completion therefore separates compile visibility from the M3/M4 obligation
+to provide the corresponding behavior and symbols.
+
 ## Milestone 3 — Complete major behavioral slices
 
 Drive:

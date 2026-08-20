@@ -1,7 +1,7 @@
 #ifndef _SYS_STAT_H
 #define _SYS_STAT_H
 
-#include <stddef.h>
+#include <sys/types.h>
 #include <time.h>
 
 #ifdef __cplusplus
@@ -10,18 +10,18 @@ extern "C" {
 
 struct stat {
 #if defined(__aarch64__) || defined(__riscv)
-    unsigned long long st_dev;
-    unsigned long long st_ino;
-    unsigned int st_mode;
-    unsigned int st_nlink;
-    unsigned int st_uid;
-    unsigned int st_gid;
-    unsigned long long st_rdev;
+    dev_t st_dev;
+    ino_t st_ino;
+    mode_t st_mode;
+    nlink_t st_nlink;
+    uid_t st_uid;
+    gid_t st_gid;
+    dev_t st_rdev;
     unsigned long __pad;
-    long st_size;
-    int st_blksize;
+    off_t st_size;
+    blksize_t st_blksize;
     int __pad2;
-    long st_blocks;
+    blkcnt_t st_blocks;
     struct timespec st_atim;
     struct timespec st_mtim;
     struct timespec st_ctim;
@@ -75,6 +75,18 @@ struct stat {
 #define S_IROTH 0004
 #define S_IWOTH 0002
 #define S_IXOTH 0001
+#define S_IRWXU 0700
+#define S_IRWXG 0070
+#define S_IRWXO 0007
+#define S_ISUID 04000
+#define S_ISGID 02000
+#define S_ISVTX 01000
+
+#define UTIME_NOW 0x3fffffff
+#define UTIME_OMIT 0x3ffffffe
+#define S_TYPEISMQ(buf) 0
+#define S_TYPEISSEM(buf) 0
+#define S_TYPEISSHM(buf) 0
 
 #define AT_FDCWD (-100)
 #define AT_SYMLINK_NOFOLLOW 0x100
@@ -83,10 +95,15 @@ int stat(const char *, struct stat *);
 int fstat(int, struct stat *);
 int lstat(const char *, struct stat *);
 int fstatat(int, const char *, struct stat *, int);
+mode_t umask(mode_t);
 int fchmod(int, unsigned int);
+int fchmodat(int, const char *, mode_t, int);
 int mkdir(const char *, unsigned int);
+int mkdirat(int, const char *, mode_t);
 int mkfifo(const char *, unsigned int);
-int mknod(const char *, unsigned int, unsigned long);
+int mkfifoat(int, const char *, mode_t);
+int mknod(const char *, mode_t, dev_t);
+int mknodat(int, const char *, mode_t, dev_t);
 int chmod(const char *, unsigned int);
 int utimensat(int, const char *, const struct timespec[2], int);
 int futimens(int, const struct timespec[2]);

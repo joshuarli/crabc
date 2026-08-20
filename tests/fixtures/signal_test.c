@@ -1,5 +1,6 @@
 #include "signal.h"
 #include "stdio.h"
+#include "errno.h"
 #include <sys/mman.h>
 
 static void *mmap_anon(size_t size) {
@@ -26,9 +27,20 @@ int main(void) {
     struct sigaction sa, old_sa;
     int sig;
 
+    /* AArch64 musl requires 6 KiB, not the historical generic 2 KiB floor. */
+    {
+        stack_t too_small;
+        too_small.ss_sp = mmap_anon(MINSIGSTKSZ);
+        too_small.ss_size = MINSIGSTKSZ - 1;
+        too_small.ss_flags = 0;
+        errno = 0;
+        if (sigaltstack(&too_small, NULL) != -1 || errno != ENOMEM) return 1;
+        munmap(too_small.ss_sp, MINSIGSTKSZ);
+    }
+
     sigfillset(&fullset);
-    if (!sigismember(&fullset, SIGHUP)) return 1;
-    if (!sigismember(&fullset, SIGTERM)) return 2;
+    if (!sigismember(&fullset, SIGHUP)) return 2;
+    if (!sigismember(&fullset, SIGTERM)) return 3;
     /* musl: signals 32/33 excluded from fillset */
     if (sigismember(&fullset, 32)) return 3;
 

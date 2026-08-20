@@ -14,6 +14,7 @@
 #define M_2_SQRTPI 1.12837916709551257390
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.707106781186547524401
+#define MAXFLOAT 3.40282346638528859812e+38F
 
 #define NAN       __builtin_nanf("")
 #define INFINITY  __builtin_inff()
@@ -29,6 +30,9 @@
 #define FP_ZERO      2
 #define FP_SUBNORMAL 3
 #define FP_NORMAL    4
+#define MATH_ERRNO 1
+#define MATH_ERREXCEPT 2
+#define math_errhandling MATH_ERRNO
 
 #ifdef __cplusplus
 extern "C" {
@@ -36,6 +40,7 @@ extern "C" {
 
 typedef float  float_t;
 typedef double double_t;
+extern int signgam;
 
 static __inline unsigned __FLOAT_BITS(float __f)
 {
@@ -144,6 +149,11 @@ static __inline int __signbitl(long double __f)
     __signbitl(x) )
 
 #define isunordered(x,y) (isnan((x)) ? ((void)(y),1) : isnan((y)))
+#define isgreater(x,y) (!isunordered((x),(y)) && (x) > (y))
+#define isgreaterequal(x,y) (!isunordered((x),(y)) && (x) >= (y))
+#define isless(x,y) (!isunordered((x),(y)) && (x) < (y))
+#define islessequal(x,y) (!isunordered((x),(y)) && (x) <= (y))
+#define islessgreater(x,y) (!isunordered((x),(y)) && (x) != (y))
 
 double      acos(double);
 float       acosf(float);
@@ -151,6 +161,22 @@ long double acosl(long double);
 double      acosh(double);
 float       acoshf(float);
 long double acoshl(long double);
+double drem(double, double);
+float dremf(float, float);
+double exp10(double);
+float exp10f(float);
+long double exp10l(long double);
+double pow10(double);
+float pow10f(float);
+long double pow10l(long double);
+double scalb(double, double);
+float scalbf(float, float);
+void sincos(double, double *, double *);
+void sincosf(float, float *, float *);
+void sincosl(long double, long double *, long double *);
+double nan(const char *);
+float nanf(const char *);
+long double nanl(const char *);
 double      asin(double);
 float       asinf(float);
 long double asinl(long double);

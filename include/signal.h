@@ -6,8 +6,10 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+#include <sys/types.h>
 
 typedef void (*sighandler_t)(int);
+typedef int sig_atomic_t;
 
 #define SIG_DFL ((sighandler_t)0)
 #define SIG_IGN ((sighandler_t)1)
@@ -85,9 +87,14 @@ typedef struct __sigset_t {
 } sigset_t;
 #endif
 
+typedef struct __crabc_siginfo siginfo_t;
+
 struct sigaction {
-    void (*sa_handler)(int);
-    unsigned long sa_flags;
+    union {
+        void (*sa_handler)(int);
+        void (*sa_sigaction)(int, siginfo_t *, void *);
+    };
+    int sa_flags;
     void (*sa_restorer)(void);
     sigset_t sa_mask;
 };
@@ -100,6 +107,15 @@ struct sigaltstack {
 
 typedef struct sigaltstack stack_t;
 
+typedef struct { long double __regs[274]; } mcontext_t;
+typedef struct __crabc_ucontext {
+    unsigned long uc_flags;
+    struct __crabc_ucontext *uc_link;
+    stack_t uc_stack;
+    sigset_t uc_sigmask;
+    mcontext_t uc_mcontext;
+} ucontext_t;
+
 #ifndef __DEFINED_struct_timespec
 #define __DEFINED_struct_timespec
 struct timespec {
@@ -108,12 +124,69 @@ struct timespec {
 };
 #endif
 
-typedef struct {
+union sigval {
+    int sival_int;
+    void *sival_ptr;
+};
+
+struct __crabc_siginfo {
     int si_signo;
     int si_errno;
     int si_code;
-    char __pad[128 - 3 * sizeof(int)];
-} siginfo_t;
+    pid_t si_pid;
+    uid_t si_uid;
+    void *si_addr;
+    int si_status;
+    union sigval si_value;
+    char __pad[80];
+};
+
+struct sigevent {
+    union sigval sigev_value;
+    int sigev_signo;
+    int sigev_notify;
+    void (*sigev_notify_function)(union sigval);
+    pthread_attr_t *sigev_notify_attributes;
+};
+
+#define SIGEV_NONE 1
+#define SIGEV_SIGNAL 0
+#define SIGEV_THREAD 2
+#define SIGRTMIN 35
+#define SIGRTMAX 64
+#define SI_QUEUE (-1)
+#define SI_TIMER (-2)
+#define SI_ASYNCIO (-4)
+#define SI_MESGQ (-3)
+#define ILL_ILLOPC 1
+#define ILL_ILLOPN 2
+#define ILL_ILLADR 3
+#define ILL_ILLTRP 4
+#define ILL_PRVOPC 5
+#define ILL_PRVREG 6
+#define ILL_COPROC 7
+#define ILL_BADSTK 8
+#define FPE_INTDIV 1
+#define FPE_INTOVF 2
+#define FPE_FLTDIV 3
+#define FPE_FLTOVF 4
+#define FPE_FLTUND 5
+#define FPE_FLTRES 6
+#define FPE_FLTINV 7
+#define FPE_FLTSUB 8
+#define SEGV_MAPERR 1
+#define SEGV_ACCERR 2
+#define BUS_ADRALN 1
+#define BUS_ADRERR 2
+#define BUS_OBJERR 3
+#define TRAP_BRKPT 1
+#define TRAP_TRACE 2
+#define CLD_EXITED 1
+#define CLD_KILLED 2
+#define CLD_DUMPED 3
+#define CLD_TRAPPED 4
+#define CLD_STOPPED 5
+#define CLD_CONTINUED 6
 
 int sigaction(int, const struct sigaction *, struct sigaction *);
 sighandler_t signal(int, sighandler_t);
@@ -133,6 +206,18 @@ int sigtimedwait(const sigset_t *, siginfo_t *, const struct timespec *);
 int sigwaitinfo(const sigset_t *, siginfo_t *);
 int sigwait(const sigset_t *, int *);
 int sigaltstack(const stack_t *, stack_t *);
+int killpg(pid_t, int);
+void psiginfo(const siginfo_t *, const char *);
+void psignal(int, const char *);
+int pthread_kill(pthread_t, int);
+int pthread_sigmask(int, const sigset_t *restrict, sigset_t *restrict);
+int sighold(int);
+int sigignore(int);
+int siginterrupt(int, int);
+int sigpause(int);
+int sigqueue(pid_t, int, const union sigval);
+int sigrelse(int);
+sighandler_t sigset(int, sighandler_t);
 
 #ifdef __cplusplus
 }

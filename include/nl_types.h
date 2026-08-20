@@ -2,8 +2,10 @@
 #define _NL_TYPES_H
 
 typedef void *nl_catd;
+typedef int nl_item;
 
 #define NL_SETD 1
+#define NL_CAT_LOCALE 1
 
 nl_catd catopen(const char *name, int oflag);
 int catclose(nl_catd catd);

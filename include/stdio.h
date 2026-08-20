@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdarg.h>
+#include <sys/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,7 @@ extern FILE *stderr;
 #define FOPEN_MAX 1000
 #define TMP_MAX 10000
 #define L_tmpnam 20
+#define L_ctermid 20
 
 /* File access */
 FILE *fopen(const char *, const char *);
@@ -65,8 +67,8 @@ size_t fwrite(const void *, size_t, size_t, FILE *);
 int fseek(FILE *, long, int);
 long ftell(FILE *);
 void rewind(FILE *);
-int fseeko(FILE *, long long, int);
-long long ftello(FILE *);
+int fseeko(FILE *, off_t, int);
+off_t ftello(FILE *);
 int fgetpos(FILE *, fpos_t *);
 int fsetpos(FILE *, const fpos_t *);
 
@@ -75,14 +77,21 @@ int feof(FILE *);
 int ferror(FILE *);
 void clearerr(FILE *);
 int fileno(FILE *);
+void flockfile(FILE *);
+int ftrylockfile(FILE *);
+void funlockfile(FILE *);
 
 /* Character I/O */
 int fgetc(FILE *);
 int getc(FILE *);
+int getc_unlocked(FILE *);
 int getchar(void);
+int getchar_unlocked(void);
 int fputc(int, FILE *);
 int putc(int, FILE *);
+int putc_unlocked(int, FILE *);
 int putchar(int);
+int putchar_unlocked(int);
 int ungetc(int, FILE *);
 
 /* Line I/O */
@@ -111,16 +120,20 @@ int vfscanf(FILE *, const char *, va_list);
 int vsscanf(const char *, const char *, va_list);
 
 /* Line input */
-long long getdelim(char **, size_t *, int, FILE *);
-long long getline(char **, size_t *, FILE *);
+ssize_t getdelim(char **restrict, size_t *restrict, int, FILE *restrict);
+ssize_t getline(char **restrict, size_t *restrict, FILE *restrict);
 
 /* File operations */
 int remove(const char *);
 int rename(const char *, const char *);
+int renameat(int, const char *, int, const char *);
 
 /* Temp files */
 char *tmpnam(char *);
 FILE *tmpfile(void);
+char *tempnam(const char *, const char *);
+char *ctermid(char *);
+char *gets(char *);
 
 /* Pipes */
 FILE *popen(const char *, const char *);
