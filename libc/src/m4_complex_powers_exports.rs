@@ -147,11 +147,25 @@ fn m4_cpow_float(z: M4ComplexFloat, c: M4ComplexFloat) -> M4ComplexFloat {
 // Export the double and float entry points.  Keep the float reduction in
 // terms of the float helpers, matching musl's cpowf.c rather than narrowing
 // through the double implementation.
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn cpow(z: M4ComplexDouble, c: M4ComplexDouble) -> M4ComplexDouble {
+    m4_long_to_double(cpowl(m4_double_to_long(z), m4_double_to_long(c)))
+}
+
+#[cfg(not(target_arch = "aarch64"))]
 #[no_mangle]
 pub extern "C" fn cpow(z: M4ComplexDouble, c: M4ComplexDouble) -> M4ComplexDouble {
     m4_cpow_double(z, c)
 }
 
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn cpowf(z: M4ComplexFloat, c: M4ComplexFloat) -> M4ComplexFloat {
+    m4_long_to_float(cpowl(m4_float_to_long(z), m4_float_to_long(c)))
+}
+
+#[cfg(not(target_arch = "aarch64"))]
 #[no_mangle]
 pub extern "C" fn cpowf(z: M4ComplexFloat, c: M4ComplexFloat) -> M4ComplexFloat {
     m4_cpow_float(z, c)

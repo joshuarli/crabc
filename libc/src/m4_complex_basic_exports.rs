@@ -27,6 +27,30 @@ pub struct M4ComplexLong {
     im: f128,
 }
 
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_double_to_long(z: M4ComplexDouble) -> M4ComplexLong {
+    M4ComplexLong { re: z.re as f128, im: z.im as f128 }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_float_to_long(z: M4ComplexFloat) -> M4ComplexLong {
+    M4ComplexLong { re: z.re as f128, im: z.im as f128 }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_long_to_double(z: M4ComplexLong) -> M4ComplexDouble {
+    M4ComplexDouble { re: z.re as f64, im: z.im as f64 }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_long_to_float(z: M4ComplexLong) -> M4ComplexFloat {
+    M4ComplexFloat { re: z.re as f32, im: z.im as f32 }
+}
+
 #[inline]
 fn m4_cproj_double(z: M4ComplexDouble) -> M4ComplexDouble {
     // C99 projects every complex value with an infinite component to the
@@ -167,11 +191,39 @@ pub extern "C" fn cprojl(z: M4ComplexLong) -> M4ComplexLong {
 
 #[no_mangle]
 pub extern "C" fn cabs(z: M4ComplexDouble) -> f64 {
-    hypot(z.re, z.im)
+    m4_cabs_double(z)
 }
 
 #[no_mangle]
 pub extern "C" fn cabsf(z: M4ComplexFloat) -> f32 {
+    m4_cabs_float(z)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_cabs_double(z: M4ComplexDouble) -> f64 {
+    // The source contract checks the correctly rounded binary64 result,
+    // while the native target has binary128 long double. Retain the extra
+    // precision through the root and round only at the ABI edge; the musl
+    // double hypot path can otherwise land one ulp below the interval.
+    hypotl(z.re as f128, z.im as f128) as f64
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn m4_cabs_double(z: M4ComplexDouble) -> f64 {
+    hypot(z.re, z.im)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_cabs_float(z: M4ComplexFloat) -> f32 {
+    hypotl(z.re as f128, z.im as f128) as f32
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn m4_cabs_float(z: M4ComplexFloat) -> f32 {
     hypotf(z.re, z.im)
 }
 
@@ -189,11 +241,35 @@ pub extern "C" fn cabsl(z: M4ComplexLong) -> f128 {
 
 #[no_mangle]
 pub extern "C" fn carg(z: M4ComplexDouble) -> f64 {
-    unsafe { atan2(z.im, z.re) }
+    m4_carg_double(z)
 }
 
 #[no_mangle]
 pub extern "C" fn cargf(z: M4ComplexFloat) -> f32 {
+    m4_carg_float(z)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_carg_double(z: M4ComplexDouble) -> f64 {
+    cargl(m4_double_to_long(z)) as f64
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn m4_carg_double(z: M4ComplexDouble) -> f64 {
+    unsafe { atan2(z.im, z.re) }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn m4_carg_float(z: M4ComplexFloat) -> f32 {
+    cargl(m4_float_to_long(z)) as f32
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn m4_carg_float(z: M4ComplexFloat) -> f32 {
     unsafe { atan2f(z.im, z.re) }
 }
 

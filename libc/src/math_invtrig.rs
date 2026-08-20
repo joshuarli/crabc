@@ -229,8 +229,30 @@ pub unsafe extern "C" fn atan(x: f64) -> f64 {
 const INVTRIG_PI: f64 = asdouble(0x400921FB54442D18);
 const INVTRIG_PI_LO: f64 = asdouble(0x3CA1A62633145C07);
 
+#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
+    // GCC lowers the C99 `carg` builtin directly to atan2 on AArch64,
+    // bypassing the complex wrapper.  Keep the native binary128
+    // intermediates until the public binary64 rounding boundary so the
+    // generated complex source checks do not inherit the f64 polynomial
+    // boundary error from musl's double implementation.
+    let result = atan2l(y as f128, x as f128) as f64;
+    // AArch64's f128-to-f64 conversion does not raise the underflow and
+    // inexact flags that musl's f64 division raises for a tiny finite result.
+    // Restore that observable part of the f64 contract after narrowing.
+    if x.is_finite() && y.is_finite() && y != 0.0 {
+        let bits = asuint64(result) & 0x7fff_ffff_ffff_ffff;
+        if bits == 0 || bits < 0x0010_0000_0000_0000 {
+            unsafe { feraiseexcept(FE_INEXACT | FE_UNDERFLOW); }
+        }
+    }
+    result
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[no_mangle]
+unsafe extern "C" fn m4_atan2_fallback(y: f64, x: f64) -> f64 {
     if is_nan(x) || is_nan(y) {
         return x + y;
     }
@@ -503,8 +525,22 @@ pub unsafe extern "C" fn atanf(x: f32) -> f32 {
 const INVTRIG_PI_F: f32 = asfloat(0x40490fdb);
 const INVTRIG_PI_LO_F: f32 = asfloat(0xb3bbbd2e);
 
+#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
+    let result = atan2l(y as f128, x as f128) as f32;
+    if x.is_finite() && y.is_finite() && y != 0.0 {
+        let bits = asuint(result) & 0x7fff_ffff;
+        if bits == 0 || bits < 0x0080_0000 {
+            unsafe { feraiseexcept(FE_INEXACT | FE_UNDERFLOW); }
+        }
+    }
+    result
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[no_mangle]
+unsafe extern "C" fn m4_atan2f_fallback(y: f32, x: f32) -> f32 {
     if is_nanf(x) || is_nanf(y) {
         return x + y;
     }
@@ -573,4 +609,16 @@ pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
         2 => INVTRIG_PI_F - (z - INVTRIG_PI_LO_F), // atan(+,-)
         _ => (z - INVTRIG_PI_LO_F) - INVTRIG_PI_F, // atan(-,-)
     }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[no_mangle]
+pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
+    m4_atan2_fallback(y, x)
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+#[no_mangle]
+pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
+    m4_atan2f_fallback(y, x)
 }

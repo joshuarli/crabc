@@ -554,84 +554,11 @@ fn m4_catanh_float(z: M4ComplexFloat) -> M4ComplexFloat {
     m4_cf(w.im, -w.re)
 }
 
-// Export the double and float entry points.
-#[no_mangle]
-pub extern "C" fn cexp(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_cd_exp(z)
-}
-
-#[no_mangle]
-pub extern "C" fn clog(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_cd_clog(z)
-}
-
-#[no_mangle]
-pub extern "C" fn csin(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_csin_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn ccos(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_ccos_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn ctan(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_ctan_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn csqrt(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_csqrt_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn csinh(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_csinh_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn ccosh(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_ccosh_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn ctanh(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_ctanh_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn casin(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_casin_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn cacos(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_cacos_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn catan(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_catan_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn casinh(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_casinh_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn cacosh(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_cacosh_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn catanh(z: M4ComplexDouble) -> M4ComplexDouble {
-    m4_catanh_double(z)
-}
-
-#[no_mangle]
-pub extern "C" fn cexpf(z: M4ComplexFloat) -> M4ComplexFloat {
+// Export the double and float entry points.  Select the ABI path at compile
+// time so the fallback body is not left as unreachable code in native builds.
+#[cfg(not(target_arch = "aarch64"))]
+#[inline]
+fn m4_cexp_float(z: M4ComplexFloat) -> M4ComplexFloat {
     let x = z.re;
     let y = z.im;
     if y == 0.0 {
@@ -656,75 +583,129 @@ pub extern "C" fn cexpf(z: M4ComplexFloat) -> M4ComplexFloat {
     m4_cf(e * cosf(y), e * sinf(y))
 }
 
-#[no_mangle]
-pub extern "C" fn clogf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_cf_clog(z)
+#[cfg(target_arch = "aarch64")]
+macro_rules! m4_export_complex_double {
+    ($($name:ident => $long:ident),* $(,)?) => {
+        $(
+            #[no_mangle]
+            pub extern "C" fn $name(z: M4ComplexDouble) -> M4ComplexDouble {
+                m4_long_to_double($long(m4_double_to_long(z)))
+            }
+        )*
+    };
 }
 
-#[no_mangle]
-pub extern "C" fn csinf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_csin_float(z)
+#[cfg(not(target_arch = "aarch64"))]
+macro_rules! m4_export_complex_double {
+    ($($name:ident => $fallback:ident),* $(,)?) => {
+        $(
+            #[no_mangle]
+            pub extern "C" fn $name(z: M4ComplexDouble) -> M4ComplexDouble {
+                $fallback(z)
+            }
+        )*
+    };
 }
 
-#[no_mangle]
-pub extern "C" fn ccosf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_ccos_float(z)
+#[cfg(target_arch = "aarch64")]
+m4_export_complex_double!(
+    cexp => cexpl,
+    clog => clogl,
+    csin => csinl,
+    ccos => ccosl,
+    ctan => ctanl,
+    csqrt => csqrtl,
+    csinh => csinhl,
+    ccosh => ccoshl,
+    ctanh => ctanhl,
+    casin => casinl,
+    cacos => cacosl,
+    catan => catanl,
+    casinh => casinhl,
+    cacosh => cacoshl,
+    catanh => catanhl,
+);
+
+#[cfg(not(target_arch = "aarch64"))]
+m4_export_complex_double!(
+    cexp => m4_cd_exp,
+    clog => m4_cd_clog,
+    csin => m4_csin_double,
+    ccos => m4_ccos_double,
+    ctan => m4_ctan_double,
+    csqrt => m4_csqrt_double,
+    csinh => m4_csinh_double,
+    ccosh => m4_ccosh_double,
+    ctanh => m4_ctanh_double,
+    casin => m4_casin_double,
+    cacos => m4_cacos_double,
+    catan => m4_catan_double,
+    casinh => m4_casinh_double,
+    cacosh => m4_cacosh_double,
+    catanh => m4_catanh_double,
+);
+
+#[cfg(target_arch = "aarch64")]
+macro_rules! m4_export_complex_float {
+    ($($name:ident => $long:ident),* $(,)?) => {
+        $(
+            #[no_mangle]
+            pub extern "C" fn $name(z: M4ComplexFloat) -> M4ComplexFloat {
+                m4_long_to_float($long(m4_float_to_long(z)))
+            }
+        )*
+    };
 }
 
-#[no_mangle]
-pub extern "C" fn ctanf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_ctan_float(z)
+#[cfg(not(target_arch = "aarch64"))]
+macro_rules! m4_export_complex_float {
+    ($($name:ident => $fallback:ident),* $(,)?) => {
+        $(
+            #[no_mangle]
+            pub extern "C" fn $name(z: M4ComplexFloat) -> M4ComplexFloat {
+                $fallback(z)
+            }
+        )*
+    };
 }
 
-#[no_mangle]
-pub extern "C" fn csqrtf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_cf_sqrt(z)
-}
+#[cfg(target_arch = "aarch64")]
+m4_export_complex_float!(
+    cexpf => cexpl,
+    clogf => clogl,
+    csinf => csinl,
+    ccosf => ccosl,
+    ctanf => ctanl,
+    csqrtf => csqrtl,
+    csinhf => csinhl,
+    ccoshf => ccoshl,
+    ctanhf => ctanhl,
+    casinf => casinl,
+    cacosf => cacosl,
+    catanf => catanl,
+    casinhf => casinhl,
+    cacoshf => cacoshl,
+    catanhf => catanhl,
+);
 
-#[no_mangle]
-pub extern "C" fn csinhf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_csinh_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn ccoshf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_ccosh_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn ctanhf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_ctanh_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn casinf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_casin_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn cacosf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_cacos_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn catanf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_catan_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn casinhf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_casinh_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn cacoshf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_cacosh_float(z)
-}
-
-#[no_mangle]
-pub extern "C" fn catanhf(z: M4ComplexFloat) -> M4ComplexFloat {
-    m4_catanh_float(z)
-}
+#[cfg(not(target_arch = "aarch64"))]
+m4_export_complex_float!(
+    cexpf => m4_cexp_float,
+    clogf => m4_cf_clog,
+    csinf => m4_csin_float,
+    ccosf => m4_ccos_float,
+    ctanf => m4_ctan_float,
+    csqrtf => m4_cf_sqrt,
+    csinhf => m4_csinh_float,
+    ccoshf => m4_ccosh_float,
+    ctanhf => m4_ctanh_float,
+    casinf => m4_casin_float,
+    cacosf => m4_cacos_float,
+    catanf => m4_catan_float,
+    casinhf => m4_casinh_float,
+    cacoshf => m4_cacosh_float,
+    catanhf => m4_catanh_float,
+);
 
 // x86_64 uses the 64-bit long-double ABI, so these are aliases at the ABI
 // boundary.  AArch64 uses native binary128 implementations below.  RISC-V

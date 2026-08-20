@@ -39,8 +39,10 @@ improvement**: it preserves the raw bytes and does not treat the improvement
 as a differential regression. This recognition is exact—an absent output,
 timeout, or any non-success candidate diagnostic is still a failure. The
 report separately counts source diagnostics that crabc shares with musl; it
-does not call those tests source-clean. That count is an accuracy measurement,
-not a replacement compatibility oracle: a candidate result that is
+does not call those tests source-clean, and the `basic` suite is red whenever
+that direct source contract fails—even when the candidate bytes happen to
+match musl byte-for-byte. That count is an accuracy measurement, not a
+replacement compatibility oracle: a candidate result that is
 byte-identical to musl remains differential parity unless POSIX/C requires a
 different result. In particular, the runner never substitutes host-glibc
 semantics for musl's behavior.

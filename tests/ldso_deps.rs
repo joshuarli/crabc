@@ -7,6 +7,10 @@ use std::process::Command;
 fn ldso_runs_pie_with_dependency() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixtures = manifest_dir.join("tests/fixtures");
+    let target = manifest_dir
+        .join("target/debug")
+        .canonicalize()
+        .expect("target/debug is not built");
 
     // Build ldso
 
@@ -65,4 +69,17 @@ fn ldso_runs_pie_with_dependency() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "ok\n");
+
+    // A bare DT_NEEDED name must not fall back to the process current working
+    // directory when the configured library path does not contain the DSO.
+    let cwd_output = Command::new(&needfoo_bin)
+        .current_dir(temp_dir)
+        .env("LD_LIBRARY_PATH", &target)
+        .output()
+        .expect("failed to run cwd dependency search case");
+    assert!(
+        !cwd_output.status.success(),
+        "bare DT_NEEDED unexpectedly loaded from cwd: {}",
+        String::from_utf8_lossy(&cwd_output.stderr)
+    );
 }

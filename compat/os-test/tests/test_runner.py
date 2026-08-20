@@ -110,6 +110,22 @@ class OutcomeComparisonTests(unittest.TestCase):
         )
         self.assertTrue(RUNNER.source_contract_passed("io", {}))
 
+    def test_basic_source_contract_failure_cannot_be_green(self) -> None:
+        """A shared source diagnostic remains red after differential matching."""
+
+        candidate = {"complex/cabs.out": b"diagnostic\n"}
+        reference = dict(candidate)
+        differences = RUNNER.compare_outcomes(reference, candidate)
+        self.assertEqual(differences, [])
+        self.assertFalse(RUNNER.source_contract_passed("basic", candidate))
+        # A matched make status and no accepted differences are still red.
+        # This is the former false-green condition from run_profile.
+        self.assertFalse(
+            RUNNER.suite_result_passed(
+                "basic", candidate, make_status_ok=True, unaccepted_difference_count=0
+            )
+        )
+
     def test_snapshot_records_exact_bytes_and_hash(self) -> None:
         snapshot = RUNNER.stream_snapshot(b"ok\n")
         self.assertEqual(snapshot["byte_length"], 3)

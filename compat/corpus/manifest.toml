@@ -195,12 +195,30 @@ argv = ["grep", "needle", "/tmp/crabc-corpus-input"]
 setup = [{ path = "/tmp/crabc-corpus-input", contents = "needle\n" }]
 
 [[cases]]
+id = "tier-b-grep-count"
+tier = "B"
+package = "grep"
+path = "/bin/grep"
+argv = ["grep", "-c", "needle", "/tmp/crabc-corpus-grep-count-input"]
+setup = [{ path = "/tmp/crabc-corpus-grep-count-input", contents = "needle\nother\nneedle\n" }]
+stateful = true
+
+[[cases]]
 id = "tier-b-sed"
 tier = "B"
 package = "sed"
 path = "/bin/sed"
 argv = ["sed", "s/old/new/", "/tmp/crabc-corpus-input"]
 setup = [{ path = "/tmp/crabc-corpus-input", contents = "old\n" }]
+
+[[cases]]
+id = "tier-b-sed-in-place"
+tier = "B"
+package = "sed"
+path = "/bin/sed"
+argv = ["sed", "-i", "s/old/new/", "/tmp/crabc-corpus-sed-state"]
+setup = [{ path = "/tmp/crabc-corpus-sed-state", contents = "old\n" }]
+stateful = true
 
 [[cases]]
 id = "tier-b-file"
@@ -210,11 +228,29 @@ path = "/usr/bin/file"
 argv = ["file", "/etc/alpine-release"]
 
 [[cases]]
+id = "tier-b-file-created-input"
+tier = "B"
+package = "file"
+path = "/usr/bin/file"
+argv = ["file", "-b", "/tmp/crabc-corpus-file-input"]
+setup = [{ path = "/tmp/crabc-corpus-file-input", contents = "stateful file input\n" }]
+stateful = true
+
+[[cases]]
 id = "tier-b-tar"
 tier = "B"
 package = "tar"
 path = "/bin/tar"
 argv = ["tar", "--version"]
+
+[[cases]]
+id = "tier-b-tar-create"
+tier = "B"
+package = "tar"
+path = "/bin/tar"
+argv = ["tar", "-cf", "/tmp/crabc-corpus-tar-output.tar", "-C", "/tmp", "crabc-corpus-tar-input"]
+setup = [{ path = "/tmp/crabc-corpus-tar-input", contents = "archive payload\n" }]
+stateful = true
 
 [[cases]]
 id = "tier-b-gzip"
@@ -224,11 +260,29 @@ path = "/bin/gzip"
 argv = ["gzip", "--version"]
 
 [[cases]]
+id = "tier-b-gzip-compress"
+tier = "B"
+package = "gzip"
+path = "/bin/gzip"
+argv = ["gzip", "-n", "-c", "/tmp/crabc-corpus-gzip-input"]
+setup = [{ path = "/tmp/crabc-corpus-gzip-input", contents = "gzip payload\n" }]
+stateful = true
+
+[[cases]]
 id = "tier-b-zstd"
 tier = "B"
 package = "zstd"
 path = "/usr/bin/zstd"
 argv = ["zstd", "--version"]
+
+[[cases]]
+id = "tier-b-zstd-compress"
+tier = "B"
+package = "zstd"
+path = "/usr/bin/zstd"
+argv = ["zstd", "--quiet", "--stdout", "/tmp/crabc-corpus-zstd-input"]
+setup = [{ path = "/tmp/crabc-corpus-zstd-input", contents = "zstd payload\n" }]
+stateful = true
 
 [[cases]]
 id = "tier-b-sqlite"
@@ -238,11 +292,28 @@ path = "/usr/bin/sqlite3"
 argv = ["sqlite3", "--version"]
 
 [[cases]]
+id = "tier-b-sqlite-state"
+tier = "B"
+package = "sqlite"
+path = "/usr/bin/sqlite3"
+argv = ["sqlite3", "/tmp/crabc-corpus-sqlite.db", "CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO items(value) VALUES ('state'); SELECT id || ':' || value FROM items;"]
+stateful = true
+
+[[cases]]
 id = "tier-c-curl"
 tier = "C"
 package = "curl"
 path = "/usr/bin/curl"
 argv = ["curl", "--version"]
+
+[[cases]]
+id = "tier-c-curl-file"
+tier = "C"
+package = "curl"
+path = "/usr/bin/curl"
+argv = ["curl", "--silent", "--show-error", "--fail", "file:///tmp/crabc-corpus-curl-input"]
+setup = [{ path = "/tmp/crabc-corpus-curl-input", contents = "curl payload\n" }]
+stateful = true
 
 [[cases]]
 id = "tier-c-openssl"
@@ -252,11 +323,29 @@ path = "/usr/bin/openssl"
 argv = ["openssl", "version"]
 
 [[cases]]
+id = "tier-c-openssl-digest"
+tier = "C"
+package = "openssl"
+path = "/usr/bin/openssl"
+argv = ["openssl", "dgst", "-sha256", "/tmp/crabc-corpus-openssl-input"]
+setup = [{ path = "/tmp/crabc-corpus-openssl-input", contents = "openssl payload\n" }]
+stateful = true
+
+[[cases]]
 id = "tier-c-ssh-version"
 tier = "C"
 package = "openssh-client-default"
 path = "/usr/bin/ssh"
 argv = ["ssh", "-V"]
+
+[[cases]]
+id = "tier-c-ssh-config"
+tier = "C"
+package = "openssh-client-default"
+path = "/usr/bin/ssh"
+argv = ["ssh", "-G", "-F", "/tmp/crabc-corpus-ssh-config", "example.test"]
+setup = [{ path = "/tmp/crabc-corpus-ssh-config", contents = "Host example.test\n    HostName 127.0.0.1\n    Port 2222\n    User crabc\n" }]
+stateful = true
 
 [[cases]]
 id = "tier-d-git"
@@ -266,8 +355,25 @@ path = "/usr/bin/git"
 argv = ["git", "--version"]
 
 [[cases]]
+id = "tier-d-git-init"
+tier = "D"
+package = "git"
+path = "/usr/bin/git"
+argv = ["git", "init", "--quiet", "/tmp/crabc-corpus-git-repository"]
+stateful = true
+
+[[cases]]
 id = "tier-d-python"
 tier = "D"
 package = "python3"
 path = "/usr/bin/python3"
 argv = ["python3", "-c", "print('crabc-corpus')"]
+
+[[cases]]
+id = "tier-d-python-file-state"
+tier = "D"
+package = "python3"
+path = "/usr/bin/python3"
+argv = ["python3", "-c", "from pathlib import Path; p = Path('/tmp/crabc-corpus-python-state'); p.write_text('python payload\\n'); print(p.read_text(), end='')"]
+setup = [{ path = "/tmp/crabc-corpus-python-state", contents = "" }]
+stateful = true

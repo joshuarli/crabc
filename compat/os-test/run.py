@@ -475,6 +475,22 @@ def source_contract_passed(suite: str, candidate: dict[str, bytes]) -> bool:
     return suite != "basic" or not basic_source_differences(candidate)
 
 
+def suite_result_passed(
+    suite: str,
+    candidate: dict[str, bytes],
+    make_status_ok: bool,
+    unaccepted_difference_count: int,
+) -> bool:
+    """Apply the final green gate shared by the report and contract tests."""
+
+    return bool(
+        make_status_ok
+        and candidate
+        and source_contract_passed(suite, candidate)
+        and unaccepted_difference_count == 0
+    )
+
+
 def classify_basic_source_improvements(
     reference: dict[str, bytes],
     candidate: dict[str, bytes],
@@ -718,10 +734,13 @@ def run_profile(args: argparse.Namespace) -> bool:
                 runtime_reports[runtime.name]["make_status"] == 0
                 for runtime in runtimes
             ) or accepted_make is not None
-            suite_passed = (
-                make_status_ok
-                and bool(candidate)
-                and unaccepted_difference_count == 0
+            # A byte-for-byte musl match is not enough for basic: the
+            # generated source contract requires every candidate outcome
+            # to be the source-defined clean exit (or its one named header
+            # skip). Keep this gate separate from differential exceptions so
+            # a shared diagnostic cannot make the suite green by accident.
+            suite_passed = suite_result_passed(
+                suite, candidate, make_status_ok, unaccepted_difference_count
             )
             report["suites"].append(
                 {

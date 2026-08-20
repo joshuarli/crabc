@@ -35,9 +35,10 @@ MUSL_VERSION = "1.2.6"
 ARCHITECTURE = "aarch64"
 DEFAULT_MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
 DEFAULT_LINUX_UAPI_INCLUDE = Path("/usr/include")
-# Probe output is ephemeral by default: the report includes build-specific
-# archive hashes and must not create an untracked checkout artifact.
-DEFAULT_OUTPUT = Path("/tmp/crabc-aarch64-abi.json")
+# Keep the generated report durable so a red ABI/static triage result can be
+# reviewed by the dashboard and tied to the current candidate archive.  The
+# reports directory is ignored, so ad-hoc runs still do not dirty the commit.
+DEFAULT_OUTPUT = Path(__file__).resolve().parents[1] / "reports/abi/latest.json"
 PROBE_NAMES = (
     "stat",
     "termios",
@@ -439,6 +440,15 @@ int main(void) {
 }
 
 
+# Every selected source combines three surfaces: header declarations (the
+# named functions in ``symbols``), ABI-bearing layout values, and constants.
+# Keeping the dimensions in the generated report makes it clear which
+# evidence is present when a future probe is added or narrowed.
+PROBE_DIMENSIONS = {
+    name: ("declaration", "layout", "constant") for name in PROBES
+}
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -593,6 +603,40 @@ def _header_compile_source(header: str) -> str:
     return f"#include <{header}>\nint main(void) {{ return 0; }}\n"
 
 
+def public_header_probe_manifest(
+    pinned_headers: Sequence[str], candidate_headers: Sequence[str]
+) -> dict[str, Any]:
+    """Describe the generated public-header declaration probe surface.
+
+    The source is generated from the pinned header file names at run time;
+    there is no hand-maintained include list that can silently omit a newly
+    installed public header.  Compile records remain declaration-consumption
+    evidence only.  The named runtime probes carry the separate layout and
+    constant evidence below, so a successful include is never mislabeled as
+    ABI parity.
+    """
+
+    pinned = sorted(set(pinned_headers))
+    candidate = sorted(set(candidate_headers))
+    return {
+        "generator": "pinned-musl-public-header-surface",
+        "oracle": f"pinned-musl-{MUSL_VERSION}",
+        "declaration_probe": {
+            "source_template": "#include <{header}>\\nint main(void) { return 0; }\\n",
+            "pinned_headers": pinned,
+            "candidate_headers": candidate,
+            "pinned_count": len(pinned),
+            "candidate_count": len(candidate),
+            "candidate_only_headers": sorted(set(candidate) - set(pinned)),
+        },
+        "layout_constant_probe": {
+            "source": "named C probes under probes; each is generated into a temporary source",
+            "probe_names": list(PROBE_NAMES),
+            "oracle_runtime": "pinned-musl",
+        },
+    }
+
+
 def _compile_header(
     *,
     compiler: list[str],
@@ -649,7 +693,10 @@ def header_compile_coverage(
             {
                 "header": name,
                 "status": input_status if name in pinned_name_set else "candidate_only",
-                "evidence": "compile_only",
+                "evidence": "generated_header_declaration_probe",
+                "probe_source_sha256": hashlib.sha256(
+                    _header_compile_source(name).encode("utf-8")
+                ).hexdigest(),
                 "reason": input_reason
                 if name in pinned_name_set
                 else "candidate public header has no pinned counterpart",
@@ -715,7 +762,10 @@ def header_compile_coverage(
                 {
                     "header": name,
                     "status": status,
-                    "evidence": "compile_only",
+                    "evidence": "generated_header_declaration_probe",
+                    "probe_source_sha256": hashlib.sha256(
+                        _header_compile_source(name).encode("utf-8")
+                    ).hexdigest(),
                     "reason": reason,
                     "candidate": candidate_result,
                     "reference": reference_result,
@@ -795,8 +845,12 @@ def static_archive_metadata(path: Path, nm: str) -> dict[str, Any]:
         return metadata
 
     metadata.update({"bytes": path.stat().st_size, "sha256": sha256(path)})
+    # ``-A`` is required for archives: without it GNU nm emits a member
+    # heading on its own line and the following records are ambiguous.  The
+    # archive/member prefix is evidence in its own right and lets the report
+    # compare duplicate definitions without collapsing the archive surface.
     result = run_command(
-        (nm, "-g", "--defined-only", "--format=posix", str(path)), max_output=None
+        (nm, "-A", "-g", "--defined-only", "--format=posix", str(path)), max_output=None
     )
     metadata["nm"] = {key: value for key, value in result.items() if key != "stdout"}
     if result["status"] != "ok":
@@ -804,27 +858,102 @@ def static_archive_metadata(path: Path, nm: str) -> dict[str, Any]:
         return metadata
 
     symbols: set[str] = set()
-    records = 0
+    symbol_types: dict[str, set[str]] = {}
+    archive_records = 0
     for line in result["stdout"].splitlines():
         fields = line.split()
-        if fields:
-            records += 1
-            # GNU nm's posix output is name, type, value, [size].  Archive
-            # prefixes are not emitted by this invocation.
-            symbols.add(fields[0])
+        # GNU nm --format=posix -A emits:
+        #   archive.a[member.o]: name type value [size]
+        if len(fields) < 3 or not fields[0].endswith(":"):
+            continue
+        name, nm_type = fields[1:3]
+        archive_records += 1
+        symbols.add(name)
+        symbol_types.setdefault(name, set()).add(nm_type)
     metadata.update(
         {
             "status": "available",
-            "defined_symbol_count": records,
+            "defined_symbol_count": archive_records,
             "unique_symbol_count": len(symbols),
             # Keep parsed names only in the in-memory report while probes are
             # being assembled.  They are removed before publication so the
             # durable report records archive identity/counts and selected
             # coverage without embedding thousands of unrelated names.
             "_defined_symbols": symbols,
+            "_symbol_types": symbol_types,
         }
     )
     return metadata
+
+
+def static_archive_comparison(
+    reference: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """Compare the complete defined-symbol surface of two static archives.
+
+    This is intentionally an archive evidence check, not a link experiment:
+    archive extraction is member-driven and crabc's Rust archive may contain
+    implementation-only symbols.  Names and nm classes are retained so a
+    missing declaration or a class change cannot disappear behind aggregate
+    counts.  Allocator internals are not filtered; the report therefore keeps
+    the existing mimalloc ownership boundary explicit rather than inventing a
+    second allocator oracle.
+    """
+
+    def names(metadata: dict[str, Any]) -> set[str]:
+        value = metadata.get("_defined_symbols")
+        return set(value) if isinstance(value, (set, list, tuple)) else set()
+
+    def types(metadata: dict[str, Any]) -> dict[str, set[str]]:
+        value = metadata.get("_symbol_types")
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(name): set(classes)
+            for name, classes in value.items()
+            if isinstance(classes, (set, list, tuple))
+        }
+
+    reference_names = names(reference)
+    candidate_names = names(candidate)
+    reference_types = types(reference)
+    candidate_types = types(candidate)
+    common = reference_names & candidate_names
+    type_mismatches = [
+        {
+            "name": name,
+            "reference": sorted(reference_types.get(name, ())),
+            "candidate": sorted(candidate_types.get(name, ())),
+        }
+        for name in sorted(common)
+        if reference_types.get(name, set()) != candidate_types.get(name, set())
+    ]
+    complete = reference.get("status") == "available" and candidate.get("status") == "available"
+    missing = sorted(reference_names - candidate_names)
+    unexpected = sorted(candidate_names - reference_names)
+    return {
+        "evidence": "complete_static_archive_nm",
+        "oracle": f"pinned-musl-{MUSL_VERSION}",
+        # A static archive is not a public-symbol parity oracle: musl's
+        # internal members and Rust/mimalloc implementation members are
+        # expected to differ.  Keep all differences as explicit triage
+        # evidence while reserving ``match`` for the unusually exact case.
+        "status": (
+            "match"
+            if complete and not missing and not unexpected and not type_mismatches
+            else "triage"
+            if complete
+            else "incomplete"
+        ),
+        "gate": "informational-triage",
+        "reference_defined_symbol_count": reference.get("defined_symbol_count", 0),
+        "candidate_defined_symbol_count": candidate.get("defined_symbol_count", 0),
+        "reference_unique_symbol_count": len(reference_names),
+        "candidate_unique_symbol_count": len(candidate_names),
+        "missing_from_candidate": missing,
+        "unexpected_in_candidate": unexpected,
+        "nm_type_mismatches": type_mismatches,
+    }
 
 
 def archive_symbol_coverage(
@@ -948,9 +1077,14 @@ def _blocked_probe(name: str, status: str, reason: str) -> dict[str, Any]:
     return {
         "name": name,
         "status": status,
-        "evidence": "runtime_abi_comparison",
+        "evidence": "generated_public_header_layout_constant_probe",
         "reason": reason,
         "headers": PROBES[name]["headers"],
+        "dimensions": list(PROBE_DIMENSIONS[name]),
+        "declarations": list(PROBES[name]["symbols"]),
+        "source_sha256": hashlib.sha256(
+            PROBES[name]["source"].encode("utf-8")
+        ).hexdigest(),
         "reference": None,
         "candidate": None,
         "comparison": None,
@@ -1018,9 +1152,14 @@ def build_report(
         "issues": input_issues,
         "probes": [],
         "header_compile_coverage": None,
+        "public_header_probe_manifest": None,
+        "static_archive_comparison": None,
     }
     report["inputs"]["musl"]["archive"] = static_archive_metadata(musl_root / "lib/libc.a", nm)
     report["inputs"]["candidate"]["archive"] = static_archive_metadata(candidate_archive, nm)
+    report["static_archive_comparison"] = static_archive_comparison(
+        report["inputs"]["musl"]["archive"], report["inputs"]["candidate"]["archive"]
+    )
     for side in ("musl", "candidate"):
         headers = report["inputs"][side]["headers"]
         if headers.get("status") != "available":
@@ -1046,6 +1185,9 @@ def build_report(
         timeout=timeout,
         input_status=input_status,
         input_reason="; ".join(input_issues),
+    )
+    report["public_header_probe_manifest"] = public_header_probe_manifest(
+        public_header_names(musl_root / "include"), public_header_names(candidate_include)
     )
     report["header_compile_coverage"]["archive_symbols"] = header_archive_symbol_coverage(
         report["inputs"]["musl"]["archive"], report["inputs"]["candidate"]["archive"]
@@ -1101,7 +1243,12 @@ def build_report(
             probe: dict[str, Any] = {
                 "name": name,
                 "headers": definition["headers"],
-                "evidence": "runtime_abi_comparison",
+                "evidence": "generated_public_header_layout_constant_probe",
+                "dimensions": list(PROBE_DIMENSIONS[name]),
+                "declarations": list(definition["symbols"]),
+                "source_sha256": hashlib.sha256(
+                    definition["source"].encode("utf-8")
+                ).hexdigest(),
                 "reference": reference,
                 "candidate": candidate,
                 "comparison": None,
@@ -1174,6 +1321,7 @@ def _drop_private_archive_symbols(report: dict[str, Any]) -> None:
     for side in ("musl", "candidate"):
         archive = report["inputs"][side]["archive"]
         archive.pop("_defined_symbols", None)
+        archive.pop("_symbol_types", None)
 
 
 def atomic_write_json(path: Path, report: dict[str, Any]) -> None:
@@ -1239,7 +1387,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--output",
         type=Path,
         default=Path(os.environ.get("CRABC_ABI_REPORT", DEFAULT_OUTPUT)),
-        help="JSON report destination (default: CRABC_ABI_REPORT or /tmp/crabc-aarch64-abi.json)",
+        help="JSON report destination (default: CRABC_ABI_REPORT or compat/reports/abi/latest.json)",
     )
     return parser.parse_args(argv)
 

@@ -46,6 +46,46 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaises(RUNNER.CorpusError):
             RUNNER.select_cases(self.manifest, ["A"], ["not-a-case"])
 
+    def test_every_tier_b_to_d_package_has_a_stateful_case(self) -> None:
+        packages = {
+            case.package
+            for case in self.manifest.cases
+            if case.tier in {"B", "C", "D"}
+        }
+        self.assertEqual(
+            packages,
+            {
+                "grep",
+                "sed",
+                "file",
+                "tar",
+                "gzip",
+                "zstd",
+                "sqlite",
+                "curl",
+                "openssl",
+                "openssh-client-default",
+                "git",
+                "python3",
+            },
+        )
+        for package in packages:
+            self.assertTrue(
+                any(
+                    case.package == package
+                    and case.tier in {"B", "C", "D"}
+                    and case.stateful
+                    for case in self.manifest.cases
+                ),
+                package,
+            )
+
+    def test_stateful_cases_use_deterministic_fixture_inputs(self) -> None:
+        stateful = [case for case in self.manifest.cases if case.stateful]
+        self.assertGreaterEqual(len(stateful), 11)
+        self.assertTrue(all(case.tier in {"B", "C", "D"} for case in stateful))
+        self.assertTrue(all(case.setup or case.package in {"git", "sqlite"} for case in stateful))
+
 
 class PureHelperTests(unittest.TestCase):
     def test_dynamic_tag_match_is_exact_enough_for_readelf_lines(self) -> None:

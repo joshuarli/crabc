@@ -472,6 +472,7 @@ mod sysnr {
     pub const SYS_SOCKETPAIR: i64 = 53;
     pub const SYS_SETSOCKOPT: i64 = 54;
     pub const SYS_EXECVE: i64 = 59;
+    pub const SYS_ARCH_PRCTL: i64 = 158;
     pub const SYS_WAIT4: i64 = 61;
     pub const SYS_KILL: i64 = 62;
     pub const SYS_UNAME: i64 = 63;
@@ -3580,21 +3581,222 @@ extern "C" {
 #[linkage = "weak"]
 #[no_mangle]
 pub extern "C" fn __rc_create_thread_tls() -> *mut u8 {
-    core::ptr::null_mut()
+    unsafe { static_tls_create_block() }
 }
 
 #[inline(never)]
 #[linkage = "weak"]
 #[no_mangle]
 pub extern "C" fn __rc_tls_block_size() -> usize {
-    0
+    unsafe { STATIC_TLS_BLOCK_SIZE }
 }
 
 #[inline(never)]
 #[linkage = "weak"]
 #[no_mangle]
 pub extern "C" fn __rc_tls_base_offset() -> usize {
-    0
+    unsafe { STATIC_TLS_TP_OFFSET }
+}
+
+// Static archive consumers do not have ldso available to supply the TLS
+// bridge above.  Keep the executable's PT_TLS image and the allocation shape
+// needed by the local-exec TLS ABI here; ldso still interposes these weak
+// entry points for dynamically loaded libc users.
+const STATIC_TCB_SIZE: usize = 256;
+const STATIC_TLS_GAP_ABOVE_TP: usize = 16;
+const STATIC_TCB_CANARY_OFFSET: usize = 0x28;
+
+static mut STATIC_TLS_IMAGE: *const u8 = core::ptr::null();
+static mut STATIC_TLS_FILESZ: usize = 0;
+static mut STATIC_TLS_MEMSZ: usize = 0;
+static mut STATIC_TLS_BLOCK_SIZE: usize = 0;
+static mut STATIC_TLS_TP_OFFSET: usize = 0;
+static mut STATIC_TLS_IMAGE_OFFSET: usize = 0;
+
+#[inline]
+const fn static_align_up(value: usize, align: usize) -> usize {
+    if align <= 1 { value } else { (value + align - 1) & !(align - 1) }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn static_read_tp() -> usize {
+    // Reading %fs:0 before startup TLS exists would fault. ARCH_GET_FS is
+    // safe in both the static CRT path and after ldso has installed a TCB.
+    let mut tp = 0usize;
+    let result = <Arch as Syscalls>::syscall2(SYS_ARCH_PRCTL, 0x1003, &mut tp as *mut usize as i64);
+    if result < 0 { 0 } else { tp }
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn static_read_tp() -> usize {
+    let tp: usize;
+    core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp);
+    tp
+}
+
+#[cfg(target_arch = "riscv64")]
+unsafe fn static_read_tp() -> usize {
+    let tp: usize;
+    core::arch::asm!("mv {}, tp", out(reg) tp);
+    tp
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn static_write_tp(tp: usize) -> bool {
+    <Arch as Syscalls>::syscall2(SYS_ARCH_PRCTL, 0x1002, tp as i64) >= 0
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn static_write_tp(tp: usize) -> bool {
+    core::arch::asm!("msr tpidr_el0, {}", in(reg) tp);
+    true
+}
+
+#[cfg(target_arch = "riscv64")]
+unsafe fn static_write_tp(tp: usize) -> bool {
+    core::arch::asm!("mv tp, {}", in(reg) tp);
+    true
+}
+
+/// Discover and install the main executable's static TLS image from the
+/// auxiliary-vector program headers.  The musl CRT enters libc before any
+/// libc constructor runs, so this must precede `_init` and Rust/mimalloc TLS
+/// accesses.  A dynamic invocation already has a TP from ldso and is left
+/// untouched.
+unsafe fn static_tls_startup(argv: *const *const c_char) {
+    if static_read_tp() != 0 || argv.is_null() {
+        return;
+    }
+
+    // musl's crt1 passes argv as the third argument; argc is the machine word
+    // immediately before it on the original entry stack.
+    let stack = (argv as *const usize).sub(1);
+    let argc = *stack;
+    let argv = stack.add(1);
+    let envp = argv.add(argc + 1);
+    let mut auxv = envp;
+    while *auxv != 0 { auxv = auxv.add(1); }
+    auxv = auxv.add(1);
+    __auxv = auxv;
+
+    let mut phdr_addr = 0usize;
+    let mut phnum = 0usize;
+    let mut phent = core::mem::size_of::<[usize; 7]>();
+    let mut p = auxv;
+    loop {
+        let tag = *p;
+        if tag == 0 { break; }
+        match tag {
+            3 => phdr_addr = *p.add(1),
+            4 => phent = *p.add(1),
+            5 => phnum = *p.add(1),
+            _ => {}
+        }
+        p = p.add(2);
+    }
+    if phdr_addr == 0 || phnum == 0 || phent < 56 { return; }
+
+    let mut load_bias = 0usize;
+    let mut tls_vaddr = 0usize;
+    let mut tls_filesz = 0usize;
+    let mut tls_memsz = 0usize;
+    let mut tls_align = 1usize;
+    for i in 0..phnum {
+        let ph = (phdr_addr as *const u8).add(i * phent);
+        let kind = core::ptr::read_unaligned(ph as *const u32);
+        let vaddr = core::ptr::read_unaligned(ph.add(16) as *const usize);
+        if kind == 6 { // PT_PHDR
+            load_bias = phdr_addr.wrapping_sub(vaddr);
+        } else if kind == 7 { // PT_TLS
+            tls_vaddr = vaddr;
+            tls_filesz = core::ptr::read_unaligned(ph.add(32) as *const usize);
+            tls_memsz = core::ptr::read_unaligned(ph.add(40) as *const usize);
+            tls_align = core::ptr::read_unaligned(ph.add(48) as *const usize).max(1);
+        }
+    }
+    if tls_memsz == 0 {
+        // A TCB is still required for stack canaries and future pthreads,
+        // even when the executable has no user-declared TLS variables.
+        tls_filesz = 0;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let var_size = static_align_up(tls_memsz, tls_align);
+        STATIC_TLS_TP_OFFSET = var_size;
+        STATIC_TLS_IMAGE_OFFSET = 0;
+        STATIC_TLS_BLOCK_SIZE = static_align_up(var_size + STATIC_TCB_CANARY_OFFSET + 8, 16);
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let tp_offset = static_align_up(STATIC_TCB_SIZE, tls_align);
+        let image_offset = static_align_up(STATIC_TLS_GAP_ABOVE_TP, tls_align);
+        STATIC_TLS_TP_OFFSET = tp_offset;
+        STATIC_TLS_IMAGE_OFFSET = image_offset;
+        STATIC_TLS_BLOCK_SIZE = tp_offset + image_offset + tls_memsz;
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        STATIC_TLS_TP_OFFSET = STATIC_TCB_SIZE;
+        STATIC_TLS_IMAGE_OFFSET = 0;
+        STATIC_TLS_BLOCK_SIZE = STATIC_TCB_SIZE + static_align_up(tls_memsz, tls_align);
+    }
+    STATIC_TLS_IMAGE = (load_bias + tls_vaddr) as *const u8;
+    STATIC_TLS_FILESZ = tls_filesz;
+    STATIC_TLS_MEMSZ = tls_memsz;
+    let block = sys_mmap(
+        core::ptr::null_mut(),
+        STATIC_TLS_BLOCK_SIZE,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+    if block == MMAP_FAILED { return; }
+    static_tls_init_block(block);
+    let tp = block.add(STATIC_TLS_TP_OFFSET);
+    if !static_write_tp(tp as usize) {
+        sys_munmap(block, STATIC_TLS_BLOCK_SIZE);
+        STATIC_TLS_BLOCK_SIZE = 0;
+        return;
+    }
+}
+
+unsafe fn static_tls_init_block(block: *mut u8) {
+    if STATIC_TLS_FILESZ > 0 && !STATIC_TLS_IMAGE.is_null() {
+        core::ptr::copy_nonoverlapping(
+            STATIC_TLS_IMAGE,
+            block.add(STATIC_TLS_TP_OFFSET + STATIC_TLS_IMAGE_OFFSET),
+            STATIC_TLS_FILESZ,
+        );
+    }
+    if STATIC_TLS_MEMSZ > STATIC_TLS_FILESZ {
+        core::ptr::write_bytes(
+            block.add(STATIC_TLS_TP_OFFSET + STATIC_TLS_IMAGE_OFFSET + STATIC_TLS_FILESZ),
+            0,
+            STATIC_TLS_MEMSZ - STATIC_TLS_FILESZ,
+        );
+    }
+    // Keep the TCB self pointer valid for code that uses the musl TCB ABI.
+    // The existing stack-guard initialization remains responsible for its
+    // own randomness; this TLS bootstrap does not invent a second guard
+    // source.
+    core::ptr::write_unaligned(block.add(STATIC_TLS_TP_OFFSET) as *mut usize, block.add(STATIC_TLS_TP_OFFSET) as usize);
+}
+
+unsafe fn static_tls_create_block() -> *mut u8 {
+    if STATIC_TLS_BLOCK_SIZE == 0 { return core::ptr::null_mut(); }
+    let block = sys_mmap(
+        core::ptr::null_mut(),
+        STATIC_TLS_BLOCK_SIZE,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+    if block == MMAP_FAILED { return core::ptr::null_mut(); }
+    static_tls_init_block(block);
+    block.add(STATIC_TLS_TP_OFFSET)
 }
 
 #[inline]
@@ -16082,6 +16284,10 @@ pub unsafe extern "C" fn __libc_start_main(
     _rtld_fini: *const c_void,
     _stack_end: *const c_void,
 ) -> ! {
+    // The musl CRT does not initialize static TLS itself.  Do this before
+    // libc constructors: mimalloc and compiler-generated TLS accesses are
+    // already valid during `_init` on a conventional static executable.
+    static_tls_startup(argv);
     let envp = argv.add((argc + 1) as usize);
     __environ = envp as *mut *mut c_char;
     sync_environ();

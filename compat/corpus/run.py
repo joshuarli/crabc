@@ -85,6 +85,7 @@ class CaseSpec:
     setup: tuple[SetupFile, ...] = ()
     cwd: str = "/tmp"
     requires_dt_relr: bool = False
+    stateful: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -198,6 +199,9 @@ def load_manifest(path: Path = MANIFEST) -> Manifest:
         cwd = item.get("cwd", "/tmp")
         if not isinstance(cwd, str) or not cwd.startswith("/"):
             raise CorpusError(f"case {case_id} cwd must be an absolute path")
+        stateful = item.get("stateful", False)
+        if not isinstance(stateful, bool):
+            raise CorpusError(f"case {case_id} stateful must be a boolean")
         cases.append(
             CaseSpec(
                 id=case_id,
@@ -209,11 +213,16 @@ def load_manifest(path: Path = MANIFEST) -> Manifest:
                 setup=tuple(setup),
                 cwd=cwd,
                 requires_dt_relr=bool(item.get("requires_dt_relr", False)),
+                stateful=stateful,
             )
         )
 
     if not packages or not cases:
         raise CorpusError("corpus manifest must contain packages and cases")
+    tiered_packages = {case.package for case in cases if case.tier in {"B", "C", "D"}}
+    for package in package_names & tiered_packages:
+        if not any(case.package == package and case.tier in {"B", "C", "D"} and case.stateful for case in cases):
+            raise CorpusError(f"Tier B-D package lacks a stateful case: {package}")
     return Manifest(
         schema=1,
         alpine_release=alpine_release,
@@ -800,6 +809,7 @@ def run(args: argparse.Namespace) -> tuple[bool, Path]:
                 "path": case.path,
                 "argv": list(case.argv),
                 "requires_dt_relr": case.requires_dt_relr,
+                "stateful": case.stateful,
                 "result": "pass" if comparison["passed"] else "fail",
                 **comparison,
             }

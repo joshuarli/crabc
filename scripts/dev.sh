@@ -27,11 +27,13 @@ Commands:
   differential [case] run a pinned musl-vs-crabc workload comparison
   os-test [options]   run the pinned POSIX os-test M6 profile against musl and crabc
   pthread-stress [options] run bounded pthread/TLS stress against musl and crabc
+  static-pthread-tls [options] run conventional static libc.a pthread/TLS lifecycle against musl and crabc
   signal-process [case] run the isolated M6 signal/process comparison workload
   resolver-network [options] run the deterministic local M6 resolver/network workload
   ldso [options]      run the synthetic M7 loader differential suite
   corpus [options]    run the pinned Alpine AArch64 package corpus (Tier A by default)
   rust-std [options]  run the M9 stock Rust std musl-vs-crabc differential fixture
+  rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
@@ -191,6 +193,13 @@ case "$command" in
         run_in_container python3 compat/pthread-stress/run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
+    static-pthread-tls)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/static-pthread-tls/run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
     signal-process)
         ensure_image
         run_in_container cargo build --workspace
@@ -226,6 +235,15 @@ case "$command" in
         run_in_container python3 compat/rust-std/run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
+    rust-std-dependent)
+        ensure_image
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/rust-std/run.py \
+            --fixture compat/rust-std/dependent-fixture/src/main.rs \
+            --report compat/reports/rust-std-dependent/latest.json "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
     lto)
         ensure_image
         run_in_container cargo build --workspace
@@ -236,7 +254,9 @@ case "$command" in
     abi-probe)
         ensure_image
         run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/scripts/probe_aarch64_abi.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
     loader-inventory)
         ensure_image

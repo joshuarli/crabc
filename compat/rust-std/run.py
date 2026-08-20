@@ -67,6 +67,32 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def fixture_package_name(manifest: Path) -> str:
+    """Read the Cargo package name used to locate the produced executable."""
+
+    try:
+        with manifest.open("rb") as stream:
+            raw = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise RunnerError(f"invalid Rust fixture manifest: {manifest}") from error
+    package = raw.get("package")
+    if not isinstance(package, dict) or not isinstance(package.get("name"), str) or not package["name"]:
+        raise RunnerError(f"Rust fixture manifest lacks package.name: {manifest}")
+    return package["name"]
+
+
+def fixture_has_dependencies(manifest: Path) -> bool:
+    """Return whether a fixture is a normal Cargo project with dependencies."""
+
+    try:
+        with manifest.open("rb") as stream:
+            raw = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise RunnerError(f"invalid Rust fixture manifest: {manifest}") from error
+    dependencies = raw.get("dependencies", {})
+    return isinstance(dependencies, dict) and bool(dependencies)
+
+
 def command_output(*command: str, environment: Mapping[str, str] | None = None) -> str:
     try:
         result = subprocess.run(
@@ -260,8 +286,14 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, object]:
     fixture = args.fixture.expanduser().resolve()
     if not fixture.is_file():
         raise RunnerError(f"Rust fixture unavailable: {fixture}")
-    if fixture == FIXTURE.resolve() and not FIXTURE_MANIFEST.is_file():
-        raise RunnerError(f"Rust fixture manifest unavailable: {FIXTURE_MANIFEST}")
+    fixture_manifest = fixture.parents[1] / "Cargo.toml"
+    if not fixture_manifest.is_file():
+        raise RunnerError(f"Rust fixture manifest unavailable: {fixture_manifest}")
+    fixture_package = fixture_package_name(fixture_manifest)
+    fixture_lock = fixture_manifest.with_name("Cargo.lock")
+    fixture_dependencies = fixture_has_dependencies(fixture_manifest)
+    if fixture_dependencies and not fixture_lock.is_file():
+        raise RunnerError(f"dependency-bearing Rust fixture requires a Cargo.lock: {fixture_lock}")
 
     active_toolchain = command_output("rustup", "show", "active-toolchain")
     if not active_toolchain.startswith(TOOLCHAIN):
@@ -287,7 +319,10 @@ def validate_inputs(args: argparse.Namespace) -> dict[str, object]:
         "candidate_libc": candidate_libc,
         "candidate_loader": candidate_loader,
         "fixture": fixture,
-        "fixture_manifest": FIXTURE_MANIFEST,
+        "fixture_manifest": fixture_manifest,
+        "fixture_lock": fixture_lock,
+        "fixture_package": fixture_package,
+        "fixture_has_dependencies": fixture_dependencies,
         "active_toolchain": active_toolchain,
         "rustc_vv": rustc_vv,
         "musl_gcc_evidence": musl_gcc_evidence.strip(),
@@ -299,11 +334,17 @@ def build_fixture(inputs: Mapping[str, object], workspace: Path) -> tuple[Path, 
     project = workspace / "project"
     source = inputs["fixture"]
     fixture_manifest = inputs["fixture_manifest"]
+    fixture_lock = inputs["fixture_lock"]
+    fixture_package = inputs["fixture_package"]
     assert isinstance(source, Path)
     assert isinstance(fixture_manifest, Path)
+    assert isinstance(fixture_lock, Path)
+    assert isinstance(fixture_package, str)
     (project / "src").mkdir(parents=True)
     shutil.copy2(source, project / "src/main.rs")
     shutil.copy2(fixture_manifest, project / "Cargo.toml")
+    if fixture_lock.is_file():
+        shutil.copy2(fixture_lock, project / "Cargo.lock")
     target_dir = workspace / "cargo-target"
     command = [
         "cargo",
@@ -315,6 +356,8 @@ def build_fixture(inputs: Mapping[str, object], workspace: Path) -> tuple[Path, 
         "-Z",
         "build-std=std,panic_abort",
     ]
+    if fixture_lock.is_file():
+        command.append("--locked")
     environment = dict(os.environ)
     for key in tuple(environment):
         if key in {"RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"} or key.startswith("CARGO_TARGET_"):
@@ -345,7 +388,7 @@ def build_fixture(inputs: Mapping[str, object], workspace: Path) -> tuple[Path, 
             f"stock Rust build-std failed ({result.returncode}); see report build.stderr",
             build_report,
         )
-    binary = target_dir / TARGET / "release/crabc-rust-std-fixture"
+    binary = target_dir / TARGET / "release" / fixture_package
     if not binary.is_file() or not os.access(binary, os.X_OK):
         raise RunnerError(f"build-std completed without executable: {binary}")
     dynamic = readelf(binary, "-l")
@@ -357,6 +400,8 @@ def build_fixture(inputs: Mapping[str, object], workspace: Path) -> tuple[Path, 
         {
             "binary": str(binary),
             "binary_sha256": sha256_file(binary),
+            "package_name": fixture_package,
+            "has_project_dependencies": bool(inputs["fixture_has_dependencies"]),
             "program_headers": dynamic,
             "dynamic_section": needed,
         }
@@ -472,6 +517,12 @@ def run(args: argparse.Namespace) -> tuple[bool, Path]:
             "source_sha256": sha256_file(inputs["fixture"]),
             "manifest": str(inputs["fixture_manifest"]),
             "manifest_sha256": sha256_file(inputs["fixture_manifest"]),
+            "lockfile": str(inputs["fixture_lock"]) if inputs["fixture_lock"].is_file() else None,
+            "lockfile_sha256": (
+                sha256_file(inputs["fixture_lock"]) if inputs["fixture_lock"].is_file() else None
+            ),
+            "package_name": inputs["fixture_package"],
+            "has_project_dependencies": bool(inputs["fixture_has_dependencies"]),
         },
         "candidate": {
             "target_dir": str(inputs["target_dir"]),
@@ -487,7 +538,7 @@ def run(args: argparse.Namespace) -> tuple[bool, Path]:
             "no_glibc": True,
             "build_uses_stock_std": True,
             "build_uses_build_std": True,
-            "build_has_project_dependencies": False,
+            "build_has_project_dependencies": bool(inputs["fixture_has_dependencies"]),
             "runtime_loader_is_program": False,
         },
         "normalization": "none",

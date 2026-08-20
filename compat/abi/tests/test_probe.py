@@ -110,6 +110,43 @@ class ProbeParserTests(unittest.TestCase):
         self.assertEqual(record["status"], "compile_ok")
         self.assertNotEqual(record["status"], "match")
 
+    def test_public_header_probe_manifest_is_generated_from_pinned_surface(self) -> None:
+        manifest = probe.public_header_probe_manifest(
+            ["stdio.h", "sys/stat.h"], ["stdio.h", "crabc-only.h"]
+        )
+        self.assertEqual(manifest["generator"], "pinned-musl-public-header-surface")
+        self.assertEqual(manifest["declaration_probe"]["pinned_count"], 2)
+        self.assertEqual(manifest["declaration_probe"]["candidate_count"], 2)
+        self.assertEqual(
+            manifest["declaration_probe"]["candidate_only_headers"], ["crabc-only.h"]
+        )
+        self.assertEqual(
+            manifest["layout_constant_probe"]["oracle_runtime"], "pinned-musl"
+        )
+
+    def test_static_archive_comparison_keeps_missing_and_nm_class_changes(self) -> None:
+        reference = {
+            "status": "available",
+            "defined_symbol_count": 3,
+            "_defined_symbols": {"same", "missing"},
+            "_symbol_types": {"same": {"T"}, "missing": {"D"}},
+        }
+        candidate = {
+            "status": "available",
+            "defined_symbol_count": 3,
+            "_defined_symbols": {"same", "extra"},
+            "_symbol_types": {"same": {"D"}, "extra": {"T"}},
+        }
+        comparison = probe.static_archive_comparison(reference, candidate)
+        self.assertEqual(comparison["status"], "triage")
+        self.assertEqual(comparison["gate"], "informational-triage")
+        self.assertEqual(comparison["missing_from_candidate"], ["missing"])
+        self.assertEqual(comparison["unexpected_in_candidate"], ["extra"])
+        self.assertEqual(
+            comparison["nm_type_mismatches"],
+            [{"name": "same", "reference": ["T"], "candidate": ["D"]}],
+        )
+
     def test_ucontext_probe_covers_named_aarch64_layout(self) -> None:
         source = probe.PROBES["signals-ucontext"]["source"]
         for field in ("fault_address", "regs", "sp", "pc", "pstate"):
@@ -138,6 +175,10 @@ class ReportContractTests(unittest.TestCase):
         self.assertEqual(report["status"], "unsupported")
         self.assertEqual(report["summary"], {"selected": 2, "by_status": {"unsupported": 2}})
         self.assertEqual(report["header_compile_coverage"]["candidate_count"], 0)
+        self.assertEqual(
+            report["public_header_probe_manifest"]["generator"],
+            "pinned-musl-public-header-surface",
+        )
         self.assertTrue(all(item["reason"] for item in report["probes"]))
         json.dumps(report)
 

@@ -1,5 +1,6 @@
 #include <complex.h>
 #include <float.h>
+#include <fenv.h>
 #include <math.h>
 #include <stdio.h>
 
@@ -49,6 +50,18 @@ int main(void) {
     // Keep one native binary128 probe here: the generated os-test cases use
     // these same double-origin inputs and reject an f64-backed *l result by
     // checking the narrow native-precision interval.
+    // The ordinary double/float complex entry points must preserve the same
+    // native precision internally on AArch64.  GCC lowers carg/cargf to
+    // atan2/atan2f, so these assertions also guard that real-function path.
+    double complex precision_double = CMPLX(90.01, 13.37);
+    if (!(0x1.6bfd81ea6a64bp+6 < cabs(precision_double) &&
+          cabs(precision_double) < 0x1.6bfd81ea6a64dp+6)) return 23;
+    if (!(0x1.2dfff31e7d1c9p-3 < carg(precision_double) &&
+          carg(precision_double) < 0x1.2dfff31e7d1cbp-3)) return 24;
+    float complex precision_float = CMPLXF(90.01, 13.37);
+    if (!(0x1.2dfffp-3 < cargf(precision_float) &&
+          cargf(precision_float) < 0x1.2dfff4p-3)) return 25;
+
     long double complex precision_z = CMPLXL(90.01, 13.37);
     long double precision_abs = cabsl(precision_z);
     if (!(0xb.5fec0f535325c22p+3L < precision_abs &&
@@ -56,6 +69,17 @@ int main(void) {
     long double precision_arg = cargl(precision_z);
     if (!(0x9.6fff98f3e8e5142p-6L < precision_arg &&
           precision_arg < 0x9.6fff98f3e8e5144p-6L)) return 22;
+
+    // Narrowing the native binary128 atan2 path must retain musl's required
+    // underflow/inexact side effects for tiny finite results.
+    feclearexcept(FE_ALL_EXCEPT);
+    (void)atan2(0x1.0p-1022, 0x1.fffffffffffffp+1023);
+    if ((fetestexcept(FE_INEXACT | FE_UNDERFLOW) &
+         (FE_INEXACT | FE_UNDERFLOW)) != (FE_INEXACT | FE_UNDERFLOW)) return 26;
+    feclearexcept(FE_ALL_EXCEPT);
+    (void)atan2f(0x1.0p-126f, 0x1.fffffep+127f);
+    if ((fetestexcept(FE_INEXACT | FE_UNDERFLOW) &
+         (FE_INEXACT | FE_UNDERFLOW)) != (FE_INEXACT | FE_UNDERFLOW)) return 27;
 #endif
 
     // cproj preserves finite values but maps an infinite component to

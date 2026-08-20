@@ -103,6 +103,42 @@ class PureHelperTests(unittest.TestCase):
         cargo = RUNNER.FIXTURE.parents[1] / "Cargo.toml"
         self.assertNotIn("[dependencies]", cargo.read_text(encoding="utf-8"))
 
+    def test_dependent_fixture_is_a_pinned_normal_cargo_application(self) -> None:
+        fixture = RUNNER.FIXTURE.parents[2] / "dependent-fixture/src/main.rs"
+        manifest = fixture.parents[1] / "Cargo.toml"
+        lock = manifest.with_name("Cargo.lock")
+        self.assertTrue(fixture.is_file())
+        self.assertTrue(manifest.is_file())
+        self.assertTrue(lock.is_file())
+        self.assertEqual(RUNNER.fixture_package_name(manifest), "crabc-rust-dependent-fixture")
+        self.assertTrue(RUNNER.fixture_has_dependencies(manifest))
+        cargo = manifest.read_text(encoding="utf-8")
+        for dependency in ("async-net = \"=2.0.0\"", "futures-lite = \"=2.6.0\"", "smol = \"=2.0.2\""):
+            self.assertIn(dependency, cargo)
+        lock_text = lock.read_text(encoding="utf-8")
+        self.assertIn("version = 4", lock_text)
+        for dependency in ("name = \"async-net\"", "name = \"futures-lite\"", "name = \"smol\""):
+            self.assertIn(dependency, lock_text)
+        self.assertGreaterEqual(lock_text.count("checksum = \""), 3)
+        source = fixture.read_text(encoding="utf-8")
+        for marker in (
+            "TcpListener::bind",
+            "smol::block_on",
+            "Mutex",
+            "Condvar",
+            "wait_with_output",
+            "ErrorKind::NotFound",
+        ):
+            self.assertIn(marker, source)
+
+    def test_fixture_manifest_helpers_distinguish_default_and_dependent_apps(self) -> None:
+        default_manifest = RUNNER.FIXTURE.parents[1] / "Cargo.toml"
+        dependent_manifest = RUNNER.FIXTURE.parents[2] / "dependent-fixture/Cargo.toml"
+        self.assertEqual(RUNNER.fixture_package_name(default_manifest), "crabc-rust-std-fixture")
+        self.assertFalse(RUNNER.fixture_has_dependencies(default_manifest))
+        self.assertEqual(RUNNER.fixture_package_name(dependent_manifest), "crabc-rust-dependent-fixture")
+        self.assertTrue(RUNNER.fixture_has_dependencies(dependent_manifest))
+
 
 class PinTests(unittest.TestCase):
     def test_upstream_pins_match_stage_target(self) -> None:

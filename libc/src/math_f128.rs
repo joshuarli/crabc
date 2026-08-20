@@ -236,7 +236,20 @@ fn f128_atan(x: f128) -> f128 {
     let s1 = z * f128_atan_t_even(w);
     let s2 = w * f128_atan_t_odd(w);
     if id < 0 {
-        x - x * (s1 + s2)
+        // The musl minimax polynomial is sufficient for its long-double
+        // implementation, but the Rust binary128 lowering can round this
+        // branch one binary64 ulp high after an AArch64 double is widened.
+        // For |x| < 0.4375 the alternating Taylor series converges rapidly
+        // (x^2 <= 0.1914), so retain the native precision through the final
+        // rounding instead of inheriting that boundary error.
+        let x2 = x * x;
+        let mut term = x;
+        let mut sum = x;
+        for n in 1..=80 {
+            term *= -x2;
+            sum += term / ((2 * n + 1) as f128);
+        }
+        sum
     } else {
         let id = id as usize;
         let z = F128_ATAN_HI[id] - ((x * (s1 + s2) - F128_ATAN_LO[id]) - x);

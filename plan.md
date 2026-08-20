@@ -2663,6 +2663,120 @@ python3 compat/lto/tests/test_runner.py            11/11 PASS
 ./scripts/dev.sh test                              workspace PASS
 ```
 
+## Milestone 10.5 — AArch64 maturity refinement
+
+Close the evidence and correctness gaps discovered by the post-M10 AArch64
+audit before considering a second architecture. This milestone blocks M11.
+
+### Contract
+
+1. **Repair the judge before trusting green.** `compat/os-test/run.py` must
+   require the source contract for a suite to pass. Retain only individually
+   named pinned-musl exceptions, expose every source-contract failure in the
+   dashboard, and add a regression test for the former false-green condition.
+2. **Harden the dynamic linker at its real process boundary.** Add isolated
+   musl-oracle tests and fixes for `AT_SECURE` environment sanitization,
+   dependency search (never search the working directory for a bare
+   `DT_NEEDED` name), error handling for dependency/capacity overflow, and
+   failed-load mapping cleanup. Replace the bounded/truncating replacement
+   stack with a representation that preserves the actual argc/envp/auxv
+   contract, including the normal kernel auxv entries. `dlopen`/`dlsym`/
+   `dlclose` and `dlerror` must have a documented synchronization/per-thread
+   contract under application threads. Re-test late TLS growth and thread exit
+   against the correct allocation layout.
+3. **Make static and ABI evidence generated rather than sampled.** Generate
+   public-header declaration/layout/constant probes from the pinned musl
+   header surface, compare candidate and reference static archives, and add
+   static pthread/TLS lifecycle tests. Malloc internals remain out of scope;
+   mimalloc remains the allocator implementation.
+4. **Exercise state, not version banners.** Extend every Tier B–D Alpine
+   corpus package with at least one deterministic stateful operation. Add a
+   dependency-bearing, unmodified stock Rust application with filesystem,
+   async/networking, synchronization, subprocess, and error-path behavior;
+   compare raw musl/crabc outcomes.
+5. **Make the gate durable.** Re-run all closure evidence from the current
+   commit with recorded environment/artifact provenance. M11 remains deferred
+   until the dashboard no longer relies on a false-green source contract and
+   the remaining boundaries are explicitly measured.
+
+### Completion evidence
+
+```text
+os-test source contracts are green or individually justified
+loader security/concurrency/stack/TLS regressions pass against musl
+generated static ABI/header report has no unexplained difference
+static pthread/TLS lifecycle test passes
+stateful Tier B–D corpus cases have exact raw musl/crabc outcomes
+dependency-bearing stock Rust application has exact raw musl/crabc outcomes
+full current-commit AArch64 closure is retained in structured reports
+```
+
+### Progress — 2026-08-20 UTC
+
+Milestone 10.5 is **complete**. M11 remains deliberately deferred: this
+milestone closes the identified AArch64 evidence and correctness gaps, rather
+than claiming that every unmeasured musl interface is complete.
+
+`compat/os-test/run.py` now makes the `basic` source contract a hard gate; its
+unit regression preserves the former shared-diagnostic false-green case. The
+current all-profile report passes all ten selected suites. `basic` has
+`source_contract_passed=true`, zero candidate source failures, and zero
+unaccepted differences; the remaining 50 source differences are individually
+recorded source improvements rather than substituted host-libc behavior.
+
+`ldso` now sanitizes unsafe loader environment inputs under `AT_SECURE`, never
+opens a bare `DT_NEEDED` name from the working directory, rejects bounded
+graph/name/dynamic-table failures without truncation, rolls back failed DSO
+mappings, and preserves full argc/envp/auxv startup vectors. Runtime loader
+operations are serialized with a recursive loader lock; `dlerror` uses
+per-thread identity storage, and TLS allocation metadata follows the actual
+thread block through late module growth. Focused startup-vector, cwd-search,
+and multithreaded `dlerror` regressions accompany the existing dynamic TLS
+coverage. `./scripts/dev.sh ldso` passes all 20 synthetic pinned-musl cases.
+
+The ABI runner now writes durable generated evidence: 183/183 pinned public
+header declaration probes compile, all nine named layout/constant probes match,
+and a complete `nm -A` static-archive name/class comparison retains every
+difference as explicit informational triage. Static archives are not falsely
+claimed equal: musl internals and Rust/mimalloc implementation members remain
+visible in that report, with malloc internals still out of scope. The separate
+conventional `libc.a` pthread/TLS lifecycle fixture links with pinned musl CRT
+objects and passes under both reference and candidate.
+
+The Alpine corpus contains 34 exact raw comparisons: 10 Tier A, 14 Tier B, 6
+Tier C, and 4 Tier D. All Tier B–D packages have a required deterministic
+stateful case (12 total). The locked, dependency-bearing stock Rust fixture
+uses `async-net`, `futures-lite`, and `smol` for filesystem, async local TCP,
+synchronization, subprocess, and error-path behavior; its status, stdout, and
+stderr match pinned musl exactly.
+
+Final current-workspace closure:
+
+```text
+./scripts/dev.sh test                              workspace PASS
+./scripts/dev.sh libc-test all                     406 PASS, 0 FAIL/BUILDERROR/TIMEOUT, 14 evidenced SKIP
+./scripts/dev.sh os-test                           10/10 selected profiles PASS; basic source gate green
+./scripts/dev.sh ldso                              20/20 PASS
+./scripts/dev.sh static-pthread-tls                PASS
+./scripts/dev.sh abi-probe                         183 header probes + 9 runtime probes PASS; static triage retained
+./scripts/dev.sh corpus --tier all --offline       34/34 exact raw PASS; 12 stateful B–D cases
+./scripts/dev.sh rust-std-dependent                exact raw PASS
+./scripts/dev.sh rust-std                          exact raw PASS
+./scripts/dev.sh pthread-stress                    10/10 PASS
+./scripts/dev.sh signal-process                    12/12 PASS
+./scripts/dev.sh resolver-network                  22 contract items PASS
+./scripts/dev.sh differential                      foundational PASS
+./scripts/dev.sh compat                            ratchet PASS; 1,647 reference, 1,668 candidate, 0 missing/mismatched
+./scripts/dev.sh loader-inventory                  reproducible PASS
+./scripts/dev.sh lto                               PARTIAL by design: A/B/C built and ran; D remains invalid by link-map evidence
+python3 compat/abi/tests/test_probe.py             11/11 PASS
+python3 compat/os-test/tests/test_runner.py        19/19 PASS
+python3 compat/corpus/tests/test_runner.py         12/12 PASS
+python3 compat/rust-std/tests/test_runner.py       9/9 PASS
+python3 compat/ldso/tests/test_runner.py           3/3 PASS
+python3 compat/lto/tests/test_runner.py            11/11 PASS
+```
+
 ## Milestone 11 — only then begin x86_64
 
 Reuse the same compatibility laboratory first.

@@ -4,7 +4,7 @@
 #![allow(dead_code, deref_nullptr)]
 
 use core::ffi::{c_char, c_void};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -128,6 +128,9 @@ const DSO_BASE_START: u64 = 0x200000000;
 const DSO_BASE_STRIDE: u64 = 0x100000000;
 const RTLD_DI_LINKMAP: i32 = 2;
 const STT_TLS: u8 = 6;
+const TCB_GENERATION_OFFSET: usize = 8;
+const TCB_BLOCK_SIZE_OFFSET: usize = 16;
+const TCB_TP_OFFSET_OFFSET: usize = 24;
 
 // ============================================================
 // Loaded object tracking
@@ -135,6 +138,8 @@ const STT_TLS: u8 = 6;
 
 struct LoadedObject {
     base: u64,
+    map_start: *mut u8,
+    map_size: usize,
     symtab: *const u8,
     sym_count: usize,
     strtab: *const u8,
@@ -180,6 +185,8 @@ struct LoadedObject {
 
 const EMPTY_OBJ: LoadedObject = LoadedObject {
     base: 0,
+    map_start: core::ptr::null_mut(),
+    map_size: 0,
     symtab: core::ptr::null(),
     sym_count: 0,
     strtab: core::ptr::null(),
@@ -341,6 +348,32 @@ static mut TLS_GENERATION: u64 = 1;
 static mut TLS_OLD_TOTAL: usize = 0;
 static mut TLS_OLD_MODULE_COUNT: usize = 0;
 static TLS_LOCK: AtomicBool = AtomicBool::new(false);
+// Runtime loader operations are serialized like musl's global loader lock.
+// The lock is recursive for constructor callbacks, which may call dlopen or
+// dlsym while the outer operation is still mutating the object graph.
+static LOADER_LOCK: AtomicBool = AtomicBool::new(false);
+static LOADER_OWNER: AtomicI64 = AtomicI64::new(0);
+static LOADER_DEPTH: AtomicUsize = AtomicUsize::new(0);
+
+const DLERROR_BUF_SIZE: usize = 128;
+
+#[repr(C)]
+struct DlErrorNode {
+    tid: usize,
+    thread_pointer: usize,
+    set: AtomicBool,
+    buf: [u8; DLERROR_BUF_SIZE],
+    next: *mut DlErrorNode,
+}
+
+// Error nodes are allocated once for each observed (tid, thread-pointer)
+// identity and are never shared between distinct live threads.  Including the
+// thread pointer prevents a recycled Linux tid from exposing an exited
+// thread's pending error before the new thread has performed another loader
+// operation. Nodes are intentionally retained so no thread-exit hook or
+// allocator is needed in the early loader.
+static mut DLERROR_HEAD: *mut DlErrorNode = core::ptr::null_mut();
+static DLERROR_LOCK: AtomicBool = AtomicBool::new(false);
 static mut LD_LIBRARY_PATH: *const u8 = core::ptr::null();
 static mut RUNPATH: *const u8 = core::ptr::null();
 static mut RUNPATH_LEN: usize = 0;
@@ -779,6 +812,53 @@ unsafe fn find_env(sp: usize, prefix: &[u8]) -> Option<*const u8> {
     None
 }
 
+/// Read one auxiliary-vector value without copying or truncating the kernel
+/// startup vector.  The kernel guarantees a terminating AT_NULL entry.
+unsafe fn find_auxv_value(sp: usize, tag_wanted: u64) -> u64 {
+    let argc = *(sp as *const u64) as usize;
+    let argv_start = sp + 8;
+    let envp_start = argv_start + (argc + 1) * 8;
+    let mut envc = 0usize;
+    while *((envp_start + envc * 8) as *const u64) != 0 {
+        envc += 1;
+    }
+    let auxv = (envp_start + (envc + 1) * 8) as *const u64;
+    let mut i = 0usize;
+    loop {
+        let tag = *auxv.add(i * 2);
+        let value = *auxv.add(i * 2 + 1);
+        if tag == AT_NULL {
+            return 0;
+        }
+        if tag == tag_wanted {
+            return value;
+        }
+        i += 1;
+    }
+}
+
+unsafe fn secure_env_entry_is_unsafe(entry: *const u8) -> bool {
+    let library_path = b"LD_LIBRARY_PATH=";
+    let preload = b"LD_PRELOAD=";
+    let entry_len = str_len(entry);
+    if entry_len < library_path.len() && entry_len < preload.len() {
+        return false;
+    }
+    let mut path_match = entry_len >= library_path.len();
+    let mut preload_match = entry_len >= preload.len();
+    for i in 0..library_path.len() {
+        if path_match && *entry.add(i) != library_path[i] {
+            path_match = false;
+        }
+    }
+    for i in 0..preload.len() {
+        if preload_match && *entry.add(i) != preload[i] {
+            preload_match = false;
+        }
+    }
+    path_match || preload_match
+}
+
 // ============================================================
 // Syscall wrappers (raw, no_std)
 // ============================================================
@@ -1141,6 +1221,7 @@ mod sysnr {
     pub const SYS_MPROTECT: i64 = 10;
     pub const SYS_MUNMAP: i64 = 11;
     pub const SYS_READLINKAT: i64 = 267;
+    pub const SYS_GETTID: i64 = 186;
     pub const SYS_ARCH_PRCTL: i64 = 158;
     pub const SYS_EXIT: i64 = 60;
 }
@@ -1156,6 +1237,7 @@ mod sysnr {
     pub const SYS_MPROTECT: i64 = 226;
     pub const SYS_MUNMAP: i64 = 215;
     pub const SYS_READLINKAT: i64 = 78;
+    pub const SYS_GETTID: i64 = 178;
     pub const SYS_EXIT: i64 = 93;
 }
 #[cfg(target_arch = "riscv64")]
@@ -1169,6 +1251,7 @@ mod sysnr {
     pub const SYS_MMAP: i64 = 222;
     pub const SYS_MUNMAP: i64 = 215;
     pub const SYS_READLINKAT: i64 = 78;
+    pub const SYS_GETTID: i64 = 178;
     pub const SYS_EXIT: i64 = 93;
 }
 pub use sysnr::*;
@@ -1201,6 +1284,84 @@ fn sys_write(fd: i64, buf: *const u8, count: usize) -> i64 {
 
 fn sys_close(fd: i64) {
     unsafe { <Arch as Syscalls>::syscall1(SYS_CLOSE, fd); }
+}
+
+#[inline(always)]
+fn current_tid() -> i64 {
+    unsafe { <Arch as Syscalls>::syscall0(SYS_GETTID) }
+}
+
+unsafe fn loader_lock() {
+    let tid = current_tid();
+    if LOADER_OWNER.load(Ordering::Acquire) == tid {
+        LOADER_DEPTH.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    while LOADER_LOCK.swap(true, Ordering::Acquire) {}
+    LOADER_OWNER.store(tid, Ordering::Relaxed);
+    LOADER_DEPTH.store(1, Ordering::Release);
+}
+
+unsafe fn loader_unlock() {
+    let tid = current_tid();
+    if LOADER_OWNER.load(Ordering::Acquire) != tid {
+        return;
+    }
+    if LOADER_DEPTH.fetch_sub(1, Ordering::Release) == 1 {
+        LOADER_OWNER.store(0, Ordering::Relaxed);
+        LOADER_LOCK.store(false, Ordering::Release);
+    }
+}
+
+unsafe fn dlerror_lock() {
+    while DLERROR_LOCK.swap(true, Ordering::Acquire) {}
+}
+
+unsafe fn dlerror_unlock() {
+    DLERROR_LOCK.store(false, Ordering::Release);
+}
+
+/// Find or allocate the caller's error node.  The caller holds DLERROR_LOCK;
+/// allocation failure is explicit and returns null rather than borrowing a
+/// different thread's storage.
+unsafe fn dlerror_node_locked(tid: usize, thread_pointer: usize) -> *mut DlErrorNode {
+    let mut node = DLERROR_HEAD;
+    while !node.is_null() {
+        if (*node).tid == tid && (*node).thread_pointer == thread_pointer {
+            return node;
+        }
+        node = (*node).next;
+    }
+
+    let size = core::mem::size_of::<DlErrorNode>();
+    let map_size = match size.checked_add(4095).map(|value| value & !4095) {
+        Some(value) => value,
+        None => return core::ptr::null_mut(),
+    };
+    let mapping = sys_mmap(
+        core::ptr::null_mut(),
+        map_size,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
+    if mapping as usize == MAP_FAILED {
+        return core::ptr::null_mut();
+    }
+    node = mapping as *mut DlErrorNode;
+    core::ptr::write(
+        node,
+        DlErrorNode {
+            tid,
+            thread_pointer,
+            set: AtomicBool::new(false),
+            buf: [0; DLERROR_BUF_SIZE],
+            next: DLERROR_HEAD,
+        },
+    );
+    DLERROR_HEAD = node;
+    node
 }
 
 fn sys_mmap(
@@ -1412,10 +1573,23 @@ unsafe fn find_library_fd(
     ld_path: Option<*const u8>,
     parent: Option<usize>,
 ) -> i64 {
+    if lib_name_len == 0 {
+        return -1;
+    }
     let mut path_buf = [0u8; 512];
     let mut origin = [0u8; 256];
 
-    if lib_name_len > 0 {
+    // A bare DT_NEEDED name is searched only through the loader's configured
+    // paths and trusted defaults.  Opening it directly would make the
+    // process's current working directory an implicit search directory.
+    let mut has_slash = false;
+    for i in 0..lib_name_len {
+        if *lib_name.add(i) == b'/' {
+            has_slash = true;
+            break;
+        }
+    }
+    if has_slash {
         let fd = sys_open(lib_name);
         if fd >= 0 {
             return fd;
@@ -1446,6 +1620,16 @@ unsafe fn find_library_fd(
     let (rp, rp_len, origin_ptr, origin_len) = if let Some(idx) = parent {
         if idx >= LOADED_COUNT {
             (core::ptr::null(), 0, core::ptr::null(), 0)
+        } else if idx == 0 {
+            // The main executable's RUNPATH/RPATH is kept in startup state
+            // rather than copied into LOADED[0]. Direct DT_NEEDED edges from
+            // the executable still arrive here with parent index zero.
+            (
+                RUNPATH,
+                RUNPATH_LEN,
+                core::ptr::addr_of!(ORIGIN_DIR).cast::<u8>(),
+                ORIGIN_LEN,
+            )
         } else {
             let name = &LOADED[idx].name;
             let mut name_len = 0usize;
@@ -1567,6 +1751,20 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
     if LOADED_COUNT >= MAX_LOADED {
         return None;
     }
+    let mut mapped: [(*mut u8, usize); 8] = [(core::ptr::null_mut(), 0); 8];
+    let mut mapped_count = 0usize;
+    macro_rules! fail_mapping {
+        () => {{
+            while mapped_count > 0 {
+                mapped_count -= 1;
+                let (addr, len) = mapped[mapped_count];
+                if !addr.is_null() && len != 0 {
+                    sys_munmap(addr, len);
+                }
+            }
+            return None;
+        }};
+    }
     let identity = file_identity(fd);
     let mut buf = [0u8; 4096];
     let n = sys_read(fd, buf.as_mut_ptr(), buf.len());
@@ -1680,7 +1878,11 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
             0,
         );
         if ptr as usize == MAP_FAILED {
-            return None;
+            fail_mapping!();
+        }
+        if mapped_count < mapped.len() {
+            mapped[mapped_count] = (map_addr as *mut u8, map_len);
+            mapped_count += 1;
         }
 
         let file_map_len = ((seg.p_filesz + adj + PAGE - 1) & !(PAGE - 1)) as usize;
@@ -1694,7 +1896,7 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
                 map_off as i64,
             );
             if fptr as usize == MAP_FAILED {
-                return None;
+                fail_mapping!();
             }
         }
 
@@ -1722,7 +1924,7 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
         }
     }
     if dyn_vaddr == 0 {
-        return None;
+        fail_mapping!();
     }
 
     let dyn_addr = (actual_base + dyn_vaddr) as usize;
@@ -1786,11 +1988,11 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
     };
     let (search_path, search_path_len) = if let Some(offset) = search_path_offset {
         if offset >= strsz {
-            return None;
+            fail_mapping!();
         }
         let path = strtab_ptr.add(offset);
         let Some(len) = dynamic_string_len(path, strsz - offset) else {
-            return None;
+            fail_mapping!();
         };
         (path, len)
     } else {
@@ -1808,6 +2010,8 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
 
     LOADED[LOADED_COUNT] = LoadedObject {
         base: actual_base,
+        map_start: actual_base.wrapping_add(image_start) as *mut u8,
+        map_size: total_size,
         symtab: symtab_ptr,
         sym_count,
         strtab: strtab_ptr,
@@ -1902,29 +2106,50 @@ unsafe fn load_named_with_dependencies_from_parent(
     }
     sys_close(fd);
     let idx = LOADED_COUNT - 1;
-    set_loaded_name(idx, name, name_len);
+    if !set_loaded_name(idx, name, name_len) {
+        return None;
+    }
     if !load_needed_dependencies(idx, ld_path) {
         return None;
     }
     Some(idx)
 }
 
+/// Roll back every DSO added after `first`.  Each object owns one contiguous
+/// load span, so failed dependency closure discovery cannot leave executable
+/// mappings behind for a later dlsym or dlopen to observe.
+unsafe fn cleanup_loaded_objects_from(first: usize) {
+    while LOADED_COUNT > first {
+        let idx = LOADED_COUNT - 1;
+        let map_start = LOADED[idx].map_start;
+        let map_size = LOADED[idx].map_size;
+        if !map_start.is_null() && map_size != 0 {
+            sys_munmap(map_start, map_size);
+        }
+        LOADED[idx] = EMPTY_OBJ;
+        LOADED_COUNT = idx;
+    }
+}
+
 /// Record an already-discovered dependency edge for constructor ordering.
 /// The graph is bounded with the same fixed capacity as the loaded-object
 /// table, and duplicate DT_NEEDED entries do not create duplicate callbacks.
-unsafe fn record_dependency(parent: usize, child: usize) {
+unsafe fn record_dependency(parent: usize, child: usize) -> bool {
     if parent >= LOADED_COUNT || child >= LOADED_COUNT || parent == child {
-        return;
+        return true;
     }
     let count = LOADED[parent].dependency_count;
     for i in 0..count {
         if LOADED[parent].dependencies[i] == child {
-            return;
+            return true;
         }
     }
     if count < MAX_LOADED {
         LOADED[parent].dependencies[count] = child;
         LOADED[parent].dependency_count = count + 1;
+        true
+    } else {
+        false
     }
 }
 
@@ -1946,10 +2171,12 @@ unsafe fn load_needed_dependencies(idx: usize, ld_path: Option<*const u8>) -> bo
     }
 
     let mut pos = dyn_addr;
+    let mut found_null = false;
     while pos + 16 <= dyn_end {
         let tag = u64::from_le_bytes(core::ptr::read_unaligned(pos as *const [u8; 8]));
         let value = u64::from_le_bytes(core::ptr::read_unaligned((pos + 8) as *const [u8; 8]));
         if tag == DT_NULL {
+            found_null = true;
             break;
         }
         if tag == DT_NEEDED {
@@ -1964,11 +2191,13 @@ unsafe fn load_needed_dependencies(idx: usize, ld_path: Option<*const u8>) -> bo
             let Some(child) = load_named_with_dependencies_from_parent(name, name_len, ld_path, Some(idx)) else {
                 return false;
             };
-            record_dependency(idx, child);
+            if !record_dependency(idx, child) {
+                return false;
+            }
         }
         pos += 16;
     }
-    true
+    found_null
 }
 
 /// Load the whitespace- or colon-separated `LD_PRELOAD` list before ordinary
@@ -1994,7 +2223,9 @@ unsafe fn load_preload_list(list: *const u8, ld_path: Option<*const u8>) -> bool
             return false;
         };
         LOADED[idx].global = true;
-        record_dependency(0, idx);
+        if !record_dependency(0, idx) {
+            return false;
+        }
         start = end;
     }
     true
@@ -2063,6 +2294,12 @@ unsafe fn resolve_symbol_with_size(name: *const u8, exclude: usize) -> (u64, usi
     }
     if str_eq(name, name_len, b"__rc_tls_block_size\0".as_ptr()) {
         return ((__rc_tls_block_size as *const () as usize) as u64, 0);
+    }
+    if str_eq(name, name_len, b"__rc_tls_block_size_for\0".as_ptr()) {
+        return ((__rc_tls_block_size_for as *const () as usize) as u64, 0);
+    }
+    if str_eq(name, name_len, b"__rc_tls_base_offset_for\0".as_ptr()) {
+        return ((__rc_tls_base_offset_for as *const () as usize) as u64, 0);
     }
 
     for i in 0..LOADED_COUNT {
@@ -2216,6 +2453,88 @@ unsafe fn tls_tp_offset_from_block() -> usize {
     { TCB_SIZE }
 }
 
+/// Read the TP offset recorded in one allocation's TCB. AArch64 can raise
+/// this offset when a late TLS module has a stronger alignment than the
+/// initial image, so consulting the process-global value would mislocate an
+/// older thread's TCB.
+unsafe fn thread_tp_offset(fs_base: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let _ = fs_base;
+        TLS_TOTAL_SIZE
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let recorded = core::ptr::read_unaligned((fs_base as *const usize).add(1));
+        if recorded >= TCB_SIZE { recorded } else { TLS_TP_OFFSET }
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        let _ = fs_base;
+        TCB_SIZE
+    }
+}
+
+unsafe fn tcb_for_thread(fs_base: usize) -> *mut u8 {
+    #[cfg(target_arch = "x86_64")]
+    { fs_base as *mut u8 }
+    #[cfg(target_arch = "aarch64")]
+    { (fs_base.wrapping_sub(thread_tp_offset(fs_base))) as *mut u8 }
+    #[cfg(target_arch = "riscv64")]
+    { fs_base.wrapping_sub(TCB_SIZE) as *mut u8 }
+}
+
+/// Return the TP-relative distance from a thread's allocation base.  x86_64
+/// stores its TCB at TP and therefore uses the recorded variable-area size;
+/// AArch64 records the TP offset in the otherwise-unused gap immediately
+/// above TP, because late TLS can raise that offset for future allocations.
+unsafe fn thread_block_tp_offset(fs_base: usize, data_size: usize) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    { data_size }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let _ = data_size;
+        thread_tp_offset(fs_base)
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        let _ = (fs_base, data_size);
+        TCB_SIZE
+    }
+}
+
+/// Initialize loader-owned TCB metadata for one TLS allocation.  The
+/// per-allocation TP offset is needed when a later dlopen introduces a more
+/// strongly aligned TLS image: old threads remain on their old allocation
+/// until their next TLS lookup and must still be unmapped from its true base.
+unsafe fn initialize_tls_tcb(tcb: *mut u8, tp: *mut u8, data_size: usize) {
+    #[cfg(not(target_arch = "aarch64"))]
+    let _ = tp;
+    core::ptr::write_unaligned(tcb as *mut u64, tcb as u64);
+    core::ptr::write_unaligned(
+        tcb.add(TCB_GENERATION_OFFSET) as *mut u64,
+        TLS_GENERATION,
+    );
+    core::ptr::write_unaligned(
+        tcb.add(TCB_BLOCK_SIZE_OFFSET) as *mut usize,
+        data_size,
+    );
+    core::ptr::write_unaligned(
+        tcb.add(TCB_TP_OFFSET_OFFSET) as *mut usize,
+        tls_tp_offset_from_block(),
+    );
+    #[cfg(target_arch = "aarch64")]
+    {
+        // TP+8 is in the ABI-mandated gap before the first positive TLS
+        // offset (GAP_ABOVE_TP is 16), so it is safe metadata storage even
+        // when the TCB is below TP by several pages.
+        core::ptr::write_unaligned(
+            tp.add(TCB_GENERATION_OFFSET) as *mut usize,
+            tls_tp_offset_from_block(),
+        );
+    }
+}
+
 unsafe fn tls_var_area_offset_from_tp() -> usize {
     #[cfg(target_arch = "x86_64")]
     { TLS_TOTAL_SIZE }
@@ -2223,15 +2542,6 @@ unsafe fn tls_var_area_offset_from_tp() -> usize {
     { 0 }
     #[cfg(target_arch = "riscv64")]
     { 0 }
-}
-
-unsafe fn tls_tcb_offset_from_tp() -> isize {
-    #[cfg(target_arch = "x86_64")]
-    { 0 }
-    #[cfg(target_arch = "aarch64")]
-    { -(TLS_TP_OFFSET as isize) }
-    #[cfg(target_arch = "riscv64")]
-    { -(TCB_SIZE as isize) }
 }
 
 // ============================================================
@@ -2633,8 +2943,11 @@ unsafe fn tls_unlock() {
     TLS_LOCK.store(false, Ordering::Release);
 }
 
-unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) {
-    let total = TLS_TOTAL_SIZE + tls_tp_offset_from_block();
+unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) -> bool {
+    let total = match TLS_TOTAL_SIZE.checked_add(tls_tp_offset_from_block()) {
+        Some(total) => total,
+        None => return false,
+    };
     let block = sys_mmap(
         core::ptr::null_mut(),
         total,
@@ -2644,12 +2957,29 @@ unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) {
         0,
     );
     if block as usize == MAP_FAILED {
-        return;
+        return false;
     }
     let old_fs = read_tp();
-    let old_var_base = (old_fs as isize - tls_var_area_offset_from_tp() as isize) as *mut u8;
-    if old_total > 0 {
-        core::ptr::copy_nonoverlapping(old_var_base, block.add(tls_var_area_offset_from_block()), old_total);
+    let old_tcb = tcb_for_thread(old_fs);
+    let recorded_data = core::ptr::read_unaligned(old_tcb.add(TCB_BLOCK_SIZE_OFFSET) as *const usize);
+    let old_data = if recorded_data != 0 { recorded_data } else { old_total };
+    let old_tp_offset = thread_block_tp_offset(old_fs, old_data);
+    let old_block = (old_fs as usize).wrapping_sub(old_tp_offset) as *mut u8;
+    let old_var_base = {
+        #[cfg(target_arch = "x86_64")]
+        { old_block }
+        #[cfg(target_arch = "aarch64")]
+        { old_fs as *mut u8 }
+        #[cfg(target_arch = "riscv64")]
+        { old_block }
+    };
+    if old_data > 0 {
+        let copy_size = if old_data < TLS_TOTAL_SIZE { old_data } else { TLS_TOTAL_SIZE };
+        core::ptr::copy_nonoverlapping(
+            old_var_base,
+            block.add(tls_var_area_offset_from_block()),
+            copy_size,
+        );
     }
     for i in old_module_count..TLS_MODULE_COUNT {
         if TLS_MEMSZ[i] == 0 {
@@ -2667,9 +2997,24 @@ unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) {
         }
     }
     let tcb = block.add(tls_tcb_offset_from_block());
-    core::ptr::write_unaligned(tcb as *mut u64, tcb as u64);
-    core::ptr::write_unaligned((tcb as *mut u64).add(1), TLS_GENERATION);
-    write_tp(block.add(tls_tp_offset_from_block()) as usize);
+    // Preserve libc's TCB fields (notably the x86_64 stack canary) while
+    // replacing the allocation.  Only the loader-owned metadata below is
+    // rewritten after the copy.
+    core::ptr::copy_nonoverlapping(old_tcb, tcb, TCB_SIZE);
+    let new_tp = block.add(tls_tp_offset_from_block());
+    initialize_tls_tcb(tcb, new_tp, TLS_TOTAL_SIZE);
+    let old_block_size = match old_data.checked_add(old_tp_offset) {
+        Some(size) => size,
+        None => {
+            sys_munmap(block, total);
+            return false;
+        }
+    };
+    write_tp(new_tp as usize);
+    if old_block_size != 0 && old_block != block {
+        sys_munmap(old_block, old_block_size);
+    }
+    true
 }
 
 /// Reserve a dynamic TLS module in the process layout. The caller holds the
@@ -2690,16 +3035,30 @@ unsafe fn register_tls_for_new_module(idx: usize) -> Option<(usize, usize)> {
     // replacing TLS_TOTAL_SIZE with that recomputed end then shrank the live
     // block to a few bytes during dlopen.  TLS_USED_SIZE is the monotonic
     // logical frontier, while TLS_TOTAL_SIZE remains its allocation capacity.
+    if !align.is_power_of_two() {
+        tls_unlock();
+        return None;
+    }
+    #[cfg(target_arch = "aarch64")]
+    if align > TLS_TP_OFFSET {
+        // AArch64's TP is above the TCB and static TLS.  A late DSO with a
+        // stronger PT_TLS alignment needs a correspondingly larger gap in
+        // newly allocated blocks; existing threads retain their recorded
+        // offset until they migrate on the next TLS lookup.
+        TLS_TP_OFFSET = align;
+    }
     let new_offset = (TLS_USED_SIZE + align - 1) & !(align - 1);
-    let new_used = new_offset + obj.tls_memsz as usize;
+    let new_used = match new_offset.checked_add(obj.tls_memsz as usize) {
+        Some(value) => value,
+        None => {
+            tls_unlock();
+            return None;
+        }
+    };
     if new_used > TLS_TOTAL_SIZE {
         let doubled = new_used.saturating_mul(2);
         let minimum = if doubled < 4096 { 4096 } else { doubled };
         TLS_TOTAL_SIZE = (minimum + 4095) & !4095;
-    }
-    #[cfg(target_arch = "aarch64")]
-    if align > TLS_TP_OFFSET {
-        TLS_TP_OFFSET = align;
     }
     TLS_LAYOUT_OFFSET[idx] = new_offset;
     TLS_FILESZ[idx] = obj.tls_filesz;
@@ -2718,7 +3077,7 @@ unsafe fn register_tls_for_new_module(idx: usize) -> Option<(usize, usize)> {
 /// Copy the relocated image of a newly registered TLS module into this
 /// thread, then let other threads observe the new generation.
 unsafe fn initialize_new_module_tls(old_total: usize, old_module_count: usize) {
-    expand_thread_tls(old_total, old_module_count);
+    let _ = expand_thread_tls(old_total, old_module_count);
     TLS_OLD_TOTAL = old_total;
     TLS_OLD_MODULE_COUNT = old_module_count;
     tls_unlock();
@@ -2747,23 +3106,31 @@ unsafe fn lookup_symbol_in_object(obj_idx: usize, name: *const u8, name_len: usi
     0
 }
 
-static mut DLERROR_BUF: [u8; 128] = [0; 128];
-static mut DLERROR_SET: bool = false;
-const DLERROR_BUF_SIZE: usize = 128;
-
 unsafe fn set_dlerror(msg: &[u8]) {
+    dlerror_lock();
+    let node = dlerror_node_locked(current_tid() as usize, read_tp());
+    if node.is_null() {
+        dlerror_unlock();
+        return;
+    }
     let len = if msg.len() >= DLERROR_BUF_SIZE {
         DLERROR_BUF_SIZE - 1
     } else {
         msg.len()
     };
-    core::ptr::copy_nonoverlapping(
-        msg.as_ptr(),
-        core::ptr::addr_of_mut!(DLERROR_BUF).cast::<u8>(),
-        len,
-    );
-    DLERROR_BUF[len] = 0;
-    DLERROR_SET = true;
+    core::ptr::copy_nonoverlapping(msg.as_ptr(), (*node).buf.as_mut_ptr(), len);
+    (*node).buf[len] = 0;
+    (*node).set.store(true, Ordering::Release);
+    dlerror_unlock();
+}
+
+unsafe fn clear_dlerror() {
+    dlerror_lock();
+    let node = dlerror_node_locked(current_tid() as usize, read_tp());
+    if !node.is_null() {
+        (*node).set.store(false, Ordering::Release);
+    }
+    dlerror_unlock();
 }
 
 const DL_GLOBAL_SENTINEL: *mut u8 = 1usize as *mut u8;
@@ -2809,8 +3176,10 @@ unsafe fn register_dlopen_callbacks() {
 
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut u8 {
-    DLERROR_SET = false;
+    loader_lock();
+    clear_dlerror();
     if filename.is_null() {
+        loader_unlock();
         return DL_GLOBAL_SENTINEL;
     }
     publish_debug_state(RT_ADD);
@@ -2821,6 +3190,7 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
         }
         LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
         publish_debug_state(RT_CONSISTENT);
+        loader_unlock();
         return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
     }
     let ld = if LD_LIBRARY_PATH.is_null() {
@@ -2832,13 +3202,10 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     let idx = match load_named_with_dependencies(filename, name_len, ld) {
         Some(idx) => idx,
         None => {
-            // A failed recursive closure must not remain visible to later
-            // dlsym/relocation calls. Its anonymous mappings are harmless
-            // process-local leakage on this error path, but its metadata is
-            // rolled back before reporting the musl-style dlopen failure.
-            LOADED_COUNT = first_new;
+            cleanup_loaded_objects_from(first_new);
             set_dlerror(b"dlopen: failed to load dependency graph\0");
             publish_debug_state(RT_CONSISTENT);
+            loader_unlock();
             return core::ptr::null_mut();
         }
     };
@@ -2848,9 +3215,16 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
         }
         LOADED[idx].global = LOADED[idx].global || (flags & RTLD_GLOBAL) != 0;
         publish_debug_state(RT_CONSISTENT);
+        loader_unlock();
         return &mut LOADED[idx] as *mut LoadedObject as *mut u8;
     }
-    set_loaded_name(idx, filename, name_len);
+    if !set_loaded_name(idx, filename, name_len) {
+        cleanup_loaded_objects_from(first_new);
+        set_dlerror(b"dlopen: library name too long\0");
+        publish_debug_state(RT_CONSISTENT);
+        loader_unlock();
+        return core::ptr::null_mut();
+    }
     LOADED[idx].global = (flags & RTLD_GLOBAL) != 0;
     LOADED[idx].ref_count = 1;
     DL_ADDS = DL_ADDS.wrapping_add((LOADED_COUNT - first_new) as u64);
@@ -2866,14 +3240,17 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     }
     run_constructors_for(idx);
     publish_debug_state(RT_CONSISTENT);
+    loader_unlock();
     &mut LOADED[idx] as *mut LoadedObject as *mut u8
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mut u8 {
-    DLERROR_SET = false;
+    loader_lock();
+    clear_dlerror();
     if symbol.is_null() {
         set_dlerror(b"dlsym: null symbol\0");
+        loader_unlock();
         return core::ptr::null_mut();
     }
     let name_len = str_len(symbol);
@@ -2892,10 +3269,14 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
         if private.is_null() {
             set_dlerror(b"dlsym: symbol not found\0");
         }
+        loader_unlock();
         return private;
     }
     let mut result: u64 = 0;
-    if handle == DL_GLOBAL_SENTINEL {
+    // dlfcn.h exposes RTLD_DEFAULT as a null handle.  The libc bridge uses
+    // the private sentinel for dlopen(NULL), but direct callers must retain
+    // the standard null-handle global lookup semantics as well.
+    if handle.is_null() || handle == DL_GLOBAL_SENTINEL {
         for i in 0..LOADED_COUNT {
             if i == 0 || LOADED[i].global {
                 result = lookup_symbol_in_object(i, symbol, name_len);
@@ -2905,17 +3286,15 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
             }
         }
     } else {
-        let idx = ((handle as usize - core::ptr::addr_of_mut!(LOADED) as usize)
-            / core::mem::size_of::<LoadedObject>()) as usize;
-        if idx < LOADED_COUNT {
+        if let Some(idx) = loaded_handle_index(handle) {
             result = lookup_symbol_in_object(idx, symbol, name_len);
-        }
-        if result == 0 {
-            for i in 0..LOADED_COUNT {
-                if i == 0 || LOADED[i].global {
-                    result = lookup_symbol_in_object(i, symbol, name_len);
-                    if result != 0 {
-                        break;
+            if result == 0 {
+                for i in 0..LOADED_COUNT {
+                    if i == 0 || LOADED[i].global {
+                        result = lookup_symbol_in_object(i, symbol, name_len);
+                        if result != 0 {
+                            break;
+                        }
                     }
                 }
             }
@@ -2924,28 +3303,35 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
     if result == 0 {
         set_dlerror(b"dlsym: symbol not found\0");
     }
+    loader_unlock();
     result as *mut u8
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlclose(handle: *mut u8) -> i32 {
+    loader_lock();
+    clear_dlerror();
     // `dlopen(NULL, ...)` returns the permanent global process handle. musl
     // accepts `dlclose` for it as a no-op; it is not an address inside LOADED.
     if handle == DL_GLOBAL_SENTINEL {
+        loader_unlock();
         return 0;
     }
     let Some(idx) = loaded_handle_index(handle) else {
         set_dlerror(b"dlclose: invalid handle\0");
+        loader_unlock();
         return -1;
     };
     if LOADED[idx].ref_count == usize::MAX {
         // Startup objects are permanently retained, as musl does for its
         // global process scope. A handle obtained for one still closes
         // successfully without unmapping the process runtime.
+        loader_unlock();
         return 0;
     }
     if LOADED[idx].ref_count == 0 {
         set_dlerror(b"dlclose: invalid handle\0");
+        loader_unlock();
         return -1;
     }
     LOADED[idx].ref_count -= 1;
@@ -2961,17 +3347,21 @@ pub unsafe extern "C" fn __ldso_dlclose(handle: *mut u8) -> i32 {
             publish_debug_state(RT_CONSISTENT);
         }
     }
+    loader_unlock();
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlerror() -> *const u8 {
-    if DLERROR_SET {
-        DLERROR_SET = false;
-        core::ptr::addr_of_mut!(DLERROR_BUF).cast::<u8>()
+    dlerror_lock();
+    let node = dlerror_node_locked(current_tid() as usize, read_tp());
+    let result = if !node.is_null() && (*node).set.swap(false, Ordering::AcqRel) {
+        (*node).buf.as_ptr()
     } else {
         core::ptr::null()
-    }
+    };
+    dlerror_unlock();
+    result
 }
 
 unsafe fn loaded_object_phdrs(idx: usize) -> Option<(*const u8, usize)> {
@@ -3018,8 +3408,14 @@ unsafe fn loaded_object_tls_data(idx: usize) -> *mut u8 {
     if idx >= LOADED_COUNT || !LOADED[idx].active || LOADED[idx].tls_memsz == 0 {
         return core::ptr::null_mut();
     }
-    let base = read_tp().wrapping_sub(tls_var_area_offset_from_tp());
-    base.wrapping_add(TLS_LAYOUT_OFFSET[idx]) as *mut u8
+    // A calling thread may predate a late TLS module.  Use the ordinary
+    // generation-aware resolver rather than applying the process-global
+    // offset to that thread's older allocation.
+    let index = TlsIndex {
+        ti_module: idx + 1,
+        ti_offset: 0,
+    };
+    __tls_get_addr(&index)
 }
 
 /// Invoke a public dl_iterate_phdr callback over the loader's stable snapshot.
@@ -3028,6 +3424,11 @@ pub unsafe extern "C" fn __ldso_dl_iterate_phdr(
     callback: LdsoIterateCallback,
     data: *mut u8,
 ) -> i32 {
+    loader_lock();
+    if callback as usize == 0 {
+        loader_unlock();
+        return -1;
+    }
     for i in 0..LOADED_COUNT {
         if !LOADED[i].active {
             continue;
@@ -3052,9 +3453,11 @@ pub unsafe extern "C" fn __ldso_dl_iterate_phdr(
             data,
         );
         if result != 0 {
+            loader_unlock();
             return result;
         }
     }
+    loader_unlock();
     0
 }
 
@@ -3066,7 +3469,9 @@ pub unsafe extern "C" fn __ldso_dladdr(
     address: *const u8,
     result: *mut LdsoDladdrResult,
 ) -> i32 {
+    loader_lock();
     if address.is_null() || result.is_null() {
+        loader_unlock();
         return 0;
     }
     (*result).fname = core::ptr::null();
@@ -3084,6 +3489,7 @@ pub unsafe extern "C" fn __ldso_dladdr(
         (*result).fbase = obj.base as usize;
 
         if obj.symtab.is_null() || obj.strtab.is_null() {
+            loader_unlock();
             return 1;
         }
 
@@ -3106,8 +3512,10 @@ pub unsafe extern "C" fn __ldso_dladdr(
         }
         (*result).sname = best_name;
         (*result).saddr = best_addr;
+        loader_unlock();
         return 1;
     }
+    loader_unlock();
     0
 }
 
@@ -3180,14 +3588,18 @@ pub unsafe extern "C" fn __ldso_dlinfo(
     request: i32,
     arg: *mut u8,
 ) -> i32 {
+    loader_lock();
     if request != RTLD_DI_LINKMAP || arg.is_null() {
+        loader_unlock();
         return -1;
     }
     let Some(idx) = loaded_handle_index(handle) else {
+        loader_unlock();
         return -1;
     };
     refresh_link_maps();
     *(arg as *mut *mut LdsoLinkMap) = core::ptr::addr_of_mut!(LINK_MAPS[idx]);
+    loader_unlock();
     0
 }
 
@@ -3265,7 +3677,11 @@ unsafe fn compute_tls_layout() {
             TLS_MEMSZ[i] = obj.tls_memsz;
             TLS_IMAGE[i] = obj.tls_image;
         }
-        TLS_USED_SIZE = TLS_TOTAL_SIZE - end;
+        // Existing x86_64 modules are placed at the high end of the variable
+        // area.  Late modules append after the capacity frontier; using
+        // `TLS_TOTAL_SIZE - end` here would place the first late module over
+        // the static images.
+        TLS_USED_SIZE = TLS_TOTAL_SIZE;
     }
 
     #[cfg(target_arch = "riscv64")]
@@ -3317,9 +3733,9 @@ unsafe fn init_tls_block(block: *mut u8) -> *mut u8 {
         }
     }
     let tcb = block.add(tls_tcb_offset_from_block());
-    core::ptr::write_unaligned(tcb as *mut u64, tcb as u64);
-    core::ptr::write_unaligned((tcb as *mut u64).add(1), TLS_GENERATION);
-    block.add(tls_tp_offset_from_block())
+    let tp = block.add(tls_tp_offset_from_block());
+    initialize_tls_tcb(tcb, tp, TLS_TOTAL_SIZE);
+    tp
 }
 
 #[repr(C)]
@@ -3368,13 +3784,22 @@ pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut u8 {
         return core::ptr::null_mut();
     }
     let fs_base = read_tp();
-    let tcb = (fs_base as isize + tls_tcb_offset_from_tp()) as *mut u8;
-    let thread_gen = core::ptr::read_unaligned((tcb as *const u64).add(1));
+    let tcb = tcb_for_thread(fs_base);
+    let thread_gen = core::ptr::read_unaligned(
+        tcb.add(TCB_GENERATION_OFFSET) as *const u64,
+    );
     if thread_gen != TLS_GENERATION {
         tls_lock();
-        let thread_gen2 = core::ptr::read_unaligned((tcb as *const u64).add(1));
+        let fs_base_locked = read_tp();
+        let tcb_locked = tcb_for_thread(fs_base_locked);
+        let thread_gen2 = core::ptr::read_unaligned(
+            tcb_locked.add(TCB_GENERATION_OFFSET) as *const u64,
+        );
         if thread_gen2 != TLS_GENERATION {
-            expand_thread_tls(TLS_OLD_TOTAL, TLS_OLD_MODULE_COUNT);
+            if !expand_thread_tls(TLS_OLD_TOTAL, TLS_OLD_MODULE_COUNT) {
+                tls_unlock();
+                return core::ptr::null_mut();
+            }
         }
         tls_unlock();
     }
@@ -3400,7 +3825,17 @@ pub unsafe extern "C" fn __rc_create_thread_tls() -> *mut u8 {
     if block as usize == MAP_FAILED {
         return core::ptr::null_mut();
     }
-    init_tls_block(block)
+    let new_tp = init_tls_block(block);
+    // New pthreads inherit the process's TCB ABI state (including the stack
+    // protector) while receiving fresh TLS variable images.
+    let old_fs = read_tp();
+    if old_fs != 0 {
+        let old_tcb = tcb_for_thread(old_fs) as *const u8;
+        let new_tcb = tcb_for_thread(new_tp as usize);
+        core::ptr::copy_nonoverlapping(old_tcb, new_tcb, TCB_SIZE);
+        initialize_tls_tcb(new_tcb, new_tp, TLS_TOTAL_SIZE);
+    }
+    new_tp
 }
 
 #[no_mangle]
@@ -3411,6 +3846,36 @@ pub unsafe extern "C" fn __rc_tls_block_size() -> usize {
 #[no_mangle]
 pub unsafe extern "C" fn __rc_tls_base_offset() -> usize {
     tls_tp_offset_from_block()
+}
+
+/// Return the allocation size for a specific thread pointer.  Runtime TLS
+/// growth can leave an existing thread on an older allocation until its next
+/// `__tls_get_addr`; callers reclaiming another thread (pthread slot cleanup,
+/// for example) must therefore not use the process-global current size.
+#[no_mangle]
+pub unsafe extern "C" fn __rc_tls_block_size_for(fs_base: *const u8) -> usize {
+    if fs_base.is_null() {
+        return 0;
+    }
+    let tcb = tcb_for_thread(fs_base as usize) as *const u8;
+    let data = core::ptr::read_unaligned(tcb.add(TCB_BLOCK_SIZE_OFFSET) as *const usize);
+    if data == 0 {
+        return 0;
+    }
+    data.saturating_add(thread_block_tp_offset(fs_base as usize, data))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn __rc_tls_base_offset_for(fs_base: *const u8) -> usize {
+    if fs_base.is_null() {
+        return 0;
+    }
+    let tcb = tcb_for_thread(fs_base as usize) as *const u8;
+    let data = core::ptr::read_unaligned(tcb.add(TCB_BLOCK_SIZE_OFFSET) as *const usize);
+    if data == 0 {
+        return 0;
+    }
+    thread_block_tp_offset(fs_base as usize, data)
 }
 
 unsafe fn register_self(ldso_base: u64) {
@@ -3468,6 +3933,8 @@ unsafe fn register_self(ldso_base: u64) {
     if LOADED_COUNT < MAX_LOADED {
         LOADED[LOADED_COUNT] = LoadedObject {
             base: ldso_base,
+            map_start: core::ptr::null_mut(),
+            map_size: 0,
             symtab: symtab_ptr,
             sym_count,
             strtab: strtab_ptr,
@@ -3510,16 +3977,20 @@ unsafe fn register_self(ldso_base: u64) {
     }
 }
 
-unsafe fn set_loaded_name(idx: usize, name: *const u8, name_len: usize) {
+unsafe fn set_loaded_name(idx: usize, name: *const u8, name_len: usize) -> bool {
     if idx >= MAX_LOADED {
-        return;
+        return false;
     }
-    let len = if name_len >= 255 { 255 } else { name_len };
+    if name_len >= 255 {
+        return false;
+    }
+    let len = name_len;
     let buf = &mut LOADED[idx].name;
     for i in 0..len {
         buf[i] = *name.add(i);
     }
     buf[len] = 0;
+    true
 }
 
 unsafe fn loaded_object_by_name(name: *const u8, name_len: usize) -> Option<usize> {
@@ -3556,8 +4027,15 @@ unsafe fn loaded_object_by_identity(identity: FileIdentity) -> Option<usize> {
 // ============================================================
 
 unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
-    // 1. Find LD_LIBRARY_PATH from kernel envp
-    let ld_path = find_env(sp, b"LD_LIBRARY_PATH=");
+    // 1. Secure-exec startup ignores all loader-controlled environment
+    // search/interposition inputs.  Read AT_SECURE before looking at envp so
+    // a set-id or capability transition cannot be influenced by LD_* values.
+    let secure = find_auxv_value(sp, AT_SECURE) != 0;
+    let ld_path = if secure {
+        None
+    } else {
+        find_env(sp, b"LD_LIBRARY_PATH=")
+    };
     LD_LIBRARY_PATH = ld_path.unwrap_or(core::ptr::null());
 
     // 2. Open and read the executable (the PIE that invoked us as PT_INTERP)
@@ -3752,10 +4230,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     let mut dt_gnu_hash: u64 = 0;
     let mut dt_hash: u64 = 0;
 
-    // ponytail: max 32 DT_NEEDED, enough for any realistic binary
-    let mut needed_offsets: [u64; 32] = [0; 32];
-    let mut needed_count: usize = 0;
-
+    let mut dynamic_terminated = dyn_vaddr == 0;
     if dyn_vaddr != 0 {
         let dyn_start = (exec_base + dyn_vaddr) as usize;
         let dyn_end = dyn_start + dyn_memsz as usize;
@@ -3764,15 +4239,10 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
             let d_tag = u64::from_le_bytes(core::ptr::read_unaligned(dp as *const [u8; 8]));
             let d_val = u64::from_le_bytes(core::ptr::read_unaligned((dp + 8) as *const [u8; 8]));
             if d_tag == DT_NULL {
+                dynamic_terminated = true;
                 break;
             }
             match d_tag {
-                DT_NEEDED => {
-                    if needed_count < 32 {
-                        needed_offsets[needed_count] = d_val;
-                        needed_count += 1;
-                    }
-                }
                 DT_SYMTAB => dt_symtab = d_val,
                 DT_STRTAB => dt_strtab = d_val,
                 DT_STRSZ => dt_strsz = d_val,
@@ -3788,21 +4258,30 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
             dp += 16;
         }
     }
-
-    // Resolve DT_NEEDED name pointers (offsets into strtab)
-    let mut needed_names: [(*const u8, usize); 32] = [(core::ptr::null(), 0); 32];
-    for i in 0..needed_count {
-        let name_ptr = (exec_base + dt_strtab + needed_offsets[i]) as *const u8;
-        let name_len = str_len(name_ptr);
-        needed_names[i] = (name_ptr, name_len);
+    if !dynamic_terminated {
+        die(96, b"dynamic_overflow", dyn_memsz as usize);
     }
 
     if dt_runpath_present {
+        if dt_runpath_off >= dt_strsz {
+            die(96, b"runpath_overflow", dt_runpath_off as usize);
+        }
         RUNPATH = (exec_base + dt_strtab + dt_runpath_off) as *const u8;
-        RUNPATH_LEN = str_len(RUNPATH);
+        let available = (dt_strsz - dt_runpath_off) as usize;
+        let Some(length) = dynamic_string_len(RUNPATH, available) else {
+            die(96, b"runpath_string", available);
+        };
+        RUNPATH_LEN = length;
     } else if dt_rpath_present {
+        if dt_rpath_off >= dt_strsz {
+            die(96, b"rpath_overflow", dt_rpath_off as usize);
+        }
         RUNPATH = (exec_base + dt_strtab + dt_rpath_off) as *const u8;
-        RUNPATH_LEN = str_len(RUNPATH);
+        let available = (dt_strsz - dt_rpath_off) as usize;
+        let Some(length) = dynamic_string_len(RUNPATH, available) else {
+            die(96, b"rpath_string", available);
+        };
+        RUNPATH_LEN = length;
     }
 
     // Register executable as LOADED[0]
@@ -3816,6 +4295,8 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     }
     LOADED[0] = LoadedObject {
         base: exec_base,
+        map_start: exec_base.wrapping_add(image_start) as *mut u8,
+        map_size: total_size,
         symtab: (exec_base + dt_symtab) as *const u8,
         sym_count: exec_sym_count,
         strtab: (exec_base + dt_strtab) as *const u8,
@@ -3867,19 +4348,22 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     // definitions must already be visible when the ordinary dependencies'
     // PLT/GOT relocations are resolved. Preserve the kernel envp pointer until
     // after this point; the replacement application stack is built later.
-    if let Some(preload) = find_env(sp, b"LD_PRELOAD=") {
-        if !load_preload_list(preload, ld_path) {
-            die(87, b"preload_graph", 0);
+    if !secure {
+        if let Some(preload) = find_env(sp, b"LD_PRELOAD=") {
+            if !load_preload_list(preload, ld_path) {
+                cleanup_loaded_objects_from(1);
+                die(87, b"preload_graph", 0);
+            }
         }
     }
 
-    // 5. Load each DT_NEEDED DSO
-    for i in 0..needed_count {
-        let (name_ptr, name_len) = needed_names[i];
-        let Some(child) = load_named_with_dependencies(name_ptr, name_len, ld_path) else {
-            die(89, b"needed_graph", i);
-        };
-        record_dependency(0, child);
+    // 5. Load every DT_NEEDED entry directly from the dynamic table.  This
+    // avoids any fixed local list: malformed or unusually large tables are
+    // walked to their terminator and dependency-capacity failures are
+    // reported by the graph builder rather than silently truncated.
+    if !load_needed_dependencies(0, ld_path) {
+        cleanup_loaded_objects_from(1);
+        die(89, b"needed_graph", 0);
     }
 
     compute_tls_layout();
@@ -3934,79 +4418,121 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     publish_debug_state(RT_CONSISTENT);
 
     let phdr_addr = exec_base + e_phoff;
-    build_and_jump(exec_base + e_entry, phdr_addr, e_phnum, sp)
+    build_and_jump(exec_base + e_entry, phdr_addr, e_phnum, sp, secure)
 }
 
 // ============================================================
 // Build a fresh stack for the target program and jump
 // ============================================================
 
-struct OrigAuxv {
-    at_base: u64,
-    at_random: *const u8,
-    at_sysinfo_ehdr: u64,
-    at_secure: u64,
-    at_uid: u64,
-    at_euid: u64,
-    at_gid: u64,
-    at_egid: u64,
-}
-
-unsafe fn read_orig_auxv(orig_sp: usize, envc: usize) -> OrigAuxv {
-    let mut out = OrigAuxv {
-        at_base: 0,
-        at_random: core::ptr::null(),
-        at_sysinfo_ehdr: 0,
-        at_secure: 0,
-        at_uid: 0,
-        at_euid: 0,
-        at_gid: 0,
-        at_egid: 0,
-    };
+unsafe fn build_and_jump(
+    entry: u64,
+    phdr_addr: u64,
+    phnum: u16,
+    orig_sp: usize,
+    secure: bool,
+) -> ! {
     let argc = *(orig_sp as *const u64) as usize;
     let argv_start = orig_sp + 8;
     let envp_start = argv_start + (argc + 1) * 8;
-    let auxv = (envp_start + (envc + 1) * 8) as *const u64;
-    let mut i = 0;
+
+    let mut original_envc: usize = 0;
+    while *((envp_start + original_envc * 8) as *const u64) != 0 {
+        original_envc += 1;
+    }
+
+    let auxv = (envp_start + (original_envc + 1) * 8) as *const u64;
+    let mut envc = original_envc;
+    if secure {
+        envc = 0;
+        for i in 0..original_envc {
+            let entry = *((envp_start + i * 8) as *const u64) as *const u8;
+            if !secure_env_entry_is_unsafe(entry) {
+                envc += 1;
+            }
+        }
+    }
+    let mut aux_entries = 0usize;
     loop {
-        let tag = *auxv.add(i * 2);
-        let val = *auxv.add(i * 2 + 1);
+        let tag = *auxv.add(aux_entries * 2);
+        aux_entries = match aux_entries.checked_add(1) {
+            Some(value) => value,
+            None => die(94, b"stack_auxv", 0),
+        };
         if tag == AT_NULL {
             break;
         }
-        match tag {
-            AT_BASE => out.at_base = val,
-            AT_RANDOM => out.at_random = val as *const u8,
-            AT_SYSINFO_EHDR => out.at_sysinfo_ehdr = val,
-            AT_SECURE => out.at_secure = val,
-            AT_UID => out.at_uid = val,
-            AT_EUID => out.at_euid = val,
-            AT_GID => out.at_gid = val,
-            AT_EGID => out.at_egid = val,
-            _ => {}
+    }
+
+    // Size the replacement stack from the complete vectors.  Bounded local
+    // arrays cannot safely represent the kernel-provided startup contract.
+    let mut strings_size = 0usize;
+    for i in 0..argc {
+        let s = *((argv_start + i * 8) as *const u64) as *const u8;
+        let len = match str_len(s).checked_add(1) {
+            Some(value) => value,
+            None => die(94, b"stack_strings", i),
+        };
+        strings_size = match strings_size.checked_add(len) {
+            Some(value) => value,
+            None => die(94, b"stack_strings", i),
+        };
+    }
+    for i in 0..envc {
+        let mut source_index = i;
+        if secure {
+            let mut seen = 0usize;
+            source_index = 0;
+            while source_index < original_envc {
+                let entry = *((envp_start + source_index * 8) as *const u64) as *const u8;
+                if !secure_env_entry_is_unsafe(entry) {
+                    if seen == i {
+                        break;
+                    }
+                    seen += 1;
+                }
+                source_index += 1;
+            }
         }
-        i += 1;
+        let s = *((envp_start + source_index * 8) as *const u64) as *const u8;
+        let len = match str_len(s).checked_add(1) {
+            Some(value) => value,
+            None => die(94, b"stack_strings", i),
+        };
+        strings_size = match strings_size.checked_add(len) {
+            Some(value) => value,
+            None => die(94, b"stack_strings", i),
+        };
     }
-    out
-}
-
-unsafe fn build_and_jump(entry: u64, phdr_addr: u64, phnum: u16, orig_sp: usize) -> ! {
-    let argc = *(orig_sp as *const u64) as usize;
-    let argv_start = orig_sp + 8;
-    let envp_start = argv_start + (argc + 1) * 8;
-
-    let mut envc: usize = 0;
-    while *((envp_start + envc * 8) as *const u64) != 0 {
-        envc += 1;
-    }
-
-    // ponytail: max 128 args, 512 env vars — covers any realistic binary
-    let max_args = if argc > 128 { 128 } else { argc };
-    let max_env = if envc > 512 { 512 } else { envc };
-
-    let orig_auxv = read_orig_auxv(orig_sp, envc);
-
-    let stack_size = 256 * 1024usize;
+    let ptr_count = match argc
+        .checked_add(1)
+        .and_then(|value| envc.checked_add(1).and_then(|env| value.checked_add(env)))
+    {
+        Some(value) => value,
+        None => die(94, b"stack_ptrs", 0),
+    };
+    let ptr_bytes = match ptr_count.checked_mul(8) {
+        Some(value) => value,
+        None => die(94, b"stack_ptrs", ptr_count),
+    };
+    let aux_bytes = match aux_entries.checked_mul(16) {
+        Some(value) => value,
+        None => die(94, b"stack_auxv", aux_entries),
+    };
+    let required = match strings_size
+        .checked_add(ptr_bytes)
+        .and_then(|value| value.checked_add(aux_bytes))
+        .and_then(|value| value.checked_add(16 + 128))
+    {
+        Some(value) => value,
+        None => die(94, b"stack_size", 0),
+    };
+    let minimum_stack = 256 * 1024usize;
+    let requested_stack = if required > minimum_stack { required } else { minimum_stack };
+    let stack_size = match requested_stack.checked_add(4095).map(|value| value & !4095) {
+        Some(value) => value,
+        None => die(94, b"stack_size", requested_stack),
+    };
     let stack_base = sys_mmap(
         core::ptr::null_mut(),
         stack_size,
@@ -4018,95 +4544,92 @@ unsafe fn build_and_jump(entry: u64, phdr_addr: u64, phnum: u16, orig_sp: usize)
     if stack_base as usize == MAP_FAILED {
         die(94, b"stack_mmap", stack_size);
     }
-    let mut sp = stack_base as usize + stack_size;
+    let stack_end = stack_base as usize + stack_size;
+    let strings_start = (stack_end - strings_size) & !15usize;
+    let random_ptr = (strings_start - 16) & !15usize;
+    let aux_base = (random_ptr - aux_bytes) & !15usize;
+    // Keep argc at a 16-byte boundary (including AArch64's strict process
+    // entry rule), then place argv immediately after it.  Rounding down may
+    // leave a small gap before auxv; the size calculation reserves it.
+    let sp = (aux_base - ptr_bytes - 8) & !15usize;
+    let ptr_base = sp + 8;
 
-    let mut new_argv: [usize; 128] = [0; 128];
-    for i in 0..max_args {
+    let argv_ptrs = ptr_base as *mut u64;
+    let envp_ptrs = argv_ptrs.add(argc + 1);
+    let mut string_cursor = strings_start;
+    for i in 0..argc {
         let s = *((argv_start + i * 8) as *const u64) as *const u8;
-        let len = str_len(s);
-        sp -= len + 1;
-        core::ptr::copy_nonoverlapping(s, sp as *mut u8, len + 1);
-        new_argv[i] = sp;
+        let len = str_len(s) + 1;
+        core::ptr::copy_nonoverlapping(s, string_cursor as *mut u8, len);
+        *argv_ptrs.add(i) = string_cursor as u64;
+        string_cursor += len;
     }
-
-    let mut new_envp: [usize; 512] = [0; 512];
-    for i in 0..max_env {
-        let s = *((envp_start + i * 8) as *const u64) as *const u8;
-        let len = str_len(s);
-        sp -= len + 1;
-        core::ptr::copy_nonoverlapping(s, sp as *mut u8, len + 1);
-        new_envp[i] = sp;
+    *argv_ptrs.add(argc) = 0;
+    for i in 0..envc {
+        let mut source_index = i;
+        if secure {
+            let mut seen = 0usize;
+            source_index = 0;
+            while source_index < original_envc {
+                let entry = *((envp_start + source_index * 8) as *const u64) as *const u8;
+                if !secure_env_entry_is_unsafe(entry) {
+                    if seen == i {
+                        break;
+                    }
+                    seen += 1;
+                }
+                source_index += 1;
+            }
+        }
+        let s = *((envp_start + source_index * 8) as *const u64) as *const u8;
+        let len = str_len(s) + 1;
+        core::ptr::copy_nonoverlapping(s, string_cursor as *mut u8, len);
+        *envp_ptrs.add(i) = string_cursor as u64;
+        string_cursor += len;
     }
+    *envp_ptrs.add(envc) = 0;
 
-    // musl's crt1 needs AT_RANDOM for the stack canary; preserve it on the new stack.
+    // Preserve AT_RANDOM on the replacement stack and copy every auxv pair,
+    // changing only values whose addresses changed when the PIE was remapped.
     let mut random_bytes = [0u8; 16];
-    if !orig_auxv.at_random.is_null() {
-        core::ptr::copy_nonoverlapping(orig_auxv.at_random, random_bytes.as_mut_ptr(), 16);
+    let mut original_random = core::ptr::null();
+    for i in 0..aux_entries {
+        if *auxv.add(i * 2) == AT_RANDOM {
+            original_random = *auxv.add(i * 2 + 1) as *const u8;
+            break;
+        }
+    }
+    if !original_random.is_null() {
+        core::ptr::copy_nonoverlapping(original_random, random_bytes.as_mut_ptr(), 16);
     } else {
         for i in 0..16 {
             random_bytes[i] = (i as u8).wrapping_add(1);
         }
     }
-    sp -= 16;
-    sp &= !15usize;
-    let random_ptr = sp;
     core::ptr::copy_nonoverlapping(random_bytes.as_ptr(), random_ptr as *mut u8, 16);
 
-    // 16-byte align before structured data so argc lands on a boundary
-    sp &= !15usize;
-
-    // Pad before auxv so argc lands on 16-byte boundary (no gap between argv[] and argc)
-    if (max_env + max_args) % 2 == 0 {
-        sp -= 8;
-        *(sp as *mut u64) = 0;
+    let aux = aux_base as *mut u64;
+    for i in 0..aux_entries {
+        let tag = *auxv.add(i * 2);
+        let original = *auxv.add(i * 2 + 1);
+        let value = match tag {
+            AT_PHDR => phdr_addr,
+            AT_PHENT => PHDR_SIZE as u64,
+            AT_PHNUM => phnum as u64,
+            AT_ENTRY => entry,
+            AT_RANDOM => random_ptr as u64,
+            _ => original,
+        };
+        *aux.add(i * 2) = tag;
+        *aux.add(i * 2 + 1) = value;
     }
 
-    const AUXV_ENTRIES: usize = 14;
-    sp -= AUXV_ENTRIES * 16;
-    let aux = sp as *mut u64;
-    *aux.add(0) = AT_PHDR;
-    *aux.add(1) = phdr_addr;
-    *aux.add(2) = AT_PHENT;
-    *aux.add(3) = PHDR_SIZE as u64;
-    *aux.add(4) = AT_PHNUM;
-    *aux.add(5) = phnum as u64;
-    *aux.add(6) = AT_PAGESZ;
-    *aux.add(7) = 4096;
-    *aux.add(8) = AT_ENTRY;
-    *aux.add(9) = entry;
-    *aux.add(10) = AT_BASE;
-    *aux.add(11) = orig_auxv.at_base;
-    *aux.add(12) = AT_SECURE;
-    *aux.add(13) = orig_auxv.at_secure;
-    *aux.add(14) = AT_RANDOM;
-    *aux.add(15) = random_ptr as u64;
-    *aux.add(16) = AT_UID;
-    *aux.add(17) = orig_auxv.at_uid;
-    *aux.add(18) = AT_EUID;
-    *aux.add(19) = orig_auxv.at_euid;
-    *aux.add(20) = AT_GID;
-    *aux.add(21) = orig_auxv.at_gid;
-    *aux.add(22) = AT_EGID;
-    *aux.add(23) = orig_auxv.at_egid;
-    *aux.add(24) = AT_SYSINFO_EHDR;
-    *aux.add(25) = orig_auxv.at_sysinfo_ehdr;
-    *aux.add(26) = AT_NULL;
-    *aux.add(27) = 0;
-
-    sp -= (max_env + 1) * 8;
-    for i in 0..max_env {
-        *((sp + i * 8) as *mut u64) = new_envp[i] as u64;
-    }
-    *((sp + max_env * 8) as *mut u64) = 0;
-
-    sp -= (max_args + 1) * 8;
-    for i in 0..max_args {
-        *((sp + i * 8) as *mut u64) = new_argv[i] as u64;
-    }
-    *((sp + max_args * 8) as *mut u64) = 0;
-
-    sp -= 8;
     *(sp as *mut u64) = argc as u64;
+
+    let auxv_sym = resolve_symbol(b"__auxv\0".as_ptr());
+    if auxv_sym != 0 {
+        core::ptr::write(auxv_sym as *mut *const usize, aux_base as *const usize);
+    }
 
     #[cfg(target_arch = "x86_64")]
     core::arch::asm!(

@@ -137,8 +137,9 @@ values measure header/compiler ABI choices; this is not candidate runtime
 verification. The report separately records hashes and selected symbol
 coverage for pinned and candidate `libc.a` archives.
 
-The runner derives a `header_compile_coverage` inventory from every pinned
-public `.h` file, records the candidate counterpart status, and keeps
+The runner derives a generated `public_header_probe_manifest` and
+`header_compile_coverage` inventory from every pinned public `.h` file,
+records the candidate counterpart status, and keeps
 candidate-only headers in a separate section. This inventory compiles an empty
 translation unit containing each header; its `compile_ok` status means only
 that both headers are consumable by the configured compiler. It does not
@@ -146,6 +147,13 @@ compare declarations, constants, macros, or structure layouts. Missing
 candidates/counterparts and headers that do not compile remain explicit
 per-header statuses; they are not omitted from the report or treated as
 declaration parity.
+
+Each generated header record includes the SHA-256 of its exact temporary
+`#include <header>` declaration probe. The named `probes` are generated in the
+same run from the checked-in probe definitions and carry declaration names,
+layout/constant dimensions, and source hashes. Their executables are linked
+and run only with pinned musl, so candidate values measure the public-header
+ABI without turning the host libc into an oracle.
 
 Coverage counts are disjoint: `pinned_count`, `candidate_count`,
 `compiled_count`, `missing_from_candidate_count`, and `candidate_only_count`
@@ -160,14 +168,24 @@ and execute value-emitting fixtures against pinned musl, and their
 `comparison.status == "match"` means the measured values agree. A compile-only
 header record must never be read as declaration or layout parity.
 
+The report's `static_archive_comparison` is a complete `nm -A` comparison of
+defined symbols and their nm classes in the pinned musl `libc.a` and candidate
+`libc.a`. It retains missing, unexpected, and class-mismatch names rather than
+reducing the result to a symbol count. Its normal non-equal state is explicit
+`triage` evidence, not an impossible static-symbol parity gate: archive
+extraction is member-driven and musl internals necessarily differ from Rust
+implementation members. Allocator internals remain unfiltered and the
+candidate allocator remains mimalloc.
+
 Run it after the workspace build in the native development image:
 
 ```sh
 ./scripts/dev.sh abi-probe
 ```
 
-The default report is `/tmp/crabc-aarch64-abi.json`; it is ephemeral and does
-not create a checkout artifact. Override the destination with `--output`, or
+The default report is `compat/reports/abi/latest.json`, which is durable
+evidence under the ignored reports directory. Override the destination with
+`--output`, or
 override inputs/select a subset with
 `--musl-root`, `--candidate-include`, `--candidate-archive`, and repeated or
 comma-separated `--probe` options. Header compilation supplies the native Linux

@@ -10,8 +10,9 @@ normal Rust source → stock std (`-Z build-std`) → pinned musl ABI → crabc
 The build happens in a temporary Cargo project outside the repository so the
 libc crate's `-C link-dead-code` flags cannot leak into Rust's standard-library
 build. It uses `musl-gcc`, whose image-pinned specs select `/opt/musl-1.2.6`,
-and disables `crt-static` to produce a dynamic AArch64 PIE. No project
-dependencies are added.
+and disables `crt-static` to produce a dynamic AArch64 PIE. The default
+fixture has no project dependencies; a separate dependency-bearing application
+is covered below.
 
 Run it inside the pinned native development image after building crabc:
 
@@ -42,3 +43,24 @@ Host-side helper tests need no Rust toolchain:
 ```bash
 python3 -m unittest discover -s compat/rust-std/tests -p 'test_*.py'
 ```
+
+## Dependency-bearing application
+
+The M10.5 workload is the normal Cargo application in
+`dependent-fixture/`. Its pinned direct dependencies (`async-net`,
+`futures-lite`, and `smol`) provide an async local TCP round trip while the
+application also exercises filesystem state, a `Mutex`/`Condvar`, a captured
+subprocess, and an explicit `NotFound` error path. Output is deterministic and
+the same raw status/stdout/stderr comparison is used:
+
+```bash
+./scripts/dev.sh rust-std-dependent
+python3 compat/rust-std/run.py \
+  --fixture compat/rust-std/dependent-fixture/src/main.rs \
+  --report compat/reports/rust-std-dependent/latest.json
+```
+
+The runner copies the application manifest (and `Cargo.lock` when supplied)
+into its temporary project, builds it with stock `std`, and records dependency
+presence in the structured report. The application is never linked against a
+crabc-specific Rust library or invoked through `libldso.so` as a program.

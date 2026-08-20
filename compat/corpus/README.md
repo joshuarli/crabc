@@ -27,6 +27,11 @@ execs. Stdout, stderr, and wait status are compared byte-for-byte, with no
 normalization. Reports include the original package-binary digest, package
 archive digest/version, runtime loader/libc digests, and kernel release.
 
+Every Tier B–D package has a `stateful = true` manifest case that creates,
+reads, transforms, or otherwise mutates deterministic fixture state. These
+cases are kept alongside the version/banner probes so package startup and
+ordinary state transitions are both visible in the raw comparison report.
+
 ## Run
 
 Inside the pinned native Docker image:

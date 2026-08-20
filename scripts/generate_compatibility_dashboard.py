@@ -27,13 +27,16 @@ LIBC_TEST_REPORT_DIR = ROOT_DIR / "libc-test-harness/reports"
 DIFFERENTIAL_REPORT_DIR = ROOT_DIR / "compat/reports/differential"
 OS_TEST_REPORT = ROOT_DIR / "compat/reports/os-test/latest.json"
 PTHREAD_STRESS_REPORT = ROOT_DIR / "compat/reports/pthread-stress/latest.json"
+STATIC_PTHREAD_TLS_REPORT = ROOT_DIR / "compat/reports/static-pthread-tls/latest.json"
 SIGNAL_PROCESS_REPORT = ROOT_DIR / "compat/reports/signal-process.json"
 RESOLVER_NETWORK_REPORT = ROOT_DIR / "compat/reports/resolver-network.json"
 LOADER_FEATURE_REPORT = ROOT_DIR / "compat/abi/crabc/aarch64/loader-features.json"
 LDSO_REPORT = ROOT_DIR / "compat/reports/ldso/latest.json"
 CORPUS_REPORT = ROOT_DIR / "compat/reports/corpus/latest.json"
 RUST_STD_REPORT = ROOT_DIR / "compat/reports/rust-std/latest.json"
+RUST_STD_DEPENDENT_REPORT = ROOT_DIR / "compat/reports/rust-std-dependent/latest.json"
 LTO_REPORT = ROOT_DIR / "compat/reports/lto/latest.json"
+ABI_PROBE_REPORT = ROOT_DIR / "compat/reports/abi/latest.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,6 +96,20 @@ def abi_state() -> dict[str, Any] | None:
     return read_json(ABI_MANIFEST)
 
 
+def abi_probe_state() -> dict[str, Any] | None:
+    """Read generated static/header evidence without turning triage into green."""
+
+    report = read_json(ABI_PROBE_REPORT)
+    if report is None:
+        return None
+    if report.get("schema") != "crabc.aarch64-abi-probe/v1":
+        raise RuntimeError(f"unexpected generated ABI probe report in {ABI_PROBE_REPORT}")
+    if not isinstance(report.get("status"), str):
+        raise RuntimeError(f"generated ABI probe report has no status: {ABI_PROBE_REPORT}")
+    report["_path"] = str(ABI_PROBE_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def libc_test_states() -> list[dict[str, Any]]:
     """Return the newest retained structured report for each libc-test subset."""
 
@@ -142,6 +159,18 @@ def m6_report_state(path: Path, expected_runner: str) -> dict[str, Any] | None:
     return report
 
 
+def static_pthread_tls_state() -> dict[str, Any] | None:
+    """Return the static archive pthread/TLS lifecycle report with strict identity."""
+
+    report = read_json(STATIC_PTHREAD_TLS_REPORT)
+    if report is None:
+        return None
+    if report.get("schema") != 1 or report.get("runner") != "crabc-static-pthread-tls":
+        raise RuntimeError(f"unexpected static pthread/TLS report identity in {STATIC_PTHREAD_TLS_REPORT}")
+    report["_path"] = str(STATIC_PTHREAD_TLS_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def m7_report_state() -> dict[str, Any] | None:
     """Return the synthetic loader report only when it has its runner identity."""
 
@@ -172,18 +201,18 @@ def m8_report_state() -> dict[str, Any] | None:
     return report
 
 
-def m9_report_state() -> dict[str, Any] | None:
-    """Return stock-Rust evidence only when its raw-comparison identity holds."""
+def rust_std_report_state(path: Path) -> dict[str, Any] | None:
+    """Return one raw-comparison Rust workload report with strict identity."""
 
-    report = read_json(RUST_STD_REPORT)
+    report = read_json(path)
     if report is None:
         return None
     if report.get("schema_version") != 1 or report.get("runner") != "compat/rust-std/run.py":
-        raise RuntimeError(f"unexpected M9 report identity in {RUST_STD_REPORT}")
+        raise RuntimeError(f"unexpected Rust workload report identity in {path}")
     comparison = report.get("comparison")
     if report.get("result") == "pass" and not isinstance(comparison, dict):
-        raise RuntimeError(f"M9 pass report has invalid comparison in {RUST_STD_REPORT}")
-    report["_path"] = str(RUST_STD_REPORT.relative_to(ROOT_DIR))
+        raise RuntimeError(f"Rust pass report has invalid comparison in {path}")
+    report["_path"] = str(path.relative_to(ROOT_DIR))
     return report
 
 
@@ -221,17 +250,20 @@ def main() -> int:
         upstreams = tomllib.load(stream)
     symbols = symbol_state()
     abi = abi_state()
+    abi_probe = abi_probe_state()
     ratchet = read_json(RATCHET_REPORT)
     libc_test = libc_test_states()
     differential = differential_state()
     os_test = m6_report_state(OS_TEST_REPORT, "pinned-os-test")
     pthread_stress = m6_report_state(PTHREAD_STRESS_REPORT, "crabc-pthread-stress")
+    static_pthread_tls = static_pthread_tls_state()
     signal_process = m6_report_state(SIGNAL_PROCESS_REPORT, "crabc-signal-process")
     resolver_network = m6_report_state(RESOLVER_NETWORK_REPORT, "compat/resolver-network")
     loader_features = loader_feature_state()
     ldso = m7_report_state()
     corpus = m8_report_state()
-    rust_std = m9_report_state()
+    rust_std = rust_std_report_state(RUST_STD_REPORT)
+    rust_std_dependent = rust_std_report_state(RUST_STD_DEPENDENT_REPORT)
     lto = m10_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -325,6 +357,42 @@ def main() -> int:
             f"({violation_count} regression violation(s))."
         )
 
+    lines.extend(["", "## Generated static/header ABI evidence", ""])
+    if abi_probe is None:
+        lines.append("No generated static/header ABI report. Run `./scripts/dev.sh abi-probe`.")
+    else:
+        coverage = abi_probe.get("header_compile_coverage", {})
+        archive = abi_probe.get("static_archive_comparison", {})
+        manifest = abi_probe.get("public_header_probe_manifest", {})
+        declaration = manifest.get("declaration_probe", {}) if isinstance(manifest, dict) else {}
+        lines.append(
+            f"Generated pinned-musl public-header/static-archive evidence: "
+            f"**{abi_probe.get('status', 'unknown')}**; report `{abi_probe['_path']}`."
+        )
+        lines.extend(
+            markdown_table(
+                ("surface", "status / count", "oracle scope"),
+                [
+                    (
+                        "public-header declaration probes",
+                        f"{coverage.get('compiled_count', 'unknown')}/"
+                        f"{declaration.get('pinned_count', 'unknown')} compile-ok",
+                        "generated from pinned musl header names",
+                    ),
+                    (
+                        "layout/constant probes",
+                        f"{abi_probe.get('summary', {}).get('by_status', {})}",
+                        "candidate executable linked/run with pinned musl",
+                    ),
+                    (
+                        "static archive symbols",
+                        str(archive.get("status", "unknown")),
+                        "nm classes; non-equal archives remain explicit triage",
+                    ),
+                ],
+            )
+        )
+
     lines.extend(["", "## Loader feature inventory", ""])
     if loader_features is None:
         lines.append("No loader feature inventory. Run `./scripts/dev.sh loader-inventory`.")
@@ -397,6 +465,13 @@ def main() -> int:
             "the candidate is entered as the package binary through an interpreter "
             "overlay, with raw stdout/stderr/status and no normalization."
         )
+        stateful_cases = sum(
+            isinstance(case, dict) and case.get("stateful") is True for case in cases.values()
+        )
+        lines.append(
+            f"Stateful Tier B–D operations: **{stateful_cases}**; every package in those tiers "
+            "is required by the manifest validator to have at least one."
+        )
         if cases:
             lines.append("")
             lines.extend(
@@ -453,6 +528,36 @@ def main() -> int:
                         if "libc.musl-aarch64.so.1" in str(build.get("dynamic_section", ""))
                         else "FAIL",
                     ),
+                    ("status", "match" if comparison.get("status_match") is True else "DIFF"),
+                    ("stdout", "match" if comparison.get("stdout_match") is True else "DIFF"),
+                    ("stderr", "match" if comparison.get("stderr_match") is True else "DIFF"),
+                ],
+            )
+        )
+
+    lines.extend(["", "## M10.5 dependency-bearing Rust workload", ""])
+    if rust_std_dependent is None:
+        lines.append(
+            "No dependency-bearing Rust workload result. Run `./scripts/dev.sh rust-std-dependent`."
+        )
+    else:
+        comparison = rust_std_dependent.get("comparison")
+        build = rust_std_dependent.get("build")
+        if not isinstance(comparison, dict) or not isinstance(build, dict):
+            raise RuntimeError(f"invalid dependent Rust evidence in {rust_std_dependent['_path']}")
+        fixture = rust_std_dependent.get("fixture", {})
+        fixture_name = fixture.get("package_name", "unknown") if isinstance(fixture, dict) else "unknown"
+        passes = rust_std_dependent.get("result") == "pass" and comparison.get("passed") is True
+        lines.append(
+            "Pinned dependency-bearing stock Rust application (filesystem, async TCP, synchronization, "
+            f"subprocess, and error path): **{'pass' if passes else 'FAIL'}**; "
+            f"fixture `{fixture_name}`, report `{rust_std_dependent['_path']}`."
+        )
+        lines.extend(
+            markdown_table(
+                ("metric", "result"),
+                [
+                    ("locked dependency build", "pass" if build.get("returncode") == 0 else "FAIL"),
                     ("status", "match" if comparison.get("status_match") is True else "DIFF"),
                     ("stdout", "match" if comparison.get("stdout_match") is True else "DIFF"),
                     ("stderr", "match" if comparison.get("stderr_match") is True else "DIFF"),
@@ -654,6 +759,16 @@ def main() -> int:
             f"report `{pthread_stress['_path']}`."
         )
 
+    if static_pthread_tls is None:
+        lines.append("\nNo static libc.a pthread/TLS result. Run `./scripts/dev.sh static-pthread-tls`.")
+    else:
+        lines.append(
+            f"\nStatic libc.a pthread/TLS lifecycle: "
+            f"**{'pass' if static_pthread_tls.get('passed') is True else 'FAIL'}** "
+            f"(pinned musl CRT/archive link and run, exact raw streams); "
+            f"report `{static_pthread_tls['_path']}`."
+        )
+
     if signal_process is None:
         lines.append("\nNo signal/process result. Run `./scripts/dev.sh signal-process`.")
     else:
@@ -700,6 +815,8 @@ def main() -> int:
         unmeasured_frontier.append("real Alpine corpus")
     if rust_std is None:
         unmeasured_frontier.append("stock Rust `std` compatibility")
+    if rust_std_dependent is None:
+        unmeasured_frontier.append("dependency-bearing Rust application")
     d_claims: dict[str, Any] = {}
     if lto is not None:
         d_configuration = lto["configurations"]["D"]
