@@ -1,6 +1,12 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
+#include "signal.h"
+#include "unistd.h"
+
+static void handle_alarm(int sig) {
+    (void)sig;
+}
 
 static int test_fopen_fclose(void) {
     FILE *f = fopen("/tmp/test_stdio_fopen.txt", "w");
@@ -188,6 +194,16 @@ static int test_popen_pclose(void) {
     if (!fgets(buf, sizeof(buf), f)) return 2;
     int rc = pclose(f);
     if (rc != 0) return 3;
+
+    /* pclose must retry waitpid when an unrelated signal interrupts it. */
+    void (*old_handler)(int) = signal(SIGALRM, handle_alarm);
+    f = popen("sleep 2", "r");
+    if (!f) return 4;
+    alarm(1);
+    rc = pclose(f);
+    alarm(0);
+    signal(SIGALRM, old_handler);
+    if (rc != 0) return 5;
     return 0;
 }
 
@@ -247,6 +263,7 @@ int main(void) {
     if ((r = test_tmpfile())) { printf("tmpfile fail %d\n", r); return r + 90; }
     if ((r = test_tmpnam())) { printf("tmpnam fail %d\n", r); return r + 100; }
     if ((r = test_rename_remove())) { printf("rename_remove fail %d\n", r); return r + 110; }
+    if ((r = test_popen_pclose())) { printf("popen_pclose fail %d\n", r); return r + 120; }
     if ((r = test_setvbuf())) { printf("setvbuf fail %d\n", r); return r + 130; }
     if ((r = test_fopen64())) { printf("fopen64 fail %d\n", r); return r + 140; }
     if ((r = test_perror_smoke())) { printf("perror fail %d\n", r); return r + 150; }

@@ -19,8 +19,10 @@ include!("math_log.rs");
 include!("math_pow.rs");
 include!("math_hypot.rs");
 include!("math_hyperbolic.rs");
+include!("math_inverse_hyperbolic.rs");
 include!("math_invtrig.rs");
 include!("math_lrint.rs");
+include!("math_compat.rs");
 
 // ============================================================
 // errno
@@ -1923,7 +1925,10 @@ pub unsafe extern "C" fn sigprocmask(
     if !oldset.is_null() {
         *oldset &= !internal_mask;
     }
-    if r < 0 { -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else { 0 }
 }
 
 #[inline]
@@ -1986,12 +1991,12 @@ pub unsafe extern "C" fn signal(signum: c_int, handler: usize) -> usize {
 
 #[no_mangle]
 pub unsafe extern "C" fn kill(pid: c_int, sig: c_int) -> c_int {
-    sys_kill(pid, sig) as c_int
+    syscall_result(sys_kill(pid, sig)) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int {
-    if sys_tgkill(tgid, tid, sig) < 0 { -1 } else { 0 }
+    if syscall_result(sys_tgkill(tgid, tid, sig)) < 0 { -1 } else { 0 }
 }
 
 #[no_mangle]
@@ -2001,7 +2006,7 @@ pub unsafe extern "C" fn getpid() -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn raise(sig: c_int) -> c_int {
-    if sys_tgkill(sys_getpid() as c_int, sys_gettid() as c_int, sig) < 0 {
+    if syscall_result(sys_tgkill(sys_getpid() as c_int, sys_gettid() as c_int, sig)) < 0 {
         -1
     } else {
         0
@@ -2564,7 +2569,7 @@ pub unsafe extern "C" fn fork() -> c_int {
     } else {
         sys_fork()
     };
-    let errno_save = if ret < 0 { EAGAIN } else { ERRNO };
+    let errno_save = if ret < 0 { (-ret) as c_int } else { ERRNO };
     if ret == 0 {
         __fork_handler(1);
     } else {
@@ -2583,17 +2588,17 @@ pub unsafe extern "C" fn execve(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    sys_execve(path, argv, envp) as c_int
+    syscall_result(sys_execve(path, argv, envp)) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn wait(status: *mut c_int) -> c_int {
-    sys_wait4(-1, status, 0, core::ptr::null_mut()) as c_int
+    syscall_result(sys_wait4(-1, status, 0, core::ptr::null_mut())) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int {
-    sys_wait4(pid, status, options, core::ptr::null_mut()) as c_int
+    syscall_result(sys_wait4(pid, status, options, core::ptr::null_mut())) as c_int
 }
 
 #[no_mangle]
@@ -3126,7 +3131,7 @@ pub unsafe extern "C" fn recvfrom(
 
 #[no_mangle]
 pub unsafe extern "C" fn shutdown(fd: c_int, how: c_int) -> c_int {
-    sys_shutdown(fd, how) as c_int
+    syscall_result(sys_shutdown(fd, how)) as c_int
 }
 
 #[no_mangle]
@@ -3137,12 +3142,12 @@ pub unsafe extern "C" fn setsockopt(
     optval: *const c_void,
     optlen: c_uint,
 ) -> c_int {
-    sys_setsockopt(fd, level, optname, optval, optlen) as c_int
+    syscall_result(sys_setsockopt(fd, level, optname, optval, optlen)) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn getsockname(fd: c_int, addr: *mut sockaddr, len: *mut c_uint) -> c_int {
-    sys_getsockname(fd, addr, len) as c_int
+    syscall_result(sys_getsockname(fd, addr, len)) as c_int
 }
 
 #[no_mangle]
@@ -4970,12 +4975,13 @@ pub unsafe extern "C" fn pthread_kill(thread: PthreadT, sig: c_int) -> c_int {
     if slot.is_null() { return EINVAL; }
     let tid = (*slot).tid;
     if tid <= 0 { return EINVAL; }
-    if sys_tgkill(sys_getpid() as c_int, tid, sig) < 0 { -1 } else { 0 }
+    let result = sys_tgkill(sys_getpid() as c_int, tid, sig);
+    if result < 0 { (-result) as c_int } else { 0 }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn pthread_sigmask(how: c_int, set: *const SigSetT, oldset: *mut SigSetT) -> c_int {
-    sigprocmask(how, set, oldset)
+    if sigprocmask(how, set, oldset) == 0 { 0 } else { ERRNO }
 }
 
 
@@ -8739,7 +8745,7 @@ pub unsafe extern "C" fn pclose(f: *mut FILE) -> c_int {
     let mut w: c_int;
     loop {
         w = waitpid(pid, &mut status, 0);
-        if w >= 0 || w != -EINTR { break; }
+        if w >= 0 || w != -1 || ERRNO != EINTR { break; }
     }
     if w < 0 || r != 0 { return -1; }
     status
@@ -13219,7 +13225,7 @@ pub extern "C" fn inet_netof(addr: u32) -> c_int {
 // ponytail: correctly-rounded float parser.
 // Decimal: collects digits into buffer, uses core::str::FromStr.
 // Hex: u128 integer arithmetic with round-to-nearest-even.
-// is_f32: true for strtof (f32::from_str), false for strtod/strtold (f64::from_str).
+// is_f32: true for strtof (f32::from_str), false for strtod (f64::from_str).
 unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
     let mut p = s;
     // skip whitespace
@@ -13447,6 +13453,247 @@ unsafe fn hex_val(c: u8) -> Option<u8> {
     else { None }
 }
 
+// AArch64 and riscv64 use IEEE-754 binary128 for long double.  Extending the
+// f64 result of strtod is ABI-correct but loses the low 60 bits of precision,
+// which is observable even for short decimal inputs such as 12.345.  Keep a
+// separate parser for this ABI: decimal input is evaluated as f128, while
+// hexadecimal input is assembled directly so its final rounding is exact.
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+unsafe fn parse_float_f128(s: *const u8, endptr: *mut *mut u8) -> f128 {
+    const DIGIT_CAP: usize = 65536;
+    const F128_INF_BITS: u128 = 0x7fff0000000000000000000000000000;
+    const F128_NAN_BITS: u128 = 0x7fff8000000000000000000000000000;
+
+    let mut p = s;
+    while *p == b' ' || *p == b'\t' || *p == b'\n' || *p == b'\r' { p = p.add(1); }
+    let mut neg = false;
+    if *p == b'-' { neg = true; p = p.add(1); }
+    else if *p == b'+' { p = p.add(1); }
+
+    if (*p | 0x20) == b'i'
+        && (*p.add(1) | 0x20) == b'n'
+        && (*p.add(2) | 0x20) == b'f'
+    {
+        p = p.add(3);
+        if (*p | 0x20) == b'i'
+            && (*p.add(1) | 0x20) == b't'
+            && (*p.add(2) | 0x20) == b'y'
+        {
+            p = p.add(3);
+        }
+        if !endptr.is_null() { *endptr = p as *mut u8; }
+        let value = f128::from_bits(F128_INF_BITS);
+        return if neg { -value } else { value };
+    }
+    if (*p | 0x20) == b'n'
+        && (*p.add(1) | 0x20) == b'a'
+        && (*p.add(2) | 0x20) == b'n'
+    {
+        p = p.add(3);
+        if *p == b'(' {
+            p = p.add(1);
+            while *p != 0 && *p != b')' { p = p.add(1); }
+            if *p == b')' { p = p.add(1); }
+        }
+        if !endptr.is_null() { *endptr = p as *mut u8; }
+        let value = f128::from_bits(F128_NAN_BITS);
+        return if neg { -value } else { value };
+    }
+
+    if *p == b'0' && (*p.add(1) == b'x' || *p.add(1) == b'X') {
+        p = p.add(2);
+        let mut digits = [0u8; DIGIT_CAP];
+        let mut n = 0usize;
+        let mut frac_hex = 0usize;
+        let mut in_frac = false;
+        let mut found = false;
+        let mut truncated_nonzero = false;
+        loop {
+            if let Some(d) = hex_val(*p) {
+                if n < DIGIT_CAP { digits[n] = d; n += 1; }
+                else if d != 0 { truncated_nonzero = true; }
+                if in_frac { frac_hex = frac_hex.saturating_add(1); }
+                p = p.add(1);
+                found = true;
+            } else if *p == b'.' && !in_frac {
+                in_frac = true;
+                p = p.add(1);
+            } else {
+                break;
+            }
+        }
+        if !found {
+            if !endptr.is_null() { *endptr = s as *mut u8; }
+            return f128::from_bits(if neg { 1u128 << 127 } else { 0 });
+        }
+
+        let mut bin_exp: i32 = 0;
+        if *p == b'p' || *p == b'P' {
+            p = p.add(1);
+            let mut exp_neg = false;
+            if *p == b'-' { exp_neg = true; p = p.add(1); }
+            else if *p == b'+' { p = p.add(1); }
+            while *p >= b'0' && *p <= b'9' {
+                if bin_exp < 1_000_000 {
+                    bin_exp = bin_exp.saturating_mul(10).saturating_add((*p - b'0') as i32);
+                }
+                p = p.add(1);
+            }
+            if exp_neg { bin_exp = -bin_exp; }
+        }
+        if !endptr.is_null() { *endptr = p as *mut u8; }
+        return hex_mant_to_f128(&digits[..n], frac_hex, bin_exp, neg, truncated_nonzero);
+    }
+
+    // Keep enough significant decimal digits for f128 arithmetic to settle
+    // ordinary inputs exactly.  Exponents are applied after accumulation so
+    // 1e+1000000 and 1e-1000000 take logarithmic rather than linear time.
+    let mut value = 0.0f128;
+    let mut found_digit = false;
+    let mut frac_digits: i32 = 0;
+    while *p >= b'0' && *p <= b'9' {
+        value = value * 10.0f128 + (*p - b'0') as f128;
+        p = p.add(1);
+        found_digit = true;
+    }
+    if *p == b'.' {
+        p = p.add(1);
+        while *p >= b'0' && *p <= b'9' {
+            value = value * 10.0f128 + (*p - b'0') as f128;
+            p = p.add(1);
+            frac_digits = frac_digits.saturating_add(1);
+            found_digit = true;
+        }
+    }
+    if !found_digit {
+        if !endptr.is_null() { *endptr = s as *mut u8; }
+        return f128::from_bits(if neg { 1u128 << 127 } else { 0 });
+    }
+    let mut exp10: i32 = -frac_digits;
+    if *p == b'e' || *p == b'E' {
+        p = p.add(1);
+        let mut exp_neg = false;
+        if *p == b'-' { exp_neg = true; p = p.add(1); }
+        else if *p == b'+' { p = p.add(1); }
+        let mut parsed_exp: i32 = 0;
+        while *p >= b'0' && *p <= b'9' {
+            if parsed_exp < 1_000_000 {
+                parsed_exp = parsed_exp.saturating_mul(10).saturating_add((*p - b'0') as i32);
+            }
+            p = p.add(1);
+        }
+        exp10 = if exp_neg {
+            exp10.saturating_sub(parsed_exp)
+        } else {
+            exp10.saturating_add(parsed_exp)
+        };
+    }
+    if !endptr.is_null() { *endptr = p as *mut u8; }
+    if value == 0.0 {
+        return f128::from_bits(if neg { 1u128 << 127 } else { 0 });
+    }
+    let scale = f128_pow10(exp10);
+    let value = if exp10 < 0 { value / scale } else { value * scale };
+    if neg { -value } else { value }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+fn f128_pow10(exp: i32) -> f128 {
+    let mut n = exp.unsigned_abs();
+    let mut base = 10.0f128;
+    let mut result = 1.0f128;
+    while n != 0 {
+        if n & 1 != 0 { result = result * base; }
+        n >>= 1;
+        if n != 0 { base = base * base; }
+    }
+    result
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+fn hex_mant_to_f128(
+    digits: &[u8],
+    frac_hex: usize,
+    bin_exp: i32,
+    neg: bool,
+    mut sticky: bool,
+) -> f128 {
+    let sign = if neg { 1u128 << 127 } else { 0 };
+    let mut first = 0usize;
+    while first < digits.len() && digits[first] == 0 { first += 1; }
+    if first == digits.len() {
+        return f128::from_bits(sign);
+    }
+
+    let first_digit = digits[first];
+    let leading = (7 - first_digit.leading_zeros()) as i64;
+    let tail_bits = (digits.len() - first - 1) as i64 * 4;
+    let unbiased = bin_exp as i64 - frac_hex as i64 * 4 + tail_bits + leading;
+    if unbiased > 16383 {
+        return f128::from_bits(sign | 0x7fff0000000000000000000000000000);
+    }
+
+    if unbiased >= -16382 {
+        let mut significand = 0u128;
+        let mut bit_index = 0usize;
+        let mut guard = false;
+        for (digit_index, &digit) in digits[first..].iter().enumerate() {
+            let start = if digit_index == 0 { leading as i32 } else { 3 };
+            for bit in (0..=start).rev() {
+                let set = (digit & (1u8 << bit)) != 0;
+                if bit_index < 113 {
+                    significand = (significand << 1) | set as u128;
+                } else if bit_index == 113 {
+                    guard = set;
+                } else {
+                    sticky |= set;
+                }
+                bit_index += 1;
+            }
+        }
+        if bit_index < 113 { significand <<= 113 - bit_index; }
+        let mut exponent = unbiased;
+        if guard && (sticky || significand & 1 != 0) { significand += 1; }
+        if significand == (1u128 << 113) {
+            significand >>= 1;
+            exponent += 1;
+        }
+        if exponent > 16383 {
+            return f128::from_bits(sign | 0x7fff0000000000000000000000000000);
+        }
+        let exponent_bits = ((exponent + 16383) as u128) << 112;
+        return f128::from_bits(sign | exponent_bits | (significand & ((1u128 << 112) - 1)));
+    }
+
+    // A subnormal is rounded in units of 2^-16494.  Walk the source bits by
+    // exponent so this also handles inputs far below the minimum normal value.
+    let mut fraction = 0u128;
+    let mut guard = false;
+    let mut bit_index = 0usize;
+    for (digit_index, &digit) in digits[first..].iter().enumerate() {
+        let start = if digit_index == 0 { leading as i32 } else { 3 };
+        for bit in (0..=start).rev() {
+            let set = (digit & (1u8 << bit)) != 0;
+            let bit_exp = unbiased - bit_index as i64;
+            if set {
+                if bit_exp >= -16494 {
+                    fraction |= 1u128 << (bit_exp + 16494);
+                } else if bit_exp == -16495 {
+                    guard = true;
+                } else {
+                    sticky = true;
+                }
+            }
+            bit_index += 1;
+        }
+    }
+    if guard && (sticky || fraction & 1 != 0) { fraction += 1; }
+    if fraction >= (1u128 << 112) {
+        return f128::from_bits(sign | (1u128 << 112));
+    }
+    f128::from_bits(sign | fraction)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> f64 {
     let mut end: *mut u8 = s as *mut u8;
@@ -13472,13 +13719,19 @@ pub unsafe extern "C" fn strtold(s: *const c_char, endptr: *mut *mut c_char) -> 
 #[no_mangle]
 #[cfg(target_arch = "aarch64")]
 pub unsafe extern "C" fn strtold(s: *const c_char, endptr: *mut *mut c_char) -> f128 {
-    strtod(s, endptr) as f128
+    let mut end: *mut u8 = s as *mut u8;
+    let result = parse_float_f128(s as *const u8, &mut end);
+    if !endptr.is_null() { *endptr = end as *mut c_char; }
+    result
 }
 
 #[no_mangle]
 #[cfg(target_arch = "riscv64")]
 pub unsafe extern "C" fn strtold(s: *const c_char, endptr: *mut *mut c_char) -> f128 {
-    strtod(s, endptr) as f128
+    let mut end: *mut u8 = s as *mut u8;
+    let result = parse_float_f128(s as *const u8, &mut end);
+    if !endptr.is_null() { *endptr = end as *mut c_char; }
+    result
 }
 
 #[no_mangle]
@@ -15147,6 +15400,7 @@ include!("pthread_atfork.rs");
 include!("fenv.rs");
 include!("locale_ctype.rs");
 include!("regression_stubs.rs");
+include!("wordexp.rs");
 
 // ============================================================
 // regex.h

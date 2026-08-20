@@ -4,7 +4,12 @@
 #define FLT_RADIX        2
 #define FLT_ROUNDS       1
 #define FLT_EVAL_METHOD  0
+#if defined(__aarch64__) || defined(__riscv)
+/* AArch64 and riscv64 pass long double as IEEE-754 binary128. */
+#define DECIMAL_DIG      36
+#else
 #define DECIMAL_DIG      21
+#endif
 
 #define FLT_MIN          1.17549435082228750797e-38F
 #define FLT_MAX          3.40282346638528859812e+38F
@@ -28,6 +33,18 @@
 #define DBL_MIN_10_EXP   (-307)
 #define DBL_MAX_10_EXP   308
 
+#if defined(__aarch64__) || defined(__riscv)
+#define LDBL_MIN         3.36210314311209350626267781732175260e-4932L
+#define LDBL_MAX         1.18973149535723176508575932662800702e+4932L
+#define LDBL_EPSILON     1.92592994438723585305597794258492732e-34L
+
+#define LDBL_MANT_DIG    113
+#define LDBL_MIN_EXP     (-16381)
+#define LDBL_MAX_EXP     16384
+#define LDBL_DIG         33
+#define LDBL_MIN_10_EXP  (-4931)
+#define LDBL_MAX_10_EXP  4932
+#else
 #define LDBL_MIN         2.22507385850720138309e-308L
 #define LDBL_MAX         1.79769313486231570815e+308L
 #define LDBL_EPSILON     2.22044604925031308085e-16L
@@ -38,5 +55,6 @@
 #define LDBL_DIG         15
 #define LDBL_MIN_10_EXP  (-307)
 #define LDBL_MAX_10_EXP  308
+#endif
 
 #endif

@@ -8,8 +8,8 @@
 // truncates toward zero.
 
 // musl rint: rounds f64 to integer using current FP rounding mode
-#[inline]
-fn rint(x: f64) -> f64 {
+#[no_mangle]
+pub extern "C" fn rint(x: f64) -> f64 {
     let u = asuint64(x);
     let e = ((u >> 52) & 0x7ff) as i32;
     let s = u >> 63;
@@ -35,8 +35,8 @@ fn rint(x: f64) -> f64 {
 }
 
 // musl rintf: rounds f32 to integer using current FP rounding mode
-#[inline]
-fn rintf(x: f32) -> f32 {
+#[no_mangle]
+pub extern "C" fn rintf(x: f32) -> f32 {
     let u = asuint(x);
     let e = ((u >> 23) & 0xff) as i32;
     let s = u >> 31;

@@ -23,11 +23,10 @@ struct flock {
 };
 #endif
 
-struct in_addr_local { uint32_t s_addr; };
 struct sockaddr_in_local {
     uint16_t sin_family;
     uint16_t sin_port;
-    struct in_addr_local sin_addr;
+    struct in_addr sin_addr;
     char pad[8];
 };
 
@@ -35,13 +34,13 @@ static int failures = 0;
 #define CHECK(expr, msg) do { if (!(expr)) { printf("FAIL: %s\n", msg); failures++; } } while(0)
 
 static void test_inet(void) {
-    struct in_addr_local a;
+    struct in_addr a;
     int r;
 
     a.s_addr = inet_addr("127.0.0.1");
     CHECK(a.s_addr == htonl(0x7f000001), "inet_addr 127.0.0.1");
 
-    r = inet_aton("10.0.128.31", &a.s_addr);
+    r = inet_aton("10.0.128.31", &a);
     CHECK(r == 1, "inet_aton parses");
     CHECK(a.s_addr == htonl(0x0a00801f), "inet_aton value");
 
@@ -55,7 +54,7 @@ static void test_inet(void) {
     CHECK(p && strcmp(buf, "127.0.0.1") == 0, "inet_ntop v4");
 
     a.s_addr = htonl(0x0a00801f);
-    p = inet_ntoa(a.s_addr);
+    p = inet_ntoa(a);
     CHECK(p && strcmp(p, "10.0.128.31") == 0, "inet_ntoa");
 }
 
@@ -87,6 +86,15 @@ static void test_fcntl_lock(void) {
 }
 
 static void test_socket(void) {
+    errno = 0;
+    CHECK(shutdown(-1, 0) == -1 && errno == EBADF, "shutdown publishes errno");
+    errno = 0;
+    CHECK(setsockopt(-1, SOL_SOCKET, SO_REUSEADDR, NULL, 0) == -1 && errno == EBADF,
+          "setsockopt publishes errno");
+    errno = 0;
+    CHECK(getsockname(-1, NULL, NULL) == -1 && errno == EBADF,
+          "getsockname publishes errno");
+
     int s = socket(AF_INET, SOCK_STREAM, 0);
     CHECK(s >= 0, "socket create");
     if (s < 0) return;

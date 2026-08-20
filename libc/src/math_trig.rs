@@ -583,7 +583,13 @@ pub extern "C" fn sin(x: f64) -> f64 {
 
     if ix <= 0x3fe921fb {
         if ix < 0x3e500000 {
-            force_eval(if ix < 0x00100000 { x / p2f(120) as f64 } else { x + p2f(120) as f64 });
+            // A tiny nonzero argument is inexact, but returning a normal
+            // value must not manufacture underflow by evaluating an unrelated
+            // subnormal expression.
+            if x != 0.0 {
+                let flags = if ix < 0x00100000 { FE_INEXACT | FE_UNDERFLOW } else { FE_INEXACT };
+                unsafe { feraiseexcept(flags); }
+            }
             return x;
         }
         return __sin(x, 0.0, 0);
@@ -633,7 +639,10 @@ pub extern "C" fn tan(x: f64) -> f64 {
 
     if ix <= 0x3fe921fb {
         if ix < 0x3e400000 {
-            force_eval(if ix < 0x00100000 { x / p2f(120) as f64 } else { x + p2f(120) as f64 });
+            if x != 0.0 {
+                let flags = if ix < 0x00100000 { FE_INEXACT | FE_UNDERFLOW } else { FE_INEXACT };
+                unsafe { feraiseexcept(flags); }
+            }
             return x;
         }
         return __tan(x, 0.0, 0);
@@ -658,7 +667,10 @@ pub extern "C" fn sinf(x: f32) -> f32 {
 
     if ix <= 0x3f490fda {
         if ix < 0x39800000 {
-            force_eval(if ix < 0x00800000 { x / p2f(120) } else { x + p2f(120) });
+            if x != 0.0 {
+                let flags = if ix < 0x00800000 { FE_INEXACT | FE_UNDERFLOW } else { FE_INEXACT };
+                unsafe { feraiseexcept(flags); }
+            }
             return x;
         }
         return __sindf(x as f64);
@@ -736,7 +748,10 @@ pub extern "C" fn tanf(x: f32) -> f32 {
 
     if ix <= 0x3f490fda {
         if ix < 0x39800000 {
-            force_eval(if ix < 0x00800000 { x / p2f(120) } else { x + p2f(120) });
+            if x != 0.0 {
+                let flags = if ix < 0x00800000 { FE_INEXACT | FE_UNDERFLOW } else { FE_INEXACT };
+                unsafe { feraiseexcept(flags); }
+            }
             return x;
         }
         return __tandf(x as f64, 0);

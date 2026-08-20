@@ -158,7 +158,9 @@ fn hyper_expm1(x: f64) -> f64 {
     } else if hx < 0x3c900000 {
         // |x| < 2^-54, return x
         if hx < 0x00100000 {
-            force_eval(x as f32);
+            if x != 0.0 {
+                unsafe { feraiseexcept(FE_INEXACT | FE_UNDERFLOW); }
+            }
         }
         return x;
     } else {
@@ -267,7 +269,9 @@ fn hyper_expm1f(x: f32) -> f32 {
     } else if hx < 0x33000000 {
         // |x| < 2^-25, return x
         if hx < 0x00800000 {
-            force_eval(x * x);
+            if x != 0.0 {
+                unsafe { feraiseexcept(FE_INEXACT | FE_UNDERFLOW); }
+            }
         }
         return x;
     } else {
@@ -320,8 +324,7 @@ fn hyper_expm1f(x: f32) -> f32 {
 // Public API: sinh, cosh, tanh (double precision)
 // ============================================================
 
-#[no_mangle]
-pub extern "C" fn sinh(x: f64) -> f64 {
+fn hyper_sinh(x: f64) -> f64 {
     let u = asuint64(x);
     let mut h = 0.5f64;
     if u >> 63 != 0 {
@@ -334,6 +337,16 @@ pub extern "C" fn sinh(x: f64) -> f64 {
 
     // |x| < log(DBL_MAX)
     if w < 0x40862e42 {
+        if w < 0x3ff00000 - (26 << 20) {
+            // sinh(x) rounds to x here.  It is nevertheless inexact for a
+            // nonzero x; raise that status directly instead of first running
+            // expm1 on a subnormal input.
+            if x != 0.0 {
+                let flags = if w < 0x00100000 { FE_INEXACT | FE_UNDERFLOW } else { FE_INEXACT };
+                unsafe { feraiseexcept(flags); }
+            }
+            return x;
+        }
         #[cfg(target_arch = "x86_64")]
         if w >= 0x3f500000 && w < 0x3fe62e42 {
             let mut r = unsafe { __crabc_sinh_small_x87(absx) };
@@ -344,11 +357,6 @@ pub extern "C" fn sinh(x: f64) -> f64 {
         }
         let t = hyper_expm1(absx);
         if w < 0x3ff00000 {
-            if w < 0x3ff00000 - (26 << 20) {
-                // note: inexact and underflow are raised by expm1
-                // note: this branch avoids spurious underflow
-                return x;
-            }
             return h * (2.0 * t - t * t / (t + 1.0));
         }
         // note: |x|>log(0x1p26)+eps could be just h*exp(x)
@@ -358,6 +366,24 @@ pub extern "C" fn sinh(x: f64) -> f64 {
     // |x| > log(DBL_MAX) or nan
     // note: the result is stored to handle overflow
     hyper_expo2(absx, 2.0 * h)
+}
+
+#[no_mangle]
+pub extern "C" fn sinh(x: f64) -> f64 {
+    // For finite |x| below log(DBL_MAX), sinh cannot overflow.  Keep the
+    // status raised before entry, but discard OFC from a transient reduced
+    // intermediate on AArch64.
+    if x.is_finite() && x.abs() < HYP_EPM1_O_THRESHOLD {
+        unsafe {
+            let prior = fetestexcept(FE_OVERFLOW);
+            feclearexcept(FE_OVERFLOW);
+            let result = hyper_sinh(x);
+            feclearexcept(FE_OVERFLOW);
+            if prior != 0 { feraiseexcept(FE_OVERFLOW); }
+            return result;
+        }
+    }
+    hyper_sinh(x)
 }
 
 #[no_mangle]
@@ -446,11 +472,15 @@ pub extern "C" fn sinhf(x: f32) -> f32 {
 
     // |x| < log(FLT_MAX)
     if w < 0x42b17217 {
+        if w < 0x3f800000 - (12 << 23) {
+            if x != 0.0 {
+                let flags = if w < 0x00800000 { FE_INEXACT | FE_UNDERFLOW } else { FE_INEXACT };
+                unsafe { feraiseexcept(flags); }
+            }
+            return x;
+        }
         let t = hyper_expm1f(absx);
         if w < 0x3f800000 {
-            if w < 0x3f800000 - (12 << 23) {
-                return x;
-            }
             return h * (2.0 * t - t * t / (t + 1.0));
         }
         return h * (t + t / (t + 1.0));

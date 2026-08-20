@@ -125,31 +125,38 @@ fn predict_false(x: bool) -> bool {
 
 #[inline]
 pub fn __math_invalid(x: f64) -> f64 {
-    (x - x) / (x - x)
+    // Keep both operations observable.  These helpers are deliberately used
+    // for their IEEE-754 status flags as well as their return values.
+    let x = fp_barrier(x);
+    let zero = x - x;
+    fp_barrier(zero) / fp_barrier(zero)
 }
 
 #[inline]
 pub fn __math_invalidf(x: f32) -> f32 {
-    (x - x) / (x - x)
+    let x = fp_barrierf(x);
+    let zero = x - x;
+    fp_barrierf(zero) / fp_barrierf(zero)
 }
 
 #[inline]
 pub fn __math_divzero(sign: u32) -> f64 {
-    let x = if sign != 0 { -1.0f64 } else { 1.0f64 };
-    x / 0.0
+    let x = fp_barrier(if sign != 0 { -1.0f64 } else { 1.0f64 });
+    x / fp_barrier(0.0)
 }
 
 #[inline]
 pub fn __math_divzerof(sign: u32) -> f32 {
-    let x = if sign != 0 { -1.0f32 } else { 1.0f32 };
-    x / 0.0
+    let x = fp_barrierf(if sign != 0 { -1.0f32 } else { 1.0f32 });
+    x / fp_barrierf(0.0)
 }
 
 #[inline]
 pub fn __math_xflow(sign: u32, y: f64) -> f64 {
     // musl: (sign ? -y : y) * y  (preserves sign of infinity/zero)
+    let y = fp_barrier(y);
     if sign != 0 {
-        -y * y
+        fp_barrier(-y) * y
     } else {
         y * y
     }
@@ -157,8 +164,9 @@ pub fn __math_xflow(sign: u32, y: f64) -> f64 {
 
 #[inline]
 pub fn __math_xflowf(sign: u32, y: f32) -> f32 {
+    let y = fp_barrierf(y);
     if sign != 0 {
-        -y * y
+        fp_barrierf(-y) * y
     } else {
         y * y
     }

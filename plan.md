@@ -2144,6 +2144,57 @@ toward verified status.
 
 Advance loader slices alongside them.
 
+This behavioral-slice milestone is complete. It closes the named M2 runtime
+gaps and gives each major slice focused, executable evidence; it does **not**
+claim the later Gate D requirement that every libc-test workload is green.
+
+- Process, signal, and socket wrappers now translate kernel errors through
+  the POSIX `errno` boundary. `fork`, `execve`, `wait`/`waitpid`, `kill`,
+  `sigprocmask`, socket-option calls, and the pthread signal APIs retain their
+  respective raw-kernel or POSIX-return contracts. Focused fixtures cover
+  `ECHILD`, failed `execve`, bad socket descriptors, and the pthread return
+  convention. `pclose` now retries a POSIX `waitpid` interrupted by a signal;
+  the stdio fixture forces that path with `SIGALRM`.
+- The existing pthread, cancellation, locale, iconv, stdio, resolver/network,
+  and loader slices remain green under the dockerized AArch64 test environment.
+  The focused loader suite covers an interpreter, a real PIE, dependencies,
+  startup argv/environment, static and dynamic TLS, TLS alignment, and
+  DT_NEEDED symlink-alias deduplication.
+- `strtold` now parses AArch64/riscv64 binary128 input directly rather than
+  extending a binary64 `strtod` result. The public `float.h` long-double
+  constants match that ABI, and a focused fixture verifies preserved precision.
+- The math surface now has explicit C99/POSIX exports for the remaining
+  unported algorithms, ABI-correct long-double entry points, musl-derived
+  `acosh`/`asinh`, and targeted IEEE exception behavior for `expm1`,
+  `nearbyint`, `scalb`, `sinh`, and related helpers. This replaces 132 math
+  link failures with behavioral results.
+- `wordexp`/`wordfree` are now exported and have a focused integration test
+  for empty positional parameters, expansion, append/offset layout,
+  `WRDE_NOCMD`, and `WRDE_UNDEF`. The shell wrapper clears transport positional
+  parameters before evaluation and preserves shell stderr only for
+  `WRDE_SHOWERR`.
+
+Final validation for this milestone:
+
+```text
+focused process/signal/network/pthread/stdio/locale/iconv/strtold/wordexp: PASS
+focused loader slice suite:                                             PASS
+libc-test API:       79 PASS, 0 FAIL, 0 BUILDERROR
+libc-test functional: 73 PASS, 1 FAIL, 0 BUILDERROR
+libc-test regression: 67 PASS, 0 FAIL, 0 BUILDERROR, 1 pinned-overlay SKIP
+libc-test math:      185 PASS, 14 FAIL, 0 BUILDERROR
+symbol ratchet:      824 candidate exports; 844 names still missing
+```
+
+The sole functional failure is the deliberately bounded `wordexp` grammar
+scanner; it avoids unsafe success for command-substitution forms but still
+needs musl-equivalent parsing for rare nested quoting and parameter-expansion
+cases. The 14 math failures are numerical-accuracy work in `acosh`, `asinh`,
+the Bessel family, gamma functions, and one `sinh` case. Those are explicit
+remaining behavior tasks for the later Gate D closure, not hidden build or
+link failures. Milestone 4 begins the still-large isolated/advanced symbol
+surface without representing those functions as complete.
+
 ## Milestone 4 — 100% implemented symbol parity
 
 Now close remaining isolated/advanced API surface.
