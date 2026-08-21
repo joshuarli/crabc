@@ -108,7 +108,10 @@ pub unsafe extern "C" fn issetugid() -> c_int {
 
 #[inline]
 unsafe fn m4_uname_raw(uts: *mut M4UtsName) -> i64 {
-    <Arch as Syscalls>::syscall1(M4_SYS_UNAME, uts as i64)
+    match crabc_core::system::uname_raw(uts.cast()) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]

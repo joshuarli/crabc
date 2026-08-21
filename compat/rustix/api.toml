@@ -412,6 +412,15 @@ compatibility = "planned-source-compatible"
 tests = ["compat/rustix/tests/test_harness.py"]
 
 [[api]]
+id = "param.clock-ticks"
+feature = "param"
+rustix = "param::clock_ticks_per_second"
+crabc = "param::clock_ticks_per_second"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
 id = "rand.getrandom"
 feature = "rand"
 rustix = "rand::getrandom"
@@ -443,18 +452,18 @@ id = "process.getpid"
 feature = "process"
 rustix = "process::getpid"
 crabc = "process::getpid"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.kill"
 feature = "process"
-rustix = "process::kill_process"
-crabc = "process::kill"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+rustix = "process::{kill_process,test_kill_process}"
+crabc = "process::{kill_process,test_kill_process}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.wait"
@@ -470,18 +479,18 @@ id = "thread.gettid"
 feature = "thread"
 rustix = "thread::gettid"
 crabc = "thread::gettid"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.sched-yield"
 feature = "thread"
 rustix = "thread::sched_yield"
 crabc = "thread::sched_yield"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "stdio.dup2-stdout"
@@ -497,63 +506,63 @@ id = "termios.isatty"
 feature = "termios"
 rustix = "termios::isatty"
 crabc = "termios::isatty"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "termios.tcgetattr"
 feature = "termios"
-rustix = "termios::tcgetattr"
-crabc = "termios::tcgetattr"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+rustix = "termios::{tcgetattr,tcsetattr,tcgetwinsize,tcsetwinsize}"
+crabc = "termios::{tcgetattr,tcsetattr,tcgetwinsize,tcsetwinsize}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "system.uname"
 feature = "system"
 rustix = "system::uname"
 crabc = "system::uname"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "system.sysinfo"
 feature = "system"
 rustix = "system::sysinfo"
 crabc = "system::sysinfo"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "pty.openpt"
 feature = "pty"
-rustix = "pty::openpt"
-crabc = "pty::openpt"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+rustix = "pty::{openpt,grantpt,unlockpt,ioctl_tiocgptpeer}"
+crabc = "pty::{openpt,grantpt,unlockpt,ioctl_tiocgptpeer}"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "shm.open"
 feature = "shm"
 rustix = "shm::open"
 crabc = "shm::open"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "mount.mount"
 feature = "mount"
 rustix = "mount::mount"
 crabc = "mount::mount"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "io-uring.extended-linux"

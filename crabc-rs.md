@@ -2769,6 +2769,34 @@ mount-related surface
 
 as applicable.
 
+**Complete.** M4 now exposes direct Linux/AArch64 process and thread identity
+operations (`Pid`, process-group/session queries, signal-zero/process signal
+delivery, `gettid`, and `sched_yield`); the ABI-stable `USER_HZ` clock-tick
+parameter; `system::{uname,sysinfo}`; typed terminal and PTY operations;
+POSIX shared-memory naming; and mount/unmount entry points. `page_size` remains
+explicitly deferred: it must read `AT_PAGESZ` through a future, explicit auxv
+initialization boundary rather than incorrectly assuming a 4 KiB AArch64 page.
+
+The terminal boundary is deliberately native rather than a C-struct cast. The
+Rust `termios::Termios` records Linux's tty layout and numeric baud rates;
+crabc's C facade retains the musl public `struct termios` layout. Both issue
+the same direct ioctl core seam, but neither leaks C ABI padding or TLS errno
+into Rust callers. This initial terminal slice uses the legacy tty protocol
+and its standard encoded baud rates; arbitrary `BOTHER` rates and the wider
+Rustix terminal flag/control-code vocabulary remain for the M5 completion
+inventory. The C facade's overlapping `getpid`, `kill`, `gettid`,
+`sched_yield`, `uname`, `sysinfo`, `mount`, and `umount2` adapters now route
+through `crabc-core`, where C-only sentinel/errno translation remains at the
+outer boundary.
+
+`./scripts/dev.sh crabc-rs` extends the prior M0–M3 gate with native M4 tests,
+an isolated pinned-Rustix source fixture, and a no-`std` archive inspection
+which requires direct AArch64 process, scheduler, system, mount, and unmount
+syscalls while rejecting public C ABI and TLS-errno symbols. Its PTY and mount
+checks are state-contained: PTYs are newly allocated and released, shared
+memory names are removed, and mounting is verified only through a missing
+target error without changing the mount namespace.
+
 ---
 
 # 81. Milestone 5 — primary rustix parity

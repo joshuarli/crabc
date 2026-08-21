@@ -2091,7 +2091,7 @@ pub unsafe extern "C" fn signal(signum: c_int, handler: usize) -> usize {
 
 #[no_mangle]
 pub unsafe extern "C" fn kill(pid: c_int, sig: c_int) -> c_int {
-    syscall_result(sys_kill(pid, sig)) as c_int
+    c_result_unit(crabc_core::process::kill(pid, sig))
 }
 
 #[no_mangle]
@@ -2101,7 +2101,7 @@ pub unsafe extern "C" fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn getpid() -> c_int {
-    sys_getpid() as c_int
+    crabc_core::process::getpid() as c_int
 }
 
 #[no_mangle]
@@ -2804,7 +2804,7 @@ pub unsafe extern "C" fn waitpid(pid: c_int, status: *mut c_int, options: c_int)
 
 #[no_mangle]
 pub unsafe extern "C" fn getppid() -> c_int {
-    sys_getppid() as c_int
+    crabc_core::process::getppid() as c_int
 }
 
 #[no_mangle]

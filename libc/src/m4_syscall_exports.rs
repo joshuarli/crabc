@@ -134,7 +134,7 @@ pub unsafe extern "C" fn wait3(
 
 #[no_mangle]
 pub unsafe extern "C" fn gettid() -> c_int {
-    syscall_result(sys_gettid()) as c_int
+    crabc_core::thread::gettid() as c_int
 }
 
 // C11 _Fork is the fork primitive without pthread_atfork callbacks.  Keep it

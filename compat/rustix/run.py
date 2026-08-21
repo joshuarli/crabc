@@ -477,7 +477,7 @@ def source_dependency(backend: str, rustix_source: Path | None) -> str:
         return (
             "api = { package = \"rustix\", path = "
             + json.dumps(str(rustix_source))
-            + ", features = [\"event\", \"fs\", \"mm\", \"net\", \"pipe\", \"rand\", \"time\"] }\n"
+            + ", features = [\"event\", \"fs\", \"mm\", \"mount\", \"net\", \"param\", \"pipe\", \"process\", \"pty\", \"rand\", \"shm\", \"system\", \"termios\", \"thread\", \"time\"] }\n"
         )
     raise HarnessError(f"unknown source backend: {backend}")
 

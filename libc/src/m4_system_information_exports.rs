@@ -43,7 +43,10 @@ const M4_INFO_ENOSYS: c_int = 38;
 
 #[inline]
 unsafe fn m4_info_sysinfo_raw(info: *mut M4Sysinfo) -> i64 {
-    <Arch as Syscalls>::syscall1(M4_INFO_SYS_SYSINFO, info as i64)
+    match crabc_core::system::sysinfo_raw(info.cast()) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]

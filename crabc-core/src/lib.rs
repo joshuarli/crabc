@@ -280,6 +280,35 @@ const SYS_RECVFROM: usize = 207;
 const SYS_MUNMAP: usize = 215;
 const SYS_MMAP: usize = 222;
 const SYS_MPROTECT: usize = 226;
+const SYS_KILL: usize = 129;
+const SYS_MOUNT: usize = 40;
+const SYS_UMOUNT2: usize = 39;
+const SYS_GETPGID: usize = 155;
+const SYS_SETPGID: usize = 154;
+const SYS_GETSID: usize = 156;
+const SYS_SETSID: usize = 157;
+const SYS_UNAME: usize = 160;
+const SYS_GETPID: usize = 172;
+const SYS_GETPPID: usize = 173;
+const SYS_GETTID: usize = 178;
+const SYS_SYSINFO: usize = 179;
+const SYS_SCHED_YIELD: usize = 124;
+
+#[inline(always)]
+unsafe fn syscall0(number: usize) -> isize {
+    let result: isize;
+    // SAFETY: This is the Linux/AArch64 syscall ABI: x8 carries the syscall
+    // number, x0 receives its return value, and `svc #0` enters the kernel.
+    unsafe {
+        asm!(
+            "svc #0",
+            in("x8") number,
+            lateout("x0") result,
+            options(nostack),
+        );
+    }
+    result
+}
 
 #[inline(always)]
 unsafe fn syscall1(number: usize, arg0: usize) -> isize {
@@ -1447,15 +1476,262 @@ pub mod mm {
     }
 }
 
+/// Direct process-identity, process-group, and signal operations.
+pub mod process {
+    use super::{
+        decode, decode_i32, syscall0, syscall1, syscall2, Result, SYS_GETPGID, SYS_GETPID,
+        SYS_GETPPID, SYS_GETSID, SYS_KILL, SYS_SETPGID, SYS_SETSID,
+    };
+
+    /// Returns the caller's Linux process ID.
+    #[inline]
+    pub fn getpid() -> i32 {
+        // Linux guarantees that this syscall succeeds and returns a positive
+        // process ID for a running task.
+        unsafe { syscall0(SYS_GETPID) as i32 }
+    }
+
+    /// Returns the caller's Linux parent process ID, or zero for namespace init.
+    #[inline]
+    pub fn getppid() -> i32 {
+        // Linux guarantees that this syscall succeeds. A zero parent is the
+        // documented namespace-init/no-visible-parent representation.
+        unsafe { syscall0(SYS_GETPPID) as i32 }
+    }
+
+    /// Sends `signal` to the raw Linux process target `pid`.
+    #[inline]
+    pub fn kill(pid: i32, signal: i32) -> Result<()> {
+        // SAFETY: Both arguments are immediate Linux scalar values.
+        decode(unsafe { syscall2(SYS_KILL, pid as usize, signal as usize) }).map(|_| ())
+    }
+
+    /// Returns a process group ID. `pid == 0` denotes the calling process.
+    #[inline]
+    pub fn getpgid(pid: i32) -> Result<i32> {
+        // SAFETY: `pid` is an immediate Linux scalar value.
+        decode_i32(unsafe { syscall1(SYS_GETPGID, pid as usize) })
+    }
+
+    /// Assigns a process group. Zero values retain Linux's calling-process meaning.
+    #[inline]
+    pub fn setpgid(pid: i32, pgid: i32) -> Result<()> {
+        // SAFETY: Both arguments are immediate Linux scalar values.
+        decode(unsafe { syscall2(SYS_SETPGID, pid as usize, pgid as usize) }).map(|_| ())
+    }
+
+    /// Returns a session ID. `pid == 0` denotes the calling process.
+    #[inline]
+    pub fn getsid(pid: i32) -> Result<i32> {
+        // SAFETY: `pid` is an immediate Linux scalar value.
+        decode_i32(unsafe { syscall1(SYS_GETSID, pid as usize) })
+    }
+
+    /// Creates a session and returns its process ID.
+    #[inline]
+    pub fn setsid() -> Result<i32> {
+        // SAFETY: `setsid` has no user-memory arguments.
+        decode_i32(unsafe { syscall0(SYS_SETSID) })
+    }
+
+}
+
+/// Direct thread-associated Linux operations.
+pub mod thread {
+    use super::{decode, syscall0, Result, SYS_GETTID, SYS_SCHED_YIELD};
+
+    /// Returns the caller's Linux thread ID.
+    #[inline]
+    pub fn gettid() -> i32 {
+        // Linux guarantees a positive ID for a running task.
+        unsafe { syscall0(SYS_GETTID) as i32 }
+    }
+
+    /// Yields the processor to the Linux scheduler.
+    #[inline]
+    pub fn sched_yield() -> Result<()> {
+        // SAFETY: `sched_yield` has no user-memory arguments.
+        decode(unsafe { syscall0(SYS_SCHED_YIELD) }).map(|_| ())
+    }
+}
+
+/// Direct Linux system-information operations.
+pub mod system {
+    use super::{decode, syscall1, Result, SYS_SYSINFO, SYS_UNAME};
+    use core::mem::MaybeUninit;
+
+    /// Linux/AArch64 `new_utsname`, including the Linux domain-name field.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct UtsName {
+        pub sysname: [u8; 65],
+        pub nodename: [u8; 65],
+        pub release: [u8; 65],
+        pub version: [u8; 65],
+        pub machine: [u8; 65],
+        pub domainname: [u8; 65],
+    }
+
+    /// Linux/AArch64 `sysinfo` without libc's compatibility-only tail.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct Sysinfo {
+        pub uptime: i64,
+        pub loads: [u64; 3],
+        pub totalram: u64,
+        pub freeram: u64,
+        pub sharedram: u64,
+        pub bufferram: u64,
+        pub totalswap: u64,
+        pub freeswap: u64,
+        pub procs: u16,
+        pub pad: u16,
+        pub totalhigh: u64,
+        pub freehigh: u64,
+        pub mem_unit: u32,
+        // Linux's `struct sysinfo` retains this ABI tail so the 64-bit
+        // representation stays 112 bytes after the alignment before
+        // `totalhigh`.
+        pub reserved: [u8; 4],
+    }
+
+    /// Reads Linux kernel and hardware naming information.
+    #[inline]
+    pub fn uname() -> Result<UtsName> {
+        let mut value = MaybeUninit::<UtsName>::uninit();
+        // SAFETY: `value` provides exactly one writable Linux/AArch64
+        // `new_utsname`; a successful syscall initializes all fields.
+        decode(unsafe { syscall1(SYS_UNAME, value.as_mut_ptr() as usize) })?;
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Reads Linux kernel and hardware naming information into C-ABI storage.
+    ///
+    /// # Safety
+    ///
+    /// `value` must designate writable Linux/AArch64 `new_utsname` storage,
+    /// or may deliberately be an invalid C ABI pointer for kernel validation.
+    #[inline]
+    pub unsafe fn uname_raw(value: *mut UtsName) -> Result<()> {
+        // SAFETY: The caller supplies the output-pointer contract.
+        decode(unsafe { syscall1(SYS_UNAME, value as usize) }).map(|_| ())
+    }
+
+    /// Reads Linux memory, load, and uptime information.
+    #[inline]
+    pub fn sysinfo() -> Result<Sysinfo> {
+        let mut value = MaybeUninit::<Sysinfo>::uninit();
+        // SAFETY: `value` is the exact Linux/AArch64 `sysinfo` ABI.
+        decode(unsafe { syscall1(SYS_SYSINFO, value.as_mut_ptr() as usize) })?;
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Reads Linux system information into C-ABI storage.
+    ///
+    /// # Safety
+    ///
+    /// `value` must designate writable Linux/AArch64 `sysinfo` storage, or
+    /// may deliberately be an invalid C ABI pointer for kernel validation.
+    #[inline]
+    pub unsafe fn sysinfo_raw(value: *mut Sysinfo) -> Result<()> {
+        // SAFETY: The caller supplies the output-pointer contract.
+        decode(unsafe { syscall1(SYS_SYSINFO, value as usize) }).map(|_| ())
+    }
+}
+
+/// Direct Linux mount namespace operations.
+pub mod mount {
+    use super::{decode, syscall2, syscall5, CStr, Result, SYS_MOUNT, SYS_UMOUNT2};
+
+    /// Mounts a filesystem with the Linux `mount` ABI.
+    #[inline]
+    pub fn mount(
+        source: Option<&CStr>,
+        target: &CStr,
+        filesystem_type: Option<&CStr>,
+        flags: u64,
+        data: Option<&CStr>,
+    ) -> Result<()> {
+        // SAFETY: Every present C string is NUL-terminated and stays live for
+        // the syscall. Linux owns interpretation of all mount-specific data.
+        decode(unsafe {
+            syscall5(
+                SYS_MOUNT,
+                source.map_or(0, |value| value.as_ptr() as usize),
+                target.as_ptr() as usize,
+                filesystem_type.map_or(0, |value| value.as_ptr() as usize),
+                flags as usize,
+                data.map_or(0, |value| value.as_ptr() as usize),
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Mounts a filesystem from raw C-ABI pointers.
+    ///
+    /// # Safety
+    ///
+    /// Every non-null string pointer must be a readable NUL-terminated C
+    /// string for the call. `data` follows the filesystem-specific Linux
+    /// mount contract and may be null.
+    #[inline]
+    pub unsafe fn mount_raw(
+        source: *const u8,
+        target: *const u8,
+        filesystem_type: *const u8,
+        flags: u64,
+        data: *const u8,
+    ) -> Result<()> {
+        // SAFETY: The caller owns all Linux mount pointer contracts.
+        decode(unsafe {
+            syscall5(
+                SYS_MOUNT,
+                source as usize,
+                target as usize,
+                filesystem_type as usize,
+                flags as usize,
+                data as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Unmounts a filesystem with the Linux `umount2` ABI.
+    #[inline]
+    pub fn umount2(target: &CStr, flags: i32) -> Result<()> {
+        // SAFETY: `target` supplies a stable NUL-terminated pathname.
+        decode(unsafe { syscall2(SYS_UMOUNT2, target.as_ptr() as usize, flags as usize) })
+            .map(|_| ())
+    }
+
+    /// Unmounts a filesystem from a raw C-ABI target pointer.
+    ///
+    /// # Safety
+    ///
+    /// `target` must be a readable NUL-terminated pathname, or may
+    /// deliberately be an invalid C ABI pointer for kernel validation.
+    #[inline]
+    pub unsafe fn umount2_raw(target: *const u8, flags: i32) -> Result<()> {
+        // SAFETY: The caller supplies the pathname-pointer contract.
+        decode(unsafe { syscall2(SYS_UMOUNT2, target as usize, flags as usize) }).map(|_| ())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{decode_i32, Errno};
+    use super::{decode_i32, system, Errno};
 
     #[test]
     fn errno_accepts_only_linux_syscall_values() {
         assert_eq!(Errno::from_raw(0), None);
         assert_eq!(Errno::from_raw(4096), None);
         assert_eq!(Errno::from_raw(2).unwrap().raw(), 2);
+    }
+
+    #[test]
+    fn system_layouts_match_linux_aarch64_kernel_abis() {
+        assert_eq!(core::mem::size_of::<system::UtsName>(), 390);
+        assert_eq!(core::mem::size_of::<system::Sysinfo>(), 112);
     }
 
     #[test]

@@ -275,19 +275,24 @@ unsafe fn m4_mount(
     mount_flags: c_ulong,
     data: *const c_void,
 ) -> i64 {
-    <Arch as Syscalls>::syscall5(
-        M4_SYS_MOUNT,
-        source as i64,
-        target as i64,
-        filesystem_type as i64,
-        mount_flags as i64,
-        data as i64,
-    )
+    match crabc_core::mount::mount_raw(
+        source.cast(),
+        target.cast(),
+        filesystem_type.cast(),
+        mount_flags as u64,
+        data.cast(),
+    ) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn m4_umount2(target: *const c_char, flags: c_int) -> i64 {
-    <Arch as Syscalls>::syscall2(M4_SYS_UMOUNT2, target as i64, flags as i64)
+    match crabc_core::mount::umount2_raw(target.cast(), flags) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]

@@ -125,11 +125,7 @@ unsafe fn m4_thread_tid(thread: PthreadT) -> Result<c_int, c_int> {
 
 #[no_mangle]
 pub unsafe extern "C" fn sched_yield() -> c_int {
-    if syscall_result(<Arch as Syscalls>::syscall0(M4_SYS_SCHED_YIELD)) < 0 {
-        -1
-    } else {
-        0
-    }
+    c_result_unit(crabc_core::thread::sched_yield())
 }
 
 #[no_mangle]
