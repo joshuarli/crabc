@@ -14,7 +14,9 @@ production ``crabc-rs`` crate, and it never loads a local Rustix checkout.
 from __future__ import annotations
 
 import argparse
+import collections
 import dataclasses
+import fnmatch
 import hashlib
 import json
 import os
@@ -79,8 +81,9 @@ ALLOWED_COVERAGE_CLASSIFICATIONS = {
     "rust-subsumed",
     "abi-only",
     "internal-runtime",
-    "unclassified",
 }
+ALLOWED_COVERAGE_STATUSES = {"verified", "documented", "deferred"}
+ALLOWED_CAPABILITY_KINDS = {"semantic", "implementation"}
 
 
 class HarnessError(ValueError):
@@ -263,9 +266,69 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def nonempty_strings(value: Any, location: str) -> list[str]:
+    require(isinstance(value, list) and value, f"{location} must be a non-empty array")
+    result: list[str] = []
+    for index, item in enumerate(value):
+        require(isinstance(item, str) and item, f"{location}[{index}] must be a non-empty string")
+        result.append(item)
+    return result
+
+
+def expand_symbol_selectors(capability: Mapping[str, Any], candidate: Sequence[str], location: str) -> tuple[str, ...]:
+    """Expand a ledger capability against the frozen measured export surface.
+
+    ``symbols`` is preferred for small, irregular groups. ``symbol_patterns``
+    keeps regular families readable without weakening the accounting: the
+    current candidate TSV is hash-pinned and every expansion is checked for
+    empty selectors, duplicate ownership, omissions, and extra names below.
+    """
+
+    has_symbols = "symbols" in capability
+    has_patterns = "symbol_patterns" in capability
+    require(not (has_symbols and has_patterns), f"{location} cannot use both symbols and symbol_patterns")
+    if has_symbols:
+        selectors = nonempty_strings(capability["symbols"], f"{location}.symbols")
+    elif has_patterns:
+        selectors = nonempty_strings(capability["symbol_patterns"], f"{location}.symbol_patterns")
+    else:
+        return ()
+
+    selected: list[str] = []
+    for selector in selectors:
+        matches = [name for name in candidate if fnmatch.fnmatchcase(name, selector)]
+        require(matches, f"{location} selector matches no candidate export: {selector!r}")
+        selected.extend(matches)
+    duplicates = sorted(name for name, count in collections.Counter(selected).items() if count > 1)
+    require(not duplicates, f"{location} selects a symbol more than once: {', '.join(duplicates)}")
+    return tuple(selected)
+
+
+def require_native_contract(capability: Mapping[str, Any], location: str) -> None:
+    status = capability["status"]
+    if status == "verified":
+        nonempty_strings(capability.get("rust_api"), f"{location}.rust_api")
+        shared_impl = capability.get("shared_impl")
+        rust_equivalent = capability.get("rust_equivalent")
+        require(
+            (isinstance(shared_impl, list) and shared_impl) or (isinstance(rust_equivalent, str) and rust_equivalent),
+            f"{location} verified native capability needs shared_impl or rust_equivalent",
+        )
+        require(capability.get("native_boundary"), f"{location} verified native capability has no native_boundary")
+        require(capability.get("uses_public_c_abi") is False, f"{location} native capability uses public C ABI")
+        require(capability.get("uses_errno_tls") is False, f"{location} native capability uses TLS errno")
+        nonempty_strings(capability.get("evidence"), f"{location}.evidence")
+        return
+    require(status == "deferred", f"{location} native capability must be verified or deferred")
+    nonempty_strings(capability.get("planned_rust_api"), f"{location}.planned_rust_api")
+    require(capability.get("deferred_reason"), f"{location} deferred native capability has no deferred_reason")
+    require(capability.get("target_milestone"), f"{location} deferred native capability has no target_milestone")
+
+
 def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
-    require(data.get("schema") == "crabc.crabc-rs-coverage/v1", "bad crabc-rs coverage schema")
+    require(data.get("schema") == "crabc.crabc-rs-coverage/v2", "bad crabc-rs coverage schema")
     require(data.get("target") == TARGET, "coverage target is not AArch64 musl")
+    require(data.get("phase") == "M9-complete", "coverage phase is not M9-complete")
     dynamic = data.get("dynamic_exports")
     policy = data.get("policy")
     capabilities = data.get("capability")
@@ -297,22 +360,91 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
     require(dynamic.get("missing_from_candidate_count") == 0, "coverage missing symbol count changed")
     require(dynamic.get("metadata_mismatches_count") == 0, "coverage metadata mismatch count changed")
     require(dynamic.get("reference_is_candidate_minus_candidate_only") is True, "coverage set invariant missing")
+    require(dynamic.get("reference_sha256") == sha256_file(reference_path), "coverage reference TSV digest changed")
+    require(dynamic.get("candidate_sha256") == sha256_file(candidate_path), "coverage candidate TSV digest changed")
 
+    capability_by_id: dict[str, Mapping[str, Any]] = {}
+    symbol_owners: dict[str, str] = {}
+    expanded_groups: list[dict[str, Any]] = []
+    classification_counts: collections.Counter[str] = collections.Counter()
+    status_counts: collections.Counter[str] = collections.Counter()
+    kind_counts: collections.Counter[str] = collections.Counter()
     record_names: list[str] = []
-    for index, record in enumerate(candidate_only_records):
-        require(isinstance(record, Mapping), f"candidate_only[{index}] is not a table")
-        for key in ("name", "classification", "status", "rationale"):
-            require(record.get(key), f"candidate_only[{index}] is missing {key}")
-        require(record["classification"] in ALLOWED_COVERAGE_CLASSIFICATIONS, f"unknown candidate-only classification: {record['classification']}")
-        require(record["status"] == "inventory", f"candidate-only status is not inventory: {record['name']}")
-        record_names.append(record["name"])
-    require(tuple(record_names) == EXPECTED_CANDIDATE_ONLY, "candidate-only records do not match symbols")
     for index, capability in enumerate(capabilities):
         require(isinstance(capability, Mapping), f"capability[{index}] is not a table")
-        require(capability.get("id"), f"capability[{index}] has no id")
-        require(capability.get("classification") in ALLOWED_COVERAGE_CLASSIFICATIONS, f"unknown capability classification: {capability.get('classification')}")
-        require(capability.get("status") == "inventory", f"capability[{index}] must remain inventory at M0")
+        location = f"capability[{index}]"
+        identifier = capability.get("id")
+        require(isinstance(identifier, str) and identifier, f"{location} has no id")
+        require(identifier not in capability_by_id, f"duplicate capability id: {identifier}")
+        kind = capability.get("kind")
+        classification = capability.get("classification")
+        status = capability.get("status")
+        require(kind in ALLOWED_CAPABILITY_KINDS, f"{location} has unknown kind: {kind}")
+        require(classification in ALLOWED_COVERAGE_CLASSIFICATIONS, f"unknown capability classification: {classification}")
+        require(status in ALLOWED_COVERAGE_STATUSES, f"{location} has unknown status: {status}")
         require(capability.get("rationale"), f"capability[{index}] has no rationale")
+        symbols = expand_symbol_selectors(capability, candidate, location)
+        if kind == "semantic":
+            require(symbols, f"{location} semantic capability has no symbols")
+        else:
+            require(not symbols, f"{location} implementation capability must not claim exported symbols")
+        for name in symbols:
+            owner = symbol_owners.get(name)
+            require(owner is None, f"symbol {name!r} belongs to both {owner} and {identifier}")
+            symbol_owners[name] = identifier
+        if classification.startswith("native-"):
+            require_native_contract(capability, location)
+        elif classification == "rust-subsumed":
+            require(status == "documented", f"{location} rust-subsumed capability must be documented")
+            require(capability.get("rust_equivalent"), f"{location} rust-subsumed capability has no Rust equivalent")
+            nonempty_strings(capability.get("evidence"), f"{location}.evidence")
+        elif classification == "abi-only":
+            require(status == "documented", f"{location} ABI-only capability must be documented")
+            require(capability.get("why_no_native_operation"), f"{location} ABI-only capability lacks why_no_native_operation")
+            require(capability.get("reviewed"), f"{location} ABI-only capability lacks reviewed status")
+            nonempty_strings(capability.get("review_evidence"), f"{location}.review_evidence")
+        else:
+            require(classification == "internal-runtime", f"{location} is unclassified")
+            require(status == "documented", f"{location} internal runtime capability must be documented")
+            require(capability.get("runtime_owner"), f"{location} internal runtime capability has no owner")
+            nonempty_strings(capability.get("evidence"), f"{location}.evidence")
+        capability_by_id[identifier] = capability
+        classification_counts[classification] += len(symbols)
+        status_counts[status] += 1
+        kind_counts[kind] += 1
+        expanded_groups.append(
+            {
+                "id": identifier,
+                "kind": kind,
+                "classification": classification,
+                "status": status,
+                "symbol_count": len(symbols),
+            }
+        )
+
+    missing_symbols = sorted(set(candidate) - set(symbol_owners))
+    require(not missing_symbols, f"candidate exports have no semantic capability: {', '.join(missing_symbols)}")
+    extra_symbols = sorted(set(symbol_owners) - set(candidate))
+    require(not extra_symbols, f"capability ledger contains non-candidate exports: {', '.join(extra_symbols)}")
+
+    candidate_only_by_classification: collections.Counter[str] = collections.Counter()
+    for index, record in enumerate(candidate_only_records):
+        require(isinstance(record, Mapping), f"candidate_only[{index}] is not a table")
+        location = f"candidate_only[{index}]"
+        for key in ("name", "capability", "classification", "status", "rationale"):
+            require(record.get(key), f"{location} is missing {key}")
+        name = record["name"]
+        capability_id = record["capability"]
+        require(isinstance(name, str), f"{location}.name is not a string")
+        require(isinstance(capability_id, str), f"{location}.capability is not a string")
+        capability = capability_by_id.get(capability_id)
+        require(capability is not None, f"{location} has unknown capability owner: {capability_id}")
+        require(symbol_owners.get(name) == capability_id, f"{location} is not owned by capability {capability_id}")
+        require(record["classification"] == capability["classification"], f"{location} classification disagrees with {capability_id}")
+        require(record["status"] == capability["status"], f"{location} status disagrees with {capability_id}")
+        record_names.append(name)
+        candidate_only_by_classification[record["classification"]] += 1
+    require(tuple(record_names) == EXPECTED_CANDIDATE_ONLY, "candidate-only records do not match symbols")
     check_no_local_absolute_path(data)
     return {
         "reference_count": len(reference),
@@ -322,7 +454,19 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
         "metadata_mismatches_count": 0,
         "reference_sha256": sha256_file(reference_path),
         "candidate_sha256": sha256_file(candidate_path),
-        "unclassified_symbol_count": len(candidate),
+        "capability_count": len(capabilities),
+        "semantic_capability_count": kind_counts["semantic"],
+        "implementation_capability_count": kind_counts["implementation"],
+        "symbol_count": len(candidate),
+        "classified_symbol_count": len(symbol_owners),
+        "unclassified_symbol_count": len(missing_symbols),
+        "unclassified_capability_count": 0,
+        "classification_counts": dict(sorted(classification_counts.items())),
+        "status_counts": dict(sorted(status_counts.items())),
+        "candidate_only_by_classification": dict(sorted(candidate_only_by_classification.items())),
+        "deferred_capability_count": status_counts["deferred"],
+        "expanded_capabilities": expanded_groups,
+        "m9_green": True,
     }
 
 

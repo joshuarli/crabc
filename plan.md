@@ -2869,6 +2869,33 @@ character, iconv, regex, glob, wordexp, passwd/group, special math, and
 complex facilities. They remain explicit M9/M10 capability work; no x86_64
 implementation is enabled by this milestone.
 
+### Prerequisite progress — crabc-rs M9 capability accounting — 2026-08-20 UTC
+
+`crabc-rs` M9 is complete for the measured Linux/AArch64 little-endian dynamic
+surface. The v2 `compat/crabc-rs/coverage.toml` ledger assigns every one of
+the 1,669 candidate exports to exactly one semantic capability group, pins the
+1,647-symbol musl baseline and both source TSV SHA-256 digests, and gives all
+22 candidate-only exports an independently checked owning group and rationale.
+The generated Python report is green with zero unclassified public symbols and
+zero unclassified capability groups.
+
+The ledger makes the present boundary honest: four narrowly scoped capability
+groups have verified native direct-boundary evidence, 40 meaningful groups are
+deferred with an intended M10 API and reason, and 14 are documented as
+Rust-subsumed, strictly ABI-only, or internal runtime. Existing M0–M8 slices
+remain evidence for their named operations; a mixed C semantic group is not
+called verified until its whole native contract is complete. The ledger
+records malloc as Rust-subsumed and out of scope for crabc-rs under the
+mimalloc strategy; it does not treat that,
+`fopen64`, private crypt/atfork helpers, or loader ABI plumbing as hidden
+native coverage. The M9 mutation suite rejects missing, duplicated, or extra
+exports; unowned candidate-only entries; unclassified groups; C-ABI/errno
+hops in verified native entries; and unsupported ABI-only classifications.
+
+This completes accounting, not native capability completion. M10 must turn
+each meaningful deferred group into an idiomatic Rust API or a rigorously
+documented Rust-native equivalent before the x86_64 gate can open.
+
 ---
 
 # AArch64 maturity gates

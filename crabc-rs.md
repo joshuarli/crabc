@@ -1421,6 +1421,13 @@ candidate-only exports, whose rationale must remain visible. Static archive
 `nm -A` triage is useful implementation evidence but is not a substitute for
 this dynamic C/Rust capability accounting.
 
+Small irregular groups use literal `symbols`. Regular exported families may
+use `symbol_patterns`, but only as a readable selector for the frozen measured
+candidate TSV: the validator expands it, rejects an empty selector, and still
+requires exactly one owner for every concrete export. The report records the
+expanded group counts, source digests, and full zero-unclassified result. A
+pattern is therefore not an open-ended future-symbol catch-all.
+
 Zero unclassified symbols is a hard completion gate.
 
 ---
@@ -3083,6 +3090,41 @@ or genuinely Rust-subsumed
 ```
 
 Every `abi-only` or `internal-runtime` classification must be explicitly justified.
+
+## M9 completion record — 2026-08-20 UTC
+
+M9 is complete for the measured Linux/AArch64-little-endian dynamic surface.
+`compat/crabc-rs/coverage.toml` is now a v2 semantic ledger for all 1,669
+candidate exports, with the pinned 1,647-symbol musl baseline and both input
+TSV SHA-256 digests checked on every run. It has 57 symbol-backed semantic
+groups plus one non-exported private-runtime implementation capability. The
+generated `python3 compat/rustix/run.py --check` report proves:
+
+```text
+classified public crabc symbols = 1669 / 1669
+unclassified public crabc symbols = 0
+unclassified crabc capability groups = 0
+candidate-only exports = 22 / 22 with an owning group
+```
+
+Status is deliberately independent of classification. `verified` records a
+native seam with direct-boundary and behavioral evidence; `deferred` records a
+meaningful capability and its intended native API, reason, and M10 target; and
+`documented` records Rust-subsumed, ABI-only, or private-runtime behavior with
+the required rationale. The current ledger has four narrowly verified groups,
+40 deferred groups, and 14 documented groups. Existing M0–M8 vertical slices
+remain evidence for their listed operations, but a mixed C capability group is
+deferred until its full native contract is complete. This is not a claim of M10
+completion.
+
+In particular, malloc remains Rust-subsumed and out of scope for crabc-rs
+(mimalloc remains the underlying allocator strategy); `fopen64` is an
+Linux/AArch64 ABI alias rather than stdio coverage; private crypt, atfork, and
+loader helpers are narrowly ABI/runtime entries; and `tgkill` is recorded as
+the verified native-safe `signal::kill_thread` seam. The validator and its
+mutation tests reject a missing, duplicate, or extra symbol; an unowned
+candidate-only symbol; an unclassified group; native public-C-ABI or
+TLS-errno use; and ABI-only records lacking review evidence.
 
 ---
 

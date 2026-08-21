@@ -1,18 +1,22 @@
-# M0 seed for the complete native Rust accounting of crabc's public ABI.
+# M9 complete capability accounting for crabc's measured public ABI.
 #
 # The dynamic symbol files are the measured AArch64 boundary from milestone
-# 10.5. The embedded candidate list makes the seed inspectable without a
-# developer checkout; the validator cross-checks it against those source TSVs.
-# This is inventory evidence, not a claim that crabc-rs already implements the
-# listed capabilities.
-schema = "crabc.crabc-rs-coverage/v1"
+# 10.5. The embedded candidate list makes the ledger inspectable without a
+# developer checkout; the validator cross-checks it and its SHA-256 digest
+# against those source TSVs. A capability uses literal ``symbols`` for small
+# irregular sets or ``symbol_patterns`` for a regular exported family. The
+# validator expands patterns only against this frozen candidate set, rejects
+# selectors which match nothing, and requires exactly one semantic owner for
+# every resulting symbol. Thus patterns keep the ledger reviewable without
+# weakening its exact 1,669-symbol accounting.
+schema = "crabc.crabc-rs-coverage/v2"
 target = "aarch64-unknown-linux-musl"
-phase = "M0-seed"
+phase = "M9-complete"
 
 [policy]
-required_completion_unclassified = 0
 production_dependency = false
 public_c_abi_is_native_rust_coverage = false
+little_endian_only = true
 
 [dynamic_exports]
 reference_source = "../reports/symbols/musl-1.2.6-aarch64.dynamic.tsv"
@@ -23,6 +27,8 @@ candidate_only_count = 22
 missing_from_candidate_count = 0
 metadata_mismatches_count = 0
 reference_is_candidate_minus_candidate_only = true
+reference_sha256 = "93cd75cd5cffcef55541ffbd9ca496e7c18826a024d9250ee750b87c97fc9071"
+candidate_sha256 = "d43f517668bbd9ab8411e276cf873d71a5412b0c26d65b53f660b509cc3c2044"
 candidate_symbols = [
   "_Exit", "_Fork", "_IO_feof_unlocked", "_IO_ferror_unlocked", "_IO_getc", "_IO_getc_unlocked", "_IO_putc", "_IO_putc_unlocked",
   "___environ", "__assert_fail", "__auxv", "__crabc_runtime_v1", "__crypt_blowfish", "__crypt_md5", "__crypt_r", "__crypt_sha256", "__crypt_sha512",
@@ -262,149 +268,794 @@ candidate_only_symbols = [
 ]
 
 [[capability]]
-id = "public-dynamic-export-surface"
-symbol_source = "../reports/symbols/crabc-aarch64.dynamic.tsv"
-symbol_count = 1669
-classification = "unclassified"
-status = "inventory"
-rationale = "M0 records every measured candidate export before semantic grouping and native Rust design."
+id = "runtime.loader"
+kind = "semantic"
+symbols = ["__auxv", "__crabc_runtime_v1", "__dls2b", "__dls3", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym", "__libc_start_main", "__rc_clone", "__rc_create_thread_tls", "__rc_tls_base_offset", "__rc_tls_block_size", "__tls_get_addr", "_dl_debug_addr", "_dl_debug_state", "_dlstart", "_fini", "_init"]
+classification = "internal-runtime"
+status = "documented"
+runtime_owner = "ldso and the append-only private RuntimeV1 bridge"
+evidence = ["ldso/src/lib.rs", "compat/crabc-rs/verify_m7_loader.py", "compat/crabc-rs/verify_m7_runtime_thread.py"]
+rationale = "These loader, TLS, and private registration exports coordinate crabc and ldso. They have no installed application-facing header contract."
 
 [[capability]]
-id = "pinned-musl-dynamic-export-baseline"
-symbol_source = "../reports/symbols/musl-1.2.6-aarch64.dynamic.tsv"
-symbol_count = 1647
-classification = "unclassified"
-status = "inventory"
-rationale = "Pinned musl remains the C/POSIX ABI oracle; this baseline is provenance, not a Rust API claim."
+id = "runtime.compiler-abi"
+kind = "semantic"
+symbols = ["__cxa_atexit", "__cxa_finalize", "__setjmp", "__sigsetjmp", "__sigsetjmp_tail", "__stack_chk_fail", "__stack_chk_guard", "_longjmp", "_pthread_cleanup_pop", "_pthread_cleanup_push", "_setjmp", "longjmp", "rust_eh_personality", "setjmp", "siglongjmp", "sigsetjmp"]
+classification = "internal-runtime"
+status = "documented"
+runtime_owner = "compiler, unwinding, and C ABI support"
+evidence = ["libc/src/lib.rs", "libc/src/arch/aarch64.s", "crabc-rs.md#33"]
+rationale = "These exports preserve compiler and C control-transfer ABI behavior; Rust exposes neither a safe nor a meaningful direct operation for them."
+
+[[capability]]
+id = "runtime.private-facades"
+kind = "implementation"
+classification = "internal-runtime"
+status = "documented"
+runtime_owner = "crabc-core private RuntimeV1 consumers"
+evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/runtime.rs", "crabc-rs/src/cfile.rs"]
+rationale = "The loader, thread/TLS, and CFile facades are useful native implementation capabilities not represented by an additional public export."
+
+[[capability]]
+id = "process.globals"
+kind = "semantic"
+symbols = ["___environ", "__daylight", "__environ", "__h_errno_location", "__optpos", "__optreset", "__progname", "__progname_full", "__signgam", "__timezone", "__tzname", "_environ", "__posix_getopt", "daylight", "environ", "getenv", "getopt", "getopt_long", "getopt_long_only", "h_errno", "optarg", "opterr", "optind", "optopt", "optreset", "program_invocation_name", "program_invocation_short_name", "putenv", "signgam", "timezone", "tzname"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["process::Environment", "process::Arguments", "time::TimeZone"]
+target_milestone = "M10"
+deferred_reason = "These C globals carry mutable process-wide state; native APIs need explicit ownership and synchronization contracts."
+rationale = "Mutable C global aliases are not an idiomatic native Rust interface."
+
+[[capability]]
+id = "error.termination"
+kind = "semantic"
+symbols = ["_Exit", "_Fork", "__assert_fail", "__errno_location", "__xpg_strerror_r", "_exit", "abort", "at_quick_exit", "atexit", "err", "errx", "exit", "herror", "hstrerror", "perror", "quick_exit", "secure_getenv", "strerror", "strerror_r", "strsignal", "verr", "verrx", "vwarn", "vwarnx", "warn", "warnx"]
+classification = "rust-subsumed"
+status = "documented"
+rust_equivalent = "Result and std::io::Error for recoverable failures; panic/termination APIs for process termination"
+evidence = ["crabc-rs.md#33", "crabc-rs.md#71"]
+rationale = "Rust error propagation and termination mechanisms are more explicit than errno/varargs reporting and C exit callbacks."
+
+[[capability]]
+id = "memory.allocator"
+kind = "semantic"
+symbols = ["aligned_alloc", "calloc", "free", "malloc", "malloc_usable_size", "memalign", "posix_memalign", "realloc", "reallocarray", "valloc"]
+classification = "rust-subsumed"
+status = "documented"
+rust_equivalent = "Rust allocation APIs backed by the project-wide mimalloc strategy"
+evidence = ["crabc-rs.md#34", "plan.md"]
+rationale = "crabc-rs deliberately does not expose malloc-family APIs; allocation is out of scope and mimalloc is the current underlying strategy."
+
+[[capability]]
+id = "memory.bytes"
+kind = "semantic"
+symbols = ["bcmp", "bcopy", "bzero", "explicit_bzero", "memccpy", "memchr", "memcmp", "memcpy", "memmem", "memmove", "mempcpy", "memrchr", "memset", "swab"]
+classification = "rust-subsumed"
+status = "documented"
+rust_equivalent = "slice methods and explicit unsafe pointer copy/fill operations"
+evidence = ["crabc-rs.md#33", "crabc-rs.md#71"]
+rationale = "Rust slices and pointer primitives provide typed bounds-aware equivalents without a second C-string-style facade."
+
+[[capability]]
+id = "text.byte-strings"
+kind = "semantic"
+symbols = ["__xpg_basename", "basename", "dirname", "index", "rindex", "stpcpy", "stpncpy", "strcasestr", "strcat", "strchr", "strchrnul", "strcmp", "strcpy", "strcspn", "strdup", "strlcat", "strlcpy", "strlen", "strncat", "strncmp", "strncpy", "strndup", "strnlen", "strpbrk", "strrchr", "strsep", "strspn", "strstr", "strtok", "strtok_r", "strverscmp"]
+classification = "rust-subsumed"
+status = "documented"
+rust_equivalent = "&str, CStr/CString, Path, and slice search/copy APIs"
+evidence = ["crabc-rs.md#33", "crabc-rs.md#71"]
+rationale = "The native counterparts preserve encoding and ownership where C byte-string functions do not."
+
+[[capability]]
+id = "numeric.scalar"
+kind = "semantic"
+symbols = ["a64l", "abs", "bsearch", "div", "ffs", "ffsl", "ffsll", "imaxabs", "imaxdiv", "l64a", "labs", "ldiv", "lfind", "llabs", "lldiv", "lsearch", "qsort", "qsort_r"]
+classification = "rust-subsumed"
+status = "documented"
+rust_equivalent = "integer methods, iterators, slice sort/search, and collections"
+evidence = ["crabc-rs.md#33", "crabc-rs.md#71"]
+rationale = "Rust standard operations express integer and collection behavior with stronger types than C callbacks and div structs."
+
+[[capability]]
+id = "numeric.qsort-helper"
+kind = "semantic"
+symbols = ["__qsort_r"]
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "This is the private implementation helper behind public qsort_r; native sorting is accounted for by Rust slice and collection APIs."
+reviewed = "M9"
+review_evidence = ["libc/src/lib.rs", "include/stdlib.h"]
+rationale = "The helper is not itself a C header operation and cannot be used to hide the public sorting capability."
+
+[[capability]]
+id = "numeric.parse-format"
+kind = "semantic"
+symbols = ["atof", "atoi", "atol", "atoll", "ecvt", "fcvt", "gcvt", "getsubopt", "strtod", "strtod_l", "strtof", "strtof_l", "strtoimax", "strtol", "strtold", "strtold_l", "strtoll", "strtoul", "strtoull", "strtoumax", "wcstod", "wcstof", "wcstoimax", "wcstol", "wcstold", "wcstoll", "wcstoul", "wcstoull", "wcstoumax", "__strtod_l", "__strtof_l", "__strtoimax_internal", "__strtol_internal", "__strtold_l", "__strtoll_internal", "__strtoul_internal", "__strtoull_internal", "__strtoumax_internal"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["text::NumberParser", "text::LocaleNumberParser"]
+target_milestone = "M10"
+deferred_reason = "C parsing depends on locale, end-pointer, and errno conventions that need an owned Rust contract."
+rationale = "Rust parsing is useful but does not yet reproduce crabc's locale-sensitive conversion capability."
+
+[[capability]]
+id = "random.state"
+kind = "semantic"
+symbols = ["drand48", "erand48", "getrandom", "jrand48", "lcong48", "lrand48", "mrand48", "nrand48", "rand", "rand_r", "random", "seed48", "srand", "srand48", "srandom", "initstate", "setstate"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["rand::RandomState", "rand::random_u32"]
+target_milestone = "M10"
+deferred_reason = "The C interfaces hide mutable generator state; a native facade needs owned and explicit state."
+rationale = "Random generation is meaningful, but no native API may borrow libc's process-global state."
+
+[[capability]]
+id = "math.elementary"
+kind = "semantic"
+symbol_patterns = ["acos*", "asin*", "atan*", "cbrt*", "ceil*", "copysign*", "cos*", "exp", "expf", "expl", "exp2*", "exp10*", "expm1*", "fabs*", "fdim*", "floor*", "fma", "fmaf", "fmal", "fmax*", "fmin*", "fmod*", "hypot*", "log", "logf", "logl", "log10*", "log1p*", "log2*", "nearbyint*", "pow*", "rint*", "round*", "sin*", "sqrt*", "tan*", "trunc", "truncf", "truncl"]
+classification = "rust-subsumed"
+status = "documented"
+rust_equivalent = "primitive floating-point methods and operators"
+evidence = ["crabc-rs.md#33", "crabc-rs.md#71"]
+rationale = "Ordinary scalar math has direct, better-typed Rust primitive equivalents; no C ABI wrapper is warranted."
+
+[[capability]]
+id = "math.special"
+kind = "semantic"
+symbols = ["__fpclassify", "__fpclassifyf", "__fpclassifyl", "__lgammal_r", "__signbit", "__signbitf", "__signbitl", "drem", "dremf", "erf", "erfc", "erfcf", "erfcl", "erff", "erfl", "finite", "finitef", "frexp", "frexpf", "frexpl", "ilogb", "ilogbf", "ilogbl", "j0", "j0f", "j1", "j1f", "jn", "jnf", "ldexp", "ldexpf", "ldexpl", "lgamma", "lgamma_r", "lgammaf", "lgammaf_r", "lgammal", "lgammal_r", "llrint", "llrintf", "llrintl", "llround", "llroundf", "llroundl", "logb", "logbf", "logbl", "lrint", "lrintf", "lrintl", "lround", "lroundf", "lroundl", "modf", "modff", "modfl", "nan", "nanf", "nanl", "nextafter", "nextafterf", "nextafterl", "nexttoward", "nexttowardf", "nexttowardl", "remainder", "remainderf", "remainderl", "remquo", "remquof", "remquol", "scalb", "scalbf", "scalbln", "scalblnf", "scalblnl", "scalbn", "scalbnf", "scalbnl", "significand", "significandf", "tgamma", "tgammaf", "tgammal", "y0", "y0f", "y1", "y1f", "yn", "ynf"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["math::special", "math::decompose"]
+target_milestone = "M10"
+deferred_reason = "Musl-specific special, decomposition, and remainder algorithms need a shared Rust implementation seam."
+rationale = "These operations are meaningful beyond Rust primitive methods and cannot be counted as C/libm wrappers."
+
+[[capability]]
+id = "math.complex"
+kind = "semantic"
+symbol_patterns = ["cabs*", "cacos*", "carg*", "casin*", "catan*", "ccos*", "cexp*", "cimag*", "clog*", "conj*", "cpow*", "cproj*", "creal*", "csin*", "csqrt*", "ctan*"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["math::Complex32", "math::Complex64"]
+target_milestone = "M10"
+deferred_reason = "Complex operations require a deliberate owned complex type and shared musl algorithm ports."
+rationale = "C complex ABI functions have no current native Rust facade."
+
+[[capability]]
+id = "math.fenv"
+kind = "semantic"
+symbols = ["__flt_rounds", "feclearexcept", "fegetenv", "fegetexceptflag", "fegetround", "feholdexcept", "feraiseexcept", "fesetenv", "fesetexceptflag", "fesetround", "fetestexcept", "feupdateenv"]
+classification = "native-safe"
+status = "verified"
+rust_api = ["fenv::Environment", "fenv::EnvironmentGuard", "fenv::RoundingMode"]
+shared_impl = ["crabc_core::fenv"]
+native_boundary = "direct AArch64 FPCR/FPSR access"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/tests/m8_fenv.rs", "compat/crabc-rs/verify_m8_fenv.py"]
+rationale = "The native facade owns the calling-thread FP environment; dynamic rounding of arbitrary optimized Rust arithmetic remains explicitly limited."
+
+[[capability]]
+id = "locale.core"
+kind = "semantic"
+symbols = ["__ctype_b_loc", "__ctype_get_mb_cur_max", "__ctype_tolower_loc", "__ctype_toupper_loc", "__duplocale", "__freelocale", "__isalnum_l", "__isalpha_l", "__isblank_l", "__iscntrl_l", "__isdigit_l", "__isgraph_l", "__islower_l", "__isprint_l", "__ispunct_l", "__isspace_l", "__isupper_l", "__iswalnum_l", "__iswalpha_l", "__iswblank_l", "__iswcntrl_l", "__iswctype_l", "__iswdigit_l", "__iswgraph_l", "__iswlower_l", "__iswprint_l", "__iswpunct_l", "__iswspace_l", "__iswupper_l", "__iswxdigit_l", "__isxdigit_l", "__newlocale", "__nl_langinfo", "__nl_langinfo_l", "__strcasecmp_l", "__strcoll_l", "__strerror_l", "__strncasecmp_l", "__strxfrm_l", "__tolower_l", "__toupper_l", "__towctrans_l", "__towlower_l", "__towupper_l", "__uselocale", "__wcscoll_l", "__wcsftime_l", "__wcsxfrm_l", "__wctrans_l", "__wctype_l", "duplocale", "freelocale", "isalnum_l", "isalpha_l", "isblank_l", "iscntrl_l", "isdigit_l", "isgraph_l", "islower_l", "isprint_l", "ispunct_l", "isspace_l", "isupper_l", "iswalnum_l", "iswalpha_l", "iswblank_l", "iswcntrl_l", "iswctype_l", "iswdigit_l", "iswgraph_l", "iswlower_l", "iswprint_l", "iswpunct_l", "iswspace_l", "iswupper_l", "iswxdigit_l", "isxdigit_l", "localeconv", "newlocale", "nl_langinfo", "nl_langinfo_l", "setlocale", "strcasecmp", "strcasecmp_l", "strcoll", "strcoll_l", "strerror_l", "strfmon", "strfmon_l", "strncasecmp", "strncasecmp_l", "strxfrm", "strxfrm_l", "tolower_l", "toupper_l", "towctrans_l", "towlower_l", "towupper_l", "uselocale", "wcscasecmp_l", "wcscoll", "wcscoll_l", "wcsftime_l", "wcsncasecmp_l", "wcsxfrm", "wcsxfrm_l", "wctrans_l", "wctype_l"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["locale::Locale", "locale::LocaleGuard"]
+target_milestone = "M10"
+deferred_reason = "Native locale APIs must own locale state rather than borrow libc's mutable locale and mbstate singletons."
+rationale = "C locale handles and locale-sensitive aliases cannot be exposed as borrowed mutable process state."
+
+[[capability]]
+id = "text.ctype"
+kind = "semantic"
+symbols = ["isascii", "isalnum", "isalpha", "isblank", "iscntrl", "isdigit", "isgraph", "islower", "isprint", "ispunct", "isspace", "isupper", "isxdigit", "toascii", "tolower", "toupper"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["text::AsciiClass", "text::UnicodeClass"]
+target_milestone = "M10"
+deferred_reason = "The locale-independent versus locale-bound behavior must be explicit in the Rust type contract."
+rationale = "Byte classification is meaningful but should not inherit C int/EOF and locale global semantics."
+
+[[capability]]
+id = "text.wide-multibyte"
+kind = "semantic"
+symbols = ["btowc", "c16rtomb", "c32rtomb", "fgetwc", "fgetwc_unlocked", "fgetws", "fgetws_unlocked", "fputwc", "fputwc_unlocked", "fputws", "fputws_unlocked", "fwide", "fwprintf", "fwscanf", "getwc", "getwc_unlocked", "getwchar", "getwchar_unlocked", "iswalnum", "iswalpha", "iswblank", "iswcntrl", "iswctype", "iswdigit", "iswgraph", "iswlower", "iswprint", "iswpunct", "iswspace", "iswupper", "iswxdigit", "mblen", "mbrlen", "mbrtoc16", "mbrtoc32", "mbrtowc", "mbsinit", "mbsnrtowcs", "mbsrtowcs", "mbstowcs", "mbtowc", "putwc", "putwc_unlocked", "putwchar", "putwchar_unlocked", "swprintf", "swscanf", "towctrans", "towlower", "towupper", "ungetwc", "vfwprintf", "vfwscanf", "vswprintf", "vswscanf", "vwprintf", "vwscanf", "wcrtomb", "wcpcpy", "wcpncpy", "wcscasecmp", "wcscat", "wcschr", "wcscmp", "wcscpy", "wcscspn", "wcsdup", "wcsftime", "wcslen", "wcsncasecmp", "wcsncat", "wcsncmp", "wcsncpy", "wcsnlen", "wcsnrtombs", "wcspbrk", "wcsrchr", "wcsrtombs", "wcsspn", "wcsstr", "wcstok", "wcstombs", "wcswcs", "wcswidth", "wctob", "wctomb", "wctrans", "wctype", "wcwidth", "wmemchr", "wmemcmp", "wmemcpy", "wmemmove", "wmemset", "wprintf", "wscanf"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["text::WideString", "text::Converter", "text::MbState"]
+target_milestone = "M10"
+deferred_reason = "Wide and multibyte conversion needs owned converter/state types and an explicit locale contract."
+rationale = "Raw wchar and mbstate interfaces cannot safely reuse libc-owned mutable conversion state."
+
+[[capability]]
+id = "text.iconv"
+kind = "semantic"
+symbols = ["iconv", "iconv_close", "iconv_open"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["text::Converter"]
+target_milestone = "M10"
+deferred_reason = "A converter must own its state and report invalid sequences without C sentinel conventions."
+rationale = "The C opaque iconv handle is not the target native interface."
+
+[[capability]]
+id = "pattern.fnmatch"
+kind = "semantic"
+symbols = ["fnmatch"]
+classification = "native-safe"
+status = "verified"
+rust_api = ["pattern::fnmatch", "pattern::FnmatchFlags"]
+shared_impl = ["crabc_core::pattern"]
+native_boundary = "shared allocation-free byte matcher"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/tests/m8_fnmatch.rs", "compat/crabc-rs/verify_m8_fnmatch.py"]
+rationale = "The native matcher accepts CStr bytes and explicitly models POSIX flags without a C or errno hop."
+
+[[capability]]
+id = "pattern.regex"
+kind = "semantic"
+symbols = ["regcomp", "regerror", "regexec", "regfree"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["pattern::Regex"]
+target_milestone = "M10"
+deferred_reason = "POSIX regex needs an owned compiled expression and explicit allocation/error semantics."
+rationale = "Borrowing C regex_t state is not native Rust coverage."
+
+[[capability]]
+id = "pattern.glob"
+kind = "semantic"
+symbols = ["glob", "globfree"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["pattern::glob"]
+target_milestone = "M10"
+deferred_reason = "Glob results require owned entries and an explicit current-directory/error policy."
+rationale = "C glob_t ownership and callbacks cannot be hidden behind a borrowed wrapper."
+
+[[capability]]
+id = "pattern.wordexp"
+kind = "semantic"
+symbols = ["wordexp", "wordfree"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["unsafe pattern::word_expand"]
+target_milestone = "M10"
+deferred_reason = "Shell execution and injection policy must be explicit at the call site."
+rationale = "Implicit C shell expansion cannot honestly be a universally safe Rust operation."
+
+[[capability]]
+id = "stdio.memory-stream"
+kind = "semantic"
+symbols = ["fmemopen"]
+classification = "native-higher-level"
+status = "verified"
+rust_api = ["cfile::CFile::from_memory"]
+shared_impl = ["private RuntimeV1 CFile callbacks"]
+native_boundary = "private append-only RuntimeV1 table"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/tests/m8_cfile.rs", "compat/crabc-rs/verify_m8_cfile.py"]
+rationale = "CFile owns a close-on-drop bounded memory stream over an exclusive buffer borrow."
+
+[[capability]]
+id = "stdio.path-stream"
+kind = "semantic"
+symbols = ["ctermid", "fdopen", "fopen", "fopencookie", "freopen", "pclose", "popen", "tmpfile"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["stdio::File", "stdio::Stream"]
+target_milestone = "M10"
+deferred_reason = "File/path constructors, standard streams, buffering policy, and child-pipe lifetime need native ownership rules."
+rationale = "Only bounded fmemopen is native today; path and pipe streams remain separate capabilities."
+
+[[capability]]
+id = "stdio.fopen64-alias"
+kind = "semantic"
+symbols = ["fopen64"]
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "On Linux/AArch64 off_t is already 64-bit, so this is only an ABI alias of fopen; it does not represent a distinct operation."
+reviewed = "M9"
+review_evidence = ["include/stdio.h", "libc/src/lib.rs"]
+rationale = "This candidate-only alias must not be used to claim completion of path-based stdio."
+
+[[capability]]
+id = "stdio.stream-io"
+kind = "semantic"
+symbols = ["_IO_feof_unlocked", "_IO_ferror_unlocked", "_IO_getc", "_IO_getc_unlocked", "_IO_putc", "_IO_putc_unlocked", "__fbufsize", "__fgetwc_unlocked", "__flbf", "__fpending", "__fpurge", "__fputwc_unlocked", "__freadable", "__freadahead", "__freading", "__freadptr", "__freadptrinc", "__fseterr", "__fsetlocking", "__fwritable", "__fwriting", "__getdelim", "__overflow", "__uflow", "clearerr", "clearerr_unlocked", "feof", "feof_unlocked", "ferror", "ferror_unlocked", "fgetc", "fgetc_unlocked", "fgetln", "fgets", "fgets_unlocked", "fpurge", "fread", "fread_unlocked", "fputc", "fputc_unlocked", "fputs", "fputs_unlocked", "fwrite", "fwrite_unlocked", "getc", "getc_unlocked", "getchar", "getchar_unlocked", "getdelim", "getline", "gets", "getw", "putc", "putc_unlocked", "putchar", "putchar_unlocked", "puts", "putw", "rewind", "ungetc"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["stdio::Stream", "std::io::Read", "std::io::Write", "std::io::BufRead"]
+target_milestone = "M10"
+deferred_reason = "Native streams need owned handles, buffering policy, and error state rather than direct FILE internals."
+rationale = "C FILE helpers and unlocked aliases are not individual native Rust APIs."
+
+[[capability]]
+id = "stdio.position-buffering"
+kind = "semantic"
+symbols = ["_flushlbf", "fclose", "fflush", "fflush_unlocked", "fileno", "fileno_unlocked", "fgetpos", "fseek", "fseeko", "fsetpos", "ftell", "ftello", "ftrylockfile", "funlockfile", "flockfile", "open_memstream", "open_wmemstream", "setbuf", "setbuffer", "setlinebuf", "setvbuf", "stderr", "stdin", "stdout"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["stdio::Stream", "std::io::Seek"]
+target_milestone = "M10"
+deferred_reason = "General FILE lifecycle, locking, position, and expandable stream ownership need a coherent native design."
+rationale = "The M8 CFile facade deliberately covers only borrowed bounded memory streams."
+
+[[capability]]
+id = "stdio.format"
+kind = "semantic"
+symbols = ["__isoc99_fscanf", "__isoc99_fwscanf", "__isoc99_scanf", "__isoc99_sscanf", "__isoc99_swscanf", "__isoc99_vfscanf", "__isoc99_vfwscanf", "__isoc99_vscanf", "__isoc99_vsscanf", "__isoc99_vswscanf", "__isoc99_vwscanf", "__isoc99_wscanf", "asprintf", "dprintf", "fprintf", "fscanf", "printf", "scanf", "snprintf", "sprintf", "sscanf", "vasprintf", "vdprintf", "vfprintf", "vfscanf", "vprintf", "vscanf", "vsnprintf", "vsprintf", "vsscanf"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["stdio::format", "text::Scan"]
+target_milestone = "M10"
+deferred_reason = "Rust formatting subsumes output, but scanf-like parsing needs an explicit typed native contract."
+rationale = "No C varargs imitation is counted as native coverage."
+
+[[capability]]
+id = "filesystem.path-metadata"
+kind = "semantic"
+symbols = ["__fxstat", "__fxstatat", "__lxstat", "__xmknod", "__xmknodat", "__xstat", "access", "chdir", "chmod", "chown", "chroot", "copy_file_range", "creat", "eaccess", "euidaccess", "faccessat", "fchdir", "fchmod", "fchmodat", "fchown", "fchownat", "fstat", "fstatat", "fstatfs", "fstatvfs", "ftruncate", "futimens", "futimes", "futimesat", "get_current_dir_name", "getcwd", "lchmod", "lchown", "link", "linkat", "lstat", "lutimes", "mkdir", "mkdirat", "mkfifo", "mkfifoat", "mknod", "mknodat", "open", "openat", "readlink", "readlinkat", "realpath", "remove", "rename", "renameat", "renameat2", "rmdir", "stat", "statfs", "statvfs", "statx", "symlink", "symlinkat", "truncate", "unlink", "unlinkat", "utime", "utimensat", "utimes"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["fs::Path", "fs::Metadata", "fs::Permissions"]
+target_milestone = "M10"
+deferred_reason = "M2 verifies open/stat/link/readlink/rename/mkdir/chmod/timestamp slices, but the remaining C path and metadata aliases need complete native ownership and policy coverage."
+rationale = "The M2 native filesystem surface is direct-core, but this full C semantic group is intentionally not yet claimed complete."
+
+[[capability]]
+id = "filesystem.directory"
+kind = "semantic"
+symbols = ["alphasort", "closedir", "dirfd", "fdopendir", "ftw", "getdents", "nftw", "opendir", "readdir", "readdir_r", "rewinddir", "scandir", "seekdir", "telldir", "versionsort"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["fs::RawDir", "fs::RawDirEntry"]
+target_milestone = "M10"
+deferred_reason = "Directory iteration must own entries and make traversal, sorting, and callback behavior explicit."
+rationale = "C DIR and ftw callback ownership are not the native interface."
+
+[[capability]]
+id = "filesystem.extensions"
+kind = "semantic"
+symbols = ["fallocate", "fgetxattr", "flistxattr", "fremovexattr", "fsetxattr", "getxattr", "lgetxattr", "listxattr", "llistxattr", "lremovexattr", "lsetxattr", "memfd_create", "mkdtemp", "mkostemp", "mkostemps", "mkstemp", "mkstemps", "mktemp", "name_to_handle_at", "open_by_handle_at", "posix_fadvise", "posix_fallocate", "posix_getdents", "removexattr", "setxattr", "tempnam", "tmpnam"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["unsafe fs::FileHandle", "fs::TempFile", "fs::xattr"]
+target_milestone = "M10"
+deferred_reason = "File handles, xattrs, temporary paths, and storage policy need explicit ownership and race contracts."
+rationale = "These extensions expose kernel-owned state or path races which cannot all be universally safe."
+
+[[capability]]
+id = "io.descriptor"
+kind = "semantic"
+symbols = ["close", "dup", "dup2", "dup3", "fcntl", "fdatasync", "flock", "fsync", "ioctl", "lockf", "lseek", "pipe", "pipe2", "posix_close", "pread", "preadv", "preadv2", "pwrite", "pwritev", "pwritev2", "read", "readv", "readahead", "sendfile", "splice", "sync", "sync_file_range", "syncfs", "tee", "vmsplice", "write", "writev"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["io::OwnedFd", "io::read", "io::write", "io::DescriptorOps"]
+target_milestone = "M10"
+deferred_reason = "M5 verifies duplication, flags, read/write, positioning, durability, and stdio descriptor helpers; positioned/vector/splice and the remaining descriptor semantics still need native coverage."
+rationale = "The direct descriptor slice is native, but the full exported descriptor family is not yet complete."
+
+[[capability]]
+id = "io.readiness"
+kind = "semantic"
+symbols = ["epoll_create", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_wait", "eventfd", "eventfd_read", "eventfd_write", "poll", "ppoll", "pselect", "select"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["event::Poller", "event::Epoll", "event::EventFd"]
+target_milestone = "M10"
+deferred_reason = "M3/M5 verify poll, eventfd, and epoll slices; select-family and full readiness lifecycle coverage remain outstanding."
+rationale = "Readiness interfaces expose descriptor lifetime and raw event contracts explicitly."
+
+[[capability]]
+id = "memory.vm"
+kind = "semantic"
+symbols = ["brk", "madvise", "mincore", "mlock", "mlock2", "mlockall", "mmap", "mprotect", "mremap", "msync", "munlock", "munlockall", "munmap", "posix_madvise", "remap_file_pages", "sbrk"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["mm::Mmap", "unsafe mm::mprotect", "unsafe mm::map_raw"]
+target_milestone = "M10"
+deferred_reason = "M3/M5 verify anonymous and file-backed mappings, protection, and unmapping; brk, locking, remapping, and advisory APIs remain separate unsafe work."
+rationale = "Address mapping and protection can invalidate Rust reference assumptions and therefore remain explicitly unsafe."
+
+[[capability]]
+id = "time.clock-calendar"
+kind = "semantic"
+symbols = ["adjtime", "adjtimex", "asctime", "asctime_r", "clock", "clock_adjtime", "clock_getcpuclockid", "clock_getres", "clock_gettime", "clock_nanosleep", "clock_settime", "ctime", "ctime_r", "difftime", "ftime", "getdate", "getdate_err", "getitimer", "gettimeofday", "gmtime", "gmtime_r", "localtime", "localtime_r", "mktime", "setitimer", "settimeofday", "stime", "strftime", "strftime_l", "strptime", "time", "timegm", "times", "timespec_get", "tzset"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["time::Clock", "time::Timespec", "time::CalendarTime"]
+target_milestone = "M10"
+deferred_reason = "M3/M5 verify clock_gettime and clock_getres; calendars, global clock control, and C formatting remain distinct native design work."
+rationale = "The existing native time seam handles direct clock data, but legacy calendar and formatting aliases are not complete."
+
+[[capability]]
+id = "time.timers"
+kind = "semantic"
+symbols = ["alarm", "nanosleep", "sleep", "timer_create", "timer_delete", "timer_getoverrun", "timer_gettime", "timer_settime", "timerfd_create", "timerfd_gettime", "timerfd_settime", "ualarm", "usleep"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["time::Timer", "time::TimerFd"]
+target_milestone = "M10"
+deferred_reason = "Timer callbacks, signal delivery, and descriptor ownership need explicit native lifetime rules."
+rationale = "C timer state and alarms cannot be represented as implicit process-global side effects."
+
+[[capability]]
+id = "network.socket"
+kind = "semantic"
+symbols = ["accept", "accept4", "bind", "connect", "getpeername", "getsockname", "getsockopt", "listen", "recv", "recvfrom", "recvmmsg", "recvmsg", "send", "sendmmsg", "sendmsg", "sendto", "setsockopt", "shutdown", "sockatmark", "socket", "socketpair"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["net::Socket", "net::SocketAddr", "net::SocketOptions"]
+target_milestone = "M10"
+deferred_reason = "M3 verifies socketpair/send/recv; Internet lifecycle, address, and option operations remain deliberately deferred."
+rationale = "Socket descriptors and caller-provided buffers make the raw native layer explicitly unsafe where needed."
+
+[[capability]]
+id = "network.address"
+kind = "semantic"
+symbols = ["ether_aton", "ether_aton_r", "ether_hostton", "ether_line", "ether_ntoa", "ether_ntoa_r", "ether_ntohost", "freeifaddrs", "getifaddrs", "gethostname", "htonl", "htons", "if_freenameindex", "if_indextoname", "if_nameindex", "if_nametoindex", "in6addr_any", "in6addr_loopback", "inet_addr", "inet_aton", "inet_lnaof", "inet_makeaddr", "inet_netof", "inet_network", "inet_ntoa", "inet_ntop", "inet_pton", "ntohl", "ntohs"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["net::IpAddr", "net::InterfaceName", "net::Interfaces"]
+target_milestone = "M10"
+deferred_reason = "Address codecs and interface lists need owned values and length-safe parsing."
+rationale = "C static-buffer and pointer-returning address helpers are not native Rust interfaces."
+
+[[capability]]
+id = "network.resolver"
+kind = "semantic"
+symbols = ["__res_state", "_ns_flagdata", "dn_comp", "dn_expand", "dn_skipname", "freeaddrinfo", "gai_strerror", "getaddrinfo", "getnameinfo", "ns_get16", "ns_get32", "ns_initparse", "ns_name_uncompress", "ns_parserr", "ns_put16", "ns_put32", "ns_skiprr", "res_init", "res_mkquery", "res_query", "res_querydomain", "res_search", "res_send"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["resolver::Resolver", "resolver::AddressInfo", "resolver::DnsPacket"]
+target_milestone = "M10"
+deferred_reason = "M7 verifies bounded configured resolution; the full DNS packet and resolver state API remains native design work."
+rationale = "The native resolver exposes owned bounded records instead of C-owned addrinfo lists, but does not yet cover the full C resolver group."
+
+[[capability]]
+id = "network.netdb"
+kind = "semantic"
+symbols = ["endhostent", "endnetent", "endprotoent", "endservent", "gethostbyaddr", "gethostbyaddr_r", "gethostbyname", "gethostbyname2", "gethostbyname2_r", "gethostbyname_r", "gethostent", "getnetbyaddr", "getnetbyname", "getnetent", "getprotobyname", "getprotobynumber", "getprotoent", "getservbyname", "getservbyname_r", "getservbyport", "getservbyport_r", "getservent", "sethostent", "setnetent", "setprotoent", "setservent"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["netdb::HostDatabase", "netdb::ServiceDatabase", "netdb::ProtocolDatabase"]
+target_milestone = "M10"
+deferred_reason = "M7 verifies owned snapshot records; legacy enumeration and every C database alias still need full API coverage."
+rationale = "Native netdb facilities use owned snapshots rather than C static record buffers, but the full group remains incomplete."
+
+[[capability]]
+id = "process.control"
+kind = "semantic"
+symbols = ["clone", "daemon", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve", "fork", "getpgid", "getpgrp", "getpid", "getppid", "getsid", "nice", "posix_spawn", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "posix_spawn_file_actions_init", "posix_spawnattr_destroy", "posix_spawnattr_getflags", "posix_spawnattr_getpgroup", "posix_spawnattr_getschedparam", "posix_spawnattr_getschedpolicy", "posix_spawnattr_getsigdefault", "posix_spawnattr_getsigmask", "posix_spawnattr_init", "posix_spawnattr_setflags", "posix_spawnattr_setpgroup", "posix_spawnattr_setschedparam", "posix_spawnattr_setschedpolicy", "posix_spawnattr_setsigdefault", "posix_spawnattr_setsigmask", "posix_spawnp", "setpgid", "setpgrp", "setsid", "vfork", "wait", "wait3", "wait4", "waitid", "waitpid"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["process::Command", "unsafe process::fork", "process::wait", "process::SpawnOptions"]
+target_milestone = "M10"
+deferred_reason = "M4/M6 verify process identity, fork/exec/wait slices, but all legacy exec and posix_spawn configurations need one complete ownership contract."
+rationale = "Fork and raw spawning are unsafe, while the owned command/wait facade provides the safe subset."
+
+[[capability]]
+id = "process.credentials-limits"
+kind = "semantic"
+symbols = ["clearenv", "getegid", "geteuid", "getgid", "getgroups", "getpriority", "getresgid", "getresuid", "getrlimit", "getrusage", "gettid", "getuid", "setegid", "setenv", "seteuid", "setfsgid", "setfsuid", "setgid", "setgroups", "setpriority", "setregid", "setresgid", "setresuid", "setreuid", "setrlimit", "setuid", "umask", "unsetenv"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["process::Credentials", "process::ResourceLimit", "unsafe process::Environment"]
+target_milestone = "M10"
+deferred_reason = "Credentials, limits, and global environment mutation need a full process-wide mutation and restoration contract."
+rationale = "Credentials, limits, and global environment mutation are explicit due to process-wide effects."
+
+[[capability]]
+id = "process.signal"
+kind = "semantic"
+symbols = ["__libc_current_sigrtmax", "__libc_current_sigrtmin", "__sysv_signal", "bsd_signal", "kill", "killpg", "pause", "psiginfo", "psignal", "raise", "sigaction", "sigaddset", "sigaltstack", "sigandset", "sigdelset", "sigemptyset", "sigfillset", "sighold", "sigignore", "siginterrupt", "sigisemptyset", "sigismember", "sigorset", "sigpause", "sigpending", "sigprocmask", "sigqueue", "sigrelse", "sigset", "signal", "signalfd", "sigsuspend", "sigtimedwait", "sigwait", "sigwaitinfo"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["signal::Signal", "signal::SigSet", "unsafe signal::SigAction"]
+target_milestone = "M10"
+deferred_reason = "M6 verifies masks, waiting, signalfd, and delivery slices; complete handler, altstack, legacy alias, and async-safety coverage remains outstanding."
+rationale = "Signals, handlers, and masks are inherently unsafe or process-global and are modeled explicitly."
+
+[[capability]]
+id = "process.thread-kill"
+kind = "semantic"
+symbols = ["tgkill"]
+classification = "native-safe"
+status = "verified"
+rust_api = ["signal::kill_thread"]
+shared_impl = ["crabc_core::process::tgkill"]
+native_boundary = "direct AArch64 tgkill syscall"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/tests/m6_signal_process.rs", "compat/crabc-rs/verify_m6.py"]
+rationale = "Typed Pid and Signal make this thread-directed signal operation a safe native facade."
+
+[[capability]]
+id = "process.atfork-exit-hooks"
+kind = "semantic"
+symbols = ["__fork_handler", "__funcs_on_exit"]
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "These are C callback registries used by fork/exit internals; native process APIs must own their own lifecycle rather than expose libc callback lists."
+reviewed = "M9"
+review_evidence = ["libc/src/pthread_atfork.rs", "libc/src/lib.rs"]
+rationale = "The private helper exports do not complete public fork or exit semantics."
+
+[[capability]]
+id = "thread.pthread-c11"
+kind = "semantic"
+symbol_patterns = ["call_once", "cnd_*", "mtx_*", "pthread_*", "thrd_*", "tss_*"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["thread::Thread", "thread::Mutex", "thread::Condvar", "thread::TlsKey"]
+target_milestone = "M10"
+deferred_reason = "The M7 slice proves private runtime thread/TLS integration, while the full pthread and C11 synchronization surface still needs complete native ownership and cancellation contracts."
+rationale = "Raw pthread object layouts and cancellation semantics cannot be hidden as safe native Rust coverage."
+
+[[capability]]
+id = "ipc"
+kind = "semantic"
+symbols = ["aio_cancel", "aio_error", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "ftok", "lio_listio", "mq_close", "mq_getattr", "mq_notify", "mq_open", "mq_receive", "mq_send", "mq_setattr", "mq_timedreceive", "mq_timedsend", "mq_unlink", "msgctl", "msgget", "msgrcv", "msgsnd", "sem_close", "sem_destroy", "sem_getvalue", "sem_init", "sem_open", "sem_post", "sem_timedwait", "sem_trywait", "sem_unlink", "sem_wait", "semctl", "semget", "semop", "semtimedop", "shm_open", "shm_unlink", "shmat", "shmctl", "shmdt", "shmget"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["ipc::Queue", "ipc::Semaphore", "ipc::SharedMemory"]
+target_milestone = "M10"
+deferred_reason = "Kernel IPC identifiers and caller-managed buffers require explicit ownership and unsafe boundaries."
+rationale = "The POSIX/SysV IPC families are meaningful but not safely represented by raw C handles."
+
+[[capability]]
+id = "terminal.pty-termios"
+kind = "semantic"
+symbols = ["cfgetispeed", "cfgetospeed", "cfmakeraw", "cfsetispeed", "cfsetospeed", "cfsetspeed", "forkpty", "grantpt", "isatty", "isastream", "login_tty", "openpty", "posix_openpt", "ptsname", "ptsname_r", "tcdrain", "tcflow", "tcflush", "tcgetattr", "tcgetpgrp", "tcgetsid", "tcgetwinsize", "tcsendbreak", "tcsetattr", "tcsetpgrp", "tcsetwinsize", "ttyname", "ttyname_r", "unlockpt", "vhangup"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["termios::Termios", "pty::Pty"]
+target_milestone = "M10"
+deferred_reason = "Terminal state and PTY controlling-session effects require explicit lifetime and process-state contracts."
+rationale = "The existing C/PTy work is evidence for the backend, not a complete native facade."
+
+[[capability]]
+id = "users.databases"
+kind = "semantic"
+symbols = ["addmntent", "cuserid", "endgrent", "endmntent", "endpwent", "endspent", "endusershell", "endutent", "endutxent", "fgetgrent", "fgetpwent", "fgetspent", "getgrent", "getgrgid", "getgrgid_r", "getgrnam", "getgrnam_r", "getgrouplist", "getlogin", "getlogin_r", "getmntent", "getmntent_r", "getpass", "getpwent", "getpwnam", "getpwnam_r", "getpwuid", "getpwuid_r", "getspent", "getspnam", "getspnam_r", "getusershell", "getutent", "getutid", "getutline", "getutxent", "getutxid", "getutxline", "hasmntopt", "initgroups", "lckpwdf", "putgrent", "putpwent", "putspent", "pututline", "pututxline", "setgrent", "setmntent", "setpwent", "setspent", "setusershell", "setutent", "setutxent", "ulckpwdf", "updwtmp", "updwtmpx", "utmpname", "utmpxname"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["users::User", "users::Group", "users::Database"]
+target_milestone = "M10"
+deferred_reason = "Native APIs must return owned records and make enumeration/runtime state explicit."
+rationale = "C database APIs return static or caller-buffer records with implicit iteration state."
+
+[[capability]]
+id = "system.kernel-admin"
+kind = "semantic"
+symbols = ["__getauxval", "__sched_cpucount", "acct", "capget", "capset", "closelog", "confstr", "delete_module", "fanotify_init", "fanotify_mark", "fpathconf", "getauxval", "getdomainname", "getdtablesize", "getentropy", "gethostid", "getloadavg", "getpagesize", "init_module", "inotify_add_watch", "inotify_init", "inotify_init1", "inotify_rm_watch", "klogctl", "membarrier", "mount", "openlog", "pathconf", "personality", "pivot_root", "prctl", "prlimit", "process_vm_readv", "process_vm_writev", "ptrace", "quotactl", "reboot", "sched_get_priority_max", "sched_get_priority_min", "sched_getaffinity", "sched_getcpu", "sched_getparam", "sched_getscheduler", "sched_rr_get_interval", "sched_setaffinity", "sched_setparam", "sched_setscheduler", "sched_yield", "setdomainname", "sethostname", "setlogmask", "setns", "swapoff", "swapon", "syscall", "sysconf", "sysinfo", "syslog", "system", "ulimit", "umount", "umount2", "uname", "unshare", "vsyslog"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["unsafe system::Kernel", "system::SystemInfo"]
+target_milestone = "M10"
+deferred_reason = "Kernel administration, namespaces, ptrace, and raw syscalls require narrow unsafe contracts and capability policy."
+rationale = "These APIs can change global system state or operate on untyped kernel ABIs."
+
+[[capability]]
+id = "loader.dlfcn"
+kind = "semantic"
+symbols = ["dl_iterate_phdr", "dladdr", "dlclose", "dlerror", "dlinfo", "dlopen", "dlsym"]
+classification = "native-unsafe"
+status = "deferred"
+planned_rust_api = ["dl::Library", "unsafe dl::Library::symbol", "dl::AddressInfo"]
+target_milestone = "M10"
+deferred_reason = "M7 verifies the private runtime Library/symbol slice; dladdr, dlinfo, and full iteration semantics remain to be completed."
+rationale = "Library ownership is safe; arbitrary symbol type assertions are explicit unsafe operations."
+
+[[capability]]
+id = "crypto.crypt"
+kind = "semantic"
+symbols = ["crypt", "crypt_r"]
+classification = "native-safe"
+status = "deferred"
+planned_rust_api = ["crypto::crypt"]
+target_milestone = "M10"
+deferred_reason = "The public password-hash API needs an owned result and explicit salt/algorithm contract."
+rationale = "Private helper exports cannot be used to claim native public crypt coverage."
+
+[[capability]]
+id = "crypto.crypt-helpers"
+kind = "semantic"
+symbols = ["__crypt_blowfish", "__crypt_md5", "__crypt_r", "__crypt_sha256", "__crypt_sha512"]
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "These are private algorithm/helper entry points behind crypt and crypt_r and have no installed public header declaration."
+reviewed = "M9"
+review_evidence = ["libc/src/crypt_impl.rs", "include/crypt.h"]
+rationale = "Their presence must not conceal the deferred public password-hash capability."
+
+[[capability]]
+id = "catalog.gettext"
+kind = "semantic"
+symbols = ["bind_textdomain_codeset", "bindtextdomain", "catclose", "catgets", "catopen", "dcgettext", "dcngettext", "dgettext", "dngettext", "gettext", "ngettext", "textdomain"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["catalog::Catalog"]
+target_milestone = "M10"
+deferred_reason = "Message catalogs need owned handles and explicit locale/domain selection."
+rationale = "C catalog and gettext globals are not a native Rust abstraction."
+
+[[capability]]
+id = "search.collections"
+kind = "semantic"
+symbols = ["hcreate", "hcreate_r", "hdestroy", "hdestroy_r", "hsearch", "hsearch_r", "insque", "remque", "tdelete", "tdestroy", "tfind", "tsearch", "twalk"]
+classification = "rust-subsumed"
+status = "documented"
+rust_equivalent = "HashMap, BTreeMap, VecDeque, and iterator traversal"
+evidence = ["crabc-rs.md#33", "crabc-rs.md#71"]
+rationale = "Rust collections own entries and comparison behavior instead of using C global tables and untyped callbacks."
+
+[[capability]]
+id = "legacy.misc"
+kind = "semantic"
+symbols = ["encrypt", "fmtmsg", "get_avphys_pages", "get_nprocs", "get_nprocs_conf", "get_phys_pages", "issetugid", "setkey"]
+classification = "native-higher-level"
+status = "deferred"
+planned_rust_api = ["system::MemoryInfo", "legacy::Compatibility"]
+target_milestone = "M10"
+deferred_reason = "These unrelated legacy APIs need individual native designs or explicit future retirement decisions."
+rationale = "They are grouped only as small, semantically documented legacy facilities, never as ABI-only disposal."
 
 [[candidate_only]]
 name = "__auxv"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Loader/startup auxv handoff consumed internally by libc; it has no public header and does not complete native auxv APIs."
 
 [[candidate_only]]
 name = "__crabc_runtime_v1"
+capability = "runtime.loader"
 classification = "internal-runtime"
-status = "inventory"
-rationale = "Versioned private singleton table for native loader and thread/TLS facades; it has no installed C header and is not a public POSIX API."
+status = "documented"
+rationale = "Versioned private singleton table for loader, thread/TLS, and CFile facades; no installed C header exposes it."
 
 [[candidate_only]]
 name = "__crypt_blowfish"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "crypto.crypt-helpers"
+classification = "abi-only"
+status = "documented"
+rationale = "Private crypt implementation helper, not a public native operation."
 
 [[candidate_only]]
 name = "__crypt_md5"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "crypto.crypt-helpers"
+classification = "abi-only"
+status = "documented"
+rationale = "Private crypt implementation helper, not a public native operation."
 
 [[candidate_only]]
 name = "__crypt_r"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "crypto.crypt-helpers"
+classification = "abi-only"
+status = "documented"
+rationale = "Private crypt implementation helper, not a public native operation."
 
 [[candidate_only]]
 name = "__crypt_sha256"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "crypto.crypt-helpers"
+classification = "abi-only"
+status = "documented"
+rationale = "Private crypt implementation helper, not a public native operation."
 
 [[candidate_only]]
 name = "__crypt_sha512"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "crypto.crypt-helpers"
+classification = "abi-only"
+status = "documented"
+rationale = "Private crypt implementation helper, not a public native operation."
 
 [[candidate_only]]
 name = "__fork_handler"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "process.atfork-exit-hooks"
+classification = "abi-only"
+status = "documented"
+rationale = "Private C fork callback dispatch helper."
 
 [[candidate_only]]
 name = "__funcs_on_exit"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "process.atfork-exit-hooks"
+classification = "abi-only"
+status = "documented"
+rationale = "Private C exit callback dispatch helper."
 
 [[candidate_only]]
 name = "__ldso_register_dlclose"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private libc-to-ldso close callback registration."
 
 [[candidate_only]]
 name = "__ldso_register_dlerror"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private libc-to-ldso error callback registration."
 
 [[candidate_only]]
 name = "__ldso_register_dlopen"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private libc-to-ldso open callback registration."
 
 [[candidate_only]]
 name = "__ldso_register_dlsym"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private libc-to-ldso symbol callback registration."
 
 [[candidate_only]]
 name = "__qsort_r"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "numeric.qsort-helper"
+classification = "abi-only"
+status = "documented"
+rationale = "Private qsort_r helper; native sorting is represented by Rust slice and collection APIs."
 
 [[candidate_only]]
 name = "__rc_clone"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private clone/TLS bridge used by libc and ldso thread startup."
 
 [[candidate_only]]
 name = "__rc_create_thread_tls"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private thread TLS bridge used by libc and ldso startup."
 
 [[candidate_only]]
 name = "__rc_tls_base_offset"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private TLS layout bridge, not an application operation."
 
 [[candidate_only]]
 name = "__rc_tls_block_size"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private TLS layout bridge, not an application operation."
 
 [[candidate_only]]
 name = "__sigsetjmp_tail"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.compiler-abi"
+classification = "internal-runtime"
+status = "documented"
+rationale = "AArch64 continuation support for the public C sigsetjmp ABI."
 
 [[candidate_only]]
 name = "fopen64"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "stdio.fopen64-alias"
+classification = "abi-only"
+status = "documented"
+rationale = "Linux/AArch64 ABI alias of fopen, not separate path-stream native coverage."
 
 [[candidate_only]]
 name = "rust_eh_personality"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "runtime.compiler-abi"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Compiler support symbol; panic=abort leaves this as non-application runtime support."
 
 [[candidate_only]]
 name = "tgkill"
-classification = "unclassified"
-status = "inventory"
-rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+capability = "process.thread-kill"
+classification = "native-safe"
+status = "verified"
+rationale = "Public signal.h operation represented by signal::kill_thread over crabc_core::process::tgkill."

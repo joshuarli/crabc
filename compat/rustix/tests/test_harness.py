@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import sys
 import tempfile
@@ -40,6 +41,80 @@ class MetadataTests(unittest.TestCase):
 
     def test_metadata_validation_is_deterministic(self) -> None:
         self.assertEqual(harness.validate_metadata(), harness.validate_metadata())
+
+
+class CoverageLedgerTests(unittest.TestCase):
+    """M9 mutations prove the coverage ledger cannot silently become inventory again."""
+
+    def ledger(self) -> dict[str, object]:
+        return copy.deepcopy(harness.load_toml(harness.COVERAGE_PATH))
+
+    @staticmethod
+    def capability(ledger: dict[str, object], identifier: str) -> dict[str, object]:
+        capabilities = ledger["capability"]
+        assert isinstance(capabilities, list)
+        for capability in capabilities:
+            assert isinstance(capability, dict)
+            if capability["id"] == identifier:
+                return capability
+        raise AssertionError(f"missing capability fixture: {identifier}")
+
+    def test_m9_report_has_exact_zero_unclassified_accounting(self) -> None:
+        coverage = harness.validate_coverage(self.ledger())
+        self.assertTrue(coverage["m9_green"])
+        self.assertEqual(coverage["symbol_count"], 1669)
+        self.assertEqual(coverage["classified_symbol_count"], 1669)
+        self.assertEqual(coverage["unclassified_symbol_count"], 0)
+        self.assertEqual(coverage["unclassified_capability_count"], 0)
+
+    def test_coverage_rejects_a_missing_symbol(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "pattern.fnmatch")["symbols"] = ["fnmatc"]
+        with self.assertRaisesRegex(harness.HarnessError, "matches no candidate export"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_a_duplicate_symbol_owner(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "pattern.glob")["symbols"].append("fnmatch")
+        with self.assertRaisesRegex(harness.HarnessError, "belongs to both"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_an_extra_symbol(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "pattern.fnmatch")["symbols"] = ["not_a_crabc_export"]
+        with self.assertRaisesRegex(harness.HarnessError, "matches no candidate export"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_an_unowned_candidate_only_export(self) -> None:
+        ledger = self.ledger()
+        records = ledger["candidate_only"]
+        assert isinstance(records, list)
+        records[0]["capability"] = "missing.owner"
+        with self.assertRaisesRegex(harness.HarnessError, "unknown capability owner"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_an_unclassified_capability(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "pattern.fnmatch")["classification"] = "unclassified"
+        with self.assertRaisesRegex(harness.HarnessError, "unknown capability classification"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_native_c_abi_or_errno_paths(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "math.fenv")["uses_public_c_abi"] = True
+        with self.assertRaisesRegex(harness.HarnessError, "uses public C ABI"):
+            harness.validate_coverage(ledger)
+
+        ledger = self.ledger()
+        self.capability(ledger, "math.fenv")["uses_errno_tls"] = True
+        with self.assertRaisesRegex(harness.HarnessError, "uses TLS errno"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_abi_only_without_review_rationale(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "stdio.fopen64-alias")["why_no_native_operation"] = ""
+        with self.assertRaisesRegex(harness.HarnessError, "lacks why_no_native_operation"):
+            harness.validate_coverage(ledger)
 
 
 class DualBackendTests(unittest.TestCase):

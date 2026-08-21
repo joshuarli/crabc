@@ -270,7 +270,8 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        # M8 retains M0-M7 and adds three deliberately narrow semantic seams:
+        # M9 retains M0-M8 and validates the complete, hash-pinned semantic
+        # export ledger. M8 adds three deliberately narrow semantic seams:
         # direct AArch64 fenv state, shared byte-oriented fnmatch, and a
         # private-runtime CFile memory stream. Keep all native and C-regression
         # evidence together so a later facade change cannot add a C/errno hop.
