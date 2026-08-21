@@ -335,7 +335,9 @@ pub unsafe extern "C" fn funlockfile(f: *mut crate::FILE) {
 
 #[no_mangle]
 pub unsafe extern "C" fn __libc_current_sigrtmin() -> c_int {
-    34
+    // musl 1.2.6 reserves 32, 33, and 34; application realtime signals start
+    // at 35. Keep this tied to musl rather than glibc's moving SIGRTMIN.
+    35
 }
 
 #[no_mangle]

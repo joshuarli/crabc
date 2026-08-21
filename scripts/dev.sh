@@ -270,13 +270,13 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        # M5 adds direct descriptor positioning/durability, file-backed
-        # mappings, epoll, and timerfd while retaining M0-M4 coverage.
+        # M6 retains M0-M5 and adds native Linux signal, wait, fork/exec,
+        # prepared-spawn, atfork, and process-control evidence.
         # Keep no-std, native, source-compatibility, and assembly evidence
         # together so a later facade change cannot add a C/errno hop.
         run_in_container cargo check -p crabc-rs --no-default-features
-        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio
-        run_in_container cargo build -p crabc-rs --example m0_direct_probe --example m2_direct_probe --example m3_direct_probe --example m4_direct_probe --example m5_direct_probe --release --no-default-features
+        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio --test m6_signal_process
+        run_in_container cargo build -p crabc-rs --example m0_direct_probe --example m2_direct_probe --example m3_direct_probe --example m4_direct_probe --example m5_direct_probe --example m6_direct_probe --release --no-default-features
         run_in_container python3 compat/rustix/run.py --check
         run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
         run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'
@@ -301,11 +301,14 @@ case "$command" in
             --fixture compat/rustix/source/m4_process_system.rs
         run_in_container python3 compat/crabc-rs/verify_m4.py --target-dir target
         run_in_container python3 compat/rustix/run.py source-compare --timeout 60 \
+            --fixture compat/rustix/source/m6_process.rs
+        run_in_container python3 compat/rustix/run.py source-compare --timeout 60 \
             --fixture compat/rustix/source/m5_fs_io.rs \
             --fixture compat/rustix/source/m5_event_time.rs \
             --fixture compat/rustix/source/m5_file_mapping.rs \
             --fixture compat/rustix/source/m5_descriptor_stdio.rs
         run_in_container python3 compat/crabc-rs/verify_m5.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m6.py --target-dir target
         ;;
     abi-probe)
         ensure_image

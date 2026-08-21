@@ -470,9 +470,18 @@ id = "process.wait"
 feature = "process"
 rustix = "process::wait"
 crabc = "process::wait"
-status = "deferred"
-compatibility = "planned-source-compatible"
-tests = ["compat/rustix/tests/test_harness.py"]
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m6_signal_process.rs", "compat/rustix/source/m6_process.rs", "compat/crabc-rs/verify_m6.py", "compat/rustix/tests/test_harness.py"]
+
+[[api]]
+id = "process.waitid"
+feature = "process"
+rustix = "process::waitid"
+crabc = "process::waitid"
+status = "verified"
+compatibility = "source-compatible"
+tests = ["crabc-rs/tests/m6_signal_process.rs", "compat/rustix/source/m6_process.rs", "compat/crabc-rs/verify_m6.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.gettid"

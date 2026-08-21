@@ -42,12 +42,18 @@ int main(void) {
     sigfillset(&fullset);
     if (!sigismember(&fullset, SIGHUP)) return 2;
     if (!sigismember(&fullset, SIGTERM)) return 3;
-    /* musl: signals 32/33 excluded from fillset */
+    /* musl reserves 32/33/34 and application realtime signals start at 35. */
     if (sigismember(&fullset, 32)) return 3;
+    if (sigismember(&fullset, 33)) return 3;
+    if (sigismember(&fullset, 34)) return 3;
+    if (SIGRTMIN != 35 || SIGRTMAX != 64) return 3;
 
     sigemptyset(&set);
     if (sigaddset(&set, 0) != -1) return 4;
     if (sigaddset(&set, 65) != -1) return 5;
+    if (sigaddset(&set, 32) != -1) return 5;
+    if (sigaddset(&set, 33) != -1) return 5;
+    if (sigaddset(&set, 34) != -1) return 5;
     if (sigdelset(&set, 0) != -1) return 6;
     if (sigdelset(&set, 65) != -1) return 7;
     if (sigismember(&set, 0) != 0) return 8;

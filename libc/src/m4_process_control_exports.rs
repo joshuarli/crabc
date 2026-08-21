@@ -13,7 +13,7 @@ const M4_CLOCK_THREAD_CPUTIME_ID: c_int = 6;
 
 #[cfg(target_arch = "x86_64")]
 const M4_SYS_WAITID: i64 = 247;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+#[cfg(target_arch = "riscv64")]
 const M4_SYS_WAITID: i64 = 95;
 
 // The calls operate on the kernel's task ID; pid 0 denotes the calling task,
@@ -37,6 +37,23 @@ const M4_SYS_SCHED_GETSCHEDULER: i64 = 120;
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const M4_SYS_SCHED_GETPARAM: i64 = 121;
 
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn m4_waitid(
+    idtype: c_int,
+    id: c_uint,
+    info: *mut siginfo_t,
+    options: c_int,
+) -> i64 {
+    match unsafe {
+        crabc_core::process::waitid_raw(idtype as u32, id, info.cast(), options as u32)
+    } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 unsafe fn m4_waitid(
     idtype: c_int,

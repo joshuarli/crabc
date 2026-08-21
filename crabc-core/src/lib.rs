@@ -286,6 +286,7 @@ const SYS_EPOLL_PWAIT: usize = 22;
 const SYS_TIMERFD_CREATE: usize = 85;
 const SYS_TIMERFD_SETTIME: usize = 86;
 const SYS_TIMERFD_GETTIME: usize = 87;
+const SYS_SIGNALFD4: usize = 74;
 const SYS_SOCKETPAIR: usize = 199;
 const SYS_SENDTO: usize = 206;
 const SYS_RECVFROM: usize = 207;
@@ -293,6 +294,14 @@ const SYS_MUNMAP: usize = 215;
 const SYS_MMAP: usize = 222;
 const SYS_MPROTECT: usize = 226;
 const SYS_KILL: usize = 129;
+const SYS_TGKILL: usize = 131;
+const SYS_SIGALTSTACK: usize = 132;
+const SYS_RT_SIGSUSPEND: usize = 133;
+const SYS_RT_SIGACTION: usize = 134;
+const SYS_RT_SIGPROCMASK: usize = 135;
+const SYS_RT_SIGPENDING: usize = 136;
+const SYS_RT_SIGTIMEDWAIT: usize = 137;
+const SYS_RT_SIGQUEUEINFO: usize = 138;
 const SYS_MOUNT: usize = 40;
 const SYS_UMOUNT2: usize = 39;
 const SYS_GETPGID: usize = 155;
@@ -302,9 +311,15 @@ const SYS_SETSID: usize = 157;
 const SYS_UNAME: usize = 160;
 const SYS_GETPID: usize = 172;
 const SYS_GETPPID: usize = 173;
+const SYS_GETUID: usize = 174;
 const SYS_GETTID: usize = 178;
 const SYS_SYSINFO: usize = 179;
 const SYS_SCHED_YIELD: usize = 124;
+const SYS_CLONE: usize = 220;
+const SYS_EXECVE: usize = 221;
+const SYS_WAIT4: usize = 260;
+const SYS_WAITID: usize = 95;
+const SYS_EXIT_GROUP: usize = 94;
 
 #[inline(always)]
 unsafe fn syscall0(number: usize) -> isize {
@@ -1803,12 +1818,259 @@ pub mod mm {
     }
 }
 
+/// Direct Linux/AArch64 signal operations.
+///
+/// This module exposes only kernel ABI records and direct syscalls. Policy
+/// around reserved libc signals, handler lifetimes, and safe Rust vocabulary
+/// belongs to `crabc-rs::signal`; C's public `sigaction` record is likewise a
+/// distinct ABI boundary in `libc`.
+pub mod signal {
+    use super::{
+        decode, decode_i32, syscall2, syscall3, syscall4, Result,
+        SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
+        SYS_RT_SIGQUEUEINFO, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
+        SYS_SIGALTSTACK, SYS_SIGNALFD4,
+    };
+
+    /// The Linux/AArch64 signal-set width passed to every `rt_*` syscall.
+    ///
+    /// Linux's kernel ABI deliberately accepts one 64-bit word here, even
+    /// though musl's public `sigset_t` has more storage for source ABI
+    /// compatibility.
+    pub const KERNEL_SIGSET_SIZE: usize = core::mem::size_of::<u64>();
+
+    /// Linux/AArch64's compact `rt_sigaction` record.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct KernelSigAction {
+        pub handler: usize,
+        pub flags: u64,
+        pub restorer: usize,
+        pub mask: u64,
+    }
+
+    /// Linux's fixed-size `siginfo_t` transport record.
+    ///
+    /// The kernel fills only the fields meaningful for the triggering signal.
+    /// Consumers must interpret it according to `si_code`.
+    #[repr(C, align(8))]
+    #[derive(Clone, Copy)]
+    pub struct SigInfo {
+        pub bytes: [u8; 128],
+    }
+
+    impl SigInfo {
+        /// A zeroed record suitable for kernel output.
+        #[inline]
+        pub const fn zeroed() -> Self {
+            Self { bytes: [0; 128] }
+        }
+    }
+
+    /// Linux/AArch64's `stack_t` layout for `sigaltstack`.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct SignalStack {
+        pub sp: *mut u8,
+        pub flags: i32,
+        _padding: i32,
+        pub size: usize,
+    }
+
+    impl SignalStack {
+        /// Builds a kernel signal-stack record with the required AArch64
+        /// padding initialized to zero.
+        #[inline]
+        pub const fn new(sp: *mut u8, flags: i32, size: usize) -> Self {
+            Self { sp, flags, _padding: 0, size }
+        }
+    }
+
+    /// Installs or queries a signal action without libc or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `action` and `old_action` must be null or point to valid compact
+    /// Linux/AArch64 records for the duration of the call. A non-null handler
+    /// and restorer must satisfy the kernel's asynchronous signal ABI.
+    #[inline]
+    pub unsafe fn rt_sigaction_raw(
+        signal: i32,
+        action: *const KernelSigAction,
+        old_action: *mut KernelSigAction,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the compact-kernel-record pointer and
+        // handler/restorer contracts; the other arguments are scalar values.
+        decode(unsafe {
+            syscall4(
+                SYS_RT_SIGACTION,
+                signal as usize,
+                action as usize,
+                old_action as usize,
+                KERNEL_SIGSET_SIZE,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Changes or queries the calling thread's kernel signal mask.
+    ///
+    /// # Safety
+    ///
+    /// `set` and `old_set` must be null or point to one readable/writable
+    /// kernel-sized signal-set word, respectively.
+    #[inline]
+    pub unsafe fn rt_sigprocmask_raw(
+        how: i32,
+        set: *const u64,
+        old_set: *mut u64,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the kernel signal-set pointer contracts.
+        decode(unsafe {
+            syscall4(
+                SYS_RT_SIGPROCMASK,
+                how as usize,
+                set as usize,
+                old_set as usize,
+                KERNEL_SIGSET_SIZE,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Queries the calling thread's pending signal set.
+    ///
+    /// # Safety
+    ///
+    /// `set` must point to writable storage for one kernel-sized signal-set
+    /// word.
+    #[inline]
+    pub unsafe fn rt_sigpending_raw(set: *mut u64) -> Result<()> {
+        // SAFETY: The caller owns the kernel signal-set output storage.
+        decode(unsafe { syscall2(SYS_RT_SIGPENDING, set as usize, KERNEL_SIGSET_SIZE) })
+            .map(|_| ())
+    }
+
+    /// Atomically swaps in `set` while waiting for an unblocked signal.
+    ///
+    /// A successful wait never returns; Linux reports `EINTR` after a handler
+    /// runs. The returned error is intentionally preserved as an ordinary
+    /// result value rather than being translated through TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `set` must point to one readable kernel-sized signal-set word.
+    #[inline]
+    pub unsafe fn rt_sigsuspend_raw(set: *const u64) -> Result<()> {
+        // SAFETY: The caller owns the kernel signal-set input storage.
+        decode(unsafe { syscall2(SYS_RT_SIGSUSPEND, set as usize, KERNEL_SIGSET_SIZE) })
+            .map(|_| ())
+    }
+
+    /// Waits for one signal in `set` and returns its signal number.
+    ///
+    /// # Safety
+    ///
+    /// `set` must point to one readable kernel-sized signal-set word.
+    /// `info` must be null or point to writable 128-byte Linux `siginfo_t`
+    /// storage. `timeout` must be null or point to one Linux/AArch64
+    /// `timespec` record.
+    #[inline]
+    pub unsafe fn rt_sigtimedwait_raw(
+        set: *const u64,
+        info: *mut SigInfo,
+        timeout: *const u8,
+    ) -> Result<i32> {
+        // SAFETY: The caller owns every pointed-to kernel ABI record.
+        decode_i32(unsafe {
+            syscall4(
+                SYS_RT_SIGTIMEDWAIT,
+                set as usize,
+                info as usize,
+                timeout as usize,
+                KERNEL_SIGSET_SIZE,
+            )
+        })
+    }
+
+    /// Queues the supplied Linux `siginfo_t` record to a process.
+    ///
+    /// # Safety
+    ///
+    /// `info` must point to a fully initialized Linux signal-information
+    /// record whose fields satisfy `rt_sigqueueinfo`'s ABI contract.
+    #[inline]
+    pub unsafe fn rt_sigqueueinfo_raw(
+        pid: i32,
+        signal: i32,
+        info: *const SigInfo,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the signal-info input record contract.
+        decode(unsafe {
+            syscall3(
+                SYS_RT_SIGQUEUEINFO,
+                pid as usize,
+                signal as usize,
+                info as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Installs or queries an alternate signal stack.
+    ///
+    /// # Safety
+    ///
+    /// `stack` and `old_stack` must be null or point to valid Linux/AArch64
+    /// `stack_t` records. Any enabled stack memory must remain valid while the
+    /// kernel may dispatch a signal on it.
+    #[inline]
+    pub unsafe fn sigaltstack_raw(
+        stack: *const SignalStack,
+        old_stack: *mut SignalStack,
+    ) -> Result<()> {
+        // SAFETY: The caller owns both `stack_t` pointer contracts.
+        decode(unsafe { syscall2(SYS_SIGALTSTACK, stack as usize, old_stack as usize) })
+            .map(|_| ())
+    }
+
+    /// Creates or updates a Linux `signalfd4` descriptor.
+    ///
+    /// # Safety
+    ///
+    /// `mask` must point to one readable Linux kernel-sized signal-set word.
+    /// When `fd` is non-negative it must designate an existing signalfd
+    /// descriptor. `flags` uses Linux's `SFD_*` bit representation.
+    #[inline]
+    pub unsafe fn signalfd4_raw(
+        fd: i32,
+        mask: *const u64,
+        flags: u32,
+    ) -> Result<i32> {
+        // SAFETY: The caller owns the mask pointer and descriptor contracts.
+        decode_i32(unsafe {
+            syscall4(
+                SYS_SIGNALFD4,
+                fd as usize,
+                mask as usize,
+                KERNEL_SIGSET_SIZE,
+                flags as usize,
+            )
+        })
+    }
+}
+
 /// Direct process-identity, process-group, and signal operations.
 pub mod process {
     use super::{
-        decode, decode_i32, syscall0, syscall1, syscall2, Result, SYS_GETPGID, SYS_GETPID,
-        SYS_GETPPID, SYS_GETSID, SYS_KILL, SYS_SETPGID, SYS_SETSID,
+        decode, decode_i32, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, Result,
+        SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
+        SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_SETPGID, SYS_SETSID, SYS_TGKILL, SYS_WAIT4,
+        SYS_WAITID,
     };
+
+    /// The low-byte clone exit signal used by Linux's fork-equivalent clone.
+    pub const CLONE_FORK_FLAGS: u64 = 17;
 
     /// Returns the caller's Linux process ID.
     #[inline]
@@ -1826,11 +2088,157 @@ pub mod process {
         unsafe { syscall0(SYS_GETPPID) as i32 }
     }
 
+    /// Returns the caller's real Linux user ID.
+    #[inline]
+    pub fn getuid() -> u32 {
+        // Linux guarantees that `getuid` succeeds and returns a `uid_t`.
+        unsafe { syscall0(SYS_GETUID) as u32 }
+    }
+
     /// Sends `signal` to the raw Linux process target `pid`.
     #[inline]
     pub fn kill(pid: i32, signal: i32) -> Result<()> {
         // SAFETY: Both arguments are immediate Linux scalar values.
         decode(unsafe { syscall2(SYS_KILL, pid as usize, signal as usize) }).map(|_| ())
+    }
+
+    /// Sends a signal to one exact thread in a process.
+    #[inline]
+    pub fn tgkill(tgid: i32, tid: i32, signal: i32) -> Result<()> {
+        // SAFETY: All arguments are immediate Linux scalar values.
+        decode(unsafe {
+            syscall3(
+                SYS_TGKILL,
+                tgid as usize,
+                tid as usize,
+                signal as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Creates a child process using the raw Linux fork-equivalent clone.
+    ///
+    /// This is deliberately only a kernel primitive. It does not run libc or
+    /// facade atfork handlers, repair runtime state, or make arbitrary Rust
+    /// execution in a multithreaded child safe.
+    #[inline]
+    pub fn fork_raw() -> Result<i32> {
+        // SAFETY: `SIGCHLD` and a null child stack form Linux's documented
+        // fork-equivalent `clone` invocation. No parent/child TID, TLS, or
+        // namespace flags are requested, so their ignored argument registers
+        // are immaterial.
+        decode_i32(unsafe { syscall2(SYS_CLONE, CLONE_FORK_FLAGS as usize, 0) })
+    }
+
+    /// Executes a new program image through Linux `execve`.
+    ///
+    /// On success this syscall does not return. A successful `Ok(())` is kept
+    /// in the type solely to model the direct syscall seam consistently.
+    ///
+    /// # Safety
+    ///
+    /// `path` must name a readable NUL-terminated pathname. `argv` and `envp`
+    /// must be null-terminated arrays of readable NUL-terminated strings (or
+    /// a null `envp` only where the kernel ABI permits it).
+    #[inline]
+    pub unsafe fn execve_raw(
+        path: *const u8,
+        argv: *const *const u8,
+        envp: *const *const u8,
+    ) -> Result<()> {
+        // SAFETY: The caller owns every pointer/array/string contract.
+        decode(unsafe {
+            syscall3(
+                SYS_EXECVE,
+                path as usize,
+                argv as usize,
+                envp as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Waits for a child process state change through Linux `wait4`.
+    ///
+    /// `pid` and `options` retain the Linux `waitpid` encoding. A successful
+    /// zero means `WNOHANG` found no waitable child.
+    ///
+    /// # Safety
+    ///
+    /// `status` must be null or point to writable Linux `int` storage.
+    #[inline]
+    pub unsafe fn wait4_raw(pid: i32, status: *mut i32, options: u32) -> Result<i32> {
+        // SAFETY: This convenience form explicitly declines rusage output.
+        unsafe { wait4_with_rusage_raw(pid, status, options, core::ptr::null_mut()) }
+    }
+
+    /// Waits for a child process state change through Linux `wait4`, with an
+    /// optional caller-owned kernel `struct rusage` output record.
+    ///
+    /// # Safety
+    ///
+    /// `status` and `rusage` must each be null or point to writable storage
+    /// for their exact Linux/AArch64 records.
+    #[inline]
+    pub unsafe fn wait4_with_rusage_raw(
+        pid: i32,
+        status: *mut i32,
+        options: u32,
+        rusage: *mut u8,
+    ) -> Result<i32> {
+        // SAFETY: The caller owns the optional status-output storage; the
+        // optional rusage output has the same caller-owned ABI contract.
+        decode_i32(unsafe {
+            syscall4(
+                SYS_WAIT4,
+                pid as usize,
+                status as usize,
+                options as usize,
+                rusage as usize,
+            )
+        })
+    }
+
+    /// Waits through Linux `waitid` and fills a 128-byte `siginfo_t` record.
+    ///
+    /// # Safety
+    ///
+    /// `info` must point to writable, eight-byte-aligned Linux `siginfo_t`
+    /// storage. `id_type`, `id`, and `options` must use Linux `waitid`
+    /// encodings.
+    #[inline]
+    pub unsafe fn waitid_raw(
+        id_type: u32,
+        id: u32,
+        info: *mut super::signal::SigInfo,
+        options: u32,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the output-record contract and supplies
+        // Linux scalar encodings for the remaining immediate arguments.
+        decode(unsafe {
+            syscall5(
+                SYS_WAITID,
+                id_type as usize,
+                id as usize,
+                info as usize,
+                options as usize,
+                0,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Terminates the current Linux thread group without invoking Rust destructors
+    /// or the public C ABI.
+    #[inline]
+    pub fn exit_immediately(status: i32) -> ! {
+        // SAFETY: `exit_group` has one immediate scalar argument and cannot
+        // return after a successful kernel entry.
+        unsafe { syscall1(SYS_EXIT_GROUP, status as usize) };
+        // Linux cannot return from a successful exit syscall. If a hostile or
+        // non-Linux execution environment did, continuing would be unsound.
+        panic!("Linux exit_group syscall returned")
     }
 
     /// Returns a process group ID. `pid == 0` denotes the calling process.

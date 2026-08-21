@@ -164,13 +164,6 @@ pub unsafe extern "C" fn sigset(sig: c_int, handler: usize) -> usize {
     }
 }
 
-// Linux rt_sigqueueinfo is not used by the existing signal wrappers, so keep
-// its architecture-specific number local to this vertical slice.
-#[cfg(target_arch = "x86_64")]
-const M4_SYS_RT_SIGQUEUEINFO: i64 = 129;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const M4_SYS_RT_SIGQUEUEINFO: i64 = 138;
-
 #[repr(C)]
 pub union M4Sigval {
     pub sival_int: c_int,
@@ -178,13 +171,15 @@ pub union M4Sigval {
 }
 
 #[inline]
-unsafe fn m4_rt_sigqueueinfo(pid: c_int, sig: c_int, info: *const u8) -> i64 {
-    <Arch as Syscalls>::syscall3(
-        M4_SYS_RT_SIGQUEUEINFO,
-        pid as i64,
-        sig as i64,
-        info as i64,
-    )
+unsafe fn m4_rt_sigqueueinfo(
+    pid: c_int,
+    sig: c_int,
+    info: *const crabc_core::signal::SigInfo,
+) -> i64 {
+    match unsafe { crabc_core::signal::rt_sigqueueinfo_raw(pid, sig, info) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -194,26 +189,26 @@ unsafe fn m4_siginfo_write_i32(info: &mut [u8; 128], offset: usize, value: c_int
 
 #[no_mangle]
 pub unsafe extern "C" fn sigqueue(pid: c_int, sig: c_int, value: M4Sigval) -> c_int {
-    let mut info = [0u8; 128];
+    let mut info = crabc_core::signal::SigInfo::zeroed();
     // Linux AArch64 aligns the _sifields union to eight bytes. Its queued
     // signal variant therefore has signo/errno/code at 0/4/8, padding at 12,
     // sender pid/uid at 16/20, and sigval at 24. Keeping the value at the
     // union's actual ABI offset is essential for SA_SIGINFO handlers: a
     // misaligned value can still deliver SI_QUEUE while silently replacing the
     // caller's sival_int with padding.
-    m4_siginfo_write_i32(&mut info, 0, sig);
-    m4_siginfo_write_i32(&mut info, 8, -1); // SI_QUEUE
-    m4_siginfo_write_i32(&mut info, 16, getpid());
+    m4_siginfo_write_i32(&mut info.bytes, 0, sig);
+    m4_siginfo_write_i32(&mut info.bytes, 8, -1); // SI_QUEUE
+    m4_siginfo_write_i32(&mut info.bytes, 16, getpid());
     core::ptr::write_unaligned(
-        info.as_mut_ptr().add(20) as *mut c_uint,
+        info.bytes.as_mut_ptr().add(20) as *mut c_uint,
         getuid(),
     );
     core::ptr::copy_nonoverlapping(
         &value as *const M4Sigval as *const u8,
-        info.as_mut_ptr().add(24),
+        info.bytes.as_mut_ptr().add(24),
         core::mem::size_of::<M4Sigval>(),
     );
-    syscall_result(m4_rt_sigqueueinfo(pid, sig, info.as_ptr())) as c_int
+    syscall_result(m4_rt_sigqueueinfo(pid, sig, &info)) as c_int
 }
 
 static M4_SIGNAL_NAMES: [&[u8]; 65] = [

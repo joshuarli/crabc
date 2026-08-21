@@ -1871,7 +1871,7 @@ pub struct timespec {
     pub tv_nsec: c_long,
 }
 
-#[repr(C)]
+#[repr(C, align(8))]
 pub struct siginfo_t {
     pub si_signo: c_int,
     pub si_errno: c_int,
@@ -1947,44 +1947,71 @@ extern "C" {
 unsafe fn sys_rt_sigaction(sig: c_int,
     act: *const KernelSigAction,
     oldact: *mut KernelSigAction,
-    sigsetsize: usize,) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_RT_SIGACTION, sig as i64, act as i64, oldact as i64, sigsetsize as i64)
+    _sigsetsize: usize,) -> i64 {
+    match unsafe {
+        crabc_core::signal::rt_sigaction_raw(sig, act.cast(), oldact.cast())
+    } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_rt_sigprocmask(how: c_int,
     set: *const SigSetT,
     oldset: *mut SigSetT,
-    sigsetsize: usize,) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_RT_SIGPROCMASK, how as i64, set as i64, oldset as i64, sigsetsize as i64)
+    _sigsetsize: usize,) -> i64 {
+    match unsafe {
+        crabc_core::signal::rt_sigprocmask_raw(how, set.cast(), oldset.cast())
+    } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
-unsafe fn sys_rt_sigpending(set: *mut SigSetT, sigsetsize: usize) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_RT_SIGPENDING, set as i64, sigsetsize as i64)
+unsafe fn sys_rt_sigpending(set: *mut SigSetT, _sigsetsize: usize) -> i64 {
+    match unsafe { crabc_core::signal::rt_sigpending_raw(set.cast()) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
-unsafe fn sys_rt_sigsuspend(mask: *const SigSetT, sigsetsize: usize) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_RT_SIGSUSPEND, mask as i64, sigsetsize as i64)
+unsafe fn sys_rt_sigsuspend(mask: *const SigSetT, _sigsetsize: usize) -> i64 {
+    match unsafe { crabc_core::signal::rt_sigsuspend_raw(mask.cast()) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_rt_sigtimedwait(set: *const SigSetT,
     info: *mut siginfo_t,
     timeout: *const timespec,
-    sigsetsize: usize,) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_RT_SIGTIMEDWAIT, set as i64, info as i64, timeout as i64, sigsetsize as i64)
+    _sigsetsize: usize,) -> i64 {
+    match unsafe {
+        crabc_core::signal::rt_sigtimedwait_raw(set.cast(), info.cast(), timeout.cast())
+    } {
+        Ok(signal) => signal as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_sigaltstack(ss: *const stack_t, old_ss: *mut stack_t) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_SIGALTSTACK, ss as i64, old_ss as i64)
+    match unsafe { crabc_core::signal::sigaltstack_raw(ss.cast(), old_ss.cast()) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_tgkill(tgid: c_int, tid: c_int, sig: c_int) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_TGKILL, tgid as i64, tid as i64, sig as i64)
+    match crabc_core::process::tgkill(tgid, tid, sig) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 const CLOCK_REALTIME: c_int = 0;
@@ -2010,16 +2037,10 @@ pub unsafe extern "C" fn sigprocmask(
     set: *const SigSetT,
     oldset: *mut SigSetT,
 ) -> c_int {
-    // ponytail: mask out internal rt signals (32, 33) before touching the kernel
-    let internal_mask: SigSetT = (1u64 << 31) | (1u64 << 32);
-    let filtered: SigSetT;
-    let set_ptr: *const SigSetT = if set.is_null() {
-        set
-    } else {
-        filtered = *set & !internal_mask;
-        &filtered
-    };
-    let r = sys_rt_sigprocmask(how, set_ptr, oldset, core::mem::size_of::<SigSetT>());
+    // Match musl: callers may supply a raw set, but returned masks never
+    // expose musl's 32–34 runtime-reserved signal bits.
+    let internal_mask: SigSetT = (1u64 << 31) | (1u64 << 32) | (1u64 << 33);
+    let r = sys_rt_sigprocmask(how, set, oldset, core::mem::size_of::<SigSetT>());
     if !oldset.is_null() {
         *oldset &= !internal_mask;
     }
@@ -2046,6 +2067,10 @@ pub unsafe extern "C" fn sigaction(
     act: *const sigaction,
     oldact: *mut sigaction,
 ) -> c_int {
+    if (signum as c_uint).wrapping_sub(32) < 3 || (signum as c_uint).wrapping_sub(1) >= 64 {
+        ERRNO = EINVAL;
+        return -1;
+    }
     let kact: KernelSigAction;
     let mut kold: KernelSigAction = core::mem::zeroed();
     let act_ptr = if act.is_null() {
@@ -2086,7 +2111,9 @@ pub unsafe extern "C" fn signal(signum: c_int, handler: usize) -> usize {
     let act = sigaction {
         sa_handler: handler,
         sa_mask: [0; PUBLIC_SIGSET_WORDS],
-        sa_flags: (SA_RESTORER as c_uint) as c_int,
+        // `signal` has BSD/musl restart semantics. `sigaction` itself adds
+        // the private kernel restorer bit at the ABI boundary.
+        sa_flags: (SA_RESTART as c_uint) as c_int,
         __sa_flags_padding: 0,
         sa_restorer: sig_restorer as *const () as usize,
     };
@@ -2136,7 +2163,7 @@ pub unsafe extern "C" fn sigemptyset(set: *mut SigSetT) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn sigfillset(set: *mut SigSetT) -> c_int {
-    // musl: all signals except 32 (SIGCANCEL) and 33 (SIGSYNCCALL)
+    // musl: all signals except its reserved 32, 33, and 34 values.
     *set = 0xFFFF_FFFC_7FFF_FFFFu64;
     0
 }
@@ -2148,9 +2175,10 @@ pub unsafe extern "C" fn sigaddset(set: *mut SigSetT, signum: c_int) -> c_int {
         ERRNO = EINVAL;
         return -1;
     }
-    // ponytail: internal rt signals (32, 33) cannot be manipulated
+    // musl reserves 32, 33, and 34 from application signal sets.
     if signum >= 32 && signum < __libc_current_sigrtmin() {
-        return 0;
+        ERRNO = EINVAL;
+        return -1;
     }
     *set |= 1u64 << s;
     0
@@ -2163,9 +2191,10 @@ pub unsafe extern "C" fn sigdelset(set: *mut SigSetT, signum: c_int) -> c_int {
         ERRNO = EINVAL;
         return -1;
     }
-    // ponytail: internal rt signals (32, 33) are never members
+    // musl reserves 32, 33, and 34 from application signal sets.
     if signum >= 32 && signum < __libc_current_sigrtmin() {
-        return 0;
+        ERRNO = EINVAL;
+        return -1;
     }
     *set &= !(1u64 << s);
     0
@@ -2175,10 +2204,6 @@ pub unsafe extern "C" fn sigdelset(set: *mut SigSetT, signum: c_int) -> c_int {
 pub unsafe extern "C" fn sigismember(set: *const SigSetT, signum: c_int) -> c_int {
     let s = (signum as c_uint).wrapping_sub(1);
     if s as usize >= 64 { return 0; }
-    // ponytail: internal rt signals (32, 33) are never members
-    if signum >= 32 && signum < __libc_current_sigrtmin() {
-        return 0;
-    }
     ((*set & (1u64 << s)) != 0) as c_int
 }
 
@@ -2700,32 +2725,38 @@ unsafe fn sys_utimensat(dirfd: i32, path: *const c_char, times: *const u8, flags
 
 #[inline]
 unsafe fn sys_fork() -> i64 {
-    #[cfg(target_arch = "x86_64")]
-    { <Arch as Syscalls>::syscall0(SYS_FORK) }
-    #[cfg(target_arch = "aarch64")]
-    { <Arch as Syscalls>::syscall2(SYS_CLONE, 17, 0) }
-    #[cfg(target_arch = "riscv64")]
-    { <Arch as Syscalls>::syscall2(SYS_CLONE, 17, 0) }
+    match crabc_core::process::fork_raw() {
+        Ok(pid) => pid as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_execve(path: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_EXECVE, path as i64, argv as i64, envp as i64)
+    match unsafe { crabc_core::process::execve_raw(path.cast(), argv.cast(), envp.cast()) } {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_wait4(pid: c_int, status: *mut c_int, options: c_int, rusage: *mut c_void) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_WAIT4, pid as i64, status as i64, options as i64, rusage as i64)
+    match unsafe {
+        crabc_core::process::wait4_with_rusage_raw(pid, status, options as u32, rusage.cast())
+    } {
+        Ok(waited) => waited as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
 unsafe fn sys_getppid() -> i64 {
-    <Arch as Syscalls>::syscall0(SYS_GETPPID)
+    crabc_core::process::getppid() as i64
 }
 
 #[inline]
 unsafe fn sys_getuid() -> i64 {
-    <Arch as Syscalls>::syscall0(SYS_GETUID)
+    crabc_core::process::getuid() as i64
 }
 
 #[inline]
@@ -3490,8 +3521,8 @@ const FUTEX_LOCK_PI: c_int = 6;
 const FUTEX_UNLOCK_PI: c_int = 7;
 const FUTEX_TRYLOCK_PI: c_int = 8;
 
-// ponytail: SIGCANCEL (32) is musl's internal cancel signal
-const SIGCANCEL: c_int = 32;
+// musl reserves 33 for cancellation and 34 for its synchronous-call helper.
+const SIGCANCEL: c_int = 33;
 
 const PTHREAD_MUTEX_NORMAL: c_int = 0;
 const PTHREAD_MUTEX_DEFAULT: c_int = 0;
@@ -4200,10 +4231,10 @@ unsafe fn run_key_dtors(slot: &mut Thread) {
 
 unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
     let slot = &mut *(slot as *mut Thread);
-    let mut set: SigSetT = 0;
-    sigemptyset(&mut set);
-    sigaddset(&mut set, SIGCANCEL);
-    pthread_sigmask(SIG_UNBLOCK, &set, core::ptr::null_mut());
+    // The public signal-set helpers correctly reject musl-reserved signals;
+    // unblock the runtime cancellation signal through the raw kernel seam.
+    let cancel_set: SigSetT = 1_u64 << (SIGCANCEL - 1);
+    sys_rt_sigprocmask(SIG_UNBLOCK, &cancel_set, core::ptr::null_mut(), 8);
     let user_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
         core::mem::transmute::<usize, _>(slot.user_fn);
     let ret = user_fn(slot.user_arg);
@@ -16447,10 +16478,10 @@ pub unsafe extern "C" fn __libc_start_main(
         m4_set_program_names(*argv);
     }
 
-    let mut set: SigSetT = 0;
-    sigemptyset(&mut set);
-    sigaddset(&mut set, SIGCANCEL);
-    sigprocmask(SIG_UNBLOCK, &set, core::ptr::null_mut());
+    // See `thread_entry`: public signal-set helpers intentionally cannot
+    // manufacture musl's cancellation signal bit.
+    let cancel_set: SigSetT = 1_u64 << (SIGCANCEL - 1);
+    sys_rt_sigprocmask(SIG_UNBLOCK, &cancel_set, core::ptr::null_mut(), 8);
 
     if !_init.is_null() {
         let init_fn: InitFn = core::mem::transmute(_init);

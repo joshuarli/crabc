@@ -105,6 +105,21 @@ unsafe fn m4_timerfd_gettime(fd: c_int, current_value: *mut M4Itimerspec) -> i64
     )
 }
 
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn m4_signalfd4(
+    fd: c_int,
+    mask: *const c_void,
+    _size: usize,
+    flags: c_int,
+) -> i64 {
+    match unsafe { crabc_core::signal::signalfd4_raw(fd, mask.cast(), flags as u32) } {
+        Ok(fd) => fd as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
 #[inline]
 unsafe fn m4_signalfd4(
     fd: c_int,

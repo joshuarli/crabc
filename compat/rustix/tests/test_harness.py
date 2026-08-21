@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused standard-library tests for the M0 Rustix compatibility harness."""
+"""Focused standard-library tests for the Rustix compatibility harness."""
 
 from __future__ import annotations
 
@@ -84,6 +84,13 @@ class SourceFixtureTests(unittest.TestCase):
                 Path("compat/rustix/source/m2_xattr.rs"),
             ],
         )
+
+    def test_m6_process_fixture_is_available_to_source_compare(self) -> None:
+        args = harness.parse_args(
+            ["source-compare", "--fixture", "compat/rustix/source/m6_process.rs"]
+        )
+        self.assertEqual(args.fixture, [Path("compat/rustix/source/m6_process.rs")])
+        self.assertTrue((ROOT / args.fixture[0]).is_file())
 
     def test_source_dependency_uses_a_fixed_api_alias(self) -> None:
         candidate = harness.source_dependency("crabc-rs", None)

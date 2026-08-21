@@ -2796,6 +2796,32 @@ Reuse the same compatibility laboratory first.
 
 No RISC-V.
 
+### Prerequisite progress — crabc-rs M6 — 2026-08-20 UTC
+
+`crabc-rs` M6 is complete for Linux/AArch64 little-endian: native typed
+signal disposition/masks/waits/queueing/alternate stacks/`signalfd`, raw and
+atfork fork, prepared fork/exec spawn, typed waits/`waitid`, and isolated
+process-group/session controls all use the shared direct `crabc-core` syscall
+seam. The native atfork registry is explicitly separate from C
+`pthread_atfork`; no mixed-registry semantics are claimed.
+
+Musl 1.2.6 remains the only libc semantic oracle. In particular, signals
+32–34 are reserved, `SIGRTMIN` is 35, and safe native realtime signals span
+35–64. The overlapping C facade has regression coverage for those rules and
+for `signal`'s `SA_RESTART` behavior. POSIX timer-generated notification is
+recorded as a later native time/runtime capability rather than being hidden
+behind the completed signal claim.
+
+The M6 native gate adds isolated realtime queue/wait and timeout, signalfd,
+handler/alternate-stack, atfork-order, failure-reporting spawn, wait/waitid,
+and process-session cases; it source-compares the Rustix-compatible wait
+shape and statically proves direct AArch64 syscalls with no public C ABI or
+TLS-errno transition. This still does not activate x86_64.
+
+Linux arm64 big-endian is not a project target. Its upstream deprecation
+confirms the existing `aarch64-unknown-linux-musl` little-endian-only scope;
+do not introduce endian-parametric abstractions or `aarch64_be` tests.
+
 ---
 
 # AArch64 maturity gates

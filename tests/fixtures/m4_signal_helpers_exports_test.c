@@ -58,6 +58,13 @@ static int legacy_mask_case(void)
         return 12;
     if (signal(SIGUSR2, SIG_DFL) == SIG_ERR)
         return 13;
+    if (signal(SIGUSR2, pause_handler) == SIG_ERR)
+        return 13;
+    memset(&action, 0, sizeof action);
+    if (sigaction(SIGUSR2, NULL, &action) != 0 || (action.sa_flags & SA_RESTART) == 0)
+        return 13;
+    if (signal(SIGUSR2, SIG_DFL) == SIG_ERR)
+        return 13;
 
     if (siginterrupt(SIGUSR1, 1) != 0)
         return 14;

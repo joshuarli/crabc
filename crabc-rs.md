@@ -2891,6 +2891,57 @@ wait/process group/session operations
 
 This should demonstrate that crabc-rs is now more than a rustix clone.
 
+### Completion — 2026-08-20 UTC
+
+**Complete for Linux/AArch64 little-endian.** M6 exposes the direct native
+process/signal surface through `crabc-core`, without a call through crabc's C
+ABI, C sentinel returns, or TLS `errno`.
+
+`signal` now covers application-visible Linux/musl signals (1–31 and 35–64),
+typed masks, actions, synchronous waits, queued delivery, thread-targeted
+delivery, alternate stacks, and typed `signalfd4` records. Signals 32–34 are
+deliberately absent from the safe vocabulary: musl 1.2.6 reserves them and
+starts `SIGRTMIN` at 35 (`src/internal/pthread_impl.h` and
+`src/signal/sigrtmin.c`). A simple handler cannot accidentally be registered
+with `SA_SIGINFO`'s incompatible three-argument ABI. Handler and alternate
+stack installation remain explicitly unsafe.
+
+`process` now provides raw and native-atfork fork, allocation-free borrowed
+exec, prepared owned fork/exec spawning with a close-on-exec error pipe,
+typed child waits and `waitid`, and isolated process-group/session controls.
+The native atfork registry is intentionally native-only: `process::fork()`
+runs callbacks registered by `process::register_atfork`, while C
+`pthread_atfork` remains owned by the C runtime. Crossing that boundary would
+violate the direct-native contract, so mixed-registry execution is not
+promised.
+
+The C facade uses the same direct core seam for its overlapping AArch64
+`waitid`, signal, and `signalfd` calls, and only converts core errors to its
+public errno/sentinel convention. The completion also corrects C-side musl
+signal semantics: `SIGRTMIN == 35`, reserved set members are rejected by
+`sigaddset`/`sigdelset`, returned masks hide 32–34, `sigaction` rejects those
+reserved dispositions, and `signal` retains musl's `SA_RESTART` behavior.
+
+POSIX timer creation and timer-generated signal delivery are deliberately a
+future native time/runtime capability, not an undocumented M6 omission. They
+need typed `SIGEV_SIGNAL`/`SIGEV_THREAD_ID` ownership and `SI_TIMER` decoding.
+The existing C signal/process workload remains its regression evidence until
+that API has a dedicated native contract. This is separate from implemented
+Linux `signalfd`, which has a fixed kernel ABI and no Rustix counterpart.
+
+The pinned Rustix 1.1.4 comparison now verifies the compatible `wait` and
+`waitid` shape with an isolated `ECHILD` fixture. Rustix deliberately does not
+offer its normal public signal, fork/atfork, exec, or `signalfd` surface, so
+those M6 APIs are documented native extensions rather than false Rustix
+compatibility claims.
+
+`./scripts/dev.sh crabc-rs` keeps M0–M6 together: it runs the isolated native
+process/signal cases, the Python-only harness checks, the M6 source fixture,
+and a no-`std` static archive inspection requiring direct AArch64 syscalls
+`signalfd4`, `rt_sig*`, `clone`, `execve`, `wait4`, `waitid`, and
+`exit_group`, while rejecting public C ABI and TLS-errno symbols. Focused C
+fixtures cover the overlapping facade behavior.
+
 ---
 
 # 83. Milestone 7 — runtime facilities
