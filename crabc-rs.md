@@ -3015,7 +3015,9 @@ contracts, safety classification, and evidence exist.
 
 # 84. Milestone 8 — libc semantic facilities
 
-Implement or classify:
+Implement or classify the mature libc facilities without treating a C export as
+native Rust coverage. This milestone is a set of narrow vertical seams, not a
+claim that every listed C interface has a Rust twin:
 
 ```text
 stdio
@@ -3033,6 +3035,32 @@ fenv
 ```
 
 and remaining mature crabc subsystems.
+
+## M8 completion record — 2026-08-20 UTC
+
+M8 is complete for its stated implement-or-classify scope.
+
+| Facility | M8 disposition | Boundary and evidence |
+| --- | --- | --- |
+| `fnmatch` | Native-safe | `pattern::fnmatch(&CStr, &CStr, FnmatchFlags)` is allocation-free and byte-oriented. `crabc-core::pattern` is the sole algorithm used by both the native facade and the C adapter; M8 tests cover pathname, period, escape, bracket, case-fold, leading-directory, and non-UTF-8 behavior. |
+| Floating environment | Native-safe with an optimizer limitation | `fenv` directly reads and writes calling-thread FPCR/FPSR. `EnvironmentGuard` restores state on drop. It does not promise that arbitrary optimized Rust arithmetic observes dynamic rounding. The static proof requires AArch64 `mrs`/`msr`, not C `fe*` or errno. |
+| Buffered memory streams | Native higher-level | `CFile<'buffer>::from_memory` owns a close-on-drop libc `FILE` over an exclusively borrowed buffer. It is opt-in through `runtime-stdio`, reaches only append-only private `RuntimeV1` callbacks, returns typed positive errors, and supplies `std::io::{Read, Write, Seek}` adapters. It is neither `Send` nor `Sync`. |
+| Remaining `stdio` | Explicitly deferred | Standard streams, file/path constructors, buffering policy, `popen`, and C varargs remain C/runtime capability-accounting work. Rust formatting is not re-exposed as a C-varargs imitation. The C `fclose` repair now frees dynamic stream/cookie/getline storage while permanently allocated standard streams remain static. |
+| `locale`, `wchar`, `iconv` | Explicitly deferred | These need owned locale/converter/state types and an explicit process-global mutation contract. Native code must not borrow libc's mutable locale or `mbstate_t` singleton state. |
+| `regex`, `glob`, `wordexp` | Explicitly deferred | POSIX regex currently depends on C-owned allocation-backed opaque state; glob needs owned results and cwd/error policy; word expansion requires an explicit shell-execution and injection-safety contract. No raw `regex_t`/`glob_t` or implicit shell behavior is counted as native coverage. |
+| passwd/group | Explicitly deferred | Future native APIs must return owned records rather than libc static buffers and must make enumeration/runtime state explicit. |
+| Math and complex | Classified for later extraction | Rust primitives subsume ordinary elementary operations. Musl-specific special, remainder, decomposition, and complex algorithms need a shared implementation seam; they must not become `crabc-rs` wrappers around C/libm. |
+
+The M8 gate runs the native unit suites, three no-std AArch64 static probes,
+private-runtime loader fixtures, existing C fenv/fnmatch/stdio regressions, and
+Python verifiers. The verifiers reject public C stdio/fenv/fnmatch calls and
+TLS-errno dependencies from the Rust-facing path. The remaining rows above are
+intentional classifications, not omitted evidence; M9 is still responsible for
+the complete machine-readable zero-unclassified accounting of all crabc
+capabilities. The implementation landmarks are `crabc-core/src/pattern.rs`,
+`crabc-core/src/fenv.rs`, `crabc-rs/src/pattern.rs`, `crabc-rs/src/fenv.rs`,
+`crabc-rs/src/cfile.rs`, `libc/src/fenv.rs`, and the private table definition
+in `crabc-core/src/lib.rs`.
 
 ---
 

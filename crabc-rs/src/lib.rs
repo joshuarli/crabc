@@ -17,11 +17,14 @@ extern crate alloc;
 extern crate std;
 
 pub mod buffer;
+#[cfg(feature = "runtime-stdio")]
+pub mod cfile;
 #[cfg(feature = "runtime-loader")]
 pub mod dl;
 #[cfg(feature = "runtime-thread")]
 pub mod runtime_thread;
 pub mod event;
+pub mod fenv;
 pub mod fd;
 pub mod ffi;
 pub mod fs;
@@ -37,6 +40,7 @@ pub mod path;
 pub mod pipe;
 pub mod process;
 pub mod pty;
+pub mod pattern;
 pub mod rand;
 pub mod time;
 pub mod termios;

@@ -5,7 +5,7 @@
 #![feature(thread_local)]
 #![allow(dead_code, non_camel_case_types)]
 
-use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, VaArgSafe, VaList};
+use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, CStr, VaArgSafe, VaList};
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
@@ -6787,7 +6787,7 @@ static mut STDOUT_BUF: [u8; BUFSIZ] = [0; BUFSIZ];
 static mut STDERR_BUF: [u8; BUFSIZ] = [0; BUFSIZ];
 
 static mut STDIN_FILE: FILE = FILE {
-    flags: 0, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
+    flags: F_PERM, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
     close: None, wend: core::ptr::null_mut(), wpos: core::ptr::null_mut(),
     mustbezero_1: core::ptr::null_mut(), wbase: core::ptr::null_mut(),
     read_fn: None, write_fn: None, seek_fn: None,
@@ -6800,7 +6800,7 @@ static mut STDIN_FILE: FILE = FILE {
     ungotten: [0; UNGET], ungotten_count: 0, _eof: 0, _err: 0,
 };
 static mut STDOUT_FILE: FILE = FILE {
-    flags: F_NOWR as u32 + F_SVB as u32, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
+    flags: F_PERM | F_NOWR | F_SVB, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
     close: None, wend: core::ptr::null_mut(), wpos: core::ptr::null_mut(),
     mustbezero_1: core::ptr::null_mut(), wbase: core::ptr::null_mut(),
     read_fn: None, write_fn: None, seek_fn: None,
@@ -6813,7 +6813,7 @@ static mut STDOUT_FILE: FILE = FILE {
     ungotten: [0; UNGET], ungotten_count: 0, _eof: 0, _err: 0,
 };
 static mut STDERR_FILE: FILE = FILE {
-    flags: F_NOWR as u32, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
+    flags: F_PERM | F_NOWR, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
     close: None, wend: core::ptr::null_mut(), wpos: core::ptr::null_mut(),
     mustbezero_1: core::ptr::null_mut(), wbase: core::ptr::null_mut(),
     read_fn: None, write_fn: None, seek_fn: None,
@@ -7045,30 +7045,64 @@ pub unsafe extern "C" fn freopen(
     }
     let new_f = fopen(filename, mode);
     if new_f.is_null() { let _ = __stdio_close(f); return core::ptr::null_mut(); }
+    // Memory and cookie streams deliberately have no backing descriptor. A
+    // `freopen` replacement is allowed to return a different stream in that
+    // case; trying to dup onto descriptor -1 would preserve stale callbacks
+    // and cookie state in the original allocation.
+    if (*f).fd < 0 {
+        let _ = fclose(f);
+        return new_f;
+    }
+    let old_fd = (*f).fd;
+    let old_buffer = (*f).buf;
+    let old_buffer_size = (*f).buf_size;
+    let permanent = (*f).flags & F_PERM;
     if (*new_f).fd == (*f).fd {
         (*new_f).fd = -1;
     } else {
-        sys_dup3((*new_f).fd, (*f).fd, 0);
-        let _ = __stdio_close(new_f);
+        let duplicated = sys_dup3((*new_f).fd, (*f).fd, 0);
+        if duplicated < 0 {
+            ERRNO = (-duplicated) as c_int;
+            let _ = fclose(new_f);
+            return core::ptr::null_mut();
+        }
     }
-    (*f).flags = (*new_f).flags;
-    (*f).rpos = core::ptr::null_mut();
-    (*f).rend = core::ptr::null_mut();
-    (*f).wpos = core::ptr::null_mut();
-    (*f).wbase = core::ptr::null_mut();
-    (*f).wend = core::ptr::null_mut();
+    if !(*f).getln_buf.is_null() {
+        free((*f).getln_buf as *mut c_void);
+    }
+    // Reinitialize the existing stream storage rather than copying the
+    // temporary FILE's buffer pointer. The permanent bit preserves static
+    // stdin/stdout/stderr ownership through a later fclose, while init_file
+    // replaces every callback and clears stale cookie/read state.
+    init_file(f, old_fd, mode, (*new_f).close, old_buffer, old_buffer_size);
+    (*f).flags = (*new_f).flags | permanent;
     (*f).lbf = (*new_f).lbf;
     (*f).pipe_pid = 0;
-    free(new_f as *mut c_void);
+    let _ = fclose(new_f);
     f
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn fclose(f: *mut FILE) -> c_int {
     if f.is_null() { return -1; }
-    let r = fflush(f);
-    if let Some(close_fn) = (*f).close { let _ = close_fn(f); }
-    if r != 0 { -1 } else { 0 }
+    let flush_status = fflush(f);
+    let close_status = match (*f).close {
+        Some(close_fn) => close_fn(f),
+        None => 0,
+    };
+    if !(*f).getln_buf.is_null() {
+        free((*f).getln_buf as *mut c_void);
+        (*f).getln_buf = core::ptr::null_mut();
+    }
+    // Every FILE returned by this libc's allocation-backed constructors is
+    // heap-owned. The permanent bit reserves the three process-lifetime
+    // standard streams, which may be flushed/closed without freeing static
+    // storage. Stream-specific close callbacks release separately allocated
+    // cookies before this final FILE allocation is returned to mimalloc.
+    if (*f).flags & F_PERM == 0 {
+        free(f as *mut c_void);
+    }
+    if flush_status != 0 || close_status != 0 { -1 } else { 0 }
 }
 
 // ============================================================
@@ -14975,7 +15009,12 @@ unsafe extern "C" fn ms_write(f: *mut FILE, buf: *const u8, len: usize) -> usize
     len
 }
 
-unsafe extern "C" fn ms_close(_f: *mut FILE) -> c_int {
+unsafe extern "C" fn ms_close(f: *mut FILE) -> c_int {
+    let cookie = (*f).cookie;
+    if !cookie.is_null() {
+        free(cookie);
+        (*f).cookie = core::ptr::null_mut();
+    }
     0
 }
 
@@ -15062,7 +15101,12 @@ unsafe extern "C" fn mwrite(f: *mut FILE, buf: *const u8, len: usize) -> usize {
     l
 }
 
-unsafe extern "C" fn mclose(_f: *mut FILE) -> c_int {
+unsafe extern "C" fn mclose(f: *mut FILE) -> c_int {
+    let cookie = (*f).cookie;
+    if !cookie.is_null() {
+        free(cookie);
+        (*f).cookie = core::ptr::null_mut();
+    }
     0
 }
 
@@ -15596,387 +15640,23 @@ pub unsafe extern "C" fn tdestroy(root: *mut TreeNode, freekey: Option<unsafe ex
 // fnmatch: full POSIX pattern matching
 // ============================================================
 
-const FNM_PATHNAME: c_int = 0x1;
-const FNM_NOESCAPE: c_int = 0x2;
-const FNM_PERIOD: c_int = 0x4;
-const FNM_LEADING_DIR: c_int = 0x8;
-const FNM_CASEFOLD: c_int = 0x10;
 const FNM_NOMATCH: c_int = 1;
-
-const FNM_END: c_int = 0;
-const FNM_STAR: c_int = -5;
-const FNM_QUESTION: c_int = -4;
-const FNM_BRACKET: c_int = -3;
-const FNM_UNMATCHABLE: c_int = -2;
-
-fn ascii_tolower(c: u8) -> u8 {
-    if c >= b'A' && c <= b'Z' { c + 32 } else { c }
-}
-
-fn ascii_toupper(c: u8) -> u8 {
-    if c >= b'a' && c <= b'z' { c - 32 } else { c }
-}
-
-fn ascii_casefold(k: u8) -> u8 {
-    let upper = ascii_toupper(k);
-    if upper != k { upper } else { ascii_tolower(k) }
-}
-
-/// Get next byte from pattern, classifying it.
-/// Returns (token_type, bytes_consumed).
-unsafe fn pat_next(pat: *const u8, m: usize, flags: c_int) -> (c_int, usize) {
-    if m == 0 || *pat == 0 {
-        return (FNM_END, 0);
-    }
-    let mut p = pat;
-    let mut step = 1usize;
-    let mut esc = false;
-    if *p == b'\\' && !(flags & FNM_NOESCAPE != 0) && *p.add(1) != 0 {
-        p = p.add(1);
-        step = 2;
-        esc = true;
-    }
-    if *p == b'[' && !esc {
-        // scan for matching ]
-        let mut k = 1usize;
-        if k < m && (*pat.add(k) == b'^' || *pat.add(k) == b'!') { k += 1; }
-        if k < m && *pat.add(k) == b']' { k += 1; }
-        while k < m && *pat.add(k) != 0 && *pat.add(k) != b']' {
-            if k + 1 < m && *pat.add(k) == b'[' &&
-               (*pat.add(k+1) == b':' || *pat.add(k+1) == b'.' || *pat.add(k+1) == b'=') {
-                let z = *pat.add(k+1);
-                k += 2;
-                if k < m { k += 1; }
-                while k < m && *pat.add(k) != 0 && (*pat.add(k-1) != z || *pat.add(k) != b']') { k += 1; }
-                if k == m || *pat.add(k) == 0 { break; }
-            }
-            k += 1;
-        }
-        if k == m || *pat.add(k) == 0 {
-            // unmatched [ is literal
-            return (b'[' as c_int, 1);
-        }
-        return (FNM_BRACKET, k + 1);
-    }
-    if *p == b'*' && !esc {
-        return (FNM_STAR, 1);
-    }
-    if *p == b'?' && !esc {
-        return (FNM_QUESTION, 1);
-    }
-    (*p as c_int, step)
-}
-
-unsafe fn match_class(name: &[u8], k: u8, kfold: u8) -> bool {
-    let eq = |c: u8| k == c || kfold == c;
-    let in_range = |lo: u8, hi: u8| (k >= lo && k <= hi) || (kfold >= lo && kfold <= hi);
-    match name {
-        b"alnum" => in_range(b'0', b'9') || in_range(b'A', b'Z') || in_range(b'a', b'z'),
-        b"alpha" => in_range(b'A', b'Z') || in_range(b'a', b'z'),
-        b"blank" => eq(b' ') || eq(b'\t'),
-        b"cntrl" => k < 0x20 || k == 0x7f,
-        b"digit" => in_range(b'0', b'9'),
-        b"graph" => k >= 0x21 && k <= 0x7e,
-        b"lower" => in_range(b'a', b'z'),
-        b"print" => k >= 0x20 && k <= 0x7e,
-        b"punct" =>
-            (k >= 0x21 && k <= 0x2f) ||
-            (k >= 0x3a && k <= 0x40) ||
-            (k >= 0x5b && k <= 0x60) ||
-            (k >= 0x7b && k <= 0x7e),
-        b"space" => eq(b' ') || eq(b'\t') || eq(b'\n') || eq(b'\r') || eq(0x0c) || eq(0x0b),
-        b"upper" => in_range(b'A', b'Z'),
-        b"xdigit" => in_range(b'0', b'9') || in_range(b'A', b'F') || in_range(b'a', b'f'),
-        _ => false,
-    }
-}
-
-/// Match a bracket expression [class] against char k.
-unsafe fn match_bracket(mut p: *const u8, k: u8, kfold: u8) -> bool {
-    let mut inv = false;
-    p = p.add(1); // skip [
-    if *p == b'^' || *p == b'!' {
-        inv = true;
-        p = p.add(1);
-    }
-    // handle ] as first char
-    if *p == b']' {
-        if k == b']' { return !inv; }
-        p = p.add(1);
-    } else if *p == b'-' {
-        if k == b'-' { return !inv; }
-        p = p.add(1);
-    }
-    while *p != b']' && *p != 0 {
-        if *p == b'-' && *p.add(1) != b']' && *p.add(1) != 0 {
-            // range: previous char to next char
-            let lo = *p.sub(1);
-            let hi = *p.add(1);
-            if lo <= hi && (k >= lo && k <= hi || kfold >= lo && kfold <= hi) {
-                return !inv;
-            }
-            p = p.add(2);
-        } else if *p == b'[' && (*p.add(1) == b':' || *p.add(1) == b'.' || *p.add(1) == b'=') {
-            let z = *p.add(1);
-            let start = p.add(2);
-            let mut q = start;
-            while *q != 0 && (*q != z || *q.add(1) != b']') { q = q.add(1); }
-            if *q != 0 {
-                let len = (q as usize) - (start as usize);
-                if len > 0 {
-                    let inner = core::slice::from_raw_parts(start, len);
-                    let matched =
-                        if z == b':' { match_class(inner, k, kfold) }
-                        else { len == 1 && (inner[0] == k || inner[0] == kfold) };
-                    if matched { return !inv; }
-                }
-                p = q.add(2);
-                continue;
-            }
-        } else {
-            if *p == k || *p == kfold {
-                return !inv;
-            }
-            p = p.add(1);
-        }
-    }
-    inv
-}
-
-/// Core fnmatch for a single path component (no FNM_PATHNAME splitting).
-unsafe fn fnmatch_internal(pat: *const u8, str: *const u8, flags: c_int) -> c_int {
-    // Handle leading .
-    if flags & FNM_PERIOD != 0 && *str == b'.' && *pat != b'.' {
-        return FNM_NOMATCH;
-    }
-
-    let mut p = pat;
-    let mut s = str;
-
-    // Consume pattern up to first *
-    loop {
-        let (tok, step) = pat_next(p, usize::MAX, flags);
-        match tok {
-            FNM_END => {
-                return if *s == 0 { 0 } else { FNM_NOMATCH };
-            }
-            FNM_STAR => {
-                p = p.add(1);
-                break;
-            }
-            FNM_QUESTION => {
-                if *s == 0 { return FNM_NOMATCH; }
-                s = s.add(1);
-                p = p.add(step);
-            }
-            FNM_BRACKET => {
-                if *s == 0 { return FNM_NOMATCH; }
-                let k = *s;
-                let kfold = if flags & FNM_CASEFOLD != 0 { ascii_casefold(k) } else { k };
-                if !match_bracket(p, k, kfold) { return FNM_NOMATCH; }
-                p = p.add(step);
-                s = s.add(1);
-            }
-            c => {
-                if *s == 0 { return FNM_NOMATCH; }
-                let k = *s;
-                let kfold = if flags & FNM_CASEFOLD != 0 { ascii_casefold(k) } else { k };
-                if k as c_int != c && kfold as c_int != c { return FNM_NOMATCH; }
-                p = p.add(step);
-                s = s.add(1);
-            }
-        }
-    }
-
-    // Now p points after first *, rest of pattern is variable
-    // Factor: find tail after last * and count fixed chars needed
-    let mut ptail = p;
-    let mut tailcnt: usize = 0;
-    let mut pp = p;
-    loop {
-        let (tok, step) = pat_next(pp, usize::MAX, flags);
-        if tok == FNM_END { break; }
-        if tok == FNM_STAR {
-            tailcnt = 0;
-            ptail = pp.add(1);
-        } else {
-            tailcnt += 1;
-        }
-        pp = pp.add(step);
-    }
-
-    // str must have at least tailcnt chars
-    let slen = strlen(s as *const c_char);
-    if slen < tailcnt { return FNM_NOMATCH; }
-
-    // Match tail: ptail..end against str[tailcnt from end]
-    let stail = s.add(slen - tailcnt);
-    let mut tp = ptail;
-    let mut ts = stail;
-    loop {
-        let (tok, step) = pat_next(tp, usize::MAX, flags);
-        tp = tp.add(step);
-        if tok == FNM_END {
-            break;
-        }
-        let k = *ts;
-        if k == 0 { return FNM_NOMATCH; }
-        let kfold = if flags & FNM_CASEFOLD != 0 { ascii_casefold(k) } else { k };
-        match tok {
-            FNM_QUESTION => { ts = ts.add(1); }
-            FNM_BRACKET => {
-                if !match_bracket(tp.sub(step), k, kfold) { return FNM_NOMATCH; }
-                ts = ts.add(1);
-            }
-            c => {
-                if k as c_int != c && kfold as c_int != c { return FNM_NOMATCH; }
-                ts = ts.add(1);
-            }
-        }
-    }
-
-    let endstr = stail;
-    let endpat = ptail;
-
-    let mut cp = p;
-    let mut cs = s;
-    while cp < endpat {
-        let (tok, step) = pat_next(cp, usize::MAX, flags);
-        if tok == FNM_STAR {
-            cp = cp.add(step);
-            cs = s;
-            continue;
-        }
-        let comp_start = cp;
-        let mut ok = false;
-        let mut try_s = cs;
-        while try_s < endstr {
-            let mut tmp_p = comp_start;
-            let mut tmp_s = try_s;
-            let mut matched = true;
-            loop {
-                let (t, st) = pat_next(tmp_p, usize::MAX, flags);
-                if t == FNM_STAR || t == FNM_END {
-                    cp = tmp_p;
-                    cs = tmp_s;
-                    ok = true;
-                    break;
-                }
-                if *tmp_s == 0 {
-                    matched = false;
-                    break;
-                }
-                let k = *tmp_s;
-                let kfold = if flags & FNM_CASEFOLD != 0 { ascii_casefold(k) } else { k };
-                match t {
-                    FNM_QUESTION => {
-                        tmp_s = tmp_s.add(1);
-                    }
-                    FNM_BRACKET => {
-                        if !match_bracket(tmp_p, k, kfold) {
-                            matched = false;
-                            break;
-                        }
-                        tmp_s = tmp_s.add(1);
-                    }
-                    c => {
-                        if k as c_int != c && kfold as c_int != c {
-                            matched = false;
-                            break;
-                        }
-                        tmp_s = tmp_s.add(1);
-                    }
-                }
-                tmp_p = tmp_p.add(st);
-            }
-            if ok { break; }
-            if !matched {
-                try_s = try_s.add(1);
-            }
-        }
-        if !ok {
-            return FNM_NOMATCH;
-        }
-    }
-    0
-}
 
 #[no_mangle]
 pub unsafe extern "C" fn fnmatch(pat: *const c_char, str: *const c_char, flags: c_int) -> c_int {
-    let pat = pat as *const u8;
-    let str = str as *const u8;
-
-    if flags & FNM_PATHNAME != 0 {
-        // Split on /
-        let mut s = str;
-        let mut p = pat;
-        loop {
-            // find next / in str
-            let mut send = s;
-            while *send != 0 && *send != b'/' { send = send.add(1); }
-            // find next / in pat
-            let mut pend = p;
-            loop {
-                let (tok, step) = pat_next(pend, usize::MAX, flags);
-                if tok == FNM_END || (tok >= 0 && tok as u8 == b'/') {
-                    break;
-                }
-                pend = pend.add(step);
-            }
-            let (ptok, pstep) = pat_next(pend, usize::MAX, flags);
-            let pat_is_slash = ptok >= 0 && ptok as u8 == b'/';
-            let str_is_slash = *send == b'/';
-            if pat_is_slash != str_is_slash && (*send != 0 || !(flags & FNM_LEADING_DIR != 0)) {
-                return FNM_NOMATCH;
-            }
-            // match component
-            // We need a null-terminated copy of the component
-            let plen = (pend as usize) - (p as usize);
-            let slen = (send as usize) - (s as usize);
-            // Use stack buffers for components
-            // ponytail: max component 1024 bytes
-            if plen > 1024 || slen > 1024 { return FNM_NOMATCH; }
-            let mut pbuf = [0u8; 1025];
-            let mut sbuf = [0u8; 1025];
-            core::ptr::copy_nonoverlapping(p, pbuf.as_mut_ptr(), plen);
-            pbuf[plen] = 0;
-            core::ptr::copy_nonoverlapping(s, sbuf.as_mut_ptr(), slen);
-            sbuf[slen] = 0;
-            if fnmatch_internal(pbuf.as_ptr(), sbuf.as_ptr(), flags & !FNM_LEADING_DIR) != 0 {
-                return FNM_NOMATCH;
-            }
-            if !pat_is_slash {
-                return 0;
-            }
-            s = send.add(1);
-            p = pend.add(pstep);
-        }
+    // SAFETY: The C ABI contract requires both arguments to point to valid
+    // NUL-terminated strings, just as the previous in-place matcher did. The
+    // shared core accepts the resulting borrowed byte slices and performs no
+    // allocation or locale lookup.
+    let pat = unsafe { CStr::from_ptr(pat) }.to_bytes();
+    let str = unsafe { CStr::from_ptr(str) }.to_bytes();
+    if crabc_core::pattern::fnmatch(pat, str, flags as u32) {
+        0
+    } else {
+        FNM_NOMATCH
     }
-
-    if flags & FNM_LEADING_DIR != 0 {
-        // Try matching at each /
-        let mut s = str;
-        while *s != 0 {
-            if *s == b'/' {
-                // temporarily null-terminate
-                // ponytail: we need to copy. Use a simple approach.
-                let len = (s as usize) - (str as usize);
-                // Just call fnmatch_internal with a temp buffer
-                if len < 4096 {
-                    let mut buf = [0u8; 4096];
-                    core::ptr::copy_nonoverlapping(str, buf.as_mut_ptr(), len);
-                    buf[len] = 0;
-                    if fnmatch_internal(pat, buf.as_ptr(), flags) == 0 {
-                        return 0;
-                    }
-                }
-            }
-            s = s.add(1);
-        }
-    }
-
-    fnmatch_internal(pat, str, flags)
 }
+
 
 // ============================================================
 // mntent: setmntent/endmntent/getmntent/getmntent_r/addmntent/hasmntopt
@@ -16870,6 +16550,214 @@ unsafe extern "C" fn runtime_thread_setspecific(
     pthread_setspecific(key as pthread_key_t, value)
 }
 
+// These callbacks are the sole stateful stdio boundary used by the native
+// `CFile` facade. They own the libc `FILE` allocation and translate its
+// sentinel/errno behavior to positive ordinary statuses before control returns
+// to Rust. No public stdio symbol or C errno TLS crosses that native boundary.
+#[inline]
+unsafe fn runtime_cfile_failure_status() -> c_int {
+    if ERRNO > 0 && ERRNO <= 4095 { ERRNO } else { EIO_VAL }
+}
+
+#[inline]
+unsafe fn runtime_cfile_file(
+    handle: crabc_core::runtime::CFileHandleV1,
+) -> core::result::Result<*mut FILE, c_int> {
+    if handle.is_null() { Err(EINVAL) } else { Ok(handle as *mut FILE) }
+}
+
+unsafe extern "C" fn runtime_cfile_open_memory(
+    buffer: *mut u8,
+    length: usize,
+    mode: u32,
+    handle: *mut crabc_core::runtime::CFileHandleV1,
+) -> c_int {
+    if buffer.is_null() || handle.is_null() {
+        return EINVAL;
+    }
+    let mode = match mode {
+        crabc_core::runtime::CFILE_MODE_READ => b"r\0".as_ptr(),
+        crabc_core::runtime::CFILE_MODE_WRITE => b"w\0".as_ptr(),
+        crabc_core::runtime::CFILE_MODE_APPEND => b"a\0".as_ptr(),
+        crabc_core::runtime::CFILE_MODE_READ_UPDATE => b"r+\0".as_ptr(),
+        crabc_core::runtime::CFILE_MODE_WRITE_UPDATE => b"w+\0".as_ptr(),
+        crabc_core::runtime::CFILE_MODE_APPEND_UPDATE => b"a+\0".as_ptr(),
+        _ => return EINVAL,
+    };
+    ERRNO = 0;
+    let file = fmemopen(buffer as *mut c_void, length, mode as *const c_char);
+    if file.is_null() {
+        return runtime_cfile_failure_status();
+    }
+    *handle = file as crabc_core::runtime::CFileHandleV1;
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_read(
+    handle: crabc_core::runtime::CFileHandleV1,
+    buffer: *mut u8,
+    length: usize,
+    read: *mut usize,
+) -> c_int {
+    if read.is_null() || (length != 0 && buffer.is_null()) {
+        return EINVAL;
+    }
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    ERRNO = 0;
+    let count = fread(buffer as *mut c_void, 1, length, file);
+    *read = count;
+    if count < length && ferror(file) != 0 {
+        return runtime_cfile_failure_status();
+    }
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_write(
+    handle: crabc_core::runtime::CFileHandleV1,
+    buffer: *const u8,
+    length: usize,
+    written: *mut usize,
+) -> c_int {
+    if written.is_null() || (length != 0 && buffer.is_null()) {
+        return EINVAL;
+    }
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    ERRNO = 0;
+    let count = fwrite(buffer as *const c_void, 1, length, file);
+    *written = count;
+    if count < length && ferror(file) != 0 {
+        return runtime_cfile_failure_status();
+    }
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_flush(
+    handle: crabc_core::runtime::CFileHandleV1,
+) -> c_int {
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    ERRNO = 0;
+    if fflush(file) == 0 { 0 } else { runtime_cfile_failure_status() }
+}
+
+unsafe extern "C" fn runtime_cfile_seek(
+    handle: crabc_core::runtime::CFileHandleV1,
+    offset: i64,
+    origin: u32,
+    position: *mut u64,
+) -> c_int {
+    if position.is_null() {
+        return EINVAL;
+    }
+    let whence = match origin {
+        crabc_core::runtime::CFILE_SEEK_START => SEEK_SET,
+        crabc_core::runtime::CFILE_SEEK_CURRENT => SEEK_CUR,
+        crabc_core::runtime::CFILE_SEEK_END => SEEK_END,
+        _ => return EINVAL,
+    };
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    ERRNO = 0;
+    if fseeko(file, offset, whence) != 0 {
+        return runtime_cfile_failure_status();
+    }
+    ERRNO = 0;
+    let current = ftello(file);
+    if current < 0 {
+        return runtime_cfile_failure_status();
+    }
+    *position = current as u64;
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_tell(
+    handle: crabc_core::runtime::CFileHandleV1,
+    position: *mut u64,
+) -> c_int {
+    if position.is_null() {
+        return EINVAL;
+    }
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    ERRNO = 0;
+    let current = ftello(file);
+    if current < 0 {
+        return runtime_cfile_failure_status();
+    }
+    *position = current as u64;
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_eof(
+    handle: crabc_core::runtime::CFileHandleV1,
+    eof: *mut u8,
+) -> c_int {
+    if eof.is_null() {
+        return EINVAL;
+    }
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    *eof = (feof(file) != 0) as u8;
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_error(
+    handle: crabc_core::runtime::CFileHandleV1,
+    error: *mut u8,
+) -> c_int {
+    if error.is_null() {
+        return EINVAL;
+    }
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    *error = (ferror(file) != 0) as u8;
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_reset(
+    handle: crabc_core::runtime::CFileHandleV1,
+) -> c_int {
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    ERRNO = 0;
+    if fseeko(file, 0, SEEK_SET) != 0 {
+        return runtime_cfile_failure_status();
+    }
+    clearerr(file);
+    0
+}
+
+unsafe extern "C" fn runtime_cfile_close(
+    handle: crabc_core::runtime::CFileHandleV1,
+) -> c_int {
+    let file = match runtime_cfile_file(handle) {
+        Ok(file) => file,
+        Err(status) => return status,
+    };
+    // `fclose` releases both the FILE and its memory-stream cookie on every
+    // result path. Do not dereference `file` after this call.
+    ERRNO = 0;
+    if fclose(file) == 0 { 0 } else { runtime_cfile_failure_status() }
+}
+
 static CRABC_RUNTIME_V1: crabc_core::runtime::RuntimeV1 = crabc_core::runtime::RuntimeV1 {
     abi_version: crabc_core::runtime::V1_ABI_VERSION,
     abi_size: core::mem::size_of::<crabc_core::runtime::RuntimeV1>() as u32,
@@ -16889,6 +16777,16 @@ static CRABC_RUNTIME_V1: crabc_core::runtime::RuntimeV1 = crabc_core::runtime::R
     thread_key_delete: runtime_thread_key_delete,
     thread_getspecific: runtime_thread_getspecific,
     thread_setspecific: runtime_thread_setspecific,
+    cfile_open_memory: runtime_cfile_open_memory,
+    cfile_read: runtime_cfile_read,
+    cfile_write: runtime_cfile_write,
+    cfile_flush: runtime_cfile_flush,
+    cfile_seek: runtime_cfile_seek,
+    cfile_tell: runtime_cfile_tell,
+    cfile_eof: runtime_cfile_eof,
+    cfile_error: runtime_cfile_error,
+    cfile_reset: runtime_cfile_reset,
+    cfile_close: runtime_cfile_close,
 };
 
 /// Returns crabc's first private process-singleton runtime table.

@@ -108,22 +108,30 @@ unsafe extern "C" fn m4_wmemstream_close(file: *mut FILE) -> c_int {
     if cookie.is_null() {
         return 0;
     }
-    if (*cookie).state != 0 {
+    let result = if (*cookie).state != 0 {
         ERRNO = EILSEQ;
-        return -1;
-    }
-    if (*cookie).buffer.is_null() {
+        -1
+    } else if (*cookie).buffer.is_null() {
         let empty = calloc(1, core::mem::size_of::<wchar_t>()) as *mut wchar_t;
         if empty.is_null() {
-            return -1;
+            -1
+        } else {
+            (*cookie).buffer = empty;
+            (*cookie).capacity = 1;
+            *(*cookie).buffer_out = empty;
+            *(*cookie).buffer.add((*cookie).length) = 0;
+            *(*cookie).size_out = (*cookie).length;
+            0
         }
-        (*cookie).buffer = empty;
-        (*cookie).capacity = 1;
-        *(*cookie).buffer_out = empty;
     }
-    *(*cookie).buffer.add((*cookie).length) = 0;
-    *(*cookie).size_out = (*cookie).length;
-    0
+    else {
+        *(*cookie).buffer.add((*cookie).length) = 0;
+        *(*cookie).size_out = (*cookie).length;
+        0
+    };
+    free(cookie as *mut c_void);
+    (*file).cookie = core::ptr::null_mut();
+    result
 }
 
 #[no_mangle]

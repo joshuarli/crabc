@@ -40,6 +40,8 @@ int main(void)
         { "[[:alnum:][:space:]]", " ", 0, 0 },
         { "[[=a=]]", "a", 0, 0 },
         { "[[=a=]]", "A", 0, FNM_NOMATCH },
+        { "[A]", "a", 0, FNM_NOMATCH },
+        { "[A]", "a", FNM_CASEFOLD, 0 },
         { 0 },
     };
 

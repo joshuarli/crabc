@@ -235,6 +235,11 @@ pub type RawFd = i32;
 /// The special `*at` descriptor representing the process current directory.
 pub const AT_FDCWD: RawFd = -100;
 
+/// Direct, typed access to the calling thread's AArch64 floating-point state.
+pub mod fenv;
+/// Stateless byte-oriented filename pattern matching shared by both facades.
+pub mod pattern;
+
 /// Private, versioned wire contracts for process-singleton crabc runtimes.
 ///
 /// These types are deliberately data-only. They let a native facade reach
@@ -264,6 +269,31 @@ pub mod runtime {
 
     /// Destructor ABI used by the private thread-local-key entry point.
     pub type ThreadDestructorV1 = unsafe extern "C" fn(*mut c_void);
+
+    /// Opaque handle representation for one libc-owned buffered memory stream.
+    ///
+    /// This is a private wire value only. Native callers must neither inspect
+    /// nor dereference it; the loaded libc owns the underlying `FILE` and its
+    /// allocation lifetime.
+    pub type CFileHandleV1 = *mut c_void;
+
+    /// Private memory-stream mode values accepted by `cfile_open_memory`.
+    ///
+    /// These describe the same six direction/start-position combinations as
+    /// `fmemopen`, but are deliberately not C mode-string bytes. Keeping the
+    /// values typed on this wire prevents a native facade from transporting a
+    /// caller-owned C string into libc's process-singleton stdio state.
+    pub const CFILE_MODE_READ: u32 = 0;
+    pub const CFILE_MODE_WRITE: u32 = 1;
+    pub const CFILE_MODE_APPEND: u32 = 2;
+    pub const CFILE_MODE_READ_UPDATE: u32 = 3;
+    pub const CFILE_MODE_WRITE_UPDATE: u32 = 4;
+    pub const CFILE_MODE_APPEND_UPDATE: u32 = 5;
+
+    /// Private memory-stream seek-origin values accepted by `cfile_seek`.
+    pub const CFILE_SEEK_START: u32 = 0;
+    pub const CFILE_SEEK_CURRENT: u32 = 1;
+    pub const CFILE_SEEK_END: u32 = 2;
 
     /// Number of key slots owned by the libc runtime in this ABI revision.
     ///
@@ -325,9 +355,10 @@ pub mod runtime {
 
     /// Private v1 runtime table owned by the loaded crabc runtime.
     ///
-    /// Functions return zero on success and `-1` on a loader failure. The
-    /// accompanying `TextV1` then owns a best-effort diagnostic. They never
-    /// transport a C sentinel/`errno` result across this boundary.
+    /// Each callback documents its own non-success status: loader operations
+    /// use `-1` plus copied `TextV1` diagnostics, while pthread and CFile
+    /// operations return positive Linux/pthread error values. None transports
+    /// a public C sentinel or TLS `errno` result across this boundary.
     #[repr(C)]
     pub struct RuntimeV1 {
         /// Must equal [`V1_ABI_VERSION`].
@@ -407,6 +438,64 @@ pub mod runtime {
             key: u32,
             value: *const c_void,
         ) -> c_int,
+        /// Opens a libc-owned buffered view over a caller-borrowed byte
+        /// buffer. `mode` is one of the private `CFILE_MODE_*` values; all
+        /// failures are positive Linux errno values, never C sentinels/TLS
+        /// errno. The runtime does not retain the handle after `cfile_close`.
+        pub cfile_open_memory: unsafe extern "C" fn(
+            buffer: *mut u8,
+            length: usize,
+            mode: u32,
+            handle: *mut CFileHandleV1,
+        ) -> c_int,
+        /// Reads up to `length` bytes, returning the count through `read`.
+        /// A short successful read at end-of-file returns zero status.
+        pub cfile_read: unsafe extern "C" fn(
+            handle: CFileHandleV1,
+            buffer: *mut u8,
+            length: usize,
+            read: *mut usize,
+        ) -> c_int,
+        /// Writes up to `length` bytes, returning the count through `written`.
+        /// A short successful write is represented by its count, not a C
+        /// sentinel; an actual stream failure is a positive errno status.
+        pub cfile_write: unsafe extern "C" fn(
+            handle: CFileHandleV1,
+            buffer: *const u8,
+            length: usize,
+            written: *mut usize,
+        ) -> c_int,
+        /// Flushes buffered output for one memory stream.
+        pub cfile_flush: unsafe extern "C" fn(handle: CFileHandleV1) -> c_int,
+        /// Seeks within one memory stream and returns the resulting absolute
+        /// byte position through `position`.
+        pub cfile_seek: unsafe extern "C" fn(
+            handle: CFileHandleV1,
+            offset: i64,
+            origin: u32,
+            position: *mut u64,
+        ) -> c_int,
+        /// Returns the current absolute byte position.
+        pub cfile_tell: unsafe extern "C" fn(
+            handle: CFileHandleV1,
+            position: *mut u64,
+        ) -> c_int,
+        /// Copies the end-of-file indicator as zero or one.
+        pub cfile_eof: unsafe extern "C" fn(
+            handle: CFileHandleV1,
+            eof: *mut u8,
+        ) -> c_int,
+        /// Copies the stream-error indicator as zero or one.
+        pub cfile_error: unsafe extern "C" fn(
+            handle: CFileHandleV1,
+            error: *mut u8,
+        ) -> c_int,
+        /// Rewinds one memory stream and clears its EOF/error indicators.
+        pub cfile_reset: unsafe extern "C" fn(handle: CFileHandleV1) -> c_int,
+        /// Closes one memory stream and releases all libc-owned allocations.
+        /// The caller must discard the handle after this call regardless of
+        /// whether the returned close/flush status is successful.
+        pub cfile_close: unsafe extern "C" fn(handle: CFileHandleV1) -> c_int,
     }
 }
 

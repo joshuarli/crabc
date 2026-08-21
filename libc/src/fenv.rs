@@ -198,74 +198,73 @@ use x86_64_imp::*;
 #[cfg(target_arch = "aarch64")]
 mod aarch64_imp {
     use super::*;
+    use crabc_core::fenv::{self, ExceptionFlags, RoundingMode};
+
+    #[inline]
+    fn exception_flags(excepts: c_int) -> ExceptionFlags {
+        ExceptionFlags::from_bits_truncate(excepts as u32)
+    }
+
+    #[inline]
+    fn rounding_mode(rounding: c_int) -> Option<RoundingMode> {
+        match rounding {
+            FE_TONEAREST => Some(RoundingMode::Nearest),
+            FE_DOWNWARD => Some(RoundingMode::Downward),
+            FE_UPWARD => Some(RoundingMode::Upward),
+            FE_TOWARDZERO => Some(RoundingMode::TowardZero),
+            _ => None,
+        }
+    }
 
     #[no_mangle]
     pub unsafe extern "C" fn feclearexcept(excepts: c_int) -> c_int {
-        let mask = (excepts & 0x1f) as u64;
-        let mut fpsr: u64;
-        core::arch::asm!("mrs {fpsr}, fpsr", fpsr = out(reg) fpsr);
-        let new_fpsr = fpsr & !mask;
-        core::arch::asm!("msr fpsr, {fpsr}", fpsr = in(reg) new_fpsr);
+        fenv::clear_exceptions(exception_flags(excepts));
         0
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn feraiseexcept(excepts: c_int) -> c_int {
-        let mask = (excepts & 0x1f) as u64;
-        let mut fpsr: u64;
-        core::arch::asm!("mrs {fpsr}, fpsr", fpsr = out(reg) fpsr);
-        let new_fpsr = fpsr | mask;
-        core::arch::asm!("msr fpsr, {fpsr}", fpsr = in(reg) new_fpsr);
+        fenv::raise_exceptions(exception_flags(excepts));
         0
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn fetestexcept(excepts: c_int) -> c_int {
-        let mask = (excepts & 0x1f) as u64;
-        let mut fpsr: u64;
-        core::arch::asm!("mrs {fpsr}, fpsr", fpsr = out(reg) fpsr);
-        (fpsr & mask) as c_int
+        fenv::test_exceptions(exception_flags(excepts)).bits() as c_int
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn fegetround() -> c_int {
-        let mut fpcr: u64;
-        core::arch::asm!("mrs {fpcr}, fpcr", fpcr = out(reg) fpcr);
-        (fpcr as c_int) & 0xc00000
+        fenv::get_rounding().raw() as c_int
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn fesetround(r: c_int) -> c_int {
-        if r != FE_TONEAREST && r != FE_DOWNWARD && r != FE_UPWARD && r != FE_TOWARDZERO {
-            return -1;
+        match rounding_mode(r) {
+            Some(rounding) => {
+                fenv::set_rounding(rounding);
+                0
+            }
+            None => -1,
         }
-        let mut fpcr: u64;
-        core::arch::asm!("mrs {fpcr}, fpcr", fpcr = out(reg) fpcr);
-        let new_fpcr = (fpcr & !0xc00000u64) | ((r as u64) & 0xc00000);
-        core::arch::asm!("msr fpcr, {fpcr}", fpcr = in(reg) new_fpcr);
-        0
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn fegetenv(envp: *mut fenv_t) -> c_int {
-        let mut fpcr: u64;
-        let mut fpsr: u64;
-        core::arch::asm!("mrs {fpcr}, fpcr", fpcr = out(reg) fpcr);
-        core::arch::asm!("mrs {fpsr}, fpsr", fpsr = out(reg) fpsr);
-        (*envp).__fpcr = fpcr as u32;
-        (*envp).__fpsr = fpsr as u32;
+        let environment = fenv::get_environment();
+        (*envp).__fpcr = environment.fpcr();
+        (*envp).__fpsr = environment.fpsr();
         0
     }
 
     #[no_mangle]
     pub unsafe extern "C" fn fesetenv(envp: *const fenv_t) -> c_int {
-        let (fpcr, fpsr) = if envp == FE_DFL_ENV {
-            (0u64, 0u64)
+        let environment = if envp == FE_DFL_ENV {
+            fenv::Environment::default()
         } else {
-            ((*envp).__fpcr as u64, (*envp).__fpsr as u64)
+            fenv::Environment::from_raw((*envp).__fpcr, (*envp).__fpsr)
         };
-        core::arch::asm!("msr fpcr, {fpcr}", fpcr = in(reg) fpcr);
-        core::arch::asm!("msr fpsr, {fpsr}", fpsr = in(reg) fpsr);
+        fenv::set_environment(environment);
         0
     }
 }

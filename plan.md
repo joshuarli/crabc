@@ -2844,6 +2844,31 @@ extensions. Robust/process-shared/recursive/error-checking forms, C cleanup
 macro scopes, and a shared C `pthread_atfork` registry remain explicit
 Linux/AArch64 capability-accounting work before the M11 x86_64 gate can open.
 
+### Prerequisite progress — crabc-rs M8 semantic facilities — 2026-08-20 UTC
+
+`crabc-rs` M8 is complete for its explicit implement-or-classify scope. The
+native surface adds allocation-free byte-oriented `fnmatch` over `CStr` and
+typed flags, direct calling-thread AArch64 FPCR/FPSR control with an RAII
+restore guard, and a close-on-drop `CFile<'buffer>` memory-stream facade. The
+first two share pure `crabc-core` implementations with the C facade; CFile is
+an opt-in `runtime-stdio` facility that reaches only the append-only private
+`__crabc_runtime_v1` table and provides `std::io::{Read, Write, Seek}` adapters
+without a public C stdio or TLS-errno hop.
+
+The C runtime repair made by this slice also reclaims dynamic `FILE`, cookie,
+and `fgetln` allocations while protecting static standard streams with
+`F_PERM`. A regression proves both `freopen` of an `fmemopen` stream and
+`freopen(stdout)` followed by `fclose(stdout)`, preventing stale callback
+state and static-storage free. The expanded Docker gate covers the native
+tests, no-std AArch64 archives, Python ELF verifiers, loader-backed CFile
+fixture, C fenv/fnmatch tests, and the relevant stdio/memory-stream
+regressions.
+
+M8 deliberately classifies—not silently claims—the remaining locale, wide
+character, iconv, regex, glob, wordexp, passwd/group, special math, and
+complex facilities. They remain explicit M9/M10 capability work; no x86_64
+implementation is enabled by this milestone.
+
 ---
 
 # AArch64 maturity gates

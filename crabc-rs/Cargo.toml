@@ -61,6 +61,21 @@ name = "m7_runtime_thread_probe"
 path = "examples/m7_runtime_thread_probe.rs"
 crate-type = ["staticlib"]
 
+[[example]]
+name = "m8_fenv_direct_probe"
+path = "examples/m8_fenv_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m8_fnmatch_direct_probe"
+path = "examples/m8_fnmatch_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m8_cfile_direct_probe"
+path = "examples/m8_cfile_direct_probe.rs"
+crate-type = ["staticlib"]
+
 [features]
 default = ["std"]
 alloc = []
@@ -73,6 +88,9 @@ runtime-loader = []
 # table. This is separately opt-in because ordinary Rust tests do not load
 # crabc's libc and therefore cannot provide the private getter.
 runtime-thread = []
+# Link the owned CFile memory-stream facade against libc's private
+# singleton-runtime table. Ordinary Rust processes do not provide this table.
+runtime-stdio = []
 # Add the owned Rust closure/result layer. Keeping it separate leaves the raw
 # no-std runtime boundary usable without an allocator.
 runtime-thread-alloc = ["runtime-thread", "alloc"]

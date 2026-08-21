@@ -478,11 +478,11 @@ unsafe fn m4_glob_walk(
                 continue;
             }
             let fnm_flags = if flags & M4_GLOB_NOESCAPE != 0 {
-                FNM_NOESCAPE
+                crabc_core::pattern::FNM_NOESCAPE as c_int
             } else {
                 0
             } | if flags & M4_GLOB_PERIOD == 0 {
-                FNM_PERIOD
+                crabc_core::pattern::FNM_PERIOD as c_int
             } else {
                 0
             };
