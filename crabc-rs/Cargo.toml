@@ -31,6 +31,11 @@ name = "m4_direct_probe"
 path = "examples/m4_direct_probe.rs"
 crate-type = ["staticlib"]
 
+[[example]]
+name = "m5_direct_probe"
+path = "examples/m5_direct_probe.rs"
+crate-type = ["staticlib"]
+
 [features]
 default = ["std"]
 alloc = []

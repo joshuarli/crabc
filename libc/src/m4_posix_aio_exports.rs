@@ -222,8 +222,14 @@ unsafe fn m4_aio_submit(cb: *mut M4AioCb, op: c_int) -> c_int {
                 sys_pwrite64(fd, (*cb).aio_buf as *const u8, (*cb).aio_nbytes, (*cb).aio_offset)
             }
         }
-        M4_AIO_O_SYNC => sys_fsync(fd),
-        M4_AIO_O_DSYNC => sys_fdatasync(fd),
+        M4_AIO_O_SYNC => match crabc_core::fs::fsync(fd) {
+            Ok(()) => 0,
+            Err(errno) => -(errno.raw() as i64),
+        },
+        M4_AIO_O_DSYNC => match crabc_core::fs::fdatasync(fd) {
+            Ok(()) => 0,
+            Err(errno) => -(errno.raw() as i64),
+        },
         _ => return M4_AIO_EINVAL,
     };
 

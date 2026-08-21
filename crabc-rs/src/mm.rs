@@ -10,7 +10,7 @@ use crate::ffi::c_void;
 use crate::Result;
 
 bitflags! {
-    /// Linux `PROT_*` flags for [`mmap_anonymous`].
+    /// Linux `PROT_*` flags for [`mmap`] and [`mmap_anonymous`].
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct ProtFlags: u32 {
@@ -52,7 +52,7 @@ bitflags! {
 }
 
 bitflags! {
-    /// Linux `MAP_*` flags for [`mmap_anonymous`].
+    /// Linux `MAP_*` flags for [`mmap`] and [`mmap_anonymous`].
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct MapFlags: u32 {
@@ -76,6 +76,40 @@ bitflags! {
         const STACK = 0x0002_0000;
         /// Preserve future Linux-defined bits.
         const _ = !0;
+    }
+}
+
+/// Creates a file-backed Linux mapping.
+///
+/// # Safety
+///
+/// If `ptr` is non-null, it must be page-aligned and valid for the mapped
+/// range's mutation requirements. The caller must preserve pointer provenance
+/// and Rust reference invariants for the returned range, including when the
+/// underlying file is concurrently changed. `offset` must meet the kernel's
+/// page-alignment requirement for the selected mapping.
+#[inline]
+pub unsafe fn mmap<Fd: crate::AsFd>(
+    ptr: *mut c_void,
+    len: usize,
+    prot: ProtFlags,
+    flags: MapFlags,
+    fd: Fd,
+    offset: u64,
+) -> Result<*mut c_void> {
+    let fd = fd.as_fd();
+    // SAFETY: The caller owns the mapping and pointer-provenance contract;
+    // `fd` remains borrowed for the duration of the kernel call.
+    unsafe {
+        crabc_core::mm::mmap_raw(
+            ptr.cast(),
+            len,
+            prot.bits(),
+            flags.bits(),
+            fd.as_raw_fd(),
+            offset,
+        )
+        .map(|mapping| mapping.cast())
     }
 }
 

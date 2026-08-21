@@ -2779,6 +2779,19 @@ python3 compat/lto/tests/test_runner.py            11/11 PASS
 
 ## Milestone 11 — only then begin x86_64
 
+Before any x86_64 implementation work, complete the Linux/AArch64
+`crabc-rs` plan in `crabc-rs.md`. Its Rustix correspondence ledger, direct
+syscall boundary proofs, source-compatible fixtures, and explicit exception
+records are an additional AArch64 maturity gate, not a parallel x86_64 task.
+
+### Prerequisite progress — 2026-08-20 UTC
+
+`crabc-rs` M5 is complete for its declared direct descriptor, readiness,
+timer, and mapping slice. The pinned Rustix correspondence ledger is now
+fully classified and its documented direct-boundary/source-comparison gate is
+green. This does not activate x86_64: the remaining `crabc-rs.md` milestones
+and their explicit deferred Linux/AArch64 surfaces remain prerequisites.
+
 Reuse the same compatibility laboratory first.
 
 No RISC-V.

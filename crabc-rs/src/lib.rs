@@ -36,6 +36,7 @@ pub mod time;
 pub mod termios;
 pub mod thread;
 pub mod shm;
+pub mod stdio;
 pub mod system;
 mod raw_dir;
 

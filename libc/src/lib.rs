@@ -877,6 +877,21 @@ unsafe fn c_result_usize(result: crabc_core::Result<usize>) -> i64 {
     }
 }
 
+/// Converts a direct-core signed offset result into the public C convention.
+///
+/// The C facade is the only layer which writes TLS `errno`; native Rust
+/// callers retain `crabc_core::Result` instead.
+#[inline]
+unsafe fn c_result_i64(result: crabc_core::Result<i64>) -> i64 {
+    match result {
+        Ok(value) => value,
+        Err(errno) => {
+            ERRNO = errno.raw();
+            -1
+        }
+    }
+}
+
 #[inline]
 unsafe fn c_result_unit(result: crabc_core::Result<()>) -> c_int {
     match result {
@@ -6554,7 +6569,7 @@ pub unsafe extern "C" fn close(fd: c_int) -> c_int {
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
-    syscall_result(sys_lseek(fd as i64, offset, whence as i64))
+    c_result_i64(crabc_core::fs::lseek(fd, offset, whence as u32))
 }
 
 #[no_mangle]
@@ -6631,7 +6646,10 @@ unsafe fn sys_pipe2(fds: *mut c_int, flags: i32) -> i64 {
 
 #[inline]
 unsafe fn sys_dup3(oldfd: i32, newfd: i32, flags: i32) -> i64 {
-    <Arch as Syscalls>::syscall3(SYS_DUP3, oldfd as i64, newfd as i64, flags as i64)
+    match crabc_core::io::dup3(oldfd, newfd, flags as u32) {
+        Ok(()) => newfd as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -13291,12 +13309,17 @@ unsafe fn sync_environ() {
 
 #[inline]
 unsafe fn sys_dup(oldfd: i32) -> i64 {
-    <Arch as Syscalls>::syscall1(SYS_DUP, oldfd as i64)
+    match crabc_core::io::dup(oldfd) {
+        Ok(fd) => fd as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]unsafe fn sys_dup2(oldfd: i32, newfd: i32) -> i64 {
-    // ponytail: dup3 with flags=0 is equivalent to dup2
-    sys_dup3(oldfd, newfd, 0)
+    match crabc_core::io::dup2(oldfd, newfd) {
+        Ok(()) => newfd as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
 }
 
 #[inline]
@@ -13354,10 +13377,6 @@ unsafe fn sys_truncate(path: *const u8, length: i64) -> i64 {
     <Arch as Syscalls>::syscall2(SYS_TRUNCATE, path as i64, length as i64)
 }
 
-unsafe fn sys_ftruncate(fd: i32, length: i64) -> i64 {
-    <Arch as Syscalls>::syscall2(SYS_FTRUNCATE, fd as i64, length as i64)
-}
-
 unsafe fn sys_nanosleep(req: *const timespec, rem: *mut timespec) -> i64 {
     <Arch as Syscalls>::syscall2(SYS_NANOSLEEP, req as i64, rem as i64)
 }
@@ -13393,14 +13412,6 @@ unsafe fn sys_pause() -> i64 {
     { <Arch as Syscalls>::syscall4(SYS_PPOLL, 0, 0, 0, 0) }
     #[cfg(target_arch = "riscv64")]
     { <Arch as Syscalls>::syscall4(SYS_PPOLL, 0, 0, 0, 0) }
-}
-
-unsafe fn sys_fsync(fd: i32) -> i64 {
-    <Arch as Syscalls>::syscall1(SYS_FSYNC, fd as i64)
-}
-
-unsafe fn sys_fdatasync(fd: i32) -> i64 {
-    <Arch as Syscalls>::syscall1(SYS_FDATASYNC, fd as i64)
 }
 
 unsafe fn sys_sync() {
@@ -13629,9 +13640,7 @@ pub unsafe extern "C" fn truncate(path: *const c_char, length: i64) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn ftruncate(fd: c_int, length: i64) -> c_int {
-    let r = sys_ftruncate(fd, length);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
-    0
+    c_result_unit(crabc_core::fs::ftruncate(fd, length))
 }
 
 #[no_mangle]
@@ -13683,16 +13692,12 @@ pub unsafe extern "C" fn pause() -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fsync(fd: c_int) -> c_int {
-    let r = sys_fsync(fd);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
-    0
+    c_result_unit(crabc_core::fs::fsync(fd))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn fdatasync(fd: c_int) -> c_int {
-    let r = sys_fdatasync(fd);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
-    0
+    c_result_unit(crabc_core::fs::fdatasync(fd))
 }
 
 #[no_mangle]

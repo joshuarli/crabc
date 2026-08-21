@@ -1,8 +1,8 @@
 //! Direct Linux/AArch64 filesystem operations.
 //!
-//! The first vertical slice intentionally contains just the stateless `openat`
-//! operation. It exercises path, descriptor, flag, mode, ownership, and typed
-//! error contracts without crossing into libc's process-global runtime state.
+//! Filesystem operations use the shared stateless Linux/AArch64 syscall seams.
+//! They exercise path, descriptor, flag, mode, ownership, and typed error
+//! contracts without crossing into libc's process-global runtime state.
 
 use bitflags::bitflags;
 use core::mem::MaybeUninit;
@@ -422,6 +422,25 @@ pub enum FlockOperation {
     NonBlockingUnlock = 8 | 4,
 }
 
+/// Enumeration of possible methods to seek within an open file descriptor.
+///
+/// This follows Rustix's Linux `SeekFrom` vocabulary. `Data` and `Hole` map to
+/// Linux sparse-file seeking and are available on this target in addition to
+/// the portable `Start`, `End`, and `Current` variants.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SeekFrom {
+    /// Set the offset to the provided absolute byte position.
+    Start(u64),
+    /// Set the offset relative to the end of the file.
+    End(i64),
+    /// Set the offset relative to the current file position.
+    Current(i64),
+    /// Seek to the next data region at or after the provided offset.
+    Data(u64),
+    /// Seek to the next hole at or after the provided offset.
+    Hole(u64),
+}
+
 /// Opens `path` relative to `dirfd`.
 ///
 /// The call directly reaches the Linux `openat` syscall through the shared
@@ -454,6 +473,56 @@ pub fn openat<P: Arg, Fd: AsFd>(
 #[inline]
 pub fn open<P: Arg>(path: P, oflags: OFlags, create_mode: Mode) -> Result<OwnedFd> {
     openat(CWD, path, oflags, create_mode)
+}
+
+/// Repositions an open file descriptor using Linux's `lseek` operation.
+///
+/// The returned offset is an unsigned byte position, matching Rustix. An
+/// absolute offset larger than `i64::MAX` is passed through to Linux's signed
+/// `off_t` representation and therefore receives the kernel's normal
+/// `EINVAL` result when it becomes negative.
+#[inline]
+#[doc(alias = "lseek")]
+pub fn seek<Fd: AsFd>(fd: Fd, position: SeekFrom) -> Result<u64> {
+    let (whence, offset) = match position {
+        SeekFrom::Start(offset) => (crabc_core::fs::SEEK_SET, offset as i64),
+        SeekFrom::End(offset) => (crabc_core::fs::SEEK_END, offset),
+        SeekFrom::Current(offset) => (crabc_core::fs::SEEK_CUR, offset),
+        SeekFrom::Data(offset) => (crabc_core::fs::SEEK_DATA, offset as i64),
+        SeekFrom::Hole(offset) => (crabc_core::fs::SEEK_HOLE, offset as i64),
+    };
+    // Linux reports successful file offsets as non-negative signed `off_t`
+    // values; the cast preserves that kernel result in Rustix's `u64` API.
+    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), offset, whence).map(|offset| offset as u64)
+}
+
+/// Returns the current offset of an open file descriptor without changing it.
+#[inline]
+#[doc(alias = "lseek")]
+pub fn tell<Fd: AsFd>(fd: Fd) -> Result<u64> {
+    crabc_core::fs::lseek(fd.as_fd().as_raw_fd(), 0, crabc_core::fs::SEEK_CUR)
+        .map(|offset| offset as u64)
+}
+
+/// Flushes file data and metadata for an open file descriptor.
+#[inline]
+pub fn fsync<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::fsync(fd.as_fd().as_raw_fd())
+}
+
+/// Flushes file data for an open file descriptor.
+#[inline]
+pub fn fdatasync<Fd: AsFd>(fd: Fd) -> Result<()> {
+    crabc_core::fs::fdatasync(fd.as_fd().as_raw_fd())
+}
+
+/// Sets the length of an open file descriptor.
+///
+/// The length uses Rustix's unsigned byte-count API and is passed to the
+/// Linux `loff_t` syscall representation without a separate libc conversion.
+#[inline]
+pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
+    crabc_core::fs::ftruncate(fd.as_fd().as_raw_fd(), length as i64)
 }
 
 /// Opens `path` relative to `dirfd` with Linux `openat2` resolution controls.

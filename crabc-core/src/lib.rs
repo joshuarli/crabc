@@ -238,7 +238,10 @@ pub const AT_FDCWD: RawFd = -100;
 const MAX_ERRNO: i32 = 4095;
 const SYS_READ: usize = 63;
 const SYS_WRITE: usize = 64;
+const SYS_LSEEK: usize = 62;
 const SYS_FCNTL: usize = 25;
+const SYS_DUP: usize = 23;
+const SYS_DUP3: usize = 24;
 const SYS_CLOSE: usize = 57;
 const SYS_FLOCK: usize = 32;
 const SYS_OPENAT: usize = 56;
@@ -249,6 +252,9 @@ const SYS_SYMLINKAT: usize = 36;
 const SYS_LINKAT: usize = 37;
 const SYS_FCHMOD: usize = 52;
 const SYS_FCHMODAT: usize = 53;
+const SYS_FTRUNCATE: usize = 46;
+const SYS_FSYNC: usize = 82;
+const SYS_FDATASYNC: usize = 83;
 const SYS_GETDENTS64: usize = 61;
 const SYS_NEWFSTATAT: usize = 79;
 const SYS_READLINKAT: usize = 78;
@@ -274,6 +280,12 @@ const SYS_CLOCK_GETRES: usize = 114;
 const SYS_GETRANDOM: usize = 278;
 const SYS_EVENTFD2: usize = 19;
 const SYS_PPOLL: usize = 73;
+const SYS_EPOLL_CREATE1: usize = 20;
+const SYS_EPOLL_CTL: usize = 21;
+const SYS_EPOLL_PWAIT: usize = 22;
+const SYS_TIMERFD_CREATE: usize = 85;
+const SYS_TIMERFD_SETTIME: usize = 86;
+const SYS_TIMERFD_GETTIME: usize = 87;
 const SYS_SOCKETPAIR: usize = 199;
 const SYS_SENDTO: usize = 206;
 const SYS_RECVFROM: usize = 207;
@@ -456,12 +468,113 @@ fn decode_i32(result: isize) -> Result<i32> {
     Ok(result as i32)
 }
 
+#[inline]
+fn decode_i64(result: isize) -> Result<i64> {
+    if result < 0 && result >= -(MAX_ERRNO as isize) {
+        // SAFETY: Linux's syscall error convention constrains this to 1..=4095.
+        return Err(unsafe { Errno(NonZeroI32::new_unchecked((-result) as i32)) });
+    }
+    Ok(result as i64)
+}
+
 /// Direct descriptor I/O operations.
 pub mod io {
     use super::{
-        decode, decode_i32, syscall1, syscall3, RawFd, Result, SYS_CLOSE,
-        SYS_FCNTL, SYS_IOCTL, SYS_READ, SYS_WRITE,
+        decode, decode_i32, syscall1, syscall3, RawFd, Result, SYS_CLOSE, SYS_DUP,
+        SYS_DUP3, SYS_FCNTL, SYS_IOCTL, SYS_READ, SYS_WRITE,
     };
+
+    /// Linux `F_DUPFD`: duplicate at or above the requested descriptor.
+    pub const F_DUPFD: i32 = 0;
+    /// Linux `F_GETFD`: read descriptor flags.
+    pub const F_GETFD: i32 = 1;
+    /// Linux `F_SETFD`: replace descriptor flags.
+    pub const F_SETFD: i32 = 2;
+    /// Linux `F_DUPFD_CLOEXEC`: duplicate with close-on-exec set.
+    pub const F_DUPFD_CLOEXEC: i32 = 1_030;
+    /// Linux `FD_CLOEXEC` descriptor flag.
+    pub const FD_CLOEXEC: u32 = 1;
+    /// Linux `O_CLOEXEC` flag accepted by `dup3`.
+    pub const O_CLOEXEC: u32 = 0x80000;
+
+    /// Duplicates `fd` to the lowest available descriptor.
+    #[inline]
+    pub fn dup(fd: RawFd) -> Result<RawFd> {
+        // SAFETY: The kernel validates the descriptor and this syscall has one
+        // integer argument with no Rust memory preconditions.
+        decode_i32(unsafe { syscall1(SYS_DUP, fd as usize) })
+    }
+
+    /// Duplicates `fd` onto `new_fd` with Linux `dup3` flags.
+    ///
+    /// This is the direct primitive used for both Rustix's `dup2` and `dup3`
+    /// operations on AArch64, where Linux exposes no separate `dup2` syscall.
+    /// The caller owns the target descriptor and must preserve that ownership
+    /// regardless of the result.
+    #[inline]
+    pub fn dup3(fd: RawFd, new_fd: RawFd, flags: u32) -> Result<()> {
+        // SAFETY: The kernel validates both descriptors and the flags; this
+        // syscall has no Rust memory arguments.
+        decode(unsafe {
+            syscall3(
+                SYS_DUP3,
+                fd as usize,
+                new_fd as usize,
+                flags as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Performs Rustix/POSIX `dup2` semantics on AArch64.
+    ///
+    /// Linux implements this through `dup3`. Unlike `dup3`, equal source and
+    /// target descriptors are a successful no-op, as required by `dup2`.
+    #[inline]
+    pub fn dup2(fd: RawFd, new_fd: RawFd) -> Result<()> {
+        if fd == new_fd {
+            return Ok(());
+        }
+        dup3(fd, new_fd, 0)
+    }
+
+    /// Reads `FD_*` flags through `fcntl(F_GETFD)`.
+    #[inline]
+    pub fn fcntl_getfd(fd: RawFd) -> Result<u32> {
+        // SAFETY: F_GETFD ignores its third argument; zero is the canonical
+        // immediate argument representation on Linux.
+        unsafe { fcntl_raw(fd, F_GETFD, core::ptr::null_mut()) }.map(|flags| flags as u32)
+    }
+
+    /// Replaces `FD_*` flags through `fcntl(F_SETFD)`.
+    #[inline]
+    pub fn fcntl_setfd(fd: RawFd, flags: u32) -> Result<()> {
+        // SAFETY: F_SETFD takes an immediate integer in the third syscall
+        // argument; `fcntl_raw` encodes that integer without dereferencing it.
+        unsafe { fcntl_raw(fd, F_SETFD, flags as usize as *mut u8) }.map(|_| ())
+    }
+
+    /// Duplicates `fd` at or above `minimum` through `fcntl(F_DUPFD)`.
+    #[inline]
+    pub fn fcntl_dupfd(fd: RawFd, minimum: RawFd) -> Result<RawFd> {
+        // SAFETY: F_DUPFD takes an immediate integer in the third syscall
+        // argument; `fcntl_raw` encodes that integer without dereferencing it.
+        unsafe { fcntl_raw(fd, F_DUPFD, minimum as u32 as usize as *mut u8) }
+    }
+
+    /// Duplicates `fd` at or above `minimum` with close-on-exec set.
+    #[inline]
+    pub fn fcntl_dupfd_cloexec(fd: RawFd, minimum: RawFd) -> Result<RawFd> {
+        // SAFETY: F_DUPFD_CLOEXEC takes an immediate integer in the third
+        // syscall argument; `fcntl_raw` encodes that integer directly.
+        unsafe {
+            fcntl_raw(
+                fd,
+                F_DUPFD_CLOEXEC,
+                minimum as u32 as usize as *mut u8,
+            )
+        }
+    }
 
     /// Reads into a raw C-compatible buffer without using libc or TLS `errno`.
     ///
@@ -552,14 +665,72 @@ pub mod io {
 /// Direct stateless filesystem operations.
 pub mod fs {
     use super::{
-        decode, syscall2, syscall3, syscall4, syscall5, CStr, RawFd, Result,
-        SYS_FCHMOD, SYS_FCHMODAT, SYS_FLOCK, SYS_FSTAT, SYS_GETDENTS64, SYS_LINKAT,
-        SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_GETXATTR,
-        SYS_LGETXATTR, SYS_LLISTXATTR, SYS_LREMOVEXATTR, SYS_LSETXATTR, SYS_LISTXATTR,
+        decode, decode_i64, syscall1, syscall2, syscall3, syscall4, syscall5, CStr, RawFd,
+        Result, SYS_FCHMOD, SYS_FCHMODAT, SYS_FDATASYNC, SYS_FLOCK, SYS_FSTAT,
+        SYS_FSYNC, SYS_FTRUNCATE, SYS_GETDENTS64, SYS_LINKAT, SYS_FGETXATTR,
+        SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_GETXATTR, SYS_LGETXATTR,
+        SYS_LLISTXATTR, SYS_LREMOVEXATTR, SYS_LSEEK, SYS_LSETXATTR, SYS_LISTXATTR,
         SYS_MKDIRAT, SYS_NEWFSTATAT, SYS_OPENAT, SYS_OPENAT2, SYS_READLINKAT,
         SYS_REMOVEXATTR, SYS_RENAMEAT2, SYS_SETXATTR, SYS_SYMLINKAT, SYS_UNLINKAT,
         SYS_UTIMENSAT,
     };
+
+    /// Linux `SEEK_SET`: position from the beginning of the file.
+    pub const SEEK_SET: u32 = 0;
+    /// Linux `SEEK_CUR`: position relative to the current file offset.
+    pub const SEEK_CUR: u32 = 1;
+    /// Linux `SEEK_END`: position relative to the end of the file.
+    pub const SEEK_END: u32 = 2;
+    /// Linux `SEEK_DATA`: position at the next data region.
+    pub const SEEK_DATA: u32 = 3;
+    /// Linux `SEEK_HOLE`: position at the next hole.
+    pub const SEEK_HOLE: u32 = 4;
+
+    /// Repositions a descriptor using Linux's `lseek` ABI without using libc
+    /// or TLS `errno`.
+    ///
+    /// The signed `offset` is the kernel's `off_t` representation. The
+    /// returned position is signed at this low-level boundary because it is
+    /// the direct syscall result; successful Linux seeks are non-negative.
+    #[inline]
+    pub fn lseek(fd: RawFd, offset: i64, whence: u32) -> Result<i64> {
+        // SAFETY: The kernel validates the descriptor, offset, and whence.
+        decode_i64(unsafe {
+            syscall3(
+                SYS_LSEEK,
+                fd as usize,
+                offset as usize,
+                whence as usize,
+            )
+        })
+    }
+
+    /// Flushes file data and metadata for an open descriptor without using
+    /// libc or TLS `errno`.
+    #[inline]
+    pub fn fsync(fd: RawFd) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor.
+        decode(unsafe { syscall1(SYS_FSYNC, fd as usize) }).map(|_| ())
+    }
+
+    /// Flushes file data for an open descriptor without using libc or TLS
+    /// `errno`.
+    #[inline]
+    pub fn fdatasync(fd: RawFd) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor.
+        decode(unsafe { syscall1(SYS_FDATASYNC, fd as usize) }).map(|_| ())
+    }
+
+    /// Sets the length of an open file without using libc or TLS `errno`.
+    ///
+    /// `length` is the signed Linux `loff_t` representation. The kernel
+    /// rejects negative lengths with `EINVAL`; retaining that representation
+    /// here keeps this seam a direct syscall boundary.
+    #[inline]
+    pub fn ftruncate(fd: RawFd, length: i64) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor and signed file length.
+        decode(unsafe { syscall2(SYS_FTRUNCATE, fd as usize, length as usize) }).map(|_| ())
+    }
 
     /// Opens a raw C-compatible path relative to `dirfd` without using libc or
     /// TLS `errno`.
@@ -1229,7 +1400,8 @@ pub mod rand {
 
 /// Direct stateless clock queries.
 pub mod time {
-    use super::{decode, syscall2, Result, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME};
+    use super::{decode, syscall2, syscall4, RawFd, Result, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
+        SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME};
 
     /// Queries a Linux clock without using libc, vDSO dispatch, or TLS
     /// `errno`.
@@ -1258,11 +1430,67 @@ pub mod time {
         decode(unsafe { syscall2(SYS_CLOCK_GETRES, clock_id as usize, timespec as usize) })
             .map(|_| ())
     }
+
+    /// Creates a Linux timer descriptor without using libc or TLS `errno`.
+    #[inline]
+    pub fn timerfd_create(clock_id: i32, flags: u32) -> Result<RawFd> {
+        // SAFETY: Linux validates the clock identifier and timer descriptor
+        // flags; no user memory is accessed by this operation.
+        decode(unsafe { super::syscall2(SYS_TIMERFD_CREATE, clock_id as usize, flags as usize) })
+            .map(|fd| fd as RawFd)
+    }
+
+    /// Arms or disarms a Linux timer descriptor without using libc or TLS
+    /// `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `new_value` must point to one writable Linux/AArch64 `struct
+    /// itimerspec`, and `old_value` must be null or point to writable storage
+    /// for one such value.
+    #[inline]
+    pub unsafe fn timerfd_settime_raw(
+        fd: RawFd,
+        flags: u32,
+        new_value: *const u8,
+        old_value: *mut u8,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the two `itimerspec` pointer contracts;
+        // Linux validates the descriptor and timer flags.
+        decode(unsafe {
+            syscall4(
+                SYS_TIMERFD_SETTIME,
+                fd as usize,
+                flags as usize,
+                new_value as usize,
+                old_value as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Reads a Linux timer descriptor's current setting without using libc or
+    /// TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `current_value` must point to writable storage for one Linux/AArch64
+    /// `struct itimerspec`.
+    #[inline]
+    pub unsafe fn timerfd_gettime_raw(fd: RawFd, current_value: *mut u8) -> Result<()> {
+        // SAFETY: The caller owns the output-memory contract; Linux validates
+        // the descriptor.
+        decode(unsafe {
+            super::syscall2(SYS_TIMERFD_GETTIME, fd as usize, current_value as usize)
+        })
+        .map(|_| ())
+    }
 }
 
 /// Direct event-descriptor and polling operations.
 pub mod event {
-    use super::{decode, syscall2, syscall5, RawFd, Result, SYS_EVENTFD2, SYS_PPOLL};
+    use super::{decode, syscall1, syscall2, syscall4, syscall5, syscall6, RawFd, Result,
+        SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2, SYS_PPOLL};
 
     /// Creates a Linux event descriptor without using libc or TLS `errno`.
     #[inline]
@@ -1270,6 +1498,105 @@ pub mod event {
         // SAFETY: Linux validates the initial value and flags.
         decode(unsafe { syscall2(SYS_EVENTFD2, initval as usize, flags as usize) })
             .map(|fd| fd as RawFd)
+    }
+
+    /// Creates a Linux epoll descriptor without using libc or TLS `errno`.
+    #[inline]
+    pub fn epoll_create1(flags: u32) -> Result<RawFd> {
+        // SAFETY: Linux validates the epoll flags; no user memory is accessed
+        // by this operation.
+        decode(unsafe { syscall1(SYS_EPOLL_CREATE1, flags as usize) })
+            .map(|fd| fd as RawFd)
+    }
+
+    /// Adds, modifies, or removes a descriptor from an epoll interest list.
+    ///
+    /// # Safety
+    ///
+    /// For `EPOLL_CTL_ADD` and `EPOLL_CTL_MOD`, `event` must point to one
+    /// readable Linux/AArch64 `struct epoll_event`; for `EPOLL_CTL_DEL`, it
+    /// may be null as required by Linux. The descriptor arguments are passed
+    /// directly to the kernel for validation.
+    #[inline]
+    pub unsafe fn epoll_ctl_raw(
+        epoll_fd: RawFd,
+        operation: u32,
+        source_fd: RawFd,
+        event: *const u8,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the optional event pointer contract; Linux
+        // validates the operation and both descriptors.
+        decode(unsafe {
+            syscall4(
+                SYS_EPOLL_CTL,
+                epoll_fd as usize,
+                operation as usize,
+                source_fd as usize,
+                event as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Waits for epoll readiness with an optional Linux signal mask.
+    ///
+    /// The timeout is the `epoll_pwait` millisecond representation: `-1`
+    /// waits indefinitely and zero performs a non-blocking query. This is the
+    /// shared seam used by both the direct Rust facade and the C errno facade.
+    ///
+    /// # Safety
+    ///
+    /// `events` must point to writable storage for `maxevents` Linux/AArch64
+    /// `struct epoll_event` records. `sigmask` must be null or point to a
+    /// kernel-sized Linux signal mask of `sigsetsize` bytes.
+    #[inline]
+    pub unsafe fn epoll_pwait_raw(
+        epoll_fd: RawFd,
+        events: *mut u8,
+        maxevents: usize,
+        timeout: i32,
+        sigmask: *const u8,
+        sigsetsize: usize,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns all pointed-to Linux ABI layouts. Linux
+        // validates the descriptor, count, timeout, and signal-mask values.
+        decode(unsafe {
+            syscall6(
+                SYS_EPOLL_PWAIT,
+                epoll_fd as usize,
+                events as usize,
+                maxevents,
+                timeout as usize,
+                sigmask as usize,
+                sigsetsize,
+            )
+        })
+    }
+
+    /// Waits for epoll readiness without changing a signal mask.
+    ///
+    /// # Safety
+    ///
+    /// The `events` pointer must be writable for `maxevents` epoll records.
+    #[inline]
+    pub unsafe fn epoll_wait_raw(
+        epoll_fd: RawFd,
+        events: *mut u8,
+        maxevents: usize,
+        timeout: i32,
+    ) -> Result<usize> {
+        // A null mask leaves the calling thread's signal mask unchanged. The
+        // kernel's AArch64 sigset size is eight bytes even for this null mask.
+        unsafe {
+            epoll_pwait_raw(
+                epoll_fd,
+                events,
+                maxevents,
+                timeout,
+                core::ptr::null(),
+                core::mem::size_of::<usize>(),
+            )
+        }
     }
 
     /// Waits for events using the Linux `ppoll` ABI without libc or TLS

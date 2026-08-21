@@ -99,8 +99,9 @@ Target exactly:
 Linux AArch64, little-endian (`aarch64-unknown-linux-musl`)
 ```
 
-Linux arm64 is maintained little-endian only. `aarch64_be` is out of scope;
-do not add endian-parametric internal abstractions, build targets, fixtures, or
+Linux arm64 big-endian is dead upstream, so this project maintains the
+little-endian target only. `aarch64_be` is out of scope; do not add
+endian-parametric internal abstractions, build targets, fixtures, or
 compatibility branches in anticipation of it. Continue to encode protocol and
 on-disk byte order explicitly where the relevant interface requires it.
 
@@ -2801,6 +2802,27 @@ target error without changing the mount namespace.
 
 # 81. Milestone 5 — primary rustix parity
 
+M5 is an evidence-led completion pass over the pinned Rustix 1.1.4
+Linux/AArch64-little-endian profile, rather than a claim that every Linux
+extension should be exposed at once. `compat/rustix/api.toml` is the
+machine-readable authority: each overlapping Rustix family must have one of
+the classifications below, with its exact test or documentation evidence.
+
+| Family | M5 treatment |
+| --- | --- |
+| `fd`, `buffer`, `ffi`, `path`, `io`, and generic `ioctl` vocabulary | Native base surface; complete Rust `std` integration, ownership transfer, and direct-kernel error semantics are required before claiming compatibility. |
+| Core filesystem, pipe, random, poll/eventfd, basic mapping, process identity, system, terminal, PTY, shared memory, and classic mount | Retain the verified M0–M4 direct-core implementations. M5 fills only the explicitly recorded omissions rather than replacing their tested contracts. |
+| Descriptor durability/positioning, descriptor flags and duplication, and `stdio` descriptor helpers | Primary M5 direct syscall work. The `stdio` helpers are descriptor operations, not libc `FILE` state. Taking or replacing process-standard descriptors remains explicitly unsafe where ownership or concurrent global use cannot be guaranteed. |
+| Epoll, timerfd, and file-backed mapping | Primary M5 readiness/VM work. Each uses typed Linux layouts and a source fixture where the Rustix shape is claimed. Socket lifecycle and address codecs stay explicitly deferred until their typed address contract can be verified as a unit. |
+| `param::page_size` and other auxv-derived values | Deferred until a real explicit auxv initialization/ownership boundary exists. Do not guess that every AArch64 process uses 4 KiB pages. |
+| Wait/fork/exec, signals, credentials, limits, scheduling, namespaces, and process-wide `prctl` policy | Deliberately deferred to the process/signal milestones. These operations change process-wide state or need child-after-fork rules, so a thin syscall wrapper is not enough evidence. |
+| Linux-specialized filesystem, VM, networking, and mount administration (`statx`, inotify, memfd/seals, splice family, userfaultfd, FSD mount APIs, ancillary messages, broad socket options, XDP) | Classified as explicit later Linux extension work, never silently counted as Rustix parity. Each needs its own ABI types and regression scope. |
+| `io_uring` and Rustix `runtime` | Not applicable to this foundational synchronous facade. They remain separately documented exclusions. |
+
+The target remains Linux/AArch64 little-endian. This table does not create an
+endian-parametric API promise; network and on-disk formats must continue to
+state their byte-order handling at the individual operation boundary.
+
 Completion requires:
 
 ```text
@@ -2820,6 +2842,33 @@ no public C ABI/errno round-trip for syscall-like APIs
 
 private runtime-boundary exception ledger green
 ```
+
+### Progress — 2026-08-20 UTC
+
+M5 is complete for its declared Linux/AArch64-little-endian scope. The
+machine-readable correspondence ledger now classifies all 89 grouped pinned
+Rustix records: 46 verified native/source-compatible records, 14 implemented
+partial records, 25 explicit later slices, one deliberate mount-helper
+divergence, and the three documented `runtime`/`io_uring`/`try_close`
+exclusions. Deferred records are not counted as native parity.
+
+The completed direct slice covers descriptor positioning, `ftruncate`,
+`fsync`, `fdatasync`, descriptor flags and duplication, standard-descriptor
+helpers, file-backed `mmap`, epoll, and timerfd. The C facades for the
+overlapping operations route through the same `crabc-core` seams and alone
+perform errno/sentinel conversion. The `dup2(fd, fd)` no-op and contrasting
+`dup3(fd, fd, 0)` `EINVAL` rule have both native and dynamically linked C
+regression evidence. Socket lifecycle/address codecs, auxv ownership, and
+the remaining process-wide or Linux-specialized operations remain explicitly
+deferred in the ledger.
+
+`./scripts/dev.sh crabc-rs` passes the no-std build, M0–M5 native tests,
+metadata checks, Python harness tests, all source comparisons, and M0–M5
+static-boundary proofs with the pinned Rustix 1.1.4 checkout. `./scripts/dev.sh test`
+passes the full Docker workspace, including the C façade regression.
+The source-comparison gate uses a 60-second compilation timeout so its pinned
+reference build is not spuriously classified as a behavioral mismatch under
+Docker emulation.
 
 Document deliberate exceptions.
 

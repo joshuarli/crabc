@@ -78,6 +78,29 @@ unsafe fn m4_ppoll(
 }
 
 #[inline]
+#[cfg(target_arch = "aarch64")]
+unsafe fn m4_epoll_pwait(
+    epfd: c_int,
+    events: *mut M4EpollEvent,
+    maxevents: c_int,
+    timeout: c_int,
+    sigmask: *const c_void,
+) -> i64 {
+    match crabc_core::event::epoll_pwait_raw(
+        epfd,
+        events.cast(),
+        maxevents as usize,
+        timeout,
+        sigmask.cast(),
+        core::mem::size_of::<SigSetT>(),
+    ) {
+        Ok(ready) => ready as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
+}
+
+#[inline]
+#[cfg(not(target_arch = "aarch64"))]
 unsafe fn m4_epoll_pwait(
     epfd: c_int,
     events: *mut M4EpollEvent,
@@ -132,16 +155,32 @@ pub unsafe extern "C" fn epoll_create(size: c_int) -> c_int {
     }
     // epoll_create1(0) is the equivalent modern syscall on targets without
     // the historical epoll_create entry point.
+    #[cfg(target_arch = "aarch64")]
+    {
+        return c_result_fd(crabc_core::event::epoll_create1(0));
+    }
     #[cfg(target_arch = "x86_64")]
-    let result = <Arch as Syscalls>::syscall1(M4_SYS_EPOLL_CREATE, size as i64);
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-    let result = <Arch as Syscalls>::syscall1(M4_SYS_EPOLL_CREATE1, 0);
-    syscall_result(result) as c_int
+    {
+        return syscall_result(<Arch as Syscalls>::syscall1(M4_SYS_EPOLL_CREATE, size as i64))
+            as c_int;
+    }
+    #[cfg(target_arch = "riscv64")]
+    {
+        return syscall_result(<Arch as Syscalls>::syscall1(M4_SYS_EPOLL_CREATE1, 0)) as c_int;
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn epoll_create1(flags: c_int) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall1(M4_SYS_EPOLL_CREATE1, flags as i64)) as c_int
+    #[cfg(target_arch = "aarch64")]
+    {
+        return c_result_fd(crabc_core::event::epoll_create1(flags as u32));
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        return syscall_result(<Arch as Syscalls>::syscall1(M4_SYS_EPOLL_CREATE1, flags as i64))
+            as c_int;
+    }
 }
 
 #[no_mangle]
@@ -151,13 +190,27 @@ pub unsafe extern "C" fn epoll_ctl(
     fd: c_int,
     event: *const M4EpollEvent,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall4(
-        M4_SYS_EPOLL_CTL,
-        epfd as i64,
-        op as i64,
-        fd as i64,
-        event as i64,
-    )) as c_int
+    #[cfg(target_arch = "aarch64")]
+    {
+        return c_result_unit(unsafe {
+            crabc_core::event::epoll_ctl_raw(
+                epfd,
+                op as u32,
+                fd,
+                event.cast(),
+            )
+        });
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        return syscall_result(<Arch as Syscalls>::syscall4(
+            M4_SYS_EPOLL_CTL,
+            epfd as i64,
+            op as i64,
+            fd as i64,
+            event as i64,
+        )) as c_int;
+    }
 }
 
 #[no_mangle]

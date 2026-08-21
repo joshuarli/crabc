@@ -93,7 +93,7 @@ class SourceFixtureTests(unittest.TestCase):
         rustix = harness.source_dependency("rustix", Path("/opt/rustix"))
         self.assertIn('api = { package = "rustix"', rustix)
         self.assertIn(
-            'features = ["event", "fs", "mm", "mount", "net", "param", "pipe", "process", "pty", "rand", "shm", "system", "termios", "thread", "time"]',
+            'features = ["event", "fs", "mm", "mount", "net", "param", "pipe", "process", "pty", "rand", "shm", "stdio", "system", "termios", "thread", "time"]',
             rustix,
         )
 

@@ -4,9 +4,90 @@
 //! not call crabc's public C ABI and never read or write TLS `errno`.
 
 use crate::buffer::Buffer;
-use crate::{AsFd, RawFd, Result};
+use crate::{AsFd, OwnedFd, RawFd, Result};
 
 pub use crate::Errno;
+
+bitflags::bitflags! {
+    /// `FD_*` flags used by [`fcntl_getfd`] and [`fcntl_setfd`].
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    pub struct FdFlags: u32 {
+        /// `FD_CLOEXEC`: close this descriptor during a successful exec.
+        const CLOEXEC = crabc_core::io::FD_CLOEXEC;
+
+        /// Preserve unknown Linux flag bits when round-tripping kernel values.
+        const _ = !0;
+    }
+}
+
+bitflags::bitflags! {
+    /// `O_*` flags accepted by [`dup3`].
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    pub struct DupFlags: u32 {
+        /// `O_CLOEXEC`: set close-on-exec on the new descriptor.
+        const CLOEXEC = crabc_core::io::O_CLOEXEC;
+
+        /// Preserve unknown Linux flag bits for kernel validation.
+        const _ = !0;
+    }
+}
+
+/// `dup(fd)`—duplicate a descriptor with a fresh owner.
+#[inline]
+pub fn dup<Fd: AsFd>(fd: Fd) -> Result<OwnedFd> {
+    let raw = crabc_core::io::dup(fd.as_fd().as_raw_fd())?;
+    // SAFETY: Linux returned a new open descriptor whose ownership is now
+    // transferred to this `OwnedFd`.
+    unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
+}
+
+/// `dup2(fd, new)`—replace the descriptor held by `new`.
+///
+/// The mutable owner prevents aliasing the target through this API. Linux's
+/// AArch64 implementation uses `dup3` internally while preserving `dup2`'s
+/// equal-descriptor no-op semantics.
+#[inline]
+pub fn dup2<Fd: AsFd>(fd: Fd, new: &mut OwnedFd) -> Result<()> {
+    crabc_core::io::dup2(fd.as_fd().as_raw_fd(), new.as_raw_fd())
+}
+
+/// `dup3(fd, new, flags)`—replace the descriptor held by `new` with flags.
+#[inline]
+pub fn dup3<Fd: AsFd>(fd: Fd, new: &mut OwnedFd, flags: DupFlags) -> Result<()> {
+    crabc_core::io::dup3(fd.as_fd().as_raw_fd(), new.as_raw_fd(), flags.bits())
+}
+
+/// `fcntl(fd, F_GETFD)`—read descriptor flags.
+#[inline]
+pub fn fcntl_getfd<Fd: AsFd>(fd: Fd) -> Result<FdFlags> {
+    crabc_core::io::fcntl_getfd(fd.as_fd().as_raw_fd()).map(FdFlags::from_bits_retain)
+}
+
+/// `fcntl(fd, F_SETFD, flags)`—replace descriptor flags.
+#[inline]
+pub fn fcntl_setfd<Fd: AsFd>(fd: Fd, flags: FdFlags) -> Result<()> {
+    crabc_core::io::fcntl_setfd(fd.as_fd().as_raw_fd(), flags.bits())
+}
+
+/// `fcntl(fd, F_DUPFD)`—duplicate at or above `minimum`.
+#[inline]
+pub fn fcntl_dupfd<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> {
+    let raw = crabc_core::io::fcntl_dupfd(fd.as_fd().as_raw_fd(), minimum)?;
+    // SAFETY: Linux returned a new open descriptor whose ownership is now
+    // transferred to this `OwnedFd`.
+    unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
+}
+
+/// `fcntl(fd, F_DUPFD_CLOEXEC)`—duplicate with close-on-exec set.
+#[inline]
+pub fn fcntl_dupfd_cloexec<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> {
+    let raw = crabc_core::io::fcntl_dupfd_cloexec(fd.as_fd().as_raw_fd(), minimum)?;
+    // SAFETY: Linux returned a new open descriptor whose ownership is now
+    // transferred to this `OwnedFd`.
+    unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
+}
 
 /// Reads bytes into initialized or potentially uninitialized storage.
 ///

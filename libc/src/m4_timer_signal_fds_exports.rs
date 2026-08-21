@@ -32,6 +32,16 @@ const M4_SYS_TIMERFD_GETTIME: i64 = 87;
 const M4_SYS_SIGNALFD4: i64 = 74;
 
 #[inline]
+#[cfg(target_arch = "aarch64")]
+unsafe fn m4_timerfd_create(clockid: c_int, flags: c_int) -> i64 {
+    match crabc_core::time::timerfd_create(clockid, flags as u32) {
+        Ok(fd) => fd as i64,
+        Err(errno) => -(errno.raw() as i64),
+    }
+}
+
+#[inline]
+#[cfg(not(target_arch = "aarch64"))]
 unsafe fn m4_timerfd_create(clockid: c_int, flags: c_int) -> i64 {
     <Arch as Syscalls>::syscall2(
         M4_SYS_TIMERFD_CREATE,
@@ -41,6 +51,26 @@ unsafe fn m4_timerfd_create(clockid: c_int, flags: c_int) -> i64 {
 }
 
 #[inline]
+#[cfg(target_arch = "aarch64")]
+unsafe fn m4_timerfd_settime(
+    fd: c_int,
+    flags: c_int,
+    new_value: *const M4Itimerspec,
+    old_value: *mut M4Itimerspec,
+) -> i64 {
+    match crabc_core::time::timerfd_settime_raw(
+        fd,
+        flags as u32,
+        new_value.cast(),
+        old_value.cast(),
+    ) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
+}
+
+#[inline]
+#[cfg(not(target_arch = "aarch64"))]
 unsafe fn m4_timerfd_settime(
     fd: c_int,
     flags: c_int,
@@ -57,6 +87,16 @@ unsafe fn m4_timerfd_settime(
 }
 
 #[inline]
+#[cfg(target_arch = "aarch64")]
+unsafe fn m4_timerfd_gettime(fd: c_int, current_value: *mut M4Itimerspec) -> i64 {
+    match crabc_core::time::timerfd_gettime_raw(fd, current_value.cast()) {
+        Ok(()) => 0,
+        Err(errno) => -(errno.raw() as i64),
+    }
+}
+
+#[inline]
+#[cfg(not(target_arch = "aarch64"))]
 unsafe fn m4_timerfd_gettime(fd: c_int, current_value: *mut M4Itimerspec) -> i64 {
     <Arch as Syscalls>::syscall2(
         M4_SYS_TIMERFD_GETTIME,
