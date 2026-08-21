@@ -16524,6 +16524,383 @@ static mut LDSO_DLSYM: Option<LdsoDlsymFn> = None;
 static mut LDSO_DLCLOSE: Option<LdsoDlcloseFn> = None;
 static mut LDSO_DLERROR: Option<LdsoDlerrorFn> = None;
 
+// `libldso.so` owns the loaded-object graph, its recursive loader lock, and
+// the TLS-backed dlerror storage. `crabc-rs` therefore cannot link a second
+// copy of that state into an application. The table below is the one narrow,
+// versioned private boundary through which its native loader API reaches the
+// already-registered ldso callbacks. It is deliberately not declared by any
+// installed C header and never carries public dlfcn sentinels or errno.
+//
+// Text is copied while the callback's loader/TLS result remains valid. This
+// prevents a native caller from borrowing a dlerror or dladdr string whose
+// lifetime is tied to a later loader operation on the same thread.
+unsafe fn runtime_text_clear(text: *mut crabc_core::runtime::TextV1) {
+    if !text.is_null() {
+        // SAFETY: The private ABI caller supplied writable output storage.
+        unsafe { core::ptr::write(text, crabc_core::runtime::TextV1::empty()) };
+    }
+}
+
+unsafe fn runtime_text_bytes(text: *mut crabc_core::runtime::TextV1, bytes: &[u8]) {
+    if text.is_null() {
+        return;
+    }
+    // SAFETY: The non-null private ABI output pointer is writable for its
+    // exact repr(C) value by the runtime-table contract.
+    let output = unsafe { &mut *text };
+    *output = crabc_core::runtime::TextV1::empty();
+    let count = core::cmp::min(bytes.len(), output.bytes.len());
+    output.bytes[..count].copy_from_slice(&bytes[..count]);
+    output.len = count as u16;
+    if count < bytes.len() {
+        output.flags = 1;
+    }
+}
+
+unsafe fn runtime_text_cstr(text: *mut crabc_core::runtime::TextV1, source: *const c_char) {
+    if text.is_null() || source.is_null() {
+        return;
+    }
+    // The loader supplies bounded NUL-terminated diagnostics/names. Copy at
+    // most the explicit v1 capacity, rather than returning its borrowed
+    // pointer across the runtime boundary.
+    let mut bytes = [0_u8; crabc_core::runtime::TEXT_CAPACITY];
+    let mut count = 0;
+    while count < bytes.len() {
+        // SAFETY: `source` is the callback's documented NUL-terminated C
+        // string and remains live until this callback returns.
+        let byte = unsafe { *(source as *const u8).add(count) };
+        if byte == 0 {
+            break;
+        }
+        bytes[count] = byte;
+        count += 1;
+    }
+    // If the source fills the bounded wire buffer, conservatively record it
+    // as truncated. Loader messages are bounded, and a false-positive here is
+    // safer than probing one byte beyond an unfamiliar callback's contract.
+    if count == bytes.len() {
+        // SAFETY: `text` was checked non-null above.
+        let output = unsafe { &mut *text };
+        *output = crabc_core::runtime::TextV1::empty();
+        output.bytes.copy_from_slice(&bytes);
+        output.len = count as u16;
+        output.flags = 1;
+    } else {
+        // SAFETY: `bytes[..count]` owns the copied diagnostic bytes.
+        unsafe { runtime_text_bytes(text, &bytes[..count]) };
+    }
+}
+
+unsafe fn runtime_loader_failure(
+    error: *mut crabc_core::runtime::TextV1,
+    fallback: &[u8],
+) {
+    // dlerror consumes the current per-thread error once. Copy it before
+    // returning so native Rust never receives a TLS-borrowed pointer.
+    if let Some(error_callback) = unsafe { LDSO_DLERROR } {
+        let message = unsafe { error_callback() };
+        if !message.is_null() {
+            // SAFETY: `message` is valid until the next loader operation on
+            // this thread, which cannot occur before this helper returns.
+            unsafe { runtime_text_cstr(error, message) };
+            if !error.is_null() && unsafe { (*error).len } != 0 {
+                return;
+            }
+        }
+    }
+    // SAFETY: `fallback` is caller-owned static text.
+    unsafe { runtime_text_bytes(error, fallback) };
+}
+
+unsafe extern "C" fn runtime_loader_open(
+    path: *const c_char,
+    flags: c_int,
+    handle: *mut *mut c_void,
+    error: *mut crabc_core::runtime::TextV1,
+) -> c_int {
+    // SAFETY: Error output is optional but, when supplied, has the wire type.
+    unsafe { runtime_text_clear(error) };
+    if handle.is_null() {
+        // SAFETY: This is a static diagnostic copied into caller-owned wire storage.
+        unsafe { runtime_text_bytes(error, b"invalid loader handle output") };
+        return -1;
+    }
+    // SAFETY: The output pointer is non-null and belongs to this ABI call.
+    unsafe { *handle = core::ptr::null_mut() };
+    let Some(open) = (unsafe { LDSO_DLOPEN }) else {
+        // SAFETY: Static fallback text has no borrowed loader lifetime.
+        unsafe { runtime_text_bytes(error, b"crabc dynamic loader runtime unavailable") };
+        return -1;
+    };
+    let opened = unsafe { open(path, flags) };
+    if opened.is_null() {
+        // SAFETY: The registered loader owns/sets its TLS diagnostic.
+        unsafe { runtime_loader_failure(error, b"dynamic loader open failed") };
+        return -1;
+    }
+    // SAFETY: Successful ldso open returned a process-valid opaque handle.
+    unsafe { *handle = opened };
+    0
+}
+
+unsafe extern "C" fn runtime_loader_symbol(
+    handle: *mut c_void,
+    name: *const c_char,
+    address: *mut *mut c_void,
+    error: *mut crabc_core::runtime::TextV1,
+) -> c_int {
+    // SAFETY: Error output is optional but has its explicit v1 layout.
+    unsafe { runtime_text_clear(error) };
+    if address.is_null() {
+        // SAFETY: Static diagnostic is copied to caller-owned output.
+        unsafe { runtime_text_bytes(error, b"invalid loader symbol output") };
+        return -1;
+    }
+    // SAFETY: The output pointer is non-null and belongs to this ABI call.
+    unsafe { *address = core::ptr::null_mut() };
+    let Some(resolve) = (unsafe { LDSO_DLSYM }) else {
+        // SAFETY: Static fallback has no loader/TLS lifetime.
+        unsafe { runtime_text_bytes(error, b"crabc dynamic loader runtime unavailable") };
+        return -1;
+    };
+    let resolved = unsafe { resolve(handle, name) };
+    if resolved.is_null() {
+        // SAFETY: The registered loader owns/sets its TLS diagnostic.
+        unsafe { runtime_loader_failure(error, b"dynamic loader symbol lookup failed") };
+        return -1;
+    }
+    // SAFETY: Successful ldso lookup returned a process-valid code/data address.
+    unsafe { *address = resolved };
+    0
+}
+
+unsafe extern "C" fn runtime_loader_close(
+    handle: *mut c_void,
+    error: *mut crabc_core::runtime::TextV1,
+) -> c_int {
+    // SAFETY: Error output is optional but has its explicit v1 layout.
+    unsafe { runtime_text_clear(error) };
+    let Some(close) = (unsafe { LDSO_DLCLOSE }) else {
+        // SAFETY: Static fallback has no loader/TLS lifetime.
+        unsafe { runtime_text_bytes(error, b"crabc dynamic loader runtime unavailable") };
+        return -1;
+    };
+    if unsafe { close(handle) } != 0 {
+        // SAFETY: The registered loader owns/sets its TLS diagnostic.
+        unsafe { runtime_loader_failure(error, b"dynamic loader close failed") };
+        return -1;
+    }
+    0
+}
+
+unsafe extern "C" fn runtime_loader_address(
+    address: *const c_void,
+    info: *mut crabc_core::runtime::LoaderAddressV1,
+    error: *mut crabc_core::runtime::TextV1,
+) -> c_int {
+    // SAFETY: Error output is optional but has its explicit v1 layout.
+    unsafe { runtime_text_clear(error) };
+    if address.is_null() || info.is_null() {
+        // SAFETY: Static diagnostic is copied to caller-owned output.
+        unsafe { runtime_text_bytes(error, b"invalid loader address lookup") };
+        return -1;
+    }
+    // SAFETY: The output pointer is non-null and belongs to this ABI call.
+    unsafe { core::ptr::write(info, crabc_core::runtime::LoaderAddressV1::empty()) };
+    let Some(lookup) = (unsafe { m4_ldso_dladdr() }) else {
+        // SAFETY: Static fallback has no loader/TLS lifetime.
+        unsafe { runtime_text_bytes(error, b"crabc dynamic loader runtime unavailable") };
+        return -1;
+    };
+    let mut raw = M4DladdrResult {
+        fname: core::ptr::null(),
+        fbase: 0,
+        sname: core::ptr::null(),
+        saddr: 0,
+    };
+    if unsafe { lookup(address, &mut raw) } == 0 {
+        // SAFETY: Static diagnostic is copied to caller-owned output.
+        unsafe { runtime_text_bytes(error, b"loader address not found") };
+        return -1;
+    }
+    // SAFETY: The output is initialized above and remains caller-owned.
+    let output = unsafe { &mut *info };
+    output.image_base = raw.fbase as *mut c_void;
+    output.symbol_address = raw.saddr as *mut c_void;
+    // SAFETY: The private ldso lookup returns callback-lifetime C strings;
+    // copy both while that contract is still live.
+    unsafe { runtime_text_cstr(&mut output.image_name, raw.fname) };
+    unsafe { runtime_text_cstr(&mut output.symbol_name, raw.sname) };
+    0
+}
+
+// These wrappers are the implementation side of the private native-thread
+// table. They call libc's own state owner directly instead of resolving the
+// public pthread names through the dynamic linker. Positive pthread error
+// values cross this boundary as ordinary integers; no errno TLS is read or
+// written. Handles remain opaque wire values and are never exposed as a C
+// `pthread_t` type to crabc-rs.
+unsafe extern "C" fn runtime_thread_create(
+    start: crabc_core::runtime::ThreadStartV1,
+    arg: *mut c_void,
+    handle: *mut crabc_core::runtime::ThreadHandleV1,
+) -> c_int {
+    if handle.is_null() {
+        return EINVAL;
+    }
+    let mut pthread = 0 as PthreadT;
+    let result = pthread_create(&mut pthread, core::ptr::null(), start as usize, arg);
+    if result == 0 {
+        // `pthread_create` only reports success with a live non-zero slot.
+        if pthread == 0 {
+            return EAGAIN;
+        }
+        *handle = pthread as crabc_core::runtime::ThreadHandleV1;
+    }
+    result
+}
+
+unsafe extern "C" fn runtime_thread_join(
+    handle: crabc_core::runtime::ThreadHandleV1,
+    result: *mut *mut c_void,
+) -> c_int {
+    if handle == 0 {
+        return EINVAL;
+    }
+    pthread_join(handle as PthreadT, result)
+}
+
+unsafe extern "C" fn runtime_thread_detach(
+    handle: crabc_core::runtime::ThreadHandleV1,
+) -> c_int {
+    if handle == 0 {
+        return EINVAL;
+    }
+    pthread_detach(handle as PthreadT)
+}
+
+unsafe extern "C" fn runtime_thread_self(
+    handle: *mut crabc_core::runtime::ThreadHandleV1,
+) -> c_int {
+    if handle.is_null() {
+        return EINVAL;
+    }
+    let pthread = pthread_self();
+    if pthread == 0 {
+        return EAGAIN;
+    }
+    *handle = pthread as crabc_core::runtime::ThreadHandleV1;
+    0
+}
+
+unsafe extern "C" fn runtime_thread_cancel(
+    handle: crabc_core::runtime::ThreadHandleV1,
+) -> c_int {
+    if handle == 0 {
+        return EINVAL;
+    }
+    pthread_cancel(handle as PthreadT)
+}
+
+unsafe extern "C" fn runtime_thread_setcancelstate(
+    state: u32,
+    old_state: *mut u32,
+) -> c_int {
+    let mut previous = 0;
+    let result = pthread_setcancelstate(state as c_int, &mut previous);
+    if result == 0 && !old_state.is_null() {
+        *old_state = previous as u32;
+    }
+    result
+}
+
+unsafe extern "C" fn runtime_thread_setcanceltype(
+    cancel_type: u32,
+    old_type: *mut u32,
+) -> c_int {
+    let mut previous = 0;
+    let result = pthread_setcanceltype(cancel_type as c_int, &mut previous);
+    if result == 0 && !old_type.is_null() {
+        *old_type = previous as u32;
+    }
+    result
+}
+
+unsafe extern "C" fn runtime_thread_testcancel() {
+    pthread_testcancel();
+}
+
+unsafe extern "C" fn runtime_thread_key_create(
+    key: *mut u32,
+    destructor: Option<crabc_core::runtime::ThreadDestructorV1>,
+) -> c_int {
+    if key.is_null() {
+        return EINVAL;
+    }
+    let mut pthread_key = 0 as pthread_key_t;
+    let result = pthread_key_create(&mut pthread_key, destructor);
+    if result == 0 {
+        *key = pthread_key as u32;
+    }
+    result
+}
+
+unsafe extern "C" fn runtime_thread_key_delete(key: u32) -> c_int {
+    if key >= crabc_core::runtime::THREAD_KEY_CAPACITY {
+        return EINVAL;
+    }
+    pthread_key_delete(key as pthread_key_t)
+}
+
+unsafe extern "C" fn runtime_thread_getspecific(key: u32) -> *mut c_void {
+    if key >= crabc_core::runtime::THREAD_KEY_CAPACITY {
+        return core::ptr::null_mut();
+    }
+    pthread_getspecific(key as pthread_key_t)
+}
+
+unsafe extern "C" fn runtime_thread_setspecific(
+    key: u32,
+    value: *const c_void,
+) -> c_int {
+    if key >= crabc_core::runtime::THREAD_KEY_CAPACITY {
+        return EINVAL;
+    }
+    pthread_setspecific(key as pthread_key_t, value)
+}
+
+static CRABC_RUNTIME_V1: crabc_core::runtime::RuntimeV1 = crabc_core::runtime::RuntimeV1 {
+    abi_version: crabc_core::runtime::V1_ABI_VERSION,
+    abi_size: core::mem::size_of::<crabc_core::runtime::RuntimeV1>() as u32,
+    loader_open: runtime_loader_open,
+    loader_symbol: runtime_loader_symbol,
+    loader_close: runtime_loader_close,
+    loader_address: runtime_loader_address,
+    thread_create: runtime_thread_create,
+    thread_join: runtime_thread_join,
+    thread_detach: runtime_thread_detach,
+    thread_self: runtime_thread_self,
+    thread_cancel: runtime_thread_cancel,
+    thread_setcancelstate: runtime_thread_setcancelstate,
+    thread_setcanceltype: runtime_thread_setcanceltype,
+    thread_testcancel: runtime_thread_testcancel,
+    thread_key_create: runtime_thread_key_create,
+    thread_key_delete: runtime_thread_key_delete,
+    thread_getspecific: runtime_thread_getspecific,
+    thread_setspecific: runtime_thread_setspecific,
+};
+
+/// Returns crabc's first private process-singleton runtime table.
+///
+/// This exported ELF name is intentionally absent from public headers. Native
+/// code checks the version and size before use; all loaded-object state remains
+/// owned and synchronized by the registered `libldso.so` callbacks.
+#[no_mangle]
+pub extern "C" fn __crabc_runtime_v1() -> *const crabc_core::runtime::RuntimeV1 {
+    &raw const CRABC_RUNTIME_V1
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_register_dlopen(f: LdsoDlopenFn) {
     LDSO_DLOPEN = Some(f);

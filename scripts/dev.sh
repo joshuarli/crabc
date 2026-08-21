@@ -270,13 +270,22 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        # M6 retains M0-M5 and adds native Linux signal, wait, fork/exec,
-        # prepared-spawn, atfork, and process-control evidence.
+        # M7 retains M0-M6 and adds direct futex synchronization, explicit
+        # caller-owned resolver/netdb state, and private singleton boundaries
+        # for loader and thread/TLS runtime state. Keep no-std/native evidence
+        # together so a later facade change cannot add a C/errno hop.
         # Keep no-std, native, source-compatibility, and assembly evidence
         # together so a later facade change cannot add a C/errno hop.
         run_in_container cargo check -p crabc-rs --no-default-features
-        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio --test m6_signal_process
-        run_in_container cargo build -p crabc-rs --example m0_direct_probe --example m2_direct_probe --example m3_direct_probe --example m4_direct_probe --example m5_direct_probe --example m6_direct_probe --release --no-default-features
+        run_in_container cargo check -p crabc-rs --no-default-features --features alloc
+        run_in_container cargo check -p crabc-rs --no-default-features --features runtime-thread
+        run_in_container cargo check -p crabc-rs --no-default-features --features runtime-thread-alloc
+        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio --test m6_signal_process --test m7_sync --test m7_resolver_netdb
+        run_in_container cargo build -p crabc-rs --example m0_direct_probe --example m2_direct_probe --example m3_direct_probe --example m4_direct_probe --example m5_direct_probe --example m6_direct_probe --example m7_sync_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m7_resolver_direct_probe --release --no-default-features --features alloc
+        run_in_container cargo build -p crabc-rs --example m7_loader_runtime_probe --release --no-default-features --features runtime-loader
+        run_in_container cargo build -p crabc-rs --example m7_runtime_thread_probe --release --no-default-features --features runtime-thread
+        run_in_container cargo test -p crabc --test m7_loader_runtime --test m7_runtime_thread
         run_in_container python3 compat/rustix/run.py --check
         run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
         run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'
@@ -309,6 +318,10 @@ case "$command" in
             --fixture compat/rustix/source/m5_descriptor_stdio.rs
         run_in_container python3 compat/crabc-rs/verify_m5.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m6.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m7.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m7_resolver.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m7_loader.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m7_runtime_thread.py --target-dir target
         ;;
     abi-probe)
         ensure_image

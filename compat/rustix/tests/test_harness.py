@@ -29,8 +29,8 @@ class MetadataTests(unittest.TestCase):
             "cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec",
         )
         self.assertEqual(report["coverage"]["reference_count"], 1647)
-        self.assertEqual(report["coverage"]["candidate_count"], 1668)
-        self.assertEqual(report["coverage"]["candidate_only_count"], 21)
+        self.assertEqual(report["coverage"]["candidate_count"], 1669)
+        self.assertEqual(report["coverage"]["candidate_only_count"], 22)
         self.assertEqual(report["production_dependencies"], [])
         self.assertFalse(report["direct_c_abi_errno_roundtrip"])
 

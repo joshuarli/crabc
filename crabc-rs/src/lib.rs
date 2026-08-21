@@ -17,6 +17,10 @@ extern crate alloc;
 extern crate std;
 
 pub mod buffer;
+#[cfg(feature = "runtime-loader")]
+pub mod dl;
+#[cfg(feature = "runtime-thread")]
+pub mod runtime_thread;
 pub mod event;
 pub mod fd;
 pub mod ffi;
@@ -25,6 +29,8 @@ pub mod io;
 pub mod ioctl;
 pub mod mm;
 pub mod mount;
+#[cfg(feature = "alloc")]
+pub mod netdb;
 pub mod net;
 pub mod param;
 pub mod path;
@@ -39,6 +45,9 @@ pub mod shm;
 pub mod signal;
 pub mod stdio;
 pub mod system;
+pub mod sync;
+#[cfg(feature = "alloc")]
+pub mod resolver;
 mod raw_dir;
 
 pub use crabc_core::{Errno, Result};

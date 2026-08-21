@@ -2235,9 +2235,9 @@ dynamic-symbol inventory is:
 
 ```text
 expected public exports: 1,647
-crabc exports:           1,668
+crabc exports:           1,669
 missing:                     0
-unexpected (baselined):     21
+unexpected (baselined):     22
 ELF metadata mismatches:     0
 ```
 
@@ -2416,8 +2416,8 @@ loader-owned TLS layout. `_dlstart` is an AArch64 raw-stack trampoline rather
 than a callable C stub, while `_init` and `_fini` retain musl's weak dummy
 ABI without CRT-generated strong replacements.
 
-The final Docker report is 1,647 expected symbols, 1,668 candidate symbols,
-zero missing names, and zero metadata mismatches. Its 21 unexpected names are
+The final Docker report is 1,647 expected symbols, 1,669 candidate symbols,
+zero missing names, and zero metadata mismatches. Its 22 unexpected names are
 the pre-existing ratchet baseline; `./scripts/dev.sh compat` reports no new
 unexpected exports or ABI regressions. Focused Docker coverage passes for
 `getdate`, legacy formatting, clone, setjmp aliases, loader startup/debugger
@@ -2453,8 +2453,8 @@ Python runner regenerates and executes exact-bit verifiers for every math
 exception on every run, so a current candidate regression becomes a failure
 instead of a skip. The full Docker workspace suite, ABI/header fixtures,
 Python harness tests, static `libc.a` linkage, and the M4 symbol ratchet all
-pass. The ratchet remains 1,647 expected dynamic symbols, 1,668 candidate
-symbols, zero missing names, zero metadata mismatches, and 21 baselined
+pass. The ratchet remains 1,647 expected dynamic symbols, 1,669 candidate
+symbols, zero missing names, zero metadata mismatches, and 22 baselined
 unexpected exports.
 
 ## Milestone 6 — standards + stress closure
@@ -2488,8 +2488,8 @@ regressions now pass. Final `./scripts/dev.sh libc-test all` evidence is 420
 total cases: 406 PASS, zero FAIL/BUILDERROR/TIMEOUT, and 14 individually
 evidenced exceptions; the strict API subset is 79/79. The workspace suite,
 Python harness tests, AArch64 ABI probe, and symbol ratchet all pass. The
-ratchet records 1,647 reference exports, 1,668 candidate exports, no missing
-or metadata-mismatched symbols, and 21 baselined candidate-only exports.
+ratchet records 1,647 reference exports, 1,669 candidate exports, no missing
+or metadata-mismatched symbols, and 22 baselined candidate-only exports.
 
 ## Milestone 7 — dynamic loader maturity
 
@@ -2766,7 +2766,7 @@ Final current-workspace closure:
 ./scripts/dev.sh signal-process                    12/12 PASS
 ./scripts/dev.sh resolver-network                  22 contract items PASS
 ./scripts/dev.sh differential                      foundational PASS
-./scripts/dev.sh compat                            ratchet PASS; 1,647 reference, 1,668 candidate, 0 missing/mismatched
+./scripts/dev.sh compat                            ratchet PASS; 1,647 reference, 1,669 candidate, 0 missing/mismatched
 ./scripts/dev.sh loader-inventory                  reproducible PASS
 ./scripts/dev.sh lto                               PARTIAL by design: A/B/C built and ran; D remains invalid by link-map evidence
 python3 compat/abi/tests/test_probe.py             11/11 PASS
@@ -2821,6 +2821,28 @@ TLS-errno transition. This still does not activate x86_64.
 Linux arm64 big-endian is not a project target. Its upstream deprecation
 confirms the existing `aarch64-unknown-linux-musl` little-endian-only scope;
 do not introduce endian-parametric abstractions or `aarch64_be` tests.
+
+### Prerequisite progress — crabc-rs M7 native runtime slice — 2026-08-20 UTC
+
+The first Linux/AArch64 little-endian `crabc-rs` runtime vertical slice is
+implemented and verified. Rust-owned, process-private direct-futex primitives
+now cover non-poisoning mutex/condition/once/semaphore, writer-preferring
+rwlock, and reusable barrier semantics. Their broadcast count is the largest
+positive Linux futex value, avoiding the unsigned wake-all deadlock that the
+multi-generation barrier regression exposed.
+
+Resolver/netdb calls are caller-owned direct DNS and text-database operations;
+they do not cross the C resolver ABI or C TLS errno. Native dynamic loading and
+thread/TLS/cancellation access use the one private, versioned
+`__crabc_runtime_v1` singleton table in `libc.so`, so `libldso` and libc remain
+the sole owners of their process state. Static-archive ELF checks reject public
+`dl*`, `pthread_*`, resolver, and TLS-errno dependencies; C fixtures run the
+loader and thread/TLS probes under crabc's `libldso.so`.
+
+This records a bounded native Rust slice, not a blanket claim over C pthread
+extensions. Robust/process-shared/recursive/error-checking forms, C cleanup
+macro scopes, and a shared C `pthread_atfork` registry remain explicit
+Linux/AArch64 capability-accounting work before the M11 x86_64 gate can open.
 
 ---
 

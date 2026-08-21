@@ -235,6 +235,181 @@ pub type RawFd = i32;
 /// The special `*at` descriptor representing the process current directory.
 pub const AT_FDCWD: RawFd = -100;
 
+/// Private, versioned wire contracts for process-singleton crabc runtimes.
+///
+/// These types are deliberately data-only. They let a native facade reach
+/// state owned by `libc.so` or `libldso.so` without mistaking a second linked
+/// copy of Rust statics for shared process state. They are not a public C ABI:
+/// no installed header names them, and callers must obtain the matching table
+/// through the explicitly versioned private entry point.
+pub mod runtime {
+    use core::ffi::{c_char, c_int, c_void};
+
+    /// First private singleton-runtime table revision.
+    pub const V1_ABI_VERSION: u32 = 1;
+
+    /// Maximum copied error or loader-name byte length on the v1 wire.
+    ///
+    /// A fixed bounded buffer avoids exposing borrowed loader/TLS storage
+    /// through the native facade. A truncation bit records a longer source.
+    pub const TEXT_CAPACITY: usize = 256;
+
+    /// Opaque handle representation for one libc-owned pthread runtime
+    /// object. It is a wire value only; native callers must not inspect or
+    /// dereference it.
+    pub type ThreadHandleV1 = u64;
+
+    /// Callback ABI used by the private thread creation entry point.
+    pub type ThreadStartV1 = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+
+    /// Destructor ABI used by the private thread-local-key entry point.
+    pub type ThreadDestructorV1 = unsafe extern "C" fn(*mut c_void);
+
+    /// Number of key slots owned by the libc runtime in this ABI revision.
+    ///
+    /// This bound lets the private wrapper reject forged key values before
+    /// they reach libc's fixed table. It is not a promise about a public C
+    /// `PTHREAD_KEYS_MAX` header constant.
+    pub const THREAD_KEY_CAPACITY: u32 = 128;
+
+    /// Owned-text representation used by the private runtime table.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct TextV1 {
+        /// Number of meaningful bytes in `bytes`.
+        pub len: u16,
+        /// Bit 0 means the original text did not fit in `bytes`.
+        pub flags: u16,
+        /// Text bytes with no required trailing NUL.
+        pub bytes: [u8; TEXT_CAPACITY],
+    }
+
+    impl TextV1 {
+        /// Creates an empty wire value.
+        #[inline]
+        pub const fn empty() -> Self {
+            Self {
+                len: 0,
+                flags: 0,
+                bytes: [0; TEXT_CAPACITY],
+            }
+        }
+    }
+
+    /// Copied loader address metadata. No pointer refers to loader-owned text.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct LoaderAddressV1 {
+        /// Mapped image base returned by the loader.
+        pub image_base: *mut c_void,
+        /// Resolved nearest-symbol address, if any.
+        pub symbol_address: *mut c_void,
+        /// Copied image name.
+        pub image_name: TextV1,
+        /// Copied nearest-symbol name.
+        pub symbol_name: TextV1,
+    }
+
+    impl LoaderAddressV1 {
+        /// Creates an empty wire value.
+        #[inline]
+        pub const fn empty() -> Self {
+            Self {
+                image_base: core::ptr::null_mut(),
+                symbol_address: core::ptr::null_mut(),
+                image_name: TextV1::empty(),
+                symbol_name: TextV1::empty(),
+            }
+        }
+    }
+
+    /// Private v1 runtime table owned by the loaded crabc runtime.
+    ///
+    /// Functions return zero on success and `-1` on a loader failure. The
+    /// accompanying `TextV1` then owns a best-effort diagnostic. They never
+    /// transport a C sentinel/`errno` result across this boundary.
+    #[repr(C)]
+    pub struct RuntimeV1 {
+        /// Must equal [`V1_ABI_VERSION`].
+        pub abi_version: u32,
+        /// Size supplied by the runtime for append-only compatibility checks.
+        pub abi_size: u32,
+        /// Opens a DSO or the global process handle when `path` is null.
+        pub loader_open: unsafe extern "C" fn(
+            path: *const c_char,
+            flags: c_int,
+            handle: *mut *mut c_void,
+            error: *mut TextV1,
+        ) -> c_int,
+        /// Looks up a DSO symbol and stores its address in `address`.
+        pub loader_symbol: unsafe extern "C" fn(
+            handle: *mut c_void,
+            name: *const c_char,
+            address: *mut *mut c_void,
+            error: *mut TextV1,
+        ) -> c_int,
+        /// Releases one DSO handle reference.
+        pub loader_close:
+            unsafe extern "C" fn(handle: *mut c_void, error: *mut TextV1) -> c_int,
+        /// Copies loader-owned address metadata into caller-owned storage.
+        pub loader_address: unsafe extern "C" fn(
+            address: *const c_void,
+            info: *mut LoaderAddressV1,
+            error: *mut TextV1,
+        ) -> c_int,
+        /// Creates a libc-owned pthread using the default attributes. The
+        /// returned handle is an opaque `ThreadHandleV1`; errors are positive
+        /// pthread error numbers and never TLS errno.
+        pub thread_create: unsafe extern "C" fn(
+            start: ThreadStartV1,
+            arg: *mut c_void,
+            handle: *mut ThreadHandleV1,
+        ) -> c_int,
+        /// Joins a libc-owned pthread and optionally receives its C callback
+        /// result pointer.
+        pub thread_join: unsafe extern "C" fn(
+            handle: ThreadHandleV1,
+            result: *mut *mut c_void,
+        ) -> c_int,
+        /// Detaches a libc-owned pthread handle.
+        pub thread_detach: unsafe extern "C" fn(handle: ThreadHandleV1) -> c_int,
+        /// Returns the current libc-owned pthread handle.
+        pub thread_self: unsafe extern "C" fn(handle: *mut ThreadHandleV1) -> c_int,
+        /// Requests cancellation of a libc-owned pthread. Native wrappers
+        /// keep this operation unsafe because cancellation bypasses ordinary
+        /// Rust destructor and lock invariants.
+        pub thread_cancel: unsafe extern "C" fn(handle: ThreadHandleV1) -> c_int,
+        /// Changes the current libc-owned pthread cancellation state.
+        pub thread_setcancelstate: unsafe extern "C" fn(
+            state: u32,
+            old_state: *mut u32,
+        ) -> c_int,
+        /// Changes the current libc-owned pthread cancellation type.
+        pub thread_setcanceltype: unsafe extern "C" fn(
+            cancel_type: u32,
+            old_type: *mut u32,
+        ) -> c_int,
+        /// Tests the current libc-owned pthread cancellation request.
+        pub thread_testcancel: unsafe extern "C" fn(),
+        /// Creates a libc-owned thread-local key. The destructor executes in
+        /// libc's thread-exit cleanup path and therefore has an unsafe Rust
+        /// callback contract.
+        pub thread_key_create: unsafe extern "C" fn(
+            key: *mut u32,
+            destructor: Option<ThreadDestructorV1>,
+        ) -> c_int,
+        /// Deletes a libc-owned thread-local key.
+        pub thread_key_delete: unsafe extern "C" fn(key: u32) -> c_int,
+        /// Reads the current thread's value for a libc-owned key.
+        pub thread_getspecific: unsafe extern "C" fn(key: u32) -> *mut c_void,
+        /// Writes the current thread's value for a libc-owned key.
+        pub thread_setspecific: unsafe extern "C" fn(
+            key: u32,
+            value: *const c_void,
+        ) -> c_int,
+    }
+}
+
 const MAX_ERRNO: i32 = 4095;
 const SYS_READ: usize = 63;
 const SYS_WRITE: usize = 64;
@@ -287,7 +462,9 @@ const SYS_TIMERFD_CREATE: usize = 85;
 const SYS_TIMERFD_SETTIME: usize = 86;
 const SYS_TIMERFD_GETTIME: usize = 87;
 const SYS_SIGNALFD4: usize = 74;
+const SYS_SOCKET: usize = 198;
 const SYS_SOCKETPAIR: usize = 199;
+const SYS_CONNECT: usize = 203;
 const SYS_SENDTO: usize = 206;
 const SYS_RECVFROM: usize = 207;
 const SYS_MUNMAP: usize = 215;
@@ -315,6 +492,7 @@ const SYS_GETUID: usize = 174;
 const SYS_GETTID: usize = 178;
 const SYS_SYSINFO: usize = 179;
 const SYS_SCHED_YIELD: usize = 124;
+const SYS_FUTEX: usize = 98;
 const SYS_CLONE: usize = 220;
 const SYS_EXECVE: usize = 221;
 const SYS_WAIT4: usize = 260;
@@ -1649,9 +1827,47 @@ pub mod event {
 /// Direct, connection-oriented Linux socket operations.
 pub mod net {
     use super::{
-        decode, syscall4, syscall6, MaybeUninit, RawFd, Result, SYS_RECVFROM, SYS_SENDTO,
-        SYS_SOCKETPAIR,
+        decode, decode_i32, syscall3, syscall4, syscall6, MaybeUninit, RawFd, Result,
+        SYS_CONNECT, SYS_RECVFROM, SYS_SENDTO, SYS_SOCKET, SYS_SOCKETPAIR,
     };
+
+    /// Creates a Linux socket without libc or TLS `errno`.
+    #[inline]
+    pub fn socket(domain: i32, type_and_flags: u32, protocol: i32) -> Result<RawFd> {
+        // SAFETY: Linux validates these scalar socket parameters.
+        decode_i32(unsafe {
+            super::syscall3(
+                SYS_SOCKET,
+                domain as usize,
+                type_and_flags as usize,
+                protocol as usize,
+            )
+        })
+    }
+
+    /// Connects a socket to a caller-owned Linux socket address.
+    ///
+    /// # Safety
+    ///
+    /// `address` must point to a readable Linux socket address of
+    /// `address_length` bytes for the duration of the syscall.
+    #[inline]
+    pub unsafe fn connect_raw(
+        socket: RawFd,
+        address: *const u8,
+        address_length: u32,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the address pointer and length contract.
+        decode(unsafe {
+            syscall3(
+                SYS_CONNECT,
+                socket as usize,
+                address as usize,
+                address_length as usize,
+            )
+        })
+        .map(|_| ())
+    }
 
     /// Creates a socket pair in caller-provided Linux `int[2]` storage.
     ///
@@ -1753,6 +1969,519 @@ pub mod net {
                 address_length as usize,
             )
         })
+    }
+}
+
+/// Stateless DNS wire and exchange operations shared by native facades.
+///
+/// This module deliberately owns no resolver configuration, cache, TLS, or
+/// libc state. Callers provide bounded nameserver configuration and buffers;
+/// the native facade can therefore own its results while the C facade keeps
+/// its historical `_res` state at its own ABI boundary.
+pub mod resolver {
+    use super::{net, Result};
+
+    /// IPv4 address family in the Linux socket ABI.
+    pub const AF_INET: u16 = 2;
+    /// IPv6 address family in the Linux socket ABI.
+    pub const AF_INET6: u16 = 10;
+    /// UDP socket type in the Linux socket ABI.
+    pub const SOCK_DGRAM: u32 = 2;
+    /// Close-on-exec socket flag.
+    pub const SOCK_CLOEXEC: u32 = 0x0008_0000;
+    /// `MSG_NOSIGNAL`, used for the datagram send operation.
+    pub const MSG_NOSIGNAL: u32 = 0x4000;
+    /// DNS Internet class.
+    pub const CLASS_IN: u16 = 1;
+    /// DNS address record.
+    pub const TYPE_A: u16 = 1;
+    /// DNS canonical-name record.
+    pub const TYPE_CNAME: u16 = 5;
+    /// DNS pointer record.
+    pub const TYPE_PTR: u16 = 12;
+    /// DNS IPv6 address record.
+    pub const TYPE_AAAA: u16 = 28;
+    /// Maximum DNS wire name size, including its root terminator.
+    pub const MAX_NAME_WIRE: usize = 256;
+    /// Maximum nameservers accepted by the musl resolver configuration.
+    pub const MAX_NAMESERVERS: usize = 3;
+
+    /// A caller-owned nameserver endpoint.
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct NameServer {
+        /// Linux address-family value.
+        pub family: u16,
+        /// Network-order address bytes in the first four or sixteen bytes.
+        pub address: [u8; 16],
+        /// UDP port in host byte order. Zero selects DNS port 53.
+        pub port: u16,
+        /// IPv6 scope identifier, ignored for IPv4.
+        pub scope_id: u32,
+    }
+
+    impl NameServer {
+        /// Builds an IPv4 nameserver using DNS port 53.
+        #[inline]
+        pub const fn ipv4(address: [u8; 4]) -> Self {
+            let mut bytes = [0; 16];
+            bytes[0] = address[0];
+            bytes[1] = address[1];
+            bytes[2] = address[2];
+            bytes[3] = address[3];
+            Self { family: AF_INET, address: bytes, port: 53, scope_id: 0 }
+        }
+
+        /// Builds an IPv6 nameserver using DNS port 53.
+        #[inline]
+        pub const fn ipv6(address: [u8; 16], scope_id: u32) -> Self {
+            Self { family: AF_INET6, address, port: 53, scope_id }
+        }
+    }
+
+    /// Bounded DNS exchange configuration.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct ExchangeConfig {
+        /// Nameservers, in configured order.
+        pub nameservers: [NameServer; MAX_NAMESERVERS],
+        /// Number of initialized entries in [`Self::nameservers`].
+        pub nameserver_count: usize,
+        /// Per-server receive timeout in milliseconds.
+        pub timeout_ms: u32,
+        /// Number of configured-order attempts.
+        pub attempts: u8,
+    }
+
+    impl ExchangeConfig {
+        /// Constructs a one-server configuration with a bounded timeout.
+        #[inline]
+        pub const fn single(nameserver: NameServer, timeout_ms: u32) -> Self {
+            Self {
+                nameservers: [nameserver; MAX_NAMESERVERS],
+                nameserver_count: 1,
+                timeout_ms,
+                attempts: 1,
+            }
+        }
+    }
+
+    #[repr(C)]
+    struct PollFd {
+        fd: i32,
+        events: i16,
+        revents: i16,
+    }
+
+    #[repr(C)]
+    struct Timespec {
+        seconds: i64,
+        nanoseconds: i64,
+    }
+
+    #[repr(C)]
+    struct SockaddrIn {
+        family: u16,
+        port: u16,
+        address: u32,
+        zero: [u8; 8],
+    }
+
+    #[repr(C)]
+    struct SockaddrIn6 {
+        family: u16,
+        port: u16,
+        flow_info: u32,
+        address: [u8; 16],
+        scope_id: u32,
+    }
+
+    const POLLIN: i16 = 0x0001;
+    const POLLERR: i16 = 0x0008;
+    const POLLHUP: i16 = 0x0010;
+    const POLLNVAL: i16 = 0x0020;
+
+    #[inline]
+    fn invalid() -> super::Errno {
+        super::Errno::INVAL
+    }
+
+    #[inline]
+    fn malformed() -> super::Errno {
+        super::Errno::BADMSG
+    }
+
+    #[inline]
+    fn write_wire_name(name: &[u8], output: &mut [u8]) -> Result<usize> {
+        if name.is_empty() || output.is_empty() {
+            return Err(invalid());
+        }
+        let mut written = 0usize;
+        let mut label_start = 0usize;
+        let mut index = 0usize;
+        while index <= name.len() {
+            let at_end = index == name.len();
+            if !at_end && name[index] != b'.' {
+                index += 1;
+                continue;
+            }
+            let label_length = index.saturating_sub(label_start);
+            if label_length == 0 {
+                if !(at_end && index != 0 && name[index - 1] == b'.') {
+                    return Err(invalid());
+                }
+            } else if label_length > 63 || written.checked_add(label_length + 2).is_none() {
+                return Err(invalid());
+            } else {
+                if written + label_length + 1 >= output.len() {
+                    return Err(super::Errno::NAMETOOLONG);
+                }
+                output[written] = label_length as u8;
+                output[written + 1..written + 1 + label_length]
+                    .copy_from_slice(&name[label_start..index]);
+                written += label_length + 1;
+            }
+            if at_end {
+                break;
+            }
+            label_start = index + 1;
+            index += 1;
+        }
+        if written >= output.len() {
+            return Err(super::Errno::NAMETOOLONG);
+        }
+        output[written] = 0;
+        Ok(written + 1)
+    }
+
+    /// Encodes one recursive DNS A/AAAA/PTR query into caller storage.
+    pub fn encode_query(name: &[u8], record_type: u16, query_id: u16, output: &mut [u8]) -> Result<usize> {
+        if output.len() < 12 {
+            return Err(super::Errno::MSGSIZE);
+        }
+        let mut wire_name = [0u8; MAX_NAME_WIRE];
+        let name_length = write_wire_name(name, &mut wire_name)?;
+        let total = 12usize
+            .checked_add(name_length)
+            .and_then(|value| value.checked_add(4))
+            .ok_or(super::Errno::MSGSIZE)?;
+        if total > output.len() {
+            return Err(super::Errno::MSGSIZE);
+        }
+        output[..total].fill(0);
+        output[0] = (query_id >> 8) as u8;
+        output[1] = query_id as u8;
+        output[2] = 0x01;
+        output[5] = 0x01;
+        output[12..12 + name_length].copy_from_slice(&wire_name[..name_length]);
+        let qtype = 12 + name_length;
+        output[qtype] = (record_type >> 8) as u8;
+        output[qtype + 1] = record_type as u8;
+        output[qtype + 2] = 0;
+        output[qtype + 3] = CLASS_IN as u8;
+        Ok(total)
+    }
+
+    /// A validated DNS response borrowing its caller-owned packet buffer.
+    pub struct DnsResponse<'packet> {
+        packet: &'packet [u8],
+        answer_offset: usize,
+        answer_count: u16,
+        response_code: u8,
+        truncated: bool,
+    }
+
+    impl<'packet> DnsResponse<'packet> {
+        /// Validates transaction, question, and DNS header fields.
+        pub fn parse(
+            packet: &'packet [u8],
+            query_name: &[u8],
+            record_type: u16,
+            query_id: u16,
+        ) -> Result<Self> {
+            if packet.len() < 12 {
+                return Err(malformed());
+            }
+            let id = u16::from_be_bytes([packet[0], packet[1]]);
+            if id != query_id || packet[2] & 0x80 == 0 || packet[2] & 0x78 != 0 {
+                return Err(malformed());
+            }
+            if u16::from_be_bytes([packet[4], packet[5]]) != 1 {
+                return Err(malformed());
+            }
+            let mut expected_name = [0u8; MAX_NAME_WIRE];
+            let expected_length = write_wire_name(query_name, &mut expected_name)?;
+            let question_end = skip_name(packet, 12)?;
+            if question_end + 4 > packet.len()
+                || question_end - 12 != expected_length
+                || packet[12..question_end] != expected_name[..expected_length]
+                || u16::from_be_bytes([packet[question_end], packet[question_end + 1]]) != record_type
+                || u16::from_be_bytes([packet[question_end + 2], packet[question_end + 3]]) != CLASS_IN
+            {
+                return Err(malformed());
+            }
+            Ok(Self {
+                packet,
+                answer_offset: question_end + 4,
+                answer_count: u16::from_be_bytes([packet[6], packet[7]]),
+                response_code: packet[3] & 0x0f,
+                truncated: packet[2] & 0x02 != 0,
+            })
+        }
+
+        /// Returns the DNS response code from the validated header.
+        #[inline]
+        pub const fn response_code(&self) -> u8 { self.response_code }
+
+        /// Returns whether the server marked this UDP response truncated.
+        #[inline]
+        pub const fn truncated(&self) -> bool { self.truncated }
+
+        /// Copies the selected answer's raw RDATA or expanded DNS name.
+        pub fn rdata_at(
+            &self,
+            record_type: u16,
+            ordinal: usize,
+            output: &mut [u8],
+        ) -> Result<Option<usize>> {
+            let mut offset = self.answer_offset;
+            let mut found = 0usize;
+            let mut index = 0u16;
+            while index < self.answer_count {
+                let name_end = skip_name(self.packet, offset)?;
+                if name_end + 10 > self.packet.len() {
+                    return Err(malformed());
+                }
+                let kind = u16::from_be_bytes([self.packet[name_end], self.packet[name_end + 1]]);
+                let class = u16::from_be_bytes([self.packet[name_end + 2], self.packet[name_end + 3]]);
+                let length = u16::from_be_bytes([self.packet[name_end + 8], self.packet[name_end + 9]]) as usize;
+                let data = name_end + 10;
+                if data.checked_add(length).filter(|end| *end <= self.packet.len()).is_none() {
+                    return Err(malformed());
+                }
+                if kind == record_type && class == CLASS_IN {
+                    if found == ordinal {
+                        if record_type == TYPE_CNAME || record_type == TYPE_PTR {
+                            let length = expand_name(self.packet, data, output)?;
+                            return Ok(Some(length));
+                        }
+                        if length > output.len() {
+                            return Err(super::Errno::MSGSIZE);
+                        }
+                        output[..length].copy_from_slice(&self.packet[data..data + length]);
+                        return Ok(Some(length));
+                    }
+                    found += 1;
+                }
+                offset = data + length;
+                index += 1;
+            }
+            Ok(None)
+        }
+    }
+
+    fn skip_name(packet: &[u8], mut offset: usize) -> Result<usize> {
+        let mut jumps = 0usize;
+        loop {
+            if offset >= packet.len() {
+                return Err(malformed());
+            }
+            let length = packet[offset];
+            if length & 0xc0 == 0xc0 {
+                if offset + 1 >= packet.len() {
+                    return Err(malformed());
+                }
+                return Ok(offset + 2);
+            }
+            if length > 63 {
+                return Err(malformed());
+            }
+            offset += 1;
+            if length == 0 {
+                return Ok(offset);
+            }
+            if offset + length as usize > packet.len() {
+                return Err(malformed());
+            }
+            offset += length as usize;
+            jumps += 1;
+            if jumps > 128 {
+                return Err(malformed());
+            }
+        }
+    }
+
+    fn expand_name(packet: &[u8], start: usize, output: &mut [u8]) -> Result<usize> {
+        let mut offset = start;
+        let mut written = 0usize;
+        let mut consumed = 0usize;
+        let mut jumped = false;
+        let mut jumps = 0usize;
+        loop {
+            if offset >= packet.len() {
+                return Err(malformed());
+            }
+            let length = packet[offset];
+            if length & 0xc0 == 0xc0 {
+                if offset + 1 >= packet.len() {
+                    return Err(malformed());
+                }
+                let target = ((length as usize & 0x3f) << 8) | packet[offset + 1] as usize;
+                if target >= packet.len() || target == offset {
+                    return Err(malformed());
+                }
+                if !jumped {
+                    consumed += 2;
+                }
+                offset = target;
+                jumped = true;
+                jumps += 1;
+                if jumps > 128 {
+                    return Err(malformed());
+                }
+                continue;
+            }
+            if length > 63 {
+                return Err(malformed());
+            }
+            offset += 1;
+            if length == 0 {
+                if written == 0 {
+                    if output.is_empty() { return Err(super::Errno::MSGSIZE); }
+                    output[0] = b'.';
+                    return Ok(1);
+                }
+                let _ = consumed;
+                return Ok(written);
+            }
+            let length = length as usize;
+            if offset + length > packet.len() {
+                return Err(malformed());
+            }
+            if written != 0 {
+                if written + 1 >= output.len() { return Err(super::Errno::MSGSIZE); }
+                output[written] = b'.';
+                written += 1;
+            }
+            if written + length >= output.len() {
+                return Err(super::Errno::MSGSIZE);
+            }
+            output[written..written + length].copy_from_slice(&packet[offset..offset + length]);
+            written += length;
+            offset += length;
+            if !jumped {
+                consumed += length + 1;
+            }
+        }
+    }
+
+    /// Sends a DNS query through the explicitly configured nameservers.
+    ///
+    /// The exchange is UDP-only in this bounded slice. Truncated responses are
+    /// returned to the caller for explicit policy handling; no TCP fallback is
+    /// hidden behind the native API yet.
+    pub fn exchange(config: &ExchangeConfig, query: &[u8], query_id: u16, answer: &mut [u8]) -> Result<usize> {
+        if config.nameserver_count == 0
+            || config.nameserver_count > MAX_NAMESERVERS
+            || config.timeout_ms == 0
+            || config.attempts == 0
+            || query.len() < 12
+            || answer.len() < 12
+        {
+            return Err(invalid());
+        }
+        let mut attempt = 0u8;
+        while attempt < config.attempts {
+            let mut index = 0usize;
+            while index < config.nameserver_count {
+                let server = config.nameservers[index];
+                let fd = match net::socket(server.family as i32, SOCK_DGRAM | SOCK_CLOEXEC, 0) {
+                    Ok(fd) => fd,
+                    Err(_) => { index += 1; continue; }
+                };
+                let connected = if server.family == AF_INET {
+                    let address = SockaddrIn {
+                        family: AF_INET,
+                        port: (if server.port == 0 { 53 } else { server.port }).to_be(),
+                        address: u32::from_ne_bytes([
+                            server.address[0], server.address[1], server.address[2], server.address[3],
+                        ]),
+                        zero: [0; 8],
+                    };
+                    // SAFETY: `address` remains alive across the direct syscall.
+                    unsafe { net::connect_raw(fd, (&address as *const SockaddrIn).cast(), 16) }
+                } else if server.family == AF_INET6 {
+                    let address = SockaddrIn6 {
+                        family: AF_INET6,
+                        port: (if server.port == 0 { 53 } else { server.port }).to_be(),
+                        flow_info: 0,
+                        address: server.address,
+                        scope_id: server.scope_id,
+                    };
+                    // SAFETY: `address` remains alive across the direct syscall.
+                    unsafe { net::connect_raw(fd, (&address as *const SockaddrIn6).cast(), 28) }
+                } else {
+                    Err(invalid())
+                };
+                if connected.is_err() {
+                    let _ = super::io::close(fd);
+                    index += 1;
+                    continue;
+                }
+                let sent = unsafe {
+                    net::sendto_raw(fd, query.as_ptr(), query.len(), MSG_NOSIGNAL, core::ptr::null(), 0)
+                };
+                if sent != Ok(query.len()) {
+                    let _ = super::io::close(fd);
+                    index += 1;
+                    continue;
+                }
+                let mut poll = PollFd { fd, events: POLLIN, revents: 0 };
+                let timeout = Timespec {
+                    seconds: (config.timeout_ms / 1000) as i64,
+                    nanoseconds: ((config.timeout_ms % 1000) as i64) * 1_000_000,
+                };
+                let ready = loop {
+                    // SAFETY: `poll` and `timeout` are valid local kernel ABI records.
+                    match unsafe {
+                        super::event::ppoll_raw(
+                            (&mut poll as *mut PollFd).cast(),
+                            1,
+                            (&timeout as *const Timespec).cast(),
+                            core::ptr::null(),
+                            8,
+                        )
+                    } {
+                        Ok(value) => break value,
+                        Err(error) if error == super::Errno::INTR => continue,
+                        Err(_) => break 0,
+                    }
+                };
+                if ready > 0 && poll.revents & (POLLIN | POLLERR | POLLHUP | POLLNVAL) != 0 {
+                    let received = unsafe {
+                        net::recvfrom_raw(
+                            fd,
+                            answer.as_mut_ptr(),
+                            answer.len(),
+                            0,
+                            core::ptr::null_mut(),
+                            core::ptr::null_mut(),
+                        )
+                    };
+                    let _ = super::io::close(fd);
+                    if let Ok(length) = received {
+                        if length >= 2
+                            && u16::from_be_bytes([answer[0], answer[1]]) == query_id
+                        {
+                            return Ok(length);
+                        }
+                    }
+                } else {
+                    let _ = super::io::close(fd);
+                }
+                index += 1;
+            }
+            attempt = attempt.saturating_add(1);
+        }
+        Err(super::Errno::TIMEDOUT)
     }
 }
 
@@ -2273,7 +3002,94 @@ pub mod process {
 
 /// Direct thread-associated Linux operations.
 pub mod thread {
-    use super::{decode, syscall0, Result, SYS_GETTID, SYS_SCHED_YIELD};
+    use super::{decode, syscall0, syscall6, Result, SYS_FUTEX, SYS_GETTID, SYS_SCHED_YIELD};
+
+    /// `FUTEX_WAIT`, waiting while the futex word still equals `expected`.
+    pub const FUTEX_WAIT: u32 = 0;
+    /// `FUTEX_WAKE`, waking up to the requested number of waiters.
+    pub const FUTEX_WAKE: u32 = 1;
+    /// Use process-private futex hashing. Process-shared objects omit this bit.
+    pub const FUTEX_PRIVATE_FLAG: u32 = 128;
+
+    /// Performs a raw Linux futex operation.
+    ///
+    /// This is the stateless kernel seam used by native Rust synchronization
+    /// objects and by the C facade. The timeout pointer, when non-null, must
+    /// point to a Linux/AArch64 `struct timespec`; for `FUTEX_WAIT` it is a
+    /// relative timeout.
+    ///
+    /// # Safety
+    ///
+    /// `address` must be a valid, four-byte-aligned futex word readable for
+    /// the duration of the syscall. `timeout` must be null or point to a
+    /// readable Linux/AArch64 timespec. `operation` must be a supported
+    /// futex operation plus any valid futex flags.
+    #[inline]
+    pub unsafe fn futex_raw(
+        address: *const u32,
+        operation: u32,
+        expected: u32,
+        timeout: *const u8,
+        secondary: *const u32,
+        value3: u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns the futex word and optional timeout memory
+        // contracts; all remaining arguments are immediate kernel values.
+        decode(unsafe {
+            syscall6(
+                SYS_FUTEX,
+                address as usize,
+                operation as usize,
+                expected as usize,
+                timeout as usize,
+                secondary as usize,
+                value3 as usize,
+            )
+        })
+    }
+
+    /// Waits while `address` still contains `expected`.
+    ///
+    /// `timeout` is a nullable pointer to a relative Linux/AArch64 timespec.
+    /// `private` selects `FUTEX_PRIVATE_FLAG`; set it to false for a
+    /// process-shared synchronization object.
+    ///
+    /// # Safety
+    ///
+    /// The futex word and optional timeout must satisfy the contracts of
+    /// [`futex_raw`].
+    #[inline]
+    pub unsafe fn futex_wait(
+        address: *const u32,
+        expected: u32,
+        private: bool,
+        timeout: *const u8,
+    ) -> Result<()> {
+        let operation = FUTEX_WAIT | if private { FUTEX_PRIVATE_FLAG } else { 0 };
+        // SAFETY: The caller supplied the futex and timeout contracts.
+        unsafe { futex_raw(address, operation, expected, timeout, core::ptr::null(), 0) }
+            .map(|_| ())
+    }
+
+    /// Wakes up to `count` waiters sleeping on `address`.
+    ///
+    /// Set `private` to false for a process-shared synchronization object.
+    /// The returned count is the number of waiters woken by the kernel.
+    ///
+    /// # Safety
+    ///
+    /// `address` must be a valid, four-byte-aligned futex word readable for
+    /// the duration of the syscall.
+    #[inline]
+    pub unsafe fn futex_wake(
+        address: *const u32,
+        count: u32,
+        private: bool,
+    ) -> Result<usize> {
+        let operation = FUTEX_WAKE | if private { FUTEX_PRIVATE_FLAG } else { 0 };
+        // SAFETY: The caller supplied the futex-word contract.
+        unsafe { futex_raw(address, operation, count, core::ptr::null(), core::ptr::null(), 0) }
+    }
 
     /// Returns the caller's Linux thread ID.
     #[inline]

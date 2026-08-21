@@ -18,14 +18,14 @@ public_c_abi_is_native_rust_coverage = false
 reference_source = "../reports/symbols/musl-1.2.6-aarch64.dynamic.tsv"
 candidate_source = "../reports/symbols/crabc-aarch64.dynamic.tsv"
 reference_count = 1647
-candidate_count = 1668
-candidate_only_count = 21
+candidate_count = 1669
+candidate_only_count = 22
 missing_from_candidate_count = 0
 metadata_mismatches_count = 0
 reference_is_candidate_minus_candidate_only = true
 candidate_symbols = [
   "_Exit", "_Fork", "_IO_feof_unlocked", "_IO_ferror_unlocked", "_IO_getc", "_IO_getc_unlocked", "_IO_putc", "_IO_putc_unlocked",
-  "___environ", "__assert_fail", "__auxv", "__crypt_blowfish", "__crypt_md5", "__crypt_r", "__crypt_sha256", "__crypt_sha512",
+  "___environ", "__assert_fail", "__auxv", "__crabc_runtime_v1", "__crypt_blowfish", "__crypt_md5", "__crypt_r", "__crypt_sha256", "__crypt_sha512",
   "__ctype_b_loc", "__ctype_get_mb_cur_max", "__ctype_tolower_loc", "__ctype_toupper_loc", "__cxa_atexit", "__cxa_finalize", "__daylight", "__dls2b",
   "__dls3", "__duplocale", "__environ", "__errno_location", "__fbufsize", "__fgetwc_unlocked", "__flbf", "__flt_rounds",
   "__fork_handler", "__fpclassify", "__fpclassifyf", "__fpclassifyl", "__fpending", "__fpurge", "__fputwc_unlocked", "__freadable",
@@ -238,6 +238,7 @@ candidate_symbols = [
 
 candidate_only_symbols = [
   "__auxv",
+  "__crabc_runtime_v1",
   "__crypt_blowfish",
   "__crypt_md5",
   "__crypt_r",
@@ -263,7 +264,7 @@ candidate_only_symbols = [
 [[capability]]
 id = "public-dynamic-export-surface"
 symbol_source = "../reports/symbols/crabc-aarch64.dynamic.tsv"
-symbol_count = 1668
+symbol_count = 1669
 classification = "unclassified"
 status = "inventory"
 rationale = "M0 records every measured candidate export before semantic grouping and native Rust design."
@@ -281,6 +282,12 @@ name = "__auxv"
 classification = "unclassified"
 status = "inventory"
 rationale = "Candidate-only export; preserve provenance until its runtime or Rust-native ownership is classified."
+
+[[candidate_only]]
+name = "__crabc_runtime_v1"
+classification = "internal-runtime"
+status = "inventory"
+rationale = "Versioned private singleton table for native loader and thread/TLS facades; it has no installed C header and is not a public POSIX API."
 
 [[candidate_only]]
 name = "__crypt_blowfish"

@@ -13046,6 +13046,7 @@
   "target": "aarch64-unknown-linux-musl",
   "unexpected": [
     "__auxv",
+    "__crabc_runtime_v1",
     "__crypt_blowfish",
     "__crypt_md5",
     "__crypt_r",

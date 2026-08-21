@@ -41,10 +41,41 @@ name = "m6_direct_probe"
 path = "examples/m6_direct_probe.rs"
 crate-type = ["staticlib"]
 
+[[example]]
+name = "m7_sync_direct_probe"
+path = "examples/m7_sync_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m7_resolver_direct_probe"
+path = "examples/m7_resolver_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m7_loader_runtime_probe"
+path = "examples/m7_loader_runtime_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m7_runtime_thread_probe"
+path = "examples/m7_runtime_thread_probe.rs"
+crate-type = ["staticlib"]
+
 [features]
 default = ["std"]
 alloc = []
 std = ["alloc"]
+# Link the native `dl` facade against crabc's private singleton-runtime table.
+# This is deliberately opt-in: ordinary Rust test executables do not load
+# crabc's `libc.so`, while a crabc process supplies the required table.
+runtime-loader = []
+# Link the raw native thread/TLS facade against libc's private singleton-runtime
+# table. This is separately opt-in because ordinary Rust tests do not load
+# crabc's libc and therefore cannot provide the private getter.
+runtime-thread = []
+# Add the owned Rust closure/result layer. Keeping it separate leaves the raw
+# no-std runtime boundary usable without an allocator.
+runtime-thread-alloc = ["runtime-thread", "alloc"]
 
 [dependencies]
 crabc-core = { path = "../crabc-core" }

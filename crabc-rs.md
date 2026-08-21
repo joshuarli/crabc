@@ -59,7 +59,7 @@ the following bounded, reproducible evidence against pinned musl 1.2.6:
 
 | Area | Current evidence |
 | --- | --- |
-| Dynamic public ABI | 1,647 expected symbols; 1,668 candidate exports; no missing names or metadata mismatches; 21 documented candidate-only exports. |
+| Dynamic public ABI | 1,647 expected symbols; 1,669 candidate exports; no missing names or metadata mismatches; 22 documented candidate-only exports. |
 | libc-test | 420 total cases: 406 pass; no fail, build error, or timeout; 14 individually evidenced exceptions. |
 | OS/runtime | 10/10 selected OS profiles pass; pthread/TLS stress 10/10; signal/process 12/12; resolver/network 22 contract items. |
 | Loader | 20/20 bounded native-AArch64 pinned-musl differential cases; generated loader inventory is reproducible. |
@@ -1378,8 +1378,8 @@ It is no longer the roadmap.
 # 32. Generate a complete crabc capability inventory
 
 Start from the measured crabc ABI and implementation inventory. The initial
-machine-readable input is all 1,668 current candidate dynamic exports, with
-the 1,647-symbol pinned-musl public surface and 21 candidate-only exports
+machine-readable input is all 1,669 current candidate dynamic exports, with
+the 1,647-symbol pinned-musl public surface and 22 candidate-only exports
 preserved as distinct provenance classes. Add the checked loader/dlfcn runtime
 inventory so capabilities not adequately described by a single libc symbol are
 also visible.
@@ -2955,6 +2955,61 @@ dynamic loading
 ```
 
 with strong ownership/safety semantics.
+
+## M7 native vertical slice — 2026-08-20 UTC
+
+The first runtime slice is complete for Linux/AArch64 little-endian. It adds
+native access where crabc has one clear process-state owner, rather than
+pretending that C pthread layouts or sentinel/`errno` conventions are Rust
+interfaces.
+
+`sync` owns process-private Rust storage and uses only the direct
+`crabc-core::thread` futex seam. It supplies non-poisoning `Mutex`, `Condvar`,
+`Once`, `Semaphore`, writer-preferring `RwLock`, and reusable `Barrier` types
+with non-`Send` guards. Broadcast wakeups use Linux's largest positive futex
+count (`i32::MAX`), not the invalid unsigned all-bits value. These primitives
+are deliberately not process-shared or robust, and their objects must not be
+used across `fork` without application-defined reinitialization.
+
+`runtime_thread` is an opt-in private-singleton facade. `NativeJoinHandle`
+supports explicitly unsafe raw C-compatible callbacks, join/detach, current
+thread identity, TLS keys, TLS destructors, and carefully unsafe cancellation
+state/type/test operations. The `runtime-thread-alloc` extension adds an owned
+closure/result `spawn` and typed `JoinHandle`; the raw `runtime-thread` feature
+remains meaningful in allocator-free `no_std` programs. Native handles are not
+yet `Send` or `Sync`, and cancellation is forbidden for a typed spawned thread
+because its join result owns a `Box<T>`.
+
+The runtime facade reaches exactly one versioned private
+`__crabc_runtime_v1` table in `libc.so`. The table has no installed C header,
+returns positive pthread errors rather than TLS `errno`, and preserves libc as
+the owner of thread slots, key slots, and cancellation state. The paired `dl`
+facade uses the same table to reach loader-owned state, copying diagnostics and
+address metadata into Rust-owned values; it never links a second loader or
+calls the public `dl*` ABI.
+
+`resolver` and `netdb` likewise avoid C runtime state: resolver configuration,
+DNS results, and text database snapshots are caller-owned. The verified slice
+covers typed numeric, A/AAAA, reverse-PTR, and deterministic configured
+nameserver resolution plus hosts/services/protocols parsing. System
+`resolv.conf` discovery, TCP retry, address sorting, and `AI_ADDRCONFIG` are
+not silently approximated; the latter is explicitly rejected until it has a
+native state/evidence contract.
+
+The M7 proof is `./scripts/dev.sh crabc-rs`: focused concurrency and resolver
+tests, allocator-free static archives, loader/thread C fixtures under
+`libldso.so`, and ELF verifiers reject public `pthread_*`, `dl*`, resolver, and
+TLS-errno dependencies. The fixtures exercise native loader state,
+thread-create/join, per-thread key round trips, and cancellation-configuration
+round trips in an actual crabc process.
+
+This does not claim a Rust representation for every C pthread extension.
+Recursive/error-checking mutex behavior, robust owner-death recovery,
+process-shared synchronization, C cleanup-handler macro scopes, and direct
+`pthread_atfork` registry sharing remain explicit capability-accounting work.
+The existing M6 native atfork registry is intentionally separate. They may not
+be hidden behind raw C structs or counted as native Rust coverage before their
+contracts, safety classification, and evidence exist.
 
 ---
 
