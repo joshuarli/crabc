@@ -9,6 +9,8 @@ FROM alpine:3.24.1@sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f0
 ARG RUST_TOOLCHAIN=nightly-2026-07-24
 ARG MUSL_VERSION=1.2.6
 ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
+ARG MUSL_REV=9fa28ece75d8a2191de7c5bb53bed224c5947417
+ARG MUSL_MIRROR=https://github.com/ifduyue/musl.git
 ARG LIBC_TEST_REV=68edb8bd73dab8147ee54c8bec638f4d2b3cff37
 ARG OS_TEST_REV=5e9456d510612f83b6ec8b1a0c06d6b1303a2512
 
@@ -42,11 +44,24 @@ RUN apk add --no-cache \
 
 # Alpine's system musl is intentionally not the oracle. Build the pinned
 # upstream release under /opt so neither libc nor ld-musl in the container is
-# replaced. musl-gcc then lets the existing integration tests use that oracle.
-RUN curl --fail --location --retry 3 --output /tmp/musl.tar.gz \
-        "https://musl.libc.org/releases/musl-${MUSL_VERSION}.tar.gz" \
-    && echo "${MUSL_SHA256}  /tmp/musl.tar.gz" | sha256sum -c - \
-    && tar -C /tmp -xzf /tmp/musl.tar.gz \
+# replaced. The official release tarball remains the primary source and is
+# SHA-256 verified. If that host is temporarily unavailable, use only the
+# documented mirror's immutable v1.2.6 commit; its commit ID names the exact
+# upstream release source and is verified after checkout. musl-gcc then lets
+# the existing integration tests use that oracle.
+RUN set -eu \
+    && if curl --fail --location --retry 3 --output /tmp/musl.tar.gz \
+            "https://musl.libc.org/releases/musl-${MUSL_VERSION}.tar.gz"; then \
+        echo "${MUSL_SHA256}  /tmp/musl.tar.gz" | sha256sum -c - \
+        && tar -C /tmp -xzf /tmp/musl.tar.gz; \
+    else \
+        rm -f /tmp/musl.tar.gz \
+        && git clone --depth 1 --branch "v${MUSL_VERSION}" "${MUSL_MIRROR}" \
+            "/tmp/musl-${MUSL_VERSION}" \
+        && cd "/tmp/musl-${MUSL_VERSION}" \
+        && test "$(git rev-parse HEAD)" = "${MUSL_REV}" \
+        && rm -rf .git; \
+    fi \
     && cd "/tmp/musl-${MUSL_VERSION}" \
     && ./configure \
         --prefix="/opt/musl-${MUSL_VERSION}" \

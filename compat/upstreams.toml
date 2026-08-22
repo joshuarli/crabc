@@ -12,6 +12,11 @@ rust_toolchain = "nightly-2026-07-24"
 version = "1.2.6"
 source = "https://musl.libc.org/releases/musl-1.2.6.tar.gz"
 sha256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
+# Docker uses this only when the SHA-256-verified primary release host is
+# unavailable. The revision is the upstream v1.2.6 release commit; checkout
+# verifies it before the source build can proceed.
+fallback_repository = "https://github.com/ifduyue/musl.git"
+fallback_revision = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
 
 [libc_test]
 # Laputa Systems carries the maintained libc-test fork. Pin the commit rather
