@@ -2799,6 +2799,24 @@ unsafe fn sys_clock_gettime(clockid: c_int, ts: *mut timespec) -> i64 {
     unsafe { crabc_core::time::clock_gettime_status_raw(clockid, ts.cast()) as i64 }
 }
 
+/// Converts the raw Linux/vDSO failure status used exclusively by
+/// [`clock_gettime`] into its public C ABI result.
+///
+/// Every route selected by `clock_gettime_status_raw` returns exactly zero on
+/// success and a Linux negative errno on failure. Keeping that narrow status
+/// contract at this boundary makes the successful vDSO return a single
+/// zero-test while preserving the shared errno publication path for failures.
+#[cold]
+#[inline(never)]
+unsafe fn clock_gettime_failure(status: i64) -> c_int {
+    debug_assert!((-4095..0).contains(&status));
+    // SAFETY: `status` is the raw negative Linux errno from the documented
+    // clock route above, so the shared conversion publishes the right errno.
+    let result = unsafe { syscall_result(status) };
+    debug_assert_eq!(result, -1);
+    -1
+}
+
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn clock_gettime(clockid: c_int, ts: *mut timespec) -> c_int {
@@ -2811,7 +2829,14 @@ pub unsafe extern "C" fn clock_gettime(clockid: c_int, ts: *mut timespec) -> c_i
     } else {
         unsafe { sys_clock_gettime(clockid, ts) }
     };
-    if syscall_result(status) < 0 { -1 } else { 0 }
+    if status == 0 {
+        0
+    } else {
+        // SAFETY: Both the validated vDSO route and the direct syscall route
+        // use the exact zero-or-negative-errno status contract documented by
+        // `clock_gettime_failure`.
+        unsafe { clock_gettime_failure(status) }
+    }
 }
 
 #[no_mangle]
