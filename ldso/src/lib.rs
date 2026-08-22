@@ -3007,13 +3007,25 @@ unsafe fn tls_var_area_offset_from_tp() -> usize {
 // Relocation processing
 // ============================================================
 
-/// Process all relocations for every loaded object.
+/// Process the complete initial loader graph before any object can have been
+/// relocated. Runtime `dlopen` uses `process_relocation_suffix` instead: GNU
+/// RELRO is optional, while packed `DT_RELR` entries update their slots in
+/// place and must never be replayed for an already loaded no-RELRO object.
 unsafe fn process_all_relocations() {
+    process_relocation_suffix(0);
+}
+
+/// Relocate exactly the dependency-graph suffix appended by one `dlopen`.
+///
+/// The loader registers an object before it discovers its children, so this
+/// suffix contains the entire new closure in a stable order. Every object
+/// before `first_new` completed relocation in an earlier transaction; keeping
+/// that boundary separate from `relro_applied` preserves no-RELRO `DT_RELR`
+/// images and avoids revisiting prior loader work.
+unsafe fn process_relocation_suffix(first_new: usize) {
+    let first_new = first_new.min(LOADED_COUNT);
     // First pass: non-COPY relocations so source symbols have final values.
-    for i in 0..LOADED_COUNT {
-        if LOADED[i].relro_applied {
-            continue;
-        }
+    for i in first_new..LOADED_COUNT {
         let (base, rela_off, rela_sz, jmprel_off, jmprel_sz, relr_off, relr_sz, relr_ent) =
             relocation_info(i);
         apply_relr_table(i, base, relr_off, relr_sz, relr_ent);
@@ -3021,22 +3033,26 @@ unsafe fn process_all_relocations() {
         apply_rela_table(i, base, jmprel_off, jmprel_sz, false);
     }
     // Second pass: COPY relocations copy initialized data into the executable.
-    for i in 0..LOADED_COUNT {
-        if LOADED[i].relro_applied {
-            continue;
-        }
+    for i in first_new..LOADED_COUNT {
         let (base, rela_off, rela_sz, _, _, _, _, _) = relocation_info(i);
         apply_rela_table(i, base, rela_off, rela_sz, true);
     }
 }
 
 /// Lock every mapped GNU_RELRO span after all relocations that may touch it.
-/// A later `dlopen` only relocates newly mapped objects; applying RELRO also
-/// makes prior objects ineligible for the relocation pass above.
+/// Runtime transactions relocate only their newly appended graph suffix, so
+/// sealing is an independent protection step rather than its completion mark.
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn apply_relro() {
+    apply_relro_suffix(0);
+}
+
+/// Seal GNU RELRO only for the dependency-graph suffix appended by one
+/// `dlopen`. Earlier maps were sealed in their own completed transaction.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+unsafe fn apply_relro_suffix(first_new: usize) {
     const PAGE: u64 = 4096;
-    for i in 0..LOADED_COUNT {
+    for i in first_new.min(LOADED_COUNT)..LOADED_COUNT {
         let obj = &mut LOADED[i];
         if obj.relro_applied || obj.relro_size == 0 {
             continue;
@@ -3889,9 +3905,9 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     // contain ordinary relocations. Reserve the layout, relocate the image,
     // then copy that relocated image into the current thread's TLS block.
     let tls_update = register_tls_for_new_modules(first_new);
-    process_all_relocations();
+    process_relocation_suffix(first_new);
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    apply_relro();
+    apply_relro_suffix(first_new);
     if tls_update {
         initialize_new_module_tls();
     }
