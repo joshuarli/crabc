@@ -4380,6 +4380,17 @@ const DT_EXITED: c_int = 0;
 const DT_EXITING: c_int = 1;
 const DT_JOINABLE: c_int = 2;
 const DT_DETACHED: c_int = 3;
+// A timed join publishes interest in this same futex word before it can
+// sleep.  The bit stays set until the worker exits (or the slot is reused):
+// clearing it after a timeout could let another timed join sleep without an
+// exit wake.  Keeping publication and the state transition in one atomic
+// word prevents a lost wake on weakly ordered machines.
+const DT_TIMED_JOIN_WAITER: c_int = c_int::MIN;
+
+#[inline(always)]
+fn detach_state_kind(state: c_int) -> c_int {
+    state & !DT_TIMED_JOIN_WAITER
+}
 
 // ponytail: musl __ptcb cleanup handler node
 #[repr(C)]
@@ -5141,12 +5152,15 @@ unsafe fn reclaim_exited_threads() {
 /// the joinable-exited state. A creator may detach concurrently with the last
 /// user instruction, so the transition must be a CAS rather than a plain
 /// store.
-unsafe fn publish_thread_exit(slot: &mut Thread) {
+unsafe fn publish_thread_exit(slot: *mut Thread) {
     loop {
-        let state = a_load(&raw const slot.detach_state);
-        match state {
+        let state = a_load(&raw const (*slot).detach_state);
+        match detach_state_kind(state) {
             DT_JOINABLE => {
-                if a_cas(&raw mut slot.detach_state, DT_JOINABLE, DT_EXITED) == DT_JOINABLE {
+                if a_cas(&raw mut (*slot).detach_state, state, DT_EXITED) == state {
+                    if state & DT_TIMED_JOIN_WAITER != 0 {
+                        futex_wake(&raw mut (*slot).detach_state, 1);
+                    }
                     return;
                 }
             }
@@ -5154,6 +5168,34 @@ unsafe fn publish_thread_exit(slot: &mut Thread) {
             // recognizes DT_DETACHED once the kernel clears tid.
             DT_DETACHED | DT_EXITED => return,
             _ => return,
+        }
+    }
+}
+
+/// Mark a joinable slot before `pthread_timedjoin_np` can wait for its exit.
+///
+/// The marker is a one-way bit in `detach_state`, the futex word itself.  An
+/// exiting worker therefore either changes the word before this CAS (so the
+/// timed join cannot sleep), or observes the marker and wakes it.  The marker
+/// deliberately survives a timeout: POSIX leaves concurrent joins undefined,
+/// and retaining the conservative wake interest is what keeps a later timed
+/// join from losing the worker's one exit notification.
+unsafe fn mark_timed_join_waiter(slot: *mut Thread) -> Result<c_int, c_int> {
+    loop {
+        let state = a_load(&raw const (*slot).detach_state);
+        match detach_state_kind(state) {
+            DT_JOINABLE => {
+                if state & DT_TIMED_JOIN_WAITER != 0 {
+                    return Ok(state);
+                }
+                let marked = state | DT_TIMED_JOIN_WAITER;
+                if a_cas(&raw mut (*slot).detach_state, state, marked) == state {
+                    return Ok(marked);
+                }
+            }
+            DT_EXITED => return Ok(DT_EXITED),
+            DT_DETACHED | DT_EXITING => return Err(EINVAL),
+            _ => return Err(EINVAL),
         }
     }
 }
@@ -5234,8 +5276,7 @@ unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
     run_key_dtors(slot);
     refresh_thread_tls_slot(slot);
     slot.result = ret;
-    publish_thread_exit(slot);
-    futex_wake(&raw mut slot.detach_state, 1);
+    publish_thread_exit(slot as *mut Thread);
     sys_exit_thread(0)
 }
 
@@ -5400,7 +5441,7 @@ pub unsafe extern "C" fn pthread_create(
 pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void) -> c_int {
     let slot = thread as *mut Thread;
     if slot.is_null() { return EINVAL; }
-    if a_load(&raw const (*slot).detach_state) == DT_DETACHED { return EINVAL; }
+    if detach_state_kind(a_load(&raw const (*slot).detach_state)) == DT_DETACHED { return EINVAL; }
     let tid_ptr = &raw mut (*slot).tid;
     loop {
         pthread_testcancel();
@@ -5425,9 +5466,9 @@ pub unsafe extern "C" fn pthread_detach(thread: PthreadT) -> c_int {
     if slot.is_null() { return EINVAL; }
     loop {
         let state = a_load(&raw const (*slot).detach_state);
-        match state {
+        match detach_state_kind(state) {
             DT_JOINABLE => {
-                if a_cas(&raw mut (*slot).detach_state, DT_JOINABLE, DT_DETACHED) == DT_JOINABLE {
+                if a_cas(&raw mut (*slot).detach_state, state, DT_DETACHED) == state {
                     return 0;
                 }
             }
@@ -5454,8 +5495,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
         run_key_dtors(slot);
         refresh_thread_tls_slot(slot);
         slot.result = retval;
-        publish_thread_exit(slot);
-        futex_wake(&raw mut slot.detach_state, 1);
+        publish_thread_exit(slot as *mut Thread);
 
         // If this is the last thread, run atexit handlers via exit().
         let mut active = 0usize;
@@ -6659,8 +6699,7 @@ unsafe fn do_cancel() -> ! {
         run_key_dtors(slot);
         refresh_thread_tls_slot(slot);
         slot.result = !0usize as *mut c_void; // PTHREAD_CANCELED
-        publish_thread_exit(slot);
-        futex_wake(&raw mut slot.detach_state, 1);
+        publish_thread_exit(slot as *mut Thread);
     }
     sys_exit_thread(0);
 }

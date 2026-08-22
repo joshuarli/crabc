@@ -439,7 +439,8 @@ pub unsafe extern "C" fn pthread_getattr_np(
     }
     m4_pthread_attr_set_sizes(attr, (*slot).stack_size, m4_pthread_default_guard_size());
     *((*attr).__i.as_mut_ptr().add(M4_ATTR_STACK_ADDR) as *mut usize) = (*slot).stack as usize;
-    (*attr).__i[M4_ATTR_DETACH] = if (*slot).detach_state >= DT_DETACHED {
+    let detach_state = a_load(&raw const (*slot).detach_state);
+    (*attr).__i[M4_ATTR_DETACH] = if detach_state_kind(detach_state) >= DT_DETACHED {
         PTHREAD_CREATE_DETACHED
     } else {
         PTHREAD_CREATE_JOINABLE
@@ -578,11 +579,11 @@ pub unsafe extern "C" fn pthread_tryjoin_np(thread: PthreadT, retval: *mut *mut 
         Ok(slot) => slot,
         Err(error) => return error,
     };
-    let state = core::ptr::read_volatile(core::ptr::addr_of!((*slot).detach_state));
-    if state == DT_JOINABLE {
+    let state = a_load(&raw const (*slot).detach_state);
+    if detach_state_kind(state) == DT_JOINABLE {
         return EBUSY;
     }
-    if state == DT_DETACHED {
+    if detach_state_kind(state) == DT_DETACHED {
         return EINVAL;
     }
     pthread_join(thread, retval)
@@ -599,16 +600,17 @@ pub unsafe extern "C" fn pthread_timedjoin_np(
         Ok(slot) => slot,
         Err(error) => return error,
     };
-    let state = core::ptr::read_volatile(core::ptr::addr_of!((*slot).detach_state));
-    if state == DT_DETACHED {
-        return EINVAL;
-    }
-    while core::ptr::read_volatile(core::ptr::addr_of!((*slot).detach_state)) != DT_EXITED {
-        let expected = core::ptr::read_volatile(core::ptr::addr_of!((*slot).detach_state));
+    let mut state = match mark_timed_join_waiter(slot) {
+        Ok(state) => state,
+        Err(error) => return error,
+    };
+    while state != DT_EXITED {
+        let expected = state;
         let error = futex_timedwait(&raw mut (*slot).detach_state, expected, abstime);
         if error != 0 {
             return error;
         }
+        state = a_load(&raw const (*slot).detach_state);
     }
     pthread_join(thread, retval)
 }

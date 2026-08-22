@@ -107,23 +107,22 @@ The scalar `memset` summary in the P1 table is historical. Three current
 still scalar: explicit AArch64 GPR stores prevent LLVM from substituting NEON
 before a separately verified SIMD decision. Every fill row remains red.
 
-The pthread/TLS table's earlier `pthread-create-release-store-*-31` range is
-historical. `pthread-initial-tp-cleanup-{matrix,repeat,repeat2}-31` records a
-still-red 0.9206×–0.9478× CPU upper-bound range across three runs, with 7.000
-versus 11.977–11.990 musl marked calls/op. A page-aligned combined allocation
-leaves dynamic TLS above the downward-growing stack and reduces the normal
-lifecycle to one `mmap`/`munmap`. Each slot records the initial TP returned by
-the TLS bridge; after the worker refreshes its current TP at exit, an unchanged
-combined allocation releases directly, while a late-`dlopen` migration retains
-the precise dynamic-TLS bridge query and replacement unmap. Exit now bypasses
-the fixed TSD destructor scan when no live key has a destructor and clears only
-exact occupied values when recycling
-a slot. The loader's one-way multi-thread publication uses the inline AArch64
-compare-exchange before the first `clone`, not a repeated callback. The direct
-513-lifetime differential now also proves rearming destructor iterations,
-no-destructor slot reuse, and all `PTHREAD_KEYS_MAX` null-destructor keys;
-dynamic-TLS cases, broad pthread stress, and loader cases pass, but the CPU gate
-remains red.
+The pthread/TLS table's `pthread-initial-tp-cleanup-*-31` range is historical.
+Three current `pthread-conditional-exit-wake-{matrix,repeat,repeat2}-31`
+reports establish a still-red 0.9139×–0.9381× CPU upper-bound range, with
+6.000 crabc versus 11.966 musl marked calls/op. Normal `pthread_join` waits on
+Linux's `CLONE_CHILD_CLEARTID` word, so an ordinary worker no longer makes a
+second, unused `detach_state` futex wake. `pthread_timedjoin_np` instead marks
+interest in that same futex word before it sleeps; the one-way marker makes the
+worker either observe and wake the timed join or change its expected word first.
+The direct extension fixture proves a timeout leaves the target joinable and a
+following timed join wakes and returns its result. A page-aligned combined
+allocation still leaves dynamic TLS above the downward-growing stack and keeps
+the normal lifecycle to one `mmap`/`munmap`. Each slot retains the initial TP
+returned by the TLS bridge, while a late-`dlopen` migration retains the precise
+dynamic-TLS bridge query and replacement unmap. The 513-lifetime differential,
+dynamic-TLS cases, ten-iteration pthread stress, and loader cases pass, but the
+CPU gate remains red.
 
 The pthread/TLS table's earlier `pthread_mutex_uncontended` result is
 historical. The three `pthread-mutex-release-store-*-31` reports now establish

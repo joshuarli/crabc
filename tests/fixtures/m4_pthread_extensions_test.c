@@ -30,11 +30,22 @@ static void *worker(void *arg)
     return arg;
 }
 
+static void *release_after_delay(void *arg)
+{
+    const struct timespec delay = { .tv_sec = 0, .tv_nsec = 100000000 };
+
+    (void)arg;
+    nanosleep(&delay, NULL);
+    release_worker = 1;
+    return NULL;
+}
+
 int main(void)
 {
     pthread_attr_t attr;
     pthread_attr_t defaults;
     pthread_t thread;
+    pthread_t release_thread;
     struct sched_param param;
     struct timespec deadline;
     char name[32];
@@ -123,11 +134,21 @@ int main(void)
     errno = EBUSY;
     CHECK(pthread_tryjoin_np(thread, &result) == EBUSY && errno == EBUSY,
           "tryjoin busy");
-    release_worker = 1;
+
+    // An expired timed join must leave the thread joinable.  The following
+    // successful timed join then has to wait for the worker's exit rather
+    // than relying on a stale completion state from the timeout path.
+    CHECK(clock_gettime(CLOCK_REALTIME, &deadline) == 0, "clock gettime timeout");
+    CHECK(pthread_timedjoin_np(thread, &result, &deadline) == ETIMEDOUT,
+          "timedjoin timeout");
+
+    CHECK(pthread_create(&release_thread, NULL, release_after_delay, NULL) == 0,
+          "create delayed release");
     CHECK(clock_gettime(CLOCK_REALTIME, &deadline) == 0, "clock gettime");
     deadline.tv_sec += 2;
     CHECK(pthread_timedjoin_np(thread, &result, &deadline) == 0 && result == (void *)0x1234,
           "timedjoin");
+    CHECK(pthread_join(release_thread, NULL) == 0, "join delayed release");
 
     errno = EBUSY;
     CHECK(pthread_getname_np((pthread_t)0, name, sizeof name) == ESRCH && errno == EBUSY,
