@@ -62,6 +62,18 @@ PROBES = {
         {34: "mkdirat", 35: "unlinkat", 56: "openat", 57: "close", 278: "getrandom"},
         ("mkdtemp", "mkdir", "mkdirat", "getrandom", "open", "openat", "unlink", "unlinkat", "close", "__errno_location"),
     ),
+    "fs-tempfile": Probe(
+        "libm10_fs_tempfile_direct_probe.a",
+        "crabc_rs_m10_fs_tempfile_direct_probe",
+        {56: "openat", 57: "close", 62: "lseek", 63: "read", 64: "write"},
+        ("mkstemp", "mkostemp", "tmpfile", "open", "openat", "read", "write", "lseek", "close", "__errno_location"),
+    ),
+    "fs-named-tempfile": Probe(
+        "libm10_fs_named_tempfile_direct_probe.a",
+        "crabc_rs_m10_fs_named_tempfile_direct_probe",
+        {25: "fcntl", 35: "unlinkat", 56: "openat", 57: "close", 278: "getrandom"},
+        ("mkstemp", "mkostemp", "mkstemps", "mkostemps", "tmpfile", "open", "openat", "fcntl", "unlink", "unlinkat", "getrandom", "close", "__errno_location"),
+    ),
     "statx": Probe(
         "libm10_statx_direct_probe.a",
         "crabc_rs_m10_statx_direct_probe",
@@ -661,6 +673,30 @@ PROBES = {
         {19: "eventfd2", 63: "read", 64: "write"},
         ("eventfd", "eventfd_read", "eventfd_write", "read", "write", "__errno_location"),
     ),
+    "inotify": Probe(
+        "libm13_inotify_direct_probe.a",
+        "crabc_rs_m13_inotify_direct_probe",
+        {26: "inotify_init1", 57: "close"},
+        ("inotify_init", "inotify_init1", "inotify_add_watch", "inotify_rm_watch", "close", "__errno_location"),
+    ),
+    "mqueue": Probe(
+        "libm13_ipc_direct_probe.a",
+        "crabc_rs_m13_ipc_direct_probe",
+        {57: "close", 180: "mq_open", 181: "mq_unlink", 182: "mq_timedsend", 183: "mq_timedreceive", 185: "mq_getsetattr"},
+        (
+            "mq_open", "mq_close", "mq_unlink", "mq_send", "mq_receive", "mq_getattr", "mq_setattr",
+            "mq_timedsend", "mq_timedreceive", "close", "__errno_location",
+        ),
+    ),
+    "users-databases": Probe(
+        "libm13_users_databases_direct_probe.a",
+        "crabc_rs_m13_users_databases_direct_probe",
+        {56: "openat", 57: "close", 63: "read"},
+        (
+            "getpwnam", "getpwuid", "getpwent", "getgrnam", "getgrgid", "getgrent",
+            "open", "openat", "read", "close", "__errno_location",
+        ),
+    ),
     "times": Probe(
         "libm10_times_direct_probe.a",
         "crabc_rs_m10_times_direct_probe",
@@ -804,6 +840,15 @@ PROBES = {
         "crabc_rs_m10_terminal_control_direct_probe",
         {29: "ioctl"},
         ("tcgetattr", "tcsetattr", "tcgetpgrp", "tcsetpgrp", "tcgetsid", "ioctl", "__errno_location"),
+    ),
+    "pty-session": Probe(
+        "libm10_pty_session_direct_probe.a",
+        "crabc_rs_m10_pty_session_direct_probe",
+        {29: "ioctl", 56: "openat", 57: "close", 157: "setsid", 260: "wait4"},
+        (
+            "openpty", "forkpty", "ptsname", "ptsname_r", "login_tty", "vhangup",
+            "ioctl", "open", "openat", "close", "waitpid", "setsid", "__errno_location",
+        ),
     ),
 }
 

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* These are musl's internal stage signatures; no public header declares them. */
 typedef void (*loader_stage_fn)(size_t *, size_t *);
@@ -36,6 +37,12 @@ static int run_stage(loader_stage_fn stage,
     stage(stack, auxv);
     if (getauxval(AT_PAGESZ) != page_size)
         return 1;
+    /* getpagesize and sysconf must read the installed kernel value, rather
+       than preserving an architecture-default 4 KiB assumption. */
+    if ((unsigned long)getpagesize() != page_size)
+        return 5;
+    if ((unsigned long)sysconf(_SC_PAGE_SIZE) != page_size)
+        return 6;
     if (getauxval(AT_SECURE) != 0)
         return 2;
     if (getenv("CRABC_LOADER_STAGE") == NULL ||

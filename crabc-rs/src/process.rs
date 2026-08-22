@@ -2367,8 +2367,20 @@ impl<'fd> PreparedExec<'fd> {
 }
 
 /// A successfully spawned native child process.
+///
+/// A `Child` is the unique owner of the wait state for its spawned process.
+/// It is deliberately not `Clone` or `Copy`: duplicating the PID would create
+/// multiple apparent owners that could each try to reap the same child.
+///
+/// ```compile_fail
+/// # use crabc_rs::process::{Child, WaitOptions};
+/// # fn duplicate_wait(child: Child) {
+/// let _first = child.wait(WaitOptions::empty());
+/// let _second = child.wait(WaitOptions::empty());
+/// # }
+/// ```
 #[cfg(feature = "alloc")]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Debug, Eq, Hash, PartialEq)]
 pub struct Child {
     pid: Pid,
 }
@@ -2382,8 +2394,9 @@ impl Child {
         self.pid
     }
 
-    /// Waits for this child. `NOHANG` may return `None` without consuming the
-    /// child, while a state report returns its decoded wait status.
+    /// Waits for this child, consuming its unique owner. `NOHANG` may return
+    /// `None`, while a state report returns its decoded wait status; either
+    /// result consumes the `Child` and cannot be waited a second time.
     #[inline]
     pub fn wait(self, options: WaitOptions) -> Result<Option<WaitStatus>> {
         waitpid(Some(self.pid), options).map(|result| result.map(|(_, status)| status))

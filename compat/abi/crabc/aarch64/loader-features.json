@@ -273,8 +273,13 @@
           "occurrences": 17
         }
       ],
-      "state": "source_only",
-      "test_targets": [],
+      "state": "source_and_test_target",
+      "test_targets": [
+        {
+          "exists": true,
+          "path": "tests/ldso_self_relocation.rs"
+        }
+      ],
       "verified": false
     },
     {

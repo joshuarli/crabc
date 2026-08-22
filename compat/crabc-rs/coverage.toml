@@ -285,7 +285,7 @@ symbols = ["__cxa_atexit", "__cxa_finalize", "__setjmp", "__sigsetjmp", "__sigse
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "compiler, unwinding, and C ABI support"
-evidence = ["libc/src/lib.rs", "libc/src/arch/aarch64.s", "docs/history/crabc-rs-delivery-plan.md#33"]
+evidence = ["libc/src/lib.rs", "docs/history/crabc-rs-delivery-plan.md#33"]
 rationale = "These exports preserve compiler and C control-transfer ABI behavior; Rust exposes neither a safe nor a meaningful direct operation for them."
 
 [[capability]]
@@ -294,7 +294,7 @@ kind = "implementation"
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "crabc-core private RuntimeV1 consumers"
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/runtime.rs", "crabc-rs/src/cfile.rs"]
+evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/dl.rs", "crabc-rs/src/runtime_thread.rs", "crabc-rs/src/cfile.rs"]
 rationale = "The loader, thread/TLS, and CFile facades are useful native implementation capabilities not represented by an additional public export."
 
 [[capability]]
@@ -517,7 +517,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The C long-double ABI is compatibility machinery; it is not an idiomatic crabc-rs operation and cannot be represented by Rust f32/f64 primitives."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/math_exports.rs"]
+review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/lib.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track, with musl/proven-equivalence math as the implementation oracle. crabc-rs does not promise a competing long-double facade merely to mirror symbols."
 
 [[capability]]
@@ -539,7 +539,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Special-function and decomposition symbols are not a coherent crabc-rs capability; any C implementation remains compatibility work guided by musl or proven equivalence."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/math_exports.rs"]
+review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/lib.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. crabc-rs does not become a second libm or expose a wrapper for every historical math export."
 
 [[capability]]
@@ -550,7 +550,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The C complex ABI family is compatibility machinery, not a requirement to create a parallel native complex-number framework in crabc-rs."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/complex.rs"]
+review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/m4_complex_basic_exports.rs", "libc/src/m4_complex_powers_exports.rs", "libc/src/m4_complex_transcendentals_exports.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track and follows musl/proven-equivalence algorithms. No native crabc-rs operation is claimed merely because the exports exist."
 
 [[capability]]
@@ -645,23 +645,26 @@ rationale = "The native matcher accepts CStr bytes and explicitly models POSIX f
 id = "pattern.regex"
 kind = "semantic"
 symbols = ["regcomp", "regerror", "regexec", "regfree"]
-classification = "native-higher-level"
-status = "deferred"
-planned_rust_api = ["pattern::Regex"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "POSIX regex remains useful compatibility work, but any native API needs proven POSIX semantic equivalence and explicit compiled-expression ownership."
-rationale = "Do not import the Rust regex ecosystem as a competing semantic stack; pursue only a focused implementation whose POSIX behavior is evidenced, or retain the C ABI track."
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "A second regex API would either duplicate the C POSIX engine or add a general Rust regex semantic stack. Neither is a useful small-runtime primitive, and no focused dependency-free native contract was justified."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "libc/src/regex.rs", "include/regex.h"]
+rationale = "The C POSIX regex ABI remains part of libc compatibility. Native callers choose an explicit application regex dependency when they need one; crabc-rs does not wrap C regex_t, global error text, or a competing pattern engine."
 
 [[capability]]
 id = "pattern.glob"
 kind = "semantic"
 symbols = ["glob", "globfree"]
 classification = "native-higher-level"
-status = "deferred"
-planned_rust_api = ["pattern::glob"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "Glob remains a useful bounded POSIX capability, but path enumeration and current-directory/error policy require an owned result contract."
-rationale = "Keep glob/fnmatch compatibility-oriented and avoid a broad wrapper of C glob_t; any native API must preserve explicit ownership and path-byte behavior."
+status = "verified"
+rust_api = ["pattern::{GlobPath, glob, glob_at}"]
+shared_impl = ["crabc_rs::pattern::{glob, glob_at} over fs::openat and RawDir", "crabc_core::pattern::fnmatch"]
+native_boundary = "alloc-gated explicit root pathname or borrowed directory descriptor, relative byte pattern, direct getdents64/fnmatch traversal, and owned raw-byte results sorted lexicographically"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/pattern.rs", "crabc-rs/tests/m8_glob.rs", "crabc-rs/examples/m8_glob_direct_probe.rs"]
+rationale = "The native expansion owns each result, preserves non-UTF-8 pathname bytes, excludes dot entries from wildcard traversal, rejects absolute/empty/parent-escaping patterns, returns an empty vector for no matches, and propagates root/directory-read errors. It uses an explicit path or descriptor root and never wraps C glob_t, C glob, C globfree, or hidden CWD policy."
 
 [[capability]]
 id = "pattern.wordexp"
@@ -1151,13 +1154,40 @@ rationale = "RawDir is the complete low-level directory-record subset; C DIR str
 [[capability]]
 id = "filesystem.extensions"
 kind = "semantic"
-symbols = ["mkostemp", "mkostemps", "mkstemp", "mkstemps", "mktemp", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam"]
-classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["unsafe fs::FileHandle", "fs::TempFile", "fs::xattr"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "File extensions remain useful core-runtime work, but temporary-name races, handle authority, xattrs, and storage policy need separate narrow contracts."
-rationale = "Keep file extensions focused on Linux kernel mechanisms and explicit ownership; do not turn them into a generic filesystem framework or imply that every C extension needs a Rust wrapper."
+symbols = ["mktemp", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam"]
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "`mktemp`, `tempnam`, and `tmpnam` expose racy or ambient pathname policies, while `name_to_handle_at` and `open_by_handle_at` carry authority-bearing Linux file handles. They remain C compatibility machinery or explicitly unsafe future work; crabc-rs does not create a generic filesystem-handle framework."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "crabc-rs/src/fs.rs", "include/fcntl.h"]
+rationale = "The safe named mkstemp family is separately verified below. Insecure pathname generators and file-handle authority are intentionally not folded into that contract; callers needing those C APIs retain their platform-specific compatibility semantics."
+
+[[capability]]
+id = "filesystem.named-temporary-file"
+kind = "semantic"
+symbols = ["mkostemp", "mkostemps", "mkstemp", "mkstemps"]
+classification = "native-higher-level"
+status = "verified"
+rust_api = ["fs::{NamedTempFile, create_temp_file, create_temp_file_at}"]
+shared_impl = ["crabc_rs::fs descriptor-relative openat, fcntl(F_DUPFD_CLOEXEC), unlinkat, and getentropy"]
+native_boundary = "stable directory descriptor plus 96-bit getrandom hexadecimal basename, bounded O_RDWR|O_CREAT|O_EXCL|O_CLOEXEC creation with mode 0600, and owned drop/remove/persist cleanup semantics"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/fs.rs", "crabc-rs/tests/m10_fs_named_tempfile.rs", "crabc-rs/examples/m10_fs_named_tempfile_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
+rationale = "NamedTempFile owns the created descriptor and a duplicated parent directory descriptor, so cleanup remains descriptor-relative and independent of later CWD changes. Prefixes are single basenames, collisions retry only on EEXIST, random suffixes come from Linux getrandom, and the default Drop path unlinks the entry; into_owned_fd is the explicit persistence escape hatch."
+
+[[capability]]
+id = "filesystem.anonymous-temporary-file"
+kind = "implementation"
+classification = "native-safe"
+status = "verified"
+rust_api = ["fs::TempFile"]
+shared_impl = ["crabc_rs::fs::openat"]
+native_boundary = "direct Linux/AArch64 openat with O_TMPFILE, O_RDWR, and O_CLOEXEC relative to an explicit directory path or descriptor, transferring the anonymous descriptor into TempFile"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/fs.rs", "crabc-rs/tests/m10_fs_tempfile.rs", "crabc-rs/examples/m10_fs_tempfile_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
+rationale = "TempFile owns an anonymous regular-file descriptor and never creates a pathname or retries with a named mkstemp-style file. Linux EOPNOTSUPP remains an explicit filesystem capability result, so callers can choose a separate named-file policy when they need one."
 
 [[capability]]
 id = "filesystem.posix-allocate-range"
@@ -1170,8 +1200,8 @@ shared_impl = ["crabc_rs::fs::fallocate with an empty FallocateFlags mode"]
 native_boundary = "borrowed descriptor and direct Linux/AArch64 fallocate syscall 47 with fixed zero mode and checked unsigned range conversion to signed loff_t"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/fs.rs", "crabc-rs/tests/m10_fallocate.rs", "crabc-rs/examples/m10_fallocate_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/fs/fallocate.rs", "compat/rustix/source/m10_posix_fallocate.rs"]
-rationale = "This native Rust spelling fixes Linux fallocate mode to zero, preserving the POSIX allocation operation over a borrowed descriptor without C's direct integer-error convention. Temporary-file races and file-handle ownership remain in the deferred extension family."
+evidence = ["crabc-rs/src/fs.rs", "crabc-rs/tests/m10_fallocate.rs", "crabc-rs/examples/m10_fallocate_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/source/m10_posix_fallocate.rs"]
+rationale = "This native Rust spelling fixes Linux fallocate mode to zero, preserving the POSIX allocation operation over a borrowed descriptor without C's direct integer-error convention. Racy temporary-name generators and file-handle authority remain outside this verified allocation contract."
 
 [[capability]]
 id = "filesystem.temporary-directory"
@@ -1267,7 +1297,7 @@ native_boundary = "direct Linux/AArch64 path, no-follow-path, and descriptor xat
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/tests/m2_filesystem.rs", "crabc-rs/examples/m2_direct_probe.rs", "compat/rustix/source/m2_xattr.rs", "compat/crabc-rs/verify_m2.py"]
-rationale = "All path/link/fd xattr forms and bounded list/value buffers have a native typed contract; runtime xattr assertions are conditional when the test filesystem reports ENOSYS or OPERATION_NOT_SUPPORTED. Temporary-file and file-handle extensions remain deferred."
+rationale = "All path/link/fd xattr forms and bounded list/value buffers have a native typed contract; runtime xattr assertions are conditional when the test filesystem reports ENOSYS or OPERATION_NOT_SUPPORTED. File-handle extensions remain deferred; named and anonymous temporary-file contracts are tracked in their separate verified rows."
 
 [[capability]]
 id = "io.positioned"
@@ -1407,7 +1437,7 @@ native_boundary = "direct Linux/AArch64 readv/writev syscalls over borrowed desc
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/m10_vectored.rs", "crabc-rs/examples/m10_vectored_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "The native wrappers retain slice lifetimes and pointer provenance, permit explicit short-operation retries through advancing segments, and make initialized-only vectored reads explicit. Positioned vector, flag-bearing, splice, and sync extensions remain separate work."
+rationale = "The native wrappers retain slice lifetimes and pointer provenance, permit explicit short-operation retries through advancing segments, and make initialized-only vectored reads explicit. Positioned-vector and flag-bearing operations are tracked in separate verified rows; splice and sync extensions remain separate work."
 
 [[capability]]
 id = "io.positioned-vectored"
@@ -1435,7 +1465,7 @@ native_boundary = "direct Linux/AArch64 close/dup/dup3/read/write syscalls with 
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/tests/m3_core_os.rs", "crabc-rs/tests/m5_descriptor_stdio.rs", "crabc-rs/examples/m0_direct_probe.rs", "crabc-rs/examples/m3_direct_probe.rs", "crabc-rs/examples/m5_direct_probe.rs", "compat/crabc-rs/verify_m0.py", "compat/crabc-rs/verify_m3.py", "compat/crabc-rs/verify_m5.py"]
-rationale = "The basic byte and ownership operations are native through typed Buffer and OwnedFd contracts, not a reproduction of raw C pointer, EINTR, or return-value conventions. Raw close remains explicitly unsafe and vector/positioned/splice families stay deferred."
+rationale = "The basic byte and ownership operations are native through typed Buffer and OwnedFd contracts, not a reproduction of raw C pointer, EINTR, or return-value conventions. Raw close remains explicitly unsafe; vector and positioned operations are tracked separately, while splice remains outside this row."
 
 [[capability]]
 id = "io.file-position"
@@ -1449,7 +1479,7 @@ native_boundary = "direct Linux/AArch64 lseek/ftruncate/fsync/fdatasync syscalls
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/tests/m5_fs_io.rs", "crabc-rs/examples/m5_direct_probe.rs", "compat/rustix/source/m5_fs_io.rs", "compat/crabc-rs/verify_m5.py"]
-rationale = "Positioning, truncation, and durability have typed native contracts; positioned/vector and advisory sync extensions remain deferred."
+rationale = "Positioning, truncation, and durability have typed native contracts; positioned/vector I/O and advisory sync extensions are tracked by separate capability rows."
 
 [[capability]]
 id = "io.advisory-flock"
@@ -1463,7 +1493,7 @@ native_boundary = "direct Linux/AArch64 flock syscall with typed FlockOperation"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/tests/m2_filesystem.rs", "crabc-rs/examples/m2_direct_probe.rs", "compat/crabc-rs/verify_m2.py"]
-rationale = "The whole-file flock operation is covered; fcntl lock commands remain a narrower native subset of the deferred fcntl symbol."
+rationale = "The whole-file flock operation is covered; fcntl lock observation is a separate native subset, while mutating lock operations and the public C fcntl symbol remain separately scoped."
 
 [[capability]]
 id = "io.typed-ioctl"
@@ -1644,7 +1674,7 @@ native_boundary = "direct Linux/AArch64 mlock, mlock2, and munlock syscalls over
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/m10_mlock.rs", "crabc-rs/examples/m10_mlock_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/mm/mmap.rs"]
-rationale = "The explicit unsafe boundary retains mapping lifetime, rounded-range validity, pointer provenance, and memlock-budget effects. It covers per-range locking only; process-wide mlockall/munlockall remains separately deferred."
+rationale = "The explicit unsafe boundary retains mapping lifetime, rounded-range validity, pointer provenance, and memlock-budget effects. It covers per-range locking only; process-wide mlockall/munlockall is covered by the separate memory.vm capability."
 
 [[capability]]
 id = "memory.residency"
@@ -1700,18 +1730,18 @@ native_boundary = "direct Linux/AArch64 mmap/mprotect/munmap syscalls with expli
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/tests/m3_core_os.rs", "crabc-rs/tests/m5_file_mapping.rs", "crabc-rs/examples/m3_direct_probe.rs", "crabc-rs/examples/m5_direct_probe.rs", "compat/crabc-rs/verify_m3.py", "compat/crabc-rs/verify_m5.py"]
-rationale = "Anonymous and file-backed mapping, protection, and unmapping are native only through explicit unsafe raw-pointer contracts; VM locking, remapping, brk, and advice remain deferred."
+rationale = "Anonymous and file-backed mapping, protection, and unmapping are native only through explicit unsafe raw-pointer contracts; VM, remapping, locking, and advice operations are tracked in their separate verified rows."
 
 [[capability]]
 id = "time.clock-calendar"
 kind = "semantic"
 symbols = ["adjtime", "adjtimex", "asctime", "asctime_r", "clock_adjtime", "ctime", "ctime_r", "getdate", "getdate_err", "localtime", "localtime_r", "mktime", "settimeofday", "stime", "strftime", "strftime_l", "strptime", "tzset"]
-classification = "native-safe"
-status = "deferred"
-planned_rust_api = ["time::LocalCalendar", "time::ClockControl", "time::CalendarFormat"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "Local calendar and clock-control work remains useful core-runtime scope, but timezone data, formatting, parsing, and wall-clock authority must be separated."
-rationale = "Consume TZ/POSIX TZ and system zoneinfo rather than bundling tzdata; preserve the verified UTC calendar capability and keep clock mutation/discipline explicitly privileged."
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "The remaining C calendar surface mixes TZ-global discovery, locale formatting/parsing, and privileged clock discipline. The useful native pieces are already explicit UTC calendar values and caller-supplied immutable timezone rules; a global-time facade would violate the scope boundary."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "crabc-rs/src/time.rs", "crabc-rs/src/timezone.rs"]
+rationale = "C time formatting, TZ setup, and clock-control retain their ABI-specific contracts. crabc-rs deliberately provides explicit UnixTime, CalendarTime, TimeZone, and LocalCalendar values instead of bundled tzdata, process-global TZ, locale data, or a clock-policy API."
 
 [[capability]]
 id = "time.timezone-rules"
@@ -1727,6 +1757,19 @@ evidence = ["crabc-rs/src/timezone.rs", "crabc-rs/tests/m11_timezone_rules.rs"]
 rationale = "This is the bounded timezone-rule half of local-time work: it validates system-supplied zoneinfo snapshots and POSIX continuations without bundling tzdata or asserting process-global TZ, zoneinfo-path loading, calendar formatting, parsing, or clock-control behavior."
 
 [[capability]]
+id = "time.local-calendar"
+kind = "implementation"
+classification = "native-safe"
+status = "verified"
+rust_api = ["time::LocalCalendar"]
+shared_impl = ["crabc_rs::time::{LocalCalendar, CalendarTime}", "crabc_rs::timezone::TimeZone::offset_at"]
+native_boundary = "explicit UnixTime plus borrowed immutable TimeZone, with checked offset adjustment into CalendarTime and copied offset/DST/abbreviation metadata; no clock, TZ, zoneinfo path, or inverse local-time lookup"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/time.rs", "crabc-rs/src/timezone.rs", "crabc-rs/tests/m10_calendar_local.rs", "crabc-rs/examples/m10_calendar_local_direct_probe.rs"]
+rationale = "LocalCalendar is a one-way, allocation-free conversion over caller-supplied immutable rules. It preserves the original UnixTime nanoseconds and copied offset metadata while retaining the abbreviation borrow from the supplied TimeZone; ambiguous/nonexistent local inputs, formatting, parsing, system-zoneinfo loading, and clock mutation remain outside this contract."
+
+[[capability]]
 id = "time.realtime-millis"
 kind = "semantic"
 symbols = ["ftime"]
@@ -1738,7 +1781,7 @@ native_boundary = "direct Linux/AArch64 clock_gettime syscall 113 with a fixed r
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_realtime_millis.rs", "crabc-rs/examples/m10_time_realtime_millis_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "The native replacement for musl ftime preserves signed Unix seconds and a normalized millisecond remainder without exposing C timeb storage, timezone state, allocation, vDSO dispatch, or the C error sentinel. Remaining local-time, formatting, parsing, and clock-control symbols stay deferred in time.clock-calendar."
+rationale = "The native replacement for musl ftime preserves signed Unix seconds and a normalized millisecond remainder without exposing C timeb storage, timezone state, allocation, vDSO dispatch, or the C error sentinel. Formatting, parsing, and process-global clock-policy symbols remain in the documented time.clock-calendar boundary; timezone rules and local conversion are separate verified capabilities."
 
 [[capability]]
 id = "time.timespec-get"
@@ -1752,7 +1795,7 @@ native_boundary = "direct Linux/AArch64 clock_gettime syscall 113 with fixed rea
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_timespec_get.rs", "crabc-rs/examples/m10_time_timespec_get_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "C11 TIME_UTC is the only supported Linux base, so the native API represents only that read-only realtime operation and returns a Result rather than C's base-or-zero sentinel. Timezone, formatting, parsing, and wall-clock mutation remain deferred."
+rationale = "C11 TIME_UTC is the only supported Linux base, so the native API represents only that read-only realtime operation and returns a Result rather than C's base-or-zero sentinel. Timezone rules, local conversion, and wall-clock mutation are separate capabilities; formatting and parsing remain in the documented calendar boundary."
 
 [[capability]]
 id = "time.clock-process-id"
@@ -1779,7 +1822,7 @@ shared_impl = ["crabc_core::time::clock_settime_raw"]
 native_boundary = "direct Linux/AArch64 clock_settime syscall over validated ClockId and canonical Timespec"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_settime.rs", "crabc-rs/examples/m10_time_settime_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/source/m10_time_settime.rs"]
+evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_settime.rs", "crabc-rs/examples/m10_time_settime_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/source/m10_time_settime.rs"]
 rationale = "The native API requires a canonical Timespec before crossing the boundary. The behavioral test uses CLOCK_MONOTONIC only, retaining the kernel's EINVAL or EPERM response without mutating wall-clock state."
 
 [[capability]]
@@ -1878,7 +1921,7 @@ native_boundary = "direct Linux/AArch64 clock_getres and clock_gettime (syscall 
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_dynamic.rs", "crabc-rs/examples/m10_time_dynamic_direct_probe.rs", "compat/rustix/source/m10_time_dynamic.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "Known and dynamic clock observations use direct kernel syscalls and preserve descriptor-clock errors as Result values; no libc, vDSO, or TLS errno path is exposed. Clock mutation, calendar conversion, and formatting remain deferred."
+rationale = "Known and dynamic clock observations use direct kernel syscalls and preserve descriptor-clock errors as Result values; no libc, vDSO, or TLS errno path is exposed. Clock mutation and local calendar conversion are separate capabilities; formatting remains in the documented calendar boundary."
 
 [[capability]]
 id = "time.process-interval-control"
@@ -2201,7 +2244,7 @@ native_boundary = "direct Linux/AArch64 socketpair/sendto/recvfrom syscalls for 
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/tests/m3_core_os.rs", "crabc-rs/examples/m3_direct_probe.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py"]
-rationale = "The connected local socket subset is complete; unconnected lifecycle, address, option, ancillary, and shutdown operations remain deferred."
+rationale = "The connected local socket subset is complete; unconnected lifecycle, address, option, ancillary, and shutdown contracts are separately classified across the network capability rows rather than implied here."
 
 [[capability]]
 id = "network.byte-order"
@@ -2296,7 +2339,7 @@ shared_impl = ["crabc_rs::net allocation-free musl inet_aton-compatible byte par
 native_boundary = "complete borrowed byte slice, musl 1–4 component base-zero IPv4 grammar, and owned core::net::Ipv4Addr network-order result"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/network_exports.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/m10_ipv4_legacy.rs", "crabc-rs/examples/m10_ipv4_legacy_direct_probe.rs", "compat/crabc-rs/verify_m10_network_address.py"]
+evidence = ["libc/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/m10_ipv4_legacy.rs", "crabc-rs/examples/m10_ipv4_legacy_direct_probe.rs", "compat/crabc-rs/verify_m10_network_address.py"]
 rationale = "The parser retains musl's legacy decimal/octal/hex and abbreviated component grammar over a length-delimited byte slice. Option cleanly represents parse failure while still accepting 0xffffffff, unlike inet_addr's INADDR_NONE ambiguity; standard Ipv4Addr formatting replaces inet_ntoa's process-global static buffer."
 
 [[capability]]
@@ -2309,7 +2352,7 @@ shared_impl = ["core::net value types re-exported by crabc_rs::net"]
 native_boundary = "pure owned Rust IP address values with no kernel, C ABI, allocator, or TLS errno boundary"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/net.rs", "crabc-rs/tests/m10_network_ipaddr.rs", "crabc-rs/examples/m10_network_ipaddr_direct_probe.rs", "compat/crabc-rs/verify_m10_network_address.py", "../rustix/src/net/ip.rs", "compat/rustix/source/m10_network_ipaddr.rs"]
+evidence = ["crabc-rs/src/net.rs", "crabc-rs/tests/m10_network_ipaddr.rs", "crabc-rs/examples/m10_network_ipaddr_direct_probe.rs", "compat/crabc-rs/verify_m10_network_address.py", "../rustix/src/maybe_polyfill/no_std/net/mod.rs", "compat/rustix/source/m10_network_ipaddr.rs"]
 rationale = "Rustix's address values are pure Rust representations, so re-exporting the exact core types gives constructor, octet, bit, and variant behavior without pretending to implement C inet text codecs, static buffers, or interface-list ownership."
 
 [[capability]]
@@ -2338,7 +2381,7 @@ native_boundary = "borrowed socket descriptor and owned u32 index, direct SIOCGI
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/netdevice.rs", "crabc-rs/tests/m10_network_interface_index_name.rs", "crabc-rs/examples/m10_network_interface_index_name_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/source/m10_network_interface_index_name.rs"]
-rationale = "The descriptor-taking Rustix form avoids if_indextoname's caller-owned C buffer. The inline form owns its 16-byte result without allocation; the String convenience is explicitly alloc-gated. Interface address-list enumeration and C static-buffer address helpers remain deferred."
+rationale = "The descriptor-taking Rustix form avoids if_indextoname's caller-owned C buffer. The inline form owns its 16-byte result without allocation; the String convenience is explicitly alloc-gated. Interface address-list enumeration is separately verified; C static-buffer address helpers remain outside this native contract."
 
 [[capability]]
 id = "network.interface-enumeration"
@@ -2366,7 +2409,7 @@ native_boundary = "owned IPv4/IPv6 textual conversion subset with network-byte-o
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/resolver.rs", "crabc-rs/tests/m7_resolver_netdb.rs", "crabc-rs/examples/m7_resolver_direct_probe.rs"]
-rationale = "This is an owned IPv4/IPv6 textual conversion subset, not the full C destination-buffer, arbitrary-family, EAFNOSUPPORT, or ENOSPC contract of inet_pton/inet_ntop. Legacy integer/address constructors, byte-order helpers, interface address-list enumeration, and static-buffer aliases remain deferred."
+rationale = "This is an owned IPv4/IPv6 textual conversion subset, not the full C destination-buffer, arbitrary-family, EAFNOSUPPORT, or ENOSPC contract of inet_pton/inet_ntop. The separate native legacy IPv4 and byte-order capabilities are tracked independently; C static-buffer aliases remain outside this native contract."
 
 [[capability]]
 id = "network.resolver-transport"
@@ -2379,17 +2422,20 @@ native_boundary = "direct Linux/AArch64 nonblocking socket, connect, sendto, rec
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/resolver.rs", "crabc-rs/tests/m11_resolver_transport.rs", "compat/crabc-rs/verify_m7_resolver.py"]
-rationale = "This closes the bounded configured transport: malformed or wrong-ID UDP packets are ignored within one per-server deadline, TC retries the exact query over length-prefixed TCP with partial I/O handling, and failures advance in configured order. System configuration discovery, hosts/search policy, CNAME completion, and the broad C netdb/resolver surface remain owned by their deferred semantic groups."
+rationale = "This closes the bounded configured transport: malformed or wrong-ID UDP packets are ignored within one per-server deadline, TC retries the exact query over length-prefixed TCP with partial I/O handling, and failures advance in configured order. Caller-owned system configuration and resolver policy are verified by the separate semantic resolver row below; the broad C netdb/resolver surface remains outside this native API."
 
 [[capability]]
 id = "network.resolver"
 kind = "semantic"
 symbols = ["__res_state", "_ns_flagdata", "dn_comp", "dn_expand", "dn_skipname", "freeaddrinfo", "gai_strerror", "getaddrinfo", "getnameinfo", "ns_get16", "ns_get32", "ns_initparse", "ns_name_uncompress", "ns_parserr", "ns_put16", "ns_put32", "ns_skiprr", "res_init", "res_mkquery", "res_query", "res_querydomain", "res_search", "res_send"]
 classification = "native-higher-level"
-status = "deferred"
-planned_rust_api = ["resolver::Resolver", "resolver::AddressInfo", "resolver::DnsPacket"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "The resolver remains useful bounded runtime work: hosts/resolv.conf, A/AAAA/CNAME, search, UDP with required TCP fallback, and basic retry/failover need one explicit owned state machine."
+status = "verified"
+rust_api = ["resolver::{Resolver, ResolverConfig, AddressInfo, AddressResults, LookupOptions}"]
+shared_impl = ["crabc_rs::resolver::ResolverConfig bounded resolv.conf/hosts snapshot parser and search/CNAME policy", "crabc_core::resolver::exchange configured UDP/TCP retry and failover transport", "crabc_rs::netdb::HostDatabase owned hosts records"]
+native_boundary = "direct Linux/AArch64 open/read of caller-selected resolver snapshots or /etc/resolv.conf and /etc/hosts, then typed A/AAAA/CNAME queries over caller-owned configured transport"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/resolver.rs", "crabc-rs/src/netdb.rs", "crabc-core/src/lib.rs", "crabc-rs/tests/m11_resolver_system.rs", "crabc-rs/tests/m11_resolver_transport.rs", "crabc-rs/examples/m7_resolver_direct_probe.rs", "compat/crabc-rs/verify_m7_resolver.py"]
 rationale = "Keep DNS deliberately small: conventional host configuration and the documented query family only. Do not add DNSSEC, DoH, DoT, mDNS, IDNA, or provider/plugin registries; the C ABI track remains separately evidenced."
 
 [[capability]]
@@ -2397,22 +2443,38 @@ id = "network.netdb"
 kind = "semantic"
 symbols = ["endhostent", "endnetent", "endprotoent", "endservent", "gethostbyaddr", "gethostbyaddr_r", "gethostbyname", "gethostbyname2", "gethostbyname2_r", "gethostbyname_r", "gethostent", "getnetbyaddr", "getnetbyname", "getnetent", "getprotobyname", "getprotobynumber", "getprotoent", "getservbyname", "getservbyname_r", "getservbyport", "getservbyport_r", "getservent", "sethostent", "setnetent", "setprotoent", "setservent"]
 classification = "native-higher-level"
-status = "deferred"
-planned_rust_api = ["netdb::HostDatabase", "netdb::ServiceDatabase", "netdb::ProtocolDatabase"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "Conventional netdb files remain useful bounded runtime work, but owned snapshots for passwd/group/hosts/services/protocols need explicit file parsing and lookup contracts."
-rationale = "Use `/etc/passwd`, `/etc/group`, `/etc/hosts`, `/etc/resolv.conf`, `/etc/services`, and `/etc/protocols`; do not build NSS modules, plugin/provider registries, or hidden global enumeration state."
+status = "verified"
+rust_api = ["netdb::{HostDatabase, ServiceDatabase, ProtocolDatabase}::{from_bytes, from_system, entries, iter, lookup}"]
+shared_impl = ["crabc_rs::netdb strict UTF-8 owned parsers and direct bounded system-file snapshots", "crabc_rs::{fs::open, crabc_core::io::read} direct Linux/AArch64 file boundary"]
+native_boundary = "direct Linux/AArch64 open/read of /etc/hosts, /etc/services, and /etc/protocols into immutable owned snapshots capped at one mebibyte; no public C ABI, errno TLS, NSS, or global enumeration state"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/netdb.rs", "crabc-rs/tests/m7_resolver_netdb.rs", "crabc-rs/examples/m7_resolver_direct_probe.rs", "compat/crabc-rs/verify_m7_resolver.py"]
+rationale = "Hosts, services, and protocols now have strict UTF-8 owned records, source-order enumeration, cloned lookups, and direct system loaders with explicit malformed-record and I/O errors. /etc/networks, passwd/group databases, resolver policy, NSS modules, provider registries, and hidden global enumeration state remain separate scope."
 
 [[capability]]
 id = "process.control"
 kind = "semantic"
 symbols = ["clone", "daemon", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve", "fork", "nice", "posix_spawn", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "posix_spawn_file_actions_init", "posix_spawnattr_destroy", "posix_spawnattr_getflags", "posix_spawnattr_getpgroup", "posix_spawnattr_getschedparam", "posix_spawnattr_getschedpolicy", "posix_spawnattr_getsigdefault", "posix_spawnattr_getsigmask", "posix_spawnattr_init", "posix_spawnattr_setflags", "posix_spawnattr_setpgroup", "posix_spawnattr_setschedparam", "posix_spawnattr_setschedpolicy", "posix_spawnattr_setsigdefault", "posix_spawnattr_setsigmask", "posix_spawnp", "setpgid", "setpgrp", "setsid", "vfork", "wait", "wait3", "wait4", "waitid", "waitpid"]
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "The remaining C spawn aliases and lifecycle hooks are process-supervisor and C-ABI policy, not an idiomatic ownership primitive. The bounded PreparedExec/Child contract owns the selected native use case."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "crabc-rs/src/process.rs", "crabc-rs/tests/m6_signal_process.rs"]
+rationale = "Native prepared execution, one-shot child ownership, process groups, sessions, and PID observation remain independently verified. C fork/vfork/clone/daemon/nice aliases and full posix_spawn action/attribute compatibility remain libc ABI behavior rather than a crabc-rs process-management framework."
+
+[[capability]]
+id = "process.child-ownership"
+kind = "implementation"
 classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["process::Command", "unsafe process::fork", "process::wait", "process::SpawnOptions"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "Process creation/control remains core runtime work, but fork/exec/wait and spawn configuration need separate exact ownership, signal, descriptor, and child-lifetime contracts."
-rationale = "Implement the required Linux mechanisms with explicit unsafe boundaries; do not create a general process-management framework or disguise policy decisions as a portable facade."
+status = "verified"
+rust_api = ["process::{PreparedExec, Child}"]
+shared_impl = ["crabc_rs::process::PreparedExec::spawn and Child::wait"]
+native_boundary = "prepared fork/exec transfers one non-Clone, non-Copy Child owner, and consuming wait maps the owned PID through waitpid without permitting duplicate safe owners"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/process.rs", "crabc-rs/tests/m6_signal_process.rs"]
+rationale = "Child owns one prepared-spawn wait operation: its PID is not Clone or Copy, and wait consumes that owner. The existing error-pipe setup, descriptor actions, fork, exec, and wait behavior remain unchanged; nonblocking polling, Command/PATH search, posix_spawn attributes, and broader process-lifetime policy remain outside this native child-owner contract."
 
 [[capability]]
 id = "process.pidfd-open"
@@ -2466,18 +2528,18 @@ native_boundary = "direct Linux/AArch64 getpgid and getsid syscalls over typed o
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/process.rs", "crabc-rs/tests/m10_session_observation.rs", "crabc-rs/examples/m10_session_observation_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "The read-only selectors retain Linux's PID-zero current-process meaning and return typed positive IDs; getpgrp is the no-argument current-group shorthand. Session/group creation and mutation, process spawning, and C aliases remain separately deferred."
+rationale = "The read-only selectors retain Linux's PID-zero current-process meaning and return typed positive IDs; getpgrp is the no-argument current-group shorthand. Session/group creation and mutation remain in the documented process-control boundary, while process spawning and owned child waiting use the separate child-ownership contract."
 
 [[capability]]
 id = "process.credentials"
 kind = "semantic"
 symbols = ["setegid", "seteuid", "setgid", "setgroups", "setregid", "setresgid", "setresuid", "setreuid", "setuid"]
-classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["process::Credentials"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "Credential mutation remains core runtime work, but POSIX process-wide synchronization across threads must be implemented before exposing authority-changing operations."
-rationale = "Preserve the distinction between read-only identity observations and synchronized credential changes; do not expose raw per-thread Linux syscalls as a process credential facade."
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "A safe process-wide credential owner would require a global all-thread rendezvous and authority policy. That is deliberately not a crabc-rs runtime framework; calling-task and filesystem credential operations retain their explicit unsafe contracts."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "tests/m4_credentials_profile.rs", "crabc-rs/tests/m10_thread_credentials.rs"]
+rationale = "The C setreuid/setregid family and direct effective-ID aliases are a tested EOPNOTSUPP profile limitation, leaving IDs unchanged. crabc-rs does not misrepresent raw calling-task setres operations as process-wide mutation; read-only IDs, explicit thread credentials, and filesystem credentials remain separately evidenced."
 
 [[capability]]
 id = "thread.credentials-res"
@@ -2490,7 +2552,7 @@ native_boundary = "direct Linux/AArch64 setresuid and setresgid syscalls over ty
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/m10_thread_credentials.rs", "crabc-rs/examples/m10_thread_credentials_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/thread/id.rs", "compat/rustix/source/m10_thread_credentials.rs"]
-rationale = "These unsafe Rustix-shaped operations retain Linux's calling-task-only scope and reject an explicit all-ones typed ID so it cannot acquire the None sentinel meaning. The broader C credential family remains deferred because musl's process-wide synchronization is a different contract."
+rationale = "These unsafe Rustix-shaped operations retain Linux's calling-task-only scope and reject an explicit all-ones typed ID so it cannot acquire the None sentinel meaning. The broader C credential family is an explicitly documented non-native boundary because musl's process-wide synchronization is a different contract."
 
 [[capability]]
 id = "process.fs-credentials"
@@ -2504,7 +2566,7 @@ native_boundary = "direct Linux/AArch64 setfsuid and setfsgid syscalls over type
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/m10_fs_credentials.rs", "crabc-rs/examples/m10_fs_credentials_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "These unsafe Linux calling-task operations reserve the all-ones query word for None and reject an explicit all-ones typed ID. Linux returns the previous filesystem identity when a requested change is denied, so ordinary process credential synchronization and failure semantics are not claimed; that broader musl contract remains deferred."
+rationale = "These unsafe Linux calling-task operations reserve the all-ones query word for None and reject an explicit all-ones typed ID. Linux returns the previous filesystem identity when a requested change is denied, so ordinary process credential synchronization and failure semantics are not claimed; that broader musl contract is an explicitly documented non-native boundary."
 
 [[capability]]
 id = "process.resource-limit-mutation"
@@ -2538,12 +2600,12 @@ rationale = "umask is a memory-safe but process-global mutation. The native API 
 id = "process.environment-mutation"
 kind = "semantic"
 symbols = ["clearenv", "setenv", "unsetenv"]
-classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["unsafe process::Environment"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "Environment mutation remains core runtime work, but storage synchronization and exec ownership must be explicit for the libc process-global state."
-rationale = "Do not call host glibc or quietly claim ownership of musl's `environ`; preserve explicit process-global synchronization and Linux-only semantics."
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "Environment mutation is shared process-global storage with exec and foreign-code lifetime obligations. crabc-rs has no global process registry and must not invent one for C-compatible mutation."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "libc/src/lib.rs"]
+rationale = "The C environ/setenv/unsetenv/clearenv ABI remains separately owned by libc. Native APIs accept explicit program and environment input for prepared execution and do not expose a potentially unsound global environment owner."
 
 [[capability]]
 id = "thread.futex-basic"
@@ -2626,7 +2688,7 @@ native_boundary = "direct Linux/AArch64 sched_rr_get_interval syscall with typed
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["libc/src/m4_sched_affinity_exports.rs", "crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/m10_sched_rr_interval.rs", "crabc-rs/examples/m10_sched_rr_interval_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "None preserves Linux PID-zero current-task selection while Some(Pid) retains exact task lookup, permission, and exit-race behavior. The native operation only observes the round-robin interval; policy selection, affinity, parameter queries, and all scheduler mutation remain deferred."
+rationale = "None preserves Linux PID-zero current-task selection while Some(Pid) retains exact task lookup, permission, and exit-race behavior. The native operation only observes the round-robin interval; policy selection and parameter queries remain separate, while affinity and scheduler mutation are covered by their own capabilities."
 
 [[capability]]
 id = "process.scheduling-priority"
@@ -2640,7 +2702,7 @@ native_boundary = "direct Linux/AArch64 getpriority syscall with typed selector 
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/m10_priority.rs", "crabc-rs/examples/m10_priority_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/process/priority.rs"]
-rationale = "The facade keeps the [-20, 19] nice range closed and translates Linux's [40, 1] raw success encoding directly into Result, so a valid C -1 nice value is never conflated with errno. Priority mutation remains deferred."
+rationale = "The facade keeps the [-20, 19] nice range closed and translates Linux's [40, 1] raw success encoding directly into Result, so a valid C -1 nice value is never conflated with errno. Priority mutation is tracked by the separate verified scheduling-priority-mutation capability."
 
 [[capability]]
 id = "process.scheduling-priority-mutation"
@@ -2668,7 +2730,7 @@ native_boundary = "direct Linux/AArch64 getgroups syscall with a typed caller-ow
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/m10_getgroups.rs", "crabc-rs/examples/m10_getgroups_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/process/id.rs"]
-rationale = "The read-only query/fill seam preserves Linux's separate supplementary-list semantics, uses opaque Gid values, and documents EINVAL retry behavior when process credentials change between count and fill. Mutating credentials and limits remain deferred."
+rationale = "The read-only query/fill seam preserves Linux's separate supplementary-list semantics, uses opaque Gid values, and documents EINVAL retry behavior when process credentials change between count and fill. Process-wide credential mutation remains separately scoped; resource-limit mutation is covered by its verified capability."
 
 [[capability]]
 id = "process.resource-usage"
@@ -2730,12 +2792,12 @@ rationale = "Opaque Uid and Gid types prevent accidental interchange with unrela
 id = "process.signal"
 kind = "semantic"
 symbols = ["__libc_current_sigrtmax", "__libc_current_sigrtmin", "__sysv_signal", "bsd_signal", "kill", "killpg", "psiginfo", "psignal", "raise", "sigaction", "sigaddset", "sigaltstack", "sigandset", "sigdelset", "sigemptyset", "sigfillset", "sighold", "sigignore", "siginterrupt", "sigisemptyset", "sigismember", "sigorset", "sigpause", "sigpending", "sigprocmask", "sigqueue", "sigrelse", "sigset", "signal", "signalfd", "sigsuspend", "sigtimedwait", "sigwait", "sigwaitinfo"]
-classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["signal::Signal", "signal::SigSet", "unsafe signal::SigAction"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "Signal handling remains core runtime work; disposition, masks, altstack, queued delivery, signalfd, legacy aliases, and async-safety need separate contracts."
-rationale = "Signal disposition, masks, queued delivery, static handler requirements, and signalfd behavior need separate explicit safety contracts."
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "The selected typed native signal masks, actions, waits, alt stacks, queueing, and signalfd cover the useful direct-kernel primitives. The unaccounted aliases, C handler compatibility, and async-signal-safe presentation do not form a separate safe Rust capability."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "crabc-rs/src/signal.rs", "crabc-rs/tests/m6_signal_process.rs"]
+rationale = "Native signal primitives remain independently verified. Historical C signal aliases, psignal formatting, handler-convention compatibility, and global disposition policy stay in the libc ABI surface rather than creating a second signal framework."
 
 [[capability]]
 id = "event.pause"
@@ -2780,23 +2842,26 @@ rationale = "The private helper exports do not complete public fork or exit sema
 id = "thread.pthread-c11"
 kind = "semantic"
 symbol_patterns = ["call_once", "cnd_*", "mtx_*", "pthread_*", "thrd_*", "tss_*"]
-classification = "native-safe"
-status = "deferred"
-planned_rust_api = ["thread::Thread", "thread::Mutex", "thread::Condvar", "thread::TlsKey"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "Pthread/C11 synchronization remains core runtime work; object ownership, cancellation, TLS, and process-shared behavior require exact contracts."
-rationale = "Raw pthread object layouts and cancellation semantics cannot be hidden as safe native Rust coverage."
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "Pthread/C11 object layouts, cancellation, cleanup scopes, atfork registries, and process-shared synchronization are C runtime contracts. Rust applications use std synchronization or the already selected direct process-private primitives rather than a parallel pthread facade."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "crabc-rs/src/sync.rs", "crabc-rs/src/runtime_thread.rs"]
+rationale = "The C pthread/C11 ABI remains compatibility work, while crabc-rs keeps its bounded mutex, condition, once, semaphore, rwlock, barrier, futex, and runtime-TLS seams. It deliberately does not mirror pthread object representations or become a thread-runtime framework."
 
 [[capability]]
 id = "ipc"
 kind = "semantic"
 symbols = ["aio_cancel", "aio_error", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "ftok", "lio_listio", "mq_close", "mq_getattr", "mq_notify", "mq_open", "mq_receive", "mq_send", "mq_setattr", "mq_timedreceive", "mq_timedsend", "mq_unlink", "msgctl", "msgget", "msgrcv", "msgsnd", "sem_close", "sem_destroy", "sem_getvalue", "sem_init", "sem_open", "sem_post", "sem_timedwait", "sem_trywait", "sem_unlink", "sem_wait", "semctl", "semget", "semop", "semtimedop", "shmat", "shmctl", "shmdt", "shmget"]
-classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["ipc::Queue", "ipc::Semaphore", "ipc::SharedMemory"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "IPC remains useful POSIX/runtime work; each queue, semaphore, shared-memory, and async-I/O mechanism needs a narrow ownership and lifetime contract."
-rationale = "Expose concrete Linux mechanisms with explicit handles and caller buffers, not a generic IPC framework or hidden policy layer."
+classification = "native-safe"
+status = "verified"
+rust_api = ["ipc::{MessageQueue, QueueAttributes, MessagePriority, OpenFlags, CreateFlags}::{open, create, unlink, attributes, set_nonblocking, send, receive, send_until, receive_until}"]
+shared_impl = ["crabc_core::ipc fixed-arity Linux/AArch64 mq_open/mq_unlink/mq_getsetattr/mq_timedsend/mq_timedreceive", "crabc_rs::ipc::MessageQueue over OwnedFd close/drop"]
+native_boundary = "typed POSIX named message queues with caller-borrowed send/receive buffers, validated priorities and attributes, explicit nonblocking flags, and absolute CLOCK_REALTIME deadlines; no variadic C ABI or global state"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/ipc.rs", "crabc-rs/tests/m13_ipc.rs", "crabc-rs/examples/m13_ipc_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
+rationale = "The first IPC slice is the owned POSIX named-message-queue mechanism only: open/create, unlink, descriptor ownership, attributes, priority ordering, caller buffers, nonblocking errors, and absolute realtime deadlines. mq_notify, SysV IPC, named semaphores, AIO, and aggregate framework abstractions remain outside scope."
 
 [[capability]]
 id = "ipc.posix-shm"
@@ -2817,11 +2882,14 @@ id = "terminal.pty-session"
 kind = "semantic"
 symbols = ["forkpty", "isastream", "login_tty", "openpty", "ptsname_r", "vhangup"]
 classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["pty::Pty"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "PTY session helpers remain useful terminal/runtime work; controlling-terminal, fork, session, and hangup effects need explicit process-state contracts."
-rationale = "The existing C/PTy work is evidence for the backend, not a complete native session/PTY lifecycle facade. The borrowed termios control operations are separately verified."
+status = "verified"
+rust_api = ["pty::PtyPair", "pty::{ptsname_into, ptsname}", "PtyPair::{set_controlling_terminal, establish_session_and_controlling_terminal}"]
+shared_impl = ["crabc_rs::pty direct /dev/ptmx/openat, TIOCGPTN, TIOCSPTLCK, TIOCGPTPEER, and TIOCSCTTY operations", "OwnedFd master/slave pair ownership"]
+native_boundary = "owned Linux PTY master/slave descriptors, caller-borrowed or alloc-owned slave names, and explicitly unsafe session/controlling-terminal transitions; no process supervisor or global terminal state"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/pty.rs", "crabc-rs/tests/m10_pty_session.rs", "crabc-rs/examples/m10_pty_session_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/source/m4_process_system.rs"]
+rationale = "The native slice completes openpty-equivalent owned pair creation, ptsname_r-equivalent borrowed/owned naming, and explicit Linux session/controlling-terminal handoff. `forkpty`, `login_tty`, and `vhangup` remain deliberately C-only historical helpers: they imply process-supervisor, prepared-exec, or hangup authority contracts outside this bounded facade; `isastream` has no Linux PTY meaning."
 
 [[capability]]
 id = "terminal.termios-control"
@@ -2849,7 +2917,7 @@ native_boundary = "borrowed terminal descriptor and direct Linux/AArch64 TCSBRK,
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/termios.rs", "crabc-rs/tests/m10_termios_queue.rs", "crabc-rs/examples/m10_termios_queue_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/termios/tc.rs", "compat/rustix/source/m10_termios_queue.rs"]
-rationale = "The Rustix-shaped queue/control quartet is safe over a borrowed terminal descriptor and direct ioctl boundary. Termios records, foreground process/session controls, and PTY creation/lifecycle remain separately deferred."
+rationale = "The Rustix-shaped queue/control quartet is safe over a borrowed terminal descriptor and direct ioctl boundary. Termios records and foreground process/session controls remain separate capabilities; PTY creation/lifecycle is covered by the verified terminal.pty-session capability."
 
 [[capability]]
 id = "terminal.exclusive-mode"
@@ -2924,22 +2992,39 @@ id = "users.databases"
 kind = "semantic"
 symbols = ["addmntent", "cuserid", "endgrent", "endmntent", "endpwent", "endspent", "endusershell", "endutent", "endutxent", "fgetgrent", "fgetpwent", "fgetspent", "getgrent", "getgrgid", "getgrgid_r", "getgrnam", "getgrnam_r", "getgrouplist", "getlogin", "getlogin_r", "getmntent", "getmntent_r", "getpass", "getpwent", "getpwnam", "getpwnam_r", "getpwuid", "getpwuid_r", "getspent", "getspnam", "getspnam_r", "getusershell", "getutent", "getutid", "getutline", "getutxent", "getutxid", "getutxline", "hasmntopt", "initgroups", "lckpwdf", "putgrent", "putpwent", "putspent", "pututline", "pututxline", "setgrent", "setmntent", "setpwent", "setspent", "setusershell", "setutent", "setutxent", "ulckpwdf", "updwtmp", "updwtmpx", "utmpname", "utmpxname"]
 classification = "native-higher-level"
-status = "deferred"
-planned_rust_api = ["users::User", "users::Group", "users::Database"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "Conventional user/group databases remain useful bounded runtime work, but records, parsing, enumeration, and mutable process state need explicit ownership."
-rationale = "Use conventional local files and existing system APIs; do not build NSS/plugin/provider infrastructure or imply support for remote identity policy."
+status = "verified"
+rust_api = ["users::{Database, UserDatabase, GroupDatabase, User, Group}"]
+shared_impl = ["crabc_rs::users immutable owned snapshots over crabc_core direct descriptor I/O"]
+native_boundary = "direct Linux/AArch64 openat/read/close of bounded conventional /etc/passwd and /etc/group snapshots; owned UTF-8 records and source-order lookup without C globals, NSS, or TLS errno"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/users.rs", "crabc-rs/tests/m13_users_databases.rs", "crabc-rs/examples/m13_users_databases_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
+rationale = "The native account-data slice owns immutable conventional passwd and group snapshots, retains source order and duplicate records, and returns the first matching local record. Blank/comment lines are ignored and malformed non-empty records reject the snapshot. Shadow, utmp/utmpx, mntent, user-shell cursors, login helpers, group mutation, NSS, and provider systems remain deliberately C-only or outside scope."
 
 [[capability]]
 id = "system.kernel-admin"
 kind = "semantic"
-symbols = ["__sched_cpucount", "acct", "capget", "capset", "closelog", "confstr", "delete_module", "fanotify_init", "fanotify_mark", "fpathconf", "getdtablesize", "gethostid", "init_module", "inotify_add_watch", "inotify_init", "inotify_init1", "inotify_rm_watch", "klogctl", "membarrier", "openlog", "pathconf", "personality", "pivot_root", "prctl", "process_vm_readv", "process_vm_writev", "ptrace", "quotactl", "reboot", "sched_getparam", "sched_getscheduler", "sched_setparam", "sched_setscheduler", "setdomainname", "sethostname", "setlogmask", "setns", "swapoff", "swapon", "syscall", "sysconf", "syslog", "system", "ulimit", "unshare", "vsyslog"]
-classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["unsafe system::Kernel", "system::SystemInfo"]
-target_milestone = "post-M10-useful-posix"
-deferred_reason = "Kernel administration remains optional useful runtime work; each mechanism needs a narrow Linux unsafe contract and explicit authority boundary."
-rationale = "These APIs can change global system state or operate on untyped kernel ABIs. Read-only load-average conversion, targeted resource-limit observation, and closed scheduler-priority-bound queries have their own typed native contracts."
+symbols = ["__sched_cpucount", "acct", "capget", "capset", "closelog", "confstr", "delete_module", "fanotify_init", "fanotify_mark", "fpathconf", "getdtablesize", "gethostid", "init_module", "klogctl", "membarrier", "openlog", "pathconf", "personality", "pivot_root", "prctl", "process_vm_readv", "process_vm_writev", "ptrace", "quotactl", "reboot", "sched_getparam", "sched_getscheduler", "sched_setparam", "sched_setscheduler", "setdomainname", "sethostname", "setlogmask", "setns", "swapoff", "swapon", "syscall", "sysconf", "syslog", "system", "ulimit", "unshare", "vsyslog"]
+classification = "abi-only"
+status = "documented"
+why_no_native_operation = "The selected descriptor-scoped inotify observation contract is complete. Namespaces, capability mutation, ptrace, process_vm, reboot, module, hostname, and logger policy would create the forbidden kernel-administration/security-policy framework."
+reviewed = "Scope realignment 2026-08-21"
+review_evidence = ["SCOPE.md", "crabc-rs/src/system.rs", "crabc-rs/tests/m13_inotify.rs"]
+rationale = "Direct observations such as inotify, load average, resource limits, and scheduler bounds remain separately verified. The broad historical kernel-admin symbol family remains C ABI behavior or deliberately unsupported rather than a native authority framework."
+
+[[capability]]
+id = "system.inotify"
+kind = "semantic"
+symbols = ["inotify_add_watch", "inotify_init", "inotify_init1", "inotify_rm_watch"]
+classification = "native-safe"
+status = "verified"
+rust_api = ["system::inotify::{Inotify, WatchDescriptor, EventMask, Event, Events}"]
+shared_impl = ["crabc_core::inotify direct init1/add_watch/rm_watch syscalls"]
+native_boundary = "owned Linux/AArch64 inotify descriptor with typed creation flags, byte-preserving caller paths and event names, caller-owned read buffers, and validated variable-length event records"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["include/sys/inotify.h", "crabc-core/src/lib.rs", "crabc-rs/src/system.rs", "crabc-rs/tests/m13_inotify.rs", "crabc-rs/examples/m13_inotify_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "tests/fixtures/m4_poll_events_test.c", "tests/m4_poll_events.rs"]
+rationale = "Inotify is the selected bounded Linux administration-adjacent mechanism: descriptor ownership closes all watches, paths and event names remain bytes, malformed record boundaries are rejected, and queue-overflow/unknown-mask observations remain explicit. It does not expose namespaces, capability mutation, ptrace, process_vm, fanotify, or a system-administration framework."
 
 [[capability]]
 id = "system.auxv"
@@ -2967,7 +3052,7 @@ native_boundary = "direct Linux/AArch64 sched_get_priority_max/min syscalls over
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/m10_scheduler_priority_bounds.rs", "crabc-rs/examples/m10_scheduler_priority_bounds_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "libc/src/m4_sched_affinity_exports.rs"]
-rationale = "The query is read-only and preserves kernel errors. Its closed policy set avoids claiming the evolving newer Linux scheduler policies; an inverted min/max pair is rejected as a malformed kernel result rather than exposed as a Rust value. Scheduler selection, parameters, affinity, and all mutation remain deferred."
+rationale = "The query is read-only and preserves kernel errors. Its closed policy set avoids claiming the evolving newer Linux scheduler policies; an inverted min/max pair is rejected as a malformed kernel result rather than exposed as a Rust value. Scheduler selection and parameter queries remain separate; affinity and priority mutation are covered by their own capabilities."
 
 [[capability]]
 id = "process.resource-limits-targeted"
@@ -2980,8 +3065,8 @@ shared_impl = ["crabc_core::process::getrlimit_for_raw"]
 native_boundary = "direct Linux/AArch64 prlimit64 syscall with a typed optional target Pid, closed Resource selector, null new-limit pointer, and private initialized output"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/m10_rlimit_targeted.rs", "crabc-rs/examples/m10_rlimit_targeted_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/process/rlimit.rs"]
-rationale = "The operation is strictly read-only: None selects the calling task and Some preserves the exact selected-PID race and permission errors. The existing infinity-aware Rlimit representation remains exact. Limit mutation through setrlimit or prlimit's new-limit argument stays deferred."
+evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/m10_rlimit.rs", "crabc-rs/examples/m10_rlimit_for_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py", "../rustix/src/process/rlimit.rs"]
+rationale = "The operation is strictly read-only: None selects the calling task and Some preserves the exact selected-PID race and permission errors. The existing infinity-aware Rlimit representation remains exact. Limit mutation through setrlimit is covered by the separate verified resource-limit-mutation capability."
 
 [[capability]]
 id = "system.load-average"
@@ -3023,7 +3108,7 @@ native_boundary = "direct Linux/AArch64 uname/sysinfo/sched_yield syscalls with 
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/tests/m4_process_system.rs", "crabc-rs/examples/m4_direct_probe.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py"]
-rationale = "This covers infallible native identity/status/yield queries: Uname and Sysinfo intentionally panic or discard impossible syscall failures, and Sysinfo omits the public C struct sysinfo compatibility tail in favor of the kernel prefix. Auxv, affinity/priority, and global administration remain deferred."
+rationale = "This covers infallible native identity/status/yield queries: Uname and Sysinfo intentionally panic or discard impossible syscall failures, and Sysinfo omits the public C struct sysinfo compatibility tail in favor of the kernel prefix. Auxv and affinity/priority are separately verified; global administration remains outside this identity/status capability."
 
 [[capability]]
 id = "mount.basic"
@@ -3050,19 +3135,22 @@ shared_impl = ["crabc_core::runtime::RuntimeV1 loader callbacks owned by libc.so
 native_boundary = "one private versioned RuntimeV1 handle boundary copies diagnostics and address metadata into Rust-owned storage; it never calls public dlfcn or TLS errno APIs"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/dl.rs", "crabc-rs/tests/m11_loader_dlfcn_basic.rs", "tests/m11_loader_dlfcn_basic.rs", "crabc-rs/examples/m11_loader_dlfcn_basic_probe.rs", "compat/crabc-rs/verify_m11_loader.py", "compat/crabc-rs/tests/test_verify_m11_loader.py"]
-rationale = "Library owns one loader reference and is deliberately !Send/!Sync; unsafe typed symbols borrow that library, diagnostics and dladdr-like metadata are copied before returning, and the synthetic DSO fixture proves constructor/destructor and reference-count lifetime behavior. dl_iterate_phdr and dlinfo remain separate introspection work."
+evidence = ["crabc-rs/src/dl.rs", "tests/m11_loader_dlfcn_basic.rs", "crabc-rs/examples/m11_loader_dlfcn_basic_probe.rs", "compat/crabc-rs/verify_m11_loader.py", "compat/crabc-rs/tests/test_verify_m11_loader.py"]
+rationale = "Library owns one loader reference and is deliberately !Send/!Sync; unsafe typed symbols borrow that library, diagnostics and dladdr-like metadata are copied before returning, and the synthetic DSO fixture proves constructor/destructor and reference-count lifetime behavior. Program-header and per-handle introspection are separately accounted by loader.dlfcn-introspection."
 
 [[capability]]
 id = "loader.dlfcn-introspection"
 kind = "semantic"
 symbols = ["dl_iterate_phdr", "dlinfo"]
 classification = "native-unsafe"
-status = "deferred"
-planned_rust_api = ["dl::LoadedImageSnapshot", "dl::Library::information"]
-target_milestone = "post-M11-loader-basic"
-deferred_reason = "Program-header iteration and loader-specific information records need independent snapshot, callback/lifetime, and ABI-layout contracts; the basic handle/symbol seam deliberately does not approximate them."
-rationale = "Keep loader introspection separate from basic owned library handles, rather than exposing loader-owned iteration state, callback reentrancy, or C dlinfo record layouts without a native ownership contract."
+status = "verified"
+rust_api = ["dl::{LoadedImage, LoadedImageSnapshot, LibraryInformation}", "dl::Library::information"]
+shared_impl = ["crabc_core::runtime::RuntimeV1 append-only loader snapshot/information callbacks owned by libc.so and libldso.so"]
+native_boundary = "one bounded callback-free RuntimeV1 copy holds the ldso lock only while copying fixed records and names into caller-owned storage; no link_map, loader-owned string, Rust callback, or errno TLS crosses the boundary"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-core/src/lib.rs", "ldso/src/lib.rs", "libc/src/m4_dynamic_loader_introspection_exports.rs", "libc/src/lib.rs", "crabc-rs/src/dl.rs", "crabc-rs/examples/m11_loader_dlfcn_introspection_probe.rs", "tests/m11_loader_dlfcn_introspection.rs", "tests/fixtures/m11_loader_dlfcn_introspection_test.c"]
+rationale = "The Rust API owns a bounded image-record snapshot and copied per-handle information. Opaque addresses carry no lifetime or dereference promise, while the old RuntimeV1 prefix remains usable through V1_LEGACY_SIZE. The AArch64 fixture proves program-header/name/base copying and loader-handle information without callback reentrancy or link_map exposure."
 
 [[capability]]
 id = "crypto.crypt"

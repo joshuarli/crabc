@@ -10,6 +10,9 @@ use bitflags::bitflags;
 
 use crate::{process::Pid, process::Signal, AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
+#[cfg(feature = "alloc")]
+use crate::timezone::{OffsetInfo, TimeZone, UtcOffset};
+
 pub use crate::fs::{Nsecs, Secs, Timespec};
 
 /// Nanoseconds in one Unix-epoch second.
@@ -195,6 +198,91 @@ impl CalendarTime {
             self.second,
         )
         .ok_or(Errno::RANGE)
+    }
+}
+
+/// A local civil-time view of one explicitly supplied UTC instant.
+///
+/// `LocalCalendar` combines [`UnixTime`] with an explicitly supplied,
+/// immutable [`TimeZone`]. The offset-adjusted whole seconds are converted
+/// through [`CalendarTime`], while the input nanoseconds and the selected
+/// offset metadata are preserved. The abbreviation is borrowed from `zone`;
+/// no timezone bytes are copied into a second allocation and no process-global
+/// `TZ` state is consulted.
+///
+/// This is a one-way UTC-instant conversion. It does not resolve an ambiguous
+/// or nonexistent local civil value back to an instant, and it does not load
+/// system zoneinfo, format text, parse text, or mutate a clock.
+#[cfg(feature = "alloc")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalCalendar<'zone> {
+    instant: UnixTime,
+    calendar: CalendarTime,
+    offset: OffsetInfo<'zone>,
+}
+
+#[cfg(feature = "alloc")]
+impl<'zone> LocalCalendar<'zone> {
+    /// Converts one UTC instant using the supplied immutable timezone rules.
+    ///
+    /// The selected offset is applied to whole seconds with checked
+    /// arithmetic. [`Errno::RANGE`] is returned if the adjusted seconds cannot
+    /// be represented by the existing native [`CalendarTime`] range; the
+    /// original instant and its nanoseconds are never normalized or discarded.
+    #[inline]
+    pub fn from_unix_time(instant: UnixTime, zone: &'zone TimeZone) -> Result<Self> {
+        let offset = zone.offset_at(instant);
+        let local_seconds = instant
+            .seconds()
+            .checked_add(i64::from(offset.offset().seconds_east_of_utc()))
+            .ok_or(Errno::RANGE)?;
+        Ok(Self {
+            instant,
+            calendar: CalendarTime::from_unix_seconds(local_seconds)?,
+            offset,
+        })
+    }
+
+    /// Returns the original UTC instant, including its nanosecond remainder.
+    #[must_use]
+    pub const fn instant(self) -> UnixTime {
+        self.instant
+    }
+
+    /// Returns the normalized local civil fields at whole-second precision.
+    #[must_use]
+    pub const fn calendar(self) -> CalendarTime {
+        self.calendar
+    }
+
+    /// Returns the selected offset east of UTC.
+    #[must_use]
+    pub const fn offset(self) -> UtcOffset {
+        self.offset.offset()
+    }
+
+    /// Returns the complete copied offset metadata for this instant.
+    #[must_use]
+    pub const fn offset_info(self) -> OffsetInfo<'zone> {
+        self.offset
+    }
+
+    /// Reports whether the selected offset is marked as daylight saving.
+    #[must_use]
+    pub const fn is_daylight_saving(self) -> bool {
+        self.offset.is_daylight_saving()
+    }
+
+    /// Returns the selected NUL-free timezone abbreviation bytes.
+    #[must_use]
+    pub const fn abbreviation(self) -> &'zone [u8] {
+        self.offset.abbreviation()
+    }
+
+    /// Returns the preserved nanosecond remainder within the local second.
+    #[must_use]
+    pub const fn nanoseconds(self) -> u32 {
+        self.instant.nanoseconds()
     }
 }
 

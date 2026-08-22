@@ -30,6 +30,7 @@ pub mod fd;
 pub mod ffi;
 pub mod fs;
 pub mod io;
+pub mod ipc;
 pub mod ioctl;
 pub mod mm;
 pub mod memory;
@@ -48,6 +49,8 @@ pub mod rand;
 pub mod time;
 #[cfg(feature = "alloc")]
 pub mod timezone;
+#[cfg(feature = "alloc")]
+pub mod users;
 pub mod termios;
 pub mod thread;
 pub mod shm;

@@ -359,6 +359,85 @@ pub mod runtime {
         }
     }
 
+    /// One copied record in a native loaded-image snapshot.
+    ///
+    /// Pointer fields are process addresses copied as values from the loader;
+    /// they do not point at loader-owned records and do not grant permission to
+    /// dereference an image after its lifetime has ended. Text is copied into
+    /// the fixed [`TextV1`] wire representation before the operation returns.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct LoaderImageV1 {
+        /// Relocated load address of the image.
+        pub image_base: *mut c_void,
+        /// Address of the image's mapped ELF program-header table.
+        pub program_headers: *const c_void,
+        /// Number of entries in `program_headers`.
+        pub program_header_count: u16,
+        /// Reserved wire padding; must be zero.
+        pub _reserved: u16,
+        /// Loader load-event count at the snapshot boundary.
+        pub additions: u64,
+        /// Loader unload-event count at the snapshot boundary.
+        pub removals: u64,
+        /// One-based TLS module ID, or zero when the image has no TLS.
+        pub tls_module: usize,
+        /// Current-thread TLS data address, or null when the image has no TLS.
+        pub tls_data: *mut c_void,
+        /// Copied image name.
+        pub image_name: TextV1,
+    }
+
+    impl LoaderImageV1 {
+        /// Creates an empty output record.
+        #[inline]
+        pub const fn empty() -> Self {
+            Self {
+                image_base: core::ptr::null_mut(),
+                program_headers: core::ptr::null(),
+                program_header_count: 0,
+                _reserved: 0,
+                additions: 0,
+                removals: 0,
+                tls_module: 0,
+                tls_data: core::ptr::null_mut(),
+                image_name: TextV1::empty(),
+            }
+        }
+    }
+
+    /// Copied information for one loader handle.
+    ///
+    /// This is the owned native counterpart of the useful `RTLD_DI_LINKMAP`
+    /// fields. It deliberately contains no `link_map *`, next/previous links,
+    /// or borrowed name pointer.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct LoaderInformationV1 {
+        /// Relocated load address of the image.
+        pub image_base: *mut c_void,
+        /// Address of the image's dynamic section, copied as an opaque value.
+        pub dynamic_address: *mut c_void,
+        /// Copied image name.
+        pub image_name: TextV1,
+    }
+
+    impl LoaderInformationV1 {
+        /// Creates an empty output record.
+        #[inline]
+        pub const fn empty() -> Self {
+            Self {
+                image_base: core::ptr::null_mut(),
+                dynamic_address: core::ptr::null_mut(),
+                image_name: TextV1::empty(),
+            }
+        }
+    }
+
+    /// Maximum number of records the current loader can return in one bounded
+    /// snapshot. This is a private wire bound, not a public ELF limit.
+    pub const LOADER_SNAPSHOT_CAPACITY: usize = 16;
+
     /// Private v1 runtime table owned by the loaded crabc runtime.
     ///
     /// Each callback documents its own non-success status: loader operations
@@ -502,7 +581,31 @@ pub mod runtime {
         /// The caller must discard the handle after this call regardless of
         /// whether the returned close/flush status is successful.
         pub cfile_close: unsafe extern "C" fn(handle: CFileHandleV1) -> c_int,
+        /// Copies the loader's current image records into caller-owned output.
+        /// The callback-free operation holds the loader lock only while it
+        /// copies records; it never exposes `link_map` storage or calls user
+        /// code while locked.
+        pub loader_snapshot: unsafe extern "C" fn(
+            records: *mut LoaderImageV1,
+            capacity: usize,
+            count: *mut usize,
+            generation: *mut u64,
+            error: *mut TextV1,
+        ) -> c_int,
+        /// Copies useful `RTLD_DI_LINKMAP` information for one loader handle.
+        /// The output contains no loader-owned `link_map *`.
+        pub loader_information: unsafe extern "C" fn(
+            handle: *mut c_void,
+            info: *mut LoaderInformationV1,
+            error: *mut TextV1,
+        ) -> c_int,
     }
+
+    /// Minimum table size containing all pre-introspection v1 callbacks.
+    ///
+    /// New consumers must accept an older table whose `abi_size` reaches this
+    /// boundary, then gate the append-only introspection fields separately.
+    pub const V1_LEGACY_SIZE: usize = core::mem::offset_of!(RuntimeV1, loader_snapshot);
 }
 
 const MAX_ERRNO: i32 = 4095;
@@ -534,6 +637,12 @@ const SYS_MKNODAT: usize = 33;
 const SYS_OPENAT: usize = 56;
 const SYS_MEMFD_CREATE: usize = 279;
 const SYS_IOCTL: usize = 29;
+// Linux/AArch64's inotify descriptor, watch-addition, and watch-removal
+// syscalls are generic entries 26 through 28. They remain a small direct
+// seam: higher layers own watch and event-buffer lifetimes.
+const SYS_INOTIFY_INIT1: usize = 26;
+const SYS_INOTIFY_ADD_WATCH: usize = 27;
+const SYS_INOTIFY_RM_WATCH: usize = 28;
 const SYS_MKDIRAT: usize = 34;
 const SYS_UNLINKAT: usize = 35;
 const SYS_SYMLINKAT: usize = 36;
@@ -610,6 +719,14 @@ const SYS_GETTIMEOFDAY: usize = 169;
 const SYS_NANOSLEEP: usize = 101;
 const SYS_GETRANDOM: usize = 278;
 const SYS_EVENTFD2: usize = 19;
+// Linux/AArch64 POSIX message-queue syscalls.  The kernel ABI is fixed-arity
+// even though the C mq_open wrapper is variadic; native callers use the typed
+// four-argument form below and never cross that C ABI.
+const SYS_MQ_OPEN: usize = 180;
+const SYS_MQ_UNLINK: usize = 181;
+const SYS_MQ_TIMEDSEND: usize = 182;
+const SYS_MQ_TIMEDRECEIVE: usize = 183;
+const SYS_MQ_GETSETATTR: usize = 185;
 const SYS_PPOLL: usize = 73;
 const SYS_PSELECT6: usize = 72;
 const SYS_EPOLL_CREATE1: usize = 20;
@@ -6699,6 +6816,184 @@ pub mod system {
     pub unsafe fn sysinfo_raw(value: *mut Sysinfo) -> Result<()> {
         // SAFETY: The caller supplies the output-pointer contract.
         decode(unsafe { syscall1(SYS_SYSINFO, value as usize) }).map(|_| ())
+    }
+}
+
+/// Direct Linux POSIX message-queue operations.
+pub mod ipc {
+    use super::{
+        decode, decode_i32, syscall1, syscall3, syscall4, syscall5, CStr, MaybeUninit, RawFd,
+        Result, SYS_MQ_GETSETATTR, SYS_MQ_OPEN, SYS_MQ_TIMEDRECEIVE, SYS_MQ_TIMEDSEND,
+        SYS_MQ_UNLINK,
+    };
+
+    /// Linux/AArch64 `struct mq_attr` wire layout.
+    ///
+    /// The public Rust facade validates and converts these signed native-long
+    /// fields before exposing them. The reserved tail is retained because the
+    /// kernel copies the complete record for `mq_getsetattr`.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct KernelMqAttr {
+        /// Queue status flags, currently `O_NONBLOCK`.
+        pub mq_flags: i64,
+        /// Maximum number of queued messages.
+        pub mq_maxmsg: i64,
+        /// Maximum message size in bytes.
+        pub mq_msgsize: i64,
+        /// Current number of queued messages.
+        pub mq_curmsgs: i64,
+        /// Linux ABI-reserved words.
+        pub reserved: [i64; 4],
+    }
+
+    /// Linux/AArch64 `struct timespec` used by absolute mq deadlines.
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct KernelMqTimespec {
+        /// Seconds since the Unix epoch for `CLOCK_REALTIME` deadlines.
+        pub tv_sec: i64,
+        /// Nanoseconds within the second.
+        pub tv_nsec: i64,
+    }
+
+    /// Opens a kernel message queue using its fixed-arity syscall ABI.
+    ///
+    /// `name` is the Linux kernel spelling without POSIX's required leading
+    /// slash; the higher-level facade validates and performs that translation.
+    /// `attr` is supplied only for creation and remains borrowed for the call.
+    #[inline]
+    pub fn open(
+        name: &CStr,
+        flags: i32,
+        mode: u32,
+        attr: Option<&KernelMqAttr>,
+    ) -> Result<RawFd> {
+        // SAFETY: `name` and the optional attribute remain live for the
+        // fixed-arity syscall; all other arguments are scalar Linux values.
+        decode_i32(unsafe {
+            syscall4(
+                SYS_MQ_OPEN,
+                name.as_ptr() as usize,
+                flags as usize,
+                mode as usize,
+                attr.map_or(0, |value| value as *const KernelMqAttr as usize),
+            )
+        })
+    }
+
+    /// Unlinks a kernel message-queue name.
+    #[inline]
+    pub fn unlink(name: &CStr) -> Result<()> {
+        // SAFETY: `name` remains live for the duration of the direct syscall.
+        decode(unsafe { syscall1(SYS_MQ_UNLINK, name.as_ptr() as usize) }).map(|_| ())
+    }
+
+    /// Reads or updates queue attributes through `mq_getsetattr`.
+    ///
+    /// Linux always writes the previous attributes to the output record on a
+    /// successful call. `new_attr == None` performs a read-only query.
+    #[inline]
+    pub fn getsetattr(fd: RawFd, new_attr: Option<&KernelMqAttr>) -> Result<KernelMqAttr> {
+        let mut old_attr = MaybeUninit::<KernelMqAttr>::uninit();
+        // SAFETY: the optional input and output storage remain live for the
+        // syscall; Linux initializes `old_attr` on success.
+        decode(unsafe {
+            syscall3(
+                SYS_MQ_GETSETATTR,
+                fd as usize,
+                new_attr.map_or(0, |value| value as *const KernelMqAttr as usize),
+                old_attr.as_mut_ptr() as usize,
+            )
+        })?;
+        // SAFETY: Linux initialized the complete attribute record on success.
+        Ok(unsafe { old_attr.assume_init() })
+    }
+
+    /// Sends one caller-borrowed message, optionally with an absolute
+    /// `CLOCK_REALTIME` deadline.
+    #[inline]
+    pub fn timed_send(
+        fd: RawFd,
+        message: &[u8],
+        priority: u32,
+        deadline: Option<&KernelMqTimespec>,
+    ) -> Result<()> {
+        // SAFETY: `message` and the optional deadline remain live for the
+        // syscall; Linux reads at most `message.len()` bytes.
+        decode(unsafe {
+            syscall5(
+                SYS_MQ_TIMEDSEND,
+                fd as usize,
+                message.as_ptr() as usize,
+                message.len(),
+                priority as usize,
+                deadline.map_or(0, |value| value as *const KernelMqTimespec as usize),
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Receives one message into caller-provided storage and returns its byte
+    /// length; Linux writes the message priority through `priority`.
+    #[inline]
+    pub fn timed_receive(
+        fd: RawFd,
+        buffer: &mut [u8],
+        priority: &mut u32,
+        deadline: Option<&KernelMqTimespec>,
+    ) -> Result<usize> {
+        // SAFETY: `buffer`, `priority`, and the optional deadline remain live
+        // for the syscall. Linux writes no more than `buffer.len()` bytes on a
+        // successful receive and initializes the priority word.
+        decode(unsafe {
+            syscall5(
+                SYS_MQ_TIMEDRECEIVE,
+                fd as usize,
+                buffer.as_mut_ptr() as usize,
+                buffer.len(),
+                priority as *mut u32 as usize,
+                deadline.map_or(0, |value| value as *const KernelMqTimespec as usize),
+            )
+        })
+    }
+}
+
+/// Direct Linux inotify operations.
+pub mod inotify {
+    use super::{decode, syscall1, syscall2, syscall3, CStr, RawFd, Result,
+        SYS_INOTIFY_ADD_WATCH, SYS_INOTIFY_INIT1, SYS_INOTIFY_RM_WATCH};
+
+    /// Creates one Linux inotify descriptor without using libc or TLS
+    /// `errno`.
+    #[inline]
+    pub fn init1(flags: u32) -> Result<RawFd> {
+        // SAFETY: `inotify_init1` takes a scalar flag word and returns one
+        // fresh descriptor on success; Linux validates the flags.
+        decode(unsafe { syscall1(SYS_INOTIFY_INIT1, flags as usize) }).map(|fd| fd as RawFd)
+    }
+
+    /// Adds or updates an inotify watch for a live NUL-terminated pathname.
+    #[inline]
+    pub fn add_watch(fd: RawFd, path: &CStr, mask: u32) -> Result<i32> {
+        // SAFETY: `path` supplies a readable NUL-terminated pathname for the
+        // duration of the direct call; all remaining arguments are scalars.
+        decode(unsafe {
+            syscall3(
+                SYS_INOTIFY_ADD_WATCH,
+                fd as usize,
+                path.as_ptr() as usize,
+                mask as usize,
+            )
+        })
+        .map(|watch| watch as i32)
+    }
+
+    /// Removes one inotify watch from an open descriptor.
+    #[inline]
+    pub fn rm_watch(fd: RawFd, watch: i32) -> Result<()> {
+        // SAFETY: both arguments are immediate Linux scalar values.
+        decode(unsafe { syscall2(SYS_INOTIFY_RM_WATCH, fd as usize, watch as usize) }).map(|_| ())
     }
 }
 

@@ -1,7 +1,8 @@
 //! Link-free no-std probe for the M7 native resolver/netdb boundary.
 //!
-//! The probe only exercises owned numeric resolution and caller-provided
-//! netdb parsing. It deliberately does not expose or call the C resolver ABI.
+//! The probe exercises owned numeric resolution, caller-provided netdb parsing,
+//! and direct caller-owned system resolver snapshots. It deliberately does not
+//! expose or call the C resolver ABI or perform a network lookup.
 
 #![no_std]
 
@@ -53,5 +54,12 @@ pub extern "C" fn crabc_rs_m7_resolver_direct_probe() -> i32 {
         return 2;
     }
     if IpAddress::parse(b"127.0.0.1").is_none() { return 3; }
+    let system = match ResolverConfig::from_system() {
+        Ok(config) => config,
+        Err(_) => return 4,
+    };
+    if system.hosts().is_none() || system.search_domains().len() > 6 || system.nameserver_count() > 3 {
+        return 5;
+    }
     0
 }

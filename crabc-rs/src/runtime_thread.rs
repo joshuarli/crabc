@@ -14,11 +14,13 @@ use alloc::boxed::Box;
 use core::ffi::c_void;
 use core::fmt;
 use core::marker::PhantomData;
-use core::mem::size_of;
 use core::num::NonZeroU64;
 use core::ptr::NonNull;
 
-use crabc_core::runtime::{RuntimeV1, ThreadDestructorV1, ThreadHandleV1, ThreadStartV1, V1_ABI_VERSION};
+use crabc_core::runtime::{
+    RuntimeV1, ThreadDestructorV1, ThreadHandleV1, ThreadStartV1, V1_ABI_VERSION,
+    V1_LEGACY_SIZE,
+};
 
 use crate::{Errno, Result};
 
@@ -34,7 +36,7 @@ fn runtime() -> Result<&'static RuntimeV1> {
     // SAFETY: The private getter's non-null result points at a RuntimeV1
     // owned by the loaded libc for the process lifetime.
     let runtime = unsafe { runtime.as_ref() };
-    if runtime.abi_version != V1_ABI_VERSION || runtime.abi_size < size_of::<RuntimeV1>() as u32 {
+    if runtime.abi_version != V1_ABI_VERSION || runtime.abi_size < V1_LEGACY_SIZE as u32 {
         return Err(Errno::INVAL);
     }
     Ok(runtime)

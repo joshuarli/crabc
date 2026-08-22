@@ -120,6 +120,63 @@ fn caller_owned_netdb_parsers_return_typed_copies() {
 }
 
 #[test]
+fn netdb_snapshots_own_input_and_enumerate_source_order() {
+    let mut input = b"192.0.2.7 example.test alias.test\n2001:db8::7 example.test\n".to_vec();
+    let hosts = HostDatabase::from_bytes(&input).expect("valid hosts fixture");
+    input.fill(b'x');
+    assert_eq!(hosts.entries().len(), 1);
+    assert_eq!(hosts.iter().count(), hosts.len());
+    assert_eq!((&hosts).into_iter().next().unwrap().name(), "example.test");
+    let copied_host = hosts.lookup("alias.test", None).expect("owned host lookup");
+    drop(hosts);
+    assert_eq!(copied_host.name(), "example.test");
+    assert_eq!(copied_host.addresses().len(), 2);
+
+    let services = ServiceDatabase::from_bytes(b"custom 4242/custom-proto alias\n")
+        .expect("valid service fixture");
+    assert_eq!(services.entries().len(), 1);
+    assert_eq!(services.iter().next().unwrap().protocol_name(), "custom-proto");
+    assert_eq!(services.lookup("ALIAS", None).unwrap().port(), 4242);
+
+    let protocols = ProtocolDatabase::from_bytes(b"custom 253 alias\n")
+        .expect("valid protocol fixture");
+    assert_eq!(protocols.entries().len(), 1);
+    assert_eq!(protocols.iter().count(), protocols.len());
+    assert_eq!(protocols.lookup_name("ALIAS").unwrap().number(), 253);
+}
+
+#[test]
+fn malformed_netdb_records_reject_the_complete_snapshot() {
+    use crabc_rs::netdb::NetDbError;
+
+    assert_eq!(HostDatabase::from_bytes(b"not-an-address only-name"), Err(NetDbError::InvalidInput));
+    assert_eq!(ServiceDatabase::from_bytes(b"broken 80/tcp/extra"), Err(NetDbError::InvalidInput));
+    assert_eq!(ProtocolDatabase::from_bytes(b"broken 65536"), Err(NetDbError::Overflow));
+    assert_eq!(ProtocolDatabase::from_bytes(b"bad\xff 1"), Err(NetDbError::InvalidInput));
+}
+
+#[test]
+fn system_netdb_loaders_match_their_direct_file_snapshots() {
+    let hosts_bytes = std::fs::read("/etc/hosts").expect("system hosts file");
+    let hosts_expected = HostDatabase::from_bytes(&hosts_bytes).expect("parse system hosts bytes");
+    let hosts = HostDatabase::from_system().expect("direct hosts loader");
+    assert_eq!(hosts, hosts_expected);
+    assert_eq!(hosts.iter().count(), hosts.len());
+
+    let services_bytes = std::fs::read("/etc/services").expect("system services file");
+    let services_expected = ServiceDatabase::from_bytes(&services_bytes).expect("parse system services bytes");
+    let services = ServiceDatabase::from_system().expect("direct services loader");
+    assert_eq!(services, services_expected);
+    assert_eq!(services.iter().count(), services.len());
+
+    let protocols_bytes = std::fs::read("/etc/protocols").expect("system protocols file");
+    let protocols_expected = ProtocolDatabase::from_bytes(&protocols_bytes).expect("parse system protocols bytes");
+    let protocols = ProtocolDatabase::from_system().expect("direct protocols loader");
+    assert_eq!(protocols, protocols_expected);
+    assert_eq!(protocols.iter().count(), protocols.len());
+}
+
+#[test]
 fn unsupported_addrconfig_is_explicit() {
     let resolver = Resolver::new(ResolverConfig::default());
     let result = resolver.lookup(

@@ -13731,10 +13731,12 @@ pub unsafe extern "C" fn gethostname(name: *mut c_char, len: usize) -> c_int {
     0
 }
 
-// ponytail: getpagesize - hardcoded 4096 for x86_64
 #[no_mangle]
 pub extern "C" fn getpagesize() -> c_int {
-    4096
+    // `AT_PAGESZ` is kernel-provided and can be 4, 16, or 64 KiB on AArch64.
+    // The dynamic loader installs `__auxv` before application constructors
+    // run, so a real process has this value before it can call libc.
+    unsafe { startup_page_size().unwrap_or(0) }
 }
 
 #[no_mangle]
@@ -13979,28 +13981,38 @@ pub unsafe extern "C" fn setgid(gid: c_uint) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn seteuid(euid: c_uint) -> c_int {
-    // ponytail: on Linux, setreuid(-1, euid) sets effective uid
-    let r = sys_setuid(euid);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
-    0
+    // Linux credential syscalls update only the calling task.  crabc does not
+    // yet have musl's all-thread credential rendezvous, so claiming success
+    // here would leave a process-wide C transition only partially applied.
+    // EOPNOTSUPP is this libc profile's deliberate limitation, not a kernel
+    // ENOSYS result.
+    let _ = euid;
+    ERRNO = EOPNOTSUPP_VAL;
+    -1
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn setegid(egid: c_uint) -> c_int {
-    let r = sys_setgid(egid);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
-    0
+    let _ = egid;
+    ERRNO = EOPNOTSUPP_VAL;
+    -1
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn setreuid(_ruid: c_uint, _euid: c_uint) -> c_int {
-    // ponytail: stub, real UID changes need cap_setuid
-    0
+pub unsafe extern "C" fn setreuid(ruid: c_uint, euid: c_uint) -> c_int {
+    // A direct Linux setreuid syscall would mutate only this task.  Keep the
+    // C ABI honest until a musl-compatible all-thread credential rendezvous
+    // exists; this is a profile limitation rather than kernel ENOSYS.
+    let _ = (ruid, euid);
+    ERRNO = EOPNOTSUPP_VAL;
+    -1
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn setregid(_rgid: c_uint, _egid: c_uint) -> c_int {
-    0
+pub unsafe extern "C" fn setregid(rgid: c_uint, egid: c_uint) -> c_int {
+    let _ = (rgid, egid);
+    ERRNO = EOPNOTSUPP_VAL;
+    -1
 }
 
 #[no_mangle]
@@ -16456,6 +16468,65 @@ unsafe extern "C" fn runtime_loader_address(
     0
 }
 
+unsafe extern "C" fn runtime_loader_snapshot(
+    records: *mut crabc_core::runtime::LoaderImageV1,
+    capacity: usize,
+    count: *mut usize,
+    generation: *mut u64,
+    error: *mut crabc_core::runtime::TextV1,
+) -> c_int {
+    unsafe { runtime_text_clear(error) };
+    if count.is_null() || generation.is_null() || (capacity != 0 && records.is_null()) {
+        unsafe { runtime_text_bytes(error, b"invalid loader snapshot output") };
+        return -1;
+    }
+    let Some(snapshot) = (unsafe { m4_ldso_loader_snapshot() }) else {
+        unsafe { runtime_text_bytes(error, b"crabc loader introspection unavailable") };
+        return -1;
+    };
+    let status = unsafe {
+        snapshot(
+            records.cast::<M4LoaderImageV1>(),
+            capacity,
+            count,
+            generation,
+            error.cast::<M4LoaderSnapshotText>(),
+        )
+    };
+    if status != 0 && !error.is_null() && unsafe { (*error).len } == 0 {
+        unsafe { runtime_text_bytes(error, b"loader image snapshot failed") };
+    }
+    status
+}
+
+unsafe extern "C" fn runtime_loader_information(
+    handle: *mut c_void,
+    info: *mut crabc_core::runtime::LoaderInformationV1,
+    error: *mut crabc_core::runtime::TextV1,
+) -> c_int {
+    unsafe { runtime_text_clear(error) };
+    if info.is_null() {
+        unsafe { runtime_text_bytes(error, b"invalid loader information output") };
+        return -1;
+    }
+    unsafe { core::ptr::write(info, crabc_core::runtime::LoaderInformationV1::empty()) };
+    let Some(information) = (unsafe { m4_ldso_loader_information() }) else {
+        unsafe { runtime_text_bytes(error, b"crabc loader introspection unavailable") };
+        return -1;
+    };
+    let status = unsafe {
+        information(
+            handle,
+            info.cast::<M4LoaderInformationV1>(),
+            error.cast::<M4LoaderSnapshotText>(),
+        )
+    };
+    if status != 0 && !error.is_null() && unsafe { (*error).len } == 0 {
+        unsafe { runtime_text_bytes(error, b"loader information failed") };
+    }
+    status
+}
+
 // These wrappers are the implementation side of the private native-thread
 // table. They call libc's own state owner directly instead of resolving the
 // public pthread names through the dynamic linker. Positive pthread error
@@ -16828,6 +16899,8 @@ static CRABC_RUNTIME_V1: crabc_core::runtime::RuntimeV1 = crabc_core::runtime::R
     cfile_error: runtime_cfile_error,
     cfile_reset: runtime_cfile_reset,
     cfile_close: runtime_cfile_close,
+    loader_snapshot: runtime_loader_snapshot,
+    loader_information: runtime_loader_information,
 };
 
 /// Returns crabc's first private process-singleton runtime table.

@@ -14,54 +14,57 @@ at once.
 
 ## Current status
 
-M0–M12 are complete. Current ledger validation records 159 verified native
-seams, 16 deferred native capability groups, and 43 documented non-native
+M0–M12 are complete. Current ledger validation records 171 verified native
+seams, no deferred native capability groups, and 52 documented non-native
 boundaries. The current generated dashboard records 1,647/1,647 required musl
 dynamic exports, no ABI metadata mismatch, 34/34 measured Alpine corpus cases,
 and no current libc-test missing-symbol blocker. These measurements are
 evidence, not a claim of complete historical libc breadth.
 
+The C `setreuid`, `setregid`, `seteuid`, and `setegid` success stubs are now
+an explicitly tested `-1/EOPNOTSUPP` profile limitation; full musl-compatible
+process-wide credential synchronization is an explicitly documented non-native
+boundary.
+
+Since this ledger was created, `getpagesize` and `_SC_PAGE_SIZE` have been
+made `AT_PAGESZ`-driven (including an 8 KiB synthetic-startup regression), and
+the AArch64 loader has a focused `AT_BASE` self-relocation runtime case. They
+are retained here as completed scope records, not active work.
+
+The M11 loader introspection row is now verified: `LoadedImageSnapshot` and
+`Library::information` copy bounded records through the append-only runtime
+bridge without exposing `link_map` or invoking callbacks while ldso is locked.
+
+The named temporary-file row is now verified as `fs::NamedTempFile`; it uses
+exclusive descriptor-relative creation, 96-bit `getrandom` suffixes,
+`O_CLOEXEC`, and owned unlink-on-drop cleanup. The anonymous `fs::TempFile` row
+is also verified through Linux `O_TMPFILE`, with no named-file fallback.
+`mktemp`/`tempnam`/`tmpnam` and Linux file-handle operations remain documented
+C-only or authority-bearing boundaries rather than a generic native filesystem
+API.
+
+The caller-owned resolver row is now verified as `ResolverConfig`: bounded
+`/etc/resolv.conf` and `/etc/hosts` snapshots, explicit hosts-before-DNS
+precedence, ndots/search candidate ordering, A/AAAA lookup, bounded CNAME
+completion, and the existing configured-order retry/failover transport. It
+does not discover NSS providers or add DNSSEC, DoH/DoT, mDNS, or IDNA policy.
+
 ## Core runtime capability work
 
 | Ledger group | Exact work still left | Do not repeat |
 | --- | --- | --- |
-| `filesystem.extensions` | Design an authority-safe temporary-file contract for the remaining `mkstemp` family and separate unsafe Linux file-handle operations (`name_to_handle_at`, `open_by_handle_at`). | Existing `mkdtemp`, xattr, allocation-range, and descriptor work. |
-| `time.clock-calendar` | Separate local-time conversion, `TZ`/system-zoneinfo discovery, formatting/parsing, and privileged wall-clock adjustment into owned contracts. | UTC calendar operations and M11 caller-supplied POSIX-TZ/TZif offset rules. Do not bundle tzdata. |
-| `network.resolver` | Add one caller-owned system resolver state machine: `/etc/resolv.conf`, `/etc/hosts` precedence, A/AAAA/CNAME completion, search domains, retries, and failover. | The configured UDP/TCP transport, malformed-packet handling, and TCP truncation fallback already verified in M11. No NSS, DNSSEC, DoH/DoT, mDNS, or IDNA policy. |
-| `network.netdb` | Turn the existing file parsers into owned snapshots/lookups for hosts, services, and protocols as individually specified. | An NSS/plugin abstraction or libc static-buffer APIs. |
-| `process.control` | Close the remaining ownership, signal, descriptor, child-lifetime, and `posix_spawn` attribute/action contracts; classify clone/vfork/daemon/nice aliases separately. | Existing prepared exec, fork/wait, and process-group/session observations. |
-| `process.credentials` | Implement or explicitly constrain synchronized process-wide credential mutation with musl-compatible cross-thread semantics. | Existing calling-task `setres*` and filesystem-credential operations. |
-| `process.environment-mutation` | Design an explicit unsafe, synchronized environment owner for mutation and exec interaction; audit C `setenv`/`unsetenv`/`clearenv` state. | Read-only process observations or a new global registry. |
-| `process.signal` | Split the ledger and finish only the unaccounted legacy/async-safety semantics. | M6 typed masks, actions, queueing, waits, alternate stacks, and `signalfd`. |
-| `thread.pthread-c11` | Specify robust/process-shared/recursive/error-checking forms, cleanup scopes, cancellation lifecycle, `Send`/`Sync` handle evidence, and shared C/native atfork semantics. | M7 process-private mutex, condition, once, semaphore, rwlock, barrier, and runtime thread/TLS slice. |
-| `loader.dlfcn-introspection` | Add an owned image-snapshot/information contract for `dl_iterate_phdr` and `dlinfo`, including reentrancy, callback, and loader-record lifetime rules. | M11 basic owned open/symbol/close. |
-
-### Concrete C-runtime correctness work
-
-- Replace the hard-coded 4 KiB `getpagesize`/`_SC_PAGE_SIZE` behavior with a
-  validated `AT_PAGESZ` source. AArch64 must not assume a 4 KiB page size.
-- Resolve the success stubs for C `setreuid` and `setregid`: implement the
-  required synchronized semantics or record a tested profile limitation. They
-  must not silently claim success without the corresponding state transition.
+| _(none)_ | The currently scoped core runtime slices are complete. | Select a new bounded contract only after updating the ledger and evidence plan. |
 
 ## Useful POSIX/runtime capability work
 
 | Ledger group | Exact work still left | Boundary |
 | --- | --- | --- |
-| `pattern.regex` | A focused POSIX-equivalent owned compiled-expression API, or an explicit decision to keep it C-only. | No general Rust regex framework by default. |
-| `pattern.glob` | Owned byte-preserving result values with explicit current-directory and error policy. | No hidden process-global traversal policy. |
-| `ipc` | Select one narrow mechanism at a time from SysV IPC, POSIX named semaphores/message queues, or AIO. | Shared memory and process-private native semaphores already exist; no aggregate IPC framework. |
-| `terminal.pty-session` | Owned PTY/session lifecycle for `openpty`/`forkpty`, controlling terminal, `login_tty`, `vhangup`, and `ptsname_r`. | Low-level `/dev/ptmx` and terminal observations are already separate. |
-| `users.databases` | Owned `/etc/passwd` and `/etc/group` records plus enumeration; separately classify shadow, utmp/utmpx, mntent, and user-shell families before work. | Conventional files only; no provider/NSS layer. |
-| `system.kernel-admin` | Propose and review one authority-bearing mechanism at a time (for example namespaces, capabilities/prctl, inotify, ptrace, or process_vm). | No kernel-administration or security-policy framework. |
 
 ## Evidence and maintenance frontiers
 
 These are not hidden feature commitments. Promote one only when it helps a
 selected scoped capability.
 
-- Add a focused runtime case for loader self-relocation, the one source-only
-  entry in the loader feature inventory.
 - Expand static-link evidence beyond the existing static pthread/TLS lifecycle
   case; a full static libc-test matrix remains unmeasured.
 - Decide whether exhaustive static-archive ABI comparison and broader
@@ -79,7 +82,7 @@ selected scoped capability.
 
 ## Not TODO
 
-The 43 `documented` ledger groups are accounted boundaries, not a hidden
+The 52 `documented` ledger groups are accounted boundaries, not a hidden
 backlog. They include C ABI-only machinery, Rust-subsumed operations, internal
 runtime exports, and the mimalloc allocator exception. Their exact rationale
 is in [`compat/crabc-rs/coverage.toml`](compat/crabc-rs/coverage.toml).
@@ -90,6 +93,40 @@ glibc as an oracle or fallback; allocator research; hand-rolled cryptography;
 general locale/charset databases; NSS/plugins; bundled tzdata; gettext;
 DNSSEC, DoH, DoT, mDNS, and IDNA policy; async runtimes; process-management
 frameworks; security-policy frameworks; and a portability abstraction layer.
+
+The bounded native netdb slice is complete for immutable owned snapshots,
+lookups, and source-order enumeration of `/etc/hosts`, `/etc/services`, and
+`/etc/protocols`. The C static-buffer netdb ABI, `/etc/networks`, and
+NSS/provider systems remain outside that slice. Resolver integration is the
+separate caller-owned `ResolverConfig` slice described above.
+
+The bounded native glob slice is complete for explicit root path or directory
+descriptor expansion. Results own raw pathname bytes and are sorted
+lexicographically; no-match returns an empty vector, while root and directory
+read errors remain typed. The C `glob`/`globfree` ABI and hidden CWD traversal
+policy remain outside this native contract.
+
+The first native IPC slice is complete for owned POSIX named message queues:
+open/create, unlink, attributes, priorities, caller buffers, nonblocking
+behavior, and absolute realtime deadlines. `mq_notify`, SysV IPC, named
+semaphores, AIO, and aggregate IPC frameworks remain outside scope.
+
+The bounded native PTY/session slice is complete for an owned master/slave
+`PtyPair`, caller-buffered or owned `ptsname` results, and an explicitly
+unsafe Linux session/controlling-terminal handoff. `forkpty`, `login_tty`,
+and `vhangup` remain C-only historical helpers because they require process
+supervision, prepared-exec, or hangup-authority contracts; `isastream` has no
+Linux PTY meaning.
+
+The remaining historical C regex, process-control, credential, environment,
+signal, pthread/C11, calendar/clock, and kernel-administration families have
+been reviewed against `SCOPE.md`. Their useful native seams are already
+separately verified; the rest are C ABI behavior, explicitly constrained
+compatibility, or out-of-scope frameworks rather than native crabc-rs work.
+The ledger records each rationale and evidence. In particular, process-wide
+credential mutation remains the tested C `EOPNOTSUPP` limitation rather than
+an unsafe per-thread facade, and global `TZ`/locale/time-control behavior does
+not become a native policy layer.
 
 ## Choosing the next slice
 

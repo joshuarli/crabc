@@ -110,6 +110,51 @@ pub type M4LdsoDlinfo = unsafe extern "C" fn(
     *mut c_void,
 ) -> c_int;
 
+// Callback-free copied-record wire layouts. These duplicate the private ldso
+// structs deliberately: libc bridges the interpreter without making ldso
+// depend on crabc-core, and no loader-owned link_map or string pointer crosses
+// this boundary.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct M4LoaderSnapshotText {
+    len: u16,
+    flags: u16,
+    bytes: [u8; 256],
+}
+
+#[repr(C)]
+pub struct M4LoaderImageV1 {
+    image_base: *mut c_void,
+    program_headers: *const c_void,
+    program_header_count: u16,
+    reserved: u16,
+    additions: u64,
+    removals: u64,
+    tls_module: usize,
+    tls_data: *mut c_void,
+    image_name: M4LoaderSnapshotText,
+}
+
+#[repr(C)]
+pub struct M4LoaderInformationV1 {
+    image_base: *mut c_void,
+    dynamic_address: *mut c_void,
+    image_name: M4LoaderSnapshotText,
+}
+
+pub type M4LdsoLoaderSnapshot = unsafe extern "C" fn(
+    *mut M4LoaderImageV1,
+    usize,
+    *mut usize,
+    *mut u64,
+    *mut M4LoaderSnapshotText,
+) -> c_int;
+pub type M4LdsoLoaderInformation = unsafe extern "C" fn(
+    *mut c_void,
+    *mut M4LoaderInformationV1,
+    *mut M4LoaderSnapshotText,
+) -> c_int;
+
 // `LDSO_DLSYM` is the established private libc/ldso callback.  Keep newer
 // loader operations behind its private selector rather than leaking a fresh
 // public registration symbol for each one into libc's ELF ABI.
@@ -139,6 +184,16 @@ unsafe fn m4_ldso_dlinfo() -> Option<M4LdsoDlinfo> {
 
 unsafe fn m4_ldso_tls_get_addr() -> *mut c_void {
     m4_ldso_private_symbol(b"__crabc_ldso_tls_get_addr\0".as_ptr().cast())
+}
+
+unsafe fn m4_ldso_loader_snapshot() -> Option<M4LdsoLoaderSnapshot> {
+    let address = m4_ldso_private_symbol(b"__crabc_ldso_loader_snapshot\0".as_ptr().cast());
+    (!address.is_null()).then(|| core::mem::transmute(address))
+}
+
+unsafe fn m4_ldso_loader_information() -> Option<M4LdsoLoaderInformation> {
+    let address = m4_ldso_private_symbol(b"__crabc_ldso_loader_information\0".as_ptr().cast());
+    (!address.is_null()).then(|| core::mem::transmute(address))
 }
 
 /// Visit the loader's current object list in load order.

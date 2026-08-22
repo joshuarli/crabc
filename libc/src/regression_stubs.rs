@@ -38,6 +38,21 @@ pub unsafe extern "C" fn __libc_current_sigrtmax() -> c_int {
 
 const _SC_PAGE_SIZE: c_int = 30;
 const _SC_CLK_TCK: c_int = 2;
+const AT_PAGESZ: c_ulong = 6;
+
+/// Read the kernel's startup page-size contract without preserving a
+/// target-default guess.  Linux always supplies `AT_PAGESZ` to a normally
+/// started process; the checked conversion keeps a malformed startup vector
+/// from manufacturing an invalid positive C page size.
+#[inline]
+unsafe fn startup_page_size() -> Option<c_int> {
+    let size = getauxval(AT_PAGESZ);
+    if size == 0 || size > c_int::MAX as c_ulong {
+        None
+    } else {
+        Some(size as c_int)
+    }
+}
 
 #[no_mangle]
 #[linkage = "weak"]
@@ -79,7 +94,13 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> c_long {
         // for a system.  musl exposes Linux's USER_HZ contract as 100; the
         // Python runtime reads this during PyInit_posix and rejects failure.
         _SC_CLK_TCK => 100,
-        _SC_PAGE_SIZE => 4096,
+        _SC_PAGE_SIZE => match startup_page_size() {
+            Some(size) => size as c_long,
+            None => {
+                crate::__errno_location().write(ENOSYS_VAL);
+                -1
+            }
+        },
         _ => {
             crate::__errno_location().write(EINVAL);
             -1

@@ -54,7 +54,7 @@ kernel MSRV 5.10. An optional macOS/AArch64 backend belongs only to
 
 M10 is complete when the ledger accounts for the profile rather than demanding
 a Rust wrapper around every C symbol. Its final inventory records 215 groups:
-156 verified native seams, 16 explicit post-M10 deferrals, and 43 documented
+171 verified native seams, no explicit post-M10 deferrals, and 52 documented
 scope boundaries. The allocator exception remains at the libc boundary;
 Rust-native callers use ordinary Rust allocation. Future work must keep the
 bounded C/POSIX/C.UTF-8 locale profile, UTF-8-first text model, conventional

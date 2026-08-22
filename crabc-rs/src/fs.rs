@@ -6,7 +6,7 @@
 
 use bitflags::bitflags;
 use core::ffi::CStr;
-use core::mem::MaybeUninit;
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::num::NonZeroU64;
 use core::ptr;
 
@@ -169,6 +169,303 @@ pub fn fcntl_get_seals<Fd: AsFd>(fd: Fd) -> Result<SealFlags> {
 #[doc(alias = "F_ADD_SEALS")]
 pub fn fcntl_add_seals<Fd: AsFd>(fd: Fd, seals: SealFlags) -> Result<()> {
     crabc_core::io::fcntl_add_seals(fd.as_fd().as_raw_fd(), seals.bits())
+}
+
+/// Number of kernel-random bytes used for each named temporary-file candidate.
+/// The bytes are encoded as 24 hexadecimal pathname bytes (96 bits).
+pub const TEMP_FILE_RANDOM_BYTES: usize = 12;
+
+/// Maximum number of candidate names attempted after an `EEXIST` collision.
+pub const TEMP_FILE_MAX_ATTEMPTS: usize = 128;
+
+const TEMP_FILE_NAME_MAX: usize = 255;
+const TEMP_FILE_SUFFIX_LENGTH: usize = TEMP_FILE_RANDOM_BYTES * 2;
+const TEMP_FILE_MODE_BITS: u32 = 0o600;
+
+/// An owned named temporary regular file with descriptor-relative cleanup.
+///
+/// Creation opens a stable directory descriptor, then atomically creates a
+/// private `O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC` entry with a 96-bit
+/// `getrandom` suffix. The value owns both descriptors and unlinks its
+/// basename on drop. [`Self::into_owned_fd`] deliberately persists the
+/// directory entry and transfers only the file descriptor to the caller.
+///
+/// The name is a basename, not a process-relative pathname. Callers that need
+/// a full path retain the directory authority they supplied and join it with
+/// [`Self::name`]; no ambient CWD or global temporary-file registry is used.
+pub struct NamedTempFile {
+    fd: OwnedFd,
+    parent: OwnedFd,
+    name: [u8; TEMP_FILE_NAME_MAX + 1],
+    name_len: u16,
+    cleanup: bool,
+}
+
+impl NamedTempFile {
+    /// Borrows the generated basename without a trailing NUL.
+    #[inline]
+    pub fn name(&self) -> &[u8] {
+        &self.name[..self.name_len as usize]
+    }
+
+    /// Borrows the stable directory descriptor used for creation and cleanup.
+    #[inline]
+    pub fn parent_fd(&self) -> BorrowedFd<'_> {
+        self.parent.as_fd()
+    }
+
+    /// Borrows the created file descriptor.
+    #[inline]
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+
+    /// Unlinks the entry and closes both owned descriptors.
+    ///
+    /// If unlinking fails, the value remains armed for a best-effort retry in
+    /// `Drop`, and the kernel error is returned to the caller.
+    pub fn remove(mut self) -> Result<()> {
+        let result = self.unlink();
+        if result.is_ok() {
+            self.cleanup = false;
+        }
+        result
+    }
+
+    /// Persists the directory entry and transfers ownership of its file FD.
+    ///
+    /// The parent directory descriptor is closed by this operation. The
+    /// caller is responsible for retaining or removing the named entry after
+    /// this transfer.
+    pub fn into_owned_fd(self) -> OwnedFd {
+        let mut this = ManuallyDrop::new(self);
+        this.cleanup = false;
+        // SAFETY: `this` is never dropped after `ManuallyDrop` is created;
+        // explicitly release the retained parent descriptor, then move the
+        // file descriptor out exactly once.
+        unsafe {
+            ptr::drop_in_place(&mut this.parent);
+            ptr::read(&this.fd)
+        }
+    }
+
+    fn unlink(&self) -> Result<()> {
+        let name = unsafe { CStr::from_bytes_with_nul_unchecked(&self.name[..self.name_len as usize + 1]) };
+        unlinkat(&self.parent, name, AtFlags::empty())
+    }
+}
+
+impl AsFd for NamedTempFile {
+    #[inline]
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.as_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsRawFd for NamedTempFile {
+    #[inline]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.as_fd().as_raw_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsFd for NamedTempFile {
+    #[inline]
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: `NamedTempFile` owns its descriptor through `OwnedFd`, so it
+        // remains open for the returned standard-library borrow.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(self.as_fd().as_raw_fd()) }
+    }
+}
+
+impl Drop for NamedTempFile {
+    fn drop(&mut self) {
+        if self.cleanup {
+            let _ = self.unlink();
+        }
+    }
+}
+
+/// Creates a named temporary file in `parent` relative to the current
+/// directory, retaining a stable parent descriptor for cleanup.
+#[inline]
+pub fn create_temp_file<P: Arg, Prefix: Arg>(parent: P, prefix: Prefix) -> Result<NamedTempFile> {
+    parent.into_with_c_str(|parent| {
+        let directory = openat(
+            CWD,
+            parent,
+            OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        create_temp_file_at(&directory, prefix)
+    })
+}
+
+/// Creates a named temporary file relative to an already-open directory.
+///
+/// `parent` must be a real open directory descriptor, not the special
+/// `AT_FDCWD` token: retaining a duplicate is what makes drop cleanup immune
+/// to later current-directory changes. The generated basename is available
+/// through [`NamedTempFile::name`].
+#[inline]
+pub fn create_temp_file_at<Fd: AsFd, Prefix: Arg>(
+    parent: Fd,
+    prefix: Prefix,
+) -> Result<NamedTempFile> {
+    let parent = parent.as_fd();
+    if parent.as_raw_fd() < 0 {
+        return Err(crate::Errno::BADF);
+    }
+    let parent = crate::io::fcntl_dupfd_cloexec(parent, 0)?;
+    prefix.into_with_c_str(|prefix| {
+        let (name, name_len, fd) = create_temp_file_at_bytes(&parent, prefix.to_bytes())?;
+        Ok(NamedTempFile {
+            fd,
+            parent,
+            name,
+            name_len: name_len as u16,
+            cleanup: true,
+        })
+    })
+}
+
+fn create_temp_file_at_bytes<Fd: AsFd>(
+    parent: Fd,
+    prefix: &[u8],
+) -> Result<([u8; TEMP_FILE_NAME_MAX + 1], usize, OwnedFd)> {
+    let name_len = validate_temp_file_prefix(prefix)?;
+    let mut candidate = [0u8; TEMP_FILE_NAME_MAX + 1];
+    let mut entropy = [0u8; TEMP_FILE_RANDOM_BYTES];
+    let hex = b"0123456789abcdef";
+    let mut attempt = 0;
+    while attempt < TEMP_FILE_MAX_ATTEMPTS {
+        let _ = crate::rand::getentropy(&mut entropy)?;
+        candidate[..prefix.len()].copy_from_slice(prefix);
+        for (index, byte) in entropy.iter().enumerate() {
+            candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
+            candidate[prefix.len() + index * 2 + 1] = hex[(byte & 0x0f) as usize];
+        }
+        candidate[name_len] = 0;
+        let candidate_cstr = unsafe {
+            CStr::from_bytes_with_nul_unchecked(&candidate[..name_len + 1])
+        };
+        match openat(
+            parent.as_fd(),
+            candidate_cstr,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
+            Mode::from_bits_retain(TEMP_FILE_MODE_BITS),
+        ) {
+            Ok(fd) => return Ok((candidate, name_len, fd)),
+            Err(crate::Errno::EXIST) => attempt += 1,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(crate::Errno::EXIST)
+}
+
+#[inline]
+fn validate_temp_file_prefix(prefix: &[u8]) -> Result<usize> {
+    if prefix.is_empty() || prefix.iter().any(|&byte| byte == b'/') {
+        return Err(crate::Errno::INVAL);
+    }
+    let name_len = prefix
+        .len()
+        .checked_add(TEMP_FILE_SUFFIX_LENGTH)
+        .ok_or(crate::Errno::NAMETOOLONG)?;
+    if name_len > TEMP_FILE_NAME_MAX {
+        return Err(crate::Errno::NAMETOOLONG);
+    }
+    Ok(name_len)
+}
+
+/// A descriptor-owned anonymous temporary regular file.
+///
+/// `TempFile` uses Linux `O_TMPFILE | O_RDWR | O_CLOEXEC` relative to the
+/// requested directory. It never creates a directory entry, and dropping the
+/// value closes the only Rust ownership token for the inode. The requested
+/// [`Mode`] is used at creation time and remains subject to the process umask.
+///
+/// This API deliberately has no named-file or `mkstemp` fallback. A filesystem
+/// that cannot create anonymous temporary files returns
+/// [`crate::Errno::OPNOTSUPP`] (Linux `EOPNOTSUPP`) from [`Self::open`] or
+/// [`Self::open_at`]. Callers that need a pathname must choose and audit a
+/// separate named-file contract.
+#[repr(transparent)]
+pub struct TempFile {
+    fd: OwnedFd,
+}
+
+impl TempFile {
+    /// Opens an anonymous temporary file in `directory` relative to CWD.
+    ///
+    /// `directory` must name a directory on a filesystem supporting Linux
+    /// `O_TMPFILE`; the successful descriptor is opened read/write and
+    /// close-on-exec. No pathname is returned or created. `EOPNOTSUPP` is
+    /// returned unchanged when the filesystem lacks this operation.
+    #[inline]
+    pub fn open<P: Arg>(directory: P, mode: Mode) -> Result<Self> {
+        Self::open_at(CWD, directory, mode)
+    }
+
+    /// Opens an anonymous temporary file in `directory` relative to `dirfd`.
+    ///
+    /// The directory descriptor remains the caller's responsibility; only the
+    /// newly created temporary-file descriptor is moved into `TempFile`.
+    /// `directory` must name a directory on a filesystem supporting Linux
+    /// `O_TMPFILE`. No named-file fallback is attempted on `EOPNOTSUPP`.
+    #[inline]
+    pub fn open_at<Fd: AsFd, P: Arg>(dirfd: Fd, directory: P, mode: Mode) -> Result<Self> {
+        openat(
+            dirfd,
+            directory,
+            OFlags::RDWR | OFlags::TMPFILE | OFlags::CLOEXEC,
+            mode,
+        )
+        .map(|fd| Self { fd })
+    }
+
+    /// Borrows the anonymous file descriptor for direct I/O and metadata
+    /// operations.
+    #[inline]
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+
+    /// Consumes the temporary-file wrapper and returns its owned descriptor.
+    ///
+    /// The descriptor remains anonymous; transferring it does not create a
+    /// directory entry or change its close-on-exec status.
+    #[inline]
+    pub fn into_owned_fd(self) -> OwnedFd {
+        self.fd
+    }
+}
+
+impl AsFd for TempFile {
+    #[inline]
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.as_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsRawFd for TempFile {
+    #[inline]
+    fn as_raw_fd(&self) -> std::os::fd::RawFd {
+        self.as_fd().as_raw_fd()
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::os::fd::AsFd for TempFile {
+    #[inline]
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: `TempFile` owns its descriptor through `OwnedFd`, so it
+        // remains open for the returned standard-library borrow.
+        unsafe { std::os::fd::BorrowedFd::borrow_raw(self.as_fd().as_raw_fd()) }
+    }
 }
 
 /// A descriptor-owning, allocation-free Linux directory stream.

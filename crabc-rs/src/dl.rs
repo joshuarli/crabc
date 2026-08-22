@@ -13,7 +13,10 @@ use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 
 use bitflags::bitflags;
-use crabc_core::runtime::{LoaderAddressV1, RuntimeV1, TextV1, TEXT_CAPACITY, V1_ABI_VERSION};
+use crabc_core::runtime::{
+    LoaderAddressV1, LoaderImageV1, LoaderInformationV1, RuntimeV1, TextV1,
+    LOADER_SNAPSHOT_CAPACITY, TEXT_CAPACITY, V1_ABI_VERSION, V1_LEGACY_SIZE,
+};
 
 bitflags! {
     /// Typed `RTLD_*` scope and resolution flags accepted by [`Library::open`].
@@ -47,7 +50,7 @@ impl OpenFlags {
 /// are copied out of loader-owned storage before the private runtime call
 /// returns. An absent name is represented by `None` at the containing API,
 /// rather than being converted into a synthetic error message.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct LoaderText {
     bytes: [u8; TEXT_CAPACITY],
     len: u16,
@@ -188,6 +191,189 @@ impl AddressInfo {
     }
 }
 
+/// One owned record from [`LoadedImageSnapshot`].
+///
+/// The address fields are opaque values copied from the loader. They are not
+/// borrowed loader records and carry no promise that the mapped image remains
+/// present after a later load/unload operation. In particular, this type does
+/// not expose a `link_map` or a Rust reference into loader state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct LoadedImage {
+    image_base: Option<NonNull<c_void>>,
+    program_headers: Option<NonNull<c_void>>,
+    program_header_count: usize,
+    additions: u64,
+    removals: u64,
+    tls_module: Option<usize>,
+    tls_data: Option<NonNull<c_void>>,
+    image_name: Option<LoaderText>,
+}
+
+impl LoadedImage {
+    fn from_wire(image: LoaderImageV1) -> Self {
+        Self {
+            image_base: NonNull::new(image.image_base),
+            program_headers: NonNull::new(image.program_headers.cast_mut()),
+            program_header_count: image.program_header_count as usize,
+            additions: image.additions,
+            removals: image.removals,
+            tls_module: (image.tls_module != 0).then_some(image.tls_module),
+            tls_data: NonNull::new(image.tls_data),
+            image_name: LoaderText::from_wire(image.image_name),
+        }
+    }
+
+    /// Returns the copied relocated image base.
+    #[inline]
+    pub const fn image_base(&self) -> Option<NonNull<c_void>> {
+        self.image_base
+    }
+
+    /// Returns the copied program-header address as an opaque value.
+    #[inline]
+    pub const fn program_headers(&self) -> Option<NonNull<c_void>> {
+        self.program_headers
+    }
+
+    /// Returns the number of entries at [`Self::program_headers`].
+    #[inline]
+    pub const fn program_header_count(&self) -> usize {
+        self.program_header_count
+    }
+
+    /// Returns the load-event counter copied at the snapshot boundary.
+    #[inline]
+    pub const fn additions(&self) -> u64 {
+        self.additions
+    }
+
+    /// Returns the unload-event counter copied at the snapshot boundary.
+    #[inline]
+    pub const fn removals(&self) -> u64 {
+        self.removals
+    }
+
+    /// Returns the one-based TLS module ID, if this image has TLS.
+    #[inline]
+    pub const fn tls_module(&self) -> Option<usize> {
+        self.tls_module
+    }
+
+    /// Returns the current-thread TLS address as an opaque value.
+    #[inline]
+    pub const fn tls_data(&self) -> Option<NonNull<c_void>> {
+        self.tls_data
+    }
+
+    /// Returns the copied image name, if one was recorded.
+    #[inline]
+    pub fn image_name(&self) -> Option<&LoaderText> {
+        self.image_name.as_ref()
+    }
+}
+
+/// A bounded, owned snapshot of the loader's active image records.
+///
+/// The current native loader has a fixed 16-record bound. Capturing fills one
+/// caller-owned array while ldso's lock is held, then releases that lock before
+/// Rust observes the records. This API never invokes a callback under that
+/// lock and never exposes loader-owned `link_map` storage.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct LoadedImageSnapshot {
+    images: [LoadedImage; LOADER_SNAPSHOT_CAPACITY],
+    len: usize,
+    generation: u64,
+}
+
+impl LoadedImageSnapshot {
+    /// Copies the current active-image set from crabc's native loader.
+    pub fn capture() -> core::result::Result<Self, LoaderError> {
+        let runtime = introspection_runtime()?;
+        let mut records = [LoaderImageV1::empty(); LOADER_SNAPSHOT_CAPACITY];
+        let mut count = 0usize;
+        let mut generation = 0u64;
+        let mut error = TextV1::empty();
+        // SAFETY: The array, count, generation, and error are caller-owned
+        // exact v1 wire storage for the synchronous callback-free copy.
+        if unsafe {
+            (runtime.loader_snapshot)(
+                records.as_mut_ptr(),
+                records.len(),
+                &mut count,
+                &mut generation,
+                &mut error,
+            )
+        } != 0
+        {
+            return Err(runtime_error(error));
+        }
+        if count > records.len() {
+            return Err(LoaderError::message(b"loader returned too many image records"));
+        }
+        let mut images = [LoadedImage::from_wire(LoaderImageV1::empty()); LOADER_SNAPSHOT_CAPACITY];
+        for index in 0..count {
+            images[index] = LoadedImage::from_wire(records[index]);
+        }
+        Ok(Self {
+            images,
+            len: count,
+            generation,
+        })
+    }
+
+    /// Returns the copied active-image records in loader order.
+    #[inline]
+    pub fn images(&self) -> &[LoadedImage] {
+        &self.images[..self.len]
+    }
+
+    /// Returns the number of copied records.
+    #[inline]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the snapshot contains no active images.
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns the loader event-generation value at the copy boundary.
+    #[inline]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
+/// Owned copied metadata for one [`Library`] handle.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct LibraryInformation {
+    image_base: Option<NonNull<c_void>>,
+    dynamic_address: Option<NonNull<c_void>>,
+    image_name: Option<LoaderText>,
+}
+
+impl LibraryInformation {
+    /// Returns the copied relocated image base.
+    #[inline]
+    pub const fn image_base(&self) -> Option<NonNull<c_void>> {
+        self.image_base
+    }
+
+    /// Returns the copied dynamic-section address as an opaque value.
+    #[inline]
+    pub const fn dynamic_address(&self) -> Option<NonNull<c_void>> {
+        self.dynamic_address
+    }
+
+    /// Returns the copied image name.
+    #[inline]
+    pub fn image_name(&self) -> Option<&LoaderText> {
+        self.image_name.as_ref()
+    }
+}
+
 extern "C" {
     fn __crabc_runtime_v1() -> *const RuntimeV1;
 }
@@ -203,8 +389,16 @@ fn runtime() -> core::result::Result<&'static RuntimeV1, LoaderError> {
     // SAFETY: The non-null table belongs to the loaded libc runtime and is
     // immutable for the process lifetime by its private ABI contract.
     let runtime = unsafe { &*runtime };
-    if runtime.abi_version != V1_ABI_VERSION || runtime.abi_size < size_of::<RuntimeV1>() as u32 {
+    if runtime.abi_version != V1_ABI_VERSION || runtime.abi_size < V1_LEGACY_SIZE as u32 {
         return Err(LoaderError::message(b"incompatible crabc dynamic loader runtime"));
+    }
+    Ok(runtime)
+}
+
+fn introspection_runtime() -> core::result::Result<&'static RuntimeV1, LoaderError> {
+    let runtime = runtime()?;
+    if runtime.abi_size < size_of::<RuntimeV1>() as u32 {
+        return Err(LoaderError::message(b"crabc loader introspection unavailable"));
     }
     Ok(runtime)
 }
@@ -338,6 +532,31 @@ impl Library {
             symbol_address: NonNull::new(raw.symbol_address),
             image_name: LoaderText::from_wire(raw.image_name),
             symbol_name: LoaderText::from_wire(raw.symbol_name),
+        })
+    }
+
+    /// Copies useful metadata for this handle without exposing `link_map`.
+    ///
+    /// The returned addresses are opaque process values. The snapshot owns
+    /// only the record and name bytes; it does not extend the loader handle's
+    /// mapping lifetime or authorize dereferencing the dynamic section.
+    pub fn information(&self) -> core::result::Result<LibraryInformation, LoaderError> {
+        let runtime = introspection_runtime()?;
+        let mut raw = LoaderInformationV1::empty();
+        let mut error = TextV1::empty();
+        // SAFETY: The handle is live for this borrow and both output values
+        // are caller-owned exact v1 wire storage. The loader performs a
+        // callback-free copy while holding its own lock.
+        if unsafe {
+            (runtime.loader_information)(self.raw_handle().as_ptr(), &mut raw, &mut error)
+        } != 0
+        {
+            return Err(runtime_error(error));
+        }
+        Ok(LibraryInformation {
+            image_base: NonNull::new(raw.image_base),
+            dynamic_address: NonNull::new(raw.dynamic_address),
+            image_name: LoaderText::from_wire(raw.image_name),
         })
     }
 

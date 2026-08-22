@@ -15,6 +15,7 @@ use bitflags::bitflags;
 
 pub use crate::net::{IpAddress, SocketAddress};
 use crate::net::{AddressFamily, SocketType};
+use crate::netdb::{HostDatabase, NetDbError};
 use crate::Errno;
 
 /// Typed resolver failure categories; no C `EAI_*` value or TLS error is exposed.
@@ -252,14 +253,26 @@ impl Resolver {
                     return Err(ResolveError::InvalidInput);
                 }
                 let absolute = node.ends_with('.');
-                if !absolute && name.as_bytes().iter().filter(|&&byte| byte == b'.').count() < self.config.ndots as usize {
+                let dots = name.as_bytes().iter().filter(|&&byte| byte == b'.').count();
+                let search_first = !absolute && dots < self.config.ndots as usize;
+                if search_first {
                     for suffix in &self.config.search_domains {
-                        candidates.push(format_domain(name, suffix));
+                        push_candidate(&mut candidates, format_domain(name, suffix));
                     }
                 }
-                candidates.push(name.to_owned());
+                push_candidate(&mut candidates, name.to_owned());
+                if !search_first && !absolute {
+                    for suffix in &self.config.search_domains {
+                        push_candidate(&mut candidates, format_domain(name, suffix));
+                    }
+                }
                 let mut saw_no_data = false;
                 for candidate in candidates {
+                    if let Some((found, host_name)) = self.lookup_hosts(&candidate, options) {
+                        addresses = found;
+                        canonical = Some(host_name);
+                        break;
+                    }
                     match self.lookup_dns(candidate.as_bytes(), options.family, options.flags) {
                         Ok((found, name)) if !found.is_empty() => {
                             addresses = found;
@@ -346,12 +359,37 @@ impl Resolver {
     }
 
     fn lookup_dns(&self, name: &[u8], family: AddressFamily, flags: LookupFlags) -> core::result::Result<(Vec<IpAddress>, Option<String>), ResolveError> {
+        let mut current = String::from_utf8(name.to_vec()).map_err(|_| ResolveError::InvalidInput)?;
+        let mut visited = Vec::new();
+        let mut canonical = None;
+        for _ in 0..8 {
+            if visited.iter().any(|known: &String| known.eq_ignore_ascii_case(&current)) {
+                return Err(ResolveError::Failure);
+            }
+            visited.push(current.clone());
+            let answer = self.lookup_dns_once(current.as_bytes(), family, flags)?;
+            if answer.canonical.is_some() {
+                canonical = answer.canonical.clone();
+            }
+            if !answer.addresses.is_empty() {
+                return Ok((answer.addresses, canonical));
+            }
+            let Some(next) = answer.cname else {
+                return Err(if answer.saw_no_data { ResolveError::NoData } else { ResolveError::NameNotFound });
+            };
+            current = next;
+        }
+        Err(ResolveError::Failure)
+    }
+
+    fn lookup_dns_once(&self, name: &[u8], family: AddressFamily, flags: LookupFlags) -> core::result::Result<DnsLookup, ResolveError> {
         let types: &[u16] = if family == AddressFamily::INET { &[crabc_core::resolver::TYPE_A] }
             else if family == AddressFamily::INET6 && flags.contains(LookupFlags::V4MAPPED) { &[crabc_core::resolver::TYPE_AAAA, crabc_core::resolver::TYPE_A] }
             else if family == AddressFamily::INET6 { &[crabc_core::resolver::TYPE_AAAA] }
             else { &[crabc_core::resolver::TYPE_A, crabc_core::resolver::TYPE_AAAA] };
         let mut addresses = Vec::new();
         let mut canonical = None;
+        let mut cname = None;
         let mut saw_no_data = false;
         for &record_type in types {
             if record_type == crabc_core::resolver::TYPE_A
@@ -380,12 +418,17 @@ impl Resolver {
                 code if code != 0 => return Err(ResolveError::Failure),
                 _ => {}
             }
-            let mut cname = [0u8; 256];
-            if canonical.is_none() {
-                if let Some(length) = response.rdata_at(crabc_core::resolver::TYPE_CNAME, 0, &mut cname)
+            let mut cname_bytes = [0u8; 256];
+            if cname.is_none() {
+                if let Some(length) = response.rdata_at(crabc_core::resolver::TYPE_CNAME, 0, &mut cname_bytes)
                     .map_err(|_| ResolveError::Failure)?
                 {
-                    canonical = core::str::from_utf8(&cname[..length]).ok().map(str::to_owned);
+                    let target = core::str::from_utf8(&cname_bytes[..length]).map_err(|_| ResolveError::Failure)?;
+                    if target.is_empty() {
+                        return Err(ResolveError::Failure);
+                    }
+                    cname = Some(target.to_owned());
+                    canonical = cname.clone();
                 }
             }
             let mut ordinal = 0usize;
@@ -404,20 +447,39 @@ impl Resolver {
             }
             if addresses.is_empty() { saw_no_data = true; }
         }
-        if addresses.is_empty() {
-            Err(if saw_no_data { ResolveError::NoData } else { ResolveError::NameNotFound })
-        } else {
-            Ok((addresses, canonical))
+        Ok(DnsLookup { addresses, canonical, cname, saw_no_data })
+    }
+
+    fn lookup_hosts(&self, name: &str, options: LookupOptions) -> Option<(Vec<IpAddress>, String)> {
+        let entry = self.config.hosts.as_ref()?.lookup(name, None)?;
+        let mut addresses = Vec::new();
+        for address in entry.addresses() {
+            match (options.family, address) {
+                (family, IpAddress::V4(_)) if family == AddressFamily::INET || family == AddressFamily::UNSPEC => addresses.push(*address),
+                (AddressFamily::INET6, IpAddress::V6(_)) => addresses.push(*address),
+                (AddressFamily::INET6, IpAddress::V4(bytes)) if options.flags.contains(LookupFlags::V4MAPPED) => addresses.push(IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, bytes[0], bytes[1], bytes[2], bytes[3]])),
+                _ => {}
+            }
         }
+        if addresses.is_empty() { None } else { Some((addresses, entry.name().to_owned())) }
     }
 }
 
-/// Explicit resolver configuration. No constructor reads `/etc/resolv.conf`.
+struct DnsLookup {
+    addresses: Vec<IpAddress>,
+    canonical: Option<String>,
+    cname: Option<String>,
+    saw_no_data: bool,
+}
+
+/// Explicit resolver configuration. [`Self::new`] stays empty and explicit;
+/// [`Self::from_system`] is the opt-in direct snapshot loader.
 #[derive(Clone, Debug)]
 pub struct ResolverConfig {
     pub(crate) exchange: crabc_core::resolver::ExchangeConfig,
     search_domains: Vec<String>,
     ndots: u8,
+    hosts: Option<HostDatabase>,
 }
 
 impl ResolverConfig {
@@ -433,7 +495,66 @@ impl ResolverConfig {
             },
             search_domains: Vec::new(),
             ndots: 1,
+            hosts: None,
         }
+    }
+
+    /// Builds a resolver from caller-owned `/etc/resolv.conf` and hosts
+    /// snapshots. No process-global resolver state is consulted.
+    pub fn from_bytes(resolv_conf: &[u8], hosts: &[u8]) -> core::result::Result<Self, ResolveError> {
+        let mut config = Self::new();
+        parse_resolv_conf(resolv_conf, &mut config)?;
+        config.hosts = Some(HostDatabase::from_bytes(hosts).map_err(map_netdb_error)?);
+        Ok(config)
+    }
+
+    /// Loads bounded `/etc/resolv.conf` and `/etc/hosts` snapshots through
+    /// direct Linux file operations, then returns an owned configuration.
+    pub fn from_system() -> core::result::Result<Self, ResolveError> {
+        let resolv_conf = read_system_file(b"/etc/resolv.conf")?;
+        let hosts = read_system_file(b"/etc/hosts")?;
+        Self::from_bytes(&resolv_conf, &hosts)
+    }
+
+    /// Adds or replaces the caller-owned hosts snapshot used before DNS.
+    pub fn set_hosts(&mut self, hosts: HostDatabase) {
+        self.hosts = Some(hosts);
+    }
+
+    /// Returns the caller-owned hosts snapshot, when configured.
+    #[must_use]
+    pub fn hosts(&self) -> Option<&HostDatabase> {
+        self.hosts.as_ref()
+    }
+
+    /// Returns search suffixes in candidate order.
+    #[must_use]
+    pub fn search_domains(&self) -> &[String] {
+        &self.search_domains
+    }
+
+    /// Returns the `ndots` threshold used for search ordering.
+    #[must_use]
+    pub const fn ndots(&self) -> u8 {
+        self.ndots
+    }
+
+    /// Returns the configured nameserver count.
+    #[must_use]
+    pub fn nameserver_count(&self) -> usize {
+        self.exchange.nameserver_count
+    }
+
+    /// Returns the per-server DNS timeout in milliseconds.
+    #[must_use]
+    pub const fn timeout_ms(&self) -> u32 {
+        self.exchange.timeout_ms
+    }
+
+    /// Returns the configured-order retry count.
+    #[must_use]
+    pub const fn attempts(&self) -> u8 {
+        self.exchange.attempts
     }
 
     /// Adds one nameserver in configured order.
@@ -465,10 +586,11 @@ impl ResolverConfig {
         if self.search_domains.len() >= 6 || IpAddress::parse(domain.as_bytes()).is_some() {
             return Err(ResolveError::InvalidInput);
         }
-        if domain.is_empty() || domain.as_bytes().contains(&0) {
+        let domain = domain.trim_end_matches('.');
+        if !valid_domain(domain) {
             return Err(ResolveError::InvalidInput);
         }
-        self.search_domains.push(domain.trim_end_matches('.').to_owned());
+        self.search_domains.push(domain.to_owned());
         Ok(())
     }
 
@@ -496,6 +618,105 @@ impl ResolverConfig {
 
 impl Default for ResolverConfig {
     fn default() -> Self { Self::new() }
+}
+
+fn parse_resolv_conf(input: &[u8], config: &mut ResolverConfig) -> core::result::Result<(), ResolveError> {
+    let mut search_seen = false;
+    for line in input.split(|&byte| byte == b'\n' || byte == b'\r') {
+        let line = line
+            .split(|&byte| byte == b'#' || byte == b';')
+            .next()
+            .unwrap_or_default();
+        let fields: Vec<&[u8]> = line
+            .split(|&byte| byte == b' ' || byte == b'\t' || byte == b'\x0b' || byte == b'\x0c')
+            .filter(|field| !field.is_empty())
+            .collect();
+        if fields.is_empty() { continue; }
+        match fields[0] {
+            b"nameserver" => {
+                if fields.len() != 2 { return Err(ResolveError::InvalidInput); }
+                let address = IpAddress::parse(fields[1]).ok_or(ResolveError::InvalidInput)?;
+                config.add_nameserver(address)?;
+            }
+            b"search" => {
+                if fields.len() < 2 { return Err(ResolveError::InvalidInput); }
+                config.search_domains.clear();
+                for field in &fields[1..] {
+                    let domain = core::str::from_utf8(field).map_err(|_| ResolveError::InvalidInput)?;
+                    config.add_search_domain(domain)?;
+                }
+                search_seen = true;
+            }
+            b"domain" => {
+                if fields.len() != 2 { return Err(ResolveError::InvalidInput); }
+                if !search_seen {
+                    config.search_domains.clear();
+                    let domain = core::str::from_utf8(fields[1]).map_err(|_| ResolveError::InvalidInput)?;
+                    config.add_search_domain(domain)?;
+                }
+            }
+            b"options" => {
+                for option in &fields[1..] {
+                    parse_resolver_option(option, config)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn parse_resolver_option(option: &[u8], config: &mut ResolverConfig) -> core::result::Result<(), ResolveError> {
+    let Some(separator) = option.iter().position(|&byte| byte == b':') else {
+        return Ok(());
+    };
+    let value = &option[separator + 1..];
+    match &option[..separator] {
+        b"ndots" => config.set_ndots(parse_decimal_u8(value).ok_or(ResolveError::InvalidInput)?)?,
+        b"timeout" => {
+            let seconds = parse_decimal_u32(value).ok_or(ResolveError::InvalidInput)?;
+            let millis = seconds.checked_mul(1000).ok_or(ResolveError::Overflow)?;
+            config.set_timeout_ms(millis)?;
+        }
+        b"attempts" => config.set_attempts(parse_decimal_u8(value).ok_or(ResolveError::InvalidInput)?)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn valid_domain(domain: &str) -> bool {
+    if domain.is_empty() || domain.len() > 253 || domain.as_bytes().contains(&0) { return false; }
+    domain.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label.as_bytes().iter().all(|&byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    })
+}
+
+fn read_system_file(path: &[u8]) -> core::result::Result<Vec<u8>, ResolveError> {
+    let descriptor = crate::fs::open(path, crate::fs::OFlags::RDONLY | crate::fs::OFlags::CLOEXEC, crate::fs::Mode::empty())?;
+    let mut snapshot = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let read = match crabc_core::io::read(descriptor.as_raw_fd(), &mut chunk) {
+            Ok(read) => read,
+            Err(Errno::INTR) => continue,
+            Err(error) => return Err(ResolveError::System(error)),
+        };
+        if read == 0 { break; }
+        let new_length = snapshot.len().checked_add(read).ok_or(ResolveError::Overflow)?;
+        if new_length > 1024 * 1024 { return Err(ResolveError::Overflow); }
+        snapshot.extend_from_slice(&chunk[..read]);
+    }
+    Ok(snapshot)
+}
+
+fn map_netdb_error(error: NetDbError) -> ResolveError {
+    match error {
+        NetDbError::InvalidInput => ResolveError::InvalidInput,
+        NetDbError::Overflow => ResolveError::Overflow,
+        NetDbError::System(error) => ResolveError::System(error),
+    }
 }
 
 fn service_choices(service: Option<&str>, options: &LookupOptions) -> core::result::Result<Vec<(SocketType, u32)>, ResolveError> {
@@ -561,6 +782,12 @@ fn format_domain(name: &str, suffix: &str) -> String {
     result
 }
 
+fn push_candidate(candidates: &mut Vec<String>, candidate: String) {
+    if !candidates.iter().any(|known| known.eq_ignore_ascii_case(&candidate)) {
+        candidates.push(candidate);
+    }
+}
+
 fn reverse_name(address: IpAddress) -> String {
     let mut result = String::new();
     match address {
@@ -586,4 +813,19 @@ fn parse_decimal(value: &[u8]) -> Option<u16> {
         number = number.checked_mul(10)?.checked_add((byte - b'0') as u32)?;
     }
     (number <= u16::MAX as u32).then_some(number as u16)
+}
+
+fn parse_decimal_u8(value: &[u8]) -> Option<u8> {
+    let number = parse_decimal(value)?;
+    u8::try_from(number).ok()
+}
+
+fn parse_decimal_u32(value: &[u8]) -> Option<u32> {
+    if value.is_empty() { return None; }
+    let mut number = 0u32;
+    for &byte in value {
+        if !byte.is_ascii_digit() { return None; }
+        number = number.checked_mul(10)?.checked_add((byte - b'0') as u32)?;
+    }
+    Some(number)
 }

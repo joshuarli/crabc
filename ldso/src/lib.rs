@@ -264,6 +264,44 @@ pub struct LdsoLinkMap {
     l_prev: *mut LdsoLinkMap,
 }
 
+// These records are a private callback-free wire boundary with libc.  Keep
+// the layout independent of `crabc-core`: ldso is the owner of loader state
+// and must remain a standalone no_std interpreter.  The corresponding libc
+// and Rust types are repr(C) copies of these fields.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct LdsoSnapshotText {
+    len: u16,
+    flags: u16,
+    bytes: [u8; 256],
+}
+
+#[repr(C)]
+pub struct LdsoLoaderImageV1 {
+    image_base: *mut c_void,
+    program_headers: *const c_void,
+    program_header_count: u16,
+    reserved: u16,
+    additions: u64,
+    removals: u64,
+    tls_module: usize,
+    tls_data: *mut c_void,
+    image_name: LdsoSnapshotText,
+}
+
+#[repr(C)]
+pub struct LdsoLoaderInformationV1 {
+    image_base: *mut c_void,
+    dynamic_address: *mut c_void,
+    image_name: LdsoSnapshotText,
+}
+
+const EMPTY_SNAPSHOT_TEXT: LdsoSnapshotText = LdsoSnapshotText {
+    len: 0,
+    flags: 0,
+    bytes: [0; 256],
+};
+
 const EMPTY_LINK_MAP: LdsoLinkMap = LdsoLinkMap {
     l_addr: 0,
     l_name: core::ptr::null_mut(),
@@ -3263,6 +3301,10 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
             __ldso_dlinfo as *mut u8
         } else if str_eq(symbol, name_len, b"__crabc_ldso_tls_get_addr\0".as_ptr()) {
             __ldso_tls_get_addr as *mut u8
+        } else if str_eq(symbol, name_len, b"__crabc_ldso_loader_snapshot\0".as_ptr()) {
+            __ldso_loader_snapshot as *mut u8
+        } else if str_eq(symbol, name_len, b"__crabc_ldso_loader_information\0".as_ptr()) {
+            __ldso_loader_information as *mut u8
         } else {
             core::ptr::null_mut()
         };
@@ -3416,6 +3458,132 @@ unsafe fn loaded_object_tls_data(idx: usize) -> *mut u8 {
         ti_offset: 0,
     };
     __tls_get_addr(&index)
+}
+
+unsafe fn snapshot_text(source: &[u8; 256]) -> LdsoSnapshotText {
+    let mut result = EMPTY_SNAPSHOT_TEXT;
+    let mut len = 0usize;
+    while len < source.len() && source[len] != 0 {
+        len += 1;
+    }
+    result.bytes[..len].copy_from_slice(&source[..len]);
+    result.len = len as u16;
+    result
+}
+
+unsafe fn snapshot_error(error: *mut LdsoSnapshotText, message: &[u8]) {
+    if error.is_null() {
+        return;
+    }
+    let mut result = EMPTY_SNAPSHOT_TEXT;
+    let len = core::cmp::min(message.len(), result.bytes.len());
+    result.bytes[..len].copy_from_slice(&message[..len]);
+    result.len = len as u16;
+    result.flags = (len < message.len()) as u16;
+    core::ptr::write(error, result);
+}
+
+/// Copy the loader's current image metadata into caller-owned records.
+///
+/// The lock is held only for this bounded copy.  No callback is invoked and no
+/// pointer to `LOADED`, `LINK_MAPS`, or a loader-owned name is returned. The
+/// opaque address fields are values for diagnostics; callers must not infer a
+/// lifetime or dereference permission from this API.
+#[no_mangle]
+pub unsafe extern "C" fn __ldso_loader_snapshot(
+    records: *mut LdsoLoaderImageV1,
+    capacity: usize,
+    count: *mut usize,
+    generation: *mut u64,
+    error: *mut LdsoSnapshotText,
+) -> i32 {
+    if count.is_null() || generation.is_null() || (capacity != 0 && records.is_null()) {
+        snapshot_error(error, b"loader snapshot output is invalid");
+        return -1;
+    }
+    loader_lock();
+    let mut total = 0usize;
+    for i in 0..LOADED_COUNT {
+        if LOADED[i].active {
+            total += 1;
+        }
+    }
+    core::ptr::write(count, 0);
+    core::ptr::write(generation, DL_ADDS.wrapping_add(DL_SUBS));
+    if capacity < total {
+        loader_unlock();
+        snapshot_error(error, b"loader snapshot capacity is too small");
+        return -1;
+    }
+    let mut output = 0usize;
+    for i in 0..LOADED_COUNT {
+        if !LOADED[i].active {
+            continue;
+        }
+        let (program_headers, program_header_count) = loaded_object_phdrs(i)
+            .map_or((core::ptr::null(), 0), |(phdr, phnum)| (phdr as *const c_void, phnum));
+        let record = LdsoLoaderImageV1 {
+            image_base: LOADED[i].base as *mut c_void,
+            program_headers,
+            program_header_count: core::cmp::min(program_header_count, u16::MAX as usize) as u16,
+            reserved: 0,
+            additions: DL_ADDS,
+            removals: DL_SUBS,
+            tls_module: if LOADED[i].tls_memsz == 0 { 0 } else { i + 1 },
+            tls_data: loaded_object_tls_data(i) as *mut c_void,
+            image_name: snapshot_text(&LOADED[i].name),
+        };
+        core::ptr::write(records.add(output), record);
+        output += 1;
+    }
+    core::ptr::write(count, total);
+    loader_unlock();
+    0
+}
+
+/// Copy useful per-handle metadata without exposing the loader's link map.
+#[no_mangle]
+pub unsafe extern "C" fn __ldso_loader_information(
+    handle: *mut u8,
+    info: *mut LdsoLoaderInformationV1,
+    error: *mut LdsoSnapshotText,
+) -> i32 {
+    if info.is_null() {
+        snapshot_error(error, b"loader information output is invalid");
+        return -1;
+    }
+    core::ptr::write(
+        info,
+        LdsoLoaderInformationV1 {
+            image_base: core::ptr::null_mut(),
+            dynamic_address: core::ptr::null_mut(),
+            image_name: EMPTY_SNAPSHOT_TEXT,
+        },
+    );
+    loader_lock();
+    let main_index = if handle == DL_GLOBAL_SENTINEL
+        && LOADED_COUNT != 0
+        && LOADED[0].active
+    {
+        Some(0)
+    } else {
+        None
+    };
+    let Some(idx) = main_index.or_else(|| loaded_handle_index(handle)) else {
+        loader_unlock();
+        snapshot_error(error, b"loader information handle is invalid");
+        return -1;
+    };
+    core::ptr::write(
+        info,
+        LdsoLoaderInformationV1 {
+            image_base: LOADED[idx].base as *mut c_void,
+            dynamic_address: LOADED[idx].dyn_addr as *mut c_void,
+            image_name: snapshot_text(&LOADED[idx].name),
+        },
+    );
+    loader_unlock();
+    0
 }
 
 /// Invoke a public dl_iterate_phdr callback over the loader's stable snapshot.

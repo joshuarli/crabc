@@ -4,10 +4,12 @@ use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use crabc_core::runtime::{
-    CFileHandleV1, LoaderAddressV1, RuntimeV1, TextV1, ThreadDestructorV1,
+    CFileHandleV1, LoaderAddressV1, LoaderImageV1, LoaderInformationV1, RuntimeV1, TextV1,
+    ThreadDestructorV1,
     ThreadHandleV1, ThreadStartV1, CFILE_MODE_APPEND, CFILE_MODE_APPEND_UPDATE,
     CFILE_MODE_READ, CFILE_MODE_READ_UPDATE, CFILE_MODE_WRITE,
     CFILE_MODE_WRITE_UPDATE, V1_ABI_VERSION,
+    V1_LEGACY_SIZE,
 };
 use crabc_rs::cfile::{CFile, FileMode, SeekFrom};
 use crabc_rs::Errno;
@@ -46,6 +48,24 @@ unsafe extern "C" fn loader_close(_: *mut c_void, _: *mut TextV1) -> c_int {
 unsafe extern "C" fn loader_address(
     _: *const c_void,
     _: *mut LoaderAddressV1,
+    _: *mut TextV1,
+) -> c_int {
+    22
+}
+
+unsafe extern "C" fn loader_snapshot(
+    _: *mut LoaderImageV1,
+    _: usize,
+    _: *mut usize,
+    _: *mut u64,
+    _: *mut TextV1,
+) -> c_int {
+    22
+}
+
+unsafe extern "C" fn loader_information(
+    _: *mut c_void,
+    _: *mut LoaderInformationV1,
     _: *mut TextV1,
 ) -> c_int {
     22
@@ -198,7 +218,9 @@ unsafe extern "C" fn cfile_close(handle: CFileHandleV1) -> c_int {
 fn runtime() -> RuntimeV1 {
     RuntimeV1 {
         abi_version: V1_ABI_VERSION,
-        abi_size: core::mem::size_of::<RuntimeV1>() as u32,
+        // Exercise append-only compatibility: CFile only needs the v1
+        // prefix and must remain usable when introspection fields are absent.
+        abi_size: V1_LEGACY_SIZE as u32,
         loader_open,
         loader_symbol,
         loader_close,
@@ -225,6 +247,8 @@ fn runtime() -> RuntimeV1 {
         cfile_error,
         cfile_reset,
         cfile_close,
+        loader_snapshot,
+        loader_information,
     }
 }
 

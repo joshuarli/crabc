@@ -12,14 +12,13 @@
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::size_of;
 use core::ptr::NonNull;
 
 use crabc_core::runtime::{
     CFileHandleV1, RuntimeV1, CFILE_MODE_APPEND, CFILE_MODE_APPEND_UPDATE,
     CFILE_MODE_READ, CFILE_MODE_READ_UPDATE, CFILE_MODE_WRITE,
     CFILE_MODE_WRITE_UPDATE, CFILE_SEEK_CURRENT, CFILE_SEEK_END,
-    CFILE_SEEK_START, V1_ABI_VERSION,
+    CFILE_SEEK_START, V1_ABI_VERSION, V1_LEGACY_SIZE,
 };
 
 use crate::{Errno, Result};
@@ -36,7 +35,7 @@ fn runtime() -> Result<&'static RuntimeV1> {
     // SAFETY: The non-null pointer is owned by the loaded libc for the
     // process lifetime, as defined by the private runtime-table contract.
     let runtime = unsafe { runtime.as_ref() };
-    if runtime.abi_version != V1_ABI_VERSION || runtime.abi_size < size_of::<RuntimeV1>() as u32 {
+    if runtime.abi_version != V1_ABI_VERSION || runtime.abi_size < V1_LEGACY_SIZE as u32 {
         return Err(Errno::INVAL);
     }
     Ok(runtime)

@@ -73,8 +73,38 @@ capability**, not a Rust wrapper for every exported C symbol.
 async runtime, process supervisor, security-policy language, or portability
 facade. It exposes low-level mechanisms where useful—nonblocking descriptors,
 poll/epoll, process primitives, signals, credentials, namespaces, and resource
-controls—without turning them into policy frameworks. POSIX regex/glob/fnmatch
-remain compatibility facilities, not a competing Rust regex ecosystem.
+controls—without turning them into policy frameworks. The POSIX regex/glob/fnmatch
+C ABIs remain compatibility facilities, not a competing Rust regex ecosystem;
+crabc-rs additionally provides the bounded native `pattern::glob` and
+`pattern::glob_at` operations with explicit roots, owned byte results, and no
+hidden CWD traversal policy.
+
+## Process credential mutation
+
+The C `setreuid`, `setregid`, `seteuid`, and `setegid` entry points are an
+explicit profile limitation: they return `-1` with `errno == EOPNOTSUPP` and
+leave the real, effective, and saved-set IDs unchanged. This is a libc-profile
+unsupported result, not a claim that Linux lacks the underlying syscall or
+returns `ENOSYS`. A musl-compatible process-wide transition needs an
+all-thread credential rendezvous that crabc does not yet own. The native
+calling-task `setresuid`/`setresgid` operations remain separately scoped and do
+not satisfy this C process-wide contract.
+
+## Named, anonymous temporary files, and file handles
+
+The native `fs::NamedTempFile` contract covers the safe `mkstemp` family only:
+it uses an explicit directory authority, a 96-bit `getrandom` basename,
+exclusive `openat` creation with `O_CLOEXEC` and mode `0600`, and owned
+descriptor-relative unlink-on-drop cleanup. `mktemp`, `tempnam`, and `tmpnam`
+remain racy or ambient C pathname facilities. Linux `name_to_handle_at` and
+`open_by_handle_at` remain authority-bearing file-handle operations and are
+documented C-only here; crabc-rs does not provide a generic file-handle or
+filesystem-confinement framework.
+
+The native `fs::TempFile` contract is separate: it opens an anonymous regular
+file with Linux `O_TMPFILE | O_RDWR | O_CLOEXEC` relative to an explicit
+directory and never creates a directory entry. Filesystems without
+`O_TMPFILE` support return `EOPNOTSUPP`; no named-file fallback is attempted.
 
 ## Dependencies and performance
 

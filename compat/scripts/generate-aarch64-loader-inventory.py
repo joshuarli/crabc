@@ -346,7 +346,7 @@ _FEATURES: tuple[dict[str, Any], ...] = (
         "name": "self_relocation",
         "description": "AArch64 _start finds and applies the loader's relative relocations.",
         "markers": ("aarch64 _start", "R_AARCH64_RELATIVE", "run_main"),
-        "tests": (),
+        "tests": ("tests/ldso_self_relocation.rs",),
     },
     {
         "name": "basic_pie_loading",

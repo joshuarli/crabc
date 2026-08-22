@@ -62,6 +62,11 @@ path = "examples/m11_loader_dlfcn_basic_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
+name = "m11_loader_dlfcn_introspection_probe"
+path = "examples/m11_loader_dlfcn_introspection_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "m7_runtime_thread_probe"
 path = "examples/m7_runtime_thread_probe.rs"
 crate-type = ["staticlib"]
@@ -74,6 +79,11 @@ crate-type = ["staticlib"]
 [[example]]
 name = "m8_fnmatch_direct_probe"
 path = "examples/m8_fnmatch_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m8_glob_direct_probe"
+path = "examples/m8_glob_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
@@ -194,6 +204,11 @@ crate-type = ["staticlib"]
 [[example]]
 name = "m10_calendar_utc_direct_probe"
 path = "examples/m10_calendar_utc_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_calendar_local_direct_probe"
+path = "examples/m10_calendar_local_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
@@ -692,6 +707,11 @@ path = "examples/m10_terminal_control_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
+name = "m10_pty_session_direct_probe"
+path = "examples/m10_pty_session_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "m10_system_names_direct_probe"
 path = "examples/m10_system_names_direct_probe.rs"
 crate-type = ["staticlib"]
@@ -719,6 +739,31 @@ crate-type = ["staticlib"]
 [[example]]
 name = "m10_fs_tempdir_direct_probe"
 path = "examples/m10_fs_tempdir_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fs_tempfile_direct_probe"
+path = "examples/m10_fs_tempfile_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fs_named_tempfile_direct_probe"
+path = "examples/m10_fs_named_tempfile_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m13_inotify_direct_probe"
+path = "examples/m13_inotify_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m13_ipc_direct_probe"
+path = "examples/m13_ipc_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m13_users_databases_direct_probe"
+path = "examples/m13_users_databases_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [features]

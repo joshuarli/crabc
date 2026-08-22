@@ -71,6 +71,7 @@ candidate inventory when run in the native image:
 ```sh
 ./scripts/dev.sh test --test ldso_real_binary
 ./scripts/dev.sh test --test ldso_interp
+./scripts/dev.sh test --test ldso_self_relocation
 ./scripts/dev.sh test --test ldso_deps
 ./scripts/dev.sh test --test ldso_startup
 ./scripts/dev.sh test --test ldso_tls

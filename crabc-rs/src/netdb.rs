@@ -1,10 +1,22 @@
-//! Caller-owned hosts, services, and protocols databases.
+//! Owned hosts, services, and protocols snapshots.
 //!
-//! These parsers are intentionally independent of `/etc` and libc's static
-//! netdb state. A caller supplies the bytes (for example, from a sandboxed
-//! configuration source), and every lookup returns an owned typed value. The
-//! module does not expose the C `gethostby*`/`getservby*` ABI or its mutable
-//! result storage.
+//! `from_bytes` parses a caller-owned snapshot and `from_system` reads one of
+//! the three conventional files (`/etc/hosts`, `/etc/services`, or
+//! `/etc/protocols`) through crabc's direct Linux file APIs. The resulting
+//! databases own every text field, preserve source order for enumeration, and
+//! never expose libc's static netdb storage or a process-global cursor. Lookup
+//! results are cloned owned records, so callers can retain them after the
+//! database is dropped.
+//!
+//! Text fields are strict UTF-8 and may not contain NUL bytes; bytes are never
+//! converted lossily. Blank and comment-only lines are ignored. A non-empty
+//! line with a malformed field shape, address, number, or service specification
+//! rejects the complete snapshot with [`NetDbError::InvalidInput`] rather than
+//! being silently discarded. System files are bounded to one mebibyte before
+//! parsing and direct file errors are returned as [`NetDbError::System`]. This
+//! deliberately covers only these three files: it does not implement
+//! `/etc/networks`, NSS, provider plugins, resolver policy, or global C ABI
+//! enumeration.
 
 use alloc::string::String;
 use alloc::vec;
@@ -12,13 +24,15 @@ use alloc::vec::Vec;
 
 use crate::resolver::IpAddress;
 
-/// Errors from parsing a caller-provided netdb text snapshot.
+/// Errors from parsing or loading a netdb text snapshot.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NetDbError {
     /// A line has an invalid field shape or an invalid address/number.
     InvalidInput,
     /// A value exceeded the bounded native representation.
     Overflow,
+    /// A direct system-file operation failed.
+    System(crate::Errno),
 }
 
 /// An owned hosts-file entry.
@@ -78,6 +92,11 @@ impl HostDatabase {
         Ok(Self { entries })
     }
 
+    /// Reads and parses the conventional Linux hosts snapshot.
+    pub fn from_system() -> core::result::Result<Self, NetDbError> {
+        Self::from_bytes(&read_system_file(b"/etc/hosts")?)
+    }
+
     /// Returns a cloned owned match by canonical name or alias.
     #[must_use]
     pub fn lookup(&self, name: &str, family: Option<crate::net::AddressFamily>) -> Option<HostEntry> {
@@ -100,6 +119,21 @@ impl HostDatabase {
     /// Returns whether the database contains no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    /// Returns entries in source order, after repeated canonical names have
+    /// been merged according to the hosts parser's duplicate policy.
+    #[must_use]
+    pub fn entries(&self) -> &[HostEntry] { &self.entries }
+
+    /// Iterates over entries in source order.
+    pub fn iter(&self) -> core::slice::Iter<'_, HostEntry> { self.entries.iter() }
+}
+
+impl<'a> IntoIterator for &'a HostDatabase {
+    type Item = &'a HostEntry;
+    type IntoIter = core::slice::Iter<'a, HostEntry>;
+
+    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
 }
 
 /// A service transport understood by the bounded netdb slice.
@@ -109,7 +143,7 @@ pub enum ServiceProtocol {
     Tcp,
     /// User Datagram Protocol.
     Udp,
-    /// A protocol name retained as an owned numeric-independent token.
+    /// A protocol token outside TCP/UDP; the owned spelling is on the entry.
     Other,
 }
 
@@ -141,6 +175,7 @@ pub struct ServiceEntry {
     aliases: Vec<String>,
     port: u16,
     protocol: ServiceProtocol,
+    protocol_name: String,
 }
 
 impl ServiceEntry {
@@ -159,6 +194,11 @@ impl ServiceEntry {
     /// Returns the parsed transport protocol.
     #[must_use]
     pub const fn protocol(&self) -> ServiceProtocol { self.protocol }
+
+    /// Returns the original protocol token, including tokens classified as
+    /// [`ServiceProtocol::Other`].
+    #[must_use]
+    pub fn protocol_name(&self) -> &str { &self.protocol_name }
 }
 
 /// A deterministic, caller-owned services database.
@@ -176,13 +216,18 @@ impl ServiceDatabase {
             let fields = fields(line);
             if fields.is_empty() { continue; }
             if fields.len() < 2 { return Err(NetDbError::InvalidInput); }
-            let (port, protocol) = parse_service_spec(fields[1])?;
+            let (port, protocol, protocol_name) = parse_service_spec(fields[1])?;
             let name = text(fields[0])?;
             let mut aliases = Vec::new();
             for field in &fields[2..] { aliases.push(text(field)?); }
-            entries.push(ServiceEntry { name, aliases, port, protocol });
+            entries.push(ServiceEntry { name, aliases, port, protocol, protocol_name });
         }
         Ok(Self { entries })
+    }
+
+    /// Reads and parses the conventional Linux services snapshot.
+    pub fn from_system() -> core::result::Result<Self, NetDbError> {
+        Self::from_bytes(&read_system_file(b"/etc/services")?)
     }
 
     /// Returns a cloned owned match by name or alias and optional protocol.
@@ -210,6 +255,20 @@ impl ServiceDatabase {
     /// Returns whether the database contains no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    /// Returns entries in source order.
+    #[must_use]
+    pub fn entries(&self) -> &[ServiceEntry] { &self.entries }
+
+    /// Iterates over entries in source order.
+    pub fn iter(&self) -> core::slice::Iter<'_, ServiceEntry> { self.entries.iter() }
+}
+
+impl<'a> IntoIterator for &'a ServiceDatabase {
+    type Item = &'a ServiceEntry;
+    type IntoIter = core::slice::Iter<'a, ServiceEntry>;
+
+    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
 }
 
 /// An owned `/etc/protocols`-style entry.
@@ -258,6 +317,11 @@ impl ProtocolDatabase {
         Ok(Self { entries })
     }
 
+    /// Reads and parses the conventional Linux protocols snapshot.
+    pub fn from_system() -> core::result::Result<Self, NetDbError> {
+        Self::from_bytes(&read_system_file(b"/etc/protocols")?)
+    }
+
     /// Returns a cloned owned match by name or alias.
     #[must_use]
     pub fn lookup_name(&self, name: &str) -> Option<ProtocolEntry> {
@@ -280,6 +344,20 @@ impl ProtocolDatabase {
     /// Returns whether the database contains no entries.
     #[must_use]
     pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+
+    /// Returns entries in source order.
+    #[must_use]
+    pub fn entries(&self) -> &[ProtocolEntry] { &self.entries }
+
+    /// Iterates over entries in source order.
+    pub fn iter(&self) -> core::slice::Iter<'_, ProtocolEntry> { self.entries.iter() }
+}
+
+impl<'a> IntoIterator for &'a ProtocolDatabase {
+    type Item = &'a ProtocolEntry;
+    type IntoIter = core::slice::Iter<'a, ProtocolEntry>;
+
+    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
 }
 
 fn text(value: &[u8]) -> core::result::Result<String, NetDbError> {
@@ -293,13 +371,17 @@ fn fields(line: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
-fn parse_service_spec(value: &[u8]) -> core::result::Result<(u16, ServiceProtocol), NetDbError> {
+fn parse_service_spec(value: &[u8]) -> core::result::Result<(u16, ServiceProtocol, String), NetDbError> {
     let Some(separator) = value.iter().position(|&byte| byte == b'/') else {
         return Err(NetDbError::InvalidInput);
     };
     let port = parse_u16(&value[..separator])?;
-    let protocol = ServiceProtocol::parse(&value[separator + 1..]).ok_or(NetDbError::InvalidInput)?;
-    Ok((port, protocol))
+    let protocol_name = text(&value[separator + 1..])?;
+    if protocol_name.as_bytes().contains(&b'/') {
+        return Err(NetDbError::InvalidInput);
+    }
+    let protocol = ServiceProtocol::parse(protocol_name.as_bytes()).ok_or(NetDbError::InvalidInput)?;
+    Ok((port, protocol, protocol_name))
 }
 
 fn parse_u16(value: &[u8]) -> core::result::Result<u16, NetDbError> {
@@ -310,4 +392,30 @@ fn parse_u16(value: &[u8]) -> core::result::Result<u16, NetDbError> {
         result = result.checked_mul(10).and_then(|value| value.checked_add((byte - b'0') as u32)).ok_or(NetDbError::Overflow)?;
     }
     u16::try_from(result).map_err(|_| NetDbError::Overflow)
+}
+
+const MAX_SYSTEM_FILE_BYTES: usize = 1024 * 1024;
+
+fn read_system_file(path: &[u8]) -> core::result::Result<Vec<u8>, NetDbError> {
+    let descriptor = crate::fs::open(path, crate::fs::OFlags::CLOEXEC, crate::fs::Mode::empty())
+        .map_err(NetDbError::System)?;
+    let mut snapshot = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let read = match crabc_core::io::read(descriptor.as_raw_fd(), &mut chunk) {
+            Ok(read) => read,
+            Err(crate::Errno::INTR) => continue,
+            Err(error) => return Err(NetDbError::System(error)),
+        };
+        if read == 0 { break; }
+        let new_length = snapshot
+            .len()
+            .checked_add(read)
+            .ok_or(NetDbError::Overflow)?;
+        if new_length > MAX_SYSTEM_FILE_BYTES {
+            return Err(NetDbError::Overflow);
+        }
+        snapshot.extend_from_slice(&chunk[..read]);
+    }
+    Ok(snapshot)
 }
