@@ -4921,6 +4921,19 @@ unsafe fn a_load(addr: *const c_int) -> c_int {
     (*(addr as *const AtomicI32)).load(Ordering::Acquire)
 }
 
+/// Read an atomic bookkeeping hint without synchronizing protected data.
+///
+/// The pthread waiter count is only a conservative wake hint. Lock ownership
+/// and every happens-before edge remain on the lock-word acquire/release
+/// operation; a contender that has reached `futex_wait` has already made that
+/// word negative. This matches
+/// musl 1.2.6's unordered `_m_waiters` read in
+/// `src/thread/pthread_mutex_unlock.c` while retaining Rust's atomic access.
+#[inline(always)]
+unsafe fn a_load_relaxed(addr: *const c_int) -> c_int {
+    (*(addr as *const AtomicI32)).load(Ordering::Relaxed)
+}
+
 unsafe fn a_swap(addr: *mut c_int, val: c_int) -> c_int {
     // SAFETY: every caller passes the aligned `c_int` state field of a live
     // pthread or libc synchronization object, and accesses it exclusively
@@ -5696,10 +5709,21 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut pthread_mutex_t) -> c_
     let type_ = (*mutex).__i[0];
     if (type_ & 0x8f) == PTHREAD_MUTEX_NORMAL {
         // SAFETY: the public mutex contract supplies a live, aligned mutex
-        // lock word owned by this atomic-helper family. The exchange returns
-        // the waiter-marked state before the release, matching the slow path.
+        // lock word and waiter count are owned by this atomic-helper family.
+        // The count is an advisory wake hint, not a protected-data edge; see
+        // `a_load_relaxed` for the state-machine argument.
+        let waiters = unsafe { a_load_relaxed(&raw const (*mutex).__i[2]) };
+        if waiters <= 0 {
+            // A waiter that races this release either sees zero before it can
+            // mark the lock, or observes its signed futex value replaced by
+            // this store and receives `EAGAIN` instead of sleeping. Thus the
+            // uncontended release needs only the release store; an observed
+            // waiter takes the established exchange-and-wake path below.
+            unsafe { a_store(&raw mut (*mutex).__i[1], 0) };
+            return 0;
+        }
         let old = unsafe { a_swap(&raw mut (*mutex).__i[1], 0) };
-        if unsafe { a_load(&raw const (*mutex).__i[2]) } > 0 || old < 0 {
+        if old < 0 || waiters > 0 {
             futex_wake(&raw mut (*mutex).__i[1], 1);
         }
         return 0;

@@ -107,6 +107,15 @@ TLS above the downward-growing stack and reduces the normal lifecycle to one
 `dlopen` migration. The 513-lifetime direct differential, dynamic-TLS cases,
 and broad pthread stress pass, but the CPU gate remains red.
 
+The pthread/TLS table's earlier `pthread_mutex_uncontended` result is
+historical. The three `pthread-mutex-release-store-*-31` reports now establish
+0.6066×–0.6109× CPU upper bounds, passing the CPU gate with zero marked calls
+in both lanes. For normal mutexes, an unordered atomic waiter hint selects a
+single release store only when it observes no waiter; an observed waiter keeps
+the prior exchange-and-wake path. The direct Musl differentials, condition
+handoff regression, and ten pthread-stress iterations preserve the retry/wake
+state machine.
+
 ## Core runtime capability work
 
 | Ledger group | Exact work still left | Do not repeat |

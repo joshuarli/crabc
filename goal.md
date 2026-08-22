@@ -144,7 +144,7 @@ The current red rows are concrete rather than hypothetical:
 | C `stdio_format_parse` ×1,000 | 1.0452× CPU upper bound; 7.003 vs 6.211 marked calls/op | A successful `fseek` records its exact kernel position until I/O invalidates it, so the immediately following buffer-empty scanner avoids a redundant `SEEK_CUR` probe while other streams retain their seekability route. The direct-musl-differential contract also forces a one-byte-buffer seek-back path and invalidates the cache with an unbuffered read. The remaining read-ahead-to-EOF and stream setup keep both selected gates red. |
 | C `pthread_create_join_tls` ×1,000 | 0.9441×–1.0258× CPU upper bounds across three 31-sample reports; 7.000 vs 11.977 marked calls/op | One page-aligned mapping places TLS above the downward-growing stack; candidate marked `mmap`/`munmap` now match musl at one each. Exit captures a late dynamic-TLS migration before reclaiming the original and replacement blocks. The direct-matched static-TLS, pthread-key, and create/join contract still passes over 513 lifetimes; dynamic-TLS regressions and broad pthread stress preserve delayed detached reclamation. Candidate syscalls pass, but CPU remains red. |
 | C `loader_dynamic_tls_growth` ×8 | 1.2876×–1.3901× CPU upper bounds across three 31-sample reports; 8.125 vs 13.125 marked calls/op | The direct matched eight-DSO contract proves a worker predating all loads receives every initialized image and its writes are thread-local; the adjacent optimized parent/child graph proves one `dlopen` initializes every TLS module in a `DT_NEEDED` closure, while the 4-KiB-aligned regression proves TLSDESC migration refreshes its cached TP. Reusing a fitting allocation removes repeated block swaps, and the musl-matched initial `libc.so` short name removes redundant dependent-libc opens/stats without changing general runtime identity matching. The initial lowest-`PT_LOAD` file mapping now covers the final span before later fixed overlays, removing eight anonymous reservations: the trace records 17 candidate mappings versus 18 musl. The marked syscall gate passes; CPU remains red. |
-| C `pthread_mutex_uncontended` ×2,000,000 | 1.0095× CPU upper bound; zero marked calls in both lanes | Inline AArch64 `ldaxr`/`stlxr` compare-exchange and exchange preserve the original acquire/release atomic semantics while removing LLVM's outlined LSE capability probe; direct normal lock/unlock wrappers avoid slow-path stack setup. The direct-matched contract proves a protected counter, busy `trylock`, and successful destruction; contention and lifecycle stress preserve the waiter retry/wake protocol. The CPU gate remains red. |
+| C `pthread_mutex_uncontended` ×2,000,000 | 0.6066×–0.6109× CPU upper bounds across three 31-sample `pthread-mutex-release-store-*-31` reports; zero marked calls in both lanes | Inline AArch64 `ldaxr`/`stlxr` compare-exchange retains the acquisition contract. Normal unlock reads its advisory waiter count without an acquire barrier and emits one release `stlr` when it observes no waiter; any observed waiter retains the prior exchange-and-wake path. Direct Musl differentials, the condition handoff regression, and broad pthread stress preserve the waiter retry/wake protocol. The CPU gate passes. |
 | C `pthread_mutex_cond_ping_pong` ×10,000 | 1.0167× CPU upper bound; 6.0021 vs 6.0030 marked calls/op | The direct-matched parent/worker protocol proves each handoff's two protected increments. The verified inline atomic primitives lower the post-spin-removal 1.0372× result without changing the futex boundary or broad pthread stress result; the CPU gate remains red. |
 
 The preceding `memset` matrix cells are historical. Three current
@@ -155,6 +155,15 @@ The preceding `memset` matrix cells are historical. Three current
 generic bounded head/tail schedule now uses explicit AArch64 GPR stores, so
 LLVM cannot substitute NEON before a separately proven SIMD decision. Every
 fill CPU row remains red.
+
+The Threads/TLS family table's earlier `pthread_mutex_uncontended` result is
+historical. Three current `pthread-mutex-release-store-*-31` reports establish
+a 0.6066×–0.6109× CPU upper-bound range, passing the CPU gate with zero marked
+syscalls in both lanes. The normal unlock fast path uses an unordered atomic
+waiter hint only to select its release store; a waiter that races the store
+cannot sleep on the replaced signed value, while any observed waiter retains
+the exchange-and-wake path. Direct Musl differentials, the condition handoff
+regression, and ten pthread-stress iterations preserve that state machine.
 
 No performance completion is declared while any currently selected red row or
 mandatory family fails, is omitted, or is unsupported.
