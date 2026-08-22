@@ -90,6 +90,14 @@ CPython 3.14.3 source build; retain it while starting `goal.md` work.
 | Scope decision | Resolve the universal allocator-plateau memory gate without starting allocator research. | The bounded audit finds one direct mimalloc domain and no duplicate wrapper allocation state. `smaps` attributes about 47.3 MiB of crabc PSS to anonymous mappings versus 33.3 MiB for musl, but a fully touched 32-MiB payload alone exceeds 90% of musl's total PSS. The fresh-cgroup `memory.peak` collector is explicitly unsupported under Docker's read-only cgroup mount. A user must choose the allocator scope change in `goal.md`; no configuration can make this fixture meet the present universal PSS target. |
 | Tooling | Resolve Rustybench’s dependency-bearing `-Z build-std` duplicate-`core` limitation before using it for build-std timing. | The dependency-free M12 `std,panic_abort` fat-LTO application proof is green; the Rustybench route records explicit unsupported evidence rather than a false measurement. |
 
+The scalar `memset` summary in the P1 table is historical. Three current
+`memset-gpr-scalar-schedule-*-31` reports supersede it with cache-resident
+64-B/16-KiB/256-KiB aligned/unaligned ranges of 1.1615×–1.1801×,
+1.1186×–1.1469×, and 0.9163×–1.6508×, plus 128-MiB ranges of
+1.1315×–1.1922× aligned and 1.1947×–1.2334× unaligned. The schedule is
+still scalar: explicit AArch64 GPR stores prevent LLVM from substituting NEON
+before a separately verified SIMD decision. Every fill row remains red.
+
 The pthread/TLS table's earlier `pthread-slot-publication-matrix-31` range is
 historical. `pthread-combined-stack-tls-create-matrix-31` records the current
 0.9441×–1.0258× CPU upper-bound range across three runs, with 7.000 versus

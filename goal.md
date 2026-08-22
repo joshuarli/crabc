@@ -147,6 +147,15 @@ The current red rows are concrete rather than hypothetical:
 | C `pthread_mutex_uncontended` ×2,000,000 | 1.0095× CPU upper bound; zero marked calls in both lanes | Inline AArch64 `ldaxr`/`stlxr` compare-exchange and exchange preserve the original acquire/release atomic semantics while removing LLVM's outlined LSE capability probe; direct normal lock/unlock wrappers avoid slow-path stack setup. The direct-matched contract proves a protected counter, busy `trylock`, and successful destruction; contention and lifecycle stress preserve the waiter retry/wake protocol. The CPU gate remains red. |
 | C `pthread_mutex_cond_ping_pong` ×10,000 | 1.0167× CPU upper bound; 6.0021 vs 6.0030 marked calls/op | The direct-matched parent/worker protocol proves each handoff's two protected increments. The verified inline atomic primitives lower the post-spin-removal 1.0372× result without changing the futex boundary or broad pthread stress result; the CPU gate remains red. |
 
+The preceding `memset` matrix cells are historical. Three current
+`memset-gpr-scalar-schedule-*-31` reports supersede them: the 64-B/16-KiB/
+256-KiB aligned/unaligned cells range from 1.1615×–1.1801×,
+1.1186×–1.1469×, and 0.9163×–1.6508×; the 128-MiB cells range from
+1.1315×–1.1922× aligned and 1.1947×–1.2334× unaligned. The musl 1.2.6
+generic bounded head/tail schedule now uses explicit AArch64 GPR stores, so
+LLVM cannot substitute NEON before a separately proven SIMD decision. Every
+fill CPU row remains red.
+
 No performance completion is declared while any currently selected red row or
 mandatory family fails, is omitted, or is unsupported.
 

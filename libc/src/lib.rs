@@ -1016,14 +1016,18 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
 /// `s` must designate at least `n` writable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn memset(s: *mut c_void, c: c_int, n: usize) -> *mut c_void {
-    let s = s as *mut u8;
-    let byte = c as u8;
-    let mut i = 0usize;
-    while i < n {
-        unsafe { s.add(i).write(byte) };
-        i += 1;
+    let destination = s.cast::<u8>();
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: the public C contract requires `destination` to designate `n`
+    // writable bytes. The scalar helper performs no reads and keeps every
+    // typed store inside that precise byte range.
+    unsafe { memset_scalar(destination, c as u8, n) };
+    #[cfg(not(target_arch = "aarch64"))]
+    for offset in 0..n {
+        // SAFETY: the public C contract makes every byte in `0..n` writable.
+        unsafe { destination.add(offset).write(c as u8) };
     }
-    s as *mut c_void
+    s
 }
 
 #[no_mangle]
