@@ -17,6 +17,7 @@ int main(void)
     void *zero_a = malloc(0);
     void *zero_b = malloc(0);
     void *aligned = (void *)1;
+    const size_t natural_alignment_sizes[] = {1, 15, 16, 17, 4096, 262144};
     size_t i;
 
     if (zero_a == NULL || zero_b == NULL || zero_a == zero_b)
@@ -25,6 +26,13 @@ int main(void)
         return fail("malloc-alignment");
     free(zero_a);
     free(zero_b);
+
+    for (i = 0; i < sizeof(natural_alignment_sizes) / sizeof(natural_alignment_sizes[0]); ++i) {
+        void *p = malloc(natural_alignment_sizes[i]);
+        if (p == NULL || (unsigned long)p % 16 != 0)
+            return fail("malloc-natural-alignment");
+        free(p);
+    }
 
     small = malloc(4);
     if (small == NULL)

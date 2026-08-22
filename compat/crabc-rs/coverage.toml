@@ -42,7 +42,7 @@ candidate_symbols = [
   "__isoc99_scanf", "__isoc99_sscanf", "__isoc99_swscanf", "__isoc99_vfscanf", "__isoc99_vfwscanf", "__isoc99_vscanf", "__isoc99_vsscanf", "__isoc99_vswscanf",
   "__isoc99_vwscanf", "__isoc99_wscanf", "__isprint_l", "__ispunct_l", "__isspace_l", "__isupper_l", "__iswalnum_l", "__iswalpha_l",
   "__iswblank_l", "__iswcntrl_l", "__iswctype_l", "__iswdigit_l", "__iswgraph_l", "__iswlower_l", "__iswprint_l", "__iswpunct_l",
-  "__iswspace_l", "__iswupper_l", "__iswxdigit_l", "__isxdigit_l", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym",
+  "__iswspace_l", "__iswupper_l", "__iswxdigit_l", "__isxdigit_l", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym", "__ldso_register_mark_multithreaded",
   "__lgammal_r", "__libc_current_sigrtmax", "__libc_current_sigrtmin", "__libc_start_main", "__lxstat", "__newlocale", "__nl_langinfo", "__nl_langinfo_l",
   "__optpos", "__optreset", "__overflow", "__posix_getopt", "__progname", "__progname_full", "__qsort_r", "__rc_clone",
   "__rc_create_thread_tls", "__rc_tls_base_offset", "__rc_tls_block_size", "__res_state", "__sched_cpucount", "__setjmp", "__signbit", "__signbitf",
@@ -257,6 +257,7 @@ candidate_only_symbols = [
   "__ldso_register_dlerror",
   "__ldso_register_dlopen",
   "__ldso_register_dlsym",
+  "__ldso_register_mark_multithreaded",
   "__qsort_r",
   "__rc_clone",
   "__rc_create_thread_tls",
@@ -271,7 +272,7 @@ candidate_only_symbols = [
 [[capability]]
 id = "runtime.loader"
 kind = "semantic"
-symbols = ["__auxv", "__crabc_runtime_v1", "__dls2b", "__dls3", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym", "__libc_start_main", "__rc_clone", "__rc_create_thread_tls", "__rc_tls_base_offset", "__rc_tls_block_size", "__tls_get_addr", "_dl_debug_addr", "_dl_debug_state", "_dlstart", "_fini", "_init"]
+symbols = ["__auxv", "__crabc_runtime_v1", "__dls2b", "__dls3", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym", "__ldso_register_mark_multithreaded", "__libc_start_main", "__rc_clone", "__rc_create_thread_tls", "__rc_tls_base_offset", "__rc_tls_block_size", "__tls_get_addr", "_dl_debug_addr", "_dl_debug_state", "_dlstart", "_fini", "_init"]
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "ldso and the append-only private RuntimeV1 bridge"
@@ -1777,11 +1778,11 @@ classification = "native-safe"
 status = "verified"
 rust_api = ["time::{RealtimeMillis, realtime_millis}"]
 shared_impl = ["crabc_core::time::clock_gettime_raw with CLOCK_REALTIME"]
-native_boundary = "direct Linux/AArch64 clock_gettime syscall 113 with a fixed realtime selector and private validated timespec storage, truncated to milliseconds"
+native_boundary = "validated Linux/AArch64 vDSO clock_gettime with a fixed realtime selector and private validated timespec storage, truncated to milliseconds; unavailable or malformed vDSO metadata uses the direct syscall fallback"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_realtime_millis.rs", "crabc-rs/examples/m10_time_realtime_millis_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "The native replacement for musl ftime preserves signed Unix seconds and a normalized millisecond remainder without exposing C timeb storage, timezone state, allocation, vDSO dispatch, or the C error sentinel. Formatting, parsing, and process-global clock-policy symbols remain in the documented time.clock-calendar boundary; timezone rules and local conversion are separate verified capabilities."
+rationale = "The native replacement for musl ftime preserves signed Unix seconds and a normalized millisecond remainder without exposing C timeb storage, timezone state, allocation, or the C error sentinel. The kernel vDSO is an internal performance dispatch with a tested direct-syscall fallback, not a public native API. Formatting, parsing, and process-global clock-policy symbols remain in the documented time.clock-calendar boundary; timezone rules and local conversion are separate verified capabilities."
 
 [[capability]]
 id = "time.timespec-get"
@@ -1791,7 +1792,7 @@ classification = "native-safe"
 status = "verified"
 rust_api = ["time::timespec_get"]
 shared_impl = ["crabc_core::time::clock_gettime_raw with CLOCK_REALTIME"]
-native_boundary = "direct Linux/AArch64 clock_gettime syscall 113 with fixed realtime selector and a private initialized timespec record"
+native_boundary = "validated Linux/AArch64 vDSO clock_gettime with a fixed realtime selector and private initialized timespec record; unavailable or malformed metadata uses the direct syscall fallback"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_timespec_get.rs", "crabc-rs/examples/m10_time_timespec_get_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
@@ -1805,7 +1806,7 @@ classification = "native-safe"
 status = "verified"
 rust_api = ["time::{ProcessClockId, clock_getcpuclockid, DynamicClockId::Process}"]
 shared_impl = ["crabc_core::time::{clock_getres_raw, clock_gettime_raw}"]
-native_boundary = "musl-encoded, kernel-validated process CPU clockid and direct Linux/AArch64 clock_getres/clock_gettime syscalls"
+native_boundary = "musl-encoded, kernel-validated process CPU clockid and direct Linux/AArch64 clock_getres plus the shared clock_gettime dispatch; CPU clock IDs remain direct syscalls"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/time.rs", "crabc-rs/tests/m10_process_clock_id.rs", "crabc-rs/examples/m10_process_clock_id_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
@@ -1847,7 +1848,7 @@ classification = "native-safe"
 status = "verified"
 rust_api = ["time::process_cpu_time"]
 shared_impl = ["crabc_core::time::clock_gettime_raw"]
-native_boundary = "direct Linux/AArch64 clock_gettime over CLOCK_PROCESS_CPUTIME_ID with private validated timespec output converted to Duration"
+native_boundary = "shared Linux/AArch64 clock_gettime dispatch over CLOCK_PROCESS_CPUTIME_ID with private validated timespec output converted to Duration; the CPU clock ID follows its direct-syscall route"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["libc/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/m10_process_cpu_time.rs", "crabc-rs/examples/m10_process_cpu_time_direct_probe.rs", "compat/crabc-rs/verify_m10_kernel.py"]
@@ -1917,11 +1918,11 @@ classification = "native-safe"
 status = "verified"
 rust_api = ["time::{ClockId, DynamicClockId, clock_getres, clock_gettime, clock_gettime_dynamic}"]
 shared_impl = ["crabc_core::time::{clock_getres_raw, clock_gettime_raw}"]
-native_boundary = "direct Linux/AArch64 clock_getres and clock_gettime (syscall 113) paths for typed known clocks and Rustix-shaped descriptor-backed CLOCKFD encoding, with caller-owned timespec output"
+native_boundary = "direct Linux/AArch64 clock_getres plus shared clock_gettime dispatch for typed known clocks and Rustix-shaped descriptor-backed CLOCKFD encoding, with caller-owned timespec output; eligible fixed clocks use the validated vDSO while descriptor and CPU clocks use the direct syscall"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_dynamic.rs", "crabc-rs/examples/m10_time_dynamic_direct_probe.rs", "compat/rustix/source/m10_time_dynamic.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "Known and dynamic clock observations use direct kernel syscalls and preserve descriptor-clock errors as Result values; no libc, vDSO, or TLS errno path is exposed. Clock mutation and local calendar conversion are separate capabilities; formatting remains in the documented calendar boundary."
+rationale = "Known and dynamic clock observations preserve descriptor-clock errors as Result values. Eligible fixed known clocks use the validated kernel vDSO with a direct fallback for unavailable or malformed metadata; descriptor and CPU clocks remain direct kernel syscalls. No libc or TLS errno path is exposed. Clock mutation and local calendar conversion are separate capabilities; formatting remains in the documented calendar boundary."
 
 [[capability]]
 id = "time.process-interval-control"
@@ -3310,6 +3311,13 @@ capability = "runtime.loader"
 classification = "internal-runtime"
 status = "documented"
 rationale = "Private libc-to-ldso symbol callback registration."
+
+[[candidate_only]]
+name = "__ldso_register_mark_multithreaded"
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private libc-to-ldso transition before the first pthread can run."
 
 [[candidate_only]]
 name = "__qsort_r"

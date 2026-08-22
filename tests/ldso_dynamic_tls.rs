@@ -14,8 +14,11 @@ fn ldso_initializes_dlopen_tls_for_existing_threads() {
     let temp_dir = dso.parent();
     let binary = test_support::TempArtifact::new("ldso_dynamic_tls_test");
 
+    // Optimized AArch64 TLSDESC access retains TP across the resolver call;
+    // this 4-KiB-aligned image forces the existing worker onto a new TLS block.
     let status = Command::new("musl-gcc")
         .args([
+            "-O3",
             "-shared",
             "-fPIC",
             fixtures.join("dynamic_tls_dso.c").to_str().unwrap(),
@@ -28,6 +31,7 @@ fn ldso_initializes_dlopen_tls_for_existing_threads() {
 
     let status = Command::new("musl-gcc")
         .args([
+            "-O3",
             "-fPIE",
             "-pie",
             "-I",

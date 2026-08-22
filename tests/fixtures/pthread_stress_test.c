@@ -295,7 +295,17 @@ static void test_fork_with_live_thread(void) {
     }
     if (child == 0) {
         char byte = 'F';
-        _exit(write(pipefd[1], &byte, 1) == 1 ? 0 : 111);
+        pthread_t self = pthread_self();
+        int previous_state = -1;
+        int state_result = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,
+                                                  &previous_state);
+        if (state_result == 0)
+            pthread_setcancelstate(previous_state, NULL);
+        _exit(self != (pthread_t)0 && state_result == 0 &&
+                      previous_state == PTHREAD_CANCEL_ENABLE &&
+                      write(pipefd[1], &byte, 1) == 1
+                  ? 0
+                  : 111);
     }
     struct pollfd event = {pipefd[0], POLLIN, 0};
     int poll_result = poll(&event, 1, 1000);

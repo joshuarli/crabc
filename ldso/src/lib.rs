@@ -3,8 +3,8 @@
 #![feature(linkage)]
 #![allow(dead_code, deref_nullptr)]
 
-use core::ffi::{c_char, c_void};
-use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use core::ffi::c_void;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -131,10 +131,47 @@ const STT_TLS: u8 = 6;
 const TCB_GENERATION_OFFSET: usize = 8;
 const TCB_BLOCK_SIZE_OFFSET: usize = 16;
 const TCB_TP_OFFSET_OFFSET: usize = 24;
+// The libc-facing TCB fields stop at the stack guard at 0x28. This following
+// range remains loader-private inside the fixed 256-byte allocation: the
+// original TP is a stable owner token across dynamic-TLS replacement, the
+// error-node pointer avoids a `gettid` syscall for every successful `dlsym`,
+// and the final range caches one verified handle-local symbol lookup per
+// thread.
+const TCB_LOADER_OWNER_OFFSET: usize = 48;
+const TCB_DLERROR_NODE_OFFSET: usize = 56;
+const TCB_DLSYM_CACHE_HANDLE_OFFSET: usize = 64;
+const TCB_DLSYM_CACHE_RESULT_OFFSET: usize = 72;
+const TCB_DLSYM_CACHE_NAME_LEN_OFFSET: usize = 80;
+const TCB_DLSYM_CACHE_HASH_OFFSET: usize = 88;
+const TCB_DLSYM_CACHE_NAME_OFFSET: usize = 96;
+const DLSYM_CACHE_NAME_LIMIT: usize = 64;
 
 // ============================================================
 // Loaded object tracking
 // ============================================================
+
+/// Immutable table bases and selectors decoded once from a valid GNU hash
+/// header. Retaining these object-relative addresses removes repeated header
+/// loads and checked base arithmetic from every symbol lookup without making
+/// a malformed header look valid.
+#[derive(Copy, Clone)]
+struct GnuHashMetadata {
+    // ELF encodes all three selectors as `u32`. Preserve that width so the
+    // AArch64 lookup can use 32-bit remainder instructions before converting
+    // the bounded result into a pointer element index.
+    bucket_count: u32,
+    symbol_offset: u32,
+    bloom_count: u32,
+    // A power-of-two Bloom word count can use a mask. `u32::MAX` is the
+    // non-power-of-two sentinel: no representable power-of-two count can
+    // produce that mask, so nonconforming-but-mapped GNU tables retain the
+    // generic modulo route.
+    bloom_mask: u32,
+    bloom_shift: u32,
+    bloom: *const u64,
+    buckets: *const u32,
+    chains: *const u32,
+}
 
 struct LoadedObject {
     base: u64,
@@ -142,6 +179,12 @@ struct LoadedObject {
     map_size: usize,
     symtab: *const u8,
     sym_count: usize,
+    // `DT_GNU_HASH` takes precedence when present, matching musl's lookup
+    // selection. Keep both table bases because a DSO may carry both formats
+    // and a SysV-only object still needs its legacy chain lookup.
+    gnu_hash: *const u8,
+    gnu_hash_metadata: Option<GnuHashMetadata>,
+    sysv_hash: *const u8,
     strtab: *const u8,
     strsz: usize,
     search_path: *const u8,
@@ -180,6 +223,11 @@ struct LoadedObject {
     file_identity_valid: bool,
     file_dev: u64,
     file_ino: u64,
+    // A bare startup dependency may safely reuse this object by name only
+    // while the initial graph is still being discovered and the object first
+    // resolved through the immutable process `LD_LIBRARY_PATH`. Parent
+    // RUNPATH/RPATH and post-constructor dlopen keep inode-based matching.
+    initial_ld_library_path_name: bool,
     name: [u8; 256],
 }
 
@@ -189,6 +237,9 @@ const EMPTY_OBJ: LoadedObject = LoadedObject {
     map_size: 0,
     symtab: core::ptr::null(),
     sym_count: 0,
+    gnu_hash: core::ptr::null(),
+    gnu_hash_metadata: None,
+    sysv_hash: core::ptr::null(),
     strtab: core::ptr::null(),
     strsz: 0,
     search_path: core::ptr::null(),
@@ -223,12 +274,17 @@ const EMPTY_OBJ: LoadedObject = LoadedObject {
     file_identity_valid: false,
     file_dev: 0,
     file_ino: 0,
+    initial_ld_library_path_name: false,
     name: [0; 256],
 };
 
 // Safety: only accessed from single-threaded _start -> run_main
 static mut LOADED: [LoadedObject; MAX_LOADED] = [EMPTY_OBJ; MAX_LOADED];
 static mut LOADED_COUNT: usize = 0;
+// No application code runs while the initial DT_NEEDED graph is discovered.
+// This makes the process's loader search path stable for the narrowly scoped
+// bare-name reuse cache below. Runtime dlopen deliberately never uses it.
+static mut INITIAL_LOAD_IN_PROGRESS: bool = false;
 
 // These layouts are the public ELF/link.h ABI.  The arrays are kept beside
 // LOADED so a dlinfo result remains stable even though dlopen handles retain
@@ -382,35 +438,40 @@ static mut TLS_MODULE_COUNT: usize = 0;
 // TP-relative descriptor. A module loaded later must consult the current
 // thread because pre-existing threads do not yet contain its TLS image.
 static mut TLS_STATIC_MODULE_COUNT: usize = 0;
+// Each TLS image is introduced by one process-wide layout generation. A
+// thread retains the generation of the block it owns, so a later lookup can
+// initialize precisely the images it has never contained. This is necessary
+// when several `dlopen` calls happen before an existing thread first touches
+// any of their TLS symbols: recording only the newest module would leave the
+// earlier images as zero-filled allocation reserve.
+static mut TLS_MODULE_GENERATION: [u64; MAX_LOADED] = [0; MAX_LOADED];
 static mut TLS_GENERATION: u64 = 1;
-static mut TLS_OLD_TOTAL: usize = 0;
-static mut TLS_OLD_MODULE_COUNT: usize = 0;
 static TLS_LOCK: AtomicBool = AtomicBool::new(false);
 // Runtime loader operations are serialized like musl's global loader lock.
 // The lock is recursive for constructor callbacks, which may call dlopen or
 // dlsym while the outer operation is still mutating the object graph.
 static LOADER_LOCK: AtomicBool = AtomicBool::new(false);
-static LOADER_OWNER: AtomicI64 = AtomicI64::new(0);
+static LOADER_OWNER: AtomicUsize = AtomicUsize::new(0);
 static LOADER_DEPTH: AtomicUsize = AtomicUsize::new(0);
+// A process starts with one execution context, so loader operations need no
+// atomic synchronization until libc is about to publish its first pthread.
+// The transition is one-way: retaining the locked route after a thread exits,
+// a failed create, or fork is conservative and avoids inferring liveness from
+// racy thread-registry state.
+static LOADER_MULTI_THREADED: AtomicBool = AtomicBool::new(false);
+static mut LOADER_SINGLE_DEPTH: usize = 0;
 
 const DLERROR_BUF_SIZE: usize = 128;
 
 #[repr(C)]
 struct DlErrorNode {
-    tid: usize,
-    thread_pointer: usize,
     set: AtomicBool,
     buf: [u8; DLERROR_BUF_SIZE],
-    next: *mut DlErrorNode,
 }
 
-// Error nodes are allocated once for each observed (tid, thread-pointer)
-// identity and are never shared between distinct live threads.  Including the
-// thread pointer prevents a recycled Linux tid from exposing an exited
-// thread's pending error before the new thread has performed another loader
-// operation. Nodes are intentionally retained so no thread-exit hook or
-// allocator is needed in the early loader.
-static mut DLERROR_HEAD: *mut DlErrorNode = core::ptr::null_mut();
+// Error nodes are allocated once per loader-owned TCB and are intentionally
+// retained. A new thread gets a freshly cleared TCB cache entry, so a recycled
+// thread-pointer allocation cannot inherit a prior thread's pending error.
 static DLERROR_LOCK: AtomicBool = AtomicBool::new(false);
 static mut LD_LIBRARY_PATH: *const u8 = core::ptr::null();
 static mut RUNPATH: *const u8 = core::ptr::null();
@@ -745,6 +806,20 @@ unsafe fn str_len(s: *const u8) -> usize {
     len
 }
 
+// LLVM may lower inlined `str_len` callers to the C `strlen` symbol.  The
+// loader needs that implementation before it has mapped libc, but applications
+// must resolve their public `strlen` calls from libc rather than this bootstrap
+// helper.  Keep the symbol linkable within this DSO and mark it hidden below.
+#[no_mangle]
+unsafe extern "C" fn strlen(s: *const u8) -> usize {
+    unsafe { str_len(s) }
+}
+
+// This is intentionally an ELF visibility directive rather than a Rust
+// visibility modifier: `no_mangle` keeps the bootstrap definition linkable,
+// while `.hidden` prevents it from entering the loader's public lookup scope.
+core::arch::global_asm!(".hidden strlen");
+
 unsafe fn sym_count_from_gnu_hash(gh: usize) -> usize {
     let nb = u32::from_le_bytes(core::ptr::read_unaligned(gh as *const [u8; 4])) as usize;
     let symoffset = u32::from_le_bytes(core::ptr::read_unaligned((gh + 4) as *const [u8; 4])) as usize;
@@ -784,9 +859,248 @@ unsafe fn sym_count_from_hash(h: usize) -> usize {
     nchain
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
-    str_len(s as *const u8)
+/// GNU hash-table function specified by the generic ELF ABI.
+///
+/// The caller already knows the name's NUL-terminated length. Keeping the
+/// length at this boundary avoids a second unbounded string walk on every
+/// relocation and `dlsym` lookup.
+unsafe fn gnu_symbol_hash(name: *const u8, name_len: usize) -> u32 {
+    let mut hash = 5381u32;
+    for i in 0..name_len {
+        hash = hash.wrapping_mul(33).wrapping_add(*name.add(i) as u32);
+    }
+    hash
+}
+
+/// Read a public C symbol name once while deriving its GNU hash.
+///
+/// `dlsym` must retain the byte length for its private-name and dlerror
+/// paths. Deriving it here avoids walking the same NUL-terminated name once
+/// for `str_len` and again in `gnu_symbol_hash` before an ordinary GNU lookup.
+unsafe fn gnu_symbol_hash_c_string(name: *const u8) -> (usize, u32) {
+    let mut name_len = 0;
+    let mut hash = 5381u32;
+    loop {
+        let byte = *name.add(name_len);
+        if byte == 0 {
+            return (name_len, hash);
+        }
+        hash = hash.wrapping_mul(33).wrapping_add(byte as u32);
+        name_len += 1;
+    }
+}
+
+/// Legacy System V ELF hash-table function.
+unsafe fn sysv_symbol_hash(name: *const u8, name_len: usize) -> u32 {
+    let mut hash = 0u32;
+    for i in 0..name_len {
+        hash = hash.wrapping_shl(4).wrapping_add(*name.add(i) as u32);
+        let high = hash & 0xf000_0000;
+        if high != 0 {
+            hash ^= high >> 24;
+        }
+        hash &= !high;
+    }
+    hash
+}
+
+unsafe fn read_hash_u32(address: usize) -> Option<u32> {
+    address.checked_add(4)?;
+    // Hash addresses originate in a mapped ELF dynamic table. Their integer
+    // form is used only for checked ELF address arithmetic before restoring
+    // exposed provenance at the raw read boundary.
+    let pointer = core::ptr::with_exposed_provenance::<u8>(address).cast::<[u8; 4]>();
+    Some(u32::from_le_bytes(core::ptr::read_unaligned(pointer)))
+}
+
+/// Decode the fixed GNU hash header once while registering an object.
+///
+/// The dynamic table has already supplied a mapped `DT_GNU_HASH` address. We
+/// keep each derived address as a raw pointer, but use integer arithmetic only
+/// for the checked offsets that ELF encodes. This leaves lookup to load just
+/// the bucket and chain entries it needs, rather than reparsing immutable
+/// header fields for every symbol resolution.
+unsafe fn gnu_hash_metadata(table: *const u8, sym_count: usize) -> Option<GnuHashMetadata> {
+    if table.is_null() {
+        return None;
+    }
+
+    let table_addr = table.addr();
+    let bucket_count = read_hash_u32(table_addr)?;
+    let symbol_offset = read_hash_u32(table_addr.checked_add(4)?)?;
+    let bloom_count = read_hash_u32(table_addr.checked_add(8)?)?;
+    let bloom_shift = read_hash_u32(table_addr.checked_add(12)?)?;
+    if bucket_count == 0
+        || bloom_count == 0
+        || bloom_shift >= u32::BITS
+        || symbol_offset as usize > sym_count
+    {
+        return None;
+    }
+
+    let bloom_addr = table_addr.checked_add(16)?;
+    let bucket_addr = bloom_addr.checked_add((bloom_count as usize).checked_mul(8)?)?;
+    let chain_addr = bucket_addr.checked_add((bucket_count as usize).checked_mul(4)?)?;
+    Some(GnuHashMetadata {
+        bucket_count,
+        symbol_offset,
+        bloom_count,
+        bloom_mask: if bloom_count.is_power_of_two() {
+            bloom_count - 1
+        } else {
+            u32::MAX
+        },
+        bloom_shift,
+        // These addresses denote the same retained mapped ELF bytes that the
+        // table address did. Exposed provenance is restored only at the raw
+        // pointer boundary after checked integer offset arithmetic. Their
+        // typed forms encode the fixed ELF entry widths for the hot lookup.
+        bloom: core::ptr::with_exposed_provenance::<u64>(bloom_addr),
+        buckets: core::ptr::with_exposed_provenance::<u32>(bucket_addr),
+        chains: core::ptr::with_exposed_provenance::<u32>(chain_addr),
+    })
+}
+
+#[inline(always)]
+fn gnu_bloom_index(hash: u32, bloom_count: u32, bloom_mask: u32) -> usize {
+    let bloom_hash = hash >> 6;
+    if bloom_mask == u32::MAX {
+        (bloom_hash % bloom_count) as usize
+    } else {
+        (bloom_hash & bloom_mask) as usize
+    }
+}
+
+/// Check a dynamic symbol candidate before returning its index from a hash
+/// chain. This preserves the loader's historical rules for undefined and
+/// local definitions while letting all scope walks share one indexed lookup.
+unsafe fn symbol_matches<const REQUIRE_GLOBAL: bool>(
+    obj: &LoadedObject,
+    sym_idx: usize,
+    name: *const u8,
+    name_len: usize,
+) -> bool {
+    if sym_idx >= obj.sym_count {
+        return false;
+    }
+    let sym = obj.symtab.add(sym_idx * SYMTAB_ENT_SIZE);
+    if REQUIRE_GLOBAL && *sym.add(4) >> 4 == 0 {
+        return false;
+    }
+    let value = u64::from_le_bytes(core::ptr::read_unaligned(sym.add(8) as *const [u8; 8]));
+    if value == 0 {
+        return false;
+    }
+    let name_offset =
+        u32::from_le_bytes(core::ptr::read_unaligned(sym as *const [u8; 4])) as usize;
+    name_offset < obj.strsz && str_eq(name, name_len, obj.strtab.add(name_offset))
+}
+
+unsafe fn lookup_gnu_hash_symbol<const REQUIRE_GLOBAL: bool>(
+    obj: &LoadedObject,
+    name: *const u8,
+    name_len: usize,
+    hash: u32,
+) -> Option<usize> {
+    let metadata = obj.gnu_hash_metadata?;
+    let bloom_index = gnu_bloom_index(hash, metadata.bloom_count, metadata.bloom_mask);
+    // `gnu_hash_metadata` decoded a nonzero table count and restored these
+    // pointers from the mapped immutable table. The modular indices remain
+    // within their respective table counts, so no per-lookup integer address
+    // reconstruction is needed at this raw ELF boundary.
+    let bloom_word = u64::from_le(core::ptr::read_unaligned(metadata.bloom.add(bloom_index)));
+    let bloom_mask = (1u64 << (hash % 64))
+        | (1u64 << ((hash >> metadata.bloom_shift) % 64));
+    if bloom_word & bloom_mask != bloom_mask {
+        return None;
+    }
+
+    let bucket_index = (hash % metadata.bucket_count) as usize;
+    let mut sym_idx = u32::from_le(core::ptr::read_unaligned(
+        metadata.buckets.add(bucket_index),
+    )) as usize;
+    if sym_idx < metadata.symbol_offset as usize || sym_idx >= obj.sym_count {
+        return None;
+    }
+    while sym_idx < obj.sym_count {
+        let chain_idx = sym_idx - metadata.symbol_offset as usize;
+        let chain_hash = u32::from_le(core::ptr::read_unaligned(
+            metadata.chains.add(chain_idx),
+        ));
+        if (chain_hash | 1) == (hash | 1)
+            && symbol_matches::<REQUIRE_GLOBAL>(obj, sym_idx, name, name_len)
+        {
+            return Some(sym_idx);
+        }
+        if chain_hash & 1 != 0 {
+            return None;
+        }
+        sym_idx = sym_idx.checked_add(1)?;
+    }
+    None
+}
+
+unsafe fn lookup_sysv_hash_symbol<const REQUIRE_GLOBAL: bool>(
+    obj: &LoadedObject,
+    name: *const u8,
+    name_len: usize,
+) -> Option<usize> {
+    let table = obj.sysv_hash.addr();
+    let bucket_count = read_hash_u32(table)? as usize;
+    let chain_count = read_hash_u32(table.checked_add(4)?)? as usize;
+    if bucket_count == 0 || chain_count == 0 {
+        return None;
+    }
+    let buckets = table.checked_add(8)?;
+    let chains = buckets.checked_add(bucket_count.checked_mul(4)?)?;
+    let hash = sysv_symbol_hash(name, name_len);
+    let mut sym_idx = read_hash_u32(
+        buckets.checked_add((hash as usize % bucket_count).checked_mul(4)?)?,
+    )? as usize;
+    for _ in 0..chain_count.min(obj.sym_count) {
+        if sym_idx == 0 || sym_idx >= obj.sym_count || sym_idx >= chain_count {
+            return None;
+        }
+        if symbol_matches::<REQUIRE_GLOBAL>(obj, sym_idx, name, name_len) {
+            return Some(sym_idx);
+        }
+        sym_idx = read_hash_u32(chains.checked_add(sym_idx.checked_mul(4)?)?)? as usize;
+    }
+    None
+}
+
+unsafe fn lookup_linear_symbol<const REQUIRE_GLOBAL: bool>(
+    obj: &LoadedObject,
+    name: *const u8,
+    name_len: usize,
+) -> Option<usize> {
+    for sym_idx in 0..obj.sym_count {
+        if symbol_matches::<REQUIRE_GLOBAL>(obj, sym_idx, name, name_len) {
+            return Some(sym_idx);
+        }
+    }
+    None
+}
+
+/// Look up one defined dynamic symbol in one object. The GNU table is the
+/// authoritative index when present; SysV is used only by legacy objects.
+/// A no-hash object retains the existing bounded linear fallback.
+unsafe fn lookup_symbol_index_in_object<const REQUIRE_GLOBAL: bool>(
+    obj: &LoadedObject,
+    name: *const u8,
+    name_len: usize,
+    gnu_hash: u32,
+) -> Option<usize> {
+    if obj.symtab.is_null() || obj.strtab.is_null() {
+        return None;
+    }
+    if !obj.gnu_hash.is_null() {
+        lookup_gnu_hash_symbol::<REQUIRE_GLOBAL>(obj, name, name_len, gnu_hash)
+    } else if !obj.sysv_hash.is_null() {
+        lookup_sysv_hash_symbol::<REQUIRE_GLOBAL>(obj, name, name_len)
+    } else {
+        lookup_linear_symbol::<REQUIRE_GLOBAL>(obj, name, name_len)
+    }
 }
 
 #[no_mangle]
@@ -1324,31 +1638,104 @@ fn sys_close(fd: i64) {
     unsafe { <Arch as Syscalls>::syscall1(SYS_CLOSE, fd); }
 }
 
-#[inline(always)]
-fn current_tid() -> i64 {
-    unsafe { <Arch as Syscalls>::syscall0(SYS_GETTID) }
+/// Return an identity that remains stable while a thread owns the recursive
+/// loader lock. Dynamic TLS growth changes TP, so the first TP installed for
+/// a loader-owned TCB is preserved in that TCB and becomes the token. The
+/// low-bit tag reserves zero as the unlocked sentinel.
+unsafe fn loader_owner_token() -> usize {
+    let thread_pointer = read_tp();
+    if thread_pointer == 0 {
+        // Loader entry has no public dl* callers before it installs a TCB.
+        // Keep the early single-threaded case representable without a syscall.
+        return 1;
+    }
+    let tcb = tcb_for_thread(thread_pointer);
+    let initial_thread_pointer = core::ptr::read_unaligned(
+        tcb.add(TCB_LOADER_OWNER_OFFSET) as *const usize,
+    );
+    let identity = if initial_thread_pointer == 0 {
+        thread_pointer
+    } else {
+        initial_thread_pointer
+    };
+    identity | 1
 }
 
 unsafe fn loader_lock() {
-    let tid = current_tid();
-    if LOADER_OWNER.load(Ordering::Acquire) == tid {
+    if !LOADER_MULTI_THREADED.load(Ordering::Acquire) {
+        LOADER_SINGLE_DEPTH = LOADER_SINGLE_DEPTH.wrapping_add(1);
+        return;
+    }
+    let owner = loader_owner_token();
+    if LOADER_OWNER.load(Ordering::Acquire) == owner {
         LOADER_DEPTH.fetch_add(1, Ordering::Relaxed);
         return;
     }
     while LOADER_LOCK.swap(true, Ordering::Acquire) {}
-    LOADER_OWNER.store(tid, Ordering::Relaxed);
+    LOADER_OWNER.store(owner, Ordering::Relaxed);
     LOADER_DEPTH.store(1, Ordering::Release);
 }
 
 unsafe fn loader_unlock() {
-    let tid = current_tid();
-    if LOADER_OWNER.load(Ordering::Acquire) != tid {
+    if !LOADER_MULTI_THREADED.load(Ordering::Acquire) {
+        if LOADER_SINGLE_DEPTH != 0 {
+            LOADER_SINGLE_DEPTH -= 1;
+        }
+        return;
+    }
+    let owner = loader_owner_token();
+    if LOADER_OWNER.load(Ordering::Acquire) != owner {
         return;
     }
     if LOADER_DEPTH.fetch_sub(1, Ordering::Release) == 1 {
         LOADER_OWNER.store(0, Ordering::Relaxed);
         LOADER_LOCK.store(false, Ordering::Release);
     }
+}
+
+/// A successful `dlsym` only reads the already-published object graph. Before
+/// libc can publish another pthread, that graph has no concurrent reader or
+/// writer, so there is no lock state to maintain. Once the process has become
+/// multi-threaded this acquires the ordinary recursive loader lock and the
+/// caller must release it through `dlsym_unlock`.
+unsafe fn dlsym_lock() -> bool {
+    if !LOADER_MULTI_THREADED.load(Ordering::Acquire) {
+        return false;
+    }
+    loader_lock();
+    true
+}
+
+unsafe fn dlsym_unlock(locked: bool) {
+    if locked {
+        loader_unlock();
+    }
+}
+
+/// Escalate loader synchronization before libc makes a second pthread
+/// runnable. If `pthread_create` occurs in a loader callback, the current
+/// single-thread recursion depth is transferred into the established lock
+/// before `clone` can start its child. Outside a loader operation, only the
+/// one-way mode bit changes.
+///
+/// # Safety
+/// libc may call this only before publishing its first pthread. Calling it
+/// after another execution context can enter loader code would race the
+/// single-thread state being transferred into `LOADER_LOCK`.
+#[no_mangle]
+pub unsafe extern "C" fn __ldso_mark_multithreaded() {
+    if LOADER_MULTI_THREADED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let depth = LOADER_SINGLE_DEPTH;
+    if depth == 0 {
+        return;
+    }
+    // This callback runs before libc issues the first successful `clone`, so
+    // no other thread can hold the newly initialized lock yet.
+    while LOADER_LOCK.swap(true, Ordering::Acquire) {}
+    LOADER_OWNER.store(loader_owner_token(), Ordering::Relaxed);
+    LOADER_DEPTH.store(depth, Ordering::Release);
 }
 
 unsafe fn dlerror_lock() {
@@ -1359,18 +1746,21 @@ unsafe fn dlerror_unlock() {
     DLERROR_LOCK.store(false, Ordering::Release);
 }
 
-/// Find or allocate the caller's error node.  The caller holds DLERROR_LOCK;
-/// allocation failure is explicit and returns null rather than borrowing a
-/// different thread's storage.
-unsafe fn dlerror_node_locked(tid: usize, thread_pointer: usize) -> *mut DlErrorNode {
-    let mut node = DLERROR_HEAD;
-    while !node.is_null() {
-        if (*node).tid == tid && (*node).thread_pointer == thread_pointer {
-            return node;
-        }
-        node = (*node).next;
+/// Find or allocate the caller's error node. The caller holds DLERROR_LOCK.
+/// Its pointer is cached in the current loader-owned TCB, so successful dl*
+/// calls do not need a Linux thread-id syscall just to clear error state.
+unsafe fn dlerror_node_locked() -> *mut DlErrorNode {
+    let thread_pointer = read_tp();
+    if thread_pointer == 0 {
+        return core::ptr::null_mut();
     }
-
+    let tcb = tcb_for_thread(thread_pointer);
+    let cached = core::ptr::read_unaligned(tcb.add(TCB_DLERROR_NODE_OFFSET) as *const usize);
+    if cached != 0 {
+        // The value was produced by `sys_mmap`, stored in this live TCB, and
+        // the mapping is intentionally retained for the thread's lifetime.
+        return core::ptr::with_exposed_provenance_mut::<DlErrorNode>(cached);
+    }
     let size = core::mem::size_of::<DlErrorNode>();
     let map_size = match size.checked_add(4095).map(|value| value & !4095) {
         Some(value) => value,
@@ -1387,18 +1777,15 @@ unsafe fn dlerror_node_locked(tid: usize, thread_pointer: usize) -> *mut DlError
     if mapping as usize == MAP_FAILED {
         return core::ptr::null_mut();
     }
-    node = mapping as *mut DlErrorNode;
+    let node = mapping as *mut DlErrorNode;
     core::ptr::write(
         node,
         DlErrorNode {
-            tid,
-            thread_pointer,
             set: AtomicBool::new(false),
             buf: [0; DLERROR_BUF_SIZE],
-            next: DLERROR_HEAD,
         },
     );
-    DLERROR_HEAD = node;
+    core::ptr::write_unaligned(tcb.add(TCB_DLERROR_NODE_OFFSET) as *mut usize, node.addr());
     node
 }
 
@@ -1605,14 +1992,28 @@ unsafe fn try_open_expanded(
     try_open(path_buf, dir, dir_len, lib_name, lib_name_len)
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum LibrarySearchSource {
+    DirectName,
+    LibraryPath,
+    ParentSearchPath,
+    DefaultPath,
+}
+
+#[derive(Copy, Clone)]
+struct OpenedLibrary {
+    fd: i64,
+    source: LibrarySearchSource,
+}
+
 unsafe fn find_library_fd(
     lib_name: *const u8,
     lib_name_len: usize,
     ld_path: Option<*const u8>,
     parent: Option<usize>,
-) -> i64 {
+) -> Option<OpenedLibrary> {
     if lib_name_len == 0 {
-        return -1;
+        return None;
     }
     let mut path_buf = [0u8; 512];
     let mut origin = [0u8; 256];
@@ -1630,7 +2031,7 @@ unsafe fn find_library_fd(
     if has_slash {
         let fd = sys_open(lib_name);
         if fd >= 0 {
-            return fd;
+            return Some(OpenedLibrary { fd, source: LibrarySearchSource::DirectName });
         }
     }
 
@@ -1645,7 +2046,7 @@ unsafe fn find_library_fd(
             if end > start {
                 let fd = try_open(&mut path_buf, ldp.add(start), end - start, lib_name, lib_name_len);
                 if fd >= 0 {
-                    return fd;
+                    return Some(OpenedLibrary { fd, source: LibrarySearchSource::LibraryPath });
                 }
             }
             if end >= ldp_len {
@@ -1723,7 +2124,7 @@ unsafe fn find_library_fd(
                     origin_len,
                 );
                 if fd >= 0 {
-                    return fd;
+                    return Some(OpenedLibrary { fd, source: LibrarySearchSource::ParentSearchPath });
                 }
             }
             if end >= rp_len {
@@ -1741,11 +2142,11 @@ unsafe fn find_library_fd(
     for &(dir_bytes, dir_len) in defaults {
         let fd = try_open(&mut path_buf, dir_bytes.as_ptr(), dir_len, lib_name, lib_name_len);
         if fd >= 0 {
-            return fd;
+            return Some(OpenedLibrary { fd, source: LibrarySearchSource::DefaultPath });
         }
     }
 
-    -1
+    None
 }
 
 // ============================================================
@@ -1781,7 +2182,11 @@ fn sys_munmap(addr: *mut u8, length: usize) -> i64 {
     unsafe { <Arch as Syscalls>::syscall2(SYS_MUNMAP, addr as i64, length as i64) }
 }
 
-unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
+unsafe fn load_dso_from_fd(
+    fd: i64,
+    _desired_base: u64,
+    identity: Option<FileIdentity>,
+) -> Option<u64> {
     // The loaded-object array is the authoritative dependency graph.  Refuse
     // a new mapping before touching address space when its bounded capacity is
     // exhausted; returning a base without registering the object would leave
@@ -1789,21 +2194,6 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
     if LOADED_COUNT >= MAX_LOADED {
         return None;
     }
-    let mut mapped: [(*mut u8, usize); 8] = [(core::ptr::null_mut(), 0); 8];
-    let mut mapped_count = 0usize;
-    macro_rules! fail_mapping {
-        () => {{
-            while mapped_count > 0 {
-                mapped_count -= 1;
-                let (addr, len) = mapped[mapped_count];
-                if !addr.is_null() && len != 0 {
-                    sys_munmap(addr, len);
-                }
-            }
-            return None;
-        }};
-    }
-    let identity = file_identity(fd);
     let mut buf = [0u8; 4096];
     let n = sys_read(fd, buf.as_mut_ptr(), buf.len());
     if n < 64 {
@@ -1831,6 +2221,7 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
 
     let mut segs: [LoadSeg; 8] = [LoadSeg { p_offset: 0, p_vaddr: 0, p_filesz: 0, p_memsz: 0, p_flags: 0 }; 8];
     let mut seg_count: usize = 0;
+    let mut lowest_segment = 0usize;
     let mut min_vaddr = u64::MAX;
     let mut max_vaddr_end = 0u64;
 
@@ -1861,6 +2252,9 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
         let p_filesz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_FILESZ) as *const [u8; 8]));
         let p_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
         segs[seg_count] = LoadSeg { p_offset, p_vaddr, p_filesz, p_memsz, p_flags };
+        if p_vaddr < min_vaddr {
+            lowest_segment = seg_count;
+        }
         seg_count += 1;
         if p_vaddr < min_vaddr { min_vaddr = p_vaddr; }
         let end = p_vaddr + p_memsz;
@@ -1876,24 +2270,41 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
     let image_end = (max_vaddr_end + PAGE - 1) & !(PAGE - 1);
     let total_size = (image_end - image_start) as usize;
 
-    // Ask the kernel for an unhinted temporary reservation. Releasing that
-    // exact span before the MAP_FIXED segment overlays preserves the kernel's
-    // per-process ASLR choice while still giving the ELF image one coherent
-    // load bias. A fixed synthetic base made every process expose identical
-    // dladdr addresses, which is neither musl-compatible nor safe.
-    let reservation = sys_mmap(
+    // musl maps the complete image span from the lowest PT_LOAD first, then
+    // overlays only subsequent segments. This reserves the final contiguous
+    // cleanup range and lets the lowest file-backed segment serve as the
+    // initial mapping, saving a separate anonymous reservation for ordinary
+    // small DSOs. Include its file offset so the first mapping still covers
+    // the complete virtual span when a valid ELF layout starts at a nonzero
+    // file page.
+    let first = segs[lowest_segment];
+    let first_offset = (first.p_offset & !(PAGE - 1)) as usize;
+    let mapping_size = match total_size.checked_add(first_offset) {
+        Some(size) => size,
+        None => return None,
+    };
+    let mapping = sys_mmap(
         core::ptr::null_mut(),
-        total_size,
-        PROT_NONE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0,
+        mapping_size,
+        prot_from_flags(first.p_flags),
+        MAP_PRIVATE,
+        fd as i32,
+        first_offset as i64,
     );
-    if reservation as usize == MAP_FAILED {
+    if mapping as usize == MAP_FAILED {
         return None;
     }
-    let actual_base = (reservation as u64).wrapping_sub(image_start);
-    sys_munmap(reservation, total_size);
+    let actual_base = (mapping as u64).wrapping_sub(image_start);
+
+    macro_rules! fail_mapping {
+        () => {{
+            // The fixed segment mappings all remain within this initial span.
+            // One unmap therefore releases mapped segments and untouched
+            // inter-segment holes together after a failed overlay.
+            sys_munmap(mapping, mapping_size);
+            return None;
+        }};
+    }
 
     let tls_image = (actual_base + tls_vaddr) as *const u8;
 
@@ -1905,26 +2316,11 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
         let map_len = ((seg.p_memsz + adj + PAGE - 1) & !(PAGE - 1)) as usize;
         let prot = prot_from_flags(seg.p_flags);
 
-        // Map the whole segment anonymously first so the tail (bss) is backed
-        // by zeroed anonymous pages, then overlay the file-backed portion.
-        let ptr = sys_mmap(
-            map_addr as *mut u8,
-            map_len,
-            prot,
-            MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
-            -1,
-            0,
-        );
-        if ptr as usize == MAP_FAILED {
-            fail_mapping!();
-        }
-        if mapped_count < mapped.len() {
-            mapped[mapped_count] = (map_addr as *mut u8, map_len);
-            mapped_count += 1;
-        }
-
         let file_map_len = ((seg.p_filesz + adj + PAGE - 1) & !(PAGE - 1)) as usize;
-        if file_map_len > 0 {
+        // The initial full-span mapping already supplies the lowest segment.
+        // Every later PT_LOAD must replace its file-backed pages so its
+        // protection and file offset take effect.
+        if i != lowest_segment && file_map_len > 0 {
             let fptr = sys_mmap(
                 map_addr as *mut u8,
                 file_map_len,
@@ -1934,6 +2330,26 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
                 map_off as i64,
             );
             if fptr as usize == MAP_FAILED {
+                fail_mapping!();
+            }
+        }
+        if map_len > file_map_len {
+            let Some(tail_addr) = map_addr.checked_add(file_map_len as u64) else {
+                fail_mapping!();
+            };
+            // The file image already covers its rounded final page. Map only
+            // the remaining `p_memsz` tail anonymously for BSS. This also
+            // replaces a low-segment tail that the full initial file mapping
+            // may have placed beyond EOF.
+            let tail = sys_mmap(
+                tail_addr as *mut u8,
+                map_len - file_map_len,
+                prot,
+                MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            if tail as usize == MAP_FAILED {
                 fail_mapping!();
             }
         }
@@ -2045,13 +2461,26 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
     } else if dt_strtab > dt_symtab && dt_strtab - dt_symtab >= SYMTAB_ENT_SIZE as u64 {
         sym_count = ((dt_strtab - dt_symtab) / SYMTAB_ENT_SIZE as u64) as usize;
     }
+    let gnu_hash = if dt_gnu_hash == 0 {
+        core::ptr::null()
+    } else {
+        (actual_base + dt_gnu_hash) as *const u8
+    };
+    let gnu_hash_metadata = gnu_hash_metadata(gnu_hash, sym_count);
 
     LOADED[LOADED_COUNT] = LoadedObject {
         base: actual_base,
-        map_start: actual_base.wrapping_add(image_start) as *mut u8,
-        map_size: total_size,
+        map_start: mapping,
+        map_size: mapping_size,
         symtab: symtab_ptr,
         sym_count,
+        gnu_hash,
+        gnu_hash_metadata,
+        sysv_hash: if dt_hash == 0 {
+            core::ptr::null()
+        } else {
+            (actual_base + dt_hash) as *const u8
+        },
         strtab: strtab_ptr,
         strsz,
         search_path,
@@ -2086,6 +2515,7 @@ unsafe fn load_dso_from_fd(fd: i64, _desired_base: u64) -> Option<u64> {
         file_identity_valid: identity.is_some(),
         file_dev: identity.map_or(0, |id| id.dev),
         file_ino: identity.map_or(0, |id| id.ino),
+        initial_ld_library_path_name: false,
         name: [0; 256],
     };
     LOADED_COUNT += 1;
@@ -2127,23 +2557,30 @@ unsafe fn load_named_with_dependencies_from_parent(
     ld_path: Option<*const u8>,
     parent: Option<usize>,
 ) -> Option<usize> {
-    let fd = find_library_fd(name, name_len, ld_path, parent);
-    if fd < 0 {
-        return None;
+    if let Some(idx) = loaded_initial_ld_library_path_object_by_name(name, name_len) {
+        return Some(idx);
     }
-    if let Some(identity) = file_identity(fd) {
+    if let Some(idx) = loaded_initial_libc_by_needed_name(name, name_len) {
+        return Some(idx);
+    }
+    let opened = find_library_fd(name, name_len, ld_path, parent)?;
+    let fd = opened.fd;
+    let identity = file_identity(fd);
+    if let Some(identity) = identity {
         if let Some(idx) = loaded_object_by_identity(identity) {
             sys_close(fd);
             return Some(idx);
         }
     }
     let desired_base = DSO_BASE_START + (LOADED_COUNT as u64) * DSO_BASE_STRIDE;
-    if load_dso_from_fd(fd, desired_base).is_none() {
+    if load_dso_from_fd(fd, desired_base, identity).is_none() {
         sys_close(fd);
         return None;
     }
     sys_close(fd);
     let idx = LOADED_COUNT - 1;
+    LOADED[idx].initial_ld_library_path_name = INITIAL_LOAD_IN_PROGRESS
+        && opened.source == LibrarySearchSource::LibraryPath;
     if !set_loaded_name(idx, name, name_len) {
         return None;
     }
@@ -2311,6 +2748,7 @@ unsafe fn resolve_symbol_with_size(name: *const u8, exclude: usize) -> (u64, usi
         #[cfg(not(all(not(test), target_arch = "aarch64")))]
         return (0, 0);
     }
+    let name_gnu_hash = gnu_symbol_hash(name, name_len);
     if str_eq(name, name_len, b"__tls_get_addr\0".as_ptr()) {
         // Prefer libc's public ABI shim once it is loaded.  This makes normal
         // GD-model relocations exercise the same registration bridge as a
@@ -2320,7 +2758,7 @@ unsafe fn resolve_symbol_with_size(name: *const u8, exclude: usize) -> (u64, usi
         // the ldso self-image before libc).
         let internal = __tls_get_addr as *const () as usize;
         for i in 0..LOADED_COUNT {
-            let candidate = lookup_symbol_in_object(i, name, name_len);
+            let candidate = lookup_symbol_in_object(i, name, name_len, name_gnu_hash);
             if candidate != 0 && candidate as usize != internal {
                 return (candidate, 0);
             }
@@ -2329,6 +2767,9 @@ unsafe fn resolve_symbol_with_size(name: *const u8, exclude: usize) -> (u64, usi
     }
     if str_eq(name, name_len, b"__rc_create_thread_tls\0".as_ptr()) {
         return ((__rc_create_thread_tls as *const () as usize) as u64, 0);
+    }
+    if str_eq(name, name_len, b"__rc_init_thread_tls\0".as_ptr()) {
+        return ((__rc_init_thread_tls as *const () as usize) as u64, 0);
     }
     if str_eq(name, name_len, b"__rc_tls_block_size\0".as_ptr()) {
         return ((__rc_tls_block_size as *const () as usize) as u64, 0);
@@ -2339,40 +2780,27 @@ unsafe fn resolve_symbol_with_size(name: *const u8, exclude: usize) -> (u64, usi
     if str_eq(name, name_len, b"__rc_tls_base_offset_for\0".as_ptr()) {
         return ((__rc_tls_base_offset_for as *const () as usize) as u64, 0);
     }
-
     for i in 0..LOADED_COUNT {
         if i == exclude {
             continue;
         }
         let obj = &LOADED[i];
-        if obj.symtab.is_null() || obj.strtab.is_null() {
+        let Some(sym_idx) = lookup_symbol_index_in_object::<true>(
+            obj,
+            name,
+            name_len,
+            name_gnu_hash,
+        ) else {
             continue;
-        }
-        for j in 0..obj.sym_count {
-            let sym_entry = obj.symtab.add(j * SYMTAB_ENT_SIZE);
-            let st_name_off =
-                u32::from_le_bytes(core::ptr::read_unaligned(sym_entry as *const [u8; 4])) as usize;
-            let st_info = *sym_entry.add(4);
-            if st_info >> 4 == 0 {
-                continue;
-            }
-            let st_value = u64::from_le_bytes(core::ptr::read_unaligned(
-                sym_entry.add(8) as *const [u8; 8],
-            ));
-            if st_value == 0 {
-                continue;
-            }
-            if st_name_off >= obj.strsz {
-                continue;
-            }
-            let sym_name = obj.strtab.add(st_name_off);
-            if str_eq(name, name_len, sym_name) {
-                let st_size = u64::from_le_bytes(core::ptr::read_unaligned(
-                    sym_entry.add(16) as *const [u8; 8],
-                ));
-                return (obj.base + st_value, st_size as usize);
-            }
-        }
+        };
+        let sym_entry = obj.symtab.add(sym_idx * SYMTAB_ENT_SIZE);
+        let st_value = u64::from_le_bytes(core::ptr::read_unaligned(
+            sym_entry.add(8) as *const [u8; 8],
+        ));
+        let st_size = u64::from_le_bytes(core::ptr::read_unaligned(
+            sym_entry.add(16) as *const [u8; 8],
+        ));
+        return (obj.base + st_value, st_size as usize);
     }
     (0, 0)
 }
@@ -2415,28 +2843,11 @@ unsafe fn resolve_symbol_module(obj_idx: usize, sym_idx: usize) -> usize {
     }
     let name = obj.strtab.add(st_name);
     let name_len = str_len(name);
+    let name_gnu_hash = gnu_symbol_hash(name, name_len);
     for i in 0..LOADED_COUNT {
         let o = &LOADED[i];
-        if o.symtab.is_null() || o.strtab.is_null() {
-            continue;
-        }
-        for j in 0..o.sym_count {
-            let se = o.symtab.add(j * SYMTAB_ENT_SIZE);
-            let s_name =
-                u32::from_le_bytes(core::ptr::read_unaligned(se as *const [u8; 4])) as usize;
-            let s_value = u64::from_le_bytes(core::ptr::read_unaligned(
-                se.add(8) as *const [u8; 8],
-            ));
-            if s_value == 0 {
-                continue;
-            }
-            if s_name >= o.strsz {
-                continue;
-            }
-            let sym_name = o.strtab.add(s_name);
-            if str_eq(name, name_len, sym_name) {
-                return i;
-            }
+        if lookup_symbol_index_in_object::<false>(o, name, name_len, name_gnu_hash).is_some() {
+            return i;
         }
     }
     obj_idx
@@ -2571,6 +2982,16 @@ unsafe fn initialize_tls_tcb(tcb: *mut u8, tp: *mut u8, data_size: usize) {
             tls_tp_offset_from_block(),
         );
     }
+}
+
+/// Initialize fields that identify one logical thread rather than one TLS
+/// allocation. `expand_thread_tls` copies these fields to its replacement
+/// block, while a freshly created pthread must receive a distinct owner token
+/// and empty dlerror and handle-local symbol caches.
+unsafe fn initialize_loader_thread_state(tcb: *mut u8, tp: *mut u8) {
+    core::ptr::write_unaligned(tcb.add(TCB_LOADER_OWNER_OFFSET) as *mut usize, tp.addr());
+    core::ptr::write_unaligned(tcb.add(TCB_DLERROR_NODE_OFFSET) as *mut usize, 0);
+    core::ptr::write_unaligned(tcb.add(TCB_DLSYM_CACHE_RESULT_OFFSET) as *mut u64, 0);
 }
 
 unsafe fn tls_var_area_offset_from_tp() -> usize {
@@ -2943,27 +3364,56 @@ unsafe fn run_destructors_for(idx: usize) {
     }
 }
 
-/// AArch64 TLS descriptor resolver for statically-linked modules. The descriptor
-/// is a two-word structure: [0] = resolver, [1] = precomputed TP offset. This
-/// resolver simply returns the offset stored in the second word.
-#[no_mangle]
-unsafe extern "C" fn __tlsdesc_static(desc: *const u64) -> u64 {
-    let arg = core::ptr::read_unaligned(desc.add(1));
-    arg
-}
-
 /// AArch64 stores the descriptor argument in one machine word. `MAX_LOADED`
 /// is deliberately small, leaving 56 bits for a TLS symbol offset and making
 /// this encoding lossless for every addressable TLS image in this loader.
 const TLSDESC_MODULE_SHIFT: usize = 56;
 const TLSDESC_OFFSET_MASK: usize = (1usize << TLSDESC_MODULE_SHIFT) - 1;
 
-/// Resolve TLS from a DSO loaded after threads may already exist. The call to
-/// `__tls_get_addr` expands an older thread's TLS block before the returned
-/// address is converted back to the TP-relative value the AArch64 TLSDESC ABI
-/// expects.
+// AArch64 TLSDESC call sites may retain their thread pointer in `x1` across
+// the resolver call; optimized musl-built DSOs do so. The descriptor ABI also
+// reserves `x2` for the same sequence. These stubs therefore preserve `x2`
+// rather than relying on the ordinary Rust C ABI, which may freely clobber
+// caller-saved registers. The dynamic helper can migrate the calling thread
+// to a larger TLS block, so its stub refreshes `x1` from the new TP instead of
+// restoring the now-stale value that musl's non-migrating resolver restores.
+// The temporary frame preserves LR while the private Rust helper runs.
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".text",
+    ".global __tlsdesc_static",
+    ".hidden __tlsdesc_static",
+    ".type __tlsdesc_static,%function",
+    "__tlsdesc_static:",
+    "ldr x0, [x0, #8]",
+    "ret",
+    ".size __tlsdesc_static, .-__tlsdesc_static",
+    ".global __tlsdesc_dynamic",
+    ".hidden __tlsdesc_dynamic",
+    ".type __tlsdesc_dynamic,%function",
+    "__tlsdesc_dynamic:",
+    "stp x2, x30, [sp, #-16]!",
+    "bl __crabc_tlsdesc_dynamic_resolve",
+    "mrs x1, tpidr_el0",
+    "ldp x2, x30, [sp], #16",
+    "ret",
+    ".size __tlsdesc_dynamic, .-__tlsdesc_dynamic",
+    ".hidden __crabc_tlsdesc_dynamic_resolve",
+);
+
+// The resolver entry points above are emitted as AArch64 assembly so their
+// addresses can be installed directly into ELF TLSDESC records below.
+unsafe extern "C" {
+    fn __tlsdesc_static(desc: *const u64) -> u64;
+    fn __tlsdesc_dynamic(desc: *const u64) -> u64;
+}
+
+/// Resolve TLS from a DSO loaded after threads may already exist. The assembly
+/// TLSDESC entry preserves the ABI-required registers before calling this
+/// helper. `__tls_get_addr` expands an older thread's TLS block before the
+/// returned address is converted back to the TP-relative descriptor value.
 #[no_mangle]
-unsafe extern "C" fn __tlsdesc_dynamic(desc: *const u64) -> u64 {
+unsafe extern "C" fn __crabc_tlsdesc_dynamic_resolve(desc: *const u64) -> u64 {
     let encoded = core::ptr::read_unaligned(desc.add(1)) as usize;
     let index = TlsIndex {
         ti_module: encoded >> TLSDESC_MODULE_SHIFT,
@@ -2981,7 +3431,66 @@ unsafe fn tls_unlock() {
     TLS_LOCK.store(false, Ordering::Release);
 }
 
-unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) -> bool {
+/// Materialize only TLS images introduced after `thread_generation` at a
+/// thread's already-selected variable-area base. Earlier images were copied
+/// from that thread's prior block and may contain thread-private writes, so
+/// they must never be reinitialized during a later `dlopen`.
+unsafe fn initialize_missing_tls_images(var_base: *mut u8, thread_generation: u64) {
+    for i in 0..TLS_MODULE_COUNT {
+        if TLS_MEMSZ[i] == 0 || TLS_MODULE_GENERATION[i] <= thread_generation {
+            continue;
+        }
+        let dst = var_base.add(TLS_LAYOUT_OFFSET[i]);
+        let src = TLS_IMAGE[i];
+        let filesz = TLS_FILESZ[i] as usize;
+        let memsz = TLS_MEMSZ[i] as usize;
+        if filesz > 0 {
+            core::ptr::copy_nonoverlapping(src, dst, filesz);
+        }
+        if memsz > filesz {
+            core::ptr::write_bytes(dst.add(filesz), 0, memsz - filesz);
+        }
+    }
+}
+
+unsafe fn expand_thread_tls() -> bool {
+    let old_fs = read_tp();
+    if old_fs == 0 {
+        return false;
+    }
+    let old_tcb = tcb_for_thread(old_fs);
+    let recorded_data = core::ptr::read_unaligned(old_tcb.add(TCB_BLOCK_SIZE_OFFSET) as *const usize);
+    if recorded_data == 0 {
+        return false;
+    }
+    let old_data = recorded_data;
+    let old_generation = core::ptr::read_unaligned(
+        old_tcb.add(TCB_GENERATION_OFFSET) as *const u64,
+    );
+    let old_tp_offset = thread_block_tp_offset(old_fs, old_data);
+    let old_block = (old_fs as usize).wrapping_sub(old_tp_offset) as *mut u8;
+    let old_var_base = {
+        #[cfg(target_arch = "x86_64")]
+        { old_block }
+        #[cfg(target_arch = "aarch64")]
+        { old_fs as *mut u8 }
+        #[cfg(target_arch = "riscv64")]
+        { old_block }
+    };
+
+    // The initial TLS allocation deliberately has spare capacity. Keep a
+    // simple late image in that allocation when its recorded TP placement and
+    // data capacity remain valid: replacing the whole block would discard no
+    // state but would add one mmap/munmap pair for every ordinary `dlopen`.
+    // A larger layout or a stronger AArch64 TP alignment still takes the
+    // replacement path below, which is required to preserve every address and
+    // the per-allocation cleanup metadata.
+    if old_data >= TLS_TOTAL_SIZE && old_tp_offset == tls_tp_offset_from_block() {
+        initialize_missing_tls_images(old_var_base, old_generation);
+        initialize_tls_tcb(old_tcb, old_fs as *mut u8, old_data);
+        return true;
+    }
+
     let total = match TLS_TOTAL_SIZE.checked_add(tls_tp_offset_from_block()) {
         Some(total) => total,
         None => return false,
@@ -2997,43 +3506,10 @@ unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) -> bool {
     if block as usize == MAP_FAILED {
         return false;
     }
-    let old_fs = read_tp();
-    let old_tcb = tcb_for_thread(old_fs);
-    let recorded_data = core::ptr::read_unaligned(old_tcb.add(TCB_BLOCK_SIZE_OFFSET) as *const usize);
-    let old_data = if recorded_data != 0 { recorded_data } else { old_total };
-    let old_tp_offset = thread_block_tp_offset(old_fs, old_data);
-    let old_block = (old_fs as usize).wrapping_sub(old_tp_offset) as *mut u8;
-    let old_var_base = {
-        #[cfg(target_arch = "x86_64")]
-        { old_block }
-        #[cfg(target_arch = "aarch64")]
-        { old_fs as *mut u8 }
-        #[cfg(target_arch = "riscv64")]
-        { old_block }
-    };
-    if old_data > 0 {
-        let copy_size = if old_data < TLS_TOTAL_SIZE { old_data } else { TLS_TOTAL_SIZE };
-        core::ptr::copy_nonoverlapping(
-            old_var_base,
-            block.add(tls_var_area_offset_from_block()),
-            copy_size,
-        );
-    }
-    for i in old_module_count..TLS_MODULE_COUNT {
-        if TLS_MEMSZ[i] == 0 {
-            continue;
-        }
-        let dst = block.add(tls_var_area_offset_from_block()).add(TLS_LAYOUT_OFFSET[i]);
-        let src = TLS_IMAGE[i];
-        let filesz = TLS_FILESZ[i] as usize;
-        let memsz = TLS_MEMSZ[i] as usize;
-        if filesz > 0 {
-            core::ptr::copy_nonoverlapping(src, dst, filesz);
-        }
-        if memsz > filesz {
-            core::ptr::write_bytes(dst.add(filesz), 0, memsz - filesz);
-        }
-    }
+    let new_var_base = block.add(tls_var_area_offset_from_block());
+    let copy_size = if old_data < TLS_TOTAL_SIZE { old_data } else { TLS_TOTAL_SIZE };
+    core::ptr::copy_nonoverlapping(old_var_base, new_var_base, copy_size);
+    initialize_missing_tls_images(new_var_base, old_generation);
     let tcb = block.add(tls_tcb_offset_from_block());
     // Preserve libc's TCB fields (notably the x86_64 stack canary) while
     // replacing the allocation.  Only the loader-owned metadata below is
@@ -3055,98 +3531,222 @@ unsafe fn expand_thread_tls(old_total: usize, old_module_count: usize) -> bool {
     true
 }
 
-/// Reserve a dynamic TLS module in the process layout. The caller holds the
-/// resulting lock until its relocations have made its TLS image usable, then
-/// completes the update with `initialize_new_module_tls`.
-unsafe fn register_tls_for_new_module(idx: usize) -> Option<(usize, usize)> {
-    let obj = &LOADED[idx];
-    if obj.tls_memsz == 0 {
-        return None;
+/// Reserve every TLS image in a newly loaded dependency graph. The caller
+/// holds the resulting lock until relocations have made all of those images
+/// usable, then completes the update with `initialize_new_module_tls`.
+unsafe fn register_tls_for_new_modules(first_new: usize) -> bool {
+    if first_new >= LOADED_COUNT {
+        return false;
+    }
+    let mut contains_tls = false;
+    for idx in first_new..LOADED_COUNT {
+        if LOADED[idx].tls_memsz != 0 {
+            contains_tls = true;
+            break;
+        }
+    }
+    if !contains_tls {
+        return false;
     }
     tls_lock();
-    let old_total = TLS_TOTAL_SIZE;
-    let old_module_count = TLS_MODULE_COUNT;
-    let align = if obj.tls_align > 0 { obj.tls_align as usize } else { 1 };
-
-    // Existing modules retain their original alignments.  Reusing the new
-    // module's alignment for every prior module could move their offsets;
-    // replacing TLS_TOTAL_SIZE with that recomputed end then shrank the live
-    // block to a few bytes during dlopen.  TLS_USED_SIZE is the monotonic
-    // logical frontier, while TLS_TOTAL_SIZE remains its allocation capacity.
-    if !align.is_power_of_two() {
-        tls_unlock();
-        return None;
-    }
-    #[cfg(target_arch = "aarch64")]
-    if align > TLS_TP_OFFSET {
-        // AArch64's TP is above the TCB and static TLS.  A late DSO with a
-        // stronger PT_TLS alignment needs a correspondingly larger gap in
-        // newly allocated blocks; existing threads retain their recorded
-        // offset until they migrate on the next TLS lookup.
-        TLS_TP_OFFSET = align;
-    }
-    let new_offset = (TLS_USED_SIZE + align - 1) & !(align - 1);
-    let new_used = match new_offset.checked_add(obj.tls_memsz as usize) {
-        Some(value) => value,
-        None => {
-            tls_unlock();
-            return None;
+    let mut new_used = TLS_USED_SIZE;
+    for idx in first_new..LOADED_COUNT {
+        let obj = &LOADED[idx];
+        if obj.tls_memsz == 0 {
+            continue;
         }
-    };
+        let align = if obj.tls_align > 0 { obj.tls_align as usize } else { 1 };
+
+        // Existing modules retain their original alignments. Reusing the new
+        // image's alignment for every prior image could move their offsets;
+        // `TLS_USED_SIZE` is therefore the monotonic logical frontier while
+        // `TLS_TOTAL_SIZE` remains allocation capacity.
+        if !align.is_power_of_two() {
+            tls_unlock();
+            return false;
+        }
+        #[cfg(target_arch = "aarch64")]
+        if align > TLS_TP_OFFSET {
+            // AArch64's TP is above the TCB and static TLS. A late DSO with a
+            // stronger PT_TLS alignment needs a correspondingly larger gap in
+            // newly allocated blocks; existing threads retain their recorded
+            // offset until they migrate on the next TLS lookup.
+            TLS_TP_OFFSET = align;
+        }
+        let new_offset = (new_used + align - 1) & !(align - 1);
+        new_used = match new_offset.checked_add(obj.tls_memsz as usize) {
+            Some(value) => value,
+            None => {
+                tls_unlock();
+                return false;
+            }
+        };
+        TLS_LAYOUT_OFFSET[idx] = new_offset;
+        TLS_FILESZ[idx] = obj.tls_filesz;
+        TLS_MEMSZ[idx] = obj.tls_memsz;
+        TLS_IMAGE[idx] = obj.tls_image;
+    }
     if new_used > TLS_TOTAL_SIZE {
         let doubled = new_used.saturating_mul(2);
         let minimum = if doubled < 4096 { 4096 } else { doubled };
         TLS_TOTAL_SIZE = (minimum + 4095) & !4095;
     }
-    TLS_LAYOUT_OFFSET[idx] = new_offset;
-    TLS_FILESZ[idx] = obj.tls_filesz;
-    TLS_MEMSZ[idx] = obj.tls_memsz;
-    TLS_IMAGE[idx] = obj.tls_image;
     TLS_USED_SIZE = new_used;
     TLS_MODULE_COUNT = LOADED_COUNT;
     TLS_GENERATION = TLS_GENERATION.wrapping_add(1);
     if TLS_GENERATION == 0 {
         TLS_GENERATION = 1;
     }
+    for idx in first_new..LOADED_COUNT {
+        if TLS_MEMSZ[idx] != 0 {
+            TLS_MODULE_GENERATION[idx] = TLS_GENERATION;
+        }
+    }
 
-    Some((old_total, old_module_count))
+    true
 }
 
-/// Copy the relocated image of a newly registered TLS module into this
+/// Copy relocated images missing from the calling thread's TLS block, then
 /// thread, then let other threads observe the new generation.
-unsafe fn initialize_new_module_tls(old_total: usize, old_module_count: usize) {
-    let _ = expand_thread_tls(old_total, old_module_count);
-    TLS_OLD_TOTAL = old_total;
-    TLS_OLD_MODULE_COUNT = old_module_count;
+unsafe fn initialize_new_module_tls() {
+    let _ = expand_thread_tls();
     tls_unlock();
 }
 
-unsafe fn lookup_symbol_in_object(obj_idx: usize, name: *const u8, name_len: usize) -> u64 {
+// Keep the complete GNU/SysV/linear dispatch out of `__ldso_dlsym` itself.
+// The public entry also carries all special-handle and error paths; inlining
+// the lookup into each scope arm made its AArch64 hot code exceed the small
+// instruction footprint that a repeated handle-local lookup needs. This
+// remains one direct internal call, with no allocation or synchronization
+// boundary added to the lookup contract.
+#[inline(never)]
+unsafe fn lookup_symbol_in_object(
+    obj_idx: usize,
+    name: *const u8,
+    name_len: usize,
+    name_gnu_hash: u32,
+) -> u64 {
     let obj = &LOADED[obj_idx];
-    if obj.symtab.is_null() || obj.strtab.is_null() {
+    let Some(sym_idx) = lookup_symbol_index_in_object::<false>(
+        obj,
+        name,
+        name_len,
+        name_gnu_hash,
+    ) else {
+        return 0;
+    };
+    let sym_entry = obj.symtab.add(sym_idx * SYMTAB_ENT_SIZE);
+    let st_value =
+        u64::from_le_bytes(core::ptr::read_unaligned(sym_entry.add(8) as *const [u8; 8]));
+    obj.base + st_value
+}
+
+/// Return a previously resolved definition from this exact handle, if the
+/// current C-string bytes still match the bounded per-thread cache entry.
+///
+/// `dlsym` accepts a mutable C string. Caching only its address would make a
+/// caller-visible lookup stale after the caller reuses and edits that array.
+/// The entry is therefore keyed by the current length, GNU hash, and a copied
+/// prefix that covers every cacheable name. It contains only a definition in
+/// the requested object's own symbol table: later global loads cannot
+/// interpose before that direct definition, and this loader retains a closed
+/// object's mapping as musl does.
+///
+/// # Safety
+///
+/// `symbol` must be a valid NUL-terminated C string of `name_len` bytes. The
+/// caller holds the loader lock whenever another thread could mutate loader
+/// state, and `handle` is the C ABI address previously returned for a loaded
+/// object.
+unsafe fn cached_handle_local_symbol(
+    handle: *mut u8,
+    symbol: *const u8,
+    name_len: usize,
+    name_gnu_hash: u32,
+) -> u64 {
+    if name_len > DLSYM_CACHE_NAME_LIMIT {
         return 0;
     }
-    for j in 0..obj.sym_count {
-        let sym_entry = obj.symtab.add(j * SYMTAB_ENT_SIZE);
-        let st_name_off = u32::from_le_bytes(core::ptr::read_unaligned(sym_entry as *const [u8; 4])) as usize;
-        let st_value = u64::from_le_bytes(core::ptr::read_unaligned(sym_entry.add(8) as *const [u8; 8]));
-        if st_value == 0 {
-            continue;
-        }
-        if st_name_off >= obj.strsz {
-            continue;
-        }
-        let sym_name = obj.strtab.add(st_name_off);
-        if str_eq(name, name_len, sym_name) {
-            return obj.base + st_value;
+    let thread_pointer = read_tp();
+    if thread_pointer == 0 {
+        return 0;
+    }
+    let tcb = tcb_for_thread(thread_pointer);
+    let cached_result = core::ptr::read_unaligned(
+        tcb.add(TCB_DLSYM_CACHE_RESULT_OFFSET) as *const u64,
+    );
+    if cached_result == 0
+        || core::ptr::read_unaligned(
+            tcb.add(TCB_DLSYM_CACHE_HANDLE_OFFSET) as *const usize,
+        ) != handle.addr()
+        || core::ptr::read_unaligned(
+            tcb.add(TCB_DLSYM_CACHE_NAME_LEN_OFFSET) as *const usize,
+        ) != name_len
+        || core::ptr::read_unaligned(
+            tcb.add(TCB_DLSYM_CACHE_HASH_OFFSET) as *const u32,
+        ) != name_gnu_hash
+    {
+        return 0;
+    }
+    let cached_name = tcb.add(TCB_DLSYM_CACHE_NAME_OFFSET);
+    for offset in 0..name_len {
+        if *symbol.add(offset) != *cached_name.add(offset) {
+            return 0;
         }
     }
-    0
+    cached_result
+}
+
+/// Store one successful direct definition in the calling thread's private
+/// cache. The result address is written last, so zero always denotes an empty
+/// entry while a new thread initializes its loader state.
+///
+/// # Safety
+///
+/// `symbol` must be a valid C string of at most `DLSYM_CACHE_NAME_LIMIT`
+/// bytes, and `handle`/`result` must be the direct loaded-object definition
+/// just resolved by `lookup_symbol_in_object` for the calling thread.
+unsafe fn cache_handle_local_symbol(
+    handle: *mut u8,
+    symbol: *const u8,
+    name_len: usize,
+    name_gnu_hash: u32,
+    result: u64,
+) {
+    if result == 0 || name_len > DLSYM_CACHE_NAME_LIMIT {
+        return;
+    }
+    let thread_pointer = read_tp();
+    if thread_pointer == 0 {
+        return;
+    }
+    let tcb = tcb_for_thread(thread_pointer);
+    core::ptr::copy_nonoverlapping(
+        symbol,
+        tcb.add(TCB_DLSYM_CACHE_NAME_OFFSET),
+        name_len,
+    );
+    core::ptr::write_unaligned(
+        tcb.add(TCB_DLSYM_CACHE_HANDLE_OFFSET) as *mut usize,
+        handle.addr(),
+    );
+    core::ptr::write_unaligned(
+        tcb.add(TCB_DLSYM_CACHE_NAME_LEN_OFFSET) as *mut usize,
+        name_len,
+    );
+    core::ptr::write_unaligned(
+        tcb.add(TCB_DLSYM_CACHE_HASH_OFFSET) as *mut u32,
+        name_gnu_hash,
+    );
+    core::ptr::write_unaligned(
+        tcb.add(TCB_DLSYM_CACHE_RESULT_OFFSET) as *mut u64,
+        result,
+    );
 }
 
 unsafe fn set_dlerror(msg: &[u8]) {
     dlerror_lock();
-    let node = dlerror_node_locked(current_tid() as usize, read_tp());
+    let node = dlerror_node_locked();
     if node.is_null() {
         dlerror_unlock();
         return;
@@ -3171,7 +3771,7 @@ unsafe fn set_dlerror(msg: &[u8]) {
 unsafe fn set_dlsym_symbol_not_found(symbol: *const u8, name_len: usize) {
     const PREFIX: &[u8] = b"dlsym: symbol not found: ";
     dlerror_lock();
-    let node = dlerror_node_locked(current_tid() as usize, read_tp());
+    let node = dlerror_node_locked();
     if node.is_null() {
         dlerror_unlock();
         return;
@@ -3185,15 +3785,6 @@ unsafe fn set_dlsym_symbol_not_found(symbol: *const u8, name_len: usize) {
     dlerror_unlock();
 }
 
-unsafe fn clear_dlerror() {
-    dlerror_lock();
-    let node = dlerror_node_locked(current_tid() as usize, read_tp());
-    if !node.is_null() {
-        (*node).set.store(false, Ordering::Release);
-    }
-    dlerror_unlock();
-}
-
 const DL_GLOBAL_SENTINEL: *mut u8 = 1usize as *mut u8;
 // This handle is never exposed through dlfcn.h.  libc uses it only through
 // the established ldso dlsym callback to obtain typed internal operations
@@ -3204,6 +3795,7 @@ type LdsoDlopenFn = unsafe extern "C" fn(*const u8, i32) -> *mut u8;
 type LdsoDlsymFn = unsafe extern "C" fn(*mut u8, *const u8) -> *mut u8;
 type LdsoDlcloseFn = unsafe extern "C" fn(*mut u8) -> i32;
 type LdsoDlerrorFn = unsafe extern "C" fn() -> *const u8;
+type LdsoMarkMultithreadedFn = unsafe extern "C" fn();
 pub type LdsoIterateCallback = unsafe extern "C" fn(*mut LdsoDlPhdrInfo, usize, *mut u8) -> i32;
 
 unsafe fn register_dlopen_callbacks() {
@@ -3232,13 +3824,17 @@ unsafe fn register_dlopen_callbacks() {
         let f: extern "C" fn(LdsoDlerrorFn) = core::mem::transmute(reg_error);
         f(__ldso_dlerror as LdsoDlerrorFn);
     }
+    let reg_threaded = resolve_symbol(b"__ldso_register_mark_multithreaded\0".as_ptr());
+    if reg_threaded != 0 {
+        let f: extern "C" fn(LdsoMarkMultithreadedFn) = core::mem::transmute(reg_threaded);
+        f(__ldso_mark_multithreaded as LdsoMarkMultithreadedFn);
+    }
 
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut u8 {
     loader_lock();
-    clear_dlerror();
     if filename.is_null() {
         loader_unlock();
         return DL_GLOBAL_SENTINEL;
@@ -3292,12 +3888,12 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     // TLS descriptors need the final module offset, while the TLS image can
     // contain ordinary relocations. Reserve the layout, relocate the image,
     // then copy that relocated image into the current thread's TLS block.
-    let tls_update = register_tls_for_new_module(idx);
+    let tls_update = register_tls_for_new_modules(first_new);
     process_all_relocations();
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     apply_relro();
-    if let Some((old_total, old_module_count)) = tls_update {
-        initialize_new_module_tls(old_total, old_module_count);
+    if tls_update {
+        initialize_new_module_tls();
     }
     run_constructors_for(idx);
     publish_debug_state(RT_CONSISTENT);
@@ -3307,14 +3903,16 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
 
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mut u8 {
-    loader_lock();
-    clear_dlerror();
+    let loader_locked = dlsym_lock();
+    // musl leaves a prior, unobserved failure available to `dlerror()` across
+    // a successful loader operation. Callers clear it before the lookup
+    // sequence whose result they intend to observe.
     if symbol.is_null() {
         set_dlerror(b"dlsym: null symbol\0");
-        loader_unlock();
+        dlsym_unlock(loader_locked);
         return core::ptr::null_mut();
     }
-    let name_len = str_len(symbol);
+    let (name_len, name_gnu_hash) = gnu_symbol_hash_c_string(symbol);
     if handle == DL_PRIVATE_SENTINEL {
         let private = if str_eq(symbol, name_len, b"__crabc_ldso_iterate_phdr\0".as_ptr()) {
             __ldso_dl_iterate_phdr as *mut u8
@@ -3334,7 +3932,7 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
         if private.is_null() {
             set_dlsym_symbol_not_found(symbol, name_len);
         }
-        loader_unlock();
+        dlsym_unlock(loader_locked);
         return private;
     }
     let mut result: u64 = 0;
@@ -3344,7 +3942,7 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
     if handle.is_null() || handle == DL_GLOBAL_SENTINEL {
         for i in 0..LOADED_COUNT {
             if i == 0 || LOADED[i].global {
-                result = lookup_symbol_in_object(i, symbol, name_len);
+                result = lookup_symbol_in_object(i, symbol, name_len, name_gnu_hash);
                 if result != 0 {
                     break;
                 }
@@ -3352,11 +3950,15 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
         }
     } else {
         if let Some(idx) = loaded_handle_index(handle) {
-            result = lookup_symbol_in_object(idx, symbol, name_len);
+            result = cached_handle_local_symbol(handle, symbol, name_len, name_gnu_hash);
+            if result == 0 {
+                result = lookup_symbol_in_object(idx, symbol, name_len, name_gnu_hash);
+                cache_handle_local_symbol(handle, symbol, name_len, name_gnu_hash, result);
+            }
             if result == 0 {
                 for i in 0..LOADED_COUNT {
                     if i == 0 || LOADED[i].global {
-                        result = lookup_symbol_in_object(i, symbol, name_len);
+                        result = lookup_symbol_in_object(i, symbol, name_len, name_gnu_hash);
                         if result != 0 {
                             break;
                         }
@@ -3368,14 +3970,13 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
     if result == 0 {
         set_dlsym_symbol_not_found(symbol, name_len);
     }
-    loader_unlock();
+    dlsym_unlock(loader_locked);
     result as *mut u8
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlclose(handle: *mut u8) -> i32 {
     loader_lock();
-    clear_dlerror();
     // `dlopen(NULL, ...)` returns the permanent global process handle. musl
     // accepts `dlclose` for it as a no-op; it is not an address inside LOADED.
     if handle == DL_GLOBAL_SENTINEL {
@@ -3419,7 +4020,7 @@ pub unsafe extern "C" fn __ldso_dlclose(handle: *mut u8) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_dlerror() -> *const u8 {
     dlerror_lock();
-    let node = dlerror_node_locked(current_tid() as usize, read_tp());
+    let node = dlerror_node_locked();
     let result = if !node.is_null() && (*node).set.swap(false, Ordering::AcqRel) {
         (*node).buf.as_ptr()
     } else {
@@ -3926,6 +4527,7 @@ unsafe fn init_tls_block(block: *mut u8) -> *mut u8 {
     let tcb = block.add(tls_tcb_offset_from_block());
     let tp = block.add(tls_tp_offset_from_block());
     initialize_tls_tcb(tcb, tp, TLS_TOTAL_SIZE);
+    initialize_loader_thread_state(tcb, tp);
     tp
 }
 
@@ -3987,7 +4589,7 @@ pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut u8 {
             tcb_locked.add(TCB_GENERATION_OFFSET) as *const u64,
         );
         if thread_gen2 != TLS_GENERATION {
-            if !expand_thread_tls(TLS_OLD_TOTAL, TLS_OLD_MODULE_COUNT) {
+            if !expand_thread_tls() {
                 tls_unlock();
                 return core::ptr::null_mut();
             }
@@ -4016,15 +4618,28 @@ pub unsafe extern "C" fn __rc_create_thread_tls() -> *mut u8 {
     if block as usize == MAP_FAILED {
         return core::ptr::null_mut();
     }
+    __rc_init_thread_tls(block)
+}
+
+/// Initialize a fresh, caller-owned TLS allocation for a pthread. libc uses
+/// this private bridge to place the block immediately above its downward-
+/// growing stack, avoiding a second anonymous mapping while preserving the
+/// loader's per-thread TCB and TLS-image initialization.
+#[no_mangle]
+pub unsafe extern "C" fn __rc_init_thread_tls(block: *mut u8) -> *mut u8 {
+    if block.is_null() || TLS_TOTAL_SIZE == 0 {
+        return core::ptr::null_mut();
+    }
     let new_tp = init_tls_block(block);
     // New pthreads inherit the process's TCB ABI state (including the stack
     // protector) while receiving fresh TLS variable images.
     let old_fs = read_tp();
     if old_fs != 0 {
         let old_tcb = tcb_for_thread(old_fs) as *const u8;
-        let new_tcb = tcb_for_thread(new_tp as usize);
+        let new_tcb = tcb_for_thread(new_tp.addr());
         core::ptr::copy_nonoverlapping(old_tcb, new_tcb, TCB_SIZE);
         initialize_tls_tcb(new_tcb, new_tp, TLS_TOTAL_SIZE);
+        initialize_loader_thread_state(new_tcb, new_tp);
     }
     new_tp
 }
@@ -4100,6 +4715,8 @@ unsafe fn register_self(ldso_base: u64) {
     let mut dt_symtab: u64 = 0;
     let mut dt_strtab: u64 = 0;
     let mut dt_strsz: u64 = 0;
+    let mut dt_gnu_hash: u64 = 0;
+    let mut dt_hash: u64 = 0;
     let mut pos = dyn_addr;
     while pos + 16 <= dyn_end {
         let d_tag = u64::from_le_bytes(core::ptr::read_unaligned(pos as *const [u8; 8]));
@@ -4111,6 +4728,8 @@ unsafe fn register_self(ldso_base: u64) {
             DT_SYMTAB => dt_symtab = d_val,
             DT_STRTAB => dt_strtab = d_val,
             DT_STRSZ => dt_strsz = d_val,
+            DT_GNU_HASH => dt_gnu_hash = d_val,
+            DT_HASH => dt_hash = d_val,
             _ => {}
         }
         pos += 16;
@@ -4120,7 +4739,19 @@ unsafe fn register_self(ldso_base: u64) {
     }
     let symtab_ptr = (ldso_base + dt_symtab) as *const u8;
     let strtab_ptr = (ldso_base + dt_strtab) as *const u8;
-    let sym_count = ((dt_strtab - dt_symtab) / SYMTAB_ENT_SIZE as u64) as usize;
+    let sym_count = if dt_gnu_hash != 0 {
+        sym_count_from_gnu_hash((ldso_base + dt_gnu_hash) as usize)
+    } else if dt_hash != 0 {
+        sym_count_from_hash((ldso_base + dt_hash) as usize)
+    } else {
+        ((dt_strtab - dt_symtab) / SYMTAB_ENT_SIZE as u64) as usize
+    };
+    let gnu_hash = if dt_gnu_hash == 0 {
+        core::ptr::null()
+    } else {
+        (ldso_base + dt_gnu_hash) as *const u8
+    };
+    let gnu_hash_metadata = gnu_hash_metadata(gnu_hash, sym_count);
     if LOADED_COUNT < MAX_LOADED {
         LOADED[LOADED_COUNT] = LoadedObject {
             base: ldso_base,
@@ -4128,6 +4759,13 @@ unsafe fn register_self(ldso_base: u64) {
             map_size: 0,
             symtab: symtab_ptr,
             sym_count,
+            gnu_hash,
+            gnu_hash_metadata,
+            sysv_hash: if dt_hash == 0 {
+                core::ptr::null()
+            } else {
+                (ldso_base + dt_hash) as *const u8
+            },
             strtab: strtab_ptr,
             strsz: dt_strsz as usize,
             search_path: core::ptr::null(),
@@ -4159,10 +4797,11 @@ unsafe fn register_self(ldso_base: u64) {
             ref_count: usize::MAX,
             active: true,
             finalized: false,
-            file_identity_valid: false,
-            file_dev: 0,
-            file_ino: 0,
-            name: [0; 256],
+        file_identity_valid: false,
+        file_dev: 0,
+        file_ino: 0,
+        initial_ld_library_path_name: false,
+        name: [0; 256],
         };
         LOADED_COUNT += 1;
     }
@@ -4194,6 +4833,64 @@ unsafe fn loaded_object_by_name(name: *const u8, name_len: usize) -> Option<usiz
         }
         if str_eq(name, name_len, LOADED[i].name.as_ptr()) {
             return Some(i);
+        }
+    }
+    None
+}
+
+unsafe fn loaded_initial_ld_library_path_object_by_name(
+    name: *const u8,
+    name_len: usize,
+) -> Option<usize> {
+    if !INITIAL_LOAD_IN_PROGRESS || name_len == 0 {
+        return None;
+    }
+    // A slash makes this a direct name, whose exact path remains subject to
+    // normal identity resolution. The startup cache is only for bare
+    // DT_NEEDED names whose configured global search result cannot vary while
+    // the loader has exclusive control before constructors run.
+    for offset in 0..name_len {
+        if *name.add(offset) == b'/' {
+            return None;
+        }
+    }
+    for idx in 0..LOADED_COUNT {
+        let object = &LOADED[idx];
+        if object.active
+            && object.initial_ld_library_path_name
+            && object.name[0] != 0
+            && str_eq(name, name_len, object.name.as_ptr())
+        {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+/// Reuse the initial libc for a conventional `DT_NEEDED libc.so` edge.
+///
+/// Musl gives its initial runtime image the `libc.so` short name, so a DSO
+/// loaded later does not reopen and stat the same libc only to rediscover its
+/// identity. Preserve the deliberately narrower runtime alias policy for all
+/// other names: `$ORIGIN`, RUNPATH/RPATH, direct paths, and arbitrary bare
+/// names retain inode-based matching. `TLS_STATIC_MODULE_COUNT` is frozen only
+/// after the initial graph is complete, which makes this exact-name reuse
+/// unavailable while startup still constructs its dependency closure.
+unsafe fn loaded_initial_libc_by_needed_name(
+    name: *const u8,
+    name_len: usize,
+) -> Option<usize> {
+    const LIBC_NEEDED_NAME: &[u8] = b"libc.so\0";
+    if !str_eq(name, name_len, LIBC_NEEDED_NAME.as_ptr()) {
+        return None;
+    }
+    for idx in 1..TLS_STATIC_MODULE_COUNT {
+        let object = &LOADED[idx];
+        if object.active
+            && object.name[0] != 0
+            && str_eq(name, name_len, object.name.as_ptr())
+        {
+            return Some(idx);
         }
     }
     None
@@ -4303,9 +5000,9 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     let image_start = min_vaddr & !(page - 1);
     let image_end = (max_vaddr_end + page - 1) & !(page - 1);
     let total_size = (image_end - image_start) as usize;
-    // The main PIE deserves the same kernel-selected load bias as DSOs. The
-    // old fixed low-address probe made its dladdr base repeat in every process
-    // and bypassed normal Linux ASLR entirely.
+    // The main PIE deserves the same kernel-selected load bias as DSOs. Keep
+    // this PROT_NONE span while MAP_FIXED overlays replace its load segments:
+    // it preserves ASLR and avoids a redundant munmap before the overlays.
     let reservation = sys_mmap(
         core::ptr::null_mut(),
         total_size,
@@ -4318,7 +5015,6 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         die(95, b"map_exec", total_size);
     }
     let exec_base = (reservation as u64).wrapping_sub(image_start);
-    sys_munmap(reservation, total_size);
 
     for i in 0..e_phnum as usize {
         let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
@@ -4338,20 +5034,6 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         let map_len = ((p_memsz + adj + page - 1) & !(page - 1)) as usize;
         let prot = prot_from_flags(p_flags);
 
-        // Map the whole segment anonymously first so the tail (bss) is backed
-        // by zeroed anonymous pages, then overlay the file-backed portion.
-        let ptr = sys_mmap(
-            map_addr as *mut u8,
-            map_len,
-            prot,
-            MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
-            -1,
-            0,
-        );
-        if ptr as usize == MAP_FAILED {
-            die(95, b"map_exec", map_addr as usize);
-        }
-
         let file_map_len = ((p_filesz + adj + page - 1) & !(page - 1)) as usize;
         if file_map_len > 0 {
             let fptr = sys_mmap(
@@ -4364,6 +5046,25 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
             );
             if fptr as usize == MAP_FAILED {
                 die(95, b"map_exec_file", map_addr as usize);
+            }
+        }
+        if map_len > file_map_len {
+            let Some(tail_addr) = map_addr.checked_add(file_map_len as u64) else {
+                die(95, b"map_exec_tail", map_addr as usize);
+            };
+            // As for DSOs, map only pages beyond the rounded file image as
+            // anonymous BSS. The file-backed prefix can replace the retained
+            // reservation directly without a transient anonymous overlay.
+            let tail = sys_mmap(
+                tail_addr as *mut u8,
+                map_len - file_map_len,
+                prot,
+                MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
+                -1,
+                0,
+            );
+            if tail as usize == MAP_FAILED {
+                die(95, b"map_exec_tail", tail_addr as usize);
             }
         }
 
@@ -4484,12 +5185,25 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     } else if dt_strtab > dt_symtab && dt_strtab - dt_symtab >= SYMTAB_ENT_SIZE as u64 {
         exec_sym_count = ((dt_strtab - dt_symtab) / SYMTAB_ENT_SIZE as u64) as usize;
     }
+    let exec_gnu_hash = if dt_gnu_hash == 0 {
+        core::ptr::null()
+    } else {
+        (exec_base + dt_gnu_hash) as *const u8
+    };
+    let exec_gnu_hash_metadata = gnu_hash_metadata(exec_gnu_hash, exec_sym_count);
     LOADED[0] = LoadedObject {
         base: exec_base,
         map_start: exec_base.wrapping_add(image_start) as *mut u8,
         map_size: total_size,
         symtab: (exec_base + dt_symtab) as *const u8,
         sym_count: exec_sym_count,
+        gnu_hash: exec_gnu_hash,
+        gnu_hash_metadata: exec_gnu_hash_metadata,
+        sysv_hash: if dt_hash == 0 {
+            core::ptr::null()
+        } else {
+            (exec_base + dt_hash) as *const u8
+        },
         strtab: (exec_base + dt_strtab) as *const u8,
         strsz: dt_strsz as usize,
         search_path: core::ptr::null(),
@@ -4524,6 +5238,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         file_identity_valid: exec_identity.is_some(),
         file_dev: exec_identity.map_or(0, |id| id.dev),
         file_ino: exec_identity.map_or(0, |id| id.ino),
+        initial_ld_library_path_name: false,
         name: [0; 256],
     };
     LOADED_COUNT = 1;
@@ -4539,6 +5254,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     // definitions must already be visible when the ordinary dependencies'
     // PLT/GOT relocations are resolved. Preserve the kernel envp pointer until
     // after this point; the replacement application stack is built later.
+    INITIAL_LOAD_IN_PROGRESS = true;
     if !secure {
         if let Some(preload) = find_env(sp, b"LD_PRELOAD=") {
             if !load_preload_list(preload, ld_path) {
@@ -4556,11 +5272,15 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         cleanup_loaded_objects_from(1);
         die(89, b"needed_graph", 0);
     }
+    INITIAL_LOAD_IN_PROGRESS = false;
 
     compute_tls_layout();
     TLS_STATIC_MODULE_COUNT = TLS_MODULE_COUNT;
-    TLS_OLD_TOTAL = TLS_TOTAL_SIZE;
-    TLS_OLD_MODULE_COUNT = TLS_MODULE_COUNT;
+    for idx in 0..TLS_MODULE_COUNT {
+        if TLS_MEMSZ[idx] != 0 {
+            TLS_MODULE_GENERATION[idx] = TLS_GENERATION;
+        }
+    }
 
     process_all_relocations();
     register_dlopen_callbacks();

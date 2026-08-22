@@ -637,6 +637,78 @@ def compare_hash_formats(work: pathlib.Path, timeout: float) -> dict[str, object
     return {"result": "pass", "reference": ref.json(), "candidate": got.json()}
 
 
+def compare_many_symbol_hash_lookup(work: pathlib.Path, timeout: float) -> dict[str, object]:
+    """Resolve first and last exports from a DSO with 1,025 hash-indexed names."""
+
+    cc = compiler()
+    dso = work / "libhash_many.so"
+    source = work / "hash_many_dso.c"
+    source.write_text(
+        "\n".join(
+            f"__attribute__((visibility(\"default\"))) int hash_many_{index}(void) {{ return {index}; }}"
+            for index in range(1025)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    checked(
+        [
+            cc,
+            "-shared",
+            "-fPIC",
+            source,
+            "-Wl,--hash-style=both",
+            "-o",
+            dso,
+        ],
+        cwd=work,
+        timeout=timeout,
+    )
+    symbols = checked(["readelf", "--dyn-syms", "--wide", dso], cwd=work, timeout=timeout)
+    exported = sum(
+        "hash_many_" in line
+        for line in symbols.stdout.decode("utf-8", errors="replace").splitlines()
+    )
+    if exported != 1025:
+        raise LoaderSuiteError(
+            f"many-symbol fixture exported {exported} hash_many symbols, expected 1025"
+        )
+
+    reference = work / "hash-many-reference"
+    candidate = work / "hash-many-candidate"
+    common = [cc, "-fPIE", "-pie", FIXTURES / "hash_many_main.c", "-ldl"]
+    checked([*common, "-o", reference], cwd=work, timeout=timeout)
+    checked(
+        [
+            *common,
+            "-Wl,--dynamic-linker",
+            TARGET / "libldso.so",
+            "-L",
+            TARGET,
+            "-lc",
+            "-o",
+            candidate,
+        ],
+        cwd=work,
+        timeout=timeout,
+    )
+    ref_env = reference_env(work)
+    ref_env["LD_LIBRARY_PATH"] = str(work)
+    got_env = candidate_env(work)
+    got_env["LD_LIBRARY_PATH"] = f"{TARGET}:{work}"
+    ref = run([reference], env=ref_env, cwd=work, timeout=timeout)
+    got = run([candidate], env=got_env, cwd=work, timeout=timeout)
+    expected = ProcessResult(ref.argv, 0, b"hash-many=1024,0\n", b"", False)
+    if ref != expected:
+        raise LoaderSuiteError(f"pinned musl many-symbol hash reference failed: {ref.json()}")
+    if got != ProcessResult(got.argv, ref.returncode, ref.stdout, ref.stderr, ref.timed_out):
+        raise LoaderSuiteError(
+            "crabc differs from pinned musl many-symbol hash lookup: "
+            f"reference={ref.json()} candidate={got.json()}"
+        )
+    return {"result": "pass", "reference": ref.json(), "candidate": got.json()}
+
+
 def compare_relro(work: pathlib.Path, timeout: float) -> dict[str, object]:
     """Require GNU_RELRO memory to reject a post-relocation child write."""
 
@@ -1428,6 +1500,8 @@ def execute(selected: set[str], timeout: float) -> dict[str, object]:
             cases["dlerror"] = compare_dlerror(work, timeout)
         if "hash-formats" in selected:
             cases["hash-formats"] = compare_hash_formats(work, timeout)
+        if "hash-many" in selected:
+            cases["hash-many"] = compare_many_symbol_hash_lookup(work, timeout)
         if "relro" in selected:
             cases["relro"] = compare_relro(work, timeout)
         if "auxv" in selected:
@@ -1477,6 +1551,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
             "initial-tls",
             "dlerror",
             "hash-formats",
+            "hash-many",
             "relro",
             "auxv",
             "legacy-lifecycle",
@@ -1543,6 +1618,7 @@ def main(argv: Sequence[str]) -> int:
                 "initial-tls",
                 "dlerror",
                 "hash-formats",
+                "hash-many",
                 "relro",
                 "auxv",
                 "legacy-lifecycle",

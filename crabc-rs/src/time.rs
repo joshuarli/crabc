@@ -336,12 +336,12 @@ impl RealtimeMillis {
     }
 }
 
-/// Reads `CLOCK_REALTIME` through Linux's direct clock syscall and truncates
-/// its subsecond component to milliseconds.
+/// Reads `CLOCK_REALTIME` through the shared Linux vDSO clock dispatch and
+/// truncates its subsecond component to milliseconds.
 ///
-/// Kernel errors remain typed [`Errno`] values. No C ABI function, vDSO
-/// dispatch, allocation, timezone state, or TLS `errno` participates in the
-/// observation.
+/// Kernel errors remain typed [`Errno`] values. Absent or malformed vDSO
+/// metadata falls back to the direct syscall; no C ABI function, allocation,
+/// timezone state, or TLS `errno` participates in the observation.
 #[inline]
 pub fn realtime_millis() -> Result<RealtimeMillis> {
     RealtimeMillis::from_timespec(clock_query_result(ClockId::Realtime as i32)?)
@@ -1420,8 +1420,10 @@ pub fn clock_settime(id: ClockId, timespec: Timespec) -> Result<()> {
 /// This is the Rustix-shaped fallible companion to [`clock_gettime`]. Linux
 /// validates the encoded clock identifier and can return an error such as
 /// [`Errno::INVAL`] for a descriptor that is not a clock device. The query
-/// uses syscall 113 directly with caller-owned, fully initialized output
-/// storage; it does not dispatch through libc, vDSO, or TLS `errno`.
+/// uses the shared typed clock dispatcher with caller-owned, fully initialized
+/// output storage. Eligible fixed clock IDs use the kernel vDSO; descriptor
+/// clocks remain direct syscalls. It does not dispatch through libc or TLS
+/// `errno`.
 pub fn clock_gettime_dynamic(id: DynamicClockId<'_>) -> Result<Timespec> {
     clock_query_result(dynamic_clock_id(id))
 }

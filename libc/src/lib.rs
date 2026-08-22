@@ -26,6 +26,8 @@ include!("math_bessel.rs");
 include!("math_gamma.rs");
 include!("math_compat.rs");
 include!("math_f128.rs");
+include!("aarch64_atomic.rs");
+include!("aarch64_memory.rs");
 
 // This is a Linux mmap syscall sentinel, used by thread, semaphore, and AIO
 // mappings. It is deliberately independent from the malloc implementation.
@@ -919,33 +921,106 @@ unsafe fn c_result_fd(result: crabc_core::Result<crabc_core::RawFd>) -> c_int {
 // ============================================================
 
 #[no_mangle]
+/// Returns the number of bytes before the first NUL terminator in `s`.
+///
+/// # Safety
+///
+/// `s` must point to a readable NUL-terminated byte sequence. The terminator
+/// and its containing Linux page must remain readable for the duration of the
+/// call; a null pointer is never valid.
 pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
-    let s = s as *const u8;
-    let mut len = 0;
-    while *s.add(len) != 0 {
-        len += 1;
+    const WORD_BYTES: usize = core::mem::size_of::<u64>();
+    // This is `-ONES` from musl's `HASZERO(x)`: using the add form keeps the
+    // AArch64 lowering at the same add/bic/bit-test shape as the oracle.
+    const MINUS_ONES: u64 = 0xfefe_fefe_fefe_feff;
+    const HIGHS: u64 = 0x8080_8080_8080_8080;
+
+    let mut cursor = s.cast::<u8>();
+    let mut length = 0usize;
+    while cursor.addr() % WORD_BYTES != 0 {
+        // SAFETY: before reaching an aligned address, this reads one byte at
+        // a time from the caller's NUL-terminated sequence and stops at its
+        // terminator.
+        if unsafe { cursor.read() } == 0 {
+            return length;
+        }
+        cursor = cursor.wrapping_add(1);
+        length += 1;
     }
-    len
+
+    loop {
+        // SAFETY: `cursor` is word-aligned. Linux page granules are multiples
+        // of eight bytes, and the byte prefix above either found the NUL or
+        // reached this aligned address without crossing a page boundary. A
+        // terminating word therefore remains inside the readable page.
+        let word = unsafe { core::ptr::read_unaligned(cursor.cast::<u64>()) };
+        let zero_bytes = word.wrapping_add(MINUS_ONES) & !word & HIGHS;
+        if zero_bytes == 0 {
+            // SAFETY: this word has no NUL, so the C string continues to the
+            // next aligned word. Both words are page-contained on Linux
+            // because page granules are multiples of eight bytes.
+            let next = unsafe { cursor.add(WORD_BYTES) };
+            let next_word = unsafe { core::ptr::read_unaligned(next.cast::<u64>()) };
+            let next_zero_bytes = next_word.wrapping_add(MINUS_ONES) & !next_word & HIGHS;
+            if next_zero_bytes == 0 {
+                cursor = unsafe { next.add(WORD_BYTES) };
+                length += WORD_BYTES * 2;
+                continue;
+            }
+            // The adjacent word is already page-contained and contains the
+            // first NUL after this nonzero word.
+            return length + WORD_BYTES + (next_zero_bytes.trailing_zeros() as usize / 8);
+        }
+        // This predicate can carry a high-bit mark into bytes after a NUL,
+        // but never before the first NUL. Linux/AArch64 is little-endian, so
+        // its least set bit belongs to that lowest-addressed terminator. The
+        // word was already proven page-contained above; this inspects no
+        // further caller memory.
+        return length + (zero_bytes.trailing_zeros() as usize / 8);
+    }
 }
 
+/// Copies `n` bytes from `src` to `dst` and returns `dst`.
+///
+/// # Safety
+///
+/// `src` must designate at least `n` readable bytes, `dst` must designate at
+/// least `n` writable bytes, and the two ranges must not overlap.
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+#[unsafe(naked)]
+pub unsafe extern "C" fn memcpy(_dst: *mut c_void, _src: *const c_void, _n: usize) -> *mut c_void {
+    // The C entry is deliberately a tail branch so the external ABI pays no
+    // wrapper prologue, argument shuffling, or return-path cost. The target
+    // owns the raw-pointer contract documented above.
+    core::arch::naked_asm!("b __crabc_aarch64_memcpy");
+}
+
+#[cfg(not(target_arch = "aarch64"))]
 #[no_mangle]
 pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
     let dst = dst as *mut u8;
     let src = src as *const u8;
-    let mut i = 0;
+    let mut i = 0usize;
     while i < n {
-        *dst.add(i) = *src.add(i);
+        unsafe { dst.add(i).write(src.add(i).read()) };
         i += 1;
     }
     dst as *mut c_void
 }
 
+/// Writes the low eight bits of `c` to `n` bytes beginning at `s` and returns `s`.
+///
+/// # Safety
+///
+/// `s` must designate at least `n` writable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn memset(s: *mut c_void, c: c_int, n: usize) -> *mut c_void {
     let s = s as *mut u8;
-    let mut i = 0;
+    let byte = c as u8;
+    let mut i = 0usize;
     while i < n {
-        *s.add(i) = c as u8;
+        unsafe { s.add(i).write(byte) };
         i += 1;
     }
     s as *mut c_void
@@ -1225,44 +1300,523 @@ pub unsafe extern "C" fn strpbrk(s: *const u8, accept: *const u8) -> *mut u8 {
 }
 
 #[no_mangle]
+/// Finds the first occurrence of the NUL-terminated `needle` C string in the
+/// NUL-terminated `haystack` C string.
+///
+/// # Safety
+///
+/// `haystack` and `needle` must each designate a readable sequence ending in
+/// a NUL byte. Neither pointer may be null.
 pub unsafe extern "C" fn strstr(haystack: *const u8, needle: *const u8) -> *mut u8 {
-    if *needle == 0 {
-        return haystack as *mut u8;
+    // SAFETY: the public contract supplies both readable C strings. The
+    // helper performs only read accesses before their respective terminators.
+    unsafe { strstr_c_string(haystack, needle) }.cast_mut()
+}
+
+/// A raw-pointer translation of musl 1.2.6's `src/string/strstr.c` two-way
+/// search (MIT licensed). Unlike musl's bounded `memchr(z, 0, grow)` probe,
+/// `known` grows one checked C-string byte at a time: callers with a
+/// terminator at a page edge never cause a speculative read into the next
+/// page. The search still carries that known prefix forward, so each haystack
+/// byte is discovered at most once.
+unsafe fn strstr_c_string(mut haystack: *const u8, needle: *const u8) -> *const u8 {
+    // SAFETY: `needle` is a readable, NUL-terminated C string by the caller's
+    // contract, so its first byte is valid to read.
+    let first = unsafe { needle.read() };
+    if first == 0 {
+        return haystack;
     }
-    let mut i = 0;
-    loop {
-        let h = *haystack.add(i);
-        if h == 0 {
-            return null_mut();
+
+    // SAFETY: `haystack` is a readable, NUL-terminated C string and `first`
+    // is nonzero, so the helper searches only through its terminator.
+    haystack = unsafe { find_byte_in_c_string(haystack, first) };
+    if haystack.is_null() {
+        return core::ptr::null();
+    }
+    // SAFETY: `needle` has a readable byte after its nonzero first byte.
+    if unsafe { needle.add(1).read() } == 0 {
+        return haystack;
+    }
+    // SAFETY: the discovered haystack position starts at a nonzero byte, so
+    // its following byte exists inside the same C string.
+    if unsafe { haystack.add(1).read() } == 0 {
+        return core::ptr::null();
+    }
+    // SAFETY: the same terminator argument holds for the third byte.
+    if unsafe { needle.add(2).read() } == 0 {
+        return unsafe { two_byte_strstr(haystack, needle) };
+    }
+    if unsafe { haystack.add(2).read() } == 0 {
+        return core::ptr::null();
+    }
+    if unsafe { needle.add(3).read() } == 0 {
+        return unsafe { three_byte_strstr(haystack, needle) };
+    }
+    if unsafe { haystack.add(3).read() } == 0 {
+        return core::ptr::null();
+    }
+    if unsafe { needle.add(4).read() } == 0 {
+        return unsafe { four_byte_strstr(haystack, needle) };
+    }
+
+    // The two-way setup allocates and initializes a 256-entry shift table.
+    // For five through eight bytes a packed rolling window has the same
+    // linear scan bound without that fixed cost. Dispatch to a length-specific
+    // instantiation so its mask and initial window are compile-time constants.
+    // The byte-at-a-time terminator checks retain the page-edge contract.
+    if unsafe { needle.add(5).read() } == 0 {
+        return unsafe { short_needle_strstr::<5, 0x0000_00ff_ffff_ffff>(haystack, needle) };
+    }
+    if unsafe { needle.add(6).read() } == 0 {
+        return unsafe { short_needle_strstr::<6, 0x0000_ffff_ffff_ffff>(haystack, needle) };
+    }
+    if unsafe { needle.add(7).read() } == 0 {
+        return unsafe { short_needle_strstr::<7, 0x00ff_ffff_ffff_ffff>(haystack, needle) };
+    }
+    if unsafe { needle.add(8).read() } == 0 {
+        return unsafe { short_needle_strstr::<8, { u64::MAX }>(haystack, needle) };
+    }
+
+    unsafe { two_way_strstr(haystack, needle) }
+}
+
+/// Find `target` without reading past a C-string terminator or across a page
+/// boundary. Linux's supported page granule is a multiple of eight bytes, so
+/// an eight-byte load begun at an eight-byte-aligned address stays on one page.
+unsafe fn find_byte_in_c_string(mut cursor: *const u8, target: u8) -> *const u8 {
+    const WORD_BYTES: usize = core::mem::size_of::<u64>();
+    const ONES: u64 = u64::MAX / 0xff;
+    const HIGHS: u64 = ONES * 0x80;
+
+    while cursor.addr() % WORD_BYTES != 0 {
+        // SAFETY: the caller supplies a readable C string; `cursor` starts in
+        // that string and advances only after a nonzero byte was observed.
+        let byte = unsafe { cursor.read() };
+        if byte == target {
+            return cursor;
         }
-        if h == *needle {
-            let mut j = 0;
-            loop {
-                let n = *needle.add(j);
-                if n == 0 {
-                    return haystack.add(i) as *mut u8;
-                }
-                if *haystack.add(i + j) != n {
-                    break;
-                }
-                j += 1;
+        if byte == 0 {
+            return core::ptr::null();
+        }
+        // SAFETY: a nonzero byte proves the subsequent C-string byte exists.
+        cursor = unsafe { cursor.add(1) };
+    }
+
+    loop {
+        // SAFETY: `cursor` is eight-byte aligned. A Linux page size is a
+        // multiple of eight, so this unaligned-capable read cannot straddle a
+        // guard page; the byte confirmation below stops at the first NUL.
+        let word = unsafe { core::ptr::read_unaligned(cursor.cast::<u64>()) };
+        let target_word = ONES * target as u64;
+        // A byte of `word & (word ^ target_word)` is zero whenever the
+        // original byte is either NUL or `target`: zero clears the left term,
+        // while `target ^ target` clears the right term. Other byte values can
+        // also produce zero, which is safe because the byte loop below
+        // confirms every candidate. The one zero-byte test therefore screens
+        // both terminating and matching bytes without a second word predicate.
+        let candidates = word & (word ^ target_word);
+        let has_candidate = candidates.wrapping_sub(ONES) & !candidates & HIGHS != 0;
+        if !has_candidate {
+            // SAFETY: the first word contains no NUL, so the C string proves
+            // the next aligned word begins in readable storage. A Linux page
+            // is a multiple of eight, so this second word also stays within a
+            // single readable page even when it starts at a page boundary.
+            let next = unsafe { cursor.add(WORD_BYTES) };
+            let next_word = unsafe { core::ptr::read_unaligned(next.cast::<u64>()) };
+            let next_candidates = next_word & (next_word ^ target_word);
+            let next_has_candidate = next_candidates.wrapping_sub(ONES)
+                & !next_candidates & HIGHS != 0;
+            if !next_has_candidate {
+                cursor = unsafe { next.add(WORD_BYTES) };
+                continue;
+            }
+            cursor = next;
+        }
+        for offset in 0..WORD_BYTES {
+            // SAFETY: every byte belongs to the aligned word selected above;
+            // it cannot cross the current Linux page boundary.
+            let byte = unsafe { cursor.add(offset).read() };
+            if byte == target {
+                return unsafe { cursor.add(offset) };
+            }
+            if byte == 0 {
+                return core::ptr::null();
             }
         }
-        i += 1;
+        // SAFETY: the selected word contains neither target nor NUL, so all
+        // of its bytes are nonzero members of the caller's C string.
+        cursor = unsafe { cursor.add(WORD_BYTES) };
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn memchr(s: *const u8, c: c_int, n: usize) -> *mut u8 {
-    let target = c as u8;
-    let mut i = 0;
-    while i < n {
-        if *s.add(i) == target {
-            return s.add(i) as *mut u8;
+unsafe fn two_byte_strstr(haystack: *const u8, needle: *const u8) -> *const u8 {
+    // SAFETY: the short-needle dispatch verified two nonzero needle bytes and
+    // two nonzero haystack bytes before entering this rolling window.
+    let target = unsafe { (needle.read() as u16) << 8 | needle.add(1).read() as u16 };
+    let mut previous = unsafe { haystack.read() };
+    let mut cursor = unsafe { haystack.add(1) };
+    loop {
+        let current = unsafe { cursor.read() };
+        if current == 0 {
+            return core::ptr::null();
         }
-        i += 1;
+        if ((previous as u16) << 8) | current as u16 == target {
+            return unsafe { cursor.sub(1) };
+        }
+        previous = current;
+        cursor = unsafe { cursor.add(1) };
     }
-    null_mut()
+}
+
+unsafe fn three_byte_strstr(haystack: *const u8, needle: *const u8) -> *const u8 {
+    let target = unsafe {
+        (needle.read() as u32) << 16 | (needle.add(1).read() as u32) << 8 | needle.add(2).read() as u32
+    };
+    let mut window = unsafe {
+        (haystack.read() as u32) << 16
+            | (haystack.add(1).read() as u32) << 8
+            | haystack.add(2).read() as u32
+    };
+    let mut cursor = unsafe { haystack.add(2) };
+    loop {
+        if window == target {
+            return unsafe { cursor.sub(2) };
+        }
+        cursor = unsafe { cursor.add(1) };
+        let next = unsafe { cursor.read() };
+        if next == 0 {
+            return core::ptr::null();
+        }
+        window = ((window << 8) | next as u32) & 0x00ff_ffff;
+    }
+}
+
+unsafe fn four_byte_strstr(haystack: *const u8, needle: *const u8) -> *const u8 {
+    let target = unsafe {
+        (needle.read() as u32) << 24
+            | (needle.add(1).read() as u32) << 16
+            | (needle.add(2).read() as u32) << 8
+            | needle.add(3).read() as u32
+    };
+    let mut window = unsafe {
+        (haystack.read() as u32) << 24
+            | (haystack.add(1).read() as u32) << 16
+            | (haystack.add(2).read() as u32) << 8
+            | haystack.add(3).read() as u32
+    };
+    let mut cursor = unsafe { haystack.add(3) };
+    loop {
+        if window == target {
+            return unsafe { cursor.sub(3) };
+        }
+        cursor = unsafe { cursor.add(1) };
+        let next = unsafe { cursor.read() };
+        if next == 0 {
+            return core::ptr::null();
+        }
+        window = (window << 8) | next as u32;
+    }
+}
+
+/// Search a five- through eight-byte needle with an exact packed byte window.
+///
+/// The caller has established a nonzero needle of `NEEDLE_LEN` bytes followed
+/// by its terminator. Each haystack byte is read only after all preceding bytes
+/// proved nonzero, so a terminator at a protected page edge remains safe.
+#[inline(always)]
+unsafe fn short_needle_strstr<const NEEDLE_LEN: usize, const WINDOW_MASK: u64>(
+    haystack: *const u8,
+    needle: *const u8,
+) -> *const u8 {
+    debug_assert!((5..=8).contains(&NEEDLE_LEN));
+    let mut target = 0u64;
+    let mut window = 0u64;
+    for index in 0..NEEDLE_LEN {
+        // SAFETY: the dispatch established this nonzero needle prefix; its
+        // C-string contract makes each byte readable.
+        target = (target << 8) | unsafe { needle.add(index).read() } as u64;
+        // SAFETY: a nonzero haystack prefix is established byte by byte. A
+        // zero encountered before the full initial window cannot match.
+        let byte = unsafe { haystack.add(index).read() };
+        if byte == 0 {
+            return core::ptr::null();
+        }
+        window = (window << 8) | byte as u64;
+    }
+    let mut cursor = unsafe { haystack.add(NEEDLE_LEN - 1) };
+    loop {
+        if window == target {
+            return unsafe { cursor.sub(NEEDLE_LEN - 1) };
+        }
+        // SAFETY: the previous window's final byte was nonzero, so this next
+        // C-string byte exists. It is checked before becoming part of the
+        // following candidate window.
+        cursor = unsafe { cursor.add(1) };
+        let byte = unsafe { cursor.read() };
+        if byte == 0 {
+            return core::ptr::null();
+        }
+        window = ((window << 8) | byte as u64) & WINDOW_MASK;
+    }
+}
+
+unsafe fn two_way_strstr(mut haystack: *const u8, needle: *const u8) -> *const u8 {
+    let mut byte_set = [0u64; 4];
+    let mut shift = [0usize; 256];
+    let mut needle_len = 0usize;
+    loop {
+        // SAFETY: each iteration reads the next byte of the caller's
+        // NUL-terminated needle and stops at its first terminator.
+        let byte = unsafe { needle.add(needle_len).read() };
+        if byte == 0 {
+            break;
+        }
+        byte_set[byte as usize / 64] |= 1u64 << (byte % 64);
+        let Some(next_len) = needle_len.checked_add(1) else {
+            return core::ptr::null();
+        };
+        shift[byte as usize] = next_len;
+        needle_len = next_len;
+    }
+
+    let (forward_suffix, forward_period) = unsafe { maximal_suffix_c_string(needle, needle_len, false) };
+    let (reverse_suffix, reverse_period) = unsafe { maximal_suffix_c_string(needle, needle_len, true) };
+    let (suffix, mut period) = if reverse_suffix > forward_suffix {
+        (reverse_suffix, reverse_period)
+    } else {
+        (forward_suffix, forward_period)
+    };
+    let critical = if suffix < 0 { 0 } else { suffix as usize + 1 };
+    let periodic = period.checked_add(critical).is_some_and(|end| {
+        end <= needle_len
+            && (0..critical).all(|index| unsafe {
+                needle.add(index).read() == needle.add(period + index).read()
+            })
+    });
+    let remembered_after_match = if periodic {
+        needle_len - period
+    } else {
+        let span = core::cmp::max(critical, needle_len - critical);
+        let Some(nonperiodic_period) = span.checked_add(1) else {
+            return core::ptr::null();
+        };
+        period = nonperiodic_period;
+        0
+    };
+
+    // Number of known nonzero bytes beginning at the current candidate. It
+    // replaces musl's speculative `memchr` growth with page-safe byte growth.
+    let mut known = 0usize;
+    let mut remembered = 0usize;
+    loop {
+        if !unsafe { grow_c_string_prefix(haystack, &mut known, needle_len) } {
+            return core::ptr::null();
+        }
+        // SAFETY: `known >= needle_len` establishes this candidate's complete
+        // nonzero search window.
+        let last = unsafe { haystack.add(needle_len - 1).read() };
+        if byte_set[last as usize / 64] & (1u64 << (last % 64)) == 0 {
+            if !unsafe { advance_c_string_candidate(&mut haystack, &mut known, needle_len) } {
+                return core::ptr::null();
+            }
+            remembered = 0;
+            continue;
+        }
+
+        let mut skip = needle_len - shift[last as usize];
+        if skip != 0 {
+            if remembered_after_match != 0 && remembered != 0 && skip < period {
+                skip = needle_len - period;
+            }
+            if !unsafe { advance_c_string_candidate(&mut haystack, &mut known, skip) } {
+                return core::ptr::null();
+            }
+            remembered = 0;
+            continue;
+        }
+
+        let mut index = core::cmp::max(critical, remembered);
+        while index < needle_len {
+            // SAFETY: the prefix-growth invariant makes `haystack[index]`
+            // readable and nonzero; the needle scan established its length.
+            if unsafe { needle.add(index).read() } != unsafe { haystack.add(index).read() } {
+                break;
+            }
+            index += 1;
+        }
+        if index < needle_len {
+            let advance = index - critical + 1;
+            if !unsafe { advance_c_string_candidate(&mut haystack, &mut known, advance) } {
+                return core::ptr::null();
+            }
+            remembered = 0;
+            continue;
+        }
+
+        index = critical;
+        while index > remembered
+            && unsafe { needle.add(index - 1).read() } == unsafe { haystack.add(index - 1).read() }
+        {
+            index -= 1;
+        }
+        if index <= remembered {
+            return haystack;
+        }
+        if !unsafe { advance_c_string_candidate(&mut haystack, &mut known, period) } {
+            return core::ptr::null();
+        }
+        remembered = remembered_after_match;
+    }
+}
+
+/// The `suffix + offset >= 0` invariant is the same critical-factorization
+/// proof used by musl's two-way search; it makes every raw needle index valid.
+unsafe fn maximal_suffix_c_string(
+    needle: *const u8,
+    needle_len: usize,
+    reverse_order: bool,
+) -> (isize, usize) {
+    let mut suffix = -1isize;
+    let mut candidate = 0usize;
+    let mut offset = 1usize;
+    let mut period = 1usize;
+    while candidate + offset < needle_len {
+        let left_index = if suffix < 0 {
+            offset - 1
+        } else {
+            suffix as usize + offset
+        };
+        let left = unsafe { needle.add(left_index).read() };
+        let right = unsafe { needle.add(candidate + offset).read() };
+        if left == right {
+            if offset == period {
+                candidate += period;
+                offset = 1;
+            } else {
+                offset += 1;
+            }
+        } else if if reverse_order { left < right } else { left > right } {
+            candidate += offset;
+            offset = 1;
+            period = if suffix < 0 {
+                candidate + 1
+            } else {
+                candidate - suffix as usize
+            };
+        } else {
+            suffix = candidate as isize;
+            candidate += 1;
+            offset = 1;
+            period = 1;
+        }
+    }
+    (suffix, period)
+}
+
+/// Establish `needed` nonzero bytes from `base` without touching the byte
+/// after a C-string terminator.
+unsafe fn grow_c_string_prefix(base: *const u8, known: &mut usize, needed: usize) -> bool {
+    while *known < needed {
+        // SAFETY: previous iterations observed each earlier byte as nonzero;
+        // the C-string contract therefore makes this next byte readable.
+        if unsafe { base.add(*known).read() } == 0 {
+            return false;
+        }
+        let Some(next_known) = known.checked_add(1) else {
+            return false;
+        };
+        *known = next_known;
+    }
+    true
+}
+
+/// Move the candidate only after the retained prefix proves that destination
+/// address lies within the C string (or on its terminating byte).
+unsafe fn advance_c_string_candidate(
+    haystack: &mut *const u8,
+    known: &mut usize,
+    advance: usize,
+) -> bool {
+    if !unsafe { grow_c_string_prefix(*haystack, known, advance) } {
+        return false;
+    }
+    // SAFETY: `known >= advance` means the C string contains all preceding
+    // bytes and therefore the destination pointer itself.
+    *haystack = unsafe { haystack.add(advance) };
+    *known -= advance;
+    true
+}
+
+#[no_mangle]
+/// Finds the first byte in the first `n` bytes of `s` equal to `c` converted
+/// to `unsigned char`.
+///
+/// # Safety
+///
+/// If `n` is nonzero, `s` must designate at least `n` readable bytes. A null
+/// pointer is permitted only when `n` is zero.
+pub unsafe extern "C" fn memchr(s: *const u8, c: c_int, n: usize) -> *mut u8 {
+    if n == 0 {
+        return null_mut();
+    }
+    // SAFETY: the public contract supplies a readable non-empty byte range.
+    // The immutable slice borrows it only for this search and never writes.
+    let bytes = unsafe { core::slice::from_raw_parts(s, n) };
+    match memchr_index(bytes, c as u8) {
+        Some(offset) => bytes.as_ptr().wrapping_add(offset).cast_mut(),
+        None => null_mut(),
+    }
+}
+
+/// Locate `target` with musl's generic word-at-a-time zero-byte predicate.
+///
+/// A word is read only when all eight of its bytes lie in `bytes`, so this
+/// never crosses the caller's supplied range or probes into a guard page.
+fn memchr_index(bytes: &[u8], target: u8) -> Option<usize> {
+    const WORD_BYTES: usize = core::mem::size_of::<u64>();
+    const ONES: u64 = u64::MAX / 0xff;
+    const HIGHS: u64 = ONES * 0x80;
+
+    let target_word = ONES * target as u64;
+    let mut index = 0usize;
+    while bytes.len() - index >= WORD_BYTES {
+        // SAFETY: `bytes.len() - index >= WORD_BYTES` proves the aligned or
+        // unaligned u64 lies completely inside this readable slice. The load
+        // does not create a reference to possibly unaligned C storage.
+        let word = unsafe {
+            core::ptr::read_unaligned(bytes.as_ptr().wrapping_add(index).cast::<u64>())
+        };
+        let difference = word ^ target_word;
+        if difference.wrapping_sub(ONES) & !difference & HIGHS == 0 {
+            let next_index = index + WORD_BYTES;
+            if bytes.len() - next_index >= WORD_BYTES {
+                // SAFETY: the remaining-length check proves this adjacent
+                // word also lies entirely inside the caller's exact range.
+                let next_word = unsafe {
+                    core::ptr::read_unaligned(bytes.as_ptr().add(next_index).cast::<u64>())
+                };
+                let next_difference = next_word ^ target_word;
+                if next_difference.wrapping_sub(ONES) & !next_difference & HIGHS == 0 {
+                    index = next_index + WORD_BYTES;
+                    continue;
+                }
+                index = next_index;
+            }
+        }
+        for offset in 0..WORD_BYTES {
+            if bytes[index + offset] == target {
+                return Some(index + offset);
+            }
+        }
+        index += WORD_BYTES;
+    }
+    while index < bytes.len() {
+        if bytes[index] == target {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
 }
 
 #[no_mangle]
@@ -1280,21 +1834,239 @@ pub unsafe extern "C" fn memrchr(s: *const u8, c: c_int, n: usize) -> *mut u8 {
 }
 
 #[no_mangle]
+/// Finds the first complete `needle` byte sequence in `haystack`.
+///
+/// # Safety
+///
+/// If `needlelen` is nonzero, `needle` must designate at least `needlelen`
+/// readable bytes. If `haystacklen` is nonzero, `haystack` must designate at
+/// least `haystacklen` readable bytes. The two ranges may overlap. A null
+/// pointer is permitted only with its corresponding zero length.
 pub unsafe extern "C" fn memmem(
     haystack: *const c_void, haystacklen: usize,
     needle: *const c_void, needlelen: usize,
 ) -> *mut c_void {
-    if needlelen == 0 { return haystack as *mut c_void; }
-    if haystacklen < needlelen { return null_mut(); }
-    let h = haystack as *const u8;
-    let n = needle as *const u8;
-    let last = haystacklen - needlelen;
-    for i in 0..=last {
-        if *h.add(i) == *n && memcmp(h.add(i) as *const c_void, n as *const c_void, needlelen) == 0 {
-            return h.add(i) as *mut c_void;
+    if needlelen == 0 {
+        return haystack.cast_mut();
+    }
+    if haystacklen < needlelen {
+        return null_mut();
+    }
+    // SAFETY: the public contract above establishes both non-empty ranges as
+    // readable for their exact byte lengths. The slices remain borrowed only
+    // for this call and are never used to write through either C pointer.
+    let haystack = unsafe { core::slice::from_raw_parts(haystack.cast::<u8>(), haystacklen) };
+    // SAFETY: `needlelen` is nonzero here, and the public contract supplies
+    // a readable non-null needle range of exactly this length.
+    let needle = unsafe { core::slice::from_raw_parts(needle.cast::<u8>(), needlelen) };
+    match memmem_index(haystack, needle) {
+        Some(offset) => haystack.as_ptr().wrapping_add(offset).cast_mut().cast(),
+        None => null_mut(),
+    }
+}
+
+/// Return the first occurrence of `needle` in `haystack` without an ABI or
+/// pointer-validity concern at the search boundary.
+///
+/// This is a slice translation of musl 1.2.6's `src/string/memmem.c` two-way
+/// search (MIT licensed). It keeps musl's short-needle rolling windows and
+/// its linear-time critical-factorization path, while spelling bounds as Rust
+/// slices rather than as C pointer arithmetic.
+fn memmem_index(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    match needle.len() {
+        0 => Some(0),
+        1 => byte_index(haystack, needle[0]),
+        2..=4 => short_memmem_index(haystack, needle),
+        _ => {
+            let first = byte_index(haystack, needle[0])?;
+            let remaining = haystack.len() - first;
+            // Once the first matching byte begins the only suffix large
+            // enough to hold `needle`, there is exactly one legal candidate.
+            // Avoid entering the generic late-suffix loop for that terminal
+            // case; the slice equality remains bounded by both input ranges.
+            if remaining == needle.len() {
+                return (haystack[first..] == *needle).then_some(first);
+            }
+            // A first-byte candidate near the end cannot amortize the 2 KiB
+            // two-way shift table. Compare that short suffix directly; this
+            // preserves the linear worst-case route below while matching the
+            // common late-match shape used by the public hot-primitive probe.
+            if remaining <= needle.len().saturating_mul(2) {
+                naive_memmem_index(haystack, needle, first)
+            } else {
+                two_way_memmem_index(haystack, needle, first)
+            }
         }
     }
-    null_mut()
+}
+
+fn byte_index(bytes: &[u8], target: u8) -> Option<usize> {
+    // `memmem` performs this first-byte search on every long needle. Reuse the
+    // bounded word scan behind the public `memchr` ABI instead of recreating a
+    // byte-at-a-time prefilter before the two-way route starts.
+    memchr_index(bytes, target)
+}
+
+fn short_memmem_index(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let width = needle.len();
+    if haystack.len() < width {
+        return None;
+    }
+    let mut target = 0u32;
+    let mut window = 0u32;
+    for index in 0..width {
+        target = (target << 8) | needle[index] as u32;
+        window = (window << 8) | haystack[index] as u32;
+    }
+    let mask = match width {
+        2 => 0x0000_ffff,
+        3 => 0x00ff_ffff,
+        4 => u32::MAX,
+        _ => return None,
+    };
+    let mut start = 0;
+    loop {
+        if window == target {
+            return Some(start);
+        }
+        let next = start + width;
+        if next == haystack.len() {
+            return None;
+        }
+        window = ((window << 8) | haystack[next] as u32) & mask;
+        start += 1;
+    }
+}
+
+fn naive_memmem_index(haystack: &[u8], needle: &[u8], first: usize) -> Option<usize> {
+    let last = haystack.len() - needle.len();
+    for start in first..=last {
+        if haystack[start] == needle[0] && haystack[start..start + needle.len()] == needle[..] {
+            return Some(start);
+        }
+    }
+    None
+}
+
+/// Find the maximal suffix using musl's two comparison directions. `suffix`
+/// may be `-1`, which represents the empty critical prefix; every indexed
+/// access is therefore guarded by the maintained `suffix + offset >= 0`
+/// invariant from the original two-way proof.
+fn maximal_suffix(needle: &[u8], reverse_order: bool) -> (isize, usize) {
+    let mut suffix = -1isize;
+    let mut candidate = 0usize;
+    let mut offset = 1usize;
+    let mut period = 1usize;
+
+    while candidate + offset < needle.len() {
+        let left_index = if suffix < 0 {
+            offset - 1
+        } else {
+            suffix as usize + offset
+        };
+        let left = needle[left_index];
+        let right = needle[candidate + offset];
+        if left == right {
+            if offset == period {
+                candidate += period;
+                offset = 1;
+            } else {
+                offset += 1;
+            }
+        } else if if reverse_order { left < right } else { left > right } {
+            candidate += offset;
+            offset = 1;
+            period = if suffix < 0 {
+                candidate + 1
+            } else {
+                candidate - suffix as usize
+            };
+        } else {
+            suffix = candidate as isize;
+            candidate += 1;
+            offset = 1;
+            period = 1;
+        }
+    }
+    (suffix, period)
+}
+
+#[inline(never)]
+fn two_way_memmem_index(haystack: &[u8], needle: &[u8], first: usize) -> Option<usize> {
+    let haystack = &haystack[first..];
+    if haystack.len() < needle.len() {
+        return None;
+    }
+
+    let (first_suffix, first_period) = maximal_suffix(needle, false);
+    let (second_suffix, second_period) = maximal_suffix(needle, true);
+    let (suffix, mut period) = if second_suffix > first_suffix {
+        (second_suffix, second_period)
+    } else {
+        (first_suffix, first_period)
+    };
+    let critical = if suffix < 0 { 0 } else { suffix as usize + 1 };
+    let periodic_end = period.checked_add(critical);
+    let periodic = periodic_end.is_some_and(|end| {
+        end <= needle.len() && needle[..critical] == needle[period..end]
+    });
+    let memory_after_match = if periodic {
+        needle.len() - period
+    } else {
+        period = core::cmp::max(critical, needle.len() - critical) + 1;
+        0
+    };
+
+    let mut byte_set = [0u64; 4];
+    let mut shift = [0usize; 256];
+    for (index, &byte) in needle.iter().enumerate() {
+        byte_set[byte as usize / 64] |= 1u64 << (byte % 64);
+        shift[byte as usize] = index + 1;
+    }
+
+    let mut start = 0usize;
+    let mut remembered = 0usize;
+    loop {
+        if haystack.len() - start < needle.len() {
+            return None;
+        }
+        let last = haystack[start + needle.len() - 1];
+        if byte_set[last as usize / 64] & (1u64 << (last % 64)) == 0 {
+            start += needle.len();
+            remembered = 0;
+            continue;
+        }
+
+        let mut skip = needle.len() - shift[last as usize];
+        if skip != 0 {
+            if memory_after_match != 0 && remembered != 0 && skip < period {
+                skip = needle.len() - period;
+            }
+            start += skip;
+            remembered = 0;
+            continue;
+        }
+
+        let mut index = core::cmp::max(critical, remembered);
+        while index < needle.len() && needle[index] == haystack[start + index] {
+            index += 1;
+        }
+        if index < needle.len() {
+            start += index - critical + 1;
+            remembered = 0;
+            continue;
+        }
+
+        index = critical;
+        while index > remembered && needle[index - 1] == haystack[start + index - 1] {
+            index -= 1;
+        }
+        if index <= remembered {
+            return Some(first + start);
+        }
+        start += period;
+        remembered = memory_after_match;
+    }
 }
 
 #[no_mangle]
@@ -2019,16 +2791,23 @@ const CLOCK_MONOTONIC: c_int = 1;
 
 #[inline]
 unsafe fn sys_clock_gettime(clockid: c_int, ts: *mut timespec) -> i64 {
-    match unsafe { crabc_core::time::clock_gettime_raw(clockid, ts.cast()) } {
-        Ok(()) => 0,
-        Err(errno) => -(errno.raw() as i64),
-    }
+    // SAFETY: The C wrapper owns the exact Linux `timespec` output contract.
+    unsafe { crabc_core::time::clock_gettime_status_raw(clockid, ts.cast()) as i64 }
 }
 
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn clock_gettime(clockid: c_int, ts: *mut timespec) -> c_int {
-    if syscall_result(sys_clock_gettime(clockid, ts)) < 0 { -1 } else { 0 }
+    // The selected C ABI clocks are the two common vDSO cases. Dispatch them
+    // straight to the already-validated cached route; every other public
+    // clock ID retains the general eligibility check and direct-syscall
+    // fallback in `sys_clock_gettime`.
+    let status = if clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC {
+        unsafe { crabc_core::time::clock_gettime_known_vdso_status_raw(clockid, ts.cast()) as i64 }
+    } else {
+        unsafe { sys_clock_gettime(clockid, ts) }
+    };
+    if syscall_result(status) < 0 { -1 } else { 0 }
 }
 
 #[no_mangle]
@@ -2725,10 +3504,24 @@ unsafe fn sys_utimensat(dirfd: i32, path: *const c_char, times: *const u8, flags
 
 #[inline]
 unsafe fn sys_fork() -> i64 {
-    match crabc_core::process::fork_raw() {
+    // The current slot lives in thread-local storage, so its TID identifies
+    // the copied caller slot in a post-fork child without another syscall.
+    // A child must discard every other inherited slot before it can use a
+    // cached current-thread pointer: those entries name threads that no
+    // longer exist in the child process.
+    let parent_tid = if CURRENT_THREAD.is_null() {
+        -1
+    } else {
+        a_load(&raw const (*CURRENT_THREAD).tid)
+    };
+    let result = match crabc_core::process::fork_raw() {
         Ok(pid) => pid as i64,
         Err(errno) => -(errno.raw() as i64),
+    };
+    if result == 0 {
+        reset_thread_registry_after_fork(parent_tid);
     }
+    result
 }
 
 #[inline]
@@ -2790,10 +3583,6 @@ pub unsafe extern "C" fn fork() -> c_int {
         &mut old_signal_mask,
         core::mem::size_of::<SigSetT>(),
     ) == 0;
-    // Save the calling thread's parent TID before clone. In the child that
-    // value still identifies the copied current-thread slot, while gettid()
-    // has changed to the child TID.
-    let parent_tid = sys_gettid() as c_int;
     // Honor RLIMIT_NPROC even when running as root, where the kernel
     // would otherwise bypass the limit. This matches the libc-test
     // expectation that fork fails with EAGAIN when the limit is zero.
@@ -2809,7 +3598,6 @@ pub unsafe extern "C" fn fork() -> c_int {
     };
     let errno_save = if ret < 0 { (-ret) as c_int } else { ERRNO };
     if ret == 0 {
-        reset_thread_registry_after_fork(parent_tid);
         __fork_handler(1);
     } else {
         __fork_handler(0);
@@ -3705,6 +4493,20 @@ pub extern "C" fn __rc_create_thread_tls() -> *mut u8 {
     unsafe { static_tls_create_block() }
 }
 
+/// Initialize a caller-provided static TLS allocation and return its thread
+/// pointer. Dynamic libc resolves this private bridge to ldso; the weak static
+/// definition keeps `libc.a` pthread creation self-contained.
+#[inline(never)]
+#[linkage = "weak"]
+#[no_mangle]
+pub unsafe extern "C" fn __rc_init_thread_tls(block: *mut u8) -> *mut u8 {
+    if block.is_null() || STATIC_TLS_BLOCK_SIZE == 0 {
+        return core::ptr::null_mut();
+    }
+    static_tls_init_block(block);
+    block.add(STATIC_TLS_TP_OFFSET)
+}
+
 #[inline(never)]
 #[linkage = "weak"]
 #[no_mangle]
@@ -3716,6 +4518,20 @@ pub extern "C" fn __rc_tls_block_size() -> usize {
 #[linkage = "weak"]
 #[no_mangle]
 pub extern "C" fn __rc_tls_base_offset() -> usize {
+    unsafe { STATIC_TLS_TP_OFFSET }
+}
+
+#[inline(never)]
+#[linkage = "weak"]
+#[no_mangle]
+pub extern "C" fn __rc_tls_block_size_for(_fs_base: *const u8) -> usize {
+    unsafe { STATIC_TLS_BLOCK_SIZE }
+}
+
+#[inline(never)]
+#[linkage = "weak"]
+#[no_mangle]
+pub extern "C" fn __rc_tls_base_offset_for(_fs_base: *const u8) -> usize {
     unsafe { STATIC_TLS_TP_OFFSET }
 }
 
@@ -3952,6 +4768,8 @@ struct Thread {
     stack: *mut u8,
     stack_size: usize,
     fs_base: *mut u8,
+    tls_initial_block: *mut u8,
+    combined_stack_tls_mapping: bool,
     tsd: [*mut c_void; PTHREAD_KEYS_MAX],
     cancelbuf: *mut __ptcb,
     robust_list: robust_list_head,
@@ -3969,6 +4787,8 @@ static mut THREADS: [Thread; MAX_THREADS] = [Thread {
     stack: core::ptr::null_mut(),
     stack_size: 0,
     fs_base: core::ptr::null_mut(),
+    tls_initial_block: core::ptr::null_mut(),
+    combined_stack_tls_mapping: false,
     tsd: [core::ptr::null_mut(); PTHREAD_KEYS_MAX],
     cancelbuf: core::ptr::null_mut(),
     robust_list: robust_list_head {
@@ -3977,6 +4797,16 @@ static mut THREADS: [Thread; MAX_THREADS] = [Thread {
         pending: core::ptr::null_mut(),
     },
 }; MAX_THREADS];
+
+/// The current pthread slot, cached in the thread's own TLS image.
+///
+/// A slot is assigned before a pthread-created thread enters user code and on
+/// lazy registration for a foreign caller. The slot remains allocated until
+/// that thread has stopped using its TLS, so it cannot be recycled underneath
+/// this pointer. `reset_thread_registry_after_fork` republishes it with the
+/// child TID or clears it when the caller was not registered.
+#[thread_local]
+static mut CURRENT_THREAD: *mut Thread = core::ptr::null_mut();
 // Kept for the in-crate clone tests' table-reset hook. Runtime slot allocation
 // scans and claims free entries directly, so this counter is not a capacity
 // gate for pthread lifecycle operations.
@@ -4022,6 +4852,7 @@ unsafe fn reset_thread_registry_after_fork(parent_tid: c_int) {
         a_store(&raw mut (*current).tid, child_tid);
         a_store(&raw mut (*current).detach_state, DT_JOINABLE);
     }
+    CURRENT_THREAD = current;
     NEXT_SLOT.store(0, Ordering::SeqCst);
     // If a foreign caller had no registered slot, defer registration until its
     // first later pthread operation. `fork` may itself run in a signal handler.
@@ -4067,12 +4898,15 @@ unsafe fn futex_timedwait(addr: *mut c_int, expected: c_int, abs_timeout: *const
     if r < 0 { let e = (-r) as c_int; if e == EAGAIN { 0 } else { e } } else { 0 }
 }
 
-// ponytail: atomic helpers wrapping AtomicI32
+// Atomic helpers retain the pthread state-machine's acquire/release contract.
+// The compare-exchange primitive is a local AArch64 exclusive loop so its
+// hot callers do not take LLVM's outlined LSE capability-dispatch call.
+#[inline(always)]
 unsafe fn a_cas(addr: *mut c_int, expected: c_int, desired: c_int) -> c_int {
-    let a = &*(addr as *const AtomicI32);
-    match a.compare_exchange(expected, desired, Ordering::AcqRel, Ordering::Acquire) {
-        Ok(v) | Err(v) => v,
-    }
+    // SAFETY: every caller passes the aligned `c_int` state field of a live
+    // pthread or libc synchronization object, and accesses it exclusively
+    // through this atomic-helper family.
+    unsafe { aarch64_compare_exchange_acqrel_i32(addr, expected, desired) }
 }
 
 unsafe fn a_store(addr: *mut c_int, val: c_int) {
@@ -4084,7 +4918,10 @@ unsafe fn a_load(addr: *const c_int) -> c_int {
 }
 
 unsafe fn a_swap(addr: *mut c_int, val: c_int) -> c_int {
-    (*(addr as *const AtomicI32)).swap(val, Ordering::AcqRel)
+    // SAFETY: every caller passes the aligned `c_int` state field of a live
+    // pthread or libc synchronization object, and accesses it exclusively
+    // through this atomic-helper family.
+    unsafe { aarch64_swap_acqrel_i32(addr, val) }
 }
 
 unsafe fn a_fetch_add(addr: *mut c_int, val: c_int) -> c_int {
@@ -4122,6 +4959,8 @@ unsafe fn initialize_thread_slot(slot: &mut Thread) {
     slot.stack = core::ptr::null_mut();
     slot.stack_size = 0;
     slot.fs_base = core::ptr::null_mut();
+    slot.tls_initial_block = core::ptr::null_mut();
+    slot.combined_stack_tls_mapping = false;
     core::ptr::write_bytes(slot.tsd.as_mut_ptr(), 0, PTHREAD_KEYS_MAX);
     slot.cancelbuf = core::ptr::null_mut();
     slot.robust_list = robust_list_head {
@@ -4135,16 +4974,41 @@ unsafe fn release_thread_slot(slot: &mut Thread) {
     let stack = slot.stack;
     let stack_size = slot.stack_size;
     let fs_base = slot.fs_base;
-    if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
-    if !fs_base.is_null() {
-        let block_size = __rc_tls_block_size();
-        let base_offset = __rc_tls_base_offset();
-        if block_size > 0 { sys_munmap(fs_base.sub(base_offset), block_size); }
+    // The loader records a TLS allocation's precise base/size in its TCB.
+    // Read that metadata while the block remains mapped: a combined initial
+    // allocation includes this TCB in `stack`, so querying it after unmapping
+    // the range would dereference freed memory.
+    let current_tls = if fs_base.is_null() {
+        None
+    } else {
+        let base_offset = __rc_tls_base_offset_for(fs_base);
+        let block_size = __rc_tls_block_size_for(fs_base);
+        Some((fs_base.sub(base_offset), block_size))
+    };
+    if slot.combined_stack_tls_mapping {
+        // A normal worker retains the TLS tail in this one mapping, so one
+        // unmap releases its requested stack and TLS together. Late dynamic
+        // TLS can migrate the worker to a separate block; `thread_entry` and
+        // every pthread exit route refresh `fs_base` before publication, so
+        // reclaim that replacement separately while releasing the old stack
+        // mapping as one range.
+        if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
+        if let Some((current_block, block_size)) = current_tls {
+            if current_block != slot.tls_initial_block {
+                if block_size > 0 { sys_munmap(current_block, block_size); }
+            }
+        }
+    } else {
+        if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
+        if let Some((current_block, block_size)) = current_tls {
+            if block_size > 0 { sys_munmap(current_block, block_size); }
+        }
     }
-    initialize_thread_slot(slot);
-    // Publish the free marker last, after all fields are reset. A creator
-    // claiming -1 can then safely initialize the slot without racing stale
-    // stack/TLS pointers from the previous owner.
+    // `tid == -1` is the sole free-slot publication state. The next creator
+    // claims it with `-2` before `initialize_thread_slot` overwrites every
+    // private field, so clearing this fixed TSD array here would only repeat
+    // that work after every successful join. No defined pthread operation may
+    // dereference a completed join's opaque thread handle.
     a_store(&raw mut slot.tid, -1);
 }
 
@@ -4198,8 +5062,7 @@ unsafe fn publish_thread_exit(slot: &mut Thread) {
     }
 }
 
-unsafe fn alloc_thread_slot() -> Option<&'static mut Thread> {
-    reclaim_exited_threads();
+unsafe fn claim_thread_slot() -> Option<&'static mut Thread> {
     let base = core::ptr::addr_of_mut!(THREADS[0]);
     for i in 0..MAX_THREADS {
         let slot = &mut *base.add(i);
@@ -4210,6 +5073,17 @@ unsafe fn alloc_thread_slot() -> Option<&'static mut Thread> {
         }
     }
     None
+}
+
+unsafe fn alloc_thread_slot() -> Option<&'static mut Thread> {
+    // Joinable threads return their slots synchronously. Probe that ordinary
+    // case before walking the full table for completed detached workers; the
+    // latter cleanup is required only when capacity is actually exhausted.
+    if let Some(slot) = claim_thread_slot() {
+        return Some(slot);
+    }
+    reclaim_exited_threads();
+    claim_thread_slot()
 }
 
 unsafe fn run_key_dtors(slot: &mut Thread) {
@@ -4229,8 +5103,23 @@ unsafe fn run_key_dtors(slot: &mut Thread) {
     }
 }
 
+/// Record the worker's current TLS block before publishing its exit. A late
+/// `dlopen` may have moved dynamic TLS away from the original combined
+/// stack/TLS mapping; reclamation must then release that replacement block
+/// rather than treating the original address as still current.
+unsafe fn refresh_thread_tls_slot(slot: &mut Thread) {
+    let current_tp = static_read_tp();
+    if current_tp != 0 {
+        slot.fs_base = current_tp as *mut u8;
+    }
+}
+
 unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
     let slot = &mut *(slot as *mut Thread);
+    // `__rc_create_thread_tls` copies the creator's TLS template. Replace
+    // that inherited cache before any cancellation-point or pthread call can
+    // observe the new thread's slot.
+    CURRENT_THREAD = slot;
     // The public signal-set helpers correctly reject musl-reserved signals;
     // unblock the runtime cancellation signal through the raw kernel seam.
     let cancel_set: SigSetT = 1_u64 << (SIGCANCEL - 1);
@@ -4239,6 +5128,7 @@ unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
         core::mem::transmute::<usize, _>(slot.user_fn);
     let ret = user_fn(slot.user_arg);
     run_key_dtors(slot);
+    refresh_thread_tls_slot(slot);
     slot.result = ret;
     publish_thread_exit(slot);
     futex_wake(&raw mut slot.detach_state, 1);
@@ -4246,11 +5136,15 @@ unsafe extern "C" fn thread_entry(slot: *mut c_void) -> *mut c_void {
 }
 
 unsafe fn find_thread() -> Option<&'static mut Thread> {
+    if !CURRENT_THREAD.is_null() {
+        return Some(&mut *CURRENT_THREAD);
+    }
     let me = sys_gettid() as c_int;
     let base = core::ptr::addr_of_mut!(THREADS[0]);
     for i in 0..MAX_THREADS {
         let slot = base.add(i);
         if core::ptr::read_volatile(&raw const (*slot).tid) == me {
+            CURRENT_THREAD = slot;
             return Some(&mut *slot);
         }
     }
@@ -4268,11 +5162,15 @@ unsafe fn find_thread() -> Option<&'static mut Thread> {
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_self() -> PthreadT {
+    if !CURRENT_THREAD.is_null() {
+        return CURRENT_THREAD as PthreadT;
+    }
     let me = sys_gettid() as c_int;
     let base = core::ptr::addr_of_mut!(THREADS[0]);
     for i in 0..MAX_THREADS {
         let slot = base.add(i);
         if core::ptr::read_volatile(&raw const (*slot).tid) == me {
+            CURRENT_THREAD = slot;
             return slot as *mut Thread as PthreadT;
         }
     }
@@ -4285,6 +5183,7 @@ pub unsafe extern "C" fn pthread_self() -> PthreadT {
         if a_cas(&raw mut slot.tid, -1, -2) == -1 {
             initialize_thread_slot(slot);
             a_store(&raw mut slot.tid, me);
+            CURRENT_THREAD = slot;
             return slot as *mut Thread as PthreadT;
         }
     }
@@ -4321,35 +5220,61 @@ pub unsafe extern "C" fn pthread_create(
         // must consume the same selected stack size as pthread_attr_init.
         m4_pthread_default_stack_size()
     };
-    let stack = sys_mmap(null_mut(), stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    // Keep the TLS allocation above the downward-growing stack in one mapping.
+    // The page-rounded stack region preserves a hard boundary between normal
+    // stack growth and the TLS block while making the TLS block page-aligned.
+    let stack_mapping_size = match stack_size.checked_add(4095) {
+        Some(size) => size & !4095,
+        None => {
+            release_thread_slot(&mut *slot);
+            return EAGAIN;
+        }
+    };
+    let tls_block_size = __rc_tls_block_size();
+    let mapping_size = match stack_mapping_size.checked_add(tls_block_size) {
+        Some(size) if tls_block_size != 0 => size,
+        _ => {
+            release_thread_slot(&mut *slot);
+            return EAGAIN;
+        }
+    };
+    let stack = sys_mmap(null_mut(), mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if stack == MMAP_FAILED {
         release_thread_slot(&mut *slot);
         return EAGAIN;
     }
-    let fs_base = __rc_create_thread_tls();
+    let tls_block = stack.add(stack_mapping_size);
+    let fs_base = __rc_init_thread_tls(tls_block);
     if fs_base.is_null() {
-        sys_munmap(stack, stack_size);
+        sys_munmap(stack, mapping_size);
         release_thread_slot(&mut *slot);
         return EAGAIN;
     }
     // Set the requested state before clone: a very short-lived detached child
     // may finish before the parent returns from this call.
+    // `alloc_thread_slot` has exclusively claimed and fully initialized this
+    // slot. Only the requested detach state and creation-specific fields vary
+    // here; clearing the fixed TSD array again would repeat its 1 KiB reset on
+    // every ordinary create/join lifecycle.
     (*slot).detach_state = detach_state;
-    (*slot).result = core::ptr::null_mut();
-    (*slot).cancel = 0;
-    (*slot).cancel_state = PTHREAD_CANCEL_ENABLE;
-    (*slot).cancel_type = PTHREAD_CANCEL_DEFERRED;
-    core::ptr::write_bytes((*slot).tsd.as_mut_ptr(), 0, PTHREAD_KEYS_MAX);
     a_store(&raw mut (*slot).tid, 1);
     (*slot).user_fn = start_routine;
     (*slot).user_arg = arg;
     (*slot).stack = stack;
-    (*slot).stack_size = stack_size;
+    (*slot).stack_size = mapping_size;
     (*slot).fs_base = fs_base;
-    let stack_top = stack.add(stack_size);
+    (*slot).tls_initial_block = tls_block;
+    (*slot).combined_stack_tls_mapping = true;
+    let stack_top = stack.add(stack_mapping_size);
     let tid_ptr = &raw mut (*slot).tid;
     let flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD
         | CLONE_SYSVSEM | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID | CLONE_SETTLS;
+    // `clone` may make the child runnable before it returns. Escalate the
+    // loader's single-thread fast path first, so the child can never observe
+    // mutable loader state while the parent still treats it as unshared.
+    if let Some(mark_multithreaded) = LDSO_MARK_MULTITHREADED {
+        mark_multithreaded();
+    }
     let tid = __rc_clone(thread_entry as *const () as usize, stack_top, flags, slot as *mut c_void, tid_ptr, fs_base as c_ulong, tid_ptr);
     if tid < 0 {
         release_thread_slot(&mut *slot);
@@ -4416,6 +5341,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
     if let Some(slot) = find_thread() {
         run_cleanup_handlers(slot);
         run_key_dtors(slot);
+        refresh_thread_tls_slot(slot);
         slot.result = retval;
         publish_thread_exit(slot);
         futex_wake(&raw mut slot.detach_state, 1);
@@ -4702,13 +5628,10 @@ unsafe fn mutex_lock_internal(m: *mut pthread_mutex_t, abs_timeout: *const times
             }
         }
     }
-    let mut spins = 100;
-    while spins > 0 {
-        let r = mutex_trylock(m);
-        if r != EBUSY { return r; }
-        core::hint::spin_loop();
-        spins -= 1;
-    }
+    // A fixed user-space spin budget turns every deterministic handoff into
+    // pure CPU work when the owner cannot run until this thread blocks. Retry
+    // once through `mutex_trylock` below, then let the kernel coordinate the
+    // contended wakeup; a release racing this setup is explicitly retried.
     loop {
         let r = mutex_trylock(m);
         if r != EBUSY { return r; }
@@ -4743,6 +5666,14 @@ pub unsafe extern "C" fn pthread_mutex_destroy(_mutex: *mut pthread_mutex_t) -> 
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_int {
+    let type_ = (*mutex).__i[0];
+    // SAFETY: the public mutex contract supplies a live, aligned mutex whose
+    // lock word is owned by this atomic-helper family.
+    if (type_ & 0x8f) == PTHREAD_MUTEX_NORMAL
+        && unsafe { a_cas(&raw mut (*mutex).__i[1], 0, EBUSY) } == 0
+    {
+        return 0;
+    }
     mutex_lock_internal(mutex, core::ptr::null())
 }
 #[no_mangle]
@@ -4758,6 +5689,21 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(mutex: *mut pthread_mutex_t, ab
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut pthread_mutex_t) -> c_int {
+    let type_ = (*mutex).__i[0];
+    if (type_ & 0x8f) == PTHREAD_MUTEX_NORMAL {
+        // SAFETY: the public mutex contract supplies a live, aligned mutex
+        // lock word owned by this atomic-helper family. The exchange returns
+        // the waiter-marked state before the release, matching the slow path.
+        let old = unsafe { a_swap(&raw mut (*mutex).__i[1], 0) };
+        if unsafe { a_load(&raw const (*mutex).__i[2]) } > 0 || old < 0 {
+            futex_wake(&raw mut (*mutex).__i[1], 1);
+        }
+        return 0;
+    }
+    mutex_unlock_internal(mutex)
+}
+
+unsafe fn mutex_unlock_internal(mutex: *mut pthread_mutex_t) -> c_int {
     let type_ = (*mutex).__i[0];
     let base_type = type_ & MUTEX_TYPE_MASK;
     let old = a_load(&raw const (*mutex).__i[1]);
@@ -5517,6 +6463,7 @@ unsafe fn do_cancel() -> ! {
     if let Some(slot) = find_thread() {
         run_cleanup_handlers(slot);
         run_key_dtors(slot);
+        refresh_thread_tls_slot(slot);
         slot.result = !0usize as *mut c_void; // PTHREAD_CANCELED
         publish_thread_exit(slot);
         futex_wake(&raw mut slot.detach_state, 1);
@@ -6767,6 +7714,11 @@ const F_EOF: u32 = 16;
 const F_ERR: u32 = 32;
 const F_SVB: u32 = 64;
 const F_APP: u32 = 128;
+// This private state bit says `off` is the kernel position returned by the
+// most recent successful seek. Buffered reads and writes clear it before they
+// can advance the descriptor, so a scanner may reuse it only on a freshly
+// repositioned, buffer-empty stream.
+const F_POSITION_KNOWN: u32 = 256;
 
 const BUFSIZ: usize = 1024;
 
@@ -6894,8 +7846,44 @@ unsafe fn buf_ptr(f: *mut FILE) -> *mut u8 {
 }
 
 unsafe extern "C" fn __stdio_read(f: *mut FILE, buf: *mut u8, len: usize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    // A descriptor read may advance past bytes retained in the FILE buffer.
+    // Until a later successful seek establishes a new kernel position, `off`
+    // is not a valid rewind origin.
+    (*f).flags &= !F_POSITION_KNOWN;
     pthread_testcancel();
-    let n = sys_read((*f).fd as i64, buf, len);
+    // Preserve musl's readv shape: send all but one requested byte directly
+    // to the caller and reserve the trailing iovec for FILE lookahead. This
+    // makes `fgetc` a buffered read without turning a bulk `fread` into a
+    // byte-at-a-time loop. `setvbuf` lets a caller supply FILE storage, so
+    // fall back to one direct read if that storage overlaps the destination:
+    // readv's iovecs must never alias.
+    let destination_start = buf as usize;
+    let destination_end = destination_start.saturating_add(len);
+    let file_buffer_start = (*f).buf as usize;
+    let file_buffer_end = file_buffer_start.saturating_add((*f).buf_size);
+    let destination_overlaps_file_buffer = destination_start < file_buffer_end
+        && file_buffer_start < destination_end;
+    let has_file_buffer = !(*f).buf.is_null()
+        && (*f).buf_size != 0
+        && !destination_overlaps_file_buffer;
+    let direct_len = len - has_file_buffer as usize;
+    let n = if has_file_buffer && direct_len != 0 {
+        let iovecs = [
+            crabc_core::io::Iovec { iov_base: buf, iov_len: direct_len },
+            crabc_core::io::Iovec { iov_base: (*f).buf, iov_len: (*f).buf_size },
+        ];
+        match crabc_core::io::readv_raw((*f).fd, iovecs.as_ptr(), iovecs.len()) {
+            Ok(value) => value as i64,
+            Err(errno) => -(errno.raw() as i64),
+        }
+    } else if has_file_buffer {
+        sys_read((*f).fd as i64, (*f).buf, (*f).buf_size)
+    } else {
+        sys_read((*f).fd as i64, buf, len)
+    };
     if n <= 0 {
         if n == 0 { (*f).flags |= F_EOF; } else { (*f).flags |= F_ERR; (*f)._err = 1; }
         // Publish the FILE error/EOF state before acting on cancellation, so
@@ -6903,10 +7891,25 @@ unsafe extern "C" fn __stdio_read(f: *mut FILE, buf: *mut u8, len: usize) -> usi
         pthread_testcancel();
         return 0;
     }
-    n as usize
+    let read = n as usize;
+    if !has_file_buffer || read <= direct_len {
+        return read;
+    }
+    let buffered = read - direct_len;
+    (*f).rpos = (*f).buf;
+    (*f).rend = (*f).buf.add(buffered);
+    // `read > direct_len` proves the lookahead iovec supplied at least one
+    // initialized byte. Copy it into the final requested byte, retaining any
+    // additional bytes for the next byte-oriented operation.
+    *buf.add(len - 1) = *(*f).rpos;
+    (*f).rpos = (*f).rpos.add(1);
+    len
 }
 
 unsafe extern "C" fn __stdio_write(f: *mut FILE, buf: *const u8, len: usize) -> usize {
+    // Like reads, writes make a previously cached seek result stale before
+    // formatted input can use it as a fallback rewind origin.
+    (*f).flags &= !F_POSITION_KNOWN;
     let l = (*f).wpos as usize - (*f).wbase as usize;
     let mut iov = [
         ((*f).wbase as *const u8, l),
@@ -6966,9 +7969,9 @@ unsafe fn init_file(
     let m = *mode;
     let has_plus = !strchr(mode as *const u8, b'+' as c_int).is_null();
     if m == b'r' as c_char && !has_plus {
-        (*f).flags = F_NORD;
-    } else if !has_plus {
         (*f).flags = F_NOWR;
+    } else if !has_plus {
+        (*f).flags = F_NORD;
     }
 }
 
@@ -7070,9 +8073,9 @@ pub unsafe extern "C" fn freopen(
         if has_plus {
             (*f).flags &= !(F_NORD | F_NOWR);
         } else if *mode == b'r' as c_char {
-            (*f).flags = ((*f).flags & !F_NOWR) | F_NORD;
-        } else {
             (*f).flags = ((*f).flags & !F_NORD) | F_NOWR;
+        } else {
+            (*f).flags = ((*f).flags & !F_NOWR) | F_NORD;
         }
         return f;
     }
@@ -7255,6 +8258,11 @@ pub unsafe extern "C" fn fseeko(stream: *mut FILE, offset: i64, whence: c_int) -
     if let Some(sfunc) = f.seek_fn {
         let r = sfunc(stream, adj_offset, whence);
         if r < 0 { return -1; }
+        // `r` is the exact kernel position after the buffer state above was
+        // discarded. A following formatted scan can use it for its rare
+        // seek-back fallback without issuing a second SEEK_CUR probe.
+        f.off = r;
+        f.flags |= F_POSITION_KNOWN;
     } else {
         ERRNO = EINVAL;
         return -1;
@@ -7413,15 +8421,53 @@ pub unsafe extern "C" fn fread(
     ptr: *mut c_void, size: SizeT, nmemb: SizeT, stream: *mut FILE,
 ) -> SizeT {
     if size == 0 || nmemb == 0 { return 0; }
-    let total = size * nmemb;
-    let mut rd = 0usize;
-    while rd < total {
-        let c = fgetc(stream);
-        if c == -1 { break; }
-        *(ptr as *mut u8).add(rd) = c as u8;
-        rd += 1;
+    let total = match size.checked_mul(nmemb) {
+        Some(total) => total,
+        None => {
+            ERRNO = EOVERFLOW;
+            return 0;
+        }
+    };
+    let f = &mut *stream;
+    let destination = ptr as *mut u8;
+    let mut read = 0usize;
+    while read < total {
+        if f.ungotten_count > 0 {
+            f.ungotten_count -= 1;
+            *destination.add(read) = f.ungotten[f.ungotten_count as usize] as u8;
+            read += 1;
+            continue;
+        }
+        if !f.rpos.is_null() && f.rpos < f.rend {
+            let available = f.rend as usize - f.rpos as usize;
+            let copied = core::cmp::min(available, total - read);
+            core::ptr::copy_nonoverlapping(f.rpos, destination.add(read), copied);
+            f.rpos = f.rpos.add(copied);
+            read += copied;
+            continue;
+        }
+        let rfunc = match f.read_fn {
+            Some(rfunc) => rfunc,
+            None => {
+                f._eof = 1;
+                break;
+            }
+        };
+        let received = rfunc(stream, destination.add(read), total - read);
+        if received == 0 {
+            if f.flags & F_ERR != 0 {
+                f._err = 1;
+            } else {
+                f._eof = 1;
+            }
+            break;
+        }
+        // A callback is required to return at most its requested byte count.
+        // Clamp progress defensively so a broken callback cannot advance the
+        // public C result past the caller's object range.
+        read += core::cmp::min(received, total - read);
     }
-    rd / size
+    read / size
 }
 
 // ============================================================
@@ -9807,7 +10853,21 @@ pub unsafe extern "C" fn vfscanf(stream: *mut FILE, fmt: *const c_char, mut args
     let f = &mut *stream;
     let start_ungotten_count = f.ungotten_count as usize;
     let sfunc = f.seek_fn;
-    let start_pos = sfunc.map(|s| s(stream, 0, SEEK_CUR)).unwrap_or(-1);
+    let has_cached_start_pos = f.flags & F_POSITION_KNOWN != 0
+        && f.rpos.is_null()
+        && f.rend.is_null()
+        && f.ungotten_count == 0
+        && f.wpos.is_null()
+        && f.wbase.is_null();
+    // The common formatted-file sequence has just completed `fseek`. Its
+    // returned position is already stored in `off`; querying SEEK_CUR again
+    // would add a syscall without adding information. Other streams retain
+    // the existing runtime seekability probe and fallback behavior.
+    let start_pos = if has_cached_start_pos {
+        f.off
+    } else {
+        sfunc.map(|s| s(stream, 0, SEEK_CUR)).unwrap_or(-1)
+    };
 
     let mut line = [0u8; 4096];
     let mut pos = 0usize;
@@ -9864,14 +10924,56 @@ pub unsafe extern "C" fn vfscanf(stream: *mut FILE, fmt: *const c_char, mut args
     let assigned = do_vsscanf(line.as_ptr(), pos, fmt, &mut args, &mut consumed);
 
     if start_pos >= 0 {
-        // Seekable: seek back to start + consumed, restore ungotten
+        // `fgetc` may have read past the conversion into `line` and the
+        // stream's read buffer. Keep that suffix in source order when the
+        // caller-provided FILE buffer can hold it: its logical position is
+        // then identical to seeking back, but the kernel remains at the
+        // already-read position. Streams without enough buffer capacity keep
+        // the established seek-back path below.
+        let line_file_start = core::cmp::min(start_ungotten_count, pos);
         let file_consumed = consumed.saturating_sub(start_ungotten_count);
-        let target = start_pos + file_consumed as i64;
-        if let Some(sfunc) = sfunc {
-            sfunc(stream, target, SEEK_SET);
+        let line_suffix_start = core::cmp::min(
+            pos,
+            line_file_start.saturating_add(file_consumed),
+        );
+        let line_file_suffix = pos - line_suffix_start;
+        let buffered_unread = if !f.rpos.is_null() && !f.rend.is_null() {
+            f.rend.offset_from(f.rpos) as usize
+        } else {
+            0
+        };
+        let retained_bytes = line_file_suffix.checked_add(buffered_unread);
+        let can_retain = !f.buf.is_null()
+            && retained_bytes.is_some_and(|count| count <= f.buf_size);
+
+        if can_retain {
+            if buffered_unread > 0 {
+                core::ptr::copy(f.rpos, f.buf.add(line_file_suffix), buffered_unread);
+            }
+            if line_file_suffix > 0 {
+                core::ptr::copy_nonoverlapping(
+                    line.as_ptr().add(line_suffix_start),
+                    f.buf,
+                    line_file_suffix,
+                );
+            }
+            if let Some(count) = retained_bytes {
+                if count > 0 {
+                    f.rpos = f.buf;
+                    f.rend = f.buf.add(count);
+                } else {
+                    f.rpos = core::ptr::null_mut();
+                    f.rend = core::ptr::null_mut();
+                }
+            }
+        } else {
+            let target = start_pos + file_consumed as i64;
+            if let Some(sfunc) = sfunc {
+                sfunc(stream, target, SEEK_SET);
+            }
+            f.rpos = core::ptr::null_mut();
+            f.rend = core::ptr::null_mut();
         }
-        f.rpos = core::ptr::null_mut();
-        f.rend = core::ptr::null_mut();
         if consumed < pos { f._eof = 0; }
         let remaining = start_ungotten_count.saturating_sub(consumed);
         f.ungotten_count = remaining as c_int;
@@ -12349,12 +13451,20 @@ pub unsafe extern "C" fn clock_nanosleep(clockid: c_int, flags: c_int, req: *con
 }
 
 #[no_mangle]
+/// Stores the current realtime clock in `tv` and returns zero on success.
+///
+/// # Safety
+///
+/// When non-null, `tv` must point to writable storage for one [`timeval`].
+/// The obsolete timezone pointer is accepted for C ABI compatibility but is
+/// not read or written.
 pub unsafe extern "C" fn gettimeofday(tv: *mut timeval, _tz: *mut c_void) -> c_int {
     if tv.is_null() { return 0; }
-    let mut ts: timespec = core::mem::zeroed();
-    let _ = sys_clock_gettime(CLOCK_REALTIME, &mut ts);
-    (*tv).tv_sec = ts.tv_sec;
-    (*tv).tv_usec = ts.tv_nsec / 1000;
+    // SAFETY: `tv` is writable by the public contract. Preserve the existing
+    // C wrapper boundary by never requesting obsolete timezone output.
+    if syscall_result(crabc_core::time::gettimeofday_status_raw(tv.cast(), core::ptr::null_mut()) as i64) < 0 {
+        return -1;
+    }
     0
 }
 
@@ -13661,8 +14771,52 @@ pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int
     r as c_int
 }
 
+// AArch64 must save all general and floating-point argument registers before a
+// Rust variadic function can inspect its `VaList`. `F_GETFD` and `F_GETFL`
+// take no third argument, so the public entry handles just those two commands
+// before that save area exists. Every command with an argument, plus unknown
+// commands, tail-branches to the unchanged variadic decoder below.
+//
+// The entry follows the AAPCS64 C ABI: `w0` and `w1` contain `fd` and `cmd`,
+// `x30` remains the original caller return address, and the fast syscall has
+// no stack storage. A negative Linux result branches to `fcntl_result`, which
+// owns the normal C `errno` translation. This is deliberately local assembly:
+// the actual command decoding and all pointer-bearing arguments stay typed
+// Rust below.
 #[no_mangle]
-pub unsafe extern "C" fn fcntl(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
+#[unsafe(naked)]
+#[cfg(target_arch = "aarch64")]
+pub unsafe extern "C" fn fcntl(_fd: c_int, _cmd: c_int, _args: ...) -> c_int {
+    core::arch::naked_asm!(
+        "cmp w1, #{getfd}",
+        "b.eq 2f",
+        "cmp w1, #{getfl}",
+        "b.ne {slow}",
+        "2:",
+        "mov x8, #{fcntl_syscall}",
+        "sxtw x0, w0",
+        "svc #0",
+        "cmn x0, #0xfff",
+        "b.hs {result}",
+        "ret",
+        slow = sym fcntl_slow,
+        result = sym fcntl_result,
+        getfd = const F_GETFD,
+        getfl = const F_GETFL,
+        fcntl_syscall = const SYS_FCNTL,
+    );
+}
+
+#[inline(never)]
+unsafe extern "C" fn fcntl_result(result: i64) -> c_int {
+    // SAFETY: the assembly entry invokes this only with a raw Linux syscall
+    // result. Keeping the conversion here makes its error path identical to
+    // every other public syscall wrapper.
+    unsafe { syscall_result(result) as c_int }
+}
+
+#[inline(never)]
+unsafe extern "C" fn fcntl_slow(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
     let r = match cmd {
         F_GETFD | F_GETFL => sys_fcntl(fd, cmd, 0),
         F_SETFD | F_SETFL | F_DUPFD | F_DUPFD_CLOEXEC => {
@@ -16251,11 +17405,13 @@ type LdsoDlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
 type LdsoDlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
 type LdsoDlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type LdsoDlerrorFn = unsafe extern "C" fn() -> *const c_char;
+type LdsoMarkMultithreadedFn = unsafe extern "C" fn();
 
 static mut LDSO_DLOPEN: Option<LdsoDlopenFn> = None;
 static mut LDSO_DLSYM: Option<LdsoDlsymFn> = None;
 static mut LDSO_DLCLOSE: Option<LdsoDlcloseFn> = None;
 static mut LDSO_DLERROR: Option<LdsoDlerrorFn> = None;
+static mut LDSO_MARK_MULTITHREADED: Option<LdsoMarkMultithreadedFn> = None;
 
 // `libldso.so` owns the loaded-object graph, its recursive loader lock, and
 // the TLS-backed dlerror storage. `crabc-rs` therefore cannot link a second
@@ -16931,6 +18087,19 @@ pub unsafe extern "C" fn __ldso_register_dlclose(f: LdsoDlcloseFn) {
 #[no_mangle]
 pub unsafe extern "C" fn __ldso_register_dlerror(f: LdsoDlerrorFn) {
     LDSO_DLERROR = Some(f);
+}
+
+/// Register the loader's one-way transition to multi-threaded synchronization.
+/// This private bridge is initialized before application code can call
+/// `pthread_create`; libc invokes it immediately before its first `clone`.
+///
+/// # Safety
+/// `f` must be the registered `libldso.so` transition entry and remain valid
+/// until process exit. Register it during single-threaded loader startup;
+/// replacing it after `pthread_create` could race callers of the callback.
+#[no_mangle]
+pub unsafe extern "C" fn __ldso_register_mark_multithreaded(f: LdsoMarkMultithreadedFn) {
+    LDSO_MARK_MULTITHREADED = Some(f);
 }
 
 #[no_mangle]

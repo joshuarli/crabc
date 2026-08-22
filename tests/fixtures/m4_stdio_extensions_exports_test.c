@@ -91,11 +91,39 @@ static int test_stdio_ext(void) {
     return 0;
 }
 
+static int test_read_mode_capabilities(void) {
+    const char path[] = "/tmp/crabc-m4-stdio-read-mode";
+    FILE *stream = fopen(path, "w");
+    if (!stream) return 1;
+    if (fputs("input", stream) < 0 || fclose(stream) != 0) return 2;
+
+    stream = fopen(path, "r");
+    if (!stream) return 3;
+    if (!__freadable(stream) || __fwritable(stream)) return 4;
+    if (fclose(stream) != 0 || remove(path) != 0) return 5;
+    return 0;
+}
+
+static int test_fread_preserves_pending_input(void) {
+    char storage[] = "abcdef";
+    char bytes[5] = {0};
+    FILE *stream = fmemopen(storage, sizeof storage - 1, "r");
+    if (!stream) return 1;
+    if (fgetc(stream) != 'a' || ungetc('a', stream) != 'a') return 2;
+    if (fread(bytes, 1, 4, stream) != 4 || memcmp(bytes, "abcd", 4) != 0) return 3;
+    if (fgetc(stream) != 'e' || fclose(stream) != 0) return 4;
+    return 0;
+}
+
 int main(void) {
     int result = test_formatted_allocation();
     if (result) return result;
     result = test_stdio_ext();
     if (result) return result + 20;
+    result = test_read_mode_capabilities();
+    if (result) return result + 50;
+    result = test_fread_preserves_pending_input();
+    if (result) return result + 60;
     puts("m4 stdio extensions ok");
     return 0;
 }

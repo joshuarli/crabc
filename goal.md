@@ -78,12 +78,21 @@ runtime dependencies—not just bytes requested from `malloc`.
 
 The existing 32-MiB live allocation measurement is therefore a real blocker:
 crabc presently records 48,284 KiB PSS versus musl's 33,864 KiB. It is about
-1.43×, not close to the 0.90× goal. We first audit crabc's mimalloc
-integration, configuration, duplicate mappings, and unnecessary retained
-runtime state. We will not write a new allocator or hide this row. If the
-approved mimalloc strategy cannot satisfy the universal memory target after
-that bounded integration work, the goal is blocked until the user explicitly
-chooses one of these scope changes:
+1.43×, not close to the 0.90× goal. The bounded audit now establishes both the
+source and the hard limit. `libc/src/allocator_mimalloc.rs` owns one direct
+mimalloc allocation domain, without the override feature or programmatic
+options; the pinned `libmimalloc-sys` v3 defaults reserve 1 GiB of virtual
+arena address space but do not make that reservation a resident-memory claim.
+The `allocator-cgroup-contract-audit` diagnostic attributes about 47.3 MiB of
+crabc PSS to anonymous mappings versus 33.3 MiB for musl. Its cgroup result is
+correctly `unsupported` in the current Docker environment because its cgroup-v2
+mount is read-only; it does not silently substitute a post-exit RSS value.
+
+This fixture cannot satisfy the universal PSS gate under any allocator
+configuration: it writes all 32 MiB (32,768 KiB) of payload, while 90% of the
+observed musl process PSS is only about 30,470 KiB. Even a candidate with zero
+runtime or allocator overhead would fail. We will not write a new allocator or
+hide this row. The goal is blocked on a user scope decision; choose one of:
 
 - approve a different mimalloc configuration/version or a focused integration
   change;
@@ -99,25 +108,44 @@ happens to favor one implementation.
 
 | Family | Required rows and invariants | Current state |
 | --- | --- | --- |
-| Dynamic startup | Minimal PIE, constructor/destructor PIE, and a realistic dependency graph. Count loader setup and relocation work. | Minimal startup exists; constructor and dependency graph rows need addition. |
-| Time and identity | `clock_gettime` for supported clocks, `gettimeofday`, and `getpid`; run marked steady-state loops after startup. | `clock_gettime` and `getpid` exist. |
-| Files and descriptors | `open`/`close`, read/write, stat, descriptor flags, and small buffered I/O with deterministic local files. | `open`/`close` exists; the remaining rows need addition. |
-| Dynamic loading | `dlsym` at 1, 128, and 1,024+ symbols; `dlopen`/`dlclose`; dependency and TLS resolution. Verify interposition/version behavior. | 128-symbol `dlsym` exists. |
-| Memory primitives | `memcpy`, `memset`, `strlen`, `memchr`, `strstr`, and `memmem` across empty, short, cache-resident, cache-spanning, aligned, unaligned, and guard-page boundaries. | A single selected size exists; complete size/alignment/guard matrix is required. |
+| Dynamic startup | Minimal PIE, constructor/destructor PIE, and a realistic dependency graph. Count loader setup and relocation work. | All three rows exist. `startup-contract-matrix-31` establishes two separately compiled PIE contracts: the constructor/destructor row proves ordering across `main` and has a red 1.2346× CPU upper bound with 39 crabc vs 9 musl whole-process calls. The startup-linked five-DSO graph proves its root resolves to `31`; `startup-resolution-cache-matrix-31` reduces that row from 95 to 80 candidate calls versus musl's 50 by reusing only an exact bare name that had resolved through the immutable initial `LD_LIBRARY_PATH`, but its 1.1811× CPU upper bound remains red. Their marked `main` regions are complete (one output write for the constructor row; an output operation in each lane for the graph), while startup gates judge retained whole-process loader, constructor, destructor, and relocation work. |
+| Time and identity | `clock_gettime` for supported clocks, `gettimeofday`, and `getpid`; run marked steady-state loops after startup. | `clock_gettime`, `gettimeofday`, and `getpid` now have marked C loops. Three CPU-pinned `clock-known-vdso-*-31` reports place the monotonic `clock_gettime` route at a still-red 1.0406×–1.0699× upper-bound range with zero marked calls: the two selected C IDs enter the cached validated vDSO route without repeating its generic eligibility screen. `gettimeofday` validates null output and canonical microseconds against musl; its bounded `__kernel_gettimeofday` vDSO lookup passes at a 0.8915× CPU upper bound with zero marked hot-region calls. |
+| Files and descriptors | `open`/`close`, read/write, stat, descriptor flags, and small buffered I/O with deterministic local files. | `fd_file_4k` and `stdio_file_4k` use distinct staged 4-KiB deterministic files. They cover close-on-exec, stat, offset write/read, buffered `fread`, seek, and `ungetc`. AArch64's no-argument `fcntl(F_GETFD/F_GETFL)` entry now bypasses Rust's variadic register-save area and tail-branches all other commands to the typed decoder. Three 31-sample `fcntl-noarg-entry-matrix-31` reports reduce `fd_file_4k` to 0.9205×–0.9365× CPU upper bounds, but it remains red; `stdio_file_4k` is 1.05×. Existing syscall counts pass, and the current cgroup memory row is unsupported. |
+| Dynamic loading | `dlsym` at 1, 128, and 1,024+ symbols; `dlopen`/`dlclose`; dependency and TLS resolution. Verify interposition/version behavior. | Three CPU-pinned, interleaved `dlsym-handle-local-cache-matrix-31` reports pass all 1/128/1,025-symbol CPU rows at 0.7413×–0.7569× / 0.7534×–0.7725× / 0.7166×–0.7680×. The cache contains only direct handle-local definitions and verifies copied current C-string bytes, preserving mutable-name and global-interposition behavior. Its 49 vs 18 whole-process syscall row remains red. The five-DSO `dlopen`/call/`dlclose` graph remains CPU-red while its syscall row passes. |
+| Memory primitives | `memcpy`, `memset`, `strlen`, `memchr`, `strstr`, and `memmem` across empty, short, cache-resident, cache-spanning, aligned, unaligned, and guard-page boundaries. | Direct musl-differential regressions cover all six over fixed empty-to-256-KiB size bands, all 16 byte alignments, 0–64-byte protected tails, and deterministic randomized misalignment. `memcpy` additionally checks non-overlap return/source/canary invariants. Its AArch64 entry tail-branches to musl 1.2.6's GPR-only short/medium/long schedule in `libc/src/aarch64_memory.rs`; three 31-sample 128-MiB aligned/unaligned runs record 0.9600×–0.9682× / 1.0498×–1.0694×. Scan/search rows pass at 0.5909×–0.7914×, while copy/fill remain red. |
 | Allocation integration | Small-object churn, medium live set, 32-MiB plateau, free/reuse, and thread-local allocation paths. Measure total process peak, not allocator counters alone. | Small/4-KiB throughput and 32-MiB plateau exist. |
-| Stdio and parsing | Buffered file input/output, `printf`, scanning, and seek/ungetc paths that have selected compatibility tests. | Needs deterministic fixtures. |
-| Threads and TLS | Create/join, uncontended and contended mutex/condition paths, TLS access, and loader TLS growth. | Needs isolated fixtures and a declared contention protocol. |
-| Networking and resolver | Local loopback socket I/O and a hermetic local DNS/hosts resolver scenario. No public network or ambient resolver state. | Needs hermetic fixtures. |
+| Stdio and parsing | Buffered file input/output, `printf`, scanning, and seek/ungetc paths that have selected compatibility tests. | `stdio_format_parse` recreates one formatted record per operation, verifies `fprintf`/flush/rewind/`fscanf` for signed/unsigned/hex/string fields, preserves and reads its literal tail, and checks bounded `snprintf`/`sscanf`. Its direct test differentials the whole contract against pinned musl, forces the scanner's seek-back route through a one-byte FILE buffer, and proves an unbuffered read invalidates a prior seek position before another scan. `stdio-format-cached-seek-matrix-31` records a successful seek's exact kernel position only until subsequent I/O invalidates it, avoiding the immediately following scanner's redundant `SEEK_CUR` probe. The row improves to 1.0452× CPU and 7.003 vs 6.211 marked calls/op, but remains red. |
+| Threads and TLS | Create/join, uncontended and contended mutex/condition paths, TLS access, and loader TLS growth. | `pthread_create_join_tls` is the first isolated row: each operation creates and joins one worker, proves that the worker sees the static TLS initializer and its own pthread-key value, and proves the parent TLS value is unchanged. Its direct pinned-musl differential recycles 513 lifetimes. The fresh `pthread-create-inline-atomics-matrix-31` report is red at a 1.1594× CPU upper bound despite 9.000 crabc vs 11.977 musl marked calls/op; separate stack/TLS mappings and thread-start setup remain the candidate work. `pthread_mutex_uncontended` proves two million normal-mutex protected increments with exact final state and zero marked syscalls in both lanes. Inline AArch64 `ldaxr`/`stlxr` compare-exchange and exchange primitives remove LLVM's outlined LSE capability probe, and its direct Musl differential now also proves a busy `trylock`; the upper bound falls from 1.3906× to a red 1.0095×. `pthread_mutex_cond_ping_pong` declares one parent/worker turn protocol: each round has two protected increments and condition signals, ending at exactly twice the round count. The same verified atomic primitives lower the post-spin-removal row from 1.0372× to a red 1.0167× with matched 6.0021 vs 6.0030 marked calls/op. `loader_dynamic_tls_growth` starts one worker before loading eight distinct `-O3` TLS DSOs; each worker image must retain its initializer and remain isolated from the parent's write before `dlclose`. The direct regression suite proves intermediate images are not skipped, a parent/child `DT_NEEDED` TLS graph initializes both modules, and the AArch64 TLSDESC path refreshes a migrated cached TP. Its per-allocation capacity/TP guard initializes ordinary fitting images in place, and the musl-matched initial `libc.so` short name eliminates redundant dependent-libc probes without loosening general runtime identity matching. The lowest `PT_LOAD` now maps the complete file span before later segments overlay it, reducing the dynamic-TLS diagnostic from 25 to 17 candidate `mmap`s (18 musl) and to 8.125 versus 13.125 marked calls/op. Three current CPU-pinned reports span a still-red 1.2876×–1.3901× upper bound. |
+| Networking and resolver | Local loopback socket I/O and a hermetic local DNS/hosts resolver scenario. No public network or ambient resolver state. | `./scripts/dev.sh resolver-network` runs one C fixture against pinned musl and crabc in a `--network none` container. It installs and restores a private resolver file only in that isolated container, uses fixed loopback DNS roles, compares exact status/stdout/stderr, and requires server-side evidence for A/AAAA/CNAME, NXDOMAIN/NODATA, malformed and wrong-ID packets, UDP truncation followed by TCP retry, search, and configured-order fallback. The same fixture covers loopback TCP/UDP IPv4/IPv6, ancillary data, readiness, shutdown, bounded I/O, EINTR, and nonblocking errors. `m11_resolver_system` and `m11_resolver_transport` add caller-owned `/etc/hosts` precedence, snapshot parsing, ndots/search ordering, and bounded native transport proofs. |
 | Native facade companion | Direct `crabc-rs` routes versus pinned Rustix: time, identity, file descriptor, allocation-avoiding buffer APIs, and errors. | Time, identity, and open/close exist; this is supporting evidence, not a musl C-ABI claim. |
 
-The first four current red rows are concrete rather than hypothetical:
+The Threads/TLS family table's `pthread-create-inline-atomics-matrix-31`
+measurement is historical. Three later `pthread-combined-stack-tls-create-
+matrix-31` reports establish the current 0.9441×–1.0258× upper-bound range:
+creators claim a free slot before detached-worker reclamation, reset it only
+after a successful claim, and allocate its stack/TLS once. The combined block
+keeps TLS above the downward-growing stack and refreshes a migrated TLS pointer
+before reclamation. The direct 513-lifetime and dynamic-TLS differentials plus
+broad pthread stress retain the lifecycle evidence.
+
+The current red rows are concrete rather than hypothetical:
 
 | Route | Present crabc/musl CPU evidence | Immediate cause to remove |
 | --- | ---: | --- |
-| C `clock_gettime` ×200,000 | 4.53× | Direct syscall instead of vDSO dispatch. |
-| `strstr` / `strlen` / `memchr` / `memmem` | 5.20× / 4.85× / 3.60× / 3.23× | Scalar or asymptotically weaker AArch64 paths. |
-| `dlsym`, 128 symbols ×5,000 | 1.93×; 15,010 vs 18 traced calls | Linear lookup and lock-owner `gettid` work. |
-| Startup | 1.14×; 48 vs 10 traced calls | Excess setup, mappings, and loader work. |
+| C `clock_gettime` ×200,000 | 1.0406×–1.0699× CPU upper bounds across three 31-sample reports; no marked-hot-loop `clock_gettime` syscall | Realtime/monotonic C calls now bypass the generic eligibility screen before their cached validated vDSO invocation. Fresh-process cost and the remaining indirect dispatch keep the CPU row red. |
+| C `gettimeofday` ×200,000 | 0.8915× CPU upper bound; 41 vs 10 non-marker calls and zero marked-region calls | bounded Linux/AArch64 `__kernel_gettimeofday` lookup eliminates the intermediate `clock_gettime` conversion and passes the CPU gate. |
+| Scalar primitive matrix, 64 B / 16 KiB / 256 KiB, aligned and unaligned | 31-sample CPU upper bounds: `memcpy` 1.0500×–1.5891×; `memset` 1.0956×–1.8702×; `strlen` 0.5062×–0.8293×; `memchr` 0.8392×–0.8944×; `strstr` 0.2250×/0.2763×, 0.6524×/0.6700×, and 0.6683×/0.6666×; `memmem` 0.3780×–0.8529×. Every row has 41 crabc vs 10 musl fresh-process calls. | Direct C fixtures now cover all six primitives over fixed empty-to-256-KiB size bands, all 16 byte alignments, 0–64-byte protected tails, and deterministic randomized misalignment. The musl 1.2.6 GPR `memcpy` schedule improves every cache-resident copy row without runtime capability dispatch, but `memcpy`/`memset` still have no CPU-passing matrix row. `strlen`, `memchr`, `strstr`, and `memmem` pass every row. For `strlen`, the page-safe zero-byte mask’s little-endian lowest bit identifies the first terminator without a byte-at-a-time end-word scan. For `strstr`, one page-safe scalar zero-byte screen over `byte & (byte ^ target)` admits every NUL or target byte and confirms possible matches bytewise; it replaces the former separate target and NUL word predicates without widening a read. For `memmem`, a first byte at the only remaining needle-sized suffix permits direct bounded equality rather than the generic late-suffix loop. The syscall row is loader/startup work, not an inner-loop syscall. Schema-4 cache provenance proves these rows fit L1/L2; the separately reported 128-MiB rows exceed the recorded 64-MiB L3. |
+| Cache-spanning primitive matrix, 128 MiB aligned and unaligned | Three 31-sample CPU upper bounds for `memcpy`: 0.9600×–0.9682× / 1.0498×–1.0694×; `memset` 1.1889×/1.2951×; `strlen` 0.7611×/0.7465×; `memchr` 0.7873×/0.7911×; `strstr` 0.5909×/0.6007×; `memmem` 0.7889×/0.7914×. Every row has 51 crabc vs 22 musl diagnostic calls. | Schema-4 classifies 128 MiB as exceeding benchmark CPU 0's reported 64-MiB L3. Source data is deterministic and lane-private; the copy/fill destination is `MAP_PRIVATE`. The scan/search rows pass; copy and fill remain red. The warm-page-cache fixture is not a cold-cache claim, and its report is `partial` only because the cgroup peak collector is unsupported. |
+| `dlsym`, 1 / 128 / 1,025 symbols ×100,000 | 0.7413×–0.7569× / 0.7534×–0.7725× / 0.7166×–0.7680× CPU upper bounds; 49 vs 18 traced calls | Immutable GNU/SysV metadata and the bounded per-thread direct-definition cache pass every CPU row. The cache compares copied current C-string bytes rather than an address identity, and stores no global or fallback resolution, so mutable names and later global interposition retain the existing result. The whole-process syscall count remains red. |
+| Five-DSO `dlopen_graph` | 1.22×–1.25× CPU upper bound; 98 vs 50 traced calls | Reusing the validated inode identity removes six duplicate mapper `fstat`s and passes the graph syscall gate, but CPU remains red. |
+| Minimal PIE startup | CPU median quantizes at the current one-operation workload; 44 vs 10 traced calls | Retained ASLR reservations and file-first/anonymous-tail mappings each removed two calls; separate-image loading and eager allocator initialization remain. |
+| Constructor/destructor PIE startup | 1.2346× CPU upper bound; 39 vs 9 whole-process calls; both marked `main` routes make exactly one output write | Constructor-before-`main` and destructor-after-`main` ordering are now proven without hiding their cost. Remove only loader or runtime work not required by that lifecycle. |
+| Startup-linked five-DSO graph | 1.1811× CPU upper bound; 80 vs 50 whole-process calls; marked regions contain one reference `ioctl`/`writev` output path and two candidate writes | An initial-graph cache removes 15 repeated same-path probes without applying to aliases, `$ORIGIN`, or runtime `dlopen`. The shared graph still has a red whole-process CPU result, although its syscall gate passes. |
+| C `stdio_format_parse` ×1,000 | 1.0452× CPU upper bound; 7.003 vs 6.211 marked calls/op | A successful `fseek` records its exact kernel position until I/O invalidates it, so the immediately following buffer-empty scanner avoids a redundant `SEEK_CUR` probe while other streams retain their seekability route. The direct-musl-differential contract also forces a one-byte-buffer seek-back path and invalidates the cache with an unbuffered read. The remaining read-ahead-to-EOF and stream setup keep both selected gates red. |
+| C `pthread_create_join_tls` ×1,000 | 0.9441×–1.0258× CPU upper bounds across three 31-sample reports; 7.000 vs 11.977 marked calls/op | One page-aligned mapping places TLS above the downward-growing stack; candidate marked `mmap`/`munmap` now match musl at one each. Exit captures a late dynamic-TLS migration before reclaiming the original and replacement blocks. The direct-matched static-TLS, pthread-key, and create/join contract still passes over 513 lifetimes; dynamic-TLS regressions and broad pthread stress preserve delayed detached reclamation. Candidate syscalls pass, but CPU remains red. |
+| C `loader_dynamic_tls_growth` ×8 | 1.2876×–1.3901× CPU upper bounds across three 31-sample reports; 8.125 vs 13.125 marked calls/op | The direct matched eight-DSO contract proves a worker predating all loads receives every initialized image and its writes are thread-local; the adjacent optimized parent/child graph proves one `dlopen` initializes every TLS module in a `DT_NEEDED` closure, while the 4-KiB-aligned regression proves TLSDESC migration refreshes its cached TP. Reusing a fitting allocation removes repeated block swaps, and the musl-matched initial `libc.so` short name removes redundant dependent-libc opens/stats without changing general runtime identity matching. The initial lowest-`PT_LOAD` file mapping now covers the final span before later fixed overlays, removing eight anonymous reservations: the trace records 17 candidate mappings versus 18 musl. The marked syscall gate passes; CPU remains red. |
+| C `pthread_mutex_uncontended` ×2,000,000 | 1.0095× CPU upper bound; zero marked calls in both lanes | Inline AArch64 `ldaxr`/`stlxr` compare-exchange and exchange preserve the original acquire/release atomic semantics while removing LLVM's outlined LSE capability probe; direct normal lock/unlock wrappers avoid slow-path stack setup. The direct-matched contract proves a protected counter, busy `trylock`, and successful destruction; contention and lifecycle stress preserve the waiter retry/wake protocol. The CPU gate remains red. |
+| C `pthread_mutex_cond_ping_pong` ×10,000 | 1.0167× CPU upper bound; 6.0021 vs 6.0030 marked calls/op | The direct-matched parent/worker protocol proves each handoff's two protected increments. The verified inline atomic primitives lower the post-spin-removal 1.0372× result without changing the futex boundary or broad pthread stress result; the CPU gate remains red. |
 
 No performance completion is declared while any currently selected red row or
 mandatory family fails, is omitted, or is unsupported.
@@ -314,6 +342,18 @@ without the required review in `SCOPE.md`.
 
 ### P0 — make the scorecard a trustworthy release gate
 
+**Status:** Schema-5 C reports retain non-marker whole-process syscall totals
+and a marker-bounded hot-region summary with exact calls/errors per completed
+operation. `marker-clock-schema5-smoke` proves both musl and crabc have zero marked
+`clock_gettime` calls while preserving their 10/41 non-marker whole-process totals;
+`marker-getpid-schema5-smoke` proves the same boundary records exactly one `getpid`
+call per operation in both lanes. `startup-marker-schema5-smoke` proves the
+constructor/destructor and startup-graph PIEs also emit one complete marker
+pair without excluding their loader lifecycle from the whole-process totals.
+The cgroup peak requirement remains
+unsupported in the current read-only Docker mount, and several mandatory
+workload families still need contracts and baselines.
+
 - Implement the isolation, interleaving, provenance, statistical comparison,
   cgroup high-water, and marker-bounded syscall requirements above.
 - Add the mandatory workload skeletons with correctness checks before timing
@@ -325,6 +365,12 @@ without the required review in `SCOPE.md`.
 it is expected to fail the numerical targets initially.
 
 ### P1 — eliminate time syscalls
+
+**Status:** The bounded vDSO implementation and shared C/Rust dispatch are
+complete. The marked hot loop has no direct `clock_gettime` syscall. Three
+31-sample reports place the direct realtime/monotonic C branch at a still-red
+1.0406×–1.0699× CPU upper-bound range; fresh-process work and the remaining
+indirect vDSO dispatch are still counted by the release gates.
 
 - Parse the Linux auxiliary vector/vDSO ELF safely in `crabc-core`.
 - Resolve the correct `__vdso_clock_gettime` symbol with bounded validation;
@@ -340,14 +386,26 @@ loop.
 
 ### P2 — make dynamic symbol lookup scale
 
+**Status:** `ldso` decodes immutable GNU-hash metadata once while it registers
+each object, selects the GNU/SysV index by object format, and keeps
+owner/error state in the loader TCB to remove per-lookup `gettid`. Three
+CPU-pinned, interleaved 31-sample runs cover 1/128/1,025 symbols at 95%
+bootstrap upper bounds of 0.7413×–0.7569× / 0.7534×–0.7725× /
+0.7166×–0.7680× CPU. A bounded per-thread cache retains only a successful
+definition in the requested handle and compares copied current C-string bytes,
+so it does not make mutable names, global fallback, or interposition stale.
+All lookup CPU rows now pass, while their 49 versus 18 whole-process syscall
+row remains red. The five-DSO graph is 1.22×–1.25× CPU and 98 versus 50 calls;
+its CPU row remains a measured gap, not missing data.
+
 - Retain GNU and SYSV hash metadata rather than reading it only to derive a
   symbol count. Implement musl-compatible hash lookup, preserving scope,
   interposition, visibility, version, TLS, and malformed-object behavior.
 - Remove `gettid` from every uncontended loader lock transition through a
   sound ownership representation. Preserve recursion and multi-threaded
   loader correctness.
-- Add 1/128/1,024+/large dependency graph fixtures plus loader stress and
-  correctness regressions.
+- Use the five-DSO graph trace to remove only non-contract setup calls, and
+  retain its dependency/TLS/interposition correctness regressions.
 
 **Exit:** all dynamic-loader rows meet the three numeric targets with no
 loader semantic regression.

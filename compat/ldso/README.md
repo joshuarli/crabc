@@ -63,11 +63,22 @@ case with a thread that predates the DSO.
 `dlerror` makes a failed `dlopen` and a failed `dlsym` observable. In each
 case it requires a non-null error exactly once, followed by a null result, so
 the fixture checks state consumption without treating musl's human-readable
-diagnostic text as a separate ABI.
+diagnostic text as a separate ABI. The direct C regression also leaves a
+failed `dlsym` error unobserved across later successful handle-local `dlsym`,
+`dlopen`, and `dlclose` operations: matching musl, callers clear before their
+lookup sequence and observe once after it rather than relying on success to
+reset error state. It also reuses one mutable character array for `dlerror`,
+`dlclose`, then `dlerror` again, proving a handle-local lookup may not use the
+C-string address alone as a cache key.
 
 `hash-formats` loads otherwise identical DSOs emitted with `DT_GNU_HASH` and
 with legacy `DT_HASH`. It proves the tags remain in the fixture and compares
 the two runtime symbol lookups.
+
+`hash-many` emits a DSO with both hash formats and 1,025 default-visible
+exports. It resolves its first and last exports through `dlsym`, so a retained
+hash-table implementation must keep the dynamic-symbol scope and the high
+symbol index correct.
 
 `relro` emits a DSO with `-z relro -z now`, proves its `PT_GNU_RELRO` segment
 and relocation shape with `readelf`, and forks a child that attempts to write
@@ -120,6 +131,33 @@ are intentionally not compared across runtimes.
 the DSO from both threads. `readelf` must show `R_AARCH64_TLSDESC`; the current
 thread observes its changed value while the pre-existing worker gets a fresh
 TLS image.
+
+The root `tests/tls_growth_regression.rs` direct pinned-musl differential
+extends that one-DSO shape to eight optimized TLS DSOs. The worker predates all
+loads, must receive every initialized image exactly once, and writes values
+that remain isolated from the parent until every handle is closed. It also
+keeps the AArch64 TLSDESC register contract observable: an optimized caller
+may cache TP in `x1`, which must be refreshed if the resolver migrates the
+thread to a larger TLS allocation.
+
+`tests/dynamic_tls_dependency.rs` covers the different one-`dlopen` graph
+shape. Its optimized parent DSO has a recorded `DT_NEEDED` edge to an optimized
+child TLS DSO; a worker predating the graph must observe both initializers and
+write only its own pair of TLS instances. The direct differential proves the
+dependency edge with `readelf -d` before comparing both runtime outputs.
+
+`ldso/src/lib.rs` records each image's introduction generation. When
+`expand_thread_tls` finds that a thread's recorded capacity and TP placement
+already fit every new image, it initializes only those images in place; a
+larger image or stronger alignment retains allocation replacement. This keeps
+already-written dynamic TLS values intact while avoiding a block swap for each
+ordinary late load.
+
+For a late DSO's exact `DT_NEEDED libc.so` edge,
+`loaded_initial_libc_by_needed_name` mirrors musl's initial-libc short name and
+reuses the initial graph object without reopening it for identity discovery.
+Other runtime bare names, `$ORIGIN`, RUNPATH/RPATH, and explicit paths still
+use the ordinary inode-identity route.
 
 `relocations` is a two-DSO graph with initialized external data, GOT data, and
 a function call. It requires `readelf -Wr` evidence for

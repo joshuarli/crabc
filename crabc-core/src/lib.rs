@@ -245,6 +245,8 @@ pub mod pattern;
 pub mod param;
 /// Pure byte-string algorithms shared by native text operations.
 pub mod text;
+/// Linux/AArch64 vDSO discovery and typed time dispatch.
+mod vdso;
 
 /// Private, versioned wire contracts for process-singleton crabc runtimes.
 ///
@@ -2874,7 +2876,7 @@ pub mod rand {
 pub mod time {
     use super::{
         decode, decode_i32, syscall1, syscall2, syscall3, syscall4, MaybeUninit, RawFd, Result,
-        SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
+        SYS_CLOCK_GETRES, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
         SYS_GETITIMER, SYS_GETTIMEOFDAY,
         SYS_NANOSLEEP, SYS_SETITIMER, SYS_TIMER_CREATE, SYS_TIMER_DELETE, SYS_TIMERFD_CREATE,
         SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TIMER_GETOVERRUN, SYS_TIMER_GETTIME,
@@ -3105,6 +3107,19 @@ pub mod time {
         decode(unsafe { syscall2(SYS_GETTIMEOFDAY, parts as usize, 0) }).map(|_| ())
     }
 
+    /// Queries Linux realtime through the validated vDSO when present, falling
+    /// back to the direct `gettimeofday` syscall with the raw kernel result.
+    ///
+    /// # Safety
+    ///
+    /// `timeval` must be null or writable for one Linux/AArch64 timeval; the
+    /// optional `timezone` pointer follows the same kernel ABI.
+    #[inline]
+    pub unsafe fn gettimeofday_status_raw(timeval: *mut u8, timezone: *mut u8) -> i32 {
+        // SAFETY: The caller owns both kernel ABI pointers.
+        unsafe { crate::vdso::gettimeofday_status(timeval, timezone) }
+    }
+
     /// Sleeps for a relative Linux/AArch64 timespec without using libc or TLS
     /// `errno`.
     ///
@@ -3156,18 +3171,52 @@ pub mod time {
         .map(|_| ())
     }
 
-    /// Queries a Linux clock without using libc, vDSO dispatch, or TLS
-    /// `errno`.
+    /// Queries a Linux clock through the validated kernel vDSO when present,
+    /// otherwise through the direct syscall, without libc or TLS `errno`.
     ///
     /// # Safety
     ///
     /// `timespec` must be writable for one Linux/AArch64 `struct timespec`.
     #[inline]
     pub unsafe fn clock_gettime_raw(clock_id: i32, timespec: *mut u8) -> Result<()> {
-        // SAFETY: The caller supplies exact output storage for the kernel
-        // timespec layout; Linux validates the clock identifier.
-        decode(unsafe { syscall2(SYS_CLOCK_GETTIME, clock_id as usize, timespec as usize) })
-            .map(|_| ())
+        // SAFETY: The caller supplies exact output storage for the vDSO or
+        // direct Linux/AArch64 timespec ABI.
+        decode(unsafe { clock_gettime_status_raw(clock_id, timespec) } as isize).map(|_| ())
+    }
+
+    /// Queries a Linux clock with the raw kernel success/negative-errno
+    /// convention used by the C ABI wrapper.
+    ///
+    /// The route is the same validated vDSO dispatch and direct-syscall
+    /// fallback as [`clock_gettime_raw`], but it avoids constructing an
+    /// internal `Result` only to translate it immediately back to C's errno
+    /// convention.
+    ///
+    /// # Safety
+    ///
+    /// `timespec` must be writable for one Linux/AArch64 `struct timespec`.
+    #[inline]
+    pub unsafe fn clock_gettime_status_raw(clock_id: i32, timespec: *mut u8) -> i32 {
+        // SAFETY: The caller owns the output-pointer contract.
+        unsafe { crate::vdso::clock_gettime_status(clock_id, timespec) }
+    }
+
+    /// Queries a known vDSO-supported Linux clock without repeating the
+    /// generic clock-ID eligibility check on the hot path.
+    ///
+    /// # Safety
+    ///
+    /// `clock_id` must be one of Linux/AArch64's fixed vDSO-supported IDs
+    /// (0, 1, 4, 5, 6, 7, or 11), and `timespec` must be writable for one
+    /// Linux/AArch64 `struct timespec`. Arbitrary user-provided IDs must use
+    /// [`clock_gettime_status_raw`] instead.
+    #[inline]
+    pub unsafe fn clock_gettime_known_vdso_status_raw(
+        clock_id: i32,
+        timespec: *mut u8,
+    ) -> i32 {
+        // SAFETY: The caller states the clock-ID and output-pointer contract.
+        unsafe { crate::vdso::clock_gettime_known_vdso_status(clock_id, timespec) }
     }
 
     /// Sets a Linux clock without using libc, vDSO dispatch, or TLS `errno`.

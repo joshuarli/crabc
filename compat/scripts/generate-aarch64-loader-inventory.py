@@ -429,8 +429,14 @@ _FEATURES: tuple[dict[str, Any], ...] = (
     },
     {
         "name": "sysv_and_gnu_hash",
-        "description": "Derive dynamic symbol bounds from SYSV and GNU hash tables.",
-        "markers": ("DT_HASH", "DT_GNU_HASH", "sym_count_from_hash", "sym_count_from_gnu_hash"),
+        "description": "Retain and use SYSV and GNU hash tables for dynamic symbol lookup.",
+        "markers": (
+            "DT_HASH",
+            "DT_GNU_HASH",
+            "lookup_symbol_index_in_object",
+            "lookup_sysv_hash_symbol",
+            "lookup_gnu_hash_symbol",
+        ),
         "tests": ("compat/ldso/run.py",),
     },
     {

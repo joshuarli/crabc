@@ -20,6 +20,8 @@ pub const AT_HWCAP: usize = 16;
 pub const AT_HWCAP2: usize = 26;
 /// `AT_EXECFN`: pointer to the executable pathname string.
 pub const AT_EXECFN: usize = 31;
+/// `AT_SYSINFO_EHDR`: base address of the kernel-provided vDSO ELF image.
+pub const AT_SYSINFO_EHDR: usize = 33;
 /// `AT_MINSIGSTKSZ`: the kernel minimum signal-stack size.
 pub const AT_MINSIGSTKSZ: usize = 51;
 

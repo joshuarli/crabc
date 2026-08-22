@@ -23,19 +23,13 @@ unsafe fn mimalloc_failed<T>(ptr: *mut T) -> *mut T {
     ptr
 }
 
-#[inline]
-unsafe fn mimalloc_allocate(size: SizeT, alignment: usize) -> *mut c_void {
-    if !mimalloc_is_power_of_two(alignment) {
-        ERRNO = EINVAL;
-        return null_mut();
-    }
-    mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(size, alignment))
-}
-
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn malloc(size: SizeT) -> *mut c_void {
-    mimalloc_allocate(size, MIMALLOC_MALLOC_ALIGNMENT)
+    // The generic mimalloc entry point need not align zero-sized allocations
+    // to the C ABI's 16-byte boundary.  Preserve that boundary for every
+    // successful `malloc` result, including a distinct zero-sized object.
+    mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(size, MIMALLOC_MALLOC_ALIGNMENT))
 }
 
 #[no_mangle]
