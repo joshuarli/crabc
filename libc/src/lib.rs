@@ -8236,7 +8236,11 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut FILE {
     if m != b'r' as c_char && m != b'w' as c_char && m != b'a' as c_char {
         ERRNO = EINVAL; return core::ptr::null_mut();
     }
-    let f = calloc(1, core::mem::size_of::<FILE>() + UNGET + BUFSIZ) as *mut FILE;
+    // `init_file` writes the complete FILE state before any stream operation
+    // observes it. The trailing buffer is initialized only by a read or write
+    // path before consumption, so zeroing all BUFSIZ bytes at every `fdopen`
+    // only adds allocation work to the ordinary open/close lifecycle.
+    let f = malloc(core::mem::size_of::<FILE>() + UNGET + BUFSIZ) as *mut FILE;
     if f.is_null() { ERRNO = ENOMEM; return core::ptr::null_mut(); }
     let buf = buf_ptr(f);
     init_file(f, fd, mode, Some(__stdio_close), buf, BUFSIZ);

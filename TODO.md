@@ -90,6 +90,15 @@ CPython 3.14.3 source build; retain it while starting `goal.md` work.
 | Scope decision | Resolve the universal allocator-plateau memory gate without starting allocator research. | The bounded audit finds one direct mimalloc domain and no duplicate wrapper allocation state. `smaps` attributes about 47.3 MiB of crabc PSS to anonymous mappings versus 33.3 MiB for musl, but a fully touched 32-MiB payload alone exceeds 90% of musl's total PSS. The fresh-cgroup `memory.peak` collector is explicitly unsupported under Docker's read-only cgroup mount. A user must choose the allocator scope change in `goal.md`; no configuration can make this fixture meet the present universal PSS target. |
 | Tooling | Resolve Rustybench’s dependency-bearing `-Z build-std` duplicate-`core` limitation before using it for build-std timing. | The dependency-free M12 `std,panic_abort` fat-LTO application proof is green; the Rustybench route records explicit unsupported evidence rather than a false measurement. |
 
+The earlier `stdio-file-readv` 1.05× `stdio_file_4k` result is historical.
+Three current `fdopen-malloc-{matrix,repeat,repeat2}-31` reports establish a
+still-red 0.9875×–1.0031× CPU upper-bound range, with 5.03 crabc versus 8.00
+musl marked calls/op. `fdopen` now clears only its complete observable `FILE`
+state; the trailing buffer is written by stdio before consumption. The new
+direct musl differential proves `O_CLOEXEC`, descriptor ownership across
+`fclose`, write/flush/seek, buffered reads, and `ungetc`; the complete stdio
+suite remains green.
+
 The scalar `memset` summary in the P1 table is historical. Three current
 `memset-gpr-scalar-schedule-*-31` reports supersede it with cache-resident
 64-B/16-KiB/256-KiB aligned/unaligned ranges of 1.1615×–1.1801×,

@@ -3,6 +3,7 @@
 #include "stdlib.h"
 #include "signal.h"
 #include "unistd.h"
+#include "fcntl.h"
 
 static void handle_alarm(int sig) {
     (void)sig;
@@ -239,12 +240,18 @@ static int test_perror_smoke(void) {
 }
 
 static int test_fdopen(void) {
-    FILE *f = fopen("/tmp/test_stdio_fd.txt", "w+");
-    if (!f) return 1;
-    fputs("fdopen", f);
-    int fd = fileno(f);
-    if (fd < 0) return 2;
-    fclose(f);
+    const char path[] = "/tmp/test_stdio_fd.txt";
+    char tail[5] = {0};
+    int fd = open(path, O_CREAT | O_TRUNC | O_RDWR | O_CLOEXEC, 0600);
+    if (fd < 0 || fcntl(fd, F_GETFD) != FD_CLOEXEC) return 1;
+    FILE *f = fdopen(fd, "w+");
+    if (!f) { close(fd); return 2; }
+    if (fputs("crabc", f) < 0 || fflush(f) != 0 || fseek(f, 0, SEEK_SET) != 0)
+        return 3;
+    if (fgetc(f) != 'c' || ungetc('C', f) != 'C' || fgetc(f) != 'C') return 4;
+    if (fread(tail, 1, 4, f) != 4 || strcmp(tail, "rabc") != 0) return 5;
+    if (fclose(f) != 0) return 6;
+    if (fcntl(fd, F_GETFD) != -1) return 7;
     remove("/tmp/test_stdio_fd.txt");
     return 0;
 }

@@ -28,7 +28,7 @@ from pathlib import Path
 MUSL_VERSION = "1.2.6"
 DEFAULT_MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
 DEFAULT_CASE = "foundational"
-CASES = (DEFAULT_CASE, "string-memory", "allocator", "fd-filesystem")
+CASES = (DEFAULT_CASE, "string-memory", "allocator", "fd-filesystem", "stdio-fdopen")
 
 
 def errno_pattern(case: str) -> re.Pattern[bytes]:
