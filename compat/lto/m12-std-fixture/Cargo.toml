@@ -1,0 +1,19 @@
+[package]
+name = "crabc-rs-m12-std-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.crabc-lto]
+entry-symbol = "crabc_rs_m12_getpid_witness"
+stdout = "m12-stock-std:ok\n"
+
+[dependencies]
+crabc-rs = { path = "../../../crabc-rs", default-features = false }
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+panic = "abort"
+
+[workspace]

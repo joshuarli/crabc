@@ -93,3 +93,43 @@ Pure host tests do not require Rust, musl, LLVM, Docker, or glibc:
 ```bash
 python3 -m unittest discover -s compat/lto/tests -p 'test_*.py'
 ```
+
+## Milestone 12 native `crabc-rs` proof
+
+`m12_run.py` is a separate, bounded representative-application harness. It
+does not change the Stage 16 A/B/C/D matrix above. In the pinned native
+Linux/AArch64 Docker image, run:
+
+```bash
+python3 compat/lto/m12_run.py
+```
+
+The default application manifest is
+`compat/lto/m12-crabc-rs-fixture/Cargo.toml`; `--manifest` selects another
+M12 manifest without assuming a source filename. The stock-`std` comparison
+uses `--stock-std-manifest`, defaulting to
+`compat/lto/m12-std-fixture/Cargo.toml`. Both manifests carry checked-in lock
+files and path-pin `crabc-rs`/`crabc-core` to this repository.
+
+The report records three lanes:
+
+* `control-o3`: the custom no-std application with LTO off;
+* `fat-lto`: the same application with fat LTO and embedded bitcode;
+* `stock-std-fat`: a build-std `std` application run once with pinned musl and
+  once with the staged crabc loader/libc.
+
+For each native lane the verifier extracts the named witness function and
+accepts instruction spelling variations (`w8`/`x8`, decimal/hex immediates)
+while requiring Linux/AArch64 `getpid` syscall 172 followed by `svc #0`. It
+also checks the representative `write` syscall 64 path, records global
+undefined-symbol mentions as context, and rejects branch/PLT edges within the
+witness to public `getpid`, `write`, or TLS `__errno_location`. This is
+semantic assembly/symbol evidence, not a compiler-byte comparison. Rust
+`.rlib` `.llvmbc` markers for `crabc-rs` and `crabc-core` are retained as
+provenance; they do not prove unique inlining.
+`strace -f -c` output is retained as corroboration when available.
+
+The stock-`std` lane compares status and raw stdout/stderr with no
+normalization. It explicitly records `lto_into_dynamic_libc_proven: false`:
+fat LTO evidence for the Rust application does not establish optimization
+inside the dynamically loaded C `libc.so`.

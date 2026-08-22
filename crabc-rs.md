@@ -4225,6 +4225,26 @@ Do not merely state that this ought to optimize.
 
 Provide evidence.
 
+## Completion — 2026-08-21 UTC
+
+M12 is complete as a bounded native Linux/AArch64 proof. The reproducible
+`./scripts/dev.sh lto-m12` command builds a normal dynamically linked
+representative application in an O3 control lane and a fat-LTO lane, then
+extracts its named `crabc_rs_m12_getpid_witness`. The witness contains direct
+Linux `getpid` syscall 172 followed by `svc #0`, has no branch/PLT edge to
+public `getpid`, `write`, or TLS `__errno_location`, and the complete fixture
+also contains the representative direct `write` syscall 64 path. The fat-LTO
+lane retains embedded LLVM bitcode in the exact `crabc-rs` and `crabc-core`
+`.rlib` inputs and has no observed internal facade-call branch in the witness.
+
+The same harness builds a stock-`std` fixture with `-Z build-std=std,panic_abort`
+and fat LTO. All three lanes compare raw exit status, stdout, and stderr
+against pinned musl and the staged crabc loader/libc without normalization.
+That stock-`std` comparison demonstrates compatibility at the dynamic runtime
+boundary only. It does **not** prove LTO into dynamically loaded `libc.so`,
+whole-program optimization, unique cross-crate inlining, or byte-exact output.
+Those limits are explicit report fields rather than implied by a passing lane.
+
 ---
 
 # Acceptance checks

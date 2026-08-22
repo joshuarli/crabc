@@ -2853,6 +2853,35 @@ Completion evidence:
 ./scripts/dev.sh crabc-rs  PASS
 ```
 
+## Milestone 12 — native `crabc-rs` LTO proof (complete)
+
+M12 completes the bounded Linux/AArch64 optimization evidence requested by
+`crabc-rs.md`; it is separate from the older M10 C-runtime LTO matrix. The
+checked-in native fixture uses only `crabc-rs` direct operations for its
+inspected route, while a second fixture adds stock `std` for a dynamic-runtime
+compatibility comparison. Both path-pin the repository crates and carry their
+own lockfiles.
+
+The reproducible command builds the normal dynamically linked application in
+O3-without-LTO and fat-LTO lanes, plus the stock-`std` fat-LTO lane:
+
+```text
+./scripts/dev.sh lto-m12  COMPLETE
+python3 -m unittest discover -s compat/lto/tests -p 'test_*.py'  16/16 PASS
+```
+
+The fat native witness contains direct AArch64 `getpid` syscall 172 plus
+`svc #0`, retains direct `write` syscall 64 evidence for the fixture, and has
+no observed public-C/TLS-errno or internal facade-call branch in its named
+function. It retains `.llvmbc` provenance for both `crabc-rs` and
+`crabc-core`, then compares raw status/stdout/stderr under pinned musl and the
+staged crabc loader/libc. The `stock-std-fat` lane also raw-compares cleanly.
+
+This is deliberately not an assertion that a dynamic `libc.so` was LTOed,
+that LLVM performed unique cross-crate inlining, that the complete program is
+whole-program optimized, or that assembly bytes are stable. The report records
+each of those non-claims explicitly.
+
 ### Prerequisite progress — 2026-08-20 UTC
 
 `crabc-rs` M5 is complete for its declared direct descriptor, readiness,

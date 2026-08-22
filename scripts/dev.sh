@@ -35,6 +35,7 @@ Commands:
   rust-std [options]  run the M9 stock Rust std musl-vs-crabc differential fixture
   rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
+  lto-m12 [options]   run the M12 native crabc-rs facade LTO proof
   crabc-rs            run the M4 native Rust facade architecture/evidence gate
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
@@ -262,6 +263,15 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/lto/run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    lto-m12)
+        ensure_image
+        # M12 builds its own native application lanes, but the staged
+        # candidate loader/libc is the runtime comparison subject.
+        run_in_container cargo build --workspace
+        run_in_container python3 scripts/collect_environment.py
+        run_in_container python3 compat/lto/m12_run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
     crabc-rs)
