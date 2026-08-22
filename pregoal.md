@@ -15,9 +15,10 @@ expensive to compile and its full optional-module graph obscures the first
 failure. This pre-goal establishes the same important boundaries with a
 smaller, independently useful project first:
 
-> Build a pinned Lua 5.4 interpreter as a shared runtime, link its executable
-> against that runtime and crabc, then load separately built C extension DSOs
-> through Lua's normal module loader under crabc's dynamic linker.
+> Build a pinned Lua 5.4 shared runtime and dynamically linked interpreter
+> against crabc, compile its bytecode tool with the required Lua-private
+> translation units, then load separately built C extension DSOs through Lua's
+> normal module loader under crabc's dynamic linker.
 
 Lua is chosen over a simple command-line utility because it resembles the
 critical CPython shape: an interpreter plus language runtime, math and string
@@ -30,6 +31,15 @@ they do not make dynamic extension loading central. Lua is the better bridge to
 `libpython` plus CPython's extension-module system. This pre-goal is
 compatibility/surface work; it does not wait for or change the performance
 targets in `goal.md`.
+
+## Current result
+
+The Lua 5.4.8 gate is complete and remains a permanent regression command:
+`./scripts/dev.sh lua`. It source-builds the shared interpreter graph and C
+extensions through the generated adapter sysroot, compares source and bytecode
+execution byte-for-byte with the pinned musl reference, and records candidate
+loader/libc/module mappings with no musl runtime mapping. The generated result
+is [`compat/reports/lua/latest.json`](compat/reports/lua/latest.json).
 
 ## What is already known
 
@@ -48,8 +58,9 @@ targets in `goal.md`.
 
 The last point defines the required honesty boundary. A result produced with
 crabc `libc.so` and loader but inherited pinned-musl `Scrt1.o`, `crti.o`, and
-`crtn.o` is a valuable **adapter-sysroot** result. It is not a claim that
-crabc already provides a fully self-hosting, musl-free C toolchain.
+`crtn.o` plus compiler CRT support is a valuable **adapter-sysroot** result.
+It is not a claim that crabc already provides a fully self-hosting, musl-free C
+toolchain.
 
 ## The adapter sysroot contract
 
@@ -62,7 +73,7 @@ not by unrecorded shell setup.
 | Headers | `crabc/include/` only, plus compiler builtin headers explicitly discovered and recorded. | A configure/header probe may not fall through to musl headers. |
 | C runtime | Current staged `crabc` `libc.so`, `libc.a`, and `libldso.so`. | Every dynamic test must run through crabc's loader and C runtime. |
 | Link-name compatibility | `libm`, `libdl`, `libpthread`, `librt`, `libutil`, and similar musl-compatible link names resolve to the staged crabc C runtime where the ABI requires them. | Every symlink and its purpose is recorded; no musl `libc.so` may satisfy a target link. |
-| CRT bridge | Pinned musl `Scrt1.o`, `crti.o`, and `crtn.o`, only if required for this first gate. | Report them as external toolchain compatibility objects, hash them, and prove the final process maps no musl libc. |
+| CRT bridge | Pinned musl `Scrt1.o`, `crti.o`, and `crtn.o`, plus the native compiler's `crtbeginS.o` and `crtendS.o`, only if required for this first gate. | Report them as external toolchain compatibility objects, hash them, and prove the final process maps no musl libc. |
 | Compiler frontend | Pinned native AArch64 compiler. | The wrapper supplies only explicit include, library, startup, interpreter, and linker arguments; its fully expanded commands are retained. |
 | Third-party libraries | None for the first Lua gate. | Do not mask a libc failure behind a system dependency graph. |
 
@@ -82,7 +93,7 @@ temporary directory, and builds this graph using the adapter sysroot:
 Lua sources
     ├── liblua.so       (shared language runtime)
     ├── lua             (interpreter dynamically linked to liblua.so)
-    ├── luac            (bytecode compiler)
+    ├── luac            (bytecode compiler with Lua-private units statically composed)
     ├── crabc_probe.so  (separately compiled loadable C extension)
     └── crabc_fail.so   (controlled load/init failure extension)
 
@@ -95,6 +106,12 @@ lua + require("crabc_probe")
 built and loaded via the normal Lua module search path. That forces the
 dynamic loader to resolve a foreign extension DSO rather than merely run one
 linked-in function.
+
+Lua's `luac` uses compiler internals that upstream deliberately does not export
+from `liblua.so`; requiring a dynamic `luac` would therefore test an invalid
+upstream link topology. It instead statically composes those same source units
+and runs through crabc's dynamic loader and C runtime. The shared-runtime
+requirement applies to the `lua` interpreter and separately loaded modules.
 
 ### Required Lua program behavior
 

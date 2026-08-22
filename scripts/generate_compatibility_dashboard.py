@@ -37,6 +37,7 @@ RUST_STD_REPORT = ROOT_DIR / "compat/reports/rust-std/latest.json"
 RUST_STD_DEPENDENT_REPORT = ROOT_DIR / "compat/reports/rust-std-dependent/latest.json"
 LTO_REPORT = ROOT_DIR / "compat/reports/lto/latest.json"
 M12_LTO_REPORT = ROOT_DIR / "compat/reports/lto/m12/latest.json"
+LUA_REPORT = ROOT_DIR / "compat/reports/lua/latest.json"
 ABI_PROBE_REPORT = ROOT_DIR / "compat/reports/abi/latest.json"
 
 
@@ -255,6 +256,26 @@ def m12_report_state() -> dict[str, Any] | None:
     return report
 
 
+def lua_report_state() -> dict[str, Any] | None:
+    """Return the adapter-sysroot Lua gate only with its complete two-lane evidence."""
+
+    report = read_json(LUA_REPORT)
+    if report is None:
+        return None
+    if report.get("schema_version") != 1 or report.get("runner") != "crabc-lua-adapter-sysroot":
+        raise RuntimeError(f"unexpected Lua source-build report identity in {LUA_REPORT}")
+    workloads = report.get("workloads")
+    if not isinstance(workloads, dict):
+        raise RuntimeError(f"Lua source-build report has invalid workloads in {LUA_REPORT}")
+    for name in ("source", "bytecode"):
+        if not isinstance(workloads.get(name), dict):
+            raise RuntimeError(f"Lua source-build report lacks {name} comparison in {LUA_REPORT}")
+    if report.get("result") == "pass" and not isinstance(workloads.get("candidate_maps"), dict):
+        raise RuntimeError(f"Lua pass report lacks candidate map isolation evidence in {LUA_REPORT}")
+    report["_path"] = str(LUA_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -286,6 +307,7 @@ def main() -> int:
     rust_std_dependent = rust_std_report_state(RUST_STD_DEPENDENT_REPORT)
     lto = m10_report_state()
     m12_lto = m12_report_state()
+    lua = lua_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     lines = [
@@ -515,6 +537,64 @@ def main() -> int:
                     ],
                 )
             )
+
+    lines.extend(["", "## Pre-goal Lua source-build gate", ""])
+    if lua is None:
+        lines.append("No Lua adapter-sysroot result. Run `./scripts/dev.sh lua`.")
+    else:
+        workloads = lua["workloads"]
+        assert isinstance(workloads, dict)
+        source = workloads["source"]
+        bytecode = workloads["bytecode"]
+        maps = workloads.get("candidate_maps")
+        assert isinstance(source, dict) and isinstance(bytecode, dict)
+        map_isolation = isinstance(maps, dict) and maps.get("no_musl_libc") is True
+        passed = (
+            lua.get("result") == "pass"
+            and lua.get("passed") is True
+            and source.get("passed") is True
+            and bytecode.get("passed") is True
+            and map_isolation
+        )
+        manifest = lua.get("manifest")
+        contents = manifest.get("contents") if isinstance(manifest, dict) else {}
+        version = contents.get("lua", {}).get("version", "unknown") if isinstance(contents, dict) else "unknown"
+        lines.append(
+            f"Pinned Lua {version} shared-runtime adapter-sysroot build: "
+            f"**{'pass' if passed else 'FAIL'}**; report `{lua['_path']}`."
+        )
+        lines.append(
+            "The interpreter is dynamically linked to source-built `liblua`; `luac` statically composes "
+            "Lua-private compiler units but runs through the same crabc loader/libc. The build uses crabc "
+            "headers/link names with explicitly recorded CRT bridge objects, so it is not a self-hosting "
+            "compiler-sysroot claim."
+        )
+        lines.append("")
+        lines.extend(
+            markdown_table(
+                ("lane", "status", "stdout", "stderr"),
+                [
+                    (
+                        "Lua source",
+                        "match" if source.get("status_match") is True else "DIFF",
+                        "match" if source.get("stdout_match") is True else "DIFF",
+                        "match" if source.get("stderr_match") is True else "DIFF",
+                    ),
+                    (
+                        "luac bytecode",
+                        "match" if bytecode.get("status_match") is True else "DIFF",
+                        "match" if bytecode.get("stdout_match") is True else "DIFF",
+                        "match" if bytecode.get("stderr_match") is True else "DIFF",
+                    ),
+                    (
+                        "candidate maps",
+                        "crabc-only" if map_isolation else "FAIL",
+                        "n/a",
+                        "n/a",
+                    ),
+                ],
+            )
+        )
 
     lines.extend(["", "## M9 stock Rust std", ""])
     if rust_std is None:

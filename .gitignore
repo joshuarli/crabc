@@ -64,3 +64,6 @@ Cargo.lock
 
 # Python compatibility harness bytecode.
 __pycache__/
+
+# Verified upstream archive cache for the test-only Lua source-build gate.
+/compat/lua/.cache/

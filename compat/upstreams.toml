@@ -24,3 +24,8 @@ revision = "5e9456d510612f83b6ec8b1a0c06d6b1303a2512"
 [libc_bench]
 repository = "https://git.musl-libc.org/git/libc-bench"
 revision = "b6b2ce5f9f87a09b14499cb00c600c601f022634"
+
+[lua]
+version = "5.4.8"
+source = "https://www.lua.org/ftp/lua-5.4.8.tar.gz"
+sha256 = "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"

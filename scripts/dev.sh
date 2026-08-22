@@ -36,6 +36,7 @@ Commands:
   rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
   lto-m12 [options]   run the M12 native crabc-rs facade LTO proof
+  lua [options]       build Lua 5.4 against the crabc adapter sysroot
   perf [options]      measure equivalent musl/crabc C-runtime workloads (release build)
   perf-native [options] measure crabc-rs direct facades against pinned Rustix
   crabc-rs            run the native crabc-rs capability/accounting/evidence gate
@@ -287,6 +288,15 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/lto/m12_run.py "$@"
+        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    lua)
+        ensure_image
+        # Lua is built from the hash-pinned upstream source once, with crabc
+        # headers/link names and an explicitly recorded musl CRT bridge.  The
+        # runner then compares those exact program bytes under musl and crabc.
+        run_in_container cargo build --workspace --release
+        run_in_container python3 compat/lua/run.py --target-dir target/release "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
     perf)

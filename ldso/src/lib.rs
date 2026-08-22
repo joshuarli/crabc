@@ -3162,6 +3162,29 @@ unsafe fn set_dlerror(msg: &[u8]) {
     dlerror_unlock();
 }
 
+/// Record a failed `dlsym` lookup without dropping the requested symbol.
+///
+/// Consumers such as Lua include `dlerror()` text in their own diagnostic,
+/// and a bare “symbol not found” makes a loadable-module failure needlessly
+/// opaque.  The message is bounded by the existing per-thread dlerror buffer;
+/// truncation is explicit rather than allocating while the loader lock is held.
+unsafe fn set_dlsym_symbol_not_found(symbol: *const u8, name_len: usize) {
+    const PREFIX: &[u8] = b"dlsym: symbol not found: ";
+    dlerror_lock();
+    let node = dlerror_node_locked(current_tid() as usize, read_tp());
+    if node.is_null() {
+        dlerror_unlock();
+        return;
+    }
+    let prefix_len = PREFIX.len().min(DLERROR_BUF_SIZE - 1);
+    core::ptr::copy_nonoverlapping(PREFIX.as_ptr(), (*node).buf.as_mut_ptr(), prefix_len);
+    let symbol_len = name_len.min(DLERROR_BUF_SIZE - 1 - prefix_len);
+    core::ptr::copy_nonoverlapping(symbol, (*node).buf.as_mut_ptr().add(prefix_len), symbol_len);
+    (*node).buf[prefix_len + symbol_len] = 0;
+    (*node).set.store(true, Ordering::Release);
+    dlerror_unlock();
+}
+
 unsafe fn clear_dlerror() {
     dlerror_lock();
     let node = dlerror_node_locked(current_tid() as usize, read_tp());
@@ -3309,7 +3332,7 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
             core::ptr::null_mut()
         };
         if private.is_null() {
-            set_dlerror(b"dlsym: symbol not found\0");
+            set_dlsym_symbol_not_found(symbol, name_len);
         }
         loader_unlock();
         return private;
@@ -3343,7 +3366,7 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
         }
     }
     if result == 0 {
-        set_dlerror(b"dlsym: symbol not found\0");
+        set_dlsym_symbol_not_found(symbol, name_len);
     }
     loader_unlock();
     result as *mut u8

@@ -85,6 +85,7 @@ container.
 ./scripts/dev.sh os-test | pthread-stress | static-pthread-tls
 ./scripts/dev.sh signal-process | resolver-network | ldso | corpus
 ./scripts/dev.sh rust-std | rust-std-dependent | lto | lto-m12
+./scripts/dev.sh lua [--offline]
 ./scripts/dev.sh perf [--label NAME]
 ./scripts/dev.sh perf-native [--label NAME]
 ./scripts/dev.sh abi-probe | loader-inventory | dashboard | shell

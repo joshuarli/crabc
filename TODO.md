@@ -71,9 +71,11 @@ focused scorecard into a measured corpus of real Alpine software and direct
 `crabc-rs` applications. Do not let it delay the current focused performance
 frontier.
 
-[`pregoal.md`](pregoal.md) is deliberately prior: complete its isolated Lua
-source-build and extension-loading compatibility gate before starting
-`goal.md`. It supplies the evidence and failure taxonomy for CPython 3.14.3.
+[`pregoal.md`](pregoal.md) is now a permanent completed gate: its isolated Lua
+5.4.8 source build, shared interpreter runtime, extension loading, bytecode,
+and candidate-loader mapping evidence pass through `./scripts/dev.sh lua`.
+It remains the evidence and failure taxonomy for promoting an adapter-sysroot
+CPython 3.14.3 source build; retain it while starting `goal.md` work.
 
 | Priority | Exact work still left | Evidence boundary |
 | --- | --- | --- |

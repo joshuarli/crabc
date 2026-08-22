@@ -49,6 +49,7 @@ The image and compatibility oracles are pinned in
 ./scripts/dev.sh test
 ./scripts/dev.sh crabc-rs    # native Rust capability suite and proofs
 ./scripts/dev.sh lto-m12     # native crabc-rs O3/fat-LTO evidence
+./scripts/dev.sh lua         # pinned Lua 5.4 source-build/extension-loading gate
 ./scripts/dev.sh perf --label baseline # controlled musl-vs-crabc performance evidence
 ./scripts/dev.sh perf-native --label baseline # crabc-rs vs Rustix direct facade evidence
 ./scripts/dev.sh compat      # symbol/ABI accounting ratchet
