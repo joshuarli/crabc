@@ -135,8 +135,8 @@ const TCB_TP_OFFSET_OFFSET: usize = 24;
 // range remains loader-private inside the fixed 256-byte allocation: the
 // original TP is a stable owner token across dynamic-TLS replacement, the
 // error-node pointer avoids a `gettid` syscall for every successful `dlsym`,
-// and the final range caches one verified handle-local symbol lookup per
-// thread.
+// the cache range stores one verified handle-local symbol lookup per thread,
+// and the following word records the allocation's initialized TLS frontier.
 const TCB_LOADER_OWNER_OFFSET: usize = 48;
 const TCB_DLERROR_NODE_OFFSET: usize = 56;
 const TCB_DLSYM_CACHE_HANDLE_OFFSET: usize = 64;
@@ -145,6 +145,8 @@ const TCB_DLSYM_CACHE_NAME_LEN_OFFSET: usize = 80;
 const TCB_DLSYM_CACHE_HASH_OFFSET: usize = 88;
 const TCB_DLSYM_CACHE_NAME_OFFSET: usize = 96;
 const DLSYM_CACHE_NAME_LIMIT: usize = 64;
+const TCB_TLS_MODULE_COUNT_OFFSET: usize = TCB_DLSYM_CACHE_NAME_OFFSET + DLSYM_CACHE_NAME_LIMIT;
+const _: () = assert!(TCB_TLS_MODULE_COUNT_OFFSET + core::mem::size_of::<usize>() <= TCB_SIZE);
 
 // ============================================================
 // Loaded object tracking
@@ -438,13 +440,11 @@ static mut TLS_MODULE_COUNT: usize = 0;
 // TP-relative descriptor. A module loaded later must consult the current
 // thread because pre-existing threads do not yet contain its TLS image.
 static mut TLS_STATIC_MODULE_COUNT: usize = 0;
-// Each TLS image is introduced by one process-wide layout generation. A
-// thread retains the generation of the block it owns, so a later lookup can
-// initialize precisely the images it has never contained. This is necessary
-// when several `dlopen` calls happen before an existing thread first touches
-// any of their TLS symbols: recording only the newest module would leave the
-// earlier images as zero-filled allocation reserve.
-static mut TLS_MODULE_GENERATION: [u64; MAX_LOADED] = [0; MAX_LOADED];
+// Each allocation retains its layout generation in its TCB. A later lookup
+// compares that generation with the current process layout, then initializes
+// only the stable module-ID suffix recorded as missing by that allocation.
+// This covers several dlopen calls before an existing thread touches any of
+// their TLS symbols without rescanning the already-initialized prefix.
 static mut TLS_GENERATION: u64 = 1;
 static TLS_LOCK: AtomicBool = AtomicBool::new(false);
 // Runtime loader operations are serialized like musl's global loader lock.
@@ -2972,6 +2972,13 @@ unsafe fn initialize_tls_tcb(tcb: *mut u8, tp: *mut u8, data_size: usize) {
         tcb.add(TCB_TP_OFFSET_OFFSET) as *mut usize,
         tls_tp_offset_from_block(),
     );
+    // Module IDs are append-only for successful runtime loads. Record the
+    // first absent module only after this allocation has received every
+    // current image, so future growth need not inspect its initialized prefix.
+    core::ptr::write_unaligned(
+        tcb.add(TCB_TLS_MODULE_COUNT_OFFSET) as *mut usize,
+        TLS_MODULE_COUNT,
+    );
     #[cfg(target_arch = "aarch64")]
     {
         // TP+8 is in the ABI-mandated gap before the first positive TLS
@@ -3447,13 +3454,14 @@ unsafe fn tls_unlock() {
     TLS_LOCK.store(false, Ordering::Release);
 }
 
-/// Materialize only TLS images introduced after `thread_generation` at a
-/// thread's already-selected variable-area base. Earlier images were copied
-/// from that thread's prior block and may contain thread-private writes, so
-/// they must never be reinitialized during a later `dlopen`.
-unsafe fn initialize_missing_tls_images(var_base: *mut u8, thread_generation: u64) {
-    for i in 0..TLS_MODULE_COUNT {
-        if TLS_MEMSZ[i] == 0 || TLS_MODULE_GENERATION[i] <= thread_generation {
+/// Materialize only TLS images in the suffix absent from one allocation. The
+/// prefix was either initialized when the thread was created or copied from
+/// its prior block, and may contain thread-private writes that a later dlopen
+/// must never reinitialize.
+unsafe fn initialize_missing_tls_images(var_base: *mut u8, first_missing_module: usize) {
+    let first = core::cmp::min(first_missing_module, TLS_MODULE_COUNT);
+    for i in first..TLS_MODULE_COUNT {
+        if TLS_MEMSZ[i] == 0 {
             continue;
         }
         let dst = var_base.add(TLS_LAYOUT_OFFSET[i]);
@@ -3480,8 +3488,8 @@ unsafe fn expand_thread_tls() -> bool {
         return false;
     }
     let old_data = recorded_data;
-    let old_generation = core::ptr::read_unaligned(
-        old_tcb.add(TCB_GENERATION_OFFSET) as *const u64,
+    let old_module_count = core::ptr::read_unaligned(
+        old_tcb.add(TCB_TLS_MODULE_COUNT_OFFSET) as *const usize,
     );
     let old_tp_offset = thread_block_tp_offset(old_fs, old_data);
     let old_block = (old_fs as usize).wrapping_sub(old_tp_offset) as *mut u8;
@@ -3502,7 +3510,7 @@ unsafe fn expand_thread_tls() -> bool {
     // replacement path below, which is required to preserve every address and
     // the per-allocation cleanup metadata.
     if old_data >= TLS_TOTAL_SIZE && old_tp_offset == tls_tp_offset_from_block() {
-        initialize_missing_tls_images(old_var_base, old_generation);
+        initialize_missing_tls_images(old_var_base, old_module_count);
         initialize_tls_tcb(old_tcb, old_fs as *mut u8, old_data);
         return true;
     }
@@ -3525,7 +3533,7 @@ unsafe fn expand_thread_tls() -> bool {
     let new_var_base = block.add(tls_var_area_offset_from_block());
     let copy_size = if old_data < TLS_TOTAL_SIZE { old_data } else { TLS_TOTAL_SIZE };
     core::ptr::copy_nonoverlapping(old_var_base, new_var_base, copy_size);
-    initialize_missing_tls_images(new_var_base, old_generation);
+    initialize_missing_tls_images(new_var_base, old_module_count);
     let tcb = block.add(tls_tcb_offset_from_block());
     // Preserve libc's TCB fields (notably the x86_64 stack canary) while
     // replacing the allocation.  Only the loader-owned metadata below is
@@ -3612,11 +3620,6 @@ unsafe fn register_tls_for_new_modules(first_new: usize) -> bool {
     TLS_GENERATION = TLS_GENERATION.wrapping_add(1);
     if TLS_GENERATION == 0 {
         TLS_GENERATION = 1;
-    }
-    for idx in first_new..LOADED_COUNT {
-        if TLS_MEMSZ[idx] != 0 {
-            TLS_MODULE_GENERATION[idx] = TLS_GENERATION;
-        }
     }
 
     true
@@ -5292,11 +5295,6 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
 
     compute_tls_layout();
     TLS_STATIC_MODULE_COUNT = TLS_MODULE_COUNT;
-    for idx in 0..TLS_MODULE_COUNT {
-        if TLS_MEMSZ[idx] != 0 {
-            TLS_MODULE_GENERATION[idx] = TLS_GENERATION;
-        }
-    }
 
     process_all_relocations();
     register_dlopen_callbacks();
