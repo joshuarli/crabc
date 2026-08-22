@@ -4959,11 +4959,15 @@ unsafe fn a_swap(addr: *mut c_int, val: c_int) -> c_int {
 }
 
 unsafe fn a_fetch_add(addr: *mut c_int, val: c_int) -> c_int {
-    (*(addr as *const AtomicI32)).fetch_add(val, Ordering::AcqRel)
+    // SAFETY: every caller passes the aligned `c_int` state field of a live
+    // pthread or libc synchronization object, and accesses it exclusively
+    // through this atomic-helper family.
+    unsafe { aarch64_fetch_add_acqrel_i32(addr, val) }
 }
 
 unsafe fn a_fetch_sub(addr: *mut c_int, val: c_int) -> c_int {
-    (*(addr as *const AtomicI32)).fetch_sub(val, Ordering::AcqRel)
+    // `wrapping_neg` preserves `AtomicI32::fetch_sub` for `i32::MIN` too.
+    unsafe { aarch64_fetch_add_acqrel_i32(addr, val.wrapping_neg()) }
 }
 
 unsafe fn spinlock_lock(lock: *mut c_int, waiters: *mut c_int) {
