@@ -5903,14 +5903,17 @@ pub unsafe extern "C" fn pthread_cond_timedwait(cond: *mut pthread_cond_t, mutex
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_signal(cond: *mut pthread_cond_t) -> c_int {
-    if a_load(&raw const (*cond).__i[3]) == 0 { return 0; }
+    // `_c_waiters` is an advisory wake hint, just as in musl 1.2.6's
+    // `pthread_cond_signal`: mutex release/acquire and the sequence futex,
+    // not this count, carry the condition-variable synchronization edge.
+    if a_load_relaxed(&raw const (*cond).__i[3]) == 0 { return 0; }
     a_fetch_add(&raw mut (*cond).__i[2], 1);
     futex_wake(&raw mut (*cond).__i[2], 1);
     0
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut pthread_cond_t) -> c_int {
-    if a_load(&raw const (*cond).__i[3]) == 0 { return 0; }
+    if a_load_relaxed(&raw const (*cond).__i[3]) == 0 { return 0; }
     a_fetch_add(&raw mut (*cond).__i[2], 1);
     futex_wake(&raw mut (*cond).__i[2], -1);
     0
