@@ -109,7 +109,6 @@ impl SignalSet {
         self.0 == 0
     }
 
-    #[cfg(feature = "alloc")]
     #[inline]
     pub(crate) const fn kernel_bits(&self) -> &u64 {
         &self.0
@@ -447,7 +446,11 @@ impl SigInfo {
         write_i32(&mut info.bytes, SIGINFO_SIGNO_OFFSET, signal.as_raw());
         write_i32(&mut info.bytes, SIGINFO_CODE_OFFSET, SI_QUEUE);
         write_i32(&mut info.bytes, SIGINFO_PID_OFFSET, process::getpid().as_raw_pid());
-        write_i32(&mut info.bytes, SIGINFO_UID_OFFSET, process::getuid() as i32);
+        write_i32(
+            &mut info.bytes,
+            SIGINFO_UID_OFFSET,
+            process::getuid().as_raw() as i32,
+        );
         write_i32(&mut info.bytes, SIGINFO_VALUE_OFFSET, value);
         Self(info)
     }

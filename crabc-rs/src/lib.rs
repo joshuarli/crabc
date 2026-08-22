@@ -17,6 +17,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod buffer;
+pub mod collections;
 #[cfg(feature = "runtime-stdio")]
 pub mod cfile;
 #[cfg(feature = "runtime-loader")]
@@ -31,7 +32,9 @@ pub mod fs;
 pub mod io;
 pub mod ioctl;
 pub mod mm;
+pub mod memory;
 pub mod mount;
+pub mod numeric;
 #[cfg(feature = "alloc")]
 pub mod netdb;
 pub mod net;
@@ -50,6 +53,7 @@ pub mod signal;
 pub mod stdio;
 pub mod system;
 pub mod sync;
+pub mod text;
 #[cfg(feature = "alloc")]
 pub mod resolver;
 mod raw_dir;

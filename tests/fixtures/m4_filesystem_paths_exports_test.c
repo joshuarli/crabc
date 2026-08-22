@@ -32,6 +32,7 @@ int main(void)
     char link_name[256] = { 0 };
     char fifo_name[256] = { 0 };
     char node_name[256] = { 0 };
+    char remove_dir_name[256] = { 0 };
     char cwd_before[256];
     char cwd_after[256];
     const char fifo_at_name[] = "fifo-at";
@@ -54,6 +55,8 @@ int main(void)
           "fifo path");
     CHECK(snprintf(node_name, sizeof node_name, "%s.node", file_name) > 0,
           "node path");
+    CHECK(snprintf(remove_dir_name, sizeof remove_dir_name, "%s.remove-dir", file_name) > 0,
+          "remove directory path");
 
     CHECK(faccessat(AT_FDCWD, file_name, F_OK, 0) == 0, "faccessat");
     CHECK(eaccess(file_name, F_OK) == 0 && euidaccess(file_name, F_OK) == 0,
@@ -67,6 +70,8 @@ int main(void)
           "effective access errno");
 
     CHECK(mkdir(dir_name, 0700) == 0, "mkdir");
+    CHECK(mkdir(remove_dir_name, 0700) == 0, "mkdir remove directory");
+    CHECK(remove(remove_dir_name) == 0, "remove empty directory");
     // O_DIRECTORY is not needed after mkdir: a read-only directory fd is
     // sufficient for fchdir and avoids depending on the incomplete header's
     // architecture-specific flag value.
@@ -121,6 +126,7 @@ cleanup:
     if (link_name[0]) unlink(link_name);
     if (fifo_name[0]) unlink(fifo_name);
     if (node_name[0]) unlink(node_name);
+    if (remove_dir_name[0]) rmdir(remove_dir_name);
     if (dir_name[0]) rmdir(dir_name);
     return result;
 }

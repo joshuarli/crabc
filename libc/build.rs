@@ -5,4 +5,9 @@ fn main() {
     // omit only those startup files; Rust's init/fini arrays remain in the
     // shared object and are handled by the dynamic linker.
     println!("cargo:rustc-cdylib-link-arg=-nostartfiles");
+    // Keep the workspace-wide `link-dead-code` instrumentation, but let this
+    // final panic-abort cdylib discard unreachable target-std unwind cleanup
+    // retained by RustCrypto's alloc-enabled MCF serializer. This affects
+    // neither the static archive nor any other workspace artifact.
+    println!("cargo:rustc-cdylib-link-arg=-Wl,--gc-sections");
 }

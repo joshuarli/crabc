@@ -71,6 +71,18 @@ pub struct Sysinfo {
     pub mem_unit: u32,
 }
 
+/// Linux one-, five-, and fifteen-minute load averages.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoadAverages {
+    /// One-minute load average.
+    pub one_minute: f64,
+    /// Five-minute load average.
+    pub five_minutes: f64,
+    /// Fifteen-minute load average.
+    pub fifteen_minutes: f64,
+}
+
 impl From<crabc_core::system::Sysinfo> for Sysinfo {
     fn from(value: crabc_core::system::Sysinfo) -> Self {
         Self {
@@ -109,5 +121,19 @@ pub fn sysinfo() -> Sysinfo {
         Ok(value) => Sysinfo::from(value),
         // See uname above: Linux supplies this data for a running task.
         Err(_) => panic!("Linux sysinfo syscall failed"),
+    }
+}
+
+/// Returns the host-wide Linux load averages.
+#[inline]
+pub fn load_average() -> LoadAverages {
+    let loads = crabc_core::system::sysinfo()
+        .map(|value| value.loads)
+        .unwrap_or_else(|_| panic!("Linux sysinfo syscall failed"));
+    const LOAD_AVERAGE_SCALE: f64 = 65_536.0;
+    LoadAverages {
+        one_minute: loads[0] as f64 / LOAD_AVERAGE_SCALE,
+        five_minutes: loads[1] as f64 / LOAD_AVERAGE_SCALE,
+        fifteen_minutes: loads[2] as f64 / LOAD_AVERAGE_SCALE,
     }
 }

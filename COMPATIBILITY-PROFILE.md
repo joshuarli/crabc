@@ -63,7 +63,9 @@ capability**, not a Rust wrapper for every exported C symbol.
   X.509, certificate validation, PRNG/DRBGs, or public-/symmetric-key
   algorithms. OS entropy such as `getrandom` is in scope. A compatibility API
   needing crypto uses a proven focused Rust dependency or remains explicitly
-  limited; cryptography is never hand-rolled here.
+  limited; cryptography is never hand-rolled here. The bounded C `crypt`
+  compatibility decision and RustCrypto dependency review are recorded in
+  [`compat/crabc-rs/crypt-profile.md`](compat/crabc-rs/crypt-profile.md).
 
 ## Deliberate non-framework boundaries
 

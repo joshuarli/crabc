@@ -282,14 +282,117 @@ case "$command" in
         run_in_container cargo check -p crabc-rs --no-default-features --features runtime-thread
         run_in_container cargo check -p crabc-rs --no-default-features --features runtime-thread-alloc
         run_in_container cargo check -p crabc-rs --no-default-features --features runtime-stdio
-        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio --test m6_signal_process --test m7_sync --test m7_resolver_netdb --test m8_fenv --test m8_fnmatch
+        run_in_container cargo test -p crabc-core --lib
+        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio --test m6_signal_process --test m7_sync --test m7_resolver_netdb --test m8_fenv --test m8_fnmatch --test m10_text --test m10_text_stateful --test m10_ctype --test m10_format --test m10_number --test m10_numeric_legacy --test m10_random --test m10_memory_special --test m10_memory_vm --test m10_fs_metadata --test m10_statx --test m10_positioned --test m10_vectored --test m10_positioned_vectored --test m10_preadv2 --test m10_directory --test m10_memfd --test m10_fallocate --test m10_fadvise --test m10_sendfile --test m10_syncfs --test m10_ppoll --test m10_readiness --test m10_msync --test m10_mincore --test m10_mlock --test m10_mremap --test m10_madvise --test m10_identity --test m10_rusage --test m10_getgroups --test m10_priority --test m10_setpriority --test m10_rlimit --test m10_sleep --test m10_clock_nanosleep --test m10_time --test m10_time_dynamic --test m10_getitimer --test m10_time_timers --test m10_calendar_utc --test m10_readahead --test m10_copy_file_range --test m10_sync_file_range --test m10_network_address --test m10_ethernet_address --test m10_ethers --test m10_network_socket --test m10_network_socket_options --test m10_network_messages --test m10_network_mmsg --test m10_network_connect --test m10_network_bind_getsockname --test m10_network_getpeername --test m10_network_listen_accept --test m10_network_datagram --test m10_descriptor --test m10_subsumed
         run_in_container cargo test -p crabc-rs --test m8_cfile --features runtime-stdio
-        run_in_container cargo build -p crabc-rs --example m0_direct_probe --example m2_direct_probe --example m3_direct_probe --example m4_direct_probe --example m5_direct_probe --example m6_direct_probe --example m7_sync_direct_probe --example m8_fenv_direct_probe --example m8_fnmatch_direct_probe --release --no-default-features
+        run_in_container cargo test -p crabc-rs --test m10_directory_position
+        run_in_container cargo test -p crabc-rs --test m10_network_socket_type
+        run_in_container cargo test -p crabc-rs --test m10_network_socket_protocol
+        run_in_container cargo test -p crabc-rs --test m10_network_socket_cookie
+        run_in_container cargo test -p crabc-rs --test m10_network_socket_domain
+        run_in_container cargo test -p crabc-rs --test m10_network_socket_acceptconn
+        run_in_container cargo test -p crabc-rs --test m10_network_socket_oobinline
+        run_in_container cargo test -p crabc-rs --test m10_network_socket_broadcast
+        run_in_container cargo test -p crabc-rs --test m10_pipe_tee
+        run_in_container cargo test -p crabc-rs --test m10_descriptor
+        run_in_container cargo test -p crabc-rs --test m10_readiness
+        run_in_container cargo test -p crabc-rs --test m10_pipe_size
+        run_in_container cargo test -p crabc-rs --test m10_fcntl_seals
+        run_in_container cargo test -p crabc-rs --test m10_fcntl_getlk
+        run_in_container cargo test -p crabc-rs --test m10_getcwd --test m10_current_dir_name --test m10_eventfd --test m10_times
+        run_in_container cargo test -p crabc-rs --test m10_setpriority
+        run_in_container cargo test -p crabc-rs --test m10_scheduler_priority_bounds
+        run_in_container cargo test -p crabc-rs --test m10_sched_rr_interval
+        run_in_container cargo test -p crabc-rs --test m10_sched_getaffinity
+        run_in_container cargo test -p crabc-rs --test m10_sched_setaffinity
+        run_in_container cargo test -p crabc-rs --test m10_pidfd_open
+        run_in_container cargo test -p crabc-rs --test m10_session_observation --test m10_thread_identity
+        run_in_container cargo test -p crabc-rs --test m10_access --test m10_truncate --test m10_process_identity
+        run_in_container cargo test -p crabc-rs --test m10_accessat
+        run_in_container cargo test -p crabc-rs --test m10_process_cwd --test m10_fs_canonicalize --test m10_fs_tempdir --test m10_sync
+        run_in_container cargo test -p crabc-rs --test m10_process_chroot
+        run_in_container cargo test -p crabc-rs --test m10_process_clock_id --test m10_time_settime --test m10_time_timespec_get --test m10_param_auxv
+        run_in_container cargo test -p crabc-rs --test m10_network_interface_index --test m10_network_interface_index_name --test m10_interface_names --test m10_interface_addresses
+        run_in_container cargo test -p crabc-rs --test m10_network_ipaddr --test m10_ipv4_legacy --test m10_pause --test m10_ttyname --test m10_termios_exclusive --test m10_termios_special_codes --test m10_termios_queue --test m10_terminal_control --test m10_futex --test m10_thread_credentials --test m10_fs_credentials
+        run_in_container cargo test -p crabc-rs --test m10_sched_cpu
+        run_in_container cargo test -p crabc-rs --test m10_ownership
+        run_in_container cargo test -p crabc-rs --test m10_special_nodes
+        run_in_container cargo test -p crabc-rs --test m10_system_names
+        run_in_container cargo test -p crabc-rs --test m10_load_average
+        run_in_container cargo test -p crabc-rs --test m10_process_cpu_time
+        run_in_container cargo test -p crabc-rs --test m10_getentropy --test m10_create
+        run_in_container cargo test -p crabc-rs --test m10_fcntl_flags
+        run_in_container cargo test -p crabc-rs --test m10_futimes
+        run_in_container cargo test -p crabc-rs --test m10_lutimes
+        run_in_container cargo test -p crabc-rs --test m10_futimesat
+        run_in_container cargo test -p crabc-rs --test m10_utimes
+        run_in_container cargo test -p crabc-rs --test m10_utime
+        run_in_container cargo build -p crabc-rs --example m10_ipv4_classful_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_ethernet_address_direct_probe --example m10_ethers_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m0_direct_probe --example m2_direct_probe --example m3_direct_probe --example m4_direct_probe --example m5_direct_probe --example m6_direct_probe --example m7_sync_direct_probe --example m8_fenv_direct_probe --example m8_fnmatch_direct_probe --example m10_text_direct_probe --example m10_text_stateful_direct_probe --example m10_ctype_direct_probe --example m10_format_direct_probe --example m10_number_direct_probe --example m10_numeric_legacy_direct_probe --example m10_random_direct_probe --example m10_memory_special_direct_probe --example m10_fs_metadata_direct_probe --example m10_statx_direct_probe --example m10_positioned_direct_probe --example m10_vectored_direct_probe --example m10_positioned_vectored_direct_probe --example m10_preadv2_direct_probe --example m10_directory_direct_probe --example m10_memfd_direct_probe --example m10_fallocate_direct_probe --example m10_fadvise_direct_probe --example m10_sendfile_direct_probe --example m10_syncfs_direct_probe --example m10_ppoll_direct_probe --example m10_readiness_direct_probe --example m10_msync_direct_probe --example m10_mincore_direct_probe --example m10_mlock_direct_probe --example m10_mremap_direct_probe --example m10_madvise_direct_probe --example m10_identity_direct_probe --example m10_rusage_direct_probe --example m10_getgroups_direct_probe --example m10_priority_direct_probe --example m10_setpriority_direct_probe --example m10_rlimit_direct_probe --example m10_rlimit_for_direct_probe --example m10_sleep_direct_probe --example m10_clock_nanosleep_direct_probe --example m10_time_direct_probe --example m10_time_dynamic_direct_probe --example m10_getitimer_direct_probe --example m10_readahead_direct_probe --example m10_copy_file_range_direct_probe --example m10_sync_file_range_direct_probe --example m10_network_address_direct_probe --example m10_network_ipaddr_direct_probe --example m10_ipv4_legacy_direct_probe --example m10_network_socket_direct_probe --example m10_network_socket_options_direct_probe --example m10_network_messages_direct_probe --example m10_network_connect_direct_probe --example m10_network_bind_getsockname_direct_probe --example m10_network_getpeername_direct_probe --example m10_network_listen_accept_direct_probe --example m10_network_datagram_direct_probe --example m10_descriptor_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_memory_vm_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_mmsg_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_time_timers_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_calendar_utc_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_process_limits_umask_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_process_chroot_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_fs_canonicalize_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_fs_tempdir_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_process_clock_id_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_time_settime_direct_probe --example m10_time_timespec_get_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_param_auxv_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_interface_index_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_interface_index_name_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_interface_names_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_interface_names_alloc_direct_probe --release --no-default-features --features alloc
+        run_in_container cargo build -p crabc-rs --example m10_interface_addresses_direct_probe --release --no-default-features --features alloc
+        run_in_container cargo build -p crabc-rs --example m10_pause_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_ttyname_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_termios_exclusive_direct_probe --example m10_termios_special_codes_direct_probe --example m10_termios_queue_direct_probe --example m10_terminal_control_direct_probe --example m10_futex_direct_probe --example m10_thread_credentials_direct_probe --example m10_fs_credentials_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_readiness_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_setpriority_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_scheduler_priority_bounds_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_sched_rr_interval_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_sched_getaffinity_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_sched_setaffinity_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_pidfd_open_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_directory_position_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_socket_type_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_socket_protocol_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_socket_cookie_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_socket_domain_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_socket_acceptconn_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_socket_oobinline_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_network_socket_broadcast_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_pipe_tee_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_pipe_size_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_fcntl_seals_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_fcntl_add_seals_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_fcntl_getlk_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_getcwd_direct_probe --example m10_current_dir_name_direct_probe --example m10_eventfd_direct_probe --example m10_times_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_session_observation_direct_probe --example m10_thread_identity_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_access_direct_probe --example m10_truncate_direct_probe --example m10_process_identity_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_accessat_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_process_cwd_direct_probe --example m10_sync_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_sched_cpu_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_ownership_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_special_nodes_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_system_names_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_load_average_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_process_cpu_time_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_getentropy_direct_probe --example m10_create_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_fcntl_flags_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_futimes_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_lutimes_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_futimesat_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_utimes_direct_probe --release --no-default-features
+        run_in_container cargo build -p crabc-rs --example m10_utime_direct_probe --release --no-default-features
         run_in_container cargo build -p crabc-rs --example m7_resolver_direct_probe --release --no-default-features --features alloc
         run_in_container cargo build -p crabc-rs --example m7_loader_runtime_probe --release --no-default-features --features runtime-loader
         run_in_container cargo build -p crabc-rs --example m7_runtime_thread_probe --release --no-default-features --features runtime-thread
         run_in_container cargo build -p crabc-rs --example m8_cfile_direct_probe --release --no-default-features --features runtime-stdio
-        run_in_container cargo test -p crabc --test m7_loader_runtime --test m7_runtime_thread --test m8_cfile_runtime --test m8_fclose_lifecycle --test fenv --test fnmatch --test stdio_full --test m4_stdio_exports --test m4_stdio_extensions_exports --test m4_cookie_stream_exports --test m4_wmemstream_exports
+        run_in_container cargo build -p crabc-libc
+        run_in_container cargo test -p crabc --test m7_loader_runtime --test m7_runtime_thread --test m8_cfile_runtime --test m8_fclose_lifecycle --test fenv --test fnmatch --test iconv --test iconv_error_progress --test stdio_full --test m4_stdio_exports --test m4_stdio_extensions_exports --test m4_cookie_stream_exports --test m4_wmemstream_exports --test m4_select --test m4_break_exports --test m4_memory_vm_exports --test m4_host_process_exports --test m4_filesystem_paths_exports
         run_in_container python3 compat/rustix/run.py --check
         run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
         run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'
@@ -316,6 +419,44 @@ case "$command" in
         run_in_container python3 compat/rustix/run.py source-compare --timeout 60 \
             --fixture compat/rustix/source/m6_process.rs
         run_in_container python3 compat/rustix/run.py source-compare --timeout 60 \
+            --fixture compat/rustix/source/m10_time_dynamic.rs
+        run_in_container python3 compat/rustix/run.py source-compare --timeout 60 \
+            --fixture compat/rustix/source/m10_accessat.rs \
+            --fixture compat/rustix/source/m10_sched_getaffinity.rs \
+            --fixture compat/rustix/source/m10_pidfd_open.rs \
+            --fixture compat/rustix/source/m10_socket_type.rs \
+            --fixture compat/rustix/source/m10_socket_cookie.rs \
+            --fixture compat/rustix/source/m10_socket_domain.rs \
+            --fixture compat/rustix/source/m10_socket_acceptconn.rs \
+            --fixture compat/rustix/source/m10_socket_oobinline.rs \
+            --fixture compat/rustix/source/m10_socket_broadcast.rs \
+            --fixture compat/rustix/source/m10_pipe_tee.rs \
+            --fixture compat/rustix/source/m10_pipe_splice.rs \
+            --fixture compat/rustix/source/m10_readiness.rs \
+            --fixture compat/rustix/source/m10_pipe_size.rs \
+            --fixture compat/rustix/source/m10_fcntl_seals.rs \
+            --fixture compat/rustix/source/m10_fcntl_add_seals.rs \
+            --fixture compat/rustix/source/m10_fcntl_getlk.rs \
+            --fixture compat/rustix/source/m10_socket_protocol.rs \
+            --fixture compat/rustix/source/m10_memory_vm.rs \
+            --fixture compat/rustix/source/m10_process_chroot.rs \
+            --fixture compat/rustix/source/m10_process_umask.rs \
+            --fixture compat/rustix/source/m10_process_setrlimit.rs \
+            --fixture compat/rustix/source/m10_posix_fallocate.rs \
+            --fixture compat/rustix/source/m10_time_settime.rs \
+            --fixture compat/rustix/source/m10_param_auxv.rs \
+            --fixture compat/rustix/source/m10_network_interface_index.rs \
+            --fixture compat/rustix/source/m10_network_interface_index_name.rs \
+            --fixture compat/rustix/source/m10_pause.rs \
+            --fixture compat/rustix/source/m10_ttyname.rs \
+            --fixture compat/rustix/source/m10_termios_exclusive.rs \
+            --fixture compat/rustix/source/m10_futex.rs \
+            --fixture compat/rustix/source/m10_network_ipaddr.rs \
+            --fixture compat/rustix/source/m10_termios_special_codes.rs \
+            --fixture compat/rustix/source/m10_termios_queue.rs \
+            --fixture compat/rustix/source/m10_thread_credentials.rs \
+            --fixture compat/rustix/source/m10_fs_tempdir.rs
+        run_in_container python3 compat/rustix/run.py source-compare --timeout 60 \
             --fixture compat/rustix/source/m5_fs_io.rs \
             --fixture compat/rustix/source/m5_event_time.rs \
             --fixture compat/rustix/source/m5_file_mapping.rs \
@@ -329,6 +470,130 @@ case "$command" in
         run_in_container python3 compat/crabc-rs/verify_m8_fenv.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m8_fnmatch.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m8_cfile.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_text.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_text_stateful.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_ctype.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_memory_special.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_format.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_number.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_numeric_legacy.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_random.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fs-metadata --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fs-canonicalize --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fs-tempdir --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py positioned --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py vectored --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py positioned-vectored --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py directory --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py directory-position --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py pipe-tee --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py descriptor --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py pipe-size --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fcntl-seals --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fcntl-add-seals --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fcntl-getlk --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py memfd --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fallocate --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py syncfs --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py rlimit --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py rlimit-for --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py process-limits-umask --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py process-chroot --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py calendar-utc --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py process-clock-id --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py param-auxv --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-interface-index --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-interface-index-name --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py interface-names --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py interface-names-alloc --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py interface-addresses --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py pause --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py ttyname --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py termios-exclusive --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py futex --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py clock-set --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py timespec-get --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py realtime-millis --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py ppoll --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py readiness --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sleep --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py clock-sleep --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py madvise --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py identity --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py wall-clock --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py process-cpu-time --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py time-dynamic --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-socket --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-connect --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py preadv2 --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fadvise --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fcntl-flags --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py futimes --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py lutimes --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py futimesat --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py utimes --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py utime --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-bind-getsockname --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py msync --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sendfile --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-getpeername --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py mincore --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py rusage --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py getgroups --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py mlock --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-listen-accept --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-datagram --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py priority --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py scheduler-priority-bounds --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sched-rr-interval --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sched-getaffinity --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sched-setaffinity --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py pidfd-open --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py setpriority --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py mremap --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py getitimer --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py readahead --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-socket-options --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-socket-type --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-socket-protocol --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-socket-cookie --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-socket-domain --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py copy-file-range --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sync-file-range --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-messages --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py network-multimessage --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py memory-vm --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py time-timers --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py getcwd --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py current-dir-name --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py eventfd --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py times --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py session-observation --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py thread-identity --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py access --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py accessat --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py truncate --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py process-identity --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py process-cwd --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sync --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py sched-cpu --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py ownership --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py special-nodes --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py system-names --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py load-average --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py getentropy --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py create --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py termios-special-codes --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py termios-queue --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py terminal-control --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py thread-credentials --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_kernel.py fs-credentials --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_network_address.py network-address --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_network_address.py ipaddr --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_network_address.py ipv4-legacy --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_network_address.py ipv4-classful --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_network_address.py ethernet-address --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m10_network_address.py ethers --target-dir target
         ;;
     abi-probe)
         ensure_image

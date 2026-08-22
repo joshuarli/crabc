@@ -5895,8 +5895,6 @@ const ENC_ISO8859_14: i32 = 28;
 const ENC_ISO8859_15: i32 = 29;
 const ENC_ISO8859_16: i32 = 30;
 
-include!("iconv_iso8859.rs");
-
 fn make_cd(from: i32, to: i32) -> IconvT {
     ((from as usize) << 16 | (to as usize) << 1 | 1) as IconvT
 }
@@ -5981,17 +5979,26 @@ unsafe fn iconv_decode(enc: i32, src: *const u8, src_left: usize) -> (u32, usize
             if c < 128 { return (c as u32, 1, 0); }
             if c < 0xC2 { return (0, 0, EILSEQ); }
             if c < 0xE0 {
-                if src_left < 2 || (*src.add(1) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
+                if src_left < 2 { return (0, 0, EINVAL); }
+                if (*src.add(1) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
                 return (((c as u32 & 0x1F) << 6) | (*src.add(1) as u32 & 0x3F), 2, 0);
             }
             if c < 0xF0 {
-                if src_left < 3 || (*src.add(1) & 0xC0) != 0x80 || (*src.add(2) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
+                if src_left < 2 { return (0, 0, EINVAL); }
+                if (*src.add(1) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
+                if src_left < 3 { return (0, 0, EINVAL); }
+                if (*src.add(2) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
                 let cp = ((c as u32 & 0x0F) << 12) | ((*src.add(1) as u32 & 0x3F) << 6) | (*src.add(2) as u32 & 0x3F);
-                if cp < 0x800 { return (0, 0, EILSEQ); }
+                if cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF) { return (0, 0, EILSEQ); }
                 return (cp, 3, 0);
             }
             if c < 0xF8 {
-                if src_left < 4 || (*src.add(1) & 0xC0) != 0x80 || (*src.add(2) & 0xC0) != 0x80 || (*src.add(3) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
+                if src_left < 2 { return (0, 0, EINVAL); }
+                if (*src.add(1) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
+                if src_left < 3 { return (0, 0, EINVAL); }
+                if (*src.add(2) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
+                if src_left < 4 { return (0, 0, EINVAL); }
+                if (*src.add(3) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
                 let cp = ((c as u32 & 0x07) << 18) | ((*src.add(1) as u32 & 0x3F) << 12) | ((*src.add(2) as u32 & 0x3F) << 6) | (*src.add(3) as u32 & 0x3F);
                 if cp < 0x10000 || cp >= 0x110000 { return (0, 0, EILSEQ); }
                 return (cp, 4, 0);
@@ -6038,7 +6045,13 @@ unsafe fn iconv_decode(enc: i32, src: *const u8, src_left: usize) -> (u32, usize
         }
         ENC_WCHAR_T => {
             if src_left < 4 { return (0, 0, EINVAL); }
-            let c = *(src as *const u32);
+            // Linux/AArch64 wchar_t is a little-endian 32-bit scalar. Read
+            // individual bytes so an otherwise valid caller buffer never
+            // requires u32 alignment at the C ABI boundary.
+            let c = (*src as u32)
+                | ((*src.add(1) as u32) << 8)
+                | ((*src.add(2) as u32) << 16)
+                | ((*src.add(3) as u32) << 24);
             if c >= 0xD800 && c < 0xE000 { return (0, 0, EILSEQ); }
             if c >= 0x110000 { return (0, 0, EILSEQ); }
             (c, 4, 0)
@@ -6049,20 +6062,20 @@ unsafe fn iconv_decode(enc: i32, src: *const u8, src_left: usize) -> (u32, usize
             (c, 1, 0)
         }
         ENC_LATIN1 => (*src as u32, 1, 0),
-        ENC_ISO8859_2 => (iso8859_to_u(&ISO8859_2_TO_U, *src), 1, 0),
-        ENC_ISO8859_3 => (iso8859_to_u(&ISO8859_3_TO_U, *src), 1, 0),
-        ENC_ISO8859_4 => (iso8859_to_u(&ISO8859_4_TO_U, *src), 1, 0),
-        ENC_ISO8859_5 => (iso8859_to_u(&ISO8859_5_TO_U, *src), 1, 0),
-        ENC_ISO8859_6 => (iso8859_to_u(&ISO8859_6_TO_U, *src), 1, 0),
-        ENC_ISO8859_7 => (iso8859_to_u(&ISO8859_7_TO_U, *src), 1, 0),
-        ENC_ISO8859_8 => (iso8859_to_u(&ISO8859_8_TO_U, *src), 1, 0),
-        ENC_ISO8859_9 => (iso8859_to_u(&ISO8859_9_TO_U, *src), 1, 0),
-        ENC_ISO8859_10 => (iso8859_to_u(&ISO8859_10_TO_U, *src), 1, 0),
-        ENC_ISO8859_11 => (iso8859_to_u(&ISO8859_11_TO_U, *src), 1, 0),
-        ENC_ISO8859_13 => (iso8859_to_u(&ISO8859_13_TO_U, *src), 1, 0),
-        ENC_ISO8859_14 => (iso8859_to_u(&ISO8859_14_TO_U, *src), 1, 0),
-        ENC_ISO8859_15 => (iso8859_to_u(&ISO8859_15_TO_U, *src), 1, 0),
-        ENC_ISO8859_16 => (iso8859_to_u(&ISO8859_16_TO_U, *src), 1, 0),
+        ENC_ISO8859_2 => (crabc_core::iconv::Iso8859::Iso8859_2.decode(*src), 1, 0),
+        ENC_ISO8859_3 => (crabc_core::iconv::Iso8859::Iso8859_3.decode(*src), 1, 0),
+        ENC_ISO8859_4 => (crabc_core::iconv::Iso8859::Iso8859_4.decode(*src), 1, 0),
+        ENC_ISO8859_5 => (crabc_core::iconv::Iso8859::Iso8859_5.decode(*src), 1, 0),
+        ENC_ISO8859_6 => (crabc_core::iconv::Iso8859::Iso8859_6.decode(*src), 1, 0),
+        ENC_ISO8859_7 => (crabc_core::iconv::Iso8859::Iso8859_7.decode(*src), 1, 0),
+        ENC_ISO8859_8 => (crabc_core::iconv::Iso8859::Iso8859_8.decode(*src), 1, 0),
+        ENC_ISO8859_9 => (crabc_core::iconv::Iso8859::Iso8859_9.decode(*src), 1, 0),
+        ENC_ISO8859_10 => (crabc_core::iconv::Iso8859::Iso8859_10.decode(*src), 1, 0),
+        ENC_ISO8859_11 => (crabc_core::iconv::Iso8859::Iso8859_11.decode(*src), 1, 0),
+        ENC_ISO8859_13 => (crabc_core::iconv::Iso8859::Iso8859_13.decode(*src), 1, 0),
+        ENC_ISO8859_14 => (crabc_core::iconv::Iso8859::Iso8859_14.decode(*src), 1, 0),
+        ENC_ISO8859_15 => (crabc_core::iconv::Iso8859::Iso8859_15.decode(*src), 1, 0),
+        ENC_ISO8859_16 => (crabc_core::iconv::Iso8859::Iso8859_16.decode(*src), 1, 0),
         ENC_WIN1252 => {
             let b = *src;
             if b < 128 { return (b as u32, 1, 0); }
@@ -6229,7 +6242,12 @@ unsafe fn iconv_encode(enc: i32, c: u32, dst: *mut u8, dst_left: usize) -> (usiz
         }
         ENC_WCHAR_T => {
             if dst_left < 4 { return (0, E2BIG); }
-            *(dst as *mut u32) = c;
+            // See the matching decoder: WChar is Linux/AArch64 LE, but C
+            // callers are allowed byte-aligned output storage.
+            *dst = (c & 0xff) as u8;
+            *dst.add(1) = ((c >> 8) & 0xff) as u8;
+            *dst.add(2) = ((c >> 16) & 0xff) as u8;
+            *dst.add(3) = (c >> 24) as u8;
             (4, 0)
         }
         ENC_ASCII => {
@@ -6247,98 +6265,98 @@ unsafe fn iconv_encode(enc: i32, c: u32, dst: *mut u8, dst_left: usize) -> (usiz
             (0, EILSEQ)
         }
         ENC_ISO8859_2 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_2_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_2.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_3 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_3_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_3.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_4 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_4_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_4.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_5 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_5_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_5.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_6 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_6_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_6.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_7 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_7_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_7.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_8 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_8_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_8.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_9 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_9_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_9.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_10 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_10_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_10.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_11 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_11_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_11.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_13 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_13_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_13.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_14 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_14_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_14.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_15 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_15_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_15.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_16 => {
-            if let Some(b) = u_to_iso8859(&ISO8859_16_TO_U, c) {
+            if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_16.encode(c) {
                 if dst_left < 1 { return (0, E2BIG); }
                 *dst = b; return (1, 0);
             }
@@ -6500,17 +6518,32 @@ pub unsafe extern "C" fn iconv(
     while src_left > 0 {
         let (cp, consumed, err) = iconv_decode(from, src, src_left);
         if err != 0 {
-            if err == EINVAL { break; }
+            // musl commits every completed scalar before reporting the error
+            // on the next one. The offending/incomplete input remains at the
+            // caller's pointer so conversion can resume with more storage or
+            // input.
+            *inbuf = src as *mut c_char;
+            *outbuf = dst as *mut c_char;
+            *inbytesleft = src_left;
+            *outbytesleft = dst_left;
             ERRNO = err;
             return !0usize;
         }
         let (written, err) = iconv_encode(to, cp, dst, dst_left);
         if err != 0 {
             if err == E2BIG {
+                *inbuf = src as *mut c_char;
+                *outbuf = dst as *mut c_char;
+                *inbytesleft = src_left;
+                *outbytesleft = dst_left;
                 ERRNO = E2BIG;
                 return !0usize;
             }
             if dst_left < 1 {
+                *inbuf = src as *mut c_char;
+                *outbuf = dst as *mut c_char;
+                *inbytesleft = src_left;
+                *outbytesleft = dst_left;
                 ERRNO = E2BIG;
                 return !0usize;
             }
@@ -10032,7 +10065,12 @@ pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
 #[no_mangle]
 pub unsafe extern "C" fn remove(path: *const c_char) -> c_int {
     if path.is_null() { ERRNO = EINVAL; return -1; }
-    let r = sys_unlinkat(AT_FDCWD, path as *const u8, 0);
+    let mut r = sys_unlinkat(AT_FDCWD, path as *const u8, 0);
+    // Match musl's `remove`: try unlink first so ordinary paths retain their
+    // normal error, then retry an `EISDIR` result as a directory removal.
+    if r == -(EISDIR_VAL as i64) {
+        r = sys_unlinkat(AT_FDCWD, path as *const u8, 512); // AT_REMOVEDIR
+    }
     if r == 0 { 0 } else { ERRNO = (-r) as c_int; -1 }
 }
 
@@ -13467,7 +13505,10 @@ unsafe fn sys_alarm(seconds: c_uint) -> i64 {
     if r < 0 {
         return r;
     }
-    old.it_value.tv_sec as i64
+    // POSIX alarm returns the remaining time rounded up to whole seconds;
+    // preserve a positive fractional timeval instead of truncating it.
+    old.it_value.tv_sec
+        .saturating_add(i64::from(old.it_value.tv_usec > 0))
 }
 
 unsafe fn sys_pause() -> i64 {

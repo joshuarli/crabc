@@ -3,8 +3,11 @@
 //! These operations use the shared typed kernel seam in `crabc-core`; they do
 //! not call crabc's public C ABI and never read or write TLS `errno`.
 
+use core::marker::PhantomData;
+use core::slice;
+
 use crate::buffer::Buffer;
-use crate::{AsFd, OwnedFd, RawFd, Result};
+use crate::{AsFd, BorrowedFd, OwnedFd, RawFd, Result};
 
 pub use crate::Errno;
 
@@ -18,6 +21,166 @@ bitflags::bitflags! {
 
         /// Preserve unknown Linux flag bits when round-tripping kernel values.
         const _ = !0;
+    }
+}
+
+bitflags::bitflags! {
+    /// The bounded Linux `RWF_*` flags accepted by [`preadv2`] and
+    /// [`pwritev2`].
+    ///
+    /// This closed set follows the stable flag vocabulary exposed by the
+    /// pinned Rustix raw backend: unknown bits, including newer header bits,
+    /// are rejected by the safe APIs before a syscall instead of being
+    /// silently forwarded. The pinned musl header also advertises
+    /// `RWF_NOAPPEND` (`0x20`), but the local Rustix ground truth does not yet
+    /// expose it, so this bounded slice deliberately treats it as a future bit.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    pub struct ReadWriteFlags: u32 {
+        /// `RWF_HIPRI`.
+        const HIPRI = 0x0000_0001;
+        /// `RWF_DSYNC`.
+        const DSYNC = 0x0000_0002;
+        /// `RWF_SYNC`.
+        const SYNC = 0x0000_0004;
+        /// `RWF_NOWAIT`.
+        const NOWAIT = 0x0000_0008;
+        /// `RWF_APPEND`.
+        const APPEND = 0x0000_0010;
+    }
+}
+
+bitflags::bitflags! {
+    /// The three Linux `SYNC_FILE_RANGE_*` controls accepted by
+    /// [`sync_file_range`].
+    ///
+    /// This is a closed flag vocabulary: values built with
+    /// [`from_bits_retain`](SyncFileRangeFlags::from_bits_retain) are checked
+    /// by [`sync_file_range`] and unknown bits return `EINVAL` before the
+    /// syscall.
+    #[repr(transparent)]
+    #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+    pub struct SyncFileRangeFlags: u32 {
+        /// Wait for already-submitted writeback before starting this request.
+        const WAIT_BEFORE = 0x01;
+        /// Start writeback for dirty pages in this range.
+        const WRITE = 0x02;
+        /// Wait for writeback after starting this request.
+        const WAIT_AFTER = 0x04;
+    }
+}
+
+/// A borrowed initialized byte range for [`writev`].
+///
+/// The wrapper preserves the source slice's lifetime and pointer provenance
+/// while presenting the Linux `struct iovec` layout required by the direct
+/// syscall. It is `Copy` because it carries only an immutable borrow.
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+pub struct IoSlice<'a> {
+    iovec: crabc_core::io::Iovec,
+    _lifetime: PhantomData<&'a [u8]>,
+}
+
+impl<'a> IoSlice<'a> {
+    /// Borrows `buffer` as one immutable vectored-I/O segment.
+    #[inline]
+    pub fn new(buffer: &'a [u8]) -> Self {
+        Self {
+            iovec: crabc_core::io::Iovec {
+                // Linux's iovec uses a mutable C pointer even for writev;
+                // the immutable Rust borrow is retained by `_lifetime`.
+                iov_base: buffer.as_ptr().cast_mut(),
+                iov_len: buffer.len(),
+            },
+            _lifetime: PhantomData,
+        }
+    }
+
+    /// Returns the remaining immutable segment.
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: `iovec` was created from a live `'a` slice and `advance`
+        // only moves its pointer within that original slice.
+        unsafe { slice::from_raw_parts(self.iovec.iov_base.cast_const(), self.iovec.iov_len) }
+    }
+
+    /// Removes `amount` bytes from the front of this segment.
+    ///
+    /// This is useful when a caller handles a short write and retries the
+    /// remaining segments. It panics if `amount` exceeds the segment length.
+    #[inline]
+    pub fn advance(&mut self, amount: usize) {
+        if amount > self.iovec.iov_len {
+            panic!("advancing IoSlice beyond its length");
+        }
+        if amount == 0 {
+            return;
+        }
+
+        // SAFETY: `amount` is within the original slice's bounds.
+        self.iovec.iov_base = unsafe { self.iovec.iov_base.add(amount) };
+        self.iovec.iov_len -= amount;
+    }
+}
+
+/// A borrowed initialized mutable byte range for [`readv`].
+///
+/// Constructing one requires an exclusive `&mut [u8]`, so safe callers cannot
+/// put overlapping mutable ranges into one readv call. This initialized-byte
+/// API intentionally does not accept `MaybeUninit`; use [`read`] when the
+/// initialized prefix and uninitialized suffix must be represented explicitly.
+#[repr(transparent)]
+pub struct IoSliceMut<'a> {
+    iovec: crabc_core::io::Iovec,
+    _lifetime: PhantomData<&'a mut [u8]>,
+}
+
+impl<'a> IoSliceMut<'a> {
+    /// Borrows `buffer` as one mutable vectored-I/O segment.
+    #[inline]
+    pub fn new(buffer: &'a mut [u8]) -> Self {
+        Self {
+            iovec: crabc_core::io::Iovec {
+                iov_base: buffer.as_mut_ptr(),
+                iov_len: buffer.len(),
+            },
+            _lifetime: PhantomData,
+        }
+    }
+
+    /// Returns the remaining segment as an immutable byte slice.
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        // SAFETY: `iovec` was created from a live `'a` mutable slice and
+        // `advance` only moves its pointer within that original slice.
+        unsafe { slice::from_raw_parts(self.iovec.iov_base.cast_const(), self.iovec.iov_len) }
+    }
+
+    /// Returns the remaining segment as a mutable byte slice.
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        // SAFETY: `iovec` was created from a live `'a` mutable slice and
+        // `advance` only moves its pointer within that original slice.
+        unsafe { slice::from_raw_parts_mut(self.iovec.iov_base, self.iovec.iov_len) }
+    }
+
+    /// Removes `amount` bytes from the front of this segment.
+    ///
+    /// This is useful when a caller handles a short read and retries the
+    /// remaining segments. It panics if `amount` exceeds the segment length.
+    #[inline]
+    pub fn advance(&mut self, amount: usize) {
+        if amount > self.iovec.iov_len {
+            panic!("advancing IoSliceMut beyond its length");
+        }
+        if amount == 0 {
+            return;
+        }
+
+        // SAFETY: `amount` is within the original slice's bounds.
+        self.iovec.iov_base = unsafe { self.iovec.iov_base.add(amount) };
+        self.iovec.iov_len -= amount;
     }
 }
 
@@ -89,6 +252,42 @@ pub fn fcntl_dupfd_cloexec<Fd: AsFd>(fd: Fd, minimum: RawFd) -> Result<OwnedFd> 
     unsafe { Ok(OwnedFd::from_raw_fd(raw)) }
 }
 
+/// Synchronizes a checked byte range of an open regular file.
+///
+/// `offset` and `length` are unsigned at this Rust boundary and describe the
+/// half-open range `[offset, offset + length)`. Before entering Linux's signed
+/// `loff_t` ABI, both values and their checked sum must fit in `i64`; failure
+/// returns `EINVAL` without making a syscall. `length == 0` is supported and
+/// has Linux's precise meaning: synchronize from `offset` through end of file.
+/// The descriptor is borrowed for the direct operation and is never closed or
+/// otherwise transferred by this function.
+///
+/// Unknown bits in `flags` are rejected with `EINVAL` before the syscall.
+#[inline]
+pub fn sync_file_range(
+    fd: BorrowedFd<'_>,
+    offset: u64,
+    length: u64,
+    flags: SyncFileRangeFlags,
+) -> Result<()> {
+    if SyncFileRangeFlags::from_bits(flags.bits()).is_none()
+        || offset > i64::MAX as u64
+        || length > i64::MAX as u64
+        || offset.checked_add(length).map_or(true, |end| end > i64::MAX as u64)
+    {
+        return Err(crate::Errno::INVAL);
+    }
+
+    // The checks above establish the exact non-negative signed `loff_t`
+    // representation and preserve Linux's zero-length-to-EOF convention.
+    crabc_core::io::sync_file_range(
+        fd.as_raw_fd(),
+        offset as i64,
+        length as i64,
+        flags.bits(),
+    )
+}
+
 /// Reads bytes into initialized or potentially uninitialized storage.
 ///
 /// For initialized buffers the returned value is the number of bytes read. For
@@ -109,6 +308,117 @@ pub fn read<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut buffer: Buf) -> Result<Buf::O
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
+/// Reads into initialized byte segments in order.
+///
+/// Linux fills the segments as one logical concatenated buffer and may return
+/// a short count. Segment contents beyond that count remain unchanged. The
+/// descriptor is borrowed for the duration of the direct syscall, and the
+/// exclusive borrows held by [`IoSliceMut`] keep the destination ranges
+/// disjoint. For potentially uninitialized storage, use [`read`] instead.
+#[inline]
+pub fn readv<Fd: AsFd>(fd: Fd, buffers: &mut [IoSliceMut<'_>]) -> Result<usize> {
+    let fd = fd.as_fd();
+    // SAFETY: `IoSliceMut` is `repr(transparent)` over the Linux iovec record;
+    // each value was built from a live, disjoint mutable byte slice. The
+    // slice keeps all records readable for the syscall duration.
+    unsafe {
+        crabc_core::io::readv_raw(
+            fd.as_raw_fd(),
+            buffers.as_ptr().cast::<crabc_core::io::Iovec>(),
+            buffers.len(),
+        )
+    }
+}
+
+/// Reads bytes at `offset` without changing the descriptor's file position.
+///
+/// The descriptor is borrowed for the operation, and the buffer contract is
+/// the same as [`read`]: initialized storage returns a byte count while
+/// `MaybeUninit` storage returns its initialized prefix and remaining suffix.
+/// `offset` is a non-negative Linux file offset; the kernel rejects values
+/// outside its signed `off_t` range.
+#[inline]
+#[allow(private_interfaces)]
+pub fn pread<Fd: AsFd, Buf: Buffer<u8>>(
+    fd: Fd,
+    mut buffer: Buf,
+    offset: u64,
+) -> Result<Buf::Output> {
+    let fd = fd.as_fd();
+    let (pointer, length) = buffer.parts_mut();
+    // SAFETY: `Buffer` supplies writable storage for exactly `length` bytes,
+    // and the descriptor borrow keeps the fd open for this syscall.
+    let initialized = unsafe {
+        crabc_core::io::pread_raw(fd.as_raw_fd(), pointer.cast(), length, offset)?
+    };
+    // SAFETY: A successful kernel pread initializes its returned prefix and
+    // never reports a length larger than the supplied buffer.
+    unsafe { Ok(buffer.assume_init(initialized)) }
+}
+
+/// Reads initialized byte segments from `offset` without changing the
+/// descriptor's file position.
+///
+/// Linux treats the segments as one logical concatenated buffer and may
+/// return a short count; bytes beyond that count remain unchanged. This
+/// initialized-byte API intentionally does not accept `MaybeUninit`; use
+/// [`read`] when the initialized prefix and uninitialized suffix must be
+/// represented explicitly. `offset` is a non-negative Linux file offset;
+/// values above `i64::MAX` return `EINVAL`.
+#[inline]
+pub fn preadv<Fd: AsFd>(
+    fd: Fd,
+    buffers: &mut [IoSliceMut<'_>],
+    offset: u64,
+) -> Result<usize> {
+    let fd = fd.as_fd();
+    // SAFETY: `IoSliceMut` is `repr(transparent)` over the Linux iovec record;
+    // each value was built from a live, disjoint mutable byte slice. The
+    // descriptor and all records remain borrowed for the direct syscall.
+    unsafe {
+        crabc_core::io::preadv_raw(
+            fd.as_raw_fd(),
+            buffers.as_ptr().cast::<crabc_core::io::Iovec>(),
+            buffers.len(),
+            offset,
+        )
+    }
+}
+
+/// Reads initialized byte segments with Linux `preadv2` flags.
+///
+/// `offset == u64::MAX` is the explicit Linux sentinel for the descriptor's
+/// current file position; that form may advance the position. Every other
+/// `u64` is passed as a positioned offset, with its low and high 32-bit words
+/// preserved by the AArch64 syscall seam. Unknown `ReadWriteFlags` bits return
+/// `EINVAL` before a syscall. A short read initializes only its returned byte
+/// count; the remaining initialized segments are unchanged.
+#[inline]
+pub fn preadv2<Fd: AsFd>(
+    fd: Fd,
+    buffers: &mut [IoSliceMut<'_>],
+    offset: u64,
+    flags: ReadWriteFlags,
+) -> Result<usize> {
+    if ReadWriteFlags::from_bits(flags.bits()).is_none() {
+        return Err(crate::Errno::INVAL);
+    }
+    let fd = fd.as_fd();
+    // SAFETY: `IoSliceMut` is `repr(transparent)` over the Linux iovec record;
+    // each value was built from a live, disjoint mutable byte slice. The
+    // descriptor, records, and source ranges remain borrowed for the direct
+    // six-argument syscall.
+    unsafe {
+        crabc_core::io::preadv2_raw(
+            fd.as_raw_fd(),
+            buffers.as_ptr().cast::<crabc_core::io::Iovec>(),
+            buffers.len(),
+            offset,
+            flags.bits(),
+        )
+    }
+}
+
 /// Writes the complete byte slice as far as the kernel accepts it.
 ///
 /// A successful short write is reported as its actual byte count, matching the
@@ -118,6 +428,101 @@ pub fn write<Fd: AsFd>(fd: Fd, buffer: &[u8]) -> Result<usize> {
     let fd = fd.as_fd();
     // SAFETY: `buffer` is valid immutable storage for its exact length.
     unsafe { crabc_core::io::write_raw(fd.as_raw_fd(), buffer.as_ptr(), buffer.len()) }
+}
+
+/// Writes initialized byte segments in order.
+///
+/// Linux treats the segments as one logical concatenated buffer and may
+/// return a short count. The descriptor and every source segment remain
+/// borrowed for the duration of the direct syscall; no allocation or C ABI
+/// wrapper is involved.
+#[inline]
+pub fn writev<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>]) -> Result<usize> {
+    let fd = fd.as_fd();
+    // SAFETY: `IoSlice` is `repr(transparent)` over the Linux iovec record;
+    // each value was built from a live immutable byte slice. The slice keeps
+    // all records and source ranges readable for the syscall duration.
+    unsafe {
+        crabc_core::io::writev_raw(
+            fd.as_raw_fd(),
+            buffers.as_ptr().cast::<crabc_core::io::Iovec>(),
+            buffers.len(),
+        )
+    }
+}
+
+/// Writes bytes at `offset` without changing the descriptor's file position.
+///
+/// A successful short write is returned as the number of bytes accepted by
+/// Linux. The descriptor is borrowed for the duration of the operation.
+#[inline]
+pub fn pwrite<Fd: AsFd>(fd: Fd, buffer: &[u8], offset: u64) -> Result<usize> {
+    let fd = fd.as_fd();
+    // SAFETY: `buffer` is valid immutable storage for its exact length, and
+    // the descriptor borrow keeps the fd open for this syscall.
+    unsafe {
+        crabc_core::io::pwrite_raw(fd.as_raw_fd(), buffer.as_ptr(), buffer.len(), offset)
+    }
+}
+
+/// Writes initialized byte segments at `offset` without changing the
+/// descriptor's file position.
+///
+/// Linux treats the segments as one logical concatenated buffer and may
+/// return a short count. `offset` is a non-negative Linux file offset; values
+/// above `i64::MAX` return `EINVAL`.
+#[inline]
+pub fn pwritev<Fd: AsFd>(
+    fd: Fd,
+    buffers: &[IoSlice<'_>],
+    offset: u64,
+) -> Result<usize> {
+    let fd = fd.as_fd();
+    // SAFETY: `IoSlice` is `repr(transparent)` over the Linux iovec record;
+    // each value was built from a live immutable byte slice. The descriptor,
+    // records, and source ranges remain borrowed for the direct syscall.
+    unsafe {
+        crabc_core::io::pwritev_raw(
+            fd.as_raw_fd(),
+            buffers.as_ptr().cast::<crabc_core::io::Iovec>(),
+            buffers.len(),
+            offset,
+        )
+    }
+}
+
+/// Writes initialized byte segments with Linux `pwritev2` flags.
+///
+/// `offset == u64::MAX` is the explicit Linux sentinel for the descriptor's
+/// current file position; that form may advance the position. Every other
+/// `u64` is passed as a positioned offset, with its low and high 32-bit words
+/// preserved by the AArch64 syscall seam. Unknown `ReadWriteFlags` bits return
+/// `EINVAL` before a syscall. A successful short write is returned as its
+/// actual byte count.
+#[inline]
+pub fn pwritev2<Fd: AsFd>(
+    fd: Fd,
+    buffers: &[IoSlice<'_>],
+    offset: u64,
+    flags: ReadWriteFlags,
+) -> Result<usize> {
+    if ReadWriteFlags::from_bits(flags.bits()).is_none() {
+        return Err(crate::Errno::INVAL);
+    }
+    let fd = fd.as_fd();
+    // SAFETY: `IoSlice` is `repr(transparent)` over the Linux iovec record;
+    // each value was built from a live immutable byte slice. The descriptor,
+    // records, and source ranges remain borrowed for the direct six-argument
+    // syscall.
+    unsafe {
+        crabc_core::io::pwritev2_raw(
+            fd.as_raw_fd(),
+            buffers.as_ptr().cast::<crabc_core::io::Iovec>(),
+            buffers.len(),
+            offset,
+            flags.bits(),
+        )
+    }
 }
 
 /// Closes a raw descriptor without retrying errors.

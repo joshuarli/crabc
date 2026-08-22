@@ -179,6 +179,24 @@ impl OwnedFd {
         core::mem::forget(self);
         fd
     }
+
+    /// Closes this descriptor exactly once through Linux's direct `close(2)`.
+    ///
+    /// This consuming operation models the POSIX close boundary: ownership is
+    /// released before the result is returned, and Linux's `EINTR` is treated
+    /// as success because Linux has already released the descriptor. Other
+    /// kernel errors are reported as ordinary [`crate::Errno`] values. The
+    /// descriptor must not be used after this call, regardless of the result.
+    #[inline]
+    pub fn close(self) -> crate::Result<()> {
+        // This releases the Rust owner before the syscall, preventing Drop
+        // from retrying or double-closing a descriptor number Linux may reuse.
+        let fd = self.into_raw_fd();
+        match crabc_core::io::close(fd) {
+            Err(error) if error == crate::Errno::INTR => Ok(()),
+            result => result,
+        }
+    }
 }
 
 impl AsRawFd for OwnedFd {

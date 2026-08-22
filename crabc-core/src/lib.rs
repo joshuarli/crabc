@@ -237,8 +237,14 @@ pub const AT_FDCWD: RawFd = -100;
 
 /// Direct, typed access to the calling thread's AArch64 floating-point state.
 pub mod fenv;
+/// Allocation-free character-set conversion shared by the native and C facades.
+pub mod iconv;
 /// Stateless byte-oriented filename pattern matching shared by both facades.
 pub mod pattern;
+/// Direct, allocation-free reads of Linux's process auxiliary vector.
+pub mod param;
+/// Pure byte-string algorithms shared by native text operations.
+pub mod text;
 
 /// Private, versioned wire contracts for process-singleton crabc runtimes.
 ///
@@ -502,27 +508,77 @@ pub mod runtime {
 const MAX_ERRNO: i32 = 4095;
 const SYS_READ: usize = 63;
 const SYS_WRITE: usize = 64;
+const SYS_READV: usize = 65;
+const SYS_WRITEV: usize = 66;
+const SYS_PREAD64: usize = 67;
+const SYS_PWRITE64: usize = 68;
+const SYS_PREADV: usize = 69;
+const SYS_PWRITEV: usize = 70;
+const SYS_SENDFILE: usize = 71;
+const SYS_VMSPLICE: usize = 75;
+const SYS_SPLICE: usize = 76;
+const SYS_TEE: usize = 77;
+const SYS_COPY_FILE_RANGE: usize = 285;
+const SYS_PREADV2: usize = 286;
+const SYS_PWRITEV2: usize = 287;
 const SYS_LSEEK: usize = 62;
 const SYS_FCNTL: usize = 25;
 const SYS_DUP: usize = 23;
 const SYS_DUP3: usize = 24;
 const SYS_CLOSE: usize = 57;
 const SYS_FLOCK: usize = 32;
+// Linux/AArch64 `mknodat` is the generic syscall numbered 33. The pinned
+// Rustix linux_raw backend and crabc's checked-in AArch64 syscall header both
+// carry this number; it precedes `mkdirat` (34) in the kernel table.
+const SYS_MKNODAT: usize = 33;
 const SYS_OPENAT: usize = 56;
+const SYS_MEMFD_CREATE: usize = 279;
 const SYS_IOCTL: usize = 29;
 const SYS_MKDIRAT: usize = 34;
 const SYS_UNLINKAT: usize = 35;
 const SYS_SYMLINKAT: usize = 36;
 const SYS_LINKAT: usize = 37;
+const SYS_FACCESSAT: usize = 48;
+// Linux added the flags-bearing access check in 5.8. Keep this direct seam
+// separate from `faccessat`: AArch64's older syscall has no flags register.
+const SYS_FACCESSAT2: usize = 439;
 const SYS_FCHMOD: usize = 52;
 const SYS_FCHMODAT: usize = 53;
+// Linux/AArch64 syscall numbers from the pinned linux-raw-sys AArch64 table:
+// fchownat(2) is 54 and fchown(2) is 55. AArch64 has no chown/lchown syscall;
+// those pathname forms use fchownat with AT_FDCWD and (for lchown) the
+// AT_SYMLINK_NOFOLLOW flag.
+const SYS_FCHOWNAT: usize = 54;
+const SYS_FCHOWN: usize = 55;
+const SYS_TRUNCATE: usize = 45;
 const SYS_FTRUNCATE: usize = 46;
+const SYS_FALLOCATE: usize = 47;
+const SYS_FADVISE64: usize = 223;
 const SYS_FSYNC: usize = 82;
 const SYS_FDATASYNC: usize = 83;
+// AArch64's generic Linux `sync` syscall has no arguments and no status
+// contract: Linux documents it as always successful.
+const SYS_SYNC: usize = 81;
+// AArch64 exposes the generic `sync_file_range` syscall at 84.
+const SYS_SYNC_FILE_RANGE: usize = 84;
+const SYS_SYNCFS: usize = 267;
 const SYS_GETDENTS64: usize = 61;
 const SYS_NEWFSTATAT: usize = 79;
 const SYS_READLINKAT: usize = 78;
+const SYS_GETCWD: usize = 17;
+// Linux/AArch64 process working-directory syscalls.  These mutate the
+// process-global CWD; the native facade documents the caller coordination
+// required around concurrent pathname operations.
+const SYS_CHDIR: usize = 49;
+const SYS_FCHDIR: usize = 50;
+// Linux/AArch64's legacy process-root operation. Keep it separate from the
+// C facade so native callers receive direct kernel errors, not TLS errno.
+const SYS_CHROOT: usize = 51;
 const SYS_FSTAT: usize = 80;
+const SYS_STATFS: usize = 43;
+const SYS_FSTATFS: usize = 44;
+// Linux/AArch64 `statx` is the extended metadata syscall introduced in 4.11.
+const SYS_STATX: usize = 291;
 const SYS_UTIMENSAT: usize = 88;
 const SYS_RENAMEAT2: usize = 276;
 const SYS_OPENAT2: usize = 437;
@@ -539,11 +595,23 @@ const SYS_REMOVEXATTR: usize = 14;
 const SYS_LREMOVEXATTR: usize = 15;
 const SYS_FREMOVEXATTR: usize = 16;
 const SYS_PIPE2: usize = 59;
+const SYS_CLOCK_SETTIME: usize = 112;
 const SYS_CLOCK_GETTIME: usize = 113;
 const SYS_CLOCK_GETRES: usize = 114;
+const SYS_CLOCK_NANOSLEEP: usize = 115;
+const SYS_GETITIMER: usize = 102;
+const SYS_SETITIMER: usize = 103;
+const SYS_TIMER_CREATE: usize = 107;
+const SYS_TIMER_GETTIME: usize = 108;
+const SYS_TIMER_GETOVERRUN: usize = 109;
+const SYS_TIMER_SETTIME: usize = 110;
+const SYS_TIMER_DELETE: usize = 111;
+const SYS_GETTIMEOFDAY: usize = 169;
+const SYS_NANOSLEEP: usize = 101;
 const SYS_GETRANDOM: usize = 278;
 const SYS_EVENTFD2: usize = 19;
 const SYS_PPOLL: usize = 73;
+const SYS_PSELECT6: usize = 72;
 const SYS_EPOLL_CREATE1: usize = 20;
 const SYS_EPOLL_CTL: usize = 21;
 const SYS_EPOLL_PWAIT: usize = 22;
@@ -553,12 +621,36 @@ const SYS_TIMERFD_GETTIME: usize = 87;
 const SYS_SIGNALFD4: usize = 74;
 const SYS_SOCKET: usize = 198;
 const SYS_SOCKETPAIR: usize = 199;
+const SYS_BIND: usize = 200;
+const SYS_LISTEN: usize = 201;
+const SYS_ACCEPT: usize = 202;
+const SYS_SHUTDOWN: usize = 210;
 const SYS_CONNECT: usize = 203;
+const SYS_GETSOCKNAME: usize = 204;
+const SYS_GETPEERNAME: usize = 205;
 const SYS_SENDTO: usize = 206;
 const SYS_RECVFROM: usize = 207;
+const SYS_SETSOCKOPT: usize = 208;
+const SYS_GETSOCKOPT: usize = 209;
+const SYS_SENDMSG: usize = 211;
+const SYS_RECVMSG: usize = 212;
+// Linux/AArch64 uses the generic syscall table entries for batched socket
+// messages.  Keep these separate from sendmsg/recvmsg: the latter receive a
+// single msghdr, while these consume an array of private mmsghdr records.
+const SYS_RECVMMSG: usize = 243;
+const SYS_SENDMMSG: usize = 269;
+const SYS_READAHEAD: usize = 213;
+const SYS_ACCEPT4: usize = 242;
 const SYS_MUNMAP: usize = 215;
+const SYS_MREMAP: usize = 216;
 const SYS_MMAP: usize = 222;
 const SYS_MPROTECT: usize = 226;
+const SYS_MSYNC: usize = 227;
+const SYS_MLOCK: usize = 228;
+const SYS_MUNLOCK: usize = 229;
+const SYS_MINCORE: usize = 232;
+const SYS_MADVISE: usize = 233;
+const SYS_MLOCK2: usize = 284;
 const SYS_KILL: usize = 129;
 const SYS_TGKILL: usize = 131;
 const SYS_SIGALTSTACK: usize = 132;
@@ -577,15 +669,46 @@ const SYS_SETSID: usize = 157;
 const SYS_UNAME: usize = 160;
 const SYS_GETPID: usize = 172;
 const SYS_GETPPID: usize = 173;
+const SYS_GETRESUID: usize = 148;
+const SYS_SETRESUID: usize = 147;
+const SYS_GETRESGID: usize = 150;
+const SYS_SETRESGID: usize = 149;
+const SYS_SETFSUID: usize = 151;
+const SYS_SETFSGID: usize = 152;
+const SYS_GETGROUPS: usize = 158;
+const SYS_GETRUSAGE: usize = 165;
+const SYS_UMASK: usize = 166;
+const SYS_GETPRIORITY: usize = 141;
+const SYS_SETPRIORITY: usize = 140;
+const SYS_TIMES: usize = 153;
 const SYS_GETUID: usize = 174;
+const SYS_GETEUID: usize = 175;
+const SYS_GETGID: usize = 176;
+const SYS_GETEGID: usize = 177;
 const SYS_GETTID: usize = 178;
+// Linux/AArch64 `getcpu`, used by the native thread CPU observation seam.
+const SYS_GETCPU: usize = 168;
+// Linux/AArch64 process-break and legacy virtual-memory operations.  These
+// are kept as raw seams because their public libc wrappers have distinct
+// sentinel/state conventions.
+const SYS_BRK: usize = 214;
+const SYS_REMAP_FILE_PAGES: usize = 234;
+const SYS_MLOCKALL: usize = 230;
+const SYS_MUNLOCKALL: usize = 231;
 const SYS_SYSINFO: usize = 179;
 const SYS_SCHED_YIELD: usize = 124;
+const SYS_SCHED_GET_PRIORITY_MAX: usize = 125;
+const SYS_SCHED_GET_PRIORITY_MIN: usize = 126;
+const SYS_SCHED_RR_GET_INTERVAL: usize = 127;
+const SYS_SCHED_SETAFFINITY: usize = 122;
+const SYS_SCHED_GETAFFINITY: usize = 123;
 const SYS_FUTEX: usize = 98;
 const SYS_CLONE: usize = 220;
 const SYS_EXECVE: usize = 221;
 const SYS_WAIT4: usize = 260;
 const SYS_WAITID: usize = 95;
+const SYS_PRLIMIT64: usize = 261;
+const SYS_PIDFD_OPEN: usize = 434;
 const SYS_EXIT_GROUP: usize = 94;
 
 #[inline(always)]
@@ -762,9 +885,26 @@ fn decode_i64(result: isize) -> Result<i64> {
 /// Direct descriptor I/O operations.
 pub mod io {
     use super::{
-        decode, decode_i32, syscall1, syscall3, RawFd, Result, SYS_CLOSE, SYS_DUP,
-        SYS_DUP3, SYS_FCNTL, SYS_IOCTL, SYS_READ, SYS_WRITE,
+        decode, decode_i32, syscall1, syscall3, syscall4, syscall5, syscall6, RawFd, Result, SYS_CLOSE,
+        SYS_DUP, SYS_DUP3, SYS_FCNTL, SYS_IOCTL, SYS_PREAD64, SYS_PREADV, SYS_PWRITE64,
+        SYS_SENDFILE, SYS_SYNC_FILE_RANGE,
+        SYS_PREADV2, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV,
     };
+
+    /// One Linux `struct iovec` record for direct vectored I/O.
+    ///
+    /// This is an ABI record rather than a safe buffer abstraction. Callers
+    /// must uphold the pointer and aliasing requirements documented by
+    /// [`readv_raw`] and [`writev_raw`]. The layout is the Linux/AArch64
+    /// `struct iovec` layout: a pointer followed by a native `size_t` length.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct Iovec {
+        /// Start of the byte range described by this record.
+        pub iov_base: *mut u8,
+        /// Number of bytes in the range.
+        pub iov_len: usize,
+    }
 
     /// Linux `F_DUPFD`: duplicate at or above the requested descriptor.
     pub const F_DUPFD: i32 = 0;
@@ -772,6 +912,14 @@ pub mod io {
     pub const F_GETFD: i32 = 1;
     /// Linux `F_SETFD`: replace descriptor flags.
     pub const F_SETFD: i32 = 2;
+    /// Linux `F_GETFL`: read the open-file-description status flags.
+    pub const F_GETFL: i32 = 3;
+    /// Linux `F_SETFL`: replace the open-file-description status flags.
+    pub const F_SETFL: i32 = 4;
+    /// Linux `F_GET_SEALS`: read an inode's sealing flags.
+    pub const F_GET_SEALS: i32 = 1_034;
+    /// Linux `F_ADD_SEALS`: add sealing flags to an inode.
+    pub const F_ADD_SEALS: i32 = 1_033;
     /// Linux `F_DUPFD_CLOEXEC`: duplicate with close-on-exec set.
     pub const F_DUPFD_CLOEXEC: i32 = 1_030;
     /// Linux `FD_CLOEXEC` descriptor flag.
@@ -836,6 +984,44 @@ pub mod io {
         unsafe { fcntl_raw(fd, F_SETFD, flags as usize as *mut u8) }.map(|_| ())
     }
 
+    /// Reads the open-file-description status flags through `fcntl(F_GETFL)`.
+    #[inline]
+    pub fn fcntl_getfl(fd: RawFd) -> Result<u32> {
+        // SAFETY: F_GETFL ignores its third argument; zero is the canonical
+        // immediate argument representation on Linux.
+        unsafe { fcntl_raw(fd, F_GETFL, core::ptr::null_mut()) }.map(|flags| flags as u32)
+    }
+
+    /// Reads an inode's Linux sealing flags through `fcntl(F_GET_SEALS)`.
+    ///
+    /// The command has no pointer argument. The returned non-negative C `int`
+    /// is preserved as a raw bitset so the safe facade can retain future
+    /// kernel-defined seal bits.
+    #[inline]
+    pub fn fcntl_get_seals(fd: RawFd) -> Result<u32> {
+        // SAFETY: F_GET_SEALS ignores its third argument; zero is the
+        // canonical immediate argument representation on Linux.
+        unsafe { fcntl_raw(fd, F_GET_SEALS, core::ptr::null_mut()) }.map(|flags| flags as u32)
+    }
+
+    /// Adds Linux sealing flags to an inode through `fcntl(F_ADD_SEALS)`.
+    #[inline]
+    pub fn fcntl_add_seals(fd: RawFd, seals: u32) -> Result<()> {
+        // SAFETY: F_ADD_SEALS takes the seal bitset as an immediate integer in
+        // the third syscall argument; `fcntl_raw` encodes it without
+        // dereferencing the value.
+        unsafe { fcntl_raw(fd, F_ADD_SEALS, seals as usize as *mut u8) }.map(|_| ())
+    }
+
+    /// Replaces the open-file-description status flags through
+    /// `fcntl(F_SETFL)`.
+    #[inline]
+    pub fn fcntl_setfl(fd: RawFd, flags: u32) -> Result<()> {
+        // SAFETY: F_SETFL takes an immediate integer in the third syscall
+        // argument; `fcntl_raw` encodes that integer without dereferencing it.
+        unsafe { fcntl_raw(fd, F_SETFL, flags as usize as *mut u8) }.map(|_| ())
+    }
+
     /// Duplicates `fd` at or above `minimum` through `fcntl(F_DUPFD)`.
     #[inline]
     pub fn fcntl_dupfd(fd: RawFd, minimum: RawFd) -> Result<RawFd> {
@@ -856,6 +1042,28 @@ pub mod io {
                 minimum as u32 as usize as *mut u8,
             )
         }
+    }
+
+    /// Synchronizes a byte range through AArch64's Linux `sync_file_range`
+    /// syscall without using libc or TLS `errno`.
+    ///
+    /// The public operation calls this seam with the kernel's signed `loff_t`
+    /// values. AArch64 uses the generic argument order `(fd, offset, nbytes,
+    /// flags)` for this syscall.
+    #[inline]
+    pub fn sync_file_range(fd: RawFd, offset: i64, nbytes: i64, flags: u32) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor, flags, and signed byte
+        // range. All four arguments are scalar AArch64 syscall registers.
+        decode(unsafe {
+            syscall4(
+                SYS_SYNC_FILE_RANGE,
+                fd as usize,
+                offset as usize,
+                nbytes as usize,
+                flags as usize,
+            )
+        })
+        .map(|_| ())
     }
 
     /// Reads into a raw C-compatible buffer without using libc or TLS `errno`.
@@ -879,6 +1087,190 @@ pub mod io {
         unsafe { read_raw(fd, buffer.as_mut_ptr(), buffer.len()) }
     }
 
+    /// Reads into an array of Linux `struct iovec` records without using libc
+    /// or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `iovecs` must be null or point to `count` initialized [`Iovec`] records
+    /// readable for the duration of the call; a null pointer is permitted only
+    /// when `count` is zero. Every non-empty `iov_base` range must be valid for
+    /// mutable access for its `iov_len` bytes, and those ranges must be
+    /// pairwise disjoint. Empty ranges may use any pointer. The descriptor's
+    /// I/O safety is the caller's responsibility.
+    #[inline]
+    pub unsafe fn readv_raw(
+        fd: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the kernel validates the descriptor and count.
+        decode(unsafe {
+            syscall3(SYS_READV, fd as usize, iovecs as usize, count)
+        })
+    }
+
+    /// Reads from `offset` without changing the descriptor's file position.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be valid for mutable access to `length` bytes for the
+    /// duration of the call, unless `length` is zero. `offset` is the
+    /// non-negative Linux `off_t` value passed to `pread64`; values above
+    /// `i64::MAX` are rejected by Linux. The descriptor's I/O safety is the
+    /// caller's responsibility.
+    #[inline]
+    pub unsafe fn pread_raw(
+        fd: RawFd,
+        buffer: *mut u8,
+        length: usize,
+        offset: u64,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the raw-buffer validity contract and the
+        // kernel validates the descriptor and file offset.
+        decode(unsafe {
+            syscall4(
+                SYS_PREAD64,
+                fd as usize,
+                buffer as usize,
+                length,
+                offset as usize,
+            )
+        })
+    }
+
+    /// Reads from `offset` without changing the descriptor's file position.
+    #[inline]
+    pub fn pread(fd: RawFd, buffer: &mut [u8], offset: u64) -> Result<usize> {
+        // SAFETY: A slice supplies a valid mutable buffer for the exact length.
+        unsafe { pread_raw(fd, buffer.as_mut_ptr(), buffer.len(), offset) }
+    }
+
+    /// Transfers up to `count` bytes from `in_fd` to `out_fd` without using
+    /// libc or TLS `errno`.
+    ///
+    /// A non-null `offset` is an in/out pointer to the input file position:
+    /// Linux starts at its value, leaves the input descriptor's shared offset
+    /// unchanged, and advances the pointed-to value by the number of bytes
+    /// transferred. A null pointer starts at and advances the input
+    /// descriptor's shared offset. The output descriptor's shared offset is
+    /// advanced in either form.
+    ///
+    /// # Safety
+    ///
+    /// `offset` must be null or point to an aligned, writable `u64` for the
+    /// duration of the call. When non-null, its value is interpreted by Linux
+    /// as a signed `off_t`; values outside that range are rejected by Linux.
+    /// The descriptors' I/O validity is the caller's responsibility.
+    #[inline]
+    pub unsafe fn sendfile_raw(
+        out_fd: RawFd,
+        in_fd: RawFd,
+        offset: *mut u64,
+        count: usize,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the optional in/out offset pointer
+        // validity contract; Linux validates both descriptors and count.
+        decode(unsafe {
+            syscall4(
+                SYS_SENDFILE,
+                out_fd as usize,
+                in_fd as usize,
+                offset as usize,
+                count,
+            )
+        })
+    }
+
+    /// Transfers up to `count` bytes between borrowed descriptors.
+    ///
+    /// This typed core wrapper keeps the optional offset pointer contract
+    /// explicit while avoiding a C ABI or process-global error channel.
+    #[inline]
+    pub fn sendfile(
+        out_fd: RawFd,
+        in_fd: RawFd,
+        offset: Option<&mut u64>,
+        count: usize,
+    ) -> Result<usize> {
+        let offset = offset.map_or(core::ptr::null_mut(), |offset| offset);
+        // SAFETY: `Option<&mut u64>` supplies either a null pointer or an
+        // aligned writable pointer valid for the syscall duration.
+        unsafe { sendfile_raw(out_fd, in_fd, offset, count) }
+    }
+
+    /// Reads from `offset` into an array of Linux `struct iovec` records
+    /// without changing the descriptor's file position or using libc/TLS
+    /// `errno`.
+    ///
+    /// Linux's AArch64 `preadv` ABI passes the offset as two 32-bit words:
+    /// low word first, then high word. This seam keeps the caller's complete
+    /// non-negative `u64` representation until those registers are formed.
+    ///
+    /// # Safety
+    ///
+    /// The iovec-array and pointed-to-buffer requirements are the same as for
+    /// [`readv_raw`]. `offset` is interpreted as a signed Linux `off_t`; values
+    /// above `i64::MAX` are rejected by Linux with `EINVAL`.
+    #[inline]
+    pub unsafe fn preadv_raw(
+        fd: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+        offset: u64,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the kernel validates the descriptor, count,
+        // and signed file offset.
+        decode(unsafe {
+            syscall5(
+                SYS_PREADV,
+                fd as usize,
+                iovecs as usize,
+                count,
+                offset as usize,
+                (offset >> 32) as usize,
+            )
+        })
+    }
+
+    /// Reads through Linux `preadv2` without libc or TLS `errno`.
+    ///
+    /// AArch64 passes the non-negative `offset` as two explicit 32-bit words,
+    /// low first and high second. Linux reserves `u64::MAX` as the explicit
+    /// current-file-offset sentinel for this operation; every other value is
+    /// preserved as a positioned offset.
+    ///
+    /// # Safety
+    ///
+    /// The iovec-array and pointed-to-buffer requirements are the same as for
+    /// [`readv_raw`]. `flags` must contain only Linux `RWF_*` bits accepted by
+    /// the caller's facade contract.
+    #[inline]
+    pub unsafe fn preadv2_raw(
+        fd: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+        offset: u64,
+        flags: u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the kernel validates the descriptor, offset,
+        // and flags. The six scalar arguments occupy x0..x5.
+        decode(unsafe {
+            syscall6(
+                SYS_PREADV2,
+                fd as usize,
+                iovecs as usize,
+                count,
+                offset as usize,
+                (offset >> 32) as usize,
+                flags as usize,
+            )
+        })
+    }
+
     /// Writes a raw C-compatible buffer without using libc or TLS `errno`.
     ///
     /// # Safety
@@ -898,6 +1290,135 @@ pub mod io {
     pub fn write(fd: RawFd, buffer: &[u8]) -> Result<usize> {
         // SAFETY: A slice supplies a valid immutable buffer for the exact length.
         unsafe { write_raw(fd, buffer.as_ptr(), buffer.len()) }
+    }
+
+    /// Writes from an array of Linux `struct iovec` records without using libc
+    /// or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `iovecs` must be null or point to `count` initialized [`Iovec`] records
+    /// readable for the duration of the call; a null pointer is permitted only
+    /// when `count` is zero. Every non-empty `iov_base` range must be valid for
+    /// immutable access for its `iov_len` bytes. The descriptor's I/O safety is
+    /// the caller's responsibility.
+    #[inline]
+    pub unsafe fn writev_raw(
+        fd: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the kernel validates the descriptor and count.
+        decode(unsafe {
+            syscall3(SYS_WRITEV, fd as usize, iovecs as usize, count)
+        })
+    }
+
+    /// Writes at `offset` without changing the descriptor's file position.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be valid for immutable access to `length` bytes for the
+    /// duration of the call, unless `length` is zero. `offset` is the
+    /// non-negative Linux `off_t` value passed to `pwrite64`; values above
+    /// `i64::MAX` are rejected by Linux. The descriptor's I/O safety is the
+    /// caller's responsibility.
+    #[inline]
+    pub unsafe fn pwrite_raw(
+        fd: RawFd,
+        buffer: *const u8,
+        length: usize,
+        offset: u64,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the raw-buffer validity contract and the
+        // kernel validates the descriptor and file offset.
+        decode(unsafe {
+            syscall4(
+                SYS_PWRITE64,
+                fd as usize,
+                buffer as usize,
+                length,
+                offset as usize,
+            )
+        })
+    }
+
+    /// Writes at `offset` without changing the descriptor's file position.
+    #[inline]
+    pub fn pwrite(fd: RawFd, buffer: &[u8], offset: u64) -> Result<usize> {
+        // SAFETY: A slice supplies a valid immutable buffer for the exact length.
+        unsafe { pwrite_raw(fd, buffer.as_ptr(), buffer.len(), offset) }
+    }
+
+    /// Writes from an array of Linux `struct iovec` records at `offset`
+    /// without changing the descriptor's file position or using libc/TLS
+    /// `errno`.
+    ///
+    /// Linux's AArch64 `pwritev` ABI passes the offset as two 32-bit words:
+    /// low word first, then high word. `offset` values above `i64::MAX` are
+    /// rejected by Linux with `EINVAL`.
+    ///
+    /// # Safety
+    ///
+    /// The iovec-array and pointed-to-buffer requirements are the same as for
+    /// [`writev_raw`].
+    #[inline]
+    pub unsafe fn pwritev_raw(
+        fd: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+        offset: u64,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the kernel validates the descriptor, count,
+        // and signed file offset.
+        decode(unsafe {
+            syscall5(
+                SYS_PWRITEV,
+                fd as usize,
+                iovecs as usize,
+                count,
+                offset as usize,
+                (offset >> 32) as usize,
+            )
+        })
+    }
+
+    /// Writes through Linux `pwritev2` without libc or TLS `errno`.
+    ///
+    /// AArch64 passes the non-negative `offset` as two explicit 32-bit words,
+    /// low first and high second. Linux reserves `u64::MAX` as the explicit
+    /// current-file-offset sentinel for this operation; every other value is
+    /// preserved as a positioned offset.
+    ///
+    /// # Safety
+    ///
+    /// The iovec-array and pointed-to-buffer requirements are the same as for
+    /// [`writev_raw`]. `flags` must contain only Linux `RWF_*` bits accepted by
+    /// the caller's facade contract.
+    #[inline]
+    pub unsafe fn pwritev2_raw(
+        fd: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+        offset: u64,
+        flags: u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the kernel validates the descriptor, offset,
+        // and flags. The six scalar arguments occupy x0..x5.
+        decode(unsafe {
+            syscall6(
+                SYS_PWRITEV2,
+                fd as usize,
+                iovecs as usize,
+                count,
+                offset as usize,
+                (offset >> 32) as usize,
+                flags as usize,
+            )
+        })
     }
 
     /// Performs an ioctl without using libc or TLS `errno`.
@@ -947,15 +1468,68 @@ pub mod io {
 /// Direct stateless filesystem operations.
 pub mod fs {
     use super::{
-        decode, decode_i64, syscall1, syscall2, syscall3, syscall4, syscall5, CStr, RawFd,
-        Result, SYS_FCHMOD, SYS_FCHMODAT, SYS_FDATASYNC, SYS_FLOCK, SYS_FSTAT,
-        SYS_FSYNC, SYS_FTRUNCATE, SYS_GETDENTS64, SYS_LINKAT, SYS_FGETXATTR,
+        decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6,
+        CStr, RawFd,
+        Result, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FCHMOD, SYS_FCHMODAT, SYS_FCHOWN, SYS_FCHOWNAT, SYS_FDATASYNC, SYS_FLOCK, SYS_FSTAT, SYS_FSTATFS,
+        SYS_FSYNC, SYS_TRUNCATE, SYS_FTRUNCATE, SYS_FALLOCATE, SYS_FADVISE64, SYS_GETDENTS64, SYS_LINKAT, SYS_FGETXATTR,
         SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_GETXATTR, SYS_LGETXATTR,
         SYS_LLISTXATTR, SYS_LREMOVEXATTR, SYS_LSEEK, SYS_LSETXATTR, SYS_LISTXATTR,
-        SYS_MKDIRAT, SYS_NEWFSTATAT, SYS_OPENAT, SYS_OPENAT2, SYS_READLINKAT,
+        SYS_MEMFD_CREATE, SYS_MKDIRAT, SYS_NEWFSTATAT, SYS_OPENAT, SYS_OPENAT2, SYS_READAHEAD,
+        SYS_READLINKAT, SYS_STATFS, SYS_COPY_FILE_RANGE,
         SYS_REMOVEXATTR, SYS_RENAMEAT2, SYS_SETXATTR, SYS_SYMLINKAT, SYS_UNLINKAT,
-        SYS_UTIMENSAT,
+        SYS_SYNC, SYS_SYNCFS, SYS_UTIMENSAT,
+        SYS_MKNODAT, SYS_STATX,
     };
+
+    // This is the private Linux/AArch64 wire layout for `struct statx`.
+    // Keep it private: callers receive a typed facade value, while this type
+    // makes the output pointer passed to the kernel carry the exact ABI size
+    // and alignment contract.
+    #[repr(C)]
+    struct KernelStatxTimestamp {
+        tv_sec: i64,
+        tv_nsec: u32,
+        __reserved: i32,
+    }
+
+    #[repr(C)]
+    struct KernelStatx {
+        stx_mask: u32,
+        stx_blksize: u32,
+        stx_attributes: u64,
+        stx_nlink: u32,
+        stx_uid: u32,
+        stx_gid: u32,
+        stx_mode: u16,
+        __spare0: [u16; 1],
+        stx_ino: u64,
+        stx_size: u64,
+        stx_blocks: u64,
+        stx_attributes_mask: u64,
+        stx_atime: KernelStatxTimestamp,
+        stx_btime: KernelStatxTimestamp,
+        stx_ctime: KernelStatxTimestamp,
+        stx_mtime: KernelStatxTimestamp,
+        stx_rdev_major: u32,
+        stx_rdev_minor: u32,
+        stx_dev_major: u32,
+        stx_dev_minor: u32,
+        stx_mnt_id: u64,
+        stx_dio_mem_align: u32,
+        stx_dio_offset_align: u32,
+        stx_subvol: u64,
+        stx_atomic_write_unit_min: u32,
+        stx_atomic_write_unit_max: u32,
+        stx_atomic_write_segments_max: u32,
+        stx_dio_read_offset_align: u32,
+        stx_atomic_write_unit_max_opt: u32,
+        __spare2: [u32; 1],
+        __spare3: [u64; 8],
+    }
+
+    const _: [(); 256] = [(); core::mem::size_of::<KernelStatx>()];
+    const STATX_RESERVED: u32 = 0x8000_0000;
+    const STATX_KNOWN_MASK: u32 = 0x0000_3fff;
 
     /// Linux `SEEK_SET`: position from the beginning of the file.
     pub const SEEK_SET: u32 = 0;
@@ -1003,6 +1577,132 @@ pub mod fs {
         decode(unsafe { syscall1(SYS_FDATASYNC, fd as usize) }).map(|_| ())
     }
 
+    /// Flushes pending filesystem metadata and cached file data for all
+    /// filesystems without using libc or TLS `errno`.
+    ///
+    /// Linux `sync(2)` has process/system-wide scope: it is not limited to the
+    /// caller's descriptors or to one mounted filesystem. Linux waits for
+    /// writeback I/O completion before returning, while POSIX permits
+    /// `sync()` to schedule writes and return before the actual writes finish.
+    /// This completion point is kernel/filesystem writeback completion; it is
+    /// not a promise that every device's volatile write cache has committed to
+    /// nonvolatile media. Linux defines this syscall as always successful, so
+    /// the direct seam has the Rustix-shaped `()` return and does not expose an
+    /// errno result.
+    #[inline]
+    pub fn sync() {
+        // SAFETY: `sync` takes no arguments. Linux defines the syscall as
+        // always successful; discard its raw return exactly as Rustix does.
+        let _ = unsafe { syscall0(SYS_SYNC) };
+    }
+
+    /// Gives Linux a POSIX filesystem access-pattern advisory through the
+    /// AArch64 `fadvise64` ABI without using libc or TLS `errno`.
+    ///
+    /// `offset` and `length` are the signed Linux/AArch64 `loff_t` values. The
+    /// native facade validates its unsigned API before converting to these
+    /// arguments.
+    #[inline]
+    pub fn fadvise64(fd: RawFd, offset: i64, length: i64, advice: u32) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor, signed offsets, length,
+        // and POSIX_FADV policy value.
+        decode(unsafe {
+            syscall4(
+                SYS_FADVISE64,
+                fd as usize,
+                offset as usize,
+                length as usize,
+                advice as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Initiates Linux file readahead through the AArch64 syscall ABI without
+    /// using libc or TLS `errno`.
+    ///
+    /// `offset` is the signed Linux `loff_t` byte offset. `count` is the
+    /// AArch64 `size_t` byte count; the native facade validates the unsigned
+    /// caller range and its end before converting `offset` here.
+    #[inline]
+    pub fn readahead(fd: RawFd, offset: i64, count: usize) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor and file type. The
+        // scalar arguments are the Linux/AArch64 readahead ABI.
+        decode(unsafe {
+            syscall3(
+                SYS_READAHEAD,
+                fd as usize,
+                offset as usize,
+                count,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Copies up to `len` bytes between two descriptors through Linux's
+    /// `copy_file_range` syscall without using libc or TLS `errno`.
+    ///
+    /// Each supplied offset is an in/out pointer to a signed Linux `loff_t`:
+    /// Linux starts from its value, leaves that descriptor's shared position
+    /// unchanged, and advances the pointed-to value by the number of bytes
+    /// copied. A null pointer selects and advances the descriptor's shared
+    /// position. The final syscall argument is fixed at zero because this
+    /// bounded seam does not expose filesystem-specific copy flags.
+    ///
+    /// The caller must keep each optional offset aligned and writable for the
+    /// duration of the call. The descriptors' I/O validity is the caller's
+    /// responsibility.
+    #[inline]
+    pub fn copy_file_range(
+        in_fd: RawFd,
+        in_offset: Option<&mut u64>,
+        out_fd: RawFd,
+        out_offset: Option<&mut u64>,
+        len: usize,
+    ) -> Result<usize> {
+        let in_offset = in_offset.map_or(core::ptr::null_mut(), |offset| offset);
+        let out_offset = out_offset.map_or(core::ptr::null_mut(), |offset| offset);
+        // SAFETY: Optional mutable references provide either null pointers or
+        // aligned writable storage for the syscall duration. Linux validates
+        // both descriptors, the signed offsets, and the copy range.
+        decode(unsafe {
+            syscall6(
+                SYS_COPY_FILE_RANGE,
+                in_fd as usize,
+                in_offset as usize,
+                out_fd as usize,
+                out_offset as usize,
+                len,
+                0,
+            )
+        })
+    }
+
+    /// Flushes all pending filesystem data associated with the descriptor's
+    /// mounted filesystem without using libc or TLS `errno`.
+    #[inline]
+    pub fn syncfs(fd: RawFd) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor and identifies its
+        // mounted filesystem for the direct sync operation.
+        decode(unsafe { syscall1(SYS_SYNCFS, fd as usize) }).map(|_| ())
+    }
+
+    /// Sets the length of a pathname-selected file without using libc or TLS
+    /// `errno`.
+    ///
+    /// `length` is the signed Linux `loff_t` representation. The public
+    /// facade validates its unsigned byte-count API before constructing the
+    /// pathname or issuing this direct syscall.
+    #[inline]
+    pub fn truncate(path: &CStr, length: i64) -> Result<()> {
+        // SAFETY: `CStr` supplies a readable NUL-terminated pathname, and the
+        // kernel validates the signed file length and pathname permissions.
+        decode(unsafe {
+            syscall2(SYS_TRUNCATE, path.as_ptr() as usize, length as usize)
+        })
+        .map(|_| ())
+    }
+
     /// Sets the length of an open file without using libc or TLS `errno`.
     ///
     /// `length` is the signed Linux `loff_t` representation. The kernel
@@ -1012,6 +1712,90 @@ pub mod fs {
     pub fn ftruncate(fd: RawFd, length: i64) -> Result<()> {
         // SAFETY: The kernel validates the descriptor and signed file length.
         decode(unsafe { syscall2(SYS_FTRUNCATE, fd as usize, length as usize) }).map(|_| ())
+    }
+
+    /// Allocates or transforms a range in an open file without using libc or
+    /// TLS `errno`.
+    ///
+    /// `offset` and `length` are the signed Linux `loff_t` representation.
+    /// The AArch64 Linux ABI passes both values as full-width registers after
+    /// the descriptor and `mode` arguments; unlike 32-bit ABIs, no high/low
+    /// word splitting is used here.
+    #[inline]
+    pub fn fallocate(fd: RawFd, mode: u32, offset: i64, length: i64) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor, mode, and signed file
+        // range. All four arguments are scalar AArch64 syscall registers.
+        decode(unsafe {
+            syscall4(
+                SYS_FALLOCATE,
+                fd as usize,
+                mode as usize,
+                offset as usize,
+                length as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Tests a pathname using Linux's standard `access()` behavior.
+    ///
+    /// AArch64 has no separate `access` syscall, so musl's public wrapper
+    /// selects `faccessat(AT_FDCWD, path, mode, 0)`. The Linux/AArch64 kernel
+    /// syscall itself has only the three arguments `(dirfd, path, mode)`; the
+    /// public wrapper's trailing zero is not a kernel flags argument. The
+    /// kernel resolves `path` from the process current working directory and
+    /// checks permissions using the real (not effective) UID and GID. This
+    /// seam does not expose the distinct `faccessat2` flags contract.
+    #[inline]
+    pub fn access(path: &CStr, mode: u32) -> Result<()> {
+        // SAFETY: `CStr` guarantees a readable NUL-terminated pathname. The
+        // kernel validates the access mode and performs the real-ID check.
+        decode(unsafe {
+            syscall3(
+                SYS_FACCESSAT,
+                super::AT_FDCWD as usize,
+                path.as_ptr() as usize,
+                mode as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Tests a pathname relative to `dirfd` using Linux's flags-bearing
+    /// `faccessat2` contract when `flags` is nonzero.
+    ///
+    /// An empty flag word uses AArch64's three-argument `faccessat` syscall.
+    /// A nonempty flag word uses `faccessat2` directly and therefore preserves
+    /// `NOSYS` on kernels predating that syscall; this seam performs no
+    /// fallback, credential emulation, or availability caching. The safe
+    /// facade restricts the flag word to `AT_EACCESS` and
+    /// `AT_SYMLINK_NOFOLLOW`.
+    #[inline]
+    pub fn accessat(dirfd: RawFd, path: &CStr, mode: u32, flags: u32) -> Result<()> {
+        // SAFETY: `CStr` guarantees a readable NUL-terminated pathname. The
+        // kernel validates the descriptor, access mode, and supported flags;
+        // the facade validates its closed flag set before reaching here.
+        decode(if flags == 0 {
+            unsafe {
+                syscall3(
+                    SYS_FACCESSAT,
+                    dirfd as usize,
+                    path.as_ptr() as usize,
+                    mode as usize,
+                )
+            }
+        } else {
+            unsafe {
+                syscall4(
+                    SYS_FACCESSAT2,
+                    dirfd as usize,
+                    path.as_ptr() as usize,
+                    mode as usize,
+                    flags as usize,
+                )
+            }
+        })
+        .map(|_| ())
     }
 
     /// Opens a raw C-compatible path relative to `dirfd` without using libc or
@@ -1109,6 +1893,66 @@ pub mod fs {
         unsafe { openat_raw(dirfd, path.as_ptr().cast(), flags, mode) }
     }
 
+    /// Creates an anonymous Linux memory file without using libc or TLS
+    /// `errno`.
+    ///
+    /// `name` must remain a valid NUL-terminated byte string for the syscall;
+    /// the public facade supplies that contract through `Arg`.
+    #[inline]
+    pub fn memfd_create(name: &CStr, flags: u32) -> Result<RawFd> {
+        // SAFETY: `CStr` supplies the name pointer and Linux validates the
+        // name length and MFD flag word.
+        decode_i32(unsafe {
+            syscall2(
+                SYS_MEMFD_CREATE,
+                name.as_ptr() as usize,
+                flags as usize,
+            )
+        })
+    }
+
+    /// Queries the Linux/AArch64 `struct statx` representation for a C path.
+    ///
+    /// This is a direct, stateless syscall seam. It intentionally propagates
+    /// `ENOSYS` instead of emulating musl's compatibility fallback or caching
+    /// process-wide availability state.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname and `buffer`
+    /// must designate writable, correctly aligned storage for the complete
+    /// 256-byte Linux/AArch64 `struct statx` layout.
+    #[inline]
+    pub unsafe fn statx_raw(
+        dirfd: RawFd,
+        path: *const u8,
+        flags: u32,
+        mask: u32,
+        buffer: *mut u8,
+    ) -> Result<()> {
+        // Rustix rejects this reserved bit before entering the kernel. Future
+        // bits are masked so an extended kernel cannot write beyond the
+        // private wire layout known by this crate.
+        if mask & STATX_RESERVED != 0 {
+            return Err(super::Errno::INVAL);
+        }
+        let mask = mask & STATX_KNOWN_MASK;
+        let buffer = buffer.cast::<KernelStatx>();
+        // SAFETY: The caller supplies the path and complete statx output
+        // storage contract; the kernel validates dirfd, flags, and mask.
+        decode(unsafe {
+            syscall5(
+                SYS_STATX,
+                dirfd as usize,
+                path as usize,
+                flags as usize,
+                mask as usize,
+                buffer as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
     /// Queries the Linux/AArch64 `struct stat` representation for `fd`.
     ///
     /// # Safety
@@ -1121,6 +1965,43 @@ pub mod fs {
         // SAFETY: The caller supplies complete writable `struct stat`
         // storage; the kernel validates the descriptor.
         decode(unsafe { syscall2(SYS_FSTAT, fd as usize, buffer as usize) }).map(|_| ())
+    }
+
+    /// Queries the Linux/AArch64 `struct statfs` representation for `fd`.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must designate writable storage for the complete target
+    /// Linux/AArch64 `struct statfs` layout. The descriptor's I/O safety is
+    /// the caller's responsibility.
+    #[inline]
+    pub unsafe fn fstatfs_raw(fd: RawFd, buffer: *mut u8) -> Result<()> {
+        // SAFETY: The caller supplies complete writable `struct statfs`
+        // storage; the kernel validates the descriptor.
+        decode(unsafe { syscall2(SYS_FSTATFS, fd as usize, buffer as usize) }).map(|_| ())
+    }
+
+    /// Queries the Linux/AArch64 `struct statfs` representation for a C path.
+    ///
+    /// # Safety
+    ///
+    /// `path` must point to a readable NUL-terminated pathname and `buffer`
+    /// must designate writable storage for the complete target Linux/AArch64
+    /// `struct statfs` layout.
+    #[inline]
+    pub unsafe fn statfs_raw(path: *const u8, buffer: *mut u8) -> Result<()> {
+        // SAFETY: The caller supplies the C-string and output-layout
+        // contracts; the kernel validates the path.
+        decode(unsafe { syscall2(SYS_STATFS, path as usize, buffer as usize) }).map(|_| ())
+    }
+
+    /// Queries filesystem statistics for a C path without using libc or TLS
+    /// `errno`.
+    #[inline]
+    pub fn statfs(path: &CStr, buffer: *mut u8) -> Result<()> {
+        // SAFETY: `CStr` establishes the pathname contract; the caller
+        // supplies the output-layout contract.
+        unsafe { statfs_raw(path.as_ptr().cast(), buffer) }
     }
 
     /// Queries the Linux/AArch64 `struct stat` representation for a C path
@@ -1199,6 +2080,30 @@ pub mod fs {
                 dirfd as usize,
                 path.as_ptr() as usize,
                 mode as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Creates a filesystem node relative to `dirfd` without using libc or
+    /// TLS `errno`.
+    ///
+    /// `mode` contains the Linux file-type and permission bits in the exact
+    /// `mknodat(2)` representation. The public facade supplies the file-type
+    /// and creation-mode pieces separately so callers cannot accidentally
+    /// duplicate or omit the type bits at this boundary.
+    #[inline]
+    pub fn mknodat(dirfd: RawFd, path: &CStr, mode: u32, dev: u64) -> Result<()> {
+        // SAFETY: `CStr` guarantees the pathname is readable and
+        // NUL-terminated; the kernel validates the node type, permissions,
+        // device number, and directory descriptor.
+        decode(unsafe {
+            syscall4(
+                SYS_MKNODAT,
+                dirfd as usize,
+                path.as_ptr() as usize,
+                mode as usize,
+                dev as usize,
             )
         })
         .map(|_| ())
@@ -1316,6 +2221,56 @@ pub mod fs {
                 dirfd as usize,
                 path.as_ptr() as usize,
                 mode as usize,
+                flags as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Changes ownership for an open descriptor through Linux/AArch64's
+    /// `fchown` syscall without using libc or TLS `errno`.
+    ///
+    /// `owner` and `group` are Linux `uid_t`/`gid_t` words. The kernel value
+    /// `u32::MAX` is the explicit no-change sentinel for either field; the
+    /// typed native facade is responsible for translating `Option` values and
+    /// rejecting an invalid raw ID before reaching this seam.
+    #[inline]
+    pub fn fchown(fd: RawFd, owner: u32, group: u32) -> Result<()> {
+        // SAFETY: The kernel validates the descriptor, IDs, and credentials.
+        decode(unsafe {
+            syscall3(
+                SYS_FCHOWN,
+                fd as usize,
+                owner as usize,
+                group as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Changes pathname-selected ownership through Linux/AArch64's
+    /// `fchownat` syscall without using libc or TLS `errno`.
+    ///
+    /// The `flags` word is intentionally supplied by the typed facade's
+    /// ownership-specific flag type; this core seam remains a direct scalar
+    /// syscall boundary and does not broaden that safe contract.
+    #[inline]
+    pub fn fchownat(
+        dirfd: RawFd,
+        path: &CStr,
+        owner: u32,
+        group: u32,
+        flags: u32,
+    ) -> Result<()> {
+        // SAFETY: `CStr` supplies the pathname; the kernel validates the
+        // descriptor, IDs, flags, and credentials.
+        decode(unsafe {
+            syscall5(
+                SYS_FCHOWNAT,
+                dirfd as usize,
+                path.as_ptr() as usize,
+                owner as usize,
+                group as usize,
                 flags as usize,
             )
         })
@@ -1631,7 +2586,13 @@ pub mod fs {
 
 /// Direct pipe operations.
 pub mod pipe {
-    use super::{decode, syscall2, MaybeUninit, RawFd, Result, SYS_PIPE2};
+    use super::{
+        decode, syscall2, syscall4, syscall6, MaybeUninit, RawFd, Result, SYS_PIPE2, SYS_SPLICE,
+        SYS_TEE, SYS_VMSPLICE,
+    };
+
+    /// Linux `F_GETPIPE_SZ`—read a pipe's current capacity in bytes.
+    const F_GETPIPE_SZ: i32 = 1_032;
 
     /// Creates a pipe in caller-provided Linux `int[2]` storage without using
     /// libc or TLS `errno`.
@@ -1661,6 +2622,118 @@ pub mod pipe {
         let [reader, writer] = unsafe { fds.assume_init() };
         Ok((reader, writer))
     }
+
+    /// Reads a Linux pipe's current capacity through the direct `fcntl`
+    /// syscall, without libc or TLS `errno`.
+    ///
+    /// The kernel returns a non-negative byte count for `F_GETPIPE_SZ` and
+    /// reports descriptor/type failures directly. A negative value outside
+    /// Linux's syscall-error range would not be a valid pipe capacity and is
+    /// rejected rather than converted to a large `usize`.
+    #[inline]
+    pub fn fcntl_getpipe_size(fd: RawFd) -> Result<usize> {
+        // SAFETY: F_GETPIPE_SZ has no pointer argument; the null third
+        // argument is the canonical immediate representation for this
+        // direct fcntl syscall.
+        let size = unsafe {
+            super::io::fcntl_raw(fd, F_GETPIPE_SZ, core::ptr::null_mut())?
+        };
+        if size < 0 {
+            return Err(super::Errno::RANGE);
+        }
+        Ok(size as usize)
+    }
+
+    /// Duplicates data from one Linux pipe into another without consuming it.
+    ///
+    /// The kernel may return a short count when fewer than `length` bytes are
+    /// available or the destination pipe cannot accept the whole request.
+    /// Flags retain Linux's `SPLICE_F_*` representation and kernel errors are
+    /// returned unchanged.
+    #[inline]
+    pub fn tee_raw(
+        fd_in: RawFd,
+        fd_out: RawFd,
+        length: usize,
+        flags: u32,
+    ) -> Result<usize> {
+        // SAFETY: Both descriptors and the scalar length/flags are immediate
+        // Linux syscall arguments; the kernel validates pipe direction and
+        // capacity requirements.
+        decode(unsafe {
+            syscall4(
+                SYS_TEE,
+                fd_in as usize,
+                fd_out as usize,
+                length,
+                flags as usize,
+            )
+        })
+    }
+
+    /// Transfers bytes between a file and a pipe through Linux `splice(2)`.
+    ///
+    /// `offset_in` and `offset_out` are nullable pointers to Linux `loff_t`
+    /// values. A null pointer selects and advances the descriptor's current
+    /// offset; a non-null pointer selects an explicit offset and advances the
+    /// pointed-to value. At least one descriptor must refer to a pipe, as
+    /// required by Linux. The pointers and descriptor lifetimes are owned by
+    /// the caller for the duration of this call.
+    #[inline]
+    pub unsafe fn splice_raw(
+        fd_in: RawFd,
+        offset_in: *mut u64,
+        fd_out: RawFd,
+        offset_out: *mut u64,
+        length: usize,
+        flags: u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns the nullable offset-pointer contracts. All
+        // descriptors and scalar values are immediate Linux syscall
+        // arguments; the kernel validates pipe direction and flags.
+        decode(unsafe {
+            syscall6(
+                SYS_SPLICE,
+                fd_in as usize,
+                offset_in as usize,
+                fd_out as usize,
+                offset_out as usize,
+                length,
+                flags as usize,
+            )
+        })
+    }
+
+    /// Transfers caller-owned iovec memory to or from a pipe through
+    /// Linux `vmsplice(2)`.
+    ///
+    /// # Safety
+    ///
+    /// `iovecs` must point to `count` readable Linux [`super::io::Iovec`]
+    /// records, and each record must satisfy the direction and lifetime
+    /// contract of the selected pipe descriptor. With `SPLICE_F_GIFT`, the
+    /// supplied pages must be page-aligned, page-sized, and never modified or
+    /// reused after the kernel accepts them. The caller must also ensure that
+    /// memory is writable when the pipe's read end is supplied.
+    #[inline]
+    pub unsafe fn vmsplice_raw(
+        fd: RawFd,
+        iovecs: *const super::io::Iovec,
+        count: usize,
+        flags: u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns the iovec-array and pointed-to-memory
+        // contracts. Linux validates the descriptor, count, and flags.
+        decode(unsafe {
+            super::syscall4(
+                SYS_VMSPLICE,
+                fd as usize,
+                iovecs as usize,
+                count,
+                flags as usize,
+            )
+        })
+    }
 }
 
 /// Direct kernel random-source operations.
@@ -1682,8 +2755,289 @@ pub mod rand {
 
 /// Direct stateless clock queries.
 pub mod time {
-    use super::{decode, syscall2, syscall4, RawFd, Result, SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME,
-        SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME};
+    use super::{
+        decode, decode_i32, syscall1, syscall2, syscall3, syscall4, MaybeUninit, RawFd, Result,
+        SYS_CLOCK_GETRES, SYS_CLOCK_GETTIME, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
+        SYS_GETITIMER, SYS_GETTIMEOFDAY,
+        SYS_NANOSLEEP, SYS_SETITIMER, SYS_TIMER_CREATE, SYS_TIMER_DELETE, SYS_TIMERFD_CREATE,
+        SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TIMER_GETOVERRUN, SYS_TIMER_GETTIME,
+        SYS_TIMER_SETTIME,
+    };
+
+    /// One signed timeval from Linux/AArch64's legacy `getitimer` result.
+    ///
+    /// This is the exact kernel wire layout: both fields are signed 64-bit
+    /// words, with `tv_usec` normalized by Linux to `0..1_000_000`. It is not
+    /// a public C `timeval` alias; the native facade validates these fields
+    /// before exposing them as Rust [`core::time::Duration`] values.
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct KernelItimervalTimeval {
+        /// Whole seconds in the interval-timer value.
+        pub tv_sec: i64,
+        /// Microseconds within `tv_sec`.
+        pub tv_usec: i64,
+    }
+
+    /// Linux/AArch64's four-word `struct __kernel_old_itimerval` result.
+    ///
+    /// The kernel writes the interval first and the current value second.
+    /// This is a syscall wire record rather than a C ABI type; callers should
+    /// validate each nested timeval before converting it to a native value.
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct KernelItimerval {
+        /// Time between expirations, or zero for a one-shot timer.
+        pub it_interval: KernelItimervalTimeval,
+        /// Time remaining until the next expiration, or zero when disarmed.
+        pub it_value: KernelItimervalTimeval,
+    }
+
+    /// One Linux/AArch64 POSIX-timer timespec.
+    ///
+    /// This private wire record intentionally remains separate from the
+    /// public Rust `Timespec`: it exists only to make the timer syscalls'
+    /// pointer and layout contract explicit.
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct KernelTimerTimespec {
+        /// Whole seconds.
+        pub tv_sec: i64,
+        /// Nanoseconds within the second.
+        pub tv_nsec: i64,
+    }
+
+    /// Linux/AArch64's POSIX timer setting record.
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct KernelItimerspec {
+        /// Interval between expirations.
+        pub it_interval: KernelTimerTimespec,
+        /// Initial or absolute expiration.
+        pub it_value: KernelTimerTimespec,
+    }
+
+    /// Kernel wall-clock fields returned by AArch64 `gettimeofday`.
+    ///
+    /// This is a private wire contract for the native Rust facade, not a
+    /// public C `timeval` type. Linux reports signed Unix-epoch seconds and a
+    /// canonical microsecond remainder in the range `0..1_000_000`.
+    #[repr(C)]
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct KernelWallClockParts {
+        /// Signed seconds since the Unix epoch (1970-01-01 00:00:00 UTC).
+        pub seconds: i64,
+        /// Microseconds within `seconds`, as normalized by Linux.
+        pub microseconds: i64,
+    }
+
+    /// Queries Linux's UTC wall clock without using libc, vDSO dispatch, or
+    /// TLS `errno`.
+    #[inline]
+    pub fn gettimeofday() -> Result<KernelWallClockParts> {
+        let mut value = MaybeUninit::<KernelWallClockParts>::uninit();
+        // SAFETY: `value` has the exact two-word AArch64 kernel layout, and a
+        // successful syscall initializes both fields.
+        unsafe { gettimeofday_raw(value.as_mut_ptr().cast())? };
+        // SAFETY: Linux initialized `value` on the successful return above.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Reads one Linux process interval timer without using libc or TLS
+    /// `errno`.
+    ///
+    /// `which` is the Linux `ITIMER_*` selector (`0`, `1`, or `2`). The
+    /// selector remains raw at this syscall boundary so Linux can report
+    /// `EINVAL` for unsupported values; the Rust facade supplies the closed
+    /// interval-timer vocabulary.
+    ///
+    /// # Safety
+    ///
+    /// `value` must point to writable storage for one
+    /// [`KernelItimerval`] value. Linux initializes all four words on
+    /// success. An invalid pointer may be passed deliberately when testing
+    /// the kernel's pointer validation behavior.
+    #[inline]
+    pub unsafe fn getitimer_raw(which: i32, value: *mut u8) -> Result<()> {
+        // SAFETY: The caller owns the result-pointer contract; Linux validates
+        // the selector and writes the complete four-word record on success.
+        decode(unsafe { syscall2(SYS_GETITIMER, which as usize, value as usize) }).map(|_| ())
+    }
+
+    /// Arms or disarms one Linux process interval timer and optionally
+    /// returns its previous setting without using libc or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `new_value` must point to one Linux/AArch64 `__kernel_old_itimerval`;
+    /// `old_value` must be null or writable storage for the same record.
+    #[inline]
+    pub unsafe fn setitimer_raw(
+        which: i32,
+        new_value: *const u8,
+        old_value: *mut u8,
+    ) -> Result<()> {
+        // SAFETY: The caller owns both timeval record pointer contracts;
+        // Linux validates the selector and the timeval values.
+        decode(unsafe {
+            syscall3(
+                SYS_SETITIMER,
+                which as usize,
+                new_value as usize,
+                old_value as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Creates one Linux POSIX timer with a private kernel `sigevent` record.
+    ///
+    /// # Safety
+    ///
+    /// `event` must be null or point to the exact 64-byte Linux/AArch64
+    /// `sigevent` layout. `timer_id` must point to writable `i32` storage.
+    #[inline]
+    pub unsafe fn timer_create_raw(
+        clock_id: i32,
+        event: *const u8,
+        timer_id: *mut i32,
+    ) -> Result<i32> {
+        // SAFETY: The caller owns the event and result-pointer contracts;
+        // Linux validates clock and notification values.
+        decode_i32(unsafe {
+            syscall3(
+                SYS_TIMER_CREATE,
+                clock_id as usize,
+                event as usize,
+                timer_id as usize,
+            )
+        })
+    }
+
+    /// Arms or disarms a Linux POSIX timer and optionally returns its old
+    /// setting without using libc or TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `new_value` must point to an initialized Linux/AArch64 `itimerspec`;
+    /// `old_value` must be null or writable storage for one such record.
+    #[inline]
+    pub unsafe fn timer_settime_raw(
+        timer_id: i32,
+        flags: i32,
+        new_value: *const u8,
+        old_value: *mut u8,
+    ) -> Result<()> {
+        // SAFETY: The caller owns both itimerspec pointer contracts; Linux
+        // validates the timer ID, flags, and time values.
+        decode(unsafe {
+            syscall4(
+                SYS_TIMER_SETTIME,
+                timer_id as usize,
+                flags as usize,
+                new_value as usize,
+                old_value as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Reads one Linux POSIX timer's current setting without using libc or
+    /// TLS `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `value` must point to writable storage for one Linux/AArch64
+    /// `itimerspec` record.
+    #[inline]
+    pub unsafe fn timer_gettime_raw(timer_id: i32, value: *mut u8) -> Result<()> {
+        // SAFETY: The caller owns the output-memory contract; Linux validates
+        // the timer ID and initializes the complete record on success.
+        decode(unsafe { syscall2(SYS_TIMER_GETTIME, timer_id as usize, value as usize) })
+            .map(|_| ())
+    }
+
+    /// Returns a Linux POSIX timer's overrun count without using libc or TLS
+    /// `errno`.
+    #[inline]
+    pub fn timer_getoverrun_raw(timer_id: i32) -> Result<i32> {
+        // SAFETY: The timer ID is a scalar and Linux validates it.
+        decode_i32(unsafe { syscall1(SYS_TIMER_GETOVERRUN, timer_id as usize) })
+    }
+
+    /// Deletes one Linux POSIX timer without using libc or TLS `errno`.
+    #[inline]
+    pub fn timer_delete_raw(timer_id: i32) -> Result<()> {
+        // SAFETY: The timer ID is a scalar and Linux validates it.
+        decode(unsafe { syscall1(SYS_TIMER_DELETE, timer_id as usize) }).map(|_| ())
+    }
+
+    /// Performs the Linux/AArch64 `gettimeofday` syscall.
+    ///
+    /// The second syscall argument is deliberately null: timezone output is a
+    /// legacy C process-global concept and is not part of this native query.
+    ///
+    /// # Safety
+    ///
+    /// `parts` must point to writable storage for one
+    /// [`KernelWallClockParts`] value.
+    #[inline]
+    pub unsafe fn gettimeofday_raw(parts: *mut u8) -> Result<()> {
+        // SAFETY: The caller supplies storage for the kernel's two-word
+        // result; the null timezone pointer requests no legacy timezone data.
+        decode(unsafe { syscall2(SYS_GETTIMEOFDAY, parts as usize, 0) }).map(|_| ())
+    }
+
+    /// Sleeps for a relative Linux/AArch64 timespec without using libc or TLS
+    /// `errno`.
+    ///
+    /// Linux initializes `remaining` only when the sleep is interrupted with
+    /// `EINTR`; callers must not read it for any other result.
+    ///
+    /// # Safety
+    ///
+    /// `request` must point to a readable Linux/AArch64 `struct timespec`.
+    /// `remaining` must point to writable storage for one such value.
+    #[inline]
+    pub unsafe fn nanosleep_raw(request: *const u8, remaining: *mut u8) -> Result<()> {
+        // SAFETY: The caller owns both timespec pointer contracts; Linux
+        // validates the requested range and writes `remaining` only on EINTR.
+        decode(unsafe { syscall2(SYS_NANOSLEEP, request as usize, remaining as usize) })
+            .map(|_| ())
+    }
+
+    /// Performs Linux/AArch64 `clock_nanosleep` with its native four-argument
+    /// syscall ABI, without using libc or TLS `errno`.
+    ///
+    /// `flags` is zero for a relative request and `1` (`TIMER_ABSTIME`) for an
+    /// absolute request. Linux does not write `remaining` for an absolute
+    /// request; callers should pass null in that mode.
+    ///
+    /// # Safety
+    ///
+    /// `request` must point to a readable Linux/AArch64 `struct timespec`.
+    /// For a relative request, `remaining` must point to writable storage for
+    /// one such value. For an absolute request, `remaining` must be null.
+    #[inline]
+    pub unsafe fn clock_nanosleep_raw(
+        clock_id: i32,
+        flags: u32,
+        request: *const u8,
+        remaining: *mut u8,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the timespec pointer contracts; Linux
+        // validates the clock identifier, flags, and timespec fields.
+        decode(unsafe {
+            syscall4(
+                SYS_CLOCK_NANOSLEEP,
+                clock_id as usize,
+                flags as usize,
+                request as usize,
+                remaining as usize,
+            )
+        })
+        .map(|_| ())
+    }
 
     /// Queries a Linux clock without using libc, vDSO dispatch, or TLS
     /// `errno`.
@@ -1696,6 +3050,25 @@ pub mod time {
         // SAFETY: The caller supplies exact output storage for the kernel
         // timespec layout; Linux validates the clock identifier.
         decode(unsafe { syscall2(SYS_CLOCK_GETTIME, clock_id as usize, timespec as usize) })
+            .map(|_| ())
+    }
+
+    /// Sets a Linux clock without using libc, vDSO dispatch, or TLS `errno`.
+    ///
+    /// Linux permits only settable clocks and requires the caller to have
+    /// permission to change them. The kernel therefore remains responsible
+    /// for returning `EINVAL` for a non-settable clock and `EPERM` when the
+    /// caller lacks the required privilege.
+    ///
+    /// # Safety
+    ///
+    /// `timespec` must point to a readable Linux/AArch64 `struct timespec`
+    /// whose `tv_nsec` field has already been validated as canonical.
+    #[inline]
+    pub unsafe fn clock_settime_raw(clock_id: i32, timespec: *const u8) -> Result<()> {
+        // SAFETY: The caller owns the readable timespec pointer contract and
+        // has validated its nanosecond field before crossing this boundary.
+        decode(unsafe { syscall2(SYS_CLOCK_SETTIME, clock_id as usize, timespec as usize) })
             .map(|_| ())
     }
 
@@ -1771,8 +3144,11 @@ pub mod time {
 
 /// Direct event-descriptor and polling operations.
 pub mod event {
-    use super::{decode, syscall1, syscall2, syscall4, syscall5, syscall6, RawFd, Result,
-        SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2, SYS_PPOLL};
+    use super::{
+        decode, decode_i32, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, Errno,
+        RawFd, Result, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2,
+        SYS_PPOLL, SYS_PSELECT6, SYS_READ, SYS_WRITE,
+    };
 
     /// Creates a Linux event descriptor without using libc or TLS `errno`.
     #[inline]
@@ -1780,6 +3156,59 @@ pub mod event {
         // SAFETY: Linux validates the initial value and flags.
         decode(unsafe { syscall2(SYS_EVENTFD2, initval as usize, flags as usize) })
             .map(|fd| fd as RawFd)
+    }
+
+    /// Reads one complete Linux eventfd counter record without using libc or
+    /// TLS `errno`.
+    ///
+    /// Linux eventfd records are exactly one little-endian `u64`. The value is
+    /// kept in a stack slot owned by this operation, so callers receive the
+    /// typed counter value rather than a raw byte buffer. A successful
+    /// eventfd read always consumes and returns the complete eight-byte
+    /// record; a different successful count is rejected as an I/O contract
+    /// violation.
+    #[inline]
+    pub fn eventfd_read(fd: RawFd) -> Result<u64> {
+        let mut value = 0_u64;
+        // SAFETY: `value` is aligned writable storage for exactly one eventfd
+        // record and remains live for the direct syscall.
+        let count = decode(unsafe {
+            syscall3(
+                SYS_READ,
+                fd as usize,
+                (&mut value as *mut u64).cast::<u8>() as usize,
+                core::mem::size_of::<u64>(),
+            )
+        })?;
+        if count != core::mem::size_of::<u64>() {
+            return Err(Errno::IO);
+        }
+        Ok(value)
+    }
+
+    /// Writes one complete Linux eventfd counter record without using libc or
+    /// TLS `errno`.
+    ///
+    /// `value` is the eventfd increment. Linux rejects `u64::MAX` and reports
+    /// counter overflow according to the descriptor's blocking mode. The
+    /// helper always submits exactly one eight-byte little-endian record and
+    /// reports any other successful count as an I/O contract violation.
+    #[inline]
+    pub fn eventfd_write(fd: RawFd, value: u64) -> Result<()> {
+        // SAFETY: `value` is aligned readable storage for exactly one eventfd
+        // record and remains live for the direct syscall.
+        let count = decode(unsafe {
+            syscall3(
+                SYS_WRITE,
+                fd as usize,
+                (&value as *const u64).cast::<u8>() as usize,
+                core::mem::size_of::<u64>(),
+            )
+        })?;
+        if count != core::mem::size_of::<u64>() {
+            return Err(Errno::IO);
+        }
+        Ok(())
     }
 
     /// Creates a Linux epoll descriptor without using libc or TLS `errno`.
@@ -1881,6 +3310,56 @@ pub mod event {
         }
     }
 
+    /// Waits for descriptor readiness through Linux/AArch64 `pselect6`.
+    ///
+    /// Linux mutates the supplied timeout and the descriptor sets in place;
+    /// the typed facade owns copies where its public contract requires
+    /// immutability. The final syscall argument is Linux's private pair of a
+    /// signal-mask pointer and its byte size, not the public 128-byte musl
+    /// `sigset_t` size.
+    ///
+    /// # Safety
+    ///
+    /// The descriptor-set pointers must be null or point to writable storage
+    /// for the kernel's bit-vector representation. `timeout` must be null or
+    /// point to writable Linux/AArch64 `timespec` storage. `sigmask` must be
+    /// null or point to a kernel-sized signal mask of `sigsetsize` bytes.
+    #[inline]
+    pub unsafe fn pselect6_raw(
+        nfds: i32,
+        readfds: *mut u8,
+        writefds: *mut u8,
+        exceptfds: *mut u8,
+        timeout: *mut u8,
+        sigmask: *const u8,
+        sigsetsize: usize,
+    ) -> Result<i32> {
+        #[repr(C)]
+        struct KernelSigmask {
+            mask: *const u8,
+            size: usize,
+        }
+
+        let signal_argument = KernelSigmask {
+            mask: sigmask,
+            size: sigsetsize,
+        };
+        // SAFETY: The caller owns the pointed-to descriptor sets, timeout,
+        // and optional kernel signal mask. The stack pair is the exact
+        // AArch64 pselect6 argument-6 layout and remains live for the call.
+        decode_i32(unsafe {
+            syscall6(
+                SYS_PSELECT6,
+                nfds as usize,
+                readfds as usize,
+                writefds as usize,
+                exceptfds as usize,
+                timeout as usize,
+                (&signal_argument as *const KernelSigmask) as usize,
+            )
+        })
+    }
+
     /// Waits for events using the Linux `ppoll` ABI without libc or TLS
     /// `errno`.
     ///
@@ -1913,12 +3392,27 @@ pub mod event {
     }
 }
 
-/// Direct, connection-oriented Linux socket operations.
+/// Direct Linux socket operations.
 pub mod net {
     use super::{
-        decode, decode_i32, syscall3, syscall4, syscall6, MaybeUninit, RawFd, Result,
-        SYS_CONNECT, SYS_RECVFROM, SYS_SENDTO, SYS_SOCKET, SYS_SOCKETPAIR,
+        decode, decode_i32, syscall2, syscall3, syscall4, syscall5, syscall6, MaybeUninit, RawFd,
+        Result,
+        SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CONNECT, SYS_GETPEERNAME, SYS_GETSOCKNAME,
+        SYS_GETSOCKOPT, SYS_LISTEN, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SHUTDOWN,
+        SYS_SOCKET, SYS_SOCKETPAIR, SYS_RECVMMSG, SYS_SENDMMSG,
     };
+
+    use super::io::Iovec;
+
+    const SOL_SOCKET: usize = 1;
+    const SO_REUSEADDR: usize = 2;
+    const SO_BROADCAST: usize = 6;
+    const SO_OOBINLINE: usize = 10;
+    const SO_TYPE: usize = 3;
+    const SO_PROTOCOL: usize = 38;
+    const SO_DOMAIN: usize = 39;
+    const SO_ACCEPTCONN: usize = 30;
+    const SO_COOKIE: usize = 57;
 
     /// Creates a Linux socket without libc or TLS `errno`.
     #[inline]
@@ -1932,6 +3426,375 @@ pub mod net {
                 protocol as usize,
             )
         })
+    }
+
+    /// Sets Linux `SOL_SOCKET/SO_REUSEADDR` without libc or TLS `errno`.
+    ///
+    /// Linux represents this boolean socket option as a four-byte integer.
+    /// The value is kept entirely inside this typed seam; callers cannot
+    /// provide an arbitrary option level, name, pointer, or length.
+    #[inline]
+    pub fn set_socket_reuseaddr(socket: RawFd, enabled: bool) -> Result<()> {
+        let value = u32::from(enabled);
+        // SAFETY: `value` is a live four-byte integer for the duration of the
+        // direct syscall, and Linux validates the descriptor and option.
+        decode(unsafe {
+            syscall5(
+                SYS_SETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_REUSEADDR,
+                (&value as *const u32) as usize,
+                core::mem::size_of::<u32>(),
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_REUSEADDR` without libc or TLS `errno`.
+    ///
+    /// Linux returns this boolean socket option as a four-byte integer. A
+    /// nonzero value is `true`, matching Rustix and the Linux socket ABI.
+    #[inline]
+    pub fn socket_reuseaddr(socket: RawFd) -> Result<bool> {
+        let mut value = MaybeUninit::<u32>::uninit();
+        let mut length = core::mem::size_of::<u32>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_REUSEADDR,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<u32>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the four bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() } != 0)
+    }
+
+    /// Sets Linux `SOL_SOCKET/SO_BROADCAST` without libc or TLS `errno`.
+    ///
+    /// Linux represents this boolean socket option as a four-byte integer.
+    /// The value is kept entirely inside this typed seam; callers cannot
+    /// provide an arbitrary option level, name, pointer, or length.
+    #[inline]
+    pub fn set_socket_broadcast(socket: RawFd, enabled: bool) -> Result<()> {
+        let value = u32::from(enabled);
+        // SAFETY: `value` is a live four-byte integer for the duration of the
+        // direct syscall, and Linux validates the descriptor and option.
+        decode(unsafe {
+            syscall5(
+                SYS_SETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_BROADCAST,
+                (&value as *const u32) as usize,
+                core::mem::size_of::<u32>(),
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_BROADCAST` without libc or TLS `errno`.
+    ///
+    /// Linux returns this boolean socket option as a four-byte integer. A
+    /// nonzero value is `true`, matching Rustix and the Linux socket ABI.
+    #[inline]
+    pub fn socket_broadcast(socket: RawFd) -> Result<bool> {
+        let mut value = MaybeUninit::<u32>::uninit();
+        let mut length = core::mem::size_of::<u32>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_BROADCAST,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<u32>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the four bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() } != 0)
+    }
+
+    /// Sets Linux `SOL_SOCKET/SO_OOBINLINE` without libc or TLS `errno`.
+    ///
+    /// Linux represents this boolean socket option as a four-byte integer.
+    /// The value is kept entirely inside this typed seam; callers cannot
+    /// provide an arbitrary option level, name, pointer, or length.
+    #[inline]
+    pub fn set_socket_oobinline(socket: RawFd, enabled: bool) -> Result<()> {
+        let value = u32::from(enabled);
+        // SAFETY: `value` is a live four-byte integer for the duration of the
+        // direct syscall, and Linux validates the descriptor and option.
+        decode(unsafe {
+            syscall5(
+                SYS_SETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_OOBINLINE,
+                (&value as *const u32) as usize,
+                core::mem::size_of::<u32>(),
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_OOBINLINE` without libc or TLS `errno`.
+    ///
+    /// Linux returns this boolean socket option as a four-byte integer. A
+    /// nonzero value is `true`, matching Rustix and the Linux socket ABI.
+    #[inline]
+    pub fn socket_oobinline(socket: RawFd) -> Result<bool> {
+        let mut value = MaybeUninit::<u32>::uninit();
+        let mut length = core::mem::size_of::<u32>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_OOBINLINE,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<u32>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the four bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() } != 0)
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_TYPE` without libc or TLS `errno`.
+    ///
+    /// Linux returns the socket type as a four-byte integer. The option level,
+    /// name, output storage, and length are fixed inside this typed seam.
+    #[inline]
+    pub fn socket_type(socket: RawFd) -> Result<u32> {
+        let mut value = MaybeUninit::<u32>::uninit();
+        let mut length = core::mem::size_of::<u32>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_TYPE,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<u32>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the four bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_PROTOCOL` without libc or TLS `errno`.
+    ///
+    /// Linux returns the protocol as a four-byte integer. The option level,
+    /// name, output storage, and length are fixed inside this typed seam.
+    #[inline]
+    pub fn socket_protocol(socket: RawFd) -> Result<u32> {
+        let mut value = MaybeUninit::<u32>::uninit();
+        let mut length = core::mem::size_of::<u32>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_PROTOCOL,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<u32>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the four bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_COOKIE` without libc or TLS `errno`.
+    ///
+    /// Linux returns the socket cookie as one private eight-byte integer. The
+    /// cookie's value is preserved exactly; only the option level, name,
+    /// output storage, and length are fixed inside this typed seam.
+    #[inline]
+    pub fn socket_cookie(socket: RawFd) -> Result<u64> {
+        let mut value = MaybeUninit::<u64>::uninit();
+        let mut length = core::mem::size_of::<u64>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_COOKIE,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<u64>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the eight bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_DOMAIN` without libc or TLS `errno`.
+    ///
+    /// Linux returns the address family as one private four-byte signed
+    /// integer. Conversion to the facade's narrower `AddressFamily` type is
+    /// intentionally performed above this direct wire seam.
+    #[inline]
+    pub fn socket_domain(socket: RawFd) -> Result<i32> {
+        let mut value = MaybeUninit::<i32>::uninit();
+        let mut length = core::mem::size_of::<i32>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_DOMAIN,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<i32>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the four bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Gets Linux `SOL_SOCKET/SO_ACCEPTCONN` without libc or TLS `errno`.
+    ///
+    /// Linux returns the listening state as one private four-byte signed
+    /// integer. The safe facade intentionally applies Rustix's raw-nonzero
+    /// boolean conversion above this direct wire seam.
+    #[inline]
+    pub fn socket_acceptconn(socket: RawFd) -> Result<i32> {
+        let mut value = MaybeUninit::<i32>::uninit();
+        let mut length = core::mem::size_of::<i32>() as u32;
+        // SAFETY: `value` and `length` are writable Linux socket-option output
+        // storage for the duration of the direct syscall.
+        decode(unsafe {
+            syscall5(
+                SYS_GETSOCKOPT,
+                socket as usize,
+                SOL_SOCKET,
+                SO_ACCEPTCONN,
+                value.as_mut_ptr() as usize,
+                (&mut length as *mut u32) as usize,
+            )
+        })?;
+        if length as usize != core::mem::size_of::<i32>() {
+            return Err(super::Errno::INVAL);
+        }
+        // SAFETY: Linux initialized exactly the four bytes described by
+        // `length` on successful `getsockopt`.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Enables listening for incoming connections without libc or TLS
+    /// `errno`.
+    #[inline]
+    pub fn listen(socket: RawFd, backlog: i32) -> Result<()> {
+        // SAFETY: Linux validates the descriptor and signed backlog scalar;
+        // this syscall has no pointer arguments.
+        decode(unsafe { syscall2(SYS_LISTEN, socket as usize, backlog as usize) }).map(|_| ())
+    }
+
+    /// Accepts one pending connection with the Linux `accept` ABI.
+    ///
+    /// # Safety
+    ///
+    /// `address` and `address_length` must be null, or must satisfy the
+    /// Linux `accept` output-pointer contract: `address` points to writable
+    /// storage whose capacity is described by `*address_length`, and
+    /// `address_length` points to writable `socklen_t` storage. The caller is
+    /// responsible for validating any returned address bytes before decoding.
+    #[inline]
+    pub unsafe fn accept_raw(
+        socket: RawFd,
+        address: *mut u8,
+        address_length: *mut u32,
+    ) -> Result<RawFd> {
+        // SAFETY: The caller owns the optional output-pointer contract; Linux
+        // validates the descriptor and initializes the accepted descriptor.
+        decode_i32(unsafe {
+            syscall3(
+                SYS_ACCEPT,
+                socket as usize,
+                address as usize,
+                address_length as usize,
+            )
+        })
+    }
+
+    /// Accepts one pending connection with Linux `accept4` flags.
+    ///
+    /// # Safety
+    ///
+    /// `address` and `address_length` have the same nullable output-pointer
+    /// contract as [`accept_raw`]. `flags` must contain only Linux
+    /// `SOCK_CLOEXEC` and `SOCK_NONBLOCK` bits when called by a typed facade;
+    /// this raw seam forwards the word for the kernel to validate.
+    #[inline]
+    pub unsafe fn accept4_raw(
+        socket: RawFd,
+        address: *mut u8,
+        address_length: *mut u32,
+        flags: u32,
+    ) -> Result<RawFd> {
+        // SAFETY: The caller owns the optional output-pointer contract; Linux
+        // validates the descriptor, flags, and initializes the accepted fd.
+        decode_i32(unsafe {
+            syscall4(
+                SYS_ACCEPT4,
+                socket as usize,
+                address as usize,
+                address_length as usize,
+                flags as usize,
+            )
+        })
+    }
+
+    /// Shuts down one direction of a Linux socket without libc or TLS
+    /// `errno`.
+    #[inline]
+    pub fn shutdown(socket: RawFd, how: i32) -> Result<()> {
+        // SAFETY: Linux validates the descriptor and shutdown mode; this
+        // syscall has no pointer arguments.
+        decode(unsafe { syscall2(SYS_SHUTDOWN, socket as usize, how as usize) }).map(|_| ())
     }
 
     /// Connects a socket to a caller-owned Linux socket address.
@@ -1950,6 +3813,87 @@ pub mod net {
         decode(unsafe {
             syscall3(
                 SYS_CONNECT,
+                socket as usize,
+                address as usize,
+                address_length as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Binds a socket to a caller-owned Linux socket address.
+    ///
+    /// # Safety
+    ///
+    /// `address` must point to a readable Linux socket address of
+    /// `address_length` bytes for the duration of the syscall.
+    #[inline]
+    pub unsafe fn bind_raw(
+        socket: RawFd,
+        address: *const u8,
+        address_length: u32,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the address pointer and length contract.
+        decode(unsafe {
+            syscall3(
+                SYS_BIND,
+                socket as usize,
+                address as usize,
+                address_length as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Returns a socket's local address into caller-provided Linux storage.
+    ///
+    /// # Safety
+    ///
+    /// `address` must point to writable storage whose capacity is described by
+    /// `*address_length`, and `address_length` must point to writable Linux
+    /// `socklen_t` storage. On success Linux replaces the length with the
+    /// number of initialized address bytes; callers must validate that result
+    /// before interpreting the storage.
+    #[inline]
+    pub unsafe fn getsockname_raw(
+        socket: RawFd,
+        address: *mut u8,
+        address_length: *mut u32,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the output storage and socklen pointer
+        // contracts; Linux validates the descriptor and reported capacity.
+        decode(unsafe {
+            syscall3(
+                SYS_GETSOCKNAME,
+                socket as usize,
+                address as usize,
+                address_length as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Returns a socket's connected peer address into caller-provided Linux
+    /// storage.
+    ///
+    /// # Safety
+    ///
+    /// `address` must point to writable storage whose capacity is described by
+    /// `*address_length`, and `address_length` must point to writable Linux
+    /// `socklen_t` storage. On success Linux replaces the length with the
+    /// number of initialized address bytes; callers must validate that result
+    /// before interpreting the storage.
+    #[inline]
+    pub unsafe fn getpeername_raw(
+        socket: RawFd,
+        address: *mut u8,
+        address_length: *mut u32,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the output storage and socklen pointer
+        // contracts; Linux validates the descriptor and reported capacity.
+        decode(unsafe {
+            syscall3(
+                SYS_GETPEERNAME,
                 socket as usize,
                 address as usize,
                 address_length as usize,
@@ -2056,6 +4000,168 @@ pub mod net {
                 flags as usize,
                 address as usize,
                 address_length as usize,
+            )
+        })
+    }
+
+    /// One Linux/AArch64 message header assembled privately for `sendmsg` and
+    /// `recvmsg`. The public native facade supplies only typed borrowed iovecs;
+    /// callers cannot provide a raw `msghdr`, ancillary pointer, or address
+    /// pointer through this seam.
+    #[repr(C)]
+    struct MessageHeader {
+        name: *mut u8,
+        name_length: u32,
+        iovecs: *mut Iovec,
+        iovec_count: usize,
+        control: *mut u8,
+        control_length: usize,
+        flags: u32,
+    }
+
+    /// Sends one ordinary vectored message on a connected socket through the
+    /// Linux `sendmsg` ABI.
+    ///
+    /// # Safety
+    ///
+    /// `iovecs` must be null or point to `count` initialized [`Iovec`] records
+    /// readable for the duration of the call. Every non-empty iovec range
+    /// must be valid for immutable access for its `iov_len` bytes. A null
+    /// iovec pointer is permitted only when `count` is zero. The descriptor's
+    /// socket validity is the caller's responsibility.
+    #[inline]
+    pub unsafe fn sendmsg_raw(
+        socket: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+        flags: u32,
+    ) -> Result<usize> {
+        let header = MessageHeader {
+            name: core::ptr::null_mut(),
+            name_length: 0,
+            iovecs: iovecs.cast_mut(),
+            iovec_count: count,
+            control: core::ptr::null_mut(),
+            control_length: 0,
+            flags: 0,
+        };
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the private header has no name or control data.
+        decode(unsafe {
+            syscall3(
+                super::SYS_SENDMSG,
+                socket as usize,
+                (&header as *const MessageHeader) as usize,
+                flags as usize,
+            )
+        })
+    }
+
+    /// Receives one ordinary vectored message from a socket through the Linux
+    /// `recvmsg` ABI and returns the kernel byte count plus returned message
+    /// flags.
+    ///
+    /// # Safety
+    ///
+    /// `iovecs` must be null or point to `count` initialized [`Iovec`] records
+    /// readable for the duration of the call. Every non-empty iovec range
+    /// must be valid for mutable access for its `iov_len` bytes, and those
+    /// ranges must be pairwise disjoint. A null iovec pointer is permitted
+    /// only when `count` is zero. The descriptor's socket validity is the
+    /// caller's responsibility.
+    #[inline]
+    pub unsafe fn recvmsg_raw(
+        socket: RawFd,
+        iovecs: *const Iovec,
+        count: usize,
+        flags: u32,
+    ) -> Result<(usize, u32)> {
+        let mut header = MessageHeader {
+            name: core::ptr::null_mut(),
+            name_length: 0,
+            iovecs: iovecs.cast_mut(),
+            iovec_count: count,
+            control: core::ptr::null_mut(),
+            control_length: 0,
+            flags: 0,
+        };
+        // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
+        // validity contracts; the private header has no name or control data.
+        let bytes = decode(unsafe {
+            syscall3(
+                super::SYS_RECVMSG,
+                socket as usize,
+                (&mut header as *mut MessageHeader) as usize,
+                flags as usize,
+            )
+        })?;
+        Ok((bytes, header.flags))
+    }
+
+    /// Sends an array of Linux/AArch64 private `mmsghdr` records.
+    ///
+    /// The records are assembled by the native facade. This raw seam keeps
+    /// the Linux `mmsghdr` layout out of the public Rust API while preserving
+    /// the kernel's count-returning partial-success contract.
+    ///
+    /// # Safety
+    ///
+    /// `messages` must be null when `count` is zero, or point to `count`
+    /// initialized, contiguous AArch64 `mmsghdr` records. Every nested
+    /// header and iovec must satisfy Linux's read-only send contract, and the
+    /// records remain valid for the syscall duration.
+    #[inline]
+    pub unsafe fn sendmmsg_raw(
+        socket: RawFd,
+        messages: *mut u8,
+        count: u32,
+        flags: u32,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns the private mmsghdr array and its nested
+        // iovec/source-buffer contracts.
+        decode(unsafe {
+            syscall4(
+                SYS_SENDMMSG,
+                socket as usize,
+                messages as usize,
+                count as usize,
+                flags as usize,
+            )
+        })
+    }
+
+    /// Receives an array of Linux/AArch64 private `mmsghdr` records.
+    ///
+    /// `timeout` is the optional mutable Linux `timespec` consumed and
+    /// updated by `recvmmsg`; callers must observe the value after the call.
+    /// A positive return is the number of messages initialized, even if a
+    /// later message would have blocked or failed.
+    ///
+    /// # Safety
+    ///
+    /// `messages` must be null when `count` is zero, or point to `count`
+    /// initialized, contiguous AArch64 `mmsghdr` records. Every nested
+    /// header and iovec must satisfy Linux's writable receive contract, and
+    /// `timeout` must be null or point to writable `timespec` storage. All
+    /// pointed-to records and buffers remain valid for the syscall duration.
+    #[inline]
+    pub unsafe fn recvmmsg_raw(
+        socket: RawFd,
+        messages: *mut u8,
+        count: u32,
+        flags: u32,
+        timeout: *mut u8,
+    ) -> Result<usize> {
+        // SAFETY: The caller owns the private mmsghdr array, timeout, and all
+        // nested destination-buffer contracts.
+        decode(unsafe {
+            syscall5(
+                SYS_RECVMMSG,
+                socket as usize,
+                messages as usize,
+                count as usize,
+                flags as usize,
+                timeout as usize,
             )
         })
     }
@@ -2576,7 +4682,13 @@ pub mod resolver {
 
 /// Direct Linux virtual-memory operations.
 pub mod mm {
-    use super::{decode, syscall2, syscall3, syscall6, RawFd, Result, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP};
+    use super::{
+        decode, syscall2, syscall3, syscall4, syscall5, syscall6, RawFd, Result, SYS_MADVISE,
+        SYS_MMAP, SYS_MINCORE, SYS_MLOCK, SYS_MLOCK2, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC,
+        SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES,
+    };
+
+    const MREMAP_FIXED: u32 = 0x2;
 
     /// Creates a mapping with the Linux/AArch64 `mmap` ABI.
     ///
@@ -2622,6 +4734,85 @@ pub mod mm {
         decode(unsafe { syscall2(SYS_MUNMAP, address as usize, length) }).map(|_| ())
     }
 
+    /// Resizes or moves a Linux mapping with the AArch64 `mremap` ABI.
+    ///
+    /// `flags` is passed to Linux unchanged. The native facade currently
+    /// exposes only `MREMAP_MAYMOVE`; this raw seam remains an ABI-level
+    /// operation so the facade can own its closed flag policy.
+    ///
+    /// # Safety
+    ///
+    /// `address` must be page-aligned, and the range beginning there and
+    /// extending for `old_length` bytes, rounded up to a page boundary, must
+    /// be a valid mapping owned by the caller. The caller must ensure that
+    /// `address + old_length` and `address + new_length` do not wrap. There
+    /// must be no Rust references into the old range when the operation may
+    /// move it, and callers must treat the old mapping as invalid after any
+    /// successful call: only the returned address may be used. If the call
+    /// fails, Linux leaves the old mapping available for cleanup.
+    #[inline]
+    pub unsafe fn mremap_raw(
+        address: *mut u8,
+        old_length: usize,
+        new_length: usize,
+        flags: u32,
+    ) -> Result<*mut u8> {
+        // SAFETY: The caller owns the mapping lifetime/provenance contract;
+        // Linux validates lengths, flags, and the mapping itself.
+        decode(unsafe {
+            syscall4(
+                SYS_MREMAP,
+                address as usize,
+                old_length,
+                new_length,
+                flags as usize,
+            )
+        })
+        .map(|address| address as *mut u8)
+    }
+
+    /// Resizes or moves a Linux mapping to a caller-selected address.
+    ///
+    /// This is the five-argument form of `mremap`. The kernel receives
+    /// `MREMAP_FIXED` in addition to `flags`; the constant is kept private so
+    /// the native facade cannot accidentally expose a fixed-address request
+    /// through its ordinary operation. The returned address is the only valid
+    /// successor of the old mapping after success.
+    ///
+    /// # Safety
+    ///
+    /// `address` and `new_address` must be page-aligned. The old range,
+    /// rounded up to a page boundary, must be a valid mapping owned by the
+    /// caller. The destination range must be valid for the destination
+    /// pointer's provenance and must contain no Rust references: Linux may
+    /// replace it. There must be no Rust references into the old range either.
+    /// The caller must ensure that neither range calculation wraps. After a
+    /// successful call, both the old mapping and any destination mapping
+    /// replaced by Linux are invalid; only the returned address may be used.
+    /// If the call fails, the old mapping remains available for cleanup.
+    #[inline]
+    pub unsafe fn mremap_fixed_raw(
+        address: *mut u8,
+        old_length: usize,
+        new_length: usize,
+        flags: u32,
+        new_address: *mut u8,
+    ) -> Result<*mut u8> {
+        // SAFETY: The caller owns both mapping lifetime/provenance contracts;
+        // Linux validates the fixed destination and mapping overlap rules.
+        decode(unsafe {
+            syscall5(
+                SYS_MREMAP,
+                address as usize,
+                old_length,
+                new_length,
+                (flags | MREMAP_FIXED) as usize,
+                new_address as usize,
+            )
+        })
+        .map(|address| address as *mut u8)
+    }
+
     /// Changes Linux mapping protection.
     ///
     /// # Safety
@@ -2632,6 +4823,221 @@ pub mod mm {
     pub unsafe fn mprotect_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
         // SAFETY: The caller owns the mapped-range and provenance contracts.
         decode(unsafe { syscall3(SYS_MPROTECT, address as usize, length, flags as usize) })
+            .map(|_| ())
+    }
+
+    /// Locks a mapped range into memory with Linux `mlock`.
+    ///
+    /// Linux rounds the range down/up to page boundaries. This is a direct
+    /// Linux/AArch64 syscall and does not use libc or thread-local `errno`.
+    ///
+    /// # Safety
+    ///
+    /// The range beginning at `address`, rounded down to the applicable page
+    /// boundary and extending for `length` bytes rounded up to a page
+    /// boundary, must remain mapped and readable for the duration of the
+    /// call. The rounded address range must not overflow. The caller must
+    /// preserve pointer provenance and Rust reference invariants for the
+    /// mapped range.
+    #[inline]
+    pub unsafe fn mlock_raw(address: *mut u8, length: usize) -> Result<()> {
+        // SAFETY: The caller owns the mapped-range and provenance contract;
+        // Linux validates the address, range, and process memlock limit.
+        decode(unsafe { syscall2(SYS_MLOCK, address as usize, length) }).map(|_| ())
+    }
+
+    /// Locks a mapped range into memory with Linux `mlock2` flags.
+    ///
+    /// `flags` is the Linux `MLOCK_*` bit set. The supported
+    /// `MLOCK_ONFAULT` bit requests that pages be locked when they are first
+    /// faulted instead of immediately. This is a direct Linux/AArch64 syscall
+    /// and does not use libc or thread-local `errno`.
+    ///
+    /// # Safety
+    ///
+    /// The range beginning at `address`, rounded down to the applicable page
+    /// boundary and extending for `length` bytes rounded up to a page
+    /// boundary, must remain mapped and readable for the duration of the
+    /// call. The rounded address range must not overflow. The caller must
+    /// preserve pointer provenance and Rust reference invariants for the
+    /// mapped range. Unsupported flag bits are reported by Linux as an
+    /// error.
+    #[inline]
+    pub unsafe fn mlock2_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
+        // SAFETY: The caller owns the mapped-range and provenance contract;
+        // Linux validates the address, range, flags, and memlock limit.
+        decode(unsafe { syscall3(SYS_MLOCK2, address as usize, length, flags as usize) })
+            .map(|_| ())
+    }
+
+    /// Unlocks a previously locked mapped range with Linux `munlock`.
+    ///
+    /// Linux rounds the range down/up to page boundaries. This is a direct
+    /// Linux/AArch64 syscall and does not use libc or thread-local `errno`.
+    ///
+    /// # Safety
+    ///
+    /// The range beginning at `address`, rounded down to the applicable page
+    /// boundary and extending for `length` bytes rounded up to a page
+    /// boundary, must remain mapped for the duration of the call. The rounded
+    /// address range must not overflow. The caller must preserve pointer
+    /// provenance and Rust reference invariants for the mapped range.
+    #[inline]
+    pub unsafe fn munlock_raw(address: *mut u8, length: usize) -> Result<()> {
+        // SAFETY: The caller owns the mapped-range and provenance contract;
+        // Linux validates the address and range.
+        decode(unsafe { syscall2(SYS_MUNLOCK, address as usize, length) }).map(|_| ())
+    }
+
+    /// Synchronizes a mapped range with its backing storage.
+    ///
+    /// This is the Linux/AArch64 `msync` syscall directly; it does not use
+    /// libc or thread-local `errno`.
+    ///
+    /// # Safety
+    ///
+    /// `address` must be page-aligned and identify a valid mapped range of
+    /// `length` bytes. `length` must be non-zero, and the mapping must remain
+    /// valid for the duration of the call. The caller must preserve pointer
+    /// provenance and Rust reference invariants across an operation which may
+    /// write mapped contents back to its backing storage or invalidate cached
+    /// data. `flags` must contain a Linux-supported synchronization mode;
+    /// invalid combinations are reported by the kernel as [`Errno::INVAL`].
+    #[inline]
+    pub unsafe fn msync_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
+        // SAFETY: The caller owns the mapped-range and provenance contracts;
+        // Linux validates the synchronization flags and mapping.
+        decode(unsafe { syscall3(SYS_MSYNC, address as usize, length, flags as usize) })
+            .map(|_| ())
+    }
+
+    /// Advises Linux about access to a mapped range.
+    ///
+    /// # Safety
+    ///
+    /// `address` must be page-aligned and identify the first byte of a valid
+    /// mapped range. `length` must be non-zero, and `address..address+length`
+    /// must not overflow and must remain mapped for the duration of the call.
+    /// The caller must preserve pointer provenance and Rust reference
+    /// invariants across advice that can discard or alter page contents, such
+    /// as `MADV_DONTNEED`. Linux rounds the final partial page as specified by
+    /// the kernel ABI.
+    #[inline]
+    pub unsafe fn madvise_raw(address: *mut u8, length: usize, advice: u32) -> Result<()> {
+        // SAFETY: The caller owns the mapped-range and provenance contracts;
+        // Linux validates the advice value and mapping.
+        decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
+            .map(|_| ())
+    }
+
+    /// Applies a POSIX memory-access advisory through Linux's `madvise` ABI.
+    ///
+    /// The syscall is shared with [`madvise_raw`], but this separate seam is
+    /// intentional: POSIX `DONTNEED` has advisory semantics and must not be
+    /// confused with Linux's page-discarding `MADV_DONTNEED` policy in a
+    /// higher-level facade.
+    ///
+    /// # Safety
+    ///
+    /// `address..address+length` must satisfy the Linux advisory syscall's
+    /// mapped-range and pointer-validity requirements.
+    #[inline]
+    pub unsafe fn posix_madvise_raw(
+        address: *mut u8,
+        length: usize,
+        advice: u32,
+    ) -> Result<()> {
+        // musl's POSIX_MADV_DONTNEED is intentionally a no-op on Linux:
+        // issuing Linux MADV_DONTNEED here would discard private anonymous
+        // contents and would silently change the POSIX contract.
+        if advice == 4 {
+            let _ = (address, length);
+            return Ok(());
+        }
+        // SAFETY: The caller owns the mapped-range contract. Linux validates
+        // the POSIX advice value and reports invalid values as EINVAL.
+        decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
+            .map(|_| ())
+    }
+
+    /// Locks all current/future mappings in the calling process.
+    ///
+    /// This operation changes process-global VM policy.  It is kept as a
+    /// direct raw seam so the native facade can expose that scope explicitly;
+    /// no C allocator or thread-local error state is involved.
+    #[inline]
+    pub fn mlockall_raw(flags: u32) -> Result<()> {
+        // SAFETY: `flags` is an immediate Linux bit mask; Linux validates the
+        // combinations and process memlock limit.
+        decode(unsafe { super::syscall1(SYS_MLOCKALL, flags as usize) }).map(|_| ())
+    }
+
+    /// Removes all process-wide memory-lock policy.
+    #[inline]
+    pub fn munlockall_raw() -> Result<()> {
+        // SAFETY: The syscall has no pointer arguments and Linux validates the
+        // calling process state.
+        decode(unsafe { super::syscall0(SYS_MUNLOCKALL) }).map(|_| ())
+    }
+
+    /// Re-maps pages in a legacy file mapping through Linux's
+    /// `remap_file_pages` syscall.
+    ///
+    /// The protection and flags words are deliberately fixed to zero at this
+    /// native boundary.  They are C ABI compatibility fields rather than a
+    /// Rust policy surface for this legacy operation.
+    ///
+    /// # Safety
+    ///
+    /// The caller must provide the page-aligned mapped range and file-page
+    /// offset required by Linux, and must not retain Rust references whose
+    /// interpretation changes when the mapping is re-arranged.
+    #[inline]
+    pub unsafe fn remap_file_pages_raw(
+        address: *mut u8,
+        size: usize,
+        page_offset: usize,
+    ) -> Result<()> {
+        // SAFETY: The caller owns the mapping and pointer-lifetime contract;
+        // Linux validates the legacy remapping request.
+        decode(unsafe {
+            syscall5(
+                SYS_REMAP_FILE_PAGES,
+                address as usize,
+                size,
+                0,
+                page_offset,
+                0,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Queries Linux page residency for a mapped range.
+    ///
+    /// Linux writes one byte per page of the range to `vector`; bit zero is
+    /// set when that page is resident and the remaining bits are unspecified.
+    /// The direct AArch64 syscall is number 232 and returns no count on
+    /// success.
+    ///
+    /// # Safety
+    ///
+    /// `address` must be page-aligned and identify the first byte of a range
+    /// which remains mapped for the duration of the call. `length` must not
+    /// make `address..address+length` wrap. `vector` must be writable for the
+    /// kernel's page count, namely `ceil(length / page_size)` bytes, and must
+    /// remain valid for that duration. The caller must keep this output
+    /// storage disjoint from the mapping being queried. A null `vector` is
+    /// permitted only when the kernel page count is zero.
+    #[inline]
+    pub unsafe fn mincore_raw(
+        address: *mut u8,
+        length: usize,
+        vector: *mut u8,
+    ) -> Result<()> {
+        // SAFETY: The caller supplies the mapped-range and output-vector
+        // validity contracts; Linux validates the address and range.
+        decode(unsafe { syscall3(SYS_MINCORE, address as usize, length, vector as usize) })
             .map(|_| ())
     }
 }
@@ -2881,11 +5287,336 @@ pub mod signal {
 /// Direct process-identity, process-group, and signal operations.
 pub mod process {
     use super::{
-        decode, decode_i32, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, Result,
-        SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
-        SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_SETPGID, SYS_SETSID, SYS_TGKILL, SYS_WAIT4,
-        SYS_WAITID,
+        decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5,
+        CStr, MaybeUninit, RawFd,
+        Result,
+        SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
+        SYS_GETRESGID, SYS_GETRESUID, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETSID,
+        SYS_GETPRIORITY, SYS_SETPRIORITY, SYS_GETRUSAGE, SYS_GETUID, SYS_GETCWD, SYS_CHDIR, SYS_FCHDIR,
+        SYS_CHROOT,
+        SYS_SETFSUID, SYS_SETFSGID,
+        SYS_UMASK,
+        SYS_KILL, SYS_PIDFD_OPEN, SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN,
+        SYS_TIMES,
+        SYS_SETPGID, SYS_SETSID, SYS_TGKILL, SYS_WAIT4, SYS_WAITID,
+        SYS_BRK,
     };
+
+    /// Queries or requests Linux's current program break.
+    ///
+    /// Linux's `brk` syscall does not use the ordinary `-errno` return
+    /// convention: it returns the resulting current break, including the
+    /// unchanged break when a requested increase cannot be satisfied.  The
+    /// C `brk` and `sbrk` adapters compare this value with their request and
+    /// provide their respective sentinel/`errno` contracts.  Native callers
+    /// receive the kernel value directly and must perform any policy or
+    /// comparison themselves.
+    ///
+    /// # Safety
+    ///
+    /// `address` is passed directly to Linux.  It may be null to query the
+    /// current break; otherwise the caller must obey the Linux program-break
+    /// address contract and coordinate with any allocator owning the heap.
+    #[inline]
+    pub unsafe fn brk_raw(address: *mut u8) -> *mut u8 {
+        // SAFETY: The caller owns the Linux program-break contract.  Unlike
+        // ordinary syscalls, `brk` returns a valid pointer on allocation
+        // failure rather than a negative errno encoding.
+        unsafe { syscall1(SYS_BRK, address as usize) as usize as *mut u8 }
+    }
+
+    /// Opens a Linux process file descriptor through `pidfd_open`.
+    ///
+    /// `pid` is a non-zero Linux process or thread ID and `flags` retains the
+    /// kernel's `PIDFD_*` bit representation. Linux validates unknown flags
+    /// and target lifetime; those errors remain ordinary [`Errno`] values.
+    #[inline]
+    pub fn pidfd_open_raw(pid: i32, flags: u32) -> Result<RawFd> {
+        // SAFETY: Both arguments are immediate Linux/AArch64 syscall values.
+        // A successful pidfd_open result is a newly allocated descriptor.
+        decode_i32(unsafe { syscall2(SYS_PIDFD_OPEN, pid as usize, flags as usize) })
+    }
+
+    /// The Linux/AArch64 `struct rlimit64` returned by `prlimit64`.
+    ///
+    /// This is the exact two-word kernel ABI record. It remains separate from
+    /// the safe facade's infinity-aware `Rlimit` mapping.
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct KernelRlimit64 {
+        /// Soft/current limit, or Linux `RLIM64_INFINITY`.
+        pub rlim_cur: u64,
+        /// Hard/maximum limit, or Linux `RLIM64_INFINITY`.
+        pub rlim_max: u64,
+    }
+
+    /// Reads one target process's resource limit through Linux `prlimit64`
+    /// without libc or TLS `errno`.
+    ///
+    /// This is a raw core seam: `pid` is the Linux `pid_t` selector and
+    /// `resource` is the Linux `RLIMIT_*` number. PID zero asks the kernel for
+    /// the calling process; null `new_limit` makes this query read-only. The
+    /// public facade supplies the typed process and resource vocabulary.
+    #[inline]
+    pub fn getrlimit_for_raw(pid: i32, resource: u32) -> Result<KernelRlimit64> {
+        let mut result = MaybeUninit::<KernelRlimit64>::uninit();
+        // SAFETY: Linux writes the complete `rlimit64` record on success;
+        // `new_limit = NULL` makes this a read-only query and the output
+        // storage remains live for the syscall.
+        decode(unsafe {
+            syscall4(
+                SYS_PRLIMIT64,
+                pid as usize,
+                resource as usize,
+                0,
+                result.as_mut_ptr() as usize,
+            )
+        })?;
+        // SAFETY: Successful prlimit64 initialized both ABI words above.
+        Ok(unsafe { result.assume_init() })
+    }
+
+    /// Reads the calling process's resource limit through Linux `prlimit64`.
+    #[inline]
+    pub fn getrlimit_raw(resource: u32) -> Result<KernelRlimit64> {
+        getrlimit_for_raw(0, resource)
+    }
+
+    /// Changes the calling process's resource limit through Linux `prlimit64`.
+    ///
+    /// This core seam deliberately targets PID zero, passes a fully
+    /// initialized kernel `rlimit64`, and requests no old-limit output. The
+    /// typed facade performs any infinity/value validation before crossing
+    /// this boundary.
+    #[inline]
+    pub fn setrlimit_raw(resource: u32, limit: &KernelRlimit64) -> Result<()> {
+        // SAFETY: `limit` remains readable for this syscall and is an exact
+        // Linux/AArch64 `struct rlimit64` record.
+        decode(unsafe {
+            syscall4(
+                SYS_PRLIMIT64,
+                0,
+                resource as usize,
+                limit as *const KernelRlimit64 as usize,
+                0,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Changes the calling process's file-creation mask and returns the old
+    /// mask. Linux's `umask` syscall always returns the previous mask.
+    #[inline]
+    pub fn umask_raw(mask: u32) -> u32 {
+        // SAFETY: `mask` is an immediate Linux mode word and the syscall's
+        // return value is the previous mask rather than an errno encoding.
+        unsafe { syscall1(SYS_UMASK, mask as usize) as u32 }
+    }
+
+    /// One Linux/AArch64 `struct timeval` as embedded in `struct rusage`.
+    ///
+    /// The pinned musl target uses 64-bit `time_t` and `suseconds_t`, and the
+    /// Linux kernel ABI uses the same two signed 64-bit words for its old
+    /// timeval record. This is the kernel record only; it is not a public C
+    /// `timeval` alias.
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct KernelRusageTimeval {
+        /// Whole seconds of CPU time.
+        pub tv_sec: i64,
+        /// Microseconds within the second.
+        pub tv_usec: i64,
+    }
+
+    /// The initialized Linux/AArch64 portion of `struct rusage`.
+    ///
+    /// Linux's `getrusage` syscall writes these 144 bytes: two old timeval
+    /// records followed by fourteen signed `long` counters. Musl's public
+    /// `struct rusage` appends sixteen reserved `long` words for source
+    /// compatibility; the kernel does not initialize that tail, so this
+    /// direct seam deliberately omits it. The native facade exposes only the
+    /// named initialized observations below.
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct KernelRusage {
+        /// User CPU time.
+        pub ru_utime: KernelRusageTimeval,
+        /// System CPU time.
+        pub ru_stime: KernelRusageTimeval,
+        /// Maximum resident-set size in KiB on Linux.
+        pub ru_maxrss: i64,
+        /// Integral shared-memory size (historical Linux field).
+        pub ru_ixrss: i64,
+        /// Integral unshared-data size (historical Linux field).
+        pub ru_idrss: i64,
+        /// Integral unshared-stack size (historical Linux field).
+        pub ru_isrss: i64,
+        /// Number of minor page faults.
+        pub ru_minflt: i64,
+        /// Number of major page faults.
+        pub ru_majflt: i64,
+        /// Number of swaps (historical Linux field).
+        pub ru_nswap: i64,
+        /// Block input operations.
+        pub ru_inblock: i64,
+        /// Block output operations.
+        pub ru_oublock: i64,
+        /// IPC messages sent (historical Linux field).
+        pub ru_msgsnd: i64,
+        /// IPC messages received (historical Linux field).
+        pub ru_msgrcv: i64,
+        /// Signals received (historical Linux field).
+        pub ru_nsignals: i64,
+        /// Voluntary context switches.
+        pub ru_nvcsw: i64,
+        /// Involuntary context switches.
+        pub ru_nivcsw: i64,
+    }
+
+    /// Reads one Linux resource-usage record through `getrusage`.
+    ///
+    /// `who` is the raw Linux `RUSAGE_*` selector. The typed facade supplies
+    /// the closed selector vocabulary; this core seam keeps the kernel token
+    /// explicit and does not accept a caller-provided output pointer. Linux
+    /// initializes only [`KernelRusage`]'s 144-byte record; the reserved tail
+    /// present in musl's public C struct is intentionally not represented.
+    #[inline]
+    pub fn getrusage_raw(who: i32) -> Result<KernelRusage> {
+        let mut result = MaybeUninit::<KernelRusage>::uninit();
+        // SAFETY: `result` is writable storage for exactly the initialized
+        // Linux/AArch64 getrusage record, and Linux writes all fields on a
+        // successful call. `who` is an immediate selector value.
+        decode(unsafe {
+            syscall2(
+                SYS_GETRUSAGE,
+                who as usize,
+                result.as_mut_ptr() as usize,
+            )
+        })?;
+        // SAFETY: Successful getrusage initialized every field in the
+        // kernel-sized record above; no reserved musl tail is read.
+        Ok(unsafe { result.assume_init() })
+    }
+
+    /// The four initialized Linux/AArch64 words written by `times(2)`.
+    ///
+    /// Linux's native `struct tms` uses four signed 64-bit `clock_t` words on
+    /// AArch64. This is an internal kernel record rather than a public C ABI
+    /// type; the native facade validates the non-negative process-accounting
+    /// values before exposing them as Rust tick values.
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct KernelProcessTimes {
+        /// User CPU time consumed by the calling process, in clock ticks.
+        pub user_ticks: i64,
+        /// System CPU time consumed by the calling process, in clock ticks.
+        pub system_ticks: i64,
+        /// User CPU time of waited-for terminated children, in clock ticks.
+        pub children_user_ticks: i64,
+        /// System CPU time of waited-for terminated children, in clock ticks.
+        pub children_system_ticks: i64,
+    }
+
+    /// The process-accounting record and independent elapsed-tick result of
+    /// one Linux `times(2)` query.
+    ///
+    /// Linux's syscall return is not another `struct tms` field: it is the
+    /// number of clock ticks since a kernel-defined arbitrary point. It is
+    /// retained separately so callers cannot confuse elapsed system ticks
+    /// with this process's CPU-accounting fields.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct KernelProcessTimesObservation {
+        /// The four words written to the caller's `struct tms` storage.
+        pub process: KernelProcessTimes,
+        /// The syscall's independent elapsed-tick return value.
+        pub elapsed_ticks: i64,
+    }
+
+    /// Reads Linux process accounting through the native `times` syscall.
+    ///
+    /// A caller-owned pointer is deliberately not exposed here: this seam
+    /// provides private initialized storage for the exact AArch64 record and
+    /// returns it by value. The kernel's signed `clock_t` return is decoded as
+    /// an ordinary syscall result; the four process-accounting words are
+    /// checked for their documented non-negative range. No C ABI, allocator,
+    /// vDSO, or TLS `errno` is involved.
+    #[inline]
+    pub fn times_raw() -> Result<KernelProcessTimesObservation> {
+        let mut process = MaybeUninit::<KernelProcessTimes>::uninit();
+        // SAFETY: `process` is writable storage for Linux/AArch64's exact
+        // four-word `struct tms`; the kernel initializes all words on success.
+        let elapsed_ticks = decode_i64(unsafe {
+            syscall1(SYS_TIMES, process.as_mut_ptr() as usize)
+        })?;
+        // SAFETY: A successful times syscall initializes all four words.
+        let process = unsafe { process.assume_init() };
+        if process.user_ticks < 0
+            || process.system_ticks < 0
+            || process.children_user_ticks < 0
+            || process.children_system_ticks < 0
+        {
+            // A conforming Linux kernel reports non-negative process times;
+            // never reinterpret a malformed record as a valid Rust value.
+            return Err(super::Errno::RANGE);
+        }
+        Ok(KernelProcessTimesObservation {
+            process,
+            elapsed_ticks,
+        })
+    }
+
+    /// Reads one Linux scheduling-priority observation through the native
+    /// `getpriority` syscall.
+    ///
+    /// Linux deliberately does not return the usual nice value here. To keep
+    /// every successful result non-negative, the kernel encodes nice values
+    /// `[-20, 19]` as `[(19 - nice) + 1]`, or `[40, 1]`; musl and Rustix both
+    /// translate that value with `20 - raw`. This core seam preserves the
+    /// kernel's encoded success value so the native facade can make that
+    /// translation at its typed boundary. A negative syscall result in
+    /// Linux's `-errno` range is decoded into the ordinary [`Errno`] result.
+    #[inline]
+    pub fn getpriority_raw(which: i32, who: u32) -> Result<i32> {
+        // SAFETY: `which` and `who` are immediate Linux scalar arguments. The
+        // public facade supplies the closed selector and identifier types.
+        decode_i32(unsafe { syscall2(SYS_GETPRIORITY, which as usize, who as usize) })
+    }
+
+    /// Reads one Linux scheduler policy's maximum and minimum priority.
+    ///
+    /// The raw policy remains an integer so Linux can report `EINVAL`; the
+    /// native facade supplies its closed policy vocabulary and validates the
+    /// returned ordering. The two calls are read-only scalar observations.
+    #[inline]
+    pub fn scheduler_priority_bounds_raw(policy: i32) -> Result<(i32, i32)> {
+        let maximum = decode_i32(unsafe {
+            syscall1(SYS_SCHED_GET_PRIORITY_MAX, policy as usize)
+        })?;
+        let minimum = decode_i32(unsafe {
+            syscall1(SYS_SCHED_GET_PRIORITY_MIN, policy as usize)
+        })?;
+        Ok((minimum, maximum))
+    }
+
+    /// Sets one Linux scheduling-priority target through `setpriority`.
+    ///
+    /// `which` and `who` retain the Linux `PRIO_*` selector encoding while the
+    /// native facade supplies the closed target and priority types. Kernel
+    /// permission and target errors remain ordinary [`Errno`] values; this
+    /// seam does not translate through libc's TLS `errno` channel.
+    #[inline]
+    pub fn setpriority_raw(which: i32, who: u32, priority: i32) -> Result<()> {
+        // SAFETY: All arguments are immediate Linux scalar values.
+        decode(unsafe {
+            syscall3(
+                SYS_SETPRIORITY,
+                which as usize,
+                who as usize,
+                priority as usize,
+            )
+        })
+        .map(|_| ())
+    }
 
     /// The low-byte clone exit signal used by Linux's fork-equivalent clone.
     pub const CLONE_FORK_FLAGS: u64 = 17;
@@ -2906,11 +5637,240 @@ pub mod process {
         unsafe { syscall0(SYS_GETPPID) as i32 }
     }
 
+    /// The Linux real, effective, and saved user IDs returned by
+    /// `getresuid`.
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct KernelUidTriple {
+        /// The process's real user ID.
+        pub real: u32,
+        /// The process's effective user ID.
+        pub effective: u32,
+        /// The process's saved-set user ID.
+        pub saved: u32,
+    }
+
+    /// The Linux real, effective, and saved group IDs returned by
+    /// `getresgid`.
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct KernelGidTriple {
+        /// The process's real group ID.
+        pub real: u32,
+        /// The process's effective group ID.
+        pub effective: u32,
+        /// The process's saved-set group ID.
+        pub saved: u32,
+    }
+
+    /// Reads the calling process's real, effective, and saved user IDs
+    /// through Linux's native `getresuid` syscall.
+    ///
+    /// The output pointers are private caller-owned storage, so this seam is
+    /// read-only and does not expose C ABI pointers or TLS `errno` semantics.
+    #[inline]
+    pub fn getresuid_raw() -> Result<KernelUidTriple> {
+        let mut real = MaybeUninit::<u32>::uninit();
+        let mut effective = MaybeUninit::<u32>::uninit();
+        let mut saved = MaybeUninit::<u32>::uninit();
+        // SAFETY: Each pointer addresses live, writable storage for one
+        // Linux/AArch64 uid_t, and Linux initializes all three words on
+        // success. The syscall has no process-mutating arguments.
+        decode(unsafe {
+            syscall3(
+                SYS_GETRESUID,
+                real.as_mut_ptr() as usize,
+                effective.as_mut_ptr() as usize,
+                saved.as_mut_ptr() as usize,
+            )
+        })?;
+        // SAFETY: Successful getresuid initialized each output above.
+        Ok(KernelUidTriple {
+            real: unsafe { real.assume_init() },
+            effective: unsafe { effective.assume_init() },
+            saved: unsafe { saved.assume_init() },
+        })
+    }
+
+    /// Reads the calling process's real, effective, and saved group IDs
+    /// through Linux's native `getresgid` syscall.
+    ///
+    /// The output pointers are private caller-owned storage, so this seam is
+    /// read-only and does not expose C ABI pointers or TLS `errno` semantics.
+    #[inline]
+    pub fn getresgid_raw() -> Result<KernelGidTriple> {
+        let mut real = MaybeUninit::<u32>::uninit();
+        let mut effective = MaybeUninit::<u32>::uninit();
+        let mut saved = MaybeUninit::<u32>::uninit();
+        // SAFETY: Each pointer addresses live, writable storage for one
+        // Linux/AArch64 gid_t, and Linux initializes all three words on
+        // success. The syscall has no process-mutating arguments.
+        decode(unsafe {
+            syscall3(
+                SYS_GETRESGID,
+                real.as_mut_ptr() as usize,
+                effective.as_mut_ptr() as usize,
+                saved.as_mut_ptr() as usize,
+            )
+        })?;
+        // SAFETY: Successful getresgid initialized each output above.
+        Ok(KernelGidTriple {
+            real: unsafe { real.assume_init() },
+            effective: unsafe { effective.assume_init() },
+            saved: unsafe { saved.assume_init() },
+        })
+    }
+
+    /// Sets or queries the calling task's Linux filesystem user ID through
+    /// `setfsuid`.
+    ///
+    /// Linux returns the previous filesystem user ID on both a successful and
+    /// an unsuccessful requested change. The all-ones input is the kernel's
+    /// query form and is therefore retained by this raw seam; the typed
+    /// facade owns its `Option<Uid>` conversion and rejects an explicit
+    /// all-ones value before reaching the syscall.
+    #[inline]
+    pub fn setfsuid_raw(uid: u32) -> Result<u32> {
+        // SAFETY: `uid` is an immediate Linux uid_t word. Linux applies this
+        // credential operation to the calling kernel task and returns the
+        // previous filesystem UID as a scalar.
+        decode(unsafe { syscall1(SYS_SETFSUID, uid as usize) }).map(|previous| previous as u32)
+    }
+
+    /// Sets or queries the calling task's Linux filesystem group ID through
+    /// `setfsgid`.
+    ///
+    /// Linux returns the previous filesystem group ID on both a successful and
+    /// an unsuccessful requested change. The all-ones input is the kernel's
+    /// query form and is therefore retained by this raw seam; the typed
+    /// facade owns its `Option<Gid>` conversion and rejects an explicit
+    /// all-ones value before reaching the syscall.
+    #[inline]
+    pub fn setfsgid_raw(gid: u32) -> Result<u32> {
+        // SAFETY: `gid` is an immediate Linux gid_t word. Linux applies this
+        // credential operation to the calling kernel task and returns the
+        // previous filesystem GID as a scalar.
+        decode(unsafe { syscall1(SYS_SETFSGID, gid as usize) }).map(|previous| previous as u32)
+    }
+
+    /// Queries or fills the calling process's supplementary group IDs through
+    /// Linux's native `getgroups` syscall.
+    ///
+    /// `groups` must be null when `length` is zero, which performs the Linux
+    /// count query. Otherwise it must point to writable storage for `length`
+    /// Linux/AArch64 `gid_t` values. Linux returns `EINVAL` when the storage
+    /// is too small; the caller may query again and retry because credentials
+    /// can change between the two syscalls.
+    ///
+    /// # Safety
+    ///
+    /// When `length` is non-zero, `groups` must be aligned and writable for
+    /// `length` `u32` values for the duration of the call. When `length` is
+    /// zero, `groups` must be null. The pointed-to storage is initialized only
+    /// for the number of groups returned by a successful fill.
+    #[inline]
+    pub unsafe fn getgroups_raw(groups: *mut u32, length: usize) -> Result<usize> {
+        // SAFETY: The caller supplies the output-storage contract; Linux
+        // validates the requested count and supplementary-group snapshot.
+        decode(unsafe { syscall2(SYS_GETGROUPS, length, groups as usize) })
+    }
+
+    /// Queries the current number of supplementary group IDs.
+    #[inline]
+    pub fn getgroups_count_raw() -> Result<usize> {
+        // SAFETY: A zero-size Linux getgroups query requires a null list and
+        // writes no caller memory.
+        unsafe { getgroups_raw(core::ptr::null_mut(), 0) }
+    }
+
+    /// Copies the calling process's current working directory through Linux's
+    /// native `getcwd` syscall.
+    ///
+    /// On success Linux initializes exactly the returned number of bytes and
+    /// includes the terminating NUL in that count. The caller must provide
+    /// writable storage for `length` bytes; the path pointer may be null only
+    /// when `length` is zero. A successful call always writes a NUL at the end
+    /// of the initialized prefix. Linux reports [`Errno::RANGE`] when the
+    /// supplied storage is too small.
+    ///
+    /// # Safety
+    ///
+    /// When `length` is non-zero, `buffer` must be aligned and writable for
+    /// `length` bytes for the duration of this call. A successful call
+    /// initializes only the returned prefix, including its trailing NUL.
+    #[inline]
+    pub unsafe fn getcwd_raw(buffer: *mut u8, length: usize) -> Result<usize> {
+        // SAFETY: The caller supplies writable output storage for the exact
+        // requested length; Linux validates the pathname and size.
+        decode(unsafe { syscall2(SYS_GETCWD, buffer as usize, length) })
+    }
+
+    /// Changes the calling process's current working directory through
+    /// Linux's native `chdir` syscall.
+    ///
+    /// The CWD is process-global on Linux. This direct seam performs no
+    /// synchronization, and callers must coordinate concurrent pathname work
+    /// when using it through a native facade.
+    #[inline]
+    pub fn chdir(path: &CStr) -> Result<()> {
+        // SAFETY: `CStr` keeps a readable, NUL-terminated pathname alive for
+        // the syscall; Linux validates the path and directory permissions.
+        decode(unsafe { syscall1(SYS_CHDIR, path.as_ptr() as usize) }).map(|_| ())
+    }
+
+    /// Changes the calling process's current working directory to the
+    /// directory referenced by `fd` through Linux's native `fchdir` syscall.
+    ///
+    /// The CWD is process-global on Linux. This direct seam performs no
+    /// synchronization, and callers must coordinate concurrent pathname work
+    /// when using it through a native facade.
+    #[inline]
+    pub fn fchdir(fd: RawFd) -> Result<()> {
+        // SAFETY: The descriptor is an immediate scalar; Linux validates that
+        // it is open and references a directory accessible to the caller.
+        decode(unsafe { syscall1(SYS_FCHDIR, fd as usize) }).map(|_| ())
+    }
+
+    /// Changes the calling process's root directory through Linux's native
+    /// `chroot` syscall.
+    ///
+    /// This direct seam reports the kernel's permission, pathname, and
+    /// filesystem errors as [`Errno`] values. It does not change the current
+    /// working directory, and it does not close or otherwise preserve any
+    /// descriptor the caller may need after the root change.
+    #[inline]
+    pub fn chroot(path: &CStr) -> Result<()> {
+        // SAFETY: `CStr` keeps a readable, NUL-terminated pathname alive for
+        // the syscall; Linux validates the path and caller privilege.
+        decode(unsafe { syscall1(SYS_CHROOT, path.as_ptr() as usize) }).map(|_| ())
+    }
+
     /// Returns the caller's real Linux user ID.
     #[inline]
     pub fn getuid() -> u32 {
         // Linux guarantees that `getuid` succeeds and returns a `uid_t`.
         unsafe { syscall0(SYS_GETUID) as u32 }
+    }
+
+    /// Returns the caller's effective Linux user ID.
+    #[inline]
+    pub fn geteuid() -> u32 {
+        // Linux guarantees that `geteuid` succeeds and returns a `uid_t`.
+        unsafe { syscall0(SYS_GETEUID) as u32 }
+    }
+
+    /// Returns the caller's real Linux group ID.
+    #[inline]
+    pub fn getgid() -> u32 {
+        // Linux guarantees that `getgid` succeeds and returns a `gid_t`.
+        unsafe { syscall0(SYS_GETGID) as u32 }
+    }
+
+    /// Returns the caller's effective Linux group ID.
+    #[inline]
+    pub fn getegid() -> u32 {
+        // Linux guarantees that `getegid` succeeds and returns a `gid_t`.
+        unsafe { syscall0(SYS_GETEGID) as u32 }
     }
 
     /// Sends `signal` to the raw Linux process target `pid`.
@@ -3091,7 +6051,12 @@ pub mod process {
 
 /// Direct thread-associated Linux operations.
 pub mod thread {
-    use super::{decode, syscall0, syscall6, Result, SYS_FUTEX, SYS_GETTID, SYS_SCHED_YIELD};
+    use super::{
+        decode, syscall0, syscall2, syscall3, syscall6, Result, SYS_FUTEX, SYS_GETCPU,
+        SYS_GETTID, SYS_SCHED_GETAFFINITY, SYS_SCHED_RR_GET_INTERVAL, SYS_SCHED_SETAFFINITY,
+        SYS_SCHED_YIELD, SYS_SETRESGID, SYS_SETRESUID,
+    };
+    use core::mem::MaybeUninit;
 
     /// `FUTEX_WAIT`, waiting while the futex word still equals `expected`.
     pub const FUTEX_WAIT: u32 = 0;
@@ -3185,6 +6150,166 @@ pub mod thread {
     pub fn gettid() -> i32 {
         // Linux guarantees a positive ID for a running task.
         unsafe { syscall0(SYS_GETTID) as i32 }
+    }
+
+    /// Sets the calling task's real, effective, and saved user IDs through
+    /// Linux's native `setresuid` syscall.
+    ///
+    /// The Linux all-ones word (`u32::MAX`) means “leave this ID unchanged.”
+    /// This raw seam accepts that kernel ABI word directly; the typed native
+    /// facade owns the `Option<Uid>` conversion and rejects an explicit typed
+    /// all-ones value before reaching this syscall.
+    #[inline]
+    pub fn setresuid_raw(ruid: u32, euid: u32, suid: u32) -> Result<()> {
+        // SAFETY: All arguments are immediate Linux uid_t words. Linux
+        // applies the credential change to the calling kernel task only.
+        decode(unsafe {
+            syscall3(
+                SYS_SETRESUID,
+                ruid as usize,
+                euid as usize,
+                suid as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Sets the calling task's real, effective, and saved group IDs through
+    /// Linux's native `setresgid` syscall.
+    ///
+    /// The Linux all-ones word (`u32::MAX`) means “leave this ID unchanged.”
+    /// This raw seam accepts that kernel ABI word directly; the typed native
+    /// facade owns the `Option<Gid>` conversion and rejects an explicit typed
+    /// all-ones value before reaching this syscall.
+    #[inline]
+    pub fn setresgid_raw(rgid: u32, egid: u32, sgid: u32) -> Result<()> {
+        // SAFETY: All arguments are immediate Linux gid_t words. Linux
+        // applies the credential change to the calling kernel task only.
+        decode(unsafe {
+            syscall3(
+                SYS_SETRESGID,
+                rgid as usize,
+                egid as usize,
+                sgid as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Returns the Linux CPU on which the calling thread is currently running.
+    ///
+    /// The Linux/AArch64 `getcpu` syscall writes a `u32` CPU identifier through
+    /// its first argument. The output points at private stack storage for the
+    /// complete syscall, while the node and cache arguments are deliberately
+    /// null because this API observes only the CPU. Rustix exposes this
+    /// operation as an infallible `usize`; Linux reports `EFAULT` only when an
+    /// output pointer is invalid, which the local storage contract rules out.
+    #[inline]
+    pub fn sched_getcpu() -> usize {
+        let mut cpu = MaybeUninit::<u32>::uninit();
+        match decode(unsafe {
+            syscall3(
+                SYS_GETCPU,
+                cpu.as_mut_ptr() as usize,
+                core::ptr::null::<u32>() as usize,
+                core::ptr::null::<u8>() as usize,
+            )
+        }) {
+            Ok(_) => {
+                // SAFETY: A successful Linux `getcpu` initializes the caller's
+                // `u32` output before returning.
+                unsafe { cpu.assume_init() as usize }
+            }
+            Err(_) => {
+                // The documented failure requires an invalid output pointer;
+                // this function owns valid stack storage, so do not fabricate
+                // a CPU number or expose a C-style error channel here.
+                panic!("Linux getcpu syscall failed")
+            }
+        }
+    }
+
+    /// Reads a Linux task's round-robin scheduling interval.
+    ///
+    /// This is the raw kernel seam for `sched_rr_get_interval`; the native
+    /// facade owns the output storage and validates the returned timespec.
+    /// Linux PID zero selects the calling task.
+    ///
+    /// # Safety
+    ///
+    /// `interval` must point to writable Linux/AArch64 `struct timespec`
+    /// storage for the duration of the syscall.
+    #[inline]
+    pub unsafe fn sched_rr_get_interval_raw(pid: i32, interval: *mut u8) -> Result<()> {
+        // SAFETY: The caller supplies writable timespec storage; `pid` and
+        // the pointer are immediate Linux syscall arguments.
+        decode(unsafe {
+            syscall2(
+                SYS_SCHED_RR_GET_INTERVAL,
+                pid as usize,
+                interval as usize,
+            )
+        })
+        .map(|_| ())
+    }
+
+    /// Reads a Linux task's CPU-affinity mask.
+    ///
+    /// The raw syscall returns the number of bytes written. The native facade
+    /// supplies the fixed target mask capacity and clears any unwritten tail.
+    /// Linux reports `EINVAL` when that capacity is smaller than the kernel's
+    /// affinity mask; this seam preserves that error unchanged.
+    ///
+    /// # Safety
+    ///
+    /// `mask` must point to writable storage for `size` bytes for the duration
+    /// of the syscall. Linux PID zero selects the calling task.
+    #[inline]
+    pub unsafe fn sched_getaffinity_raw(
+        pid: i32,
+        mask: *mut u8,
+        size: usize,
+    ) -> Result<usize> {
+        // SAFETY: The caller supplies writable mask storage for `size` bytes;
+        // all three values are immediate Linux syscall arguments.
+        decode(unsafe {
+            syscall3(
+                SYS_SCHED_GETAFFINITY,
+                pid as usize,
+                size,
+                mask as usize,
+            )
+        })
+    }
+
+    /// Sets a Linux task's CPU-affinity mask.
+    ///
+    /// Linux may intersect the requested mask with CPUs present in the
+    /// system and CPUs permitted by the task's cpuset cgroup. An empty
+    /// resulting mask is reported by the kernel as `EINVAL`; this seam keeps
+    /// that error unchanged.
+    ///
+    /// # Safety
+    ///
+    /// `mask` must point to readable storage for `size` bytes for the
+    /// duration of the syscall. Linux PID zero selects the calling task.
+    #[inline]
+    pub unsafe fn sched_setaffinity_raw(
+        pid: i32,
+        mask: *const u8,
+        size: usize,
+    ) -> Result<()> {
+        // SAFETY: The caller supplies readable mask storage for `size` bytes;
+        // all three values are immediate Linux syscall arguments.
+        decode(unsafe {
+            syscall3(
+                SYS_SCHED_SETAFFINITY,
+                pid as usize,
+                size,
+                mask as usize,
+            )
+        })
+        .map(|_| ())
     }
 
     /// Yields the processor to the Linux scheduler.
@@ -3359,7 +6484,7 @@ pub mod mount {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_i32, system, Errno};
+    use super::{decode_i32, process, system, Errno};
 
     #[test]
     fn errno_accepts_only_linux_syscall_values() {
@@ -3372,6 +6497,12 @@ mod tests {
     fn system_layouts_match_linux_aarch64_kernel_abis() {
         assert_eq!(core::mem::size_of::<system::UtsName>(), 390);
         assert_eq!(core::mem::size_of::<system::Sysinfo>(), 112);
+    }
+
+    #[test]
+    fn resource_usage_layout_matches_linux_aarch64_initialized_prefix() {
+        assert_eq!(core::mem::size_of::<process::KernelRusageTimeval>(), 16);
+        assert_eq!(core::mem::size_of::<process::KernelRusage>(), 144);
     }
 
     #[test]

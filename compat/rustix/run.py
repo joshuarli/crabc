@@ -79,11 +79,45 @@ ALLOWED_COVERAGE_CLASSIFICATIONS = {
     "native-unsafe",
     "native-higher-level",
     "rust-subsumed",
+    "scope-exception",
     "abi-only",
     "internal-runtime",
 }
 ALLOWED_COVERAGE_STATUSES = {"verified", "documented", "deferred"}
 ALLOWED_CAPABILITY_KINDS = {"semantic", "implementation"}
+
+# The allocator is the one deliberate crabc-rs scope exception. Keep this
+# contract centralized: a scope exception must not become a second spelling of
+# Rust subsumption or ABI-only, and this exact symbol ownership is part of the
+# exception's reviewable boundary.
+SCOPE_EXCEPTION_CLASSIFICATION = "scope-exception"
+ALLOCATOR_SCOPE_EXCEPTION_ID = "allocator-mimalloc-libc-boundary"
+ALLOCATOR_SCOPE_EXCEPTION_VERSION = 1
+ALLOCATOR_SCOPE_EXCEPTION_POLICY = "mimalloc-backed-libc-boundary"
+ALLOCATOR_SCOPE_EXCEPTION_EVIDENCE = (
+    "plan.md",
+    "crabc-rs.md",
+    "crabc-rs/m10_subsumed_evidence.md",
+)
+ALLOCATOR_SCOPE_EXCEPTION_SYMBOLS = {
+    "memory.allocator-basic": (
+        "aligned_alloc",
+        "calloc",
+        "free",
+        "malloc",
+        "memalign",
+        "posix_memalign",
+        "realloc",
+        "reallocarray",
+        "valloc",
+    ),
+    "memory.allocator-observability": ("malloc_usable_size",),
+}
+ALLOCATOR_SCOPE_EXCEPTION_FULL_SYMBOLS = frozenset(
+    symbol
+    for symbols in ALLOCATOR_SCOPE_EXCEPTION_SYMBOLS.values()
+    for symbol in symbols
+)
 
 
 class HarnessError(ValueError):
@@ -242,6 +276,62 @@ def relative_source(path_text: str, *, owner: Path) -> Path:
     return resolved
 
 
+def relative_evidence(path_text: str, *, location: str) -> Path:
+    """Resolve a checked-in evidence path from the repository root.
+
+    Coverage evidence is deliberately different from the inventory paths above:
+    it is authored as a repository-relative path, not as a path relative to the
+    metadata file.  Fragments such as ``README.md#section`` are rejected because
+    they are documentation pointers, not independently inspectable evidence.
+    """
+
+    require(isinstance(path_text, str) and path_text, f"{location} has an empty path")
+    require("#" not in path_text, f"{location} must name a repository file, not an anchor: {path_text!r}")
+    path = Path(path_text)
+    require(not path.is_absolute(), f"{location} must be repository-relative: {path_text}")
+    resolved = (ROOT / path).resolve()
+    try:
+        resolved.relative_to(ROOT)
+    except ValueError as error:
+        raise HarnessError(f"{location} escapes repository: {path_text}") from error
+    require(resolved.is_file(), f"{location} does not exist: {path_text}")
+    return resolved
+
+
+def require_rust_subsumed_evidence(capability: Mapping[str, Any], location: str) -> None:
+    """Require inspectable source and behavior evidence for a subsumption claim."""
+
+    evidence = nonempty_strings(capability.get("evidence"), f"{location}.evidence")
+    source_evidence = nonempty_strings(capability.get("source_evidence"), f"{location}.source_evidence")
+    behavior_evidence = nonempty_strings(
+        capability.get("behavior_evidence"), f"{location}.behavior_evidence"
+    )
+    for field, paths in (
+        ("evidence", evidence),
+        ("source_evidence", source_evidence),
+        ("behavior_evidence", behavior_evidence),
+    ):
+        for index, path_text in enumerate(paths):
+            relative_evidence(path_text, location=f"{location}.{field}[{index}]")
+
+    require(len(evidence) == len(set(evidence)), f"{location}.evidence contains duplicate paths")
+    require(
+        evidence == source_evidence + behavior_evidence,
+        f"{location}.evidence must list source_evidence followed by behavior_evidence",
+    )
+    require(
+        all("/tests/" not in path and "/examples/" not in path for path in source_evidence),
+        f"{location}.source_evidence must identify implementation or contract source files",
+    )
+    require(
+        all(
+            "/tests/" in path or "/examples/" in path or "/verify_" in path
+            for path in behavior_evidence
+        ),
+        f"{location}.behavior_evidence must identify tests, probes, or verifiers",
+    )
+
+
 def symbol_names(path: Path) -> tuple[str, ...]:
     names: list[str] = []
     try:
@@ -325,6 +415,59 @@ def require_native_contract(capability: Mapping[str, Any], location: str) -> Non
     require(capability.get("target_milestone"), f"{location} deferred native capability has no target_milestone")
 
 
+def require_scope_exception_contract(
+    capability: Mapping[str, Any], symbols: Sequence[str], location: str
+) -> None:
+    """Validate the sole versioned policy exception in the coverage ledger."""
+
+    identifier = capability.get("id")
+    expected_symbols = ALLOCATOR_SCOPE_EXCEPTION_SYMBOLS.get(identifier)
+    require(
+        expected_symbols is not None,
+        f"{location} scope-exception is reserved for the allocator whitelist",
+    )
+    require(
+        "symbols" in capability and "symbol_patterns" not in capability,
+        f"{location} allocator scope-exception must use literal symbols",
+    )
+    require(
+        capability.get("symbols") == list(expected_symbols) and tuple(symbols) == expected_symbols,
+        f"{location} allocator scope-exception symbols changed",
+    )
+    require(capability.get("status") == "documented", f"{location} scope-exception must be documented")
+    require(
+        capability.get("scope_exception_id") == ALLOCATOR_SCOPE_EXCEPTION_ID,
+        f"{location} allocator scope-exception id changed",
+    )
+    require(
+        capability.get("scope_exception_version") == ALLOCATOR_SCOPE_EXCEPTION_VERSION,
+        f"{location} allocator scope-exception version changed",
+    )
+    require(
+        capability.get("scope_exception_policy") == ALLOCATOR_SCOPE_EXCEPTION_POLICY,
+        f"{location} allocator scope-exception policy changed",
+    )
+    evidence = nonempty_strings(capability.get("evidence"), f"{location}.evidence")
+    require(
+        tuple(evidence) == ALLOCATOR_SCOPE_EXCEPTION_EVIDENCE,
+        f"{location} allocator scope-exception evidence changed",
+    )
+    for index, path_text in enumerate(evidence):
+        relative_evidence(path_text, location=f"{location}.evidence[{index}]")
+    for forbidden in (
+        "rust_equivalent",
+        "source_evidence",
+        "behavior_evidence",
+        "why_no_native_operation",
+        "reviewed",
+        "review_evidence",
+    ):
+        require(
+            forbidden not in capability,
+            f"{location} scope-exception must not carry {forbidden}; it is neither Rust-subsumed nor ABI-only",
+        )
+
+
 def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
     require(data.get("schema") == "crabc.crabc-rs-coverage/v2", "bad crabc-rs coverage schema")
     require(data.get("target") == TARGET, "coverage target is not AArch64 musl")
@@ -382,6 +525,11 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
         require(kind in ALLOWED_CAPABILITY_KINDS, f"{location} has unknown kind: {kind}")
         require(classification in ALLOWED_COVERAGE_CLASSIFICATIONS, f"unknown capability classification: {classification}")
         require(status in ALLOWED_COVERAGE_STATUSES, f"{location} has unknown status: {status}")
+        if identifier in ALLOCATOR_SCOPE_EXCEPTION_SYMBOLS:
+            require(
+                classification == SCOPE_EXCEPTION_CLASSIFICATION,
+                f"{location} allocator capability must remain {SCOPE_EXCEPTION_CLASSIFICATION}; reclassification is forbidden",
+            )
         require(capability.get("rationale"), f"capability[{index}] has no rationale")
         symbols = expand_symbol_selectors(capability, candidate, location)
         if kind == "semantic":
@@ -397,7 +545,9 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
         elif classification == "rust-subsumed":
             require(status == "documented", f"{location} rust-subsumed capability must be documented")
             require(capability.get("rust_equivalent"), f"{location} rust-subsumed capability has no Rust equivalent")
-            nonempty_strings(capability.get("evidence"), f"{location}.evidence")
+            require_rust_subsumed_evidence(capability, location)
+        elif classification == SCOPE_EXCEPTION_CLASSIFICATION:
+            require_scope_exception_contract(capability, symbols, location)
         elif classification == "abi-only":
             require(status == "documented", f"{location} ABI-only capability must be documented")
             require(capability.get("why_no_native_operation"), f"{location} ABI-only capability lacks why_no_native_operation")
@@ -426,6 +576,24 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
     require(not missing_symbols, f"candidate exports have no semantic capability: {', '.join(missing_symbols)}")
     extra_symbols = sorted(set(symbol_owners) - set(candidate))
     require(not extra_symbols, f"capability ledger contains non-candidate exports: {', '.join(extra_symbols)}")
+    scope_exception_capabilities = {
+        identifier
+        for identifier, capability in capability_by_id.items()
+        if capability["classification"] == SCOPE_EXCEPTION_CLASSIFICATION
+    }
+    require(
+        scope_exception_capabilities == set(ALLOCATOR_SCOPE_EXCEPTION_SYMBOLS),
+        "scope-exception whitelist invariant changed: only the two allocator capabilities are permitted",
+    )
+    scope_exception_symbols = {
+        symbol
+        for identifier in scope_exception_capabilities
+        for symbol in expand_symbol_selectors(capability_by_id[identifier], candidate, f"capability {identifier}")
+    }
+    require(
+        scope_exception_symbols == ALLOCATOR_SCOPE_EXCEPTION_FULL_SYMBOLS,
+        "scope-exception whitelist invariant changed: allocator symbol family is not exact",
+    )
 
     candidate_only_by_classification: collections.Counter[str] = collections.Counter()
     for index, record in enumerate(candidate_only_records):

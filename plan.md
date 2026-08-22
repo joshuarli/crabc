@@ -2801,13 +2801,26 @@ python3 compat/ldso/tests/test_runner.py           3/3 PASS
 python3 compat/lto/tests/test_runner.py            11/11 PASS
 ```
 
-## Milestone 11 — reserved; no active architecture expansion
+## Milestone 11 — scope-aligned core-runtime refinement (not started)
 
-The former x86_64 milestone is deliberately inactive. Completing Linux/AArch64
-`crabc-rs` evidence is valuable in its own right, but it does **not** activate
-another architecture. Any future architecture proposal needs a separate user
-decision and a new scope/profile review; do not use this historical record as
-authorization to begin x86_64 work.
+The former x86_64 milestone is deliberately inactive. M11 now means the next
+Linux/AArch64 refinement work selected from the post-M10 ledger; it does **not**
+activate another architecture. Any future architecture proposal needs a
+separate user decision and a new scope/profile review.
+
+The next selection must preserve the profile in `SCOPE.md` and
+`COMPATIBILITY-PROFILE.md`:
+
+| Priority | Post-M10 groups | Scope boundary |
+| --- | --- | --- |
+| Core Unix runtime | calendar/timezone, process control/credentials/environment/signals, pthread/C11, `dlopen` runtime, filesystem extensions | Direct Linux/AArch64 behavior with normal POSIX failure semantics; timezone data comes from the system. |
+| Core network profile | resolver and netdb | `/etc/hosts`, `/etc/resolv.conf`, A/AAAA/CNAME, search, UDP/TCP fallback, retries, and conventional text databases only; no NSS, DNSSEC, DoH/DoT, mDNS, or IDNA framework. |
+| Useful POSIX | regex/glob, IPC, PTY/session, user databases, narrowly scoped kernel administration | Compatibility-focused implementations without a Rust regex, process-framework, or security-policy substitute. |
+| C ABI/profile machinery | stdio, locale, wide text, long-double and other C-only families | Account and test the C contract where it belongs; do not manufacture a broad Rust wrapper. |
+
+M11 has not begun. The 16 `deferred` ledger groups are the deliberately
+measured backlog; the 43 `documented` groups are not hidden M11 work unless a
+new profile decision promotes one.
 
 ### Prerequisite progress — 2026-08-20 UTC
 
@@ -2923,21 +2936,31 @@ This completes accounting, not native capability completion. M10 turns each
 meaningful deferred group into an idiomatic Rust API or a rigorously documented
 Rust-native equivalent where it belongs in the supported Linux/AArch64 profile.
 
-### Prerequisite progress — crabc-rs M10 native capability closure — 2026-08-21 UTC
+### Milestone 10 completion — crabc-rs semantic capability closure — 2026-08-21 UTC
 
-M10 is **in progress**, with its accounting made stricter before claiming more
-coverage. The 1,669-export inventory remains exact and green, but the ledger
-now splits the previously mixed native/direct and Rust-subsumed families into
-the operations actually evidenced. C errno/exit state, scanners, secure or
-pointer-returning byte operations, the remaining callback/intrusive
-collections, and
-fenv-sensitive math remain explicit native work. The one policy exception is
-the full public malloc family, including `malloc_usable_size`: it is out of
-scope for crabc-rs under the project mimalloc strategy and remains a libc
-boundary obligation rather than a semantic-equivalence claim.
+M10 is **complete**. The 1,669-export inventory is exact and green; its 215
+semantic groups record 156 verified native seams, 16 explicitly deferred
+post-M10 capability groups, and 43 documented Rust-subsumed, C-ABI, or
+private-runtime groups. This is the project’s semantic-accounting definition
+of completion, not a promise to create a Rust wrapper for every historical C
+symbol. The full malloc family, including `malloc_usable_size`, remains the
+sole versioned `allocator-mimalloc-libc-boundary` scope exception: it belongs
+to the mimalloc-backed C libc boundary, not crabc-rs.
 
-The current measured ledger has 214 groups: 155 verified, 37 deferred, and 22
-documented. The newest verified groups remain deliberately narrow: checked
+All hand-rolled cryptographic implementations have been removed. The bounded
+C `crypt` profile delegates complete SHA-256-crypt (`$5$`) and SHA-512-crypt
+MCF construction to pure RustCrypto `sha-crypt`; it accepts only canonical,
+non-empty `Base64ShaCrypt` salts and preserves the dependency's explicit
+default-rounds spelling. Arbitrary legacy salt text, DES, MD5-crypt, and
+bcrypt remain documented compatibility limits. There is no AWS-LC, OpenSSL,
+BoringSSL, or other C-backed crypto provider. The dependency and ABI adapter
+review lives in `compat/crabc-rs/crypt-profile.md`.
+
+The terminal-control seam now verifies typed `tcgetattr`, `tcsetattr`,
+`tcgetpgrp`, `tcsetpgrp`, and `tcgetsid` using direct AArch64 ioctls and a
+private kernel record. It does not overclaim PTY or terminal-session creation.
+
+The final M10 verified slices remain deliberately narrow: checked
 descriptor-to-descriptor range copying, explicit file-range writeback/wait,
 connected vectored message I/O, current-directory retrieval, millisecond
 realtime observation, typed eventfd counter I/O, process-accounting ticks,
@@ -3064,14 +3087,11 @@ and TLS errno forbidden.
 
 Focused behavioral tests, release static-boundary probes, the Python metadata
 harness, and the complete pinned Linux/AArch64 `./scripts/dev.sh crabc-rs`
-gate pass. Rustix source comparison remains applicable only where Rustix has a
-matching surface. The ledger check confirms the 214-group inventory (155
-verified, 37 deferred, 22 documented).
-M10 remains in progress; this records only the completed filesystem,
-credentials, terminal queue, time, legacy-IPv4, classful-IPv4, Ethernet
-codec, ethers database, IPv6-value, interface-address, and interface-name
-enumeration slices rather than claiming closure of their broader deferred
-families.
+gate pass as final evidence. Rustix source comparison remains applicable
+only where Rustix has a matching surface. The ledger check confirms the
+215-group inventory (156 verified, 16 deferred, 43 documented). The deferred
+groups are the scope-aligned M11 backlog described above, rather than an
+unacknowledged gap in the M10 completion claim.
 
 `memory::ByteOps` closes the four non-basic byte primitives with borrowed
 typed slices: volatile, compiler-fenced `explicit_bzero`; delimiter-aware

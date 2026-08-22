@@ -51,6 +51,10 @@ const M4_SYS_MLOCK2: i64 = 284;
 const M4_SYS_REMAP_FILE_PAGES: i64 = 234;
 
 const M4_MREMAP_FIXED: c_int = 2;
+// POSIX_MADV_DONTNEED is intentionally distinct from Linux MADV_DONTNEED.
+// musl keeps this POSIX advisory as a no-op instead of discarding anonymous
+// pages through the Linux syscall.
+const M4_POSIX_MADV_DONTNEED: c_int = 4;
 
 #[inline]
 unsafe fn m4_mprotect(addr: *mut c_void, len: SizeT, prot: c_int) -> i64 {
@@ -162,6 +166,9 @@ pub unsafe extern "C" fn posix_madvise(
     len: SizeT,
     advice: c_int,
 ) -> c_int {
+    if advice == M4_POSIX_MADV_DONTNEED {
+        return 0;
+    }
     let result = m4_madvise(addr, len, advice);
     if result < 0 && result >= -4095 {
         (-result) as c_int

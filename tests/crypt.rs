@@ -19,6 +19,9 @@ fn crypt_under_libc_so() {
 static int failures = 0;
 static char *p;
 
+extern char *__crypt_blowfish(const char *, const char *, char *);
+extern char *__crypt_md5(const char *, const char *, char *);
+
 #define CHECK(expected, salt, key) \
     p = crypt(key, salt); \
     if (!p) p = "*"; \
@@ -27,26 +30,47 @@ static char *p;
         failures++; \
     }
 
-int main() {
-    /* MD5 */
-    CHECK("$1$abcd0123$9Qcg8DyviekV3tDGMZynJ1", "$1$abcd0123$", "Xy01@#\x01\x02\x80\x7f\xff\r\n\x81\t !")
-    CHECK("$1$$qRPK7m23GJusamGpoGLby/", "$1$$", "")
-    CHECK("$1$salt$UsdFqFVB.FsuinRDK5eE..", "$1$salt$", "")
+#define CHECK_R(expected, salt, key) \
+    do { \
+        struct crypt_data data = { 0x13579bdf, { 0 } }; \
+        int initialized = data.initialized; \
+        p = crypt_r(key, salt, &data); \
+        if (!p || p != data.__buf || data.initialized != initialized || strcmp(p, expected) != 0) { \
+            write(2, "FAIL-R\\n", 7); \
+            failures++; \
+        } \
+    } while (0)
 
-    /* SHA-256 */
-    CHECK("$5$$3c2QQ0KjIU1OLtB29cl8Fplc2WN7X89bnoEjaR7tWu.", "$5$$", "")
-    CHECK("$5$rounds=1234$abc0123456789$3VfDjPt05VHFn47C/ojFZ6KRPYrOjj1lLbH.dkF3bZ6", "$5$rounds=1234$abc0123456789$", "Xy01@#\x01\x02\x80\x7f\xff\r\n\x81\t !")
-    CHECK("$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5", "$5$saltstring", "Hello world!")
+int main() {
+    /* MD5-crypt is ABI-visible but deliberately unsupported in crabc. */
+    CHECK("*", "$1$abcd0123$", "Xy01@#\x01\x02\x80\x7f\xff\r\n\x81\t !")
+    CHECK("*", "$1$$", "")
+    CHECK("*", "$1$salt$", "")
+    if (__crypt_md5(NULL, NULL, NULL) != NULL ||
+        __crypt_blowfish(NULL, NULL, NULL) != NULL ||
+        crypt_r("x", "$1$salt$", NULL) != NULL) {
+        write(2, "FAIL-NULL\n", 10);
+        failures++;
+    }
+
+    /* SHA-256: canonical Base64ShaCrypt salts use dependency-owned MCF. */
+    CHECK("$5$rounds=5000$9aEeVXnCiCNHUjO/$FrVBcjyJukRaE6inMYazyQv1DBnwaKfom.71ebgQR/0", "$5$9aEeVXnCiCNHUjO/", "foobar")
+    CHECK("$5$rounds=100000$9aEeVXnCiCNHUjO/$8sPrwM2muhX.m.Wk6nf/qjLv257uvFtFEdFt0Up616D", "$5$rounds=100000$9aEeVXnCiCNHUjO/", "foobar")
 
     /* SHA-512 */
-    CHECK("$6$$/chiBau24cE26QQVW3IfIe68Xu5.JQ4E8Ie7lcRLwqxO5cxGuBhqF2HmTL.zWJ9zjChg3yJYFXeGBQ2y3Ba1d1", "$6$$", "")
-    CHECK("$6$rounds=1234$abc0123456789$BCpt8zLrc/RcyuXmCDOE1ALqMXB2MH6n1g891HhFj8.w7LxGv.FTkqq6Vxc/km3Y0jE0j24jY5PIv/oOu6reg1", "$6$rounds=1234$abc0123456789$", "Xy01@#\x01\x02\x80\x7f\xff\r\n\x81\t !")
-    CHECK("$6$saltstring$svn8UoSVapNtMuq1ukKS4tPQd8iKwSMHWjl/O817G3uBnIFNjnQJuesI68u4OTLiBFdcbYEdFCoEOfaS35inz1", "$6$saltstring", "Hello world!")
+    CHECK("$6$rounds=5000$bbe605c2cce4c642$BiBOywFAm9kdv6ZPpj2GaKVqeh/.c21pf1uFBaq.e59KEE2Ej74iJleXaLXURYV6uh5LF4K7dDc4vtRtPiiKB/", "$6$bbe605c2cce4c642", "foobar")
+    CHECK("$6$rounds=100000$bbe605c2cce4c642$bCGLqF35/fKkEVLwsr19YOM6.EcwMQ1svcz3iFHIfJZZ3etWnNZIMpAlO3EC3OHZJpNqNlC0sMLh3K/ctWdmF1", "$6$rounds=100000$bbe605c2cce4c642", "foobar")
+    CHECK("*", "$5$", "foobar")
+    CHECK("*", "$5$x", "foobar")
+    CHECK("*", "$6$xx", "foobar")
+    CHECK("*", "$5$9aEeVXnCiCNHUjO/$extra", "foobar")
+    CHECK_R("$5$rounds=5000$9aEeVXnCiCNHUjO/$FrVBcjyJukRaE6inMYazyQv1DBnwaKfom.71ebgQR/0", "$5$9aEeVXnCiCNHUjO/", "foobar");
+    CHECK_R("$6$rounds=100000$bbe605c2cce4c642$bCGLqF35/fKkEVLwsr19YOM6.EcwMQ1svcz3iFHIfJZZ3etWnNZIMpAlO3EC3OHZJpNqNlC0sMLh3K/ctWdmF1", "$6$rounds=100000$bbe605c2cce4c642", "foobar");
 
-    /* Blowfish (bcrypt) */
-    CHECK("$2a$04$012345678901234567890u8auMTJmy9uQv1pCMPSGmRjXec5nzCf6", "$2a$04$0123456789012345678901", "")
-    CHECK("$2a$04$abcdefghijklmnopqrstuu8J3SjO9LQpndv9O3HW/e0PB1xKk.PJu", "$2a$04$abcdefghijklmnopqrstuv", "Aa@\xaa 0123456789")
-    CHECK("$2y$04$abcdefghijklmnopqrstuubUAnPDiHn0JtKfNM4q6HN1ZsdaC1D8i", "$2y$04$abcdefghijklmnopqrstuv", "\xff\xff\xff\xa3\x33\x01\x40")
+    /* Blowfish/bcrypt is ABI-visible but deliberately unsupported in crabc. */
+    CHECK("*", "$2a$04$0123456789012345678901", "")
+    CHECK("*", "$2a$04$abcdefghijklmnopqrstuv", "Aa@\xaa 0123456789")
+    CHECK("*", "$2y$04$abcdefghijklmnopqrstuv", "\xff\xff\xff\xa3\x33\x01\x40")
 
     /* Blowfish invalid salts return "*" */
     p = crypt("", "$2a$00$0123456789012345678901");
@@ -63,6 +87,10 @@ int main() {
     std::fs::write(&src_path, test_src).expect("failed to write crypt test source");
 
     let bin_path = test_support::TempArtifact::new("crypt_test");
+    let dynamic_linker = format!(
+        "-Wl,--dynamic-linker={}",
+        manifest_dir.join("target/debug/libldso.so").display()
+    );
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE", "-pie", "-D_GNU_SOURCE",
@@ -73,6 +101,7 @@ int main() {
             "-lc",
             "-o", bin_path.to_str().unwrap(),
         ])
+        .arg(dynamic_linker)
         .status()
         .expect("failed to compile crypt test");
     assert!(status.success(), "crypt test compilation failed");

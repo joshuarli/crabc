@@ -32,5 +32,5 @@ fn legacy_des_bit_array_apis_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "m4 legacy des ok\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "m4 legacy des unsupported\n");
 }

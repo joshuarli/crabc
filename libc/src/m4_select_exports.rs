@@ -1,9 +1,9 @@
 // M4 select-family entry points.
 //
 // Linux exposes `pselect6`, not a separate modern `select` syscall on AArch64.
-// `pselect` keeps its caller's const timeout untouched, while `select`
-// deliberately passes a mutable converted timeout and writes back the kernel's
-// remaining interval.
+// Both public entry points keep their caller's timeout untouched. The Linux
+// `pselect6` ABI mutates its timeout pointer, so each wrapper passes a private
+// temporary conversion instead.
 
 #[cfg(target_arch = "x86_64")]
 const M4_SYS_PSELECT6: i64 = 270;
@@ -17,6 +17,20 @@ struct M4PselectSigmask {
 }
 
 #[inline]
+fn m4_select_timespec(timeout: &timeval) -> Option<timespec> {
+    // Match musl's legacy conversion policy: reject negative components,
+    // carry every complete microsecond second into tv_sec, and reject a
+    // carry which cannot be represented by the target C ABI.
+    if timeout.tv_sec < 0 || timeout.tv_usec < 0 {
+        return None;
+    }
+    let extra_seconds = timeout.tv_usec / 1_000_000;
+    let tv_sec = timeout.tv_sec.checked_add(extra_seconds)?;
+    let tv_nsec = (timeout.tv_usec % 1_000_000) * 1_000;
+    Some(timespec { tv_sec, tv_nsec })
+}
+
+#[inline]
 unsafe fn m4_pselect6(
     nfds: c_int,
     readfds: *mut c_void,
@@ -27,7 +41,9 @@ unsafe fn m4_pselect6(
 ) -> i64 {
     let signal_argument = M4PselectSigmask {
         mask: sigmask,
-        size: core::mem::size_of::<SigSetT>(),
+        // Linux/AArch64 consumes the compact kernel signal set, not musl's
+        // public 128-byte `sigset_t` representation.
+        size: crabc_core::signal::KERNEL_SIGSET_SIZE,
     };
     <Arch as Syscalls>::syscall6(
         M4_SYS_PSELECT6,
@@ -78,25 +94,25 @@ pub unsafe extern "C" fn select(
     exceptfds: *mut c_void,
     timeout: *mut timeval,
 ) -> c_int {
-    let mut timeout_copy = timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut timeout_copy: timespec;
     let timeout_ptr = if timeout.is_null() {
         core::ptr::null_mut()
     } else {
-        timeout_copy.tv_sec = (*timeout).tv_sec;
-        timeout_copy.tv_nsec = (*timeout).tv_usec * 1_000;
+        timeout_copy = match m4_select_timespec(&*timeout) {
+            Some(value) => value,
+            None => {
+                ERRNO = EINVAL;
+                return -1;
+            }
+        };
         &mut timeout_copy
     };
-    let result = syscall_result(m4_pselect6(
+    syscall_result(m4_pselect6(
         nfds,
         readfds,
         writefds,
         exceptfds,
         timeout_ptr,
         core::ptr::null(),
-    ));
-    if !timeout.is_null() {
-        (*timeout).tv_sec = timeout_copy.tv_sec;
-        (*timeout).tv_usec = timeout_copy.tv_nsec / 1_000;
-    }
-    result as c_int
+    )) as c_int
 }

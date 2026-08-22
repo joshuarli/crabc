@@ -3259,12 +3259,13 @@ candidate-only exports = 22 / 22 with an owning group
 
 Status is deliberately independent of classification. `verified` records a
 native seam with direct-boundary and behavioral evidence; `deferred` records a
-meaningful capability and its intended native API, reason, and M10 target; and
+meaningful capability and its intended post-M10 API, reason, and target; and
 `documented` records Rust-subsumed, ABI-only, or private-runtime behavior with
-the required rationale. The current ledger has 214 groups: 155 verified, 37
-deferred, and 22 documented. Existing M0–M8 vertical slices remain evidence
-for their listed operations, but a mixed C capability group is deferred until
-its full native contract is complete. This is not a claim of M10 completion.
+the required rationale. The current ledger has 215 groups: 156 verified, 16
+deferred, and 43 documented. Deferred groups are explicitly post-M10 work;
+documented C-ABI and Rust-subsumed groups are accounted scope boundaries, not
+unclaimed native wrappers. Existing M0–M8 vertical slices remain evidence for
+their listed operations.
 
 In particular, the public malloc family is the versioned
 `scope-exception` `allocator-mimalloc-libc-boundary` v1 and remains out of
@@ -3299,17 +3300,28 @@ only when:
 
 ### Progress — 2026-08-21 UTC
 
-M10 remains **in progress**. The ledger has been tightened before adding more
-surface: existing direct Linux/AArch64 slices are now recorded only in the
-exact capability groups they prove, while mixed C families remain deferred.
-The current inventory has 214 groups: 155 verified, 37 deferred, and 22
-documented. In particular, Rust-subsumed entries no longer hide C errno and
-exit state, scanf, secure byte operations, the remaining callback/intrusive
-collections, or
-floating-environment-sensitive math. The sole allocator exception remains
-explicit: crabc-rs exposes no malloc-family API, including usable-size
-introspection, and uses the project mimalloc strategy rather than claiming
-C allocator ABI equivalence.
+M10 is **complete**. The green inventory has 215 semantic groups: 156
+verified native seams, 16 explicitly deferred post-M10 capability groups, and
+43 documented Rust-subsumed, C-ABI, or private-runtime groups. This is
+semantic accounting for the Linux/AArch64 profile, not a claim that every C
+export deserves a Rust wrapper. In particular, documented groups no longer
+hide C errno/exit state, scanners, secure byte operations, callback/intrusive
+collections, fenv-sensitive math, locale machinery, or C-only stdio forms.
+The sole allocator exception remains explicit: crabc-rs exposes no
+malloc-family API, including usable-size introspection, and uses ordinary Rust
+allocation while the C ABI remains a mimalloc-backed libc boundary.
+
+The completed terminal-control seam provides typed `tcgetattr`, `tcsetattr`,
+`tcgetpgrp`, `tcsetpgrp`, and `tcgetsid` through the direct Linux/AArch64
+ioctl boundary and a private kernel-layout record; it neither crosses C
+termios nor implies PTY/session construction coverage. The C `crypt` ABI is
+now a bounded compatibility profile: SHA-256-crypt and SHA-512-crypt use
+pure RustCrypto `sha-crypt` MCF construction; all hand-rolled digest, cipher,
+transposition, and password-hash serialization code has been removed. Only
+canonical non-empty `Base64ShaCrypt` salt input is accepted, and dependency
+output retains its explicit default-rounds spelling. The precise formats,
+dependency due diligence, and unsupported legacy forms are recorded in
+[`compat/crabc-rs/crypt-profile.md`](compat/crabc-rs/crypt-profile.md).
 
 `fd::OwnedFd::close` consumes its one ownership token before direct Linux
 `close`; a Linux `EINTR` is success because the descriptor has already been
@@ -4115,34 +4127,28 @@ claim.
 
 ---
 
-# 87. Milestone 11 — production proof
+# 87. Milestone 11 — scope-aligned core-runtime refinement
 
-Build representative applications that use:
+M11 has not started. It is the next Linux/AArch64 refinement milestone, not
+an architecture expansion and not a mandate to recreate a broad portable Unix
+layer. Select work from the 16 explicit post-M10 ledger deferrals in the
+following order:
 
-```text
-filesystem
-networking
-polling
-mmap
-process execution
-fork/exec
-signals
-resolver
-dynamic loading
-thread primitives
-```
+1. Core runtime: calendar/timezone handling from system zoneinfo, process
+   control/credentials/environment/signals, pthread/C11, dynamic loading, and
+   filesystem extensions.
+2. Core resolver profile: `/etc/hosts`, `/etc/resolv.conf`, A/AAAA/CNAME,
+   search, UDP with TCP fallback, retries/failover, and conventional netdb
+   files—without NSS, DNSSEC, DoH/DoT, mDNS, or IDNA framework behavior.
+3. Useful POSIX: regex/glob compatibility, IPC, PTY/session work, user
+   databases, and tightly bounded kernel administration.
+4. C ABI profile: C-only stdio, locale, wide text, and long-double families
+   remain rigorously documented/tested at the ABI boundary when relevant;
+   they do not automatically become `crabc-rs` APIs.
 
-without:
-
-```text
-rustix
-libc
-nix
-```
-
-as direct dependencies.
-
-Demonstrate that crabc-rs can realistically be the application's Unix systems substrate.
+Any representative-application proof follows a completed scoped slice. It
+must demonstrate the named Linux/AArch64 contract without treating the absence
+of `rustix`, `libc`, or `nix` as a portability claim.
 
 ---
 

@@ -116,6 +116,129 @@ class CoverageLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(harness.HarnessError, "lacks why_no_native_operation"):
             harness.validate_coverage(ledger)
 
+    def test_coverage_rejects_anchor_only_rust_subsumption_evidence(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "error.termination.abort")["evidence"][0] = "crabc-rs.md#33"
+        with self.assertRaisesRegex(harness.HarnessError, "anchor"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_missing_rust_subsumption_evidence_file(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "memory.bytes-basic")["behavior_evidence"] = [
+            "crabc-rs/tests/m10_subsumed_missing.rs"
+        ]
+        with self.assertRaisesRegex(harness.HarnessError, "does not exist"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_rejects_duplicate_rust_subsumption_evidence(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "search.hash-table")["evidence"] = [
+            "crabc-rs/m10_subsumed_evidence.md",
+            "crabc-rs/m10_subsumed_evidence.md",
+        ]
+        with self.assertRaisesRegex(harness.HarnessError, "duplicate paths"):
+            harness.validate_coverage(ledger)
+
+    def test_coverage_requires_both_source_and_behavior_rust_subsumption_evidence(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "numeric.scalar-basic")["source_evidence"] = ["crabc-rs.md"]
+        self.capability(ledger, "numeric.scalar-basic")["behavior_evidence"] = [
+            "crabc-rs/m10_subsumed_evidence.md"
+        ]
+        self.capability(ledger, "numeric.scalar-basic")["evidence"] = [
+            "crabc-rs.md",
+            "crabc-rs/m10_subsumed_evidence.md",
+        ]
+        with self.assertRaisesRegex(harness.HarnessError, "behavior_evidence must identify"):
+            harness.validate_coverage(ledger)
+
+    def test_m10_keeps_long_double_math_and_bounded_formatting_deferred(self) -> None:
+        ledger = self.ledger()
+        elementary = self.capability(ledger, "math.elementary")
+        long_double = self.capability(ledger, "math.elementary-long-double")
+        self.assertNotIn("expl", elementary["symbols"])
+        self.assertIn("expl", long_double["symbols"])
+        output = self.capability(ledger, "stdio.format-output")
+        bounded = self.capability(ledger, "stdio.format-bounded")
+        self.assertNotIn("snprintf", output["symbols"])
+        self.assertEqual(bounded["symbols"], ["snprintf", "vsnprintf"])
+
+        elementary["symbols"].append("expl")
+        with self.assertRaisesRegex(harness.HarnessError, "belongs to both"):
+            harness.validate_coverage(ledger)
+
+    def test_m10_preserves_the_whole_malloc_family_policy_exclusion(self) -> None:
+        ledger = self.ledger()
+        basic = self.capability(ledger, "memory.allocator-basic")
+        observability = self.capability(ledger, "memory.allocator-observability")
+        allocator_symbols = set(basic["symbols"])
+        allocator_symbols.update(observability["symbols"])
+        self.assertEqual(
+            allocator_symbols,
+            {
+                "aligned_alloc",
+                "calloc",
+                "free",
+                "malloc",
+                "malloc_usable_size",
+                "memalign",
+                "posix_memalign",
+                "realloc",
+                "reallocarray",
+                "valloc",
+            },
+        )
+        self.assertEqual(basic["classification"], "scope-exception")
+        self.assertEqual(observability["classification"], "scope-exception")
+        self.assertEqual(basic["status"], "documented")
+        self.assertEqual(observability["status"], "documented")
+        self.assertEqual(basic["scope_exception_id"], harness.ALLOCATOR_SCOPE_EXCEPTION_ID)
+        self.assertEqual(basic["scope_exception_version"], harness.ALLOCATOR_SCOPE_EXCEPTION_VERSION)
+        self.assertEqual(basic["scope_exception_policy"], harness.ALLOCATOR_SCOPE_EXCEPTION_POLICY)
+        self.assertEqual(basic["evidence"], list(harness.ALLOCATOR_SCOPE_EXCEPTION_EVIDENCE))
+        self.assertNotIn("rust_equivalent", basic)
+        self.assertNotIn("rust_equivalent", observability)
+
+    def test_scope_exception_rejects_non_allocator_use_and_allocator_reclassification(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "memory.bytes-basic")["classification"] = "scope-exception"
+        with self.assertRaisesRegex(harness.HarnessError, "reserved for the allocator whitelist"):
+            harness.validate_coverage(ledger)
+
+        ledger = self.ledger()
+        self.capability(ledger, "memory.allocator-basic")["classification"] = "rust-subsumed"
+        with self.assertRaisesRegex(harness.HarnessError, "must remain scope-exception"):
+            harness.validate_coverage(ledger)
+
+    def test_scope_exception_rejects_allocator_id_or_symbol_drift(self) -> None:
+        ledger = self.ledger()
+        self.capability(ledger, "memory.allocator-basic")["id"] = "memory.allocator-renamed"
+        with self.assertRaisesRegex(harness.HarnessError, "reserved for the allocator whitelist"):
+            harness.validate_coverage(ledger)
+
+        ledger = self.ledger()
+        symbols = self.capability(ledger, "memory.allocator-basic")["symbols"]
+        symbols[0], symbols[1] = symbols[1], symbols[0]
+        with self.assertRaisesRegex(harness.HarnessError, "symbols changed"):
+            harness.validate_coverage(ledger)
+
+    def test_scope_exception_rejects_allocator_metadata_drift(self) -> None:
+        mutations = (
+            ("scope_exception_id", "different-exception", "exception id changed"),
+            ("scope_exception_version", 2, "exception version changed"),
+            ("scope_exception_policy", "rust-subsumed", "exception policy changed"),
+            ("evidence", ["crabc-rs.md"], "exception evidence changed"),
+            ("status", "verified", "scope-exception must be documented"),
+            ("rust_equivalent", "Box/Vec", "neither Rust-subsumed nor ABI-only"),
+        )
+        for field, value, message in mutations:
+            with self.subTest(field=field):
+                ledger = self.ledger()
+                capability = self.capability(ledger, "memory.allocator-basic")
+                capability[field] = value
+                with self.assertRaisesRegex(harness.HarnessError, message):
+                    harness.validate_coverage(ledger)
+
 
 class DualBackendTests(unittest.TestCase):
     def test_stub_backends_compare_in_isolated_workspaces(self) -> None:

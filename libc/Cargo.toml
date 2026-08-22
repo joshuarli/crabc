@@ -17,3 +17,8 @@ bench = false
 crabc-core = { path = "../crabc-core" }
 libm = "0.2"
 libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"] }
+# RustCrypto's SHA-crypt implementation and MCF serializer. `alloc` is used
+# only for the dependency-owned temporary password-hash string; its allocator
+# is the existing mimalloc-backed C allocation strategy in `crypt_impl.rs`.
+base64ct = { version = "1.8", default-features = false }
+sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }

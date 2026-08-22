@@ -51,8 +51,10 @@ future platform or API contract. `crabc` remains Linux/AArch64 with Linux
 kernel MSRV 5.10. An optional macOS/AArch64 backend belongs only to
 `crabc-rs`, through libSystem and a separate implementation boundary.
 
-The M10 ledger is semantic accounting rather than a demand for a Rust wrapper
-around every C symbol. The allocator exception remains at the libc boundary;
+M10 is complete when the ledger accounts for the profile rather than demanding
+a Rust wrapper around every C symbol. Its final inventory records 215 groups:
+156 verified native seams, 16 explicit post-M10 deferrals, and 43 documented
+scope boundaries. The allocator exception remains at the libc boundary;
 Rust-native callers use ordinary Rust allocation. Future work must keep the
 bounded C/POSIX/C.UTF-8 locale profile, UTF-8-first text model, conventional
 file-backed user/host/service/protocol lookup without NSS, small DNS resolver,

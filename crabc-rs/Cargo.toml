@@ -76,6 +76,646 @@ name = "m8_cfile_direct_probe"
 path = "examples/m8_cfile_direct_probe.rs"
 crate-type = ["staticlib"]
 
+[[example]]
+name = "m10_text_direct_probe"
+path = "examples/m10_text_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_text_stateful_direct_probe"
+path = "examples/m10_text_stateful_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ctype_direct_probe"
+path = "examples/m10_ctype_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_address_direct_probe"
+path = "examples/m10_network_address_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ethernet_address_direct_probe"
+path = "examples/m10_ethernet_address_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ethers_direct_probe"
+path = "examples/m10_ethers_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_ipaddr_direct_probe"
+path = "examples/m10_network_ipaddr_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ipv4_legacy_direct_probe"
+path = "examples/m10_ipv4_legacy_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ipv4_classful_direct_probe"
+path = "examples/m10_ipv4_classful_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_interface_index_direct_probe"
+path = "examples/m10_network_interface_index_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_interface_index_name_direct_probe"
+path = "examples/m10_network_interface_index_name_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_interface_names_direct_probe"
+path = "examples/m10_interface_names_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_interface_names_alloc_direct_probe"
+path = "examples/m10_interface_names_alloc_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_interface_addresses_direct_probe"
+path = "examples/m10_interface_addresses_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fs_metadata_direct_probe"
+path = "examples/m10_fs_metadata_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_statx_direct_probe"
+path = "examples/m10_statx_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_positioned_direct_probe"
+path = "examples/m10_positioned_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_format_direct_probe"
+path = "examples/m10_format_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_number_direct_probe"
+path = "examples/m10_number_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_random_direct_probe"
+path = "examples/m10_random_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_vectored_direct_probe"
+path = "examples/m10_vectored_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_time_direct_probe"
+path = "examples/m10_time_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_calendar_utc_direct_probe"
+path = "examples/m10_calendar_utc_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_time_dynamic_direct_probe"
+path = "examples/m10_time_dynamic_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_time_settime_direct_probe"
+path = "examples/m10_time_settime_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_time_timespec_get_direct_probe"
+path = "examples/m10_time_timespec_get_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_time_realtime_millis_direct_probe"
+path = "examples/m10_time_realtime_millis_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_param_auxv_direct_probe"
+path = "examples/m10_param_auxv_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sched_rr_interval_direct_probe"
+path = "examples/m10_sched_rr_interval_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sched_getaffinity_direct_probe"
+path = "examples/m10_sched_getaffinity_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sched_setaffinity_direct_probe"
+path = "examples/m10_sched_setaffinity_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_pidfd_open_direct_probe"
+path = "examples/m10_pidfd_open_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_process_cpu_time_direct_probe"
+path = "examples/m10_process_cpu_time_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_process_clock_id_direct_probe"
+path = "examples/m10_process_clock_id_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_direct_probe"
+path = "examples/m10_network_socket_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_type_direct_probe"
+path = "examples/m10_network_socket_type_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_protocol_direct_probe"
+path = "examples/m10_network_socket_protocol_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_cookie_direct_probe"
+path = "examples/m10_network_socket_cookie_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_domain_direct_probe"
+path = "examples/m10_network_socket_domain_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_acceptconn_direct_probe"
+path = "examples/m10_network_socket_acceptconn_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_oobinline_direct_probe"
+path = "examples/m10_network_socket_oobinline_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_broadcast_direct_probe"
+path = "examples/m10_network_socket_broadcast_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_positioned_vectored_direct_probe"
+path = "examples/m10_positioned_vectored_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_directory_direct_probe"
+path = "examples/m10_directory_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_directory_position_direct_probe"
+path = "examples/m10_directory_position_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_pipe_tee_direct_probe"
+path = "examples/m10_pipe_tee_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_descriptor_direct_probe"
+path = "examples/m10_descriptor_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_numeric_legacy_direct_probe"
+path = "examples/m10_numeric_legacy_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_readiness_direct_probe"
+path = "examples/m10_readiness_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_memory_special_direct_probe"
+path = "examples/m10_memory_special_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_memory_vm_direct_probe"
+path = "examples/m10_memory_vm_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_pipe_size_direct_probe"
+path = "examples/m10_pipe_size_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sleep_direct_probe"
+path = "examples/m10_sleep_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_memfd_direct_probe"
+path = "examples/m10_memfd_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fcntl_seals_direct_probe"
+path = "examples/m10_fcntl_seals_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fcntl_add_seals_direct_probe"
+path = "examples/m10_fcntl_add_seals_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fcntl_getlk_direct_probe"
+path = "examples/m10_fcntl_getlk_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ppoll_direct_probe"
+path = "examples/m10_ppoll_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_pause_direct_probe"
+path = "examples/m10_pause_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_clock_nanosleep_direct_probe"
+path = "examples/m10_clock_nanosleep_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_time_timers_direct_probe"
+path = "examples/m10_time_timers_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_madvise_direct_probe"
+path = "examples/m10_madvise_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_identity_direct_probe"
+path = "examples/m10_identity_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fallocate_direct_probe"
+path = "examples/m10_fallocate_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_syncfs_direct_probe"
+path = "examples/m10_syncfs_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_rlimit_direct_probe"
+path = "examples/m10_rlimit_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_rlimit_for_direct_probe"
+path = "examples/m10_rlimit_for_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_process_limits_umask_direct_probe"
+path = "examples/m10_process_limits_umask_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_connect_direct_probe"
+path = "examples/m10_network_connect_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_preadv2_direct_probe"
+path = "examples/m10_preadv2_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fadvise_direct_probe"
+path = "examples/m10_fadvise_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fcntl_flags_direct_probe"
+path = "examples/m10_fcntl_flags_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_futimes_direct_probe"
+path = "examples/m10_futimes_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_lutimes_direct_probe"
+path = "examples/m10_lutimes_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_futimesat_direct_probe"
+path = "examples/m10_futimesat_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_utimes_direct_probe"
+path = "examples/m10_utimes_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_utime_direct_probe"
+path = "examples/m10_utime_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_bind_getsockname_direct_probe"
+path = "examples/m10_network_bind_getsockname_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_msync_direct_probe"
+path = "examples/m10_msync_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sendfile_direct_probe"
+path = "examples/m10_sendfile_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_getpeername_direct_probe"
+path = "examples/m10_network_getpeername_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_mincore_direct_probe"
+path = "examples/m10_mincore_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_rusage_direct_probe"
+path = "examples/m10_rusage_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_getgroups_direct_probe"
+path = "examples/m10_getgroups_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_mlock_direct_probe"
+path = "examples/m10_mlock_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_listen_accept_direct_probe"
+path = "examples/m10_network_listen_accept_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_datagram_direct_probe"
+path = "examples/m10_network_datagram_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_priority_direct_probe"
+path = "examples/m10_priority_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_scheduler_priority_bounds_direct_probe"
+path = "examples/m10_scheduler_priority_bounds_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_setpriority_direct_probe"
+path = "examples/m10_setpriority_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_mremap_direct_probe"
+path = "examples/m10_mremap_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_socket_options_direct_probe"
+path = "examples/m10_network_socket_options_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_readahead_direct_probe"
+path = "examples/m10_readahead_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_getitimer_direct_probe"
+path = "examples/m10_getitimer_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_copy_file_range_direct_probe"
+path = "examples/m10_copy_file_range_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sync_file_range_direct_probe"
+path = "examples/m10_sync_file_range_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_messages_direct_probe"
+path = "examples/m10_network_messages_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_network_mmsg_direct_probe"
+path = "examples/m10_network_mmsg_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_getcwd_direct_probe"
+path = "examples/m10_getcwd_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_current_dir_name_direct_probe"
+path = "examples/m10_current_dir_name_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_eventfd_direct_probe"
+path = "examples/m10_eventfd_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_times_direct_probe"
+path = "examples/m10_times_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_session_observation_direct_probe"
+path = "examples/m10_session_observation_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_thread_identity_direct_probe"
+path = "examples/m10_thread_identity_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_access_direct_probe"
+path = "examples/m10_access_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_accessat_direct_probe"
+path = "examples/m10_accessat_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_truncate_direct_probe"
+path = "examples/m10_truncate_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_process_identity_direct_probe"
+path = "examples/m10_process_identity_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_process_cwd_direct_probe"
+path = "examples/m10_process_cwd_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_process_chroot_direct_probe"
+path = "examples/m10_process_chroot_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sync_direct_probe"
+path = "examples/m10_sync_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_sched_cpu_direct_probe"
+path = "examples/m10_sched_cpu_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ownership_direct_probe"
+path = "examples/m10_ownership_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_special_nodes_direct_probe"
+path = "examples/m10_special_nodes_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_ttyname_direct_probe"
+path = "examples/m10_ttyname_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_termios_exclusive_direct_probe"
+path = "examples/m10_termios_exclusive_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_termios_special_codes_direct_probe"
+path = "examples/m10_termios_special_codes_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_futex_direct_probe"
+path = "examples/m10_futex_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_thread_credentials_direct_probe"
+path = "examples/m10_thread_credentials_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fs_credentials_direct_probe"
+path = "examples/m10_fs_credentials_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_termios_queue_direct_probe"
+path = "examples/m10_termios_queue_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_terminal_control_direct_probe"
+path = "examples/m10_terminal_control_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_system_names_direct_probe"
+path = "examples/m10_system_names_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_load_average_direct_probe"
+path = "examples/m10_load_average_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_getentropy_direct_probe"
+path = "examples/m10_getentropy_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_create_direct_probe"
+path = "examples/m10_create_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fs_canonicalize_direct_probe"
+path = "examples/m10_fs_canonicalize_direct_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
+name = "m10_fs_tempdir_direct_probe"
+path = "examples/m10_fs_tempdir_direct_probe.rs"
+crate-type = ["staticlib"]
+
 [features]
 default = ["std"]
 alloc = []

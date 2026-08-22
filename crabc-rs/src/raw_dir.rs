@@ -11,7 +11,7 @@ use core::mem::{align_of, MaybeUninit};
 use core::slice;
 
 use crate::fs::FileType;
-use crate::{AsFd, Errno, Result};
+use crate::{AsFd, BorrowedFd, Errno, Result};
 
 const LINUX_DIRENT64_HEADER_SIZE: usize = 19;
 const LINUX_DIRENT64_ALIGNMENT: usize = align_of::<u64>();
@@ -22,6 +22,8 @@ pub struct RawDir<'buffer, Fd: AsFd> {
     buffer: &'buffer mut [MaybeUninit<u8>],
     initialized: usize,
     offset: usize,
+    pending_seek: Option<i64>,
+    failed: bool,
 }
 
 impl<'buffer, Fd: AsFd> RawDir<'buffer, Fd> {
@@ -47,6 +49,8 @@ impl<'buffer, Fd: AsFd> RawDir<'buffer, Fd> {
             buffer,
             initialized: 0,
             offset: 0,
+            pending_seek: None,
+            failed: false,
         }
     }
 
@@ -58,6 +62,18 @@ impl<'buffer, Fd: AsFd> RawDir<'buffer, Fd> {
     /// the underlying buffer is refilled.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Result<RawDirEntry<'_>>> {
+        if self.failed {
+            return None;
+        }
+        if let Some(offset) = self.pending_seek {
+            match self.seek_to(offset) {
+                Ok(_) => self.pending_seek = None,
+                Err(error) => {
+                    self.failed = true;
+                    return Some(Err(error));
+                }
+            }
+        }
         if self.is_buffer_empty() {
             // SAFETY: `self.buffer` is caller-owned writable storage for the
             // exact passed length and remains live for the syscall.
@@ -125,6 +141,64 @@ impl<'buffer, Fd: AsFd> RawDir<'buffer, Fd> {
         }))
     }
 
+    /// Rewinds the directory stream to its beginning on the next call to
+    /// [`Self::next`], matching Rustix's deferred `rewinddir` behavior.
+    ///
+    /// Existing records are discarded immediately. If Linux rejects the
+    /// eventual `lseek(fd, 0, SEEK_SET)`, after retrying interruption, the
+    /// next call returns that error and the stream becomes exhausted.
+    #[inline]
+    pub fn rewind(&mut self) {
+        self.initialized = 0;
+        self.offset = 0;
+        self.pending_seek = Some(0);
+        self.failed = false;
+    }
+
+    /// Seeks to a Linux directory-entry cookie and discards buffered records.
+    ///
+    /// `offset` is the `d_off` cookie exposed by
+    /// [`RawDirEntry::next_entry_cookie`], not a byte position. The direct
+    /// `lseek(fd, offset, SEEK_SET)` error is returned immediately after
+    /// retrying interruption; after a failure, the stream is exhausted.
+    #[inline]
+    pub fn seek(&mut self, offset: i64) -> Result<()> {
+        self.initialized = 0;
+        self.offset = 0;
+        self.pending_seek = None;
+        self.failed = false;
+        match self.seek_to(offset) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                self.failed = true;
+                Err(error)
+            }
+        }
+    }
+
+    /// Borrows the descriptor used by this iterator without transferring its
+    /// ownership.
+    #[inline]
+    pub fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+
+    /// Performs Rustix's interrupted-directory-seek retry policy.
+    #[inline]
+    fn seek_to(&self, offset: i64) -> Result<()> {
+        loop {
+            match crabc_core::fs::lseek(
+                self.fd.as_fd().as_raw_fd(),
+                offset,
+                crabc_core::fs::SEEK_SET,
+            ) {
+                Err(Errno::INTR) => continue,
+                Ok(_) => return Ok(()),
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     /// Returns true when the next call will refill the caller buffer.
     #[inline]
     pub fn is_buffer_empty(&self) -> bool {
@@ -142,6 +216,16 @@ pub struct RawDirEntry<'entry> {
 }
 
 impl RawDirEntry<'_> {
+    /// Returns the entry name as bytes without its trailing NUL.
+    ///
+    /// Linux pathnames are byte sequences rather than required UTF-8. The
+    /// returned slice borrows the current directory buffer and therefore
+    /// cannot outlive the entry or the iterator refill which produced it.
+    #[inline]
+    pub fn name_bytes(&self) -> &[u8] {
+        self.file_name.to_bytes()
+    }
+
     /// Returns the byte-preserving entry name.
     #[inline]
     pub fn file_name(&self) -> &CStr {

@@ -114,6 +114,9 @@ int main(void)
         old.it_value.tv_sec != 0 || old.it_value.tv_usec != 0 ||
         old.it_interval.tv_sec != 0 || old.it_interval.tv_usec != 0)
         return 10;
+    /* musl's alarm contract ceilings a positive fractional remainder. */
+    if (ualarm(125000, 0) != 0 || alarm(0) != 1)
+        return 15;
     if (ualarm(0, 0) != 0)
         return 11;
 

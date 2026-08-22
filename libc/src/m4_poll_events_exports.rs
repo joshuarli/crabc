@@ -69,7 +69,7 @@ unsafe fn m4_ppoll(
             nfds,
             timeout.cast(),
             sigmask.cast(),
-            core::mem::size_of::<SigSetT>(),
+            crabc_core::signal::KERNEL_SIGSET_SIZE,
         )
     } {
         Ok(ready) => ready as i64,
@@ -92,7 +92,7 @@ unsafe fn m4_epoll_pwait(
         maxevents as usize,
         timeout,
         sigmask.cast(),
-        core::mem::size_of::<SigSetT>(),
+        crabc_core::signal::KERNEL_SIGSET_SIZE,
     ) {
         Ok(ready) => ready as i64,
         Err(errno) => -(errno.raw() as i64),

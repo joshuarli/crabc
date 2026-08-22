@@ -5,11 +5,26 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <search.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
 extern sighandler_t bsd_signal(int, sighandler_t);
 extern sighandler_t __sysv_signal(int, sighandler_t);
+
+static int compare_ints(const void *left, const void *right)
+{
+    const int a = *(const int *)left;
+    const int b = *(const int *)right;
+    return (a > b) - (a < b);
+}
+
+static int compare_ints_with_direction(const void *left, const void *right, void *context)
+{
+    const int result = compare_ints(left, right);
+    const int reverse = *(const int *)context;
+    return reverse ? -result : result;
+}
 
 int main(void)
 {
@@ -51,6 +66,29 @@ int main(void)
         return 11;
     if (getpriority(99, 0) != -1 || errno != EINVAL)
         return 12;
+
+    {
+        /* lsearch may append one value, so reserve that caller-owned slot. */
+        int values[6] = {1, 3, 5, 7, 9};
+        int key = 5;
+        size_t count = 5;
+        int *found = bsearch(&key, values, count, sizeof(values[0]), compare_ints);
+        if (!found || *found != 5)
+            return 13;
+        found = lfind(&key, values, &count, sizeof(values[0]), compare_ints);
+        if (!found || *found != 5)
+            return 14;
+        key = 6;
+        found = lsearch(&key, values, &count, sizeof(values[0]), compare_ints);
+        if (!found || *found != 6 || count != 6)
+            return 15;
+
+        int sortable[] = {1, 4, 2, 3};
+        int reverse = 1;
+        qsort_r(sortable, 4, sizeof(sortable[0]), compare_ints_with_direction, &reverse);
+        if (sortable[0] != 4 || sortable[1] != 3 || sortable[2] != 2 || sortable[3] != 1)
+            return 16;
+    }
 
     puts("m4 system utils exports ok");
     return 0;

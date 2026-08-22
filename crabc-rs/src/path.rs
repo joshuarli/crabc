@@ -243,6 +243,201 @@ impl Arg for &PathBuf {
     }
 }
 
+/// A borrowed byte-oriented result of Unix `basename`/`dirname` processing.
+///
+/// The result never allocates or requires UTF-8. Unlike the C `libgen.h`
+/// functions, it does not mutate the caller's path; this makes the native
+/// operation safe to use concurrently and keeps the returned part tied to the
+/// source path's lifetime.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct PathPart<'a> {
+    bytes: &'a [u8],
+}
+
+/// Errors raised when a raw byte path cannot be represented as a NUL-free
+/// pathname payload.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PathError {
+    /// The path contains a byte which would terminate a C pathname.
+    InteriorNul { index: usize },
+}
+
+impl<'a> PathPart<'a> {
+    /// Validates and borrows a NUL-free Unix pathname payload.
+    pub fn new(path: &'a [u8]) -> core::result::Result<Self, PathError> {
+        if let Some(index) = path.iter().position(|&byte| byte == 0) {
+            return Err(PathError::InteriorNul { index });
+        }
+        Ok(Self { bytes: path })
+    }
+
+    /// Borrows the payload of an already validated C string.
+    #[must_use]
+    pub fn from_cstr(path: &'a CStr) -> Self {
+        Self {
+            bytes: path.to_bytes(),
+        }
+    }
+
+    /// Computes the final non-slash path component using musl's basename
+    /// policy from a C string. Empty input yields `.`; an all-slash path
+    /// yields `/`.
+    #[must_use]
+    pub fn basename(path: &'a CStr) -> Self {
+        Self {
+            bytes: basename_component(path.to_bytes()),
+        }
+    }
+
+    /// Computes the directory prefix using musl's dirname policy. Empty
+    /// input and a path without a slash yield `.`; slash-only paths yield `/`.
+    #[must_use]
+    pub fn dirname(path: &'a CStr) -> Self {
+        Self {
+            bytes: dirname_component(path.to_bytes()),
+        }
+    }
+
+    /// Returns the borrowed result bytes.
+    #[must_use]
+    pub const fn as_bytes(self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Returns the result as a byte string without UTF-8 conversion.
+    #[must_use]
+    pub const fn as_ref_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Returns whether the part is the current-directory spelling `.`.
+    #[must_use]
+    pub fn is_current(self) -> bool {
+        self.bytes == b"."
+    }
+
+    /// Returns whether the part is the root spelling `/`.
+    #[must_use]
+    pub fn is_root(self) -> bool {
+        self.bytes == b"/"
+    }
+}
+
+impl AsRef<[u8]> for PathPart<'_> {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes
+    }
+}
+
+impl core::ops::Deref for PathPart<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.bytes
+    }
+}
+
+#[inline]
+fn basename_component(path: &[u8]) -> &[u8] {
+    if path.is_empty() {
+        return b".";
+    }
+    let mut end = path.len();
+    while end > 1 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 1 && path[0] == b'/' {
+        return &path[..1];
+    }
+    let mut start = end;
+    while start > 0 && path[start - 1] != b'/' {
+        start -= 1;
+    }
+    &path[start..end]
+}
+
+#[inline]
+fn dirname_component(path: &[u8]) -> &[u8] {
+    if path.is_empty() {
+        return b".";
+    }
+    let mut end = path.len();
+    while end > 1 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 1 && path[0] == b'/' {
+        return &path[..1];
+    }
+
+    let mut slash = end;
+    while slash > 0 && path[slash - 1] != b'/' {
+        slash -= 1;
+    }
+    if slash == 0 {
+        return b".";
+    }
+    let mut directory_end = slash;
+    while directory_end > 1 && path[directory_end - 1] == b'/' {
+        directory_end -= 1;
+    }
+    if directory_end == 0 {
+        &path[..1]
+    } else {
+        &path[..directory_end]
+    }
+}
+
+/// Computes a borrowed basename result from a NUL-terminated path.
+#[must_use]
+pub fn basename(path: &CStr) -> PathPart<'_> {
+    PathPart::basename(path)
+}
+
+/// Validates a byte path and computes a borrowed basename without allocation
+/// or mutation.
+pub fn basename_bytes(path: &[u8]) -> core::result::Result<PathPart<'_>, PathError> {
+    let part = PathPart::new(path)?;
+    Ok(PathPart {
+        bytes: basename_component(part.bytes),
+    })
+}
+
+/// Computes a borrowed dirname result from a NUL-terminated path.
+#[must_use]
+pub fn dirname(path: &CStr) -> PathPart<'_> {
+    PathPart::dirname(path)
+}
+
+/// Validates a byte path and computes a borrowed dirname without allocation
+/// or mutation.
+pub fn dirname_bytes(path: &[u8]) -> core::result::Result<PathPart<'_>, PathError> {
+    let part = PathPart::new(path)?;
+    Ok(PathPart {
+        bytes: dirname_component(part.bytes),
+    })
+}
+
+#[cfg(feature = "std")]
+impl<'a> PathPart<'a> {
+    /// Computes basename from a Unix `Path` without requiring UTF-8.
+    #[must_use]
+    pub fn basename_path(path: &'a Path) -> core::result::Result<Self, PathError> {
+        let part = Self::new(path.as_os_str().as_bytes())?;
+        Ok(Self {
+            bytes: basename_component(part.bytes),
+        })
+    }
+
+    /// Computes dirname from a Unix `Path` without requiring UTF-8.
+    #[must_use]
+    pub fn dirname_path(path: &'a Path) -> core::result::Result<Self, PathError> {
+        let part = Self::new(path.as_os_str().as_bytes())?;
+        Ok(Self {
+            bytes: dirname_component(part.bytes),
+        })
+    }
+}
+
 #[cfg(feature = "std")]
 impl Arg for PathBuf {
     #[inline]
@@ -297,5 +492,32 @@ mod tests {
         let result = bytes.as_slice().into_with_c_str(|_| Ok(()));
 
         assert_eq!(result.unwrap_err().raw(), 36);
+    }
+}
+
+#[cfg(test)]
+mod path_part_tests {
+    use super::{basename_bytes, dirname_bytes, PathPart};
+
+    #[test]
+    fn basename_and_dirname_follow_musl_path_matrix() {
+        let cases = [
+            (b"".as_slice(), b".".as_slice(), b".".as_slice()),
+            (b"a".as_slice(), b"a".as_slice(), b".".as_slice()),
+            (b"a/".as_slice(), b"a".as_slice(), b".".as_slice()),
+            (b"/".as_slice(), b"/".as_slice(), b"/".as_slice()),
+            (b"////".as_slice(), b"/".as_slice(), b"/".as_slice()),
+            (b"/a".as_slice(), b"a".as_slice(), b"/".as_slice()),
+            (b"/a/".as_slice(), b"a".as_slice(), b"/".as_slice()),
+            (b"/a/b".as_slice(), b"b".as_slice(), b"/a".as_slice()),
+            (b"//a//b".as_slice(), b"b".as_slice(), b"//a".as_slice()),
+        ];
+        for (path, expected_basename, expected_dirname) in cases {
+            assert_eq!(basename_bytes(path).unwrap().as_bytes(), expected_basename);
+            assert_eq!(dirname_bytes(path).unwrap().as_bytes(), expected_dirname);
+        }
+        assert!(basename_bytes(b"/").unwrap().is_root());
+        assert!(dirname_bytes(b"a").unwrap().is_current());
+        assert!(basename_bytes(b"a\0/b").is_err());
     }
 }

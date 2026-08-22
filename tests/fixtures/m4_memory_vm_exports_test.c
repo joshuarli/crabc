@@ -52,6 +52,11 @@ int main(void)
     CHECK(madvise(mapping, page, POSIX_MADV_NORMAL) == 0, "madvise");
     CHECK(posix_madvise(mapping, page, POSIX_MADV_NORMAL) == 0,
           "posix_madvise");
+    /* musl keeps POSIX_MADV_DONTNEED as a successful no-op: do not forward
+       this deliberately unaligned range to Linux MADV_DONTNEED. */
+    CHECK(posix_madvise((unsigned char *)mapping + 1, page,
+                        POSIX_MADV_DONTNEED) == 0,
+          "posix_madvise dontneed no-op");
     CHECK(msync(mapping, page, MS_SYNC) == 0, "msync");
 
     errno = 0;
