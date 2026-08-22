@@ -980,20 +980,29 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+unsafe extern "C" {
+    // The hidden musl-shaped AArch64 implementation in
+    // `aarch64_memory.rs`. Its ABI exactly matches the public C entry, so an
+    // ordinary Rust forwarding function can retain a tail call without a
+    // naked source body.
+    #[link_name = "__crabc_aarch64_memcpy"]
+    fn aarch64_memcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void;
+}
+
+#[cfg(target_arch = "aarch64")]
 /// Copies `n` bytes from `src` to `dst` and returns `dst`.
 ///
 /// # Safety
 ///
 /// `src` must designate at least `n` readable bytes, `dst` must designate at
 /// least `n` writable bytes, and the two ranges must not overlap.
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
-#[unsafe(naked)]
-pub unsafe extern "C" fn memcpy(_dst: *mut c_void, _src: *const c_void, _n: usize) -> *mut c_void {
-    // The C entry is deliberately a tail branch so the external ABI pays no
-    // wrapper prologue, argument shuffling, or return-path cost. The target
-    // owns the raw-pointer contract documented above.
-    core::arch::naked_asm!("b __crabc_aarch64_memcpy");
+pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
+    // SAFETY: this public wrapper owns the same non-overlapping C byte-range
+    // contract documented above, and the hidden implementation has the exact
+    // AArch64 C ABI signature.
+    unsafe { aarch64_memcpy(dst, src, n) }
 }
 
 #[cfg(not(target_arch = "aarch64"))]
