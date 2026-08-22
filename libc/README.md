@@ -1,6 +1,17 @@
 # crabc-libc
 
-A `no_std` Rust implementation of musl-compatible libc. Produces `libc.so` and `libc.a` for running unmodified musl-linked ELF binaries.
+A `no_std` Rust implementation of the libc ABI for crabc's focused modern
+runtime profile. It produces `libc.so` and `libc.a` for running selected
+unmodified musl-linked ELF binaries on Linux AArch64.
+
+## Compatibility profile
+
+Crabc targets Linux AArch64 (`aarch64-unknown-linux-musl`) on Linux kernel
+versions 5.10 and newer. Its musl-compatible ABI is a modern Unix runtime
+profile, not a promise of complete historical musl or glibc breadth; exported
+symbols may exist for ABI compatibility without making every historical libc
+subsystem a project priority. Locale, system-database, cryptographic, and
+allocation behavior remain intentionally bounded by that profile.
 
 ## Usage
 
@@ -20,7 +31,7 @@ Output is in `target/debug/libc.so` and `target/debug/libc.a`.
 
 - Implements ~350+ C library functions (stdio, stdlib, string, math, pthread, etc.)
 - `no_std` — no Rust standard library dependency
-- Targets musl ABI for x86_64 and aarch64
+- Targets the musl ABI for Linux AArch64
 - Supports long double via `f128` on aarch64
 
 ## License

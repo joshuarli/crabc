@@ -1,6 +1,12 @@
 # libc-test Integration Harness
 
-Builds and runs the [libc-test](https://git.musl-libc.org/cgit/libc-test) suite against crabc's libc.so to produce a categorized failure report. `run.sh` remains a compatibility launcher; the build, link, timeout, and test loop live in the dependency-free `runner.py`, while `report.py` owns structured-report generation.
+Builds and runs the selected [libc-test](https://git.musl-libc.org/cgit/libc-test)
+subsets against crabc's `libc.so` to produce a categorized failure report.
+The runtime check is scoped to Linux AArch64 on Linux kernel versions 5.10 and
+newer, with pinned musl as the behavioral oracle; it is not a claim of complete
+historical musl or glibc compatibility. `run.sh` remains a compatibility
+launcher; the build, link, timeout, and test loop live in the dependency-free
+`runner.py`, while `report.py` owns structured-report generation.
 
 ## How It Works
 

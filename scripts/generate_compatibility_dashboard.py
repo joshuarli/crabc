@@ -274,7 +274,9 @@ def main() -> int:
         "",
         f"Generated: `{generated_at}`",
         "",
-        "This is a measurement dashboard, not a claim of full musl compatibility. "
+        "This is a measurement dashboard for crabc's modern runtime profile "
+        "(Linux AArch64 on Linux kernel versions 5.10 and newer), not a claim "
+        "of complete historical musl or glibc compatibility. "
         "`exported`, `implemented`, and `verified` remain separate states.",
         "",
         "## Baseline",

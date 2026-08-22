@@ -1,5 +1,10 @@
 # Pinned AArch64 musl ABI inventory
 
+This inventory records evidence for crabc's supported modern runtime profile:
+Linux AArch64 on Linux kernel versions 5.10 and newer. It measures the pinned
+musl 1.2.6 reference boundary; it is not a claim of complete historical musl
+or glibc compatibility.
+
 This directory records the ABI boundary of the pinned musl 1.2.6 reference on
 the `aarch64-unknown-linux-musl` target. The source files are the independently
 built reference installed at `/opt/musl-1.2.6` in the native `linux/arm64`

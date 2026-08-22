@@ -1,6 +1,15 @@
 # crabc-ldso
 
-A `no_std` Rust dynamic linker (`ldso`) for musl-linked ELF binaries. Produces `libldso.so` which can be used as `--dynamic-linker` to run musl-linked executables.
+A `no_std` Rust dynamic linker (`ldso`) for crabc's focused Linux AArch64
+musl-compatible runtime profile. It produces `libldso.so`, which can be used
+as `--dynamic-linker` for selected unmodified musl-linked executables.
+
+## Compatibility profile
+
+The supported target is Linux AArch64 on Linux kernel versions 5.10 and
+newer. This is a focused modern-runtime loader, not a general loader for
+other architectures or a promise of complete historical musl or glibc
+behavior.
 
 ## Usage
 
@@ -11,7 +20,7 @@ cargo build -p crabc-ldso
 
 Output is in `target/debug/libldso.so`.
 
-Run a musl-linked binary:
+Run a supported AArch64 musl-linked binary:
 ```bash
 LD_LIBRARY_PATH=target/debug ./target/debug/loader my_binary
 ```
@@ -25,8 +34,8 @@ Or directly:
 
 - Self-relocating `_start` entry point
 - Loads `DT_NEEDED` dependencies
-- Handles TLS (Thread-Local Storage) for both x86_64 (TLS_BELOW_TP) and aarch64 (TLS_ABOVE_TP)
-- Processes all standard ELF relocation types
+- Handles AArch64 TLS (Thread-Local Storage) with TLS_ABOVE_TP
+- Processes the supported AArch64 ELF relocation types
 - TLSDESC resolver for aarch64
 
 Startup vectors are copied without fixed argv/envp/auxv limits, and failed

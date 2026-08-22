@@ -1,4 +1,4 @@
-# Implement `crabc-rs`: a complete idiomatic Rust interface to crabc
+# Implement `crabc-rs`: a focused idiomatic Rust interface to crabc
 
 You are extending the measured Linux/AArch64 `crabc` implementation with a new public crate:
 
@@ -46,13 +46,22 @@ C compatibility facade
 idiomatic Rust facade
 ```
 
+The platform boundary is deliberate. `crabc` itself is a Linux/AArch64
+runtime. `crabc-rs` has a required Linux/AArch64 backend and may later gain an
+optional, separately implemented macOS/AArch64 backend through libSystem. A
+macOS `crabc-rs` backend does not make `crabc` portable, and neither backend
+justifies a speculative portability framework.
+
 ---
 
 # Ground truth and assumptions
 
-The target is **Linux/AArch64**. macOS/AArch64 is only a development host;
-all target builds and runtime measurements run in the native Linux/AArch64
-Docker laboratory.
+The target for `crabc` is **Linux/AArch64, little-endian**, with a Linux kernel
+MSRV of **5.10**. The required `crabc-rs` backend has the same target. macOS/
+AArch64 is currently only a development host; an optional `crabc-rs` backend
+may use macOS libSystem later, but it is not a `crabc` target or a Linux
+compatibility requirement. All present target builds and runtime measurements
+run in the native Linux/AArch64 Docker laboratory.
 
 Milestone 10.5 is the accepted C-runtime baseline for this work. It establishes
 the following bounded, reproducible evidence against pinned musl 1.2.6:
@@ -77,21 +86,32 @@ Do not reopen these foundations merely to redesign them. Reopen a boundary only
 when `crabc-rs` work produces a focused regression or reveals a contract the
 current evidence does not cover.
 
+The kernel MSRV is part of the contract: use mechanisms available in Linux
+5.10, do not add fallback paths for older kernels, and document any API that
+deliberately requires a newer kernel.
+
 ---
 
 # Explicitly out of scope
 
-Do not implement:
+For `crabc` itself, do not implement:
 
 ```text
 x86_64
 riscv64
-macOS
+32-bit architectures
+big-endian targets
+non-Linux kernels
 other Unix platforms
 Windows
 ```
 
-Do not create cross-platform abstractions in anticipation of them.
+For the required Linux `crabc-rs` backend, do not implement x86_64, RISC-V,
+32-bit, big-endian, non-Linux, or Windows targets. Do not create portability
+abstractions in anticipation of them. An optional macOS/AArch64 `crabc-rs`
+backend may be considered separately through libSystem; it is not part of the
+`crabc` implementation, the current Linux acceptance gate, or a promise of
+cross-platform semantics.
 
 Target exactly:
 
@@ -117,6 +137,51 @@ If crabc's libc ABI uses mimalloc or another established allocator backend, pres
 
 Rust-native callers should normally allocate through ordinary Rust allocation facilities rather than `malloc`/`free`.
 
+## Scope-reset interpretation
+
+Earlier roadmap language about x86 support, portable Unix backends, a complete
+Rust twin of every C export, or mechanically wrapping the full libc surface is
+historical planning context. It remains useful provenance for why the M0–M10
+evidence and inventories exist, but it is superseded for active work. Preserve
+completed evidence; do not preserve those ambitions as implementation scope.
+
+The coverage ledger remains mandatory, but “complete coverage” means semantic
+accounting. Each meaningful capability is either represented by an idiomatic
+safe, unsafe, or higher-level API, explicitly subsumed by a better Rust
+facility, or recorded as a deliberate compatibility/runtime exception. It does
+not mean one public Rust wrapper per C symbol.
+
+Future peripheral compatibility follows this bounded profile:
+
+* Locale support is limited to `C`, `POSIX`, and `C.UTF-8` (with cheap obvious
+  UTF-8 aliases optional). Preserve the byte-oriented versus UTF-8 distinction;
+  do not build CLDR, locale packs, localized databases, or broad language-
+  specific rules.
+* UTF-8 is the native text model. Compatibility work may cover ASCII, UTF-8,
+  UTF-16LE/BE, and UTF-32LE/BE where justified. Existing M10 codec evidence is
+  preserved, but it is not a commitment to grow a legacy charset catalog.
+* There is no NSS or plugin ecosystem. User/group, host, service, and protocol
+  lookup consumes conventional system files; DNS remains a small `/etc/hosts`,
+  `/etc/resolv.conf`, A/AAAA/CNAME, UDP/TCP-fallback resolver.
+* Do not add DNSSEC, DoH/DoT, mDNS, service-discovery frameworks, recursive-
+  resolver machinery, or IDNA policy to the runtime resolver.
+* Timezone behavior consumes system `TZ`/zoneinfo and POSIX TZ syntax; crabc
+  does not bundle or maintain tzdata. Gettext, message catalogs, and a
+  localization framework remain above this layer (or narrow ABI compatibility
+  only).
+* Do not implement cryptographic algorithms, TLS, X.509, password hashing, or
+  cryptographic PRNG/DRBGs inside crabc. Kernel entropy such as `getrandom` is
+  an operating-system primitive and remains in scope.
+* The runtime stays synchronous. It exposes low-level process and security
+  mechanisms, including prepared fork/exec and justified kernel primitives,
+  but does not become an async runtime, process supervisor, or security-policy
+  framework.
+
+Public unsafe APIs remain honest: use a small documented unsafe boundary where
+fork, signal handlers, raw mappings, ioctl, dynamic symbol typing, or similar
+operations cannot uphold Rust invariants for every caller. Do not make an API
+superficially safe to improve wrapper counts.
+
 ---
 
 # Mission
@@ -129,7 +194,7 @@ bytecodealliance/rustix
 
 and then continues substantially beyond rustix until:
 
-> **Every meaningful capability implemented by mature crabc has an idiomatic Rust representation or an explicitly justified Rust-native equivalent.**
+> **Every meaningful in-scope capability implemented by mature crabc has an idiomatic Rust representation or an explicitly justified Rust-native equivalent.**
 
 The development sequence is:
 
@@ -166,7 +231,7 @@ stdio
         ↓
 dynamic loading
         ↓
-locale/text/iconv
+bounded locale/text/iconv compatibility
         ↓
 pattern APIs
         ↓
@@ -174,10 +239,16 @@ user/group databases
         ↓
 math/complex/fenv
         ↓
-other crabc capabilities
+timezone and other useful runtime capabilities
         ↓
-──── 100% CRABC CAPABILITY COVERAGE ────
+──── 100% IN-SCOPE SEMANTIC ACCOUNTING ────
 ```
+
+The sequence is a planning aid, not a commitment to implement every
+historical libc domain. Locale, charset, resolver, timezone, and gettext work
+must remain within the bounded profile above; ABI-only compatibility is not a
+reason to create a new Rust framework. “100%” is the coverage-ledger invariant,
+not a count of mechanically mirrored C functions.
 
 Do not implement this horizontally.
 
@@ -552,19 +623,26 @@ unless there is a strong technical reason.
 
 ---
 
-# 8. Keep normal dependencies extremely small
+# 8. Keep normal dependencies focused and small
 
 This is foundational systems infrastructure.
 
-The normal production graph is permitted one third-party package:
+Zero dependencies is not a goal by itself. The normal production graph should
+remain small, and a focused dependency is preferable to a bespoke replacement
+when it is easier to audit, preserves LTO visibility, and does not import an
+ecosystem. The baseline dependency is:
 
 ```toml
 bitflags = { version = "2.4.0", default-features = false }
 ```
 
 Use it for typed bit-pattern APIs where it improves correctness and readability.
-Do not add further normal dependencies merely for convenience; each must have a
-documented architectural reason and corresponding dependency-graph review.
+Focused additions such as `memchr`, `simdutf8`, or `atomic-wait` may be
+appropriate when an actual subsystem needs their narrow, tested primitive. Do
+not add dependencies merely for convenience; each normal dependency needs a
+short architectural justification and dependency-graph review covering its
+transitives, proc macros, build scripts, native code, allocation/runtime state,
+`no_std` support, and LLVM/LTO visibility.
 
 Explicitly avoid:
 
@@ -592,8 +670,10 @@ Run:
 cargo tree -p crabc-rs -e normal
 ```
 
-as an acceptance gate: it must show the shared crabc implementation and
-`bitflags`, but no other third-party normal dependency.
+as an acceptance gate: it must show the shared crabc implementation and only
+reviewed focused normal dependencies. Frameworks, proc-macro ecosystems,
+async runtimes, and opaque native libraries remain out of scope for the core
+crate.
 
 ---
 
@@ -1373,7 +1453,7 @@ It is no longer the roadmap.
 
 ---
 
-# PHASE II — COMPLETE CRABC CAPABILITY COVERAGE
+# PHASE II — COMPLETE IN-SCOPE CRABC CAPABILITY ACCOUNTING
 
 # 32. Generate a complete crabc capability inventory
 
@@ -1384,7 +1464,9 @@ preserved as distinct provenance classes. Add the checked loader/dlfcn runtime
 inventory so capabilities not adequately described by a single libc symbol are
 also visible.
 
-Every exported public libc symbol must be assigned to a semantic capability group.
+Every exported public libc symbol must be assigned to a semantic capability
+group. This is accounting for the ABI and its meaning, not a demand for a
+mechanical Rust wrapper for every export.
 
 Also inventory useful implementation capabilities that are not individually represented as exported symbols.
 
@@ -1428,7 +1510,10 @@ requires exactly one owner for every concrete export. The report records the
 expanded group counts, source digests, and full zero-unclassified result. A
 pattern is therefore not an open-ended future-symbol catch-all.
 
-Zero unclassified symbols is a hard completion gate.
+Zero unclassified symbols is a hard completion gate. Deliberately unsupported
+legacy breadth must be represented as an explicit profile limitation rather
+than disguised as an accidental gap or pulled into the native API merely to
+make the count larger.
 
 ---
 
@@ -1467,11 +1552,23 @@ memmove
 strlen-like operations
 qsort
 bsearch
-basic allocation
 printf-style formatting
 ```
 
 Every use of this classification requires a written rationale.
+
+### `scope-exception`
+
+A deliberately out-of-scope capability with a versioned policy contract. This
+classification is not Rust-subsumption evidence and is not an ABI-only
+disposal. The validator currently permits exactly one exception:
+`allocator-mimalloc-libc-boundary` v1 for `memory.allocator-basic` and
+`memory.allocator-observability`, together owning the complete public malloc
+family, including `malloc_usable_size`. It requires documented status,
+explicit policy/rationale/evidence fields, and rejects any other capability,
+symbol set, or reclassification. The project keeps this family at the libc
+boundary under its mimalloc strategy; crabc-rs does not claim C allocator ABI
+or usable-size equivalence.
 
 ### `abi-only`
 
@@ -1487,7 +1584,7 @@ Again, justify it.
 
 ---
 
-# 34. 100% coverage does not mean 1400 silly functions
+# 34. 100% semantic coverage does not mean 1400 silly functions
 
 Do not create APIs such as:
 
@@ -1501,7 +1598,7 @@ merely to increase a counter if Rust already has a superior abstraction.
 
 The completion criterion is:
 
-> **Every semantic capability of crabc is either accessible through a good Rust API or explicitly proven to be subsumed by an existing Rust-native mechanism.**
+> **Every semantic capability of crabc is either accessible through a good Rust API, explicitly proven to be subsumed by an existing Rust-native mechanism, or covered by the one validator-enforced versioned scope exception.**
 
 There must be no meaningful capability hiding behind:
 
@@ -1555,7 +1652,7 @@ After rustix parity, proceed approximately:
 
 5. stdio FILE abstractions
 
-6. locale/wchar/iconv
+6. bounded locale/text/iconv compatibility
 
 7. regex/fnmatch/glob/wordexp
 
@@ -1565,10 +1662,16 @@ After rustix parity, proceed approximately:
 
 10. miscellaneous POSIX facilities
 
-11. remaining capability-manifest gaps
+11. remaining in-scope capability-manifest gaps
 ```
 
 Adjust based on actual mature crabc contents.
+
+This order does not authorize a general internationalization stack, charset
+catalog, NSS/plugin system, timezone database, gettext framework, cryptographic
+subsystem, or any other domain excluded by the scope profile. Such entries are
+closed with precise compatibility classifications when the C ABI requires
+them.
 
 Again: vertical slices only.
 
@@ -1680,7 +1783,22 @@ protocol database
 resolver APIs
 ```
 
-No public Internet should be required by tests.
+The resolver is deliberately small and deterministic. It consumes conventional
+system sources only:
+
+```text
+users/groups: /etc/passwd and /etc/group (where applicable)
+hosts:        /etc/hosts
+DNS:          /etc/resolv.conf and DNS A/AAAA/CNAME
+services:     /etc/services
+protocols:    /etc/protocols
+```
+
+There is no NSS/plugin ecosystem, LDAP/SSSD/PAM integration, or systemd name
+service provider. Keep UDP DNS, required TCP fallback, search domains, and
+normal `getaddrinfo`/`getnameinfo` behavior; do not grow DNSSEC, DoH/DoT,
+mDNS, service-discovery, recursive-resolver, or IDNA policy here. No public
+Internet should be required by tests.
 
 Reuse the existing deterministic DNS fixture.
 
@@ -1772,9 +1890,10 @@ Classify formatting capabilities appropriately in the coverage manifest.
 
 ---
 
-# 43. Locale, wchar and iconv
+# 43. Bounded locale, text and iconv compatibility
 
-Where crabc contains meaningful runtime machinery, expose owned types such as:
+UTF-8 is the native text model. Where crabc contains meaningful runtime
+machinery, expose owned types such as:
 
 ```text
 Locale
@@ -1789,6 +1908,20 @@ Avoid pretending locale mutation is harmless process-global state.
 Use RAII where locale handles have lifetime.
 
 Represent conversion buffers with slices rather than raw pointer-to-pointer interfaces.
+
+The supported locale profile is `C`, `POSIX`, and `C.UTF-8`, with an obvious
+UTF-8 alias accepted only when it is effectively free. Preserve the distinction
+between the byte-oriented C/POSIX locale and the Unicode C.UTF-8 locale; an
+unsupported locale name must fail according to the API contract. Do not build
+CLDR, locale packs, country-specific collation, localized date/monetary data,
+or a gettext/message-catalog framework.
+
+For compatibility, prioritize ASCII, UTF-8, UTF-16LE/BE, and UTF-32LE/BE.
+The completed M10 evidence for additional codec tables remains valid historical
+evidence, but does not commit future work to a Shift-JIS/Big5/GB/DOS/ISO-8859
+catalog or to broad legacy alias behavior. Crabc parses system timezone files
+and POSIX `TZ` syntax when timezone APIs are added; it does not embed or own
+tzdata.
 
 ---
 
@@ -1850,6 +1983,10 @@ Gid
 Support lookups and enumeration where the underlying crabc implementation does.
 
 Thread safety must be explicit.
+
+These APIs consume conventional passwd/group files or a caller-supplied
+snapshot. They must not grow an NSS/plugin, LDAP, SSSD, PAM, or daemon-backed
+identity-provider architecture.
 
 ---
 
@@ -1958,6 +2095,11 @@ ExitStatus-like representations
 where helpful.
 
 Avoid unnecessary heap work between fork and exec.
+
+Keep this layer at the mechanism boundary. Prepared fork/exec is appropriate;
+restart policies, supervisors, shell pipelines, job graphs, logging/capture
+frameworks, service management, and daemon orchestration belong above
+`crabc-rs`.
 
 ---
 
@@ -2485,6 +2627,7 @@ native-safe
 native-unsafe
 native-higher-level
 rust-subsumed
+scope-exception
 abi-only
 internal-runtime
 unclassified
@@ -2533,14 +2676,13 @@ memcpy
 qsort
 → slice sorting
 
-malloc
-→ Rust allocator / Box / Vec
-
 printf
 → format_args!/Write
 ```
 
 Do not classify something as subsumed merely because implementing it is inconvenient.
+The allocator family is governed by the separate, versioned scope exception
+above rather than by this Rust-equivalence rule.
 
 ---
 
@@ -2555,6 +2697,12 @@ malloc/free
 API.
 
 Rust-native allocation should use Rust allocation facilities.
+
+The complete public malloc family, including `malloc_usable_size`, is the sole
+`scope-exception`: `allocator-mimalloc-libc-boundary` v1. It records the
+project's mimalloc-backed libc boundary and is neither `rust-subsumed` nor
+`abi-only`; the exact IDs, symbols, metadata, and evidence are validator
+enforced.
 
 If raw allocator ABI access is necessary for C interoperability, it may live in the raw/compatibility escape hatch.
 
@@ -2576,8 +2724,9 @@ as one feature-gated public facade.
 
 The only additional **workspace** crate justified by this project is the
 internal shared implementation layer if needed. `bitflags` is the one approved
-third-party normal dependency; do not turn that exception into a general
-crate-splitting or dependency-growth policy.
+baseline third-party normal dependency; other focused crates require the
+dependency review described in section 8. Do not turn that allowance into a
+general crate-splitting or dependency-growth policy.
 
 Avoid a 20-crate micro-workspace.
 
@@ -2631,7 +2780,7 @@ no production rustix dependency
 
 default feature is std; no-default-features target check passes
 
-bitflags is the only third-party normal dependency
+normal dependencies are few, focused, and individually justified
 
 shared implementation strategy proven
 
@@ -3096,8 +3245,9 @@ Every `abi-only` or `internal-runtime` classification must be explicitly justifi
 M9 is complete for the measured Linux/AArch64-little-endian dynamic surface.
 `compat/crabc-rs/coverage.toml` is now a v2 semantic ledger for all 1,669
 candidate exports, with the pinned 1,647-symbol musl baseline and both input
-TSV SHA-256 digests checked on every run. It has 57 symbol-backed semantic
-groups plus one non-exported private-runtime implementation capability. The
+TSV SHA-256 digests checked on every run. It preserves 57 symbol-backed
+semantic groupings while separately accounting for non-exported private-runtime
+and Linux-native implementation capabilities. The
 generated `python3 compat/rustix/run.py --check` report proves:
 
 ```text
@@ -3111,14 +3261,15 @@ Status is deliberately independent of classification. `verified` records a
 native seam with direct-boundary and behavioral evidence; `deferred` records a
 meaningful capability and its intended native API, reason, and M10 target; and
 `documented` records Rust-subsumed, ABI-only, or private-runtime behavior with
-the required rationale. The current ledger has four narrowly verified groups,
-40 deferred groups, and 14 documented groups. Existing M0–M8 vertical slices
-remain evidence for their listed operations, but a mixed C capability group is
-deferred until its full native contract is complete. This is not a claim of M10
-completion.
+the required rationale. The current ledger has 214 groups: 155 verified, 37
+deferred, and 22 documented. Existing M0–M8 vertical slices remain evidence
+for their listed operations, but a mixed C capability group is deferred until
+its full native contract is complete. This is not a claim of M10 completion.
 
-In particular, malloc remains Rust-subsumed and out of scope for crabc-rs
-(mimalloc remains the underlying allocator strategy); `fopen64` is an
+In particular, the public malloc family is the versioned
+`scope-exception` `allocator-mimalloc-libc-boundary` v1 and remains out of
+scope for crabc-rs (mimalloc remains the underlying allocator strategy);
+`fopen64` is an
 Linux/AArch64 ABI alias rather than stdio coverage; private crypt, atfork, and
 loader helpers are narrowly ABI/runtime entries; and `tgkill` is recorded as
 the verified native-safe `signal::kill_thread` seam. The validator and its
@@ -3128,21 +3279,839 @@ TLS-errno use; and ABI-only records lacking review evidence.
 
 ---
 
-# 86. Milestone 10 — 100% native capability coverage
+# 86. Milestone 10 — semantic capability closure
 
-This is the final semantic gate.
+This is the final semantic gate. The original “100% native capability
+coverage” label is retained in the M10 evidence history but is superseded as a
+mechanical-wrapper ambition.
 
 The project may claim:
 
-> crabc-rs provides complete native Rust coverage of crabc
+> crabc-rs provides complete in-scope semantic coverage of crabc
 
 only when:
 
-1. every meaningful underlying capability is reachable through an idiomatic Rust interface;
+1. every meaningful in-scope underlying capability is reachable through an idiomatic Rust interface, explicitly subsumed by Rust, or covered by a documented compatibility/runtime exception;
 2. inherently unsafe operations have explicit unsafe interfaces;
 3. operations better represented by existing Rust primitives are documented as such;
 4. raw C ABI exposure is not being used to hide missing native API design;
 5. the complete machine-readable coverage inventory is green.
+
+### Progress — 2026-08-21 UTC
+
+M10 remains **in progress**. The ledger has been tightened before adding more
+surface: existing direct Linux/AArch64 slices are now recorded only in the
+exact capability groups they prove, while mixed C families remain deferred.
+The current inventory has 214 groups: 155 verified, 37 deferred, and 22
+documented. In particular, Rust-subsumed entries no longer hide C errno and
+exit state, scanf, secure byte operations, the remaining callback/intrusive
+collections, or
+floating-environment-sensitive math. The sole allocator exception remains
+explicit: crabc-rs exposes no malloc-family API, including usable-size
+introspection, and uses the project mimalloc strategy rather than claiming
+C allocator ABI equivalence.
+
+`fd::OwnedFd::close` consumes its one ownership token before direct Linux
+`close`; a Linux `EINTR` is success because the descriptor has already been
+released and must never be retried. `fs::lock_from_current` makes the
+`lockf` range and operation explicit, avoiding C command integers and signed
+length traps while preserving advisory, process-associated lock semantics.
+`pipe::{splice, IoSliceRaw, vmsplice}` follows Rustix's borrowed-descriptor
+and optional-offset shape. `vmsplice` stays explicitly unsafe: its caller
+selects the pipe direction and, for `GIFT`, owns page alignment, actual
+page-size, and post-transfer lifetime obligations. The direct AArch64 proof
+exercises syscall numbers 25, 57, 59, 62--64, 75, and 76 without a C ABI or
+TLS-errno hop.
+
+`memory::ByteOps` covers the four non-basic byte operations through borrowed
+Rust slices: `explicit_bzero` performs volatile writes behind compiler fences;
+`memccpy` and `mempcpy` return typed suffixes; and `swab` preserves an odd
+tail byte. Its AArch64 static archive has no specialized C byte-operation,
+allocator, or TLS-errno reference.
+
+`text::{CStrBuilder, CStrWrite, PaddedCopy}` makes C-string writes
+invariant-preserving: exact, truncating, padded, and append-prefix forms
+always retain their private terminator. Allocation-gated `CString` duplication
+preserves non-UTF-8 bytes. ASCII case folding, musl `strverscmp` behavior,
+empty-preserving split state, and independent token state replace C global or
+pointer-driven contracts. `path::{PathPart, basename, dirname}` uses NUL-free
+`CStr` input or checked byte slices and preserves musl's lexical path policy.
+
+`numeric::{EncodedLong, DecodedLong, DecodeStatus}` owns musl's six-byte,
+low-32-bit, least-significant-digit radix-64-long representation and makes
+NUL termination, invalid bytes, input exhaustion, and the digit limit typed
+decode states. `collections::{Search, InsertOutcome, CallbackSort}` replaces
+C comparator pointers with ordered typed slices, alloc-gated `Vec` growth,
+and explicit mutable comparator context; its ordering remains deliberately
+unstable, as with `qsort_r`.
+
+`process::kernel_brk` is an explicit unsafe query/request boundary that never
+coordinates an allocator. `mm::{MlockAllFlags, PosixAdvice, mlockall,
+munlockall, posix_madvise, remap_file_pages}` keeps process-wide lock policy,
+mapped-range provenance, musl's POSIX `DONTNEED` no-op, and legacy remap's
+fixed zero compatibility words explicit. The C `brk`/`sbrk` and
+`posix_madvise` adapters were corrected to the same musl semantics.
+
+`net::{MMsgHdr, sendmmsg, recvmmsg}` owns private Linux message records while
+retaining source/destination borrows, initialized receive prefixes, partial
+batch counts, individual result fields, and mutable timeout state. The fixed
+`net::sockatmark` ioctl is separately verified as a typed boolean query.
+
+`time::{IntervalTimerValue, setitimer, alarm, ualarm}` controls the explicit
+process interval timers with microsecond-validated inputs and complete old
+settings. `PosixTimer` owns a kernel timer ID and typed specification/notify
+records, supports explicit retryable deletion plus best-effort Drop, and
+deliberately excludes `SIGEV_THREAD`; that callback-runtime work remains a
+separate deferred implementation capability. `sleep` and `usleep` are
+documented as covered by the more expressive `nanosleep(Duration)` boundary.
+
+`time::{CalendarTime, time, difftime, gmtime, timegm}` provides strict,
+musl-derived UTC Gregorian conversion without a C `tm` layout, static buffer,
+timezone, or TLS errno. Invalid civil fields and C `timegm` normalization are
+rejected rather than represented by an invalid native value; local-time,
+format/parse, and clock-discipline work remains distinct. `process::chroot`
+is Rustix-shaped but explicit about its process-wide root effect, and its
+regression only asks the kernel for a nonexistent path. `process::{umask,
+setrlimit}` expose their process-global mutations with restoration evidence
+and limit-order validation. Their direct AArch64 proof is limited to syscalls
+51, 113, 166, and 261. The C `remove` adapter also now matches musl by
+retrying `EISDIR` with `AT_REMOVEDIR`; native Rust retains separate typed file
+unlink and directory-removal operations.
+
+`fs::{canonicalize_into, canonicalize}` is a byte-preserving physical
+canonicalization contract with caller-buffered and alloc-gated owned results.
+It resolves lexical components and absolute/relative links through direct
+Linux directory operations, caps path expansion at `PATH_MAX` and forty links,
+and makes output capacity failure explicit rather than exposing a C result
+pointer or implicit allocation.
+
+`time::clock_getcpuclockid` turns musl's encoded process CPU clock ID into a
+validated opaque value, rejecting `pid_t` inputs that could wrap to another
+clock before reading it through `DynamicClockId::Process`. `clock_settime` now
+has the exact Rustix shape over a canonical `Timespec`; tests exercise an
+un-settable monotonic clock only, preserving direct `EINVAL`/`EPERM` without
+altering wall-clock state.
+
+`param::{page_size, linux_hwcap, linux_minsigstksz, linux_execfn}` reads fixed
+auxiliary-vector records directly from `/proc/self/auxv`, matching Rustix's
+Linux-raw fallback without borrowing libc's `getauxval` state. Network-device
+name/index lookup now has Rustix's descriptor-taking `SIOCGIFINDEX` and
+`SIOCGIFNAME` forms over a private 40-byte AArch64 `ifreq` boundary. Reverse
+lookup returns owned fixed inline UTF-8 storage or an alloc-gated `String`,
+never if_indextoname's caller buffer. Interface address-list enumeration stays
+separate.
+`net::{IpAddr, Ipv4Addr, Ipv6Addr}` also re-exports Rustix's pure core value
+types: constructor, octet, bit, and IPv4/IPv6-variant behavior is available
+without claiming C `inet_*` text parsing, static storage, or interface-list
+ownership.
+
+`event::pause` matches Rustix's deliberately unit-returning signal-only wait:
+Linux/AArch64 uses direct `ppoll(NULL, 0, NULL, NULL)` and its inevitable
+`EINTR` becomes the completion condition rather than C `errno` state. It does
+not install a handler or alter a signal mask. `termios::{ttyname_into,
+ttyname}` adds caller-buffered and alloc-gated terminal-path retrieval. It
+requires procfs, validates both character-device and terminal state, and
+compares the procfd target's device/inode with the original descriptor before
+returning it; C static storage and `ttyname_r`'s integer/buffer convention do
+not cross the native boundary.
+
+`termios::{ioctl_tiocexcl, ioctl_tiocnxcl}` follows Rustix's no-argument
+exclusive-mode ioctls over a borrowed terminal descriptor. The terminal owns
+the setting until explicit release or teardown; privileged opens may bypass its
+`EBUSY` restriction. It carries no C terminal-state pointer or errno contract.
+`Termios::special_codes` is now the complete Rustix named index vocabulary
+over Linux's private 19-byte `NCCS` ioctl region. It deliberately remains a
+44-byte Linux terminal record rather than a cast of musl's differently sized
+public C `struct termios`; the wider terminal/session policy is still deferred.
+
+`thread::futex::{Flags, Timespec, wait, wake}` is the bounded Rustix-shaped
+Linux futex primitive. Borrowing an `AtomicU32` makes the required alignment
+and lifetime explicit, and the optional borrowed timeout keeps the kernel's
+relative `FUTEX_WAIT` form. `PRIVATE`, `CLOCK_REALTIME`, and future bits are
+passed directly to Linux for operation-specific validation; `EAGAIN`, `EINTR`,
+timeout, and wake-count results remain direct. Priority inheritance, requeue,
+bitset, futex-fd, and waitv operations remain deferred, as does any C pthread
+ABI claim.
+
+`thread::{Uid, Gid, set_thread_res_uid, set_thread_res_gid}` exposes Rustix's
+Linux `setres*` shape with the actual calling-task-only effect. `None`
+is the kernel all-ones no-change sentinel, while an explicit all-ones typed ID
+is rejected so it cannot silently change meaning. This is not musl's
+process-wide synchronized C credential contract, which remains deferred.
+
+`unsafe process::{set_fs_uid, set_fs_gid}` is a separate Linux extension for
+filesystem identity. `None` is the kernel all-ones query word and a typed
+all-ones ID is rejected; the returned value is the prior filesystem identity,
+including when Linux denies a requested change without an errno result. The
+calling-task authority effect is intentionally not presented as musl's
+synchronized process credential operation.
+
+`termios::{tcdrain, tcflush, tcflow, tcsendbreak}` is the safe
+Rustix-compatible queue-control quartet. It uses closed queue/action types and
+direct terminal ioctls over a borrowed descriptor. That evidence does not
+promote the separate private termios-record, foreground process/session, or
+PTY lifecycle contracts, which remain deferred.
+
+`fs::posix_fallocate` fixes Linux `fallocate` to its POSIX zero-mode
+operation. Its borrowed descriptor, checked unsigned byte range, unchanged
+file position, and direct `Errno` result make C's integer-error convention and
+flag-bearing Linux allocation modes unavailable at this native boundary.
+
+`process::{get_current_dir_name, get_current_dir_name_alloc}` accepts a
+caller-owned `PWD` snapshot rather than reading global environment state. It
+returns its exact symlink-preserving, non-UTF-8 bytes only when direct device
+and inode checks show that an absolute nonempty snapshot is the current
+directory; otherwise it uses physical `getcwd`. `lchmod` is ABI-only and
+documented: Linux cannot mutate symlink modes, and musl's fixed `ENOTSUP`
+result is not a native operation.
+
+`time::timespec_get` is the direct realtime observation corresponding to the
+single C11 `TIME_UTC` case. It returns a typed, normalized `Timespec` or a
+kernel error—not C's base/zero sentinel—and neither owns timezone state nor
+implies the deferred calendar, formatting, or clock-adjustment surfaces.
+
+`time::{RealtimeMillis, realtime_millis}` is the native replacement for musl's
+`ftime`: it reads `CLOCK_REALTIME` through direct Linux/AArch64 syscall 113,
+retains signed Unix seconds, and truncates a validated nanosecond remainder to
+milliseconds. It does not expose C `struct timeb`, timezone state, allocation,
+vDSO dispatch, or TLS `errno`; the other local-time, formatting, parsing, and
+clock-control symbols remain in deferred `time.clock-calendar`.
+
+`net::parse_ipv4_legacy` has musl's full one-to-four-component base-zero IPv4
+grammar over a complete byte slice. `Ipv4Addr` preserves a valid all-ones
+address without `inet_addr`'s sentinel ambiguity, and ordinary Rust formatting
+replaces `inet_ntoa`'s static buffer. Strict modern parsing and interface
+enumeration remain separate deferred contracts; the Ethernet codec is now
+covered by its own complete four-symbol group below.
+
+`net::{parse_ipv4_network_number, make_ipv4_address, ipv4_local_number,
+ipv4_network_number}` is the separate four-helper classful IPv4 arithmetic
+capability corresponding to `inet_network`, `inet_makeaddr`, `inet_lnaof`, and
+`inet_netof`. It states `Ipv4Addr`'s logical network-order octets and
+host-order `u32` network/host numbers at the API boundary; musl's
+`htonl`/`ntohl` semantics make the result independent of AArch64 object
+representation. It returns owned values and does not reproduce C sentinel
+results, process-global static storage, allocation, or TLS `errno`. Modern
+presentation parsing remains separate, while the independent owned
+interface-address snapshot and ethers database contracts are accounted for
+below; this arithmetic slice does not claim broader legacy address parity.
+
+`net::EthernetAddress` is the complete native counterpart for musl's
+`ether_aton`, `ether_aton_r`, `ether_ntoa`, and `ether_ntoa_r` as one verified
+capability. `EthernetAddress::parse` consumes a complete borrowed byte slice
+with exactly six colon-separated components, preserving musl's
+`strtoul(..., 16)` spellings (leading C whitespace per component, an optional
+sign, and an optional `0x`/`0X` prefix) while rejecting no-conversion/empty
+components, out-of-range octets, missing or extra components, and trailing
+bytes. `to_ascii_bytes` and `write_to` produce musl's exact canonical form:
+six two-digit uppercase hexadecimal fields separated by colons (`%.2X`,
+`:%.2X`), with no terminating NUL and no static buffer. The release AArch64
+archive probe exercises parsing, round-trip bytes, uppercase formatting,
+short-buffer rejection, and malformed/trailing input; its verifier rejects
+the four C codec calls, neighboring address helpers, allocator, and TLS
+`errno` references. No C ABI or libc public call is part of this native
+boundary.
+
+`fs::{create_temp_dir_into, create_temp_dir, create_temp_dir_at_into,
+create_temp_dir_at}` replaces `mkdtemp`'s mutable `XXXXXX` template with an
+explicit parent, prefix, caller buffer or alloc-gated result, 96-bit kernel
+random suffix, and atomic `mkdirat(..., 0700)` retry loop. The returned path
+is not a retained directory capability; callers that coordinate CWD changes
+retain a parent descriptor and use the `_at` forms.
+
+The first new M10 native implementation capability is
+`text::{TextEncoding, TextConverter}`. It is an allocation-free, borrowed-slice
+converter for strict UTF-8, ASCII, UTF-16LE/BE, UTF-32LE/BE, and Linux/AArch64
+little-endian `WChar`, plus ISO-8859-2 through -16, with typed resumable
+progress, malformed/incomplete input, output-full, and unrepresentable-scalar
+results. Its AArch64 static probe rejects `iconv*`, C allocator, and
+TLS-errno references. Undefined ISO table slots retain their extracted table
+scalar in the native contract. This is intentionally not a claim that the C
+`iconv`, `iconv_open`, and `iconv_close` exports or their complete legacy
+codec/alias behavior are done: those symbols remain deferred until the C
+compatibility adapter and native facade share the full typed implementation.
+
+`text::AsciiClass` and its typed `u8` predicates/conversions complete the
+exported byte ctype group under the fixed C/POSIX locale model. High bytes are
+valid inputs with an empty classification, while C EOF, negative/out-of-range
+integers, locale handles, and wide ctype stay outside this type boundary and
+in their separate deferred capability groups.
+
+`stdio::{BoundedFormatter, FormatResult, format_to}` now supplies the native
+bounded-formatting seam. Typed `core::fmt::Arguments` write into caller-owned
+byte storage, report the complete required UTF-8 byte count, and preserve a
+valid UTF-8 prefix on truncation. C varargs, trailing-NUL, locale, allocator,
+and errno behavior do not cross this boundary; its AArch64 probe rejects those
+C dependencies.
+
+The C iconv adapter has a pinned-musl regression fixture for incomplete
+UTF-8, surrogate rejection, and pointer/count progress before `EILSEQ` or
+`E2BIG`; those cases now pass. ISO-8859-2 through -16 data lives once in
+`crabc_core::iconv` and serves the legacy adapter. This begins the data
+migration only: C iconv aliases and all legacy codec behavior remain deferred.
+
+`text::{NumberParser, NumberParseError}` supplies allocation-free full-slice
+ASCII integer parsing for an explicit radix from 2 through 36. Its typed
+errors distinguish empty input, signs, invalid digits, and overflow. It makes
+locale, whitespace, base prefixes, end pointers, and errno unrepresentable;
+floating-point, wide-character, and locale-sensitive parsing remain deferred.
+
+`rand::{RandomState, random_u32, getrandom, GetRandomFlags}` makes random
+state explicit: a deterministic non-cryptographic SplitMix64 stream is owned
+by the caller, while `from_entropy` and `getrandom` use the direct Linux
+kernel boundary with typed errors. No C random global, public C ABI, or errno
+state participates.
+
+`fs::{StatFs, StatVfs, statfs, fstatfs, statvfs, fstatvfs}` exposes typed
+filesystem-capacity observations through direct Linux/AArch64 `statfs` and
+`fstatfs` calls. The kernel ABI layout remains private; the POSIX-shaped
+`StatVfs` mapping is explicit and conservative. This does not claim the other
+path/metadata aliases.
+
+`fs::{fallocate, FallocateFlags}` allocates, preserves size, zeroes, or punches
+a checked byte range through the direct Linux/AArch64 syscall. It borrows the
+descriptor without changing its offset, accepts only a closed safe mode set,
+and rejects unsupported combinations plus signed `loff_t` range overflow
+before the kernel boundary. POSIX allocation aliases and temporary-path policy
+remain separate work.
+
+`fs::syncfs` borrows an open descriptor to flush its mounted filesystem through
+the direct Linux/AArch64 syscall. It is intentionally distinct from per-file
+`fsync`/`fdatasync` durability and does not use C state or errno.
+
+`fs::sync` invokes the global Linux writeback syscall with its direct
+zero-argument, unit-success contract. Linux waits for kernel/filesystem
+writeback completion while POSIX permits scheduling-only behavior; neither
+guarantees persistence past a device volatile cache.
+
+`fs::{Advice, fadvise}` makes the six POSIX file-access hints a closed native
+type. Its Rustix-shaped range accepts either an explicit nonzero length or the
+kernel's zero-length-to-end-of-file convention, checks signed ABI bounds before
+the direct `fadvise64` syscall, and deliberately does not reproduce C's
+direct-error return convention.
+
+`fs::readahead` makes Linux's advisory cache-read request available over a
+borrowed descriptor without moving its file position. Its unsigned offset and
+length form a checked half-open range; values or range ends outside the signed
+`loff_t` domain return `EINVAL` before the direct syscall rather than being
+truncated.
+
+`fs::copy_file_range` copies a requested range between two borrowed
+descriptors. Optional mutable offsets preserve Linux's explicit-offset mode;
+absent offsets preserve its shared-file-position mode. The wrapper checks every
+`loff_t` value and range end before the syscall, exposes short copies, and
+commits caller offsets only after a successful kernel return.
+
+`process::{getcwd, getcwd_alloc}` reads the current directory through the
+direct Linux/AArch64 syscall. The allocation-free form returns only the
+initialized, NUL-terminated prefix of caller-owned storage; the alloc-gated
+convenience reuses a vector and grows only after `ERANGE`. It does not expose
+C's allocation ownership rule or a raw C buffer contract.
+
+`process::{chdir, fchdir}` changes the process-global current directory through
+direct Linux/AArch64 syscalls. The safe Rustix/std-shaped operations do not
+isolate threads, so callers must coordinate concurrent pathname work; the
+regression restores the original directory through an owned descriptor on an
+intentional error path.
+
+`fs::{access, Access}` checks a current-directory pathname with a closed
+read/write/execute/existence mode set. It preserves Linux's real-ID
+`access()` semantics through the direct three-argument `faccessat` syscall,
+but intentionally exposes neither directory-relative nor `faccessat2` flags.
+
+`fs::sendfile` transfers between two borrowed descriptors while preserving
+Linux's two input-offset modes: an explicit mutable offset advances itself but
+not the input descriptor, whereas `None` advances the input descriptor. It
+returns short transfer counts, rejects offsets outside signed `off_t` before
+the direct syscall, and never transfers descriptor ownership.
+
+`fs::ftruncate` now rejects byte lengths outside Linux's signed `loff_t` range
+before it even borrows a descriptor. The regression preserves the existing
+checked direct syscall for representable values while making unsigned cast
+wraparound and any accidental file-size mutation impossible for invalid input.
+
+`fs::truncate` gives a pathname-selected file the same checked unsigned byte
+count boundary. An unrepresentable length returns `EINVAL` before `Arg` path
+conversion or the direct syscall, so it cannot mutate the selected file.
+
+`fs::{Dev, FIFO_DEVICE, mknodat, mkfifo, mkfifoat}` creates Linux filesystem
+nodes through direct `mknodat`. The node type, permission/special bits, and
+exact `dev_t` are separate inputs: `FileType::Unknown` and caller-provided
+file-type bits in `Mode` return `EINVAL` before the syscall. FIFO helpers own
+their required zero device word, while device-node privilege and device-number
+validation remain kernel error paths rather than unsafe Rust memory behavior.
+
+`fs::{ChownFlags, chown, lchown, fchown, chownat}` uses direct
+`fchownat`/`fchown` for Linux/AArch64 ownership changes. `None` alone maps to
+the all-ones no-change field; a raw all-ones `Uid` or `Gid` is rejected instead
+of silently acquiring that different meaning. The closed ownership flag type
+only permits final-symlink no-follow, not unrelated `AT_*` bits.
+
+`thread::sched_getcpu` is the Rustix-shaped, infallible transient CPU
+observation. Its direct `getcpu` syscall writes into facade-owned valid stack
+storage, so no user-memory error path escapes; the result does not claim CPU
+affinity, pinning, or stability across a scheduling event.
+
+`rand::{getentropy, GETENTROPY_MAX_LENGTH}` fills caller-owned storage through
+direct Linux/AArch64 `getrandom` with musl's exact 256-byte ceiling. An
+oversize request returns `EIO` before the syscall; interruptions retry, and
+the API exposes a `MaybeUninit` buffer only after it is wholly initialized.
+It does not cross a public C entropy or errno boundary.
+
+`fs::create` is the narrow native equivalent of `creat`: direct `openat` with
+write-only, create, and truncate flags and no implicit close-on-exec. It
+returns an `OwnedFd`; callers requiring a different creation policy use the
+explicitly general `fs::open` API instead.
+
+`system::{Uname, uname}` provides owned Linux kernel-name observations through
+`Uname::{nodename, domainname}`. This follows Rustix's `uname`-based hostname
+shape and deliberately avoids C caller-buffer sizing, truncation, and errno
+semantics while keeping the UTS layout private.
+
+`fs::{fcntl_getfl, fcntl_setfl}` adds the status-flag forms of Linux `fcntl`
+over a borrowed descriptor. Observed unknown `OFlags` bits are retained, and
+the API explicitly reflects that `F_SETFL` changes the shared open-file
+description: duplicate descriptors observe its result. Descriptor-local
+close-on-exec remains separate from this contract.
+
+`process::{setpriority_process, setpriority_process_group,
+setpriority_user}` sends a closed `Priority` and `PriorityTarget` directly to
+Linux/AArch64 `setpriority`. It is Rust-safe but intentionally has scheduling
+side effects, so callers coordinate affected tasks; permission and target
+errors remain typed kernel results. The native contract does not adopt C
+`nice` increment or errno-translation behavior.
+
+`fs::{futimes, Timeval}` provides the descriptor-only microsecond timestamp
+operation through the existing direct `utimensat` futimens form. `None`
+expresses current time without a nullable pointer; supplied signed seconds are
+preserved while invalid microseconds are rejected before nanosecond conversion
+or the syscall. Path-based timeval aliases remain separate policy work.
+
+`system::{LoadAverages, load_average}` converts Linux `sysinfo`'s fixed 16.16
+one/five/fifteen-minute load words into an owned observation. It deliberately
+does not expose C `getloadavg`'s partial caller buffer, count, or sentinel
+conventions, and it adds no new C or syscall boundary beyond `sysinfo`.
+
+`fs::{lutimes, Timeval}` updates a final symlink's own timestamps through
+direct `utimensat` with the closed no-follow flag. It shares the pre-kernel
+microsecond validation and `None` current-time form with `futimes`; target
+timestamps remain outside this operation's effect.
+
+`process::getrlimit_for` observes a selected process's current resource limit
+through direct `prlimit64`, preserving typed optional-PID selection, kernel
+permission/exit races, and the existing unlimited representation. It always
+passes a null new-limit pointer, so it is not a limit-mutation API.
+
+`fs::{futimesat, Timeval}` is the directory-relative, final-symlink-following
+timeval form. Its owned directory-descriptor borrow, non-null typed path, and
+zero `utimensat` flags make that resolution policy explicit; checked
+microseconds and `None` current time share the existing timestamp contract.
+C's null-path extension, cwd-only form, and no-follow form remain distinct.
+
+`time::process_cpu_time` converts the known Linux process CPU-time clock into
+a canonical `Duration` through the existing direct `clock_gettime` seam. It
+does not inherit C `clock`'s `clock_t` microsecond unit, overflow sentinel, or
+calendar-time behavior.
+
+`time::{DynamicClockId, clock_gettime_dynamic}` adds the Rustix-shaped
+fallible dynamic-clock observation. Known clocks and Linux clock-device
+descriptors are encoded as typed identifiers, with the descriptor borrow
+retaining its owner for the query; syscall 113 writes caller-owned timespec
+storage directly. Kernel errors such as `EINVAL` remain `Result` values, and
+the slice has no libc, vDSO, or TLS-errno route. Clock mutation remains
+deferred.
+
+`fs::{utimes, Timeval}` is the AT_FDCWD, final-symlink-following timeval
+form. It reuses checked microseconds and the typed current-time form while
+making cwd selection explicit; C nullable pointers remain outside this
+contract.
+
+`fs::{utime, Utimbuf}` is the corresponding whole-second timestamp form. Its
+typed pair is converted privately to two zero-nanosecond records for direct
+`utimensat`; `None` requests Linux current time, and cwd lookup follows a
+final symlink. The native value does not promise C layout or nullable-pointer
+semantics.
+
+`fs::statx` provides direct extended Linux metadata over a private exact
+256-byte output record. `Statx::stx_mask` remains authoritative for optional
+fields; the reserved request bit is rejected before the syscall, and direct
+kernel errors such as `ENOSYS` remain visible rather than falling back to
+`fstatat` or caching process-wide availability.
+
+`process::scheduler_priority_bounds` is a read-only scalar observation over
+the closed `SCHED_OTHER`, `SCHED_FIFO`, and `SCHED_RR` policies. It validates
+the returned ordering and preserves kernel errors, while scheduler-policy
+selection and parameter mutation remain outside this facade.
+
+`thread::sched_rr_get_interval` observes a selected Linux task's round-robin
+interval as a validated `Duration`. `None` retains PID-zero current-task
+selection, while `Some(Pid)` preserves direct lookup and permission errors;
+it neither selects a scheduler policy nor changes any task state.
+
+`fs::accessat` has Rustix's `Access`/`AtFlags` source shape while retaining a
+direct Linux/AArch64 kernel boundary: empty flags select `faccessat`, and the
+closed `EACCESS`/`SYMLINK_NOFOLLOW` subset selects `faccessat2`. Other
+distinguishable at-family bits fail before the syscall; Linux's shared
+`REMOVEDIR`/`EACCESS` bit is necessarily interpreted as `EACCESS`. This
+deliberately has no musl/Rustix fallback, credential emulation, or
+process-global availability cache, so an older kernel's `ENOSYS` remains
+visible.
+
+`thread::{CpuSet, sched_getaffinity}` reads a Rustix-shaped fixed 1024-bit CPU
+mask through direct syscall 123. `EINVAL` for an insufficient kernel mask is
+preserved without allocation, retry, or truncation; a successful short kernel
+write has its private tail cleared. `CpuSet`'s local construction and bit
+methods change only the value, not task affinity. The result is a transient
+affinity snapshot rather than a kernel-mutation API or a cross-call stability
+guarantee.
+
+`thread::sched_setaffinity` is the matching direct syscall 122 mutation over a
+fixed `CpuSet`. `None` selects the calling task and `Some(Pid)` preserves
+kernel task-lookup and permission errors. Linux may intersect the requested
+mask with online/cpuset-permitted CPUs, reporting an empty effective mask as
+`EINVAL`; the test reapplies the observed mask so it exercises the syscall
+without intentionally changing task eligibility.
+
+`io::{pread, pwrite}` adds caller-buffered positioned I/O with borrowed
+descriptors, non-negative `u64` offsets, typed errors, and `MaybeUninit` read
+support. It preserves the descriptor position and does not claim flag-bearing,
+splice, or remaining descriptor operations.
+
+`io::{IoSlice, IoSliceMut, readv, writev}` adds initialized vectored I/O over
+the same direct descriptor boundary. Each segment keeps its source or exclusive
+destination borrow alive, segments may be advanced explicitly after a short
+operation, and empty vectors/segments are valid without allocation. This does
+not overclaim positioned-vector, flag-bearing, splice, or sync extensions.
+
+`io::{preadv, pwritev}` makes that same initialized-segment contract positional.
+It preserves the shared descriptor offset, retains short-read suffixes, and
+encodes the full `u64` offset through the Linux/AArch64 syscall ABI's explicit
+low/high 32-bit words. Flag-bearing vectors and splice remain deferred.
+
+`io::{preadv2, pwritev2, ReadWriteFlags}` extends that boundary with the
+documented Linux RWF flags. Unknown flags are rejected before the direct
+syscall; ordinary offsets retain their exact low/high-word encoding, while the
+explicit `u64::MAX` sentinel retains Linux's current-file-offset semantics.
+
+`io::{sync_file_range, SyncFileRangeFlags}` submits the bounded Linux
+writeback/wait operation for a borrowed descriptor. Its closed flag set and
+checked signed range preserve the Linux/AArch64 ABI, including zero length's
+through-EOF meaning, without claiming global `sync` semantics or C errno.
+
+`event::{ppoll, PollFd, PollFlags}` supplies the signal-mask-aware readiness
+form through the direct Linux/AArch64 syscall. It borrows a `SignalSet` only
+for the call, passes the exact eight-byte kernel mask, and copies the timeout
+that Linux may mutate; `poll` remains the explicit no-mask convenience form.
+
+`event::{epoll::create_legacy, epoll::wait_with_mask}` completes the legacy
+epoll alias and signal-mask-aware wait over the existing initialized event
+buffer. `event::{FdSetElement, FdSetIter, fd_set_*, select, pselect}` exposes
+the Linux bit-vector descriptor-set contract in the Rustix shape: the sets are
+mutated to ready entries, raw descriptor lifetime is an explicit unsafe
+obligation, and the `pselect6` timeout is copied. The C `select` adapter
+validates negative timeval fields, normalizes large microsecond fields with
+checked seconds arithmetic, and never writes the caller's timeval; C
+`pselect` passes the eight-byte kernel signal-set width rather than musl's
+public 128-byte sigset representation.
+
+`event::{eventfd_read, eventfd_write}` borrows an event descriptor and keeps
+its one eight-byte counter record private as a typed `u64`. Reads retain both
+ordinary counter-reset and semaphore behavior; writes preserve Linux's
+all-ones rejection and nonblocking overflow error. The readiness ledger now
+separately records the complete select-family and epoll alias/mask contracts;
+unrelated pause and future readiness extensions remain separate work.
+
+`unsafe mm::{madvise, Advice}` gives Linux a closed set of ordinary mapping
+advice policies. Page alignment, range validity, pointer provenance, and the
+fact that `LinuxDontNeed` can invalidate contents remain explicit caller
+obligations; VM locking, remapping, and broader advice policy remain deferred.
+
+`unsafe mm::{msync, MsyncFlags}` synchronizes a caller-proven mapped range
+through the direct Linux/AArch64 syscall. Mapping lifetime, page alignment,
+pointer provenance, and the cache effects of invalidation remain explicit
+unsafe obligations; synchronization flags are passed as the Rustix-compatible
+Linux bit set without a C sentinel or errno conversion.
+
+`unsafe mm::{mincore, MINCORE_PAGE_SIZE}` snapshots page residency into an
+exclusive caller-owned byte vector. It checks capacity using the 4 KiB AArch64
+page-size lower bound, which safely over-provisions for larger configured page
+sizes; mapping alignment, lifetime, provenance, and output disjointness remain
+explicit unsafe obligations.
+
+`unsafe mm::{mlock, mlock_with, munlock, MlockFlags}` locks or unlocks one
+caller-proven mapped range through the direct Linux/AArch64 `mlock`, `mlock2`,
+and `munlock` syscalls. `ONFAULT` is explicit, while rounded-range validity,
+mapping lifetime, pointer provenance, and memlock-budget effects remain unsafe
+caller obligations. Process-wide `mlockall`/`munlockall` remain deferred.
+
+`unsafe mm::{mremap, mremap_fixed, MremapFlags}` resizes or moves a
+caller-owned mapping and returns its successor address. The old range is
+consumed on success; the fixed-address form also invalidates any replaced
+destination mapping. `MAYMOVE` is the only public flag, with fixed relocation
+bound to the explicit destination API and `DONTUNMAP` intentionally deferred.
+
+`fs::{Dir, DirEntry}` is a descriptor-owning, caller-buffered directory stream
+above `RawDir`. It opens with controlled read-only/directory/close-on-exec flags,
+preserves arbitrary filename bytes, ties entries to the stream borrow, and makes
+EOF and the first error terminal. It interoperates with both crabc-rs and
+standard Rust descriptor-borrow traits. C stream records, sorting, and walking
+remain separate capabilities.
+
+`Dir::{rewind, seek}` and the underlying `RawDir` use opaque Linux `d_off`
+cookies, not byte positions, and discard buffered entries on each cursor
+operation. Rewind defers direct `lseek(fd, 0, SEEK_SET)` until the next read;
+seek returns a direct failure immediately. Both retry `EINTR`. The native
+caller-buffered constructor remains distinct from Rustix's allocating `Dir`,
+and reentrant C records plus a tell-position API remain separate.
+
+`time::{UnixTime, wall_clock}` reads the UTC wall clock through the direct
+Linux/AArch64 `gettimeofday` syscall. The native value preserves signed Unix
+seconds with canonical nanoseconds; legacy timezone output, C `timeval`,
+vDSO/libc routing, allocation, and TLS errno are absent. Calendar conversion,
+formatting, mutation, and other global-time semantics remain deferred.
+
+`time::{getitimer, IntervalTimerKind, IntervalTimerValue, GetitimerError}`
+reads but never arms, disarms, or otherwise mutates the three Linux process
+interval timers. The closed selector enum and private validated `Duration`
+pair reject arbitrary C selectors and malformed signed `timeval` values before
+they enter the public API; timer mutation and signal delivery remain separate
+work.
+
+`process::{times, ClockTicks, ProcessTimes}` reads the five Linux
+process-accounting observations without inventing a `CLK_TCK` conversion. The
+four validated private `tms` fields and the syscall's separate elapsed return
+remain opaque tick values, so C output storage and calendar semantics stay out
+of the native contract.
+
+`time::{nanosleep, SleepOutcome, SleepError}` takes a `core::time::Duration`
+and exposes rather than hides interruption: completion and `EINTR` with the
+kernel's remaining duration are distinct typed outcomes. It never silently
+retries or crosses C sleep/errno state. C duration aliases, timers, callbacks,
+and process-global alarm semantics remain separate work.
+
+`time::{clock_nanosleep_relative, clock_nanosleep_absolute}` makes the selected
+clock and sleep mode explicit. Relative interruption returns Linux's remaining
+duration, while absolute interruption remains a typed `EINTR` without an
+invented remainder; malformed absolute nanoseconds are rejected before the
+kernel boundary. Calendar conversion, timezone state, and clock mutation stay
+separate capabilities.
+
+`process::{getuid, geteuid, getgid, getegid, Uid, Gid}` reads real and
+effective Linux identities through direct zero-argument syscalls. The opaque
+types preserve exact raw `uid_t`/`gid_t` values while preventing accidental
+interchange with unrelated integers; authority-changing credentials and limits
+remain separate native work.
+
+`process::{getresuid, getresgid, UidTriple, GidTriple}` adds read-only real,
+effective, and saved-set identities through private caller-owned output words.
+The triple fields retain those same opaque types; credential mutation remains
+outside this capability.
+
+`process::{Resource, Rlimit, getrlimit}` adds read-only observations through
+`prlimit64` with PID zero and a null new-limit. The closed resource vocabulary
+maps Linux's infinite limit to `None`; changing limits remains an explicitly
+separate process-wide contract.
+
+`process::{PidfdFlags, pidfd_open}` creates a Linux process descriptor through
+direct syscall 434 and transfers the fresh descriptor to `OwnedFd`. `NONBLOCK`
+and retained future flag bits remain kernel-validated; `ENOSYS`, target-lifetime,
+permission, descriptor-limit, and flag errors cross unchanged with no fallback
+or availability cache. This is a native Rustix extension, not a musl C export.
+
+`process::{ResourceUsageTarget, ResourceUsageTime, ResourceUsage, getrusage}`
+reads the three pinned Linux targets through the direct syscall. Its typed
+value preserves the two canonical microsecond times and fourteen initialized
+counters, while deliberately omitting musl's uninitialized compatibility tail.
+
+`process::{getgroups_count, getgroups, Gid}` exposes the read-only Linux
+supplementary-group query/fill protocol through typed caller-owned storage.
+It preserves the separate supplementary list rather than adding the effective
+group ID, and documents `EINVAL` retry behavior when credentials change
+between the sizing and fill calls; no credential mutation is included.
+
+`process::{Priority, PriorityTarget, getpriority}` exposes read-only Linux
+nice observations for a process, process group, or user. It translates the
+kernel's non-negative `[40, 1]` success representation into the closed
+`[-20, 19]` nice range, so a valid C `-1` is never confused with an error;
+priority mutation remains deferred.
+
+`process::{getpid, getppid, Pid}` is independently verified as a direct,
+read-only identity observation. The caller PID is positive and typed, while
+Linux's zero-parent namespace-init/no-visible-parent sentinel maps to `None`.
+Process creation, execution, waiting, and mutation remain separate contracts.
+
+`process::{getpgid, getpgrp, getsid}` exposes read-only process-group and
+session observations through typed optional `Pid` selectors. `None` retains
+Linux's current-process meaning, while `getpgrp` is the independently tested
+current-group shorthand over the same direct `getpgid` contract; session/group
+mutation, spawning, and C aliases remain deferred.
+
+`thread::gettid` is independently verified as a typed, stable kernel-task
+identity. It is neither a pthread handle nor a cancellation/TLS contract, so
+the broader pthread and C11 surface remains deferred.
+
+`fs::{memfd_create, MemfdFlags}` creates an anonymous memory file from a
+byte-oriented name and moves the fresh descriptor into `OwnedFd`. Its closed
+flag set has only stable close-on-exec, sealing, and default-huge-page choices;
+page-size encodings and newer exec-policy bits are not silently forwarded.
+
+`fs::{SealFlags, fcntl_get_seals}` is the bounded read-only seal companion.
+Direct `fcntl(F_GET_SEALS)` retains all observed Linux seal bits, including
+future bits. An allow-sealing memfd begins unsealed, a plain memfd carries
+`F_SEAL_SEAL`, and ineligible descriptors retain direct `EINVAL`.
+
+`fs::fcntl_add_seals` is the matching bounded mutator over direct
+`fcntl(F_ADD_SEALS)`. It supplies seal bits as the kernel's immediate integer
+argument, retains `EPERM` for unsealable or already-finally-sealed memfds, and
+leaves the public C `fcntl` ABI in its separate status-flag capability.
+
+`process::{Flock, FlockType, FlockOffsetType, fcntl_getlk}` is the read-only
+`fcntl(F_GETLK)` conflict query. It validates the private AArch64 flock record
+before exposing `None` for `F_UNLCK` or a typed first conflicting lock. Because
+fcntl locks are process-associated, a forked child—not the owning process—is
+required to observe the parent's lock; mutation stays separate.
+
+`net::{NetworkU16, NetworkU32}` models network byte order as owned
+big-endian bytes, completing the value-only byte-order capability without a C
+ABI, static buffer, allocator, or errno state. Interface address-list enumeration and
+legacy address/hostname helpers remain deferred.
+
+`net::{socket, Shutdown}` adds direct typed socket construction and directional
+shutdown. The construction boundary owns its successful descriptor, uses a
+closed `SOCK_NONBLOCK`/`SOCK_CLOEXEC` flag set, and represents non-default
+protocols as Rustix-shaped nonzero raw words forwarded bit-for-bit to Linux's
+C-`int` slot. Address encoding, connection,
+options, ancillary data, and multi-message operations remain separate deferred
+capabilities.
+
+`net::{set_socket_reuseaddr, socket_reuseaddr}` adds the bounded
+`SOL_SOCKET/SO_REUSEADDR` option as a Rust `bool` over private four-byte kernel
+storage. It validates the returned length and preserves kernel errors while
+exposing no arbitrary C level/name/pointer/length interface; broader socket
+options remain separate capabilities.
+
+`net::sockopt::socket_type` follows Rustix's exact module path for the bounded
+`SOL_SOCKET/SO_TYPE` query. The private four-byte kernel result becomes the
+existing raw-preserving `SocketType`, so a newer type is not discarded and a
+non-socket descriptor retains direct `ENOTSOCK`; broad socket options remain
+separate capabilities.
+
+`net::sockopt::socket_protocol` follows the matching Rustix path for
+`SOL_SOCKET/SO_PROTOCOL`. Its direct private result maps zero to `None` and
+otherwise preserves the matching raw `Protocol` word; non-socket descriptors
+retain `ENOTSOCK` and the broad option surface remains separate.
+
+`net::sockopt::socket_cookie` follows the fixed-width Rustix
+`SOL_SOCKET/SO_COOKIE` observation. Its private eight-byte storage returns the
+kernel's opaque `u64` unchanged; repeated reads on a live socket are stable,
+but no stronger lifetime or global-uniqueness claim is made. Non-socket
+descriptors retain direct `ENOTSOCK`.
+
+`net::sockopt::socket_domain` follows Rustix's typed `SOL_SOCKET/SO_DOMAIN`
+query through fixed private storage. Its signed kernel result is checked before
+conversion to the closed `AddressFamily` type; unrepresentable values return
+`OPNOTSUPP`, and non-socket descriptors retain direct `ENOTSOCK`.
+
+`net::sockopt::socket_acceptconn` follows Rustix's fixed
+`SOL_SOCKET/SO_ACCEPTCONN` observation through private four-byte storage. It
+returns whether a borrowed stream socket is listening; the native tests cover
+the false-to-true transition around `listen`, while non-socket descriptors
+retain `ENOTSOCK`.
+
+`net::sockopt::{set_socket_oobinline, socket_oobinline}` follows Rustix's
+fixed `SOL_SOCKET/SO_OOBINLINE` boolean setting through private four-byte
+storage. Its tests cover the false-to-true-to-false flag transition and direct
+`ENOTSOCK`; urgent-data I/O behavior and broad socket options remain outside
+this bounded capability.
+
+`net::sockopt::{set_socket_broadcast, socket_broadcast}` follows Rustix's
+fixed `SOL_SOCKET/SO_BROADCAST` boolean setting through private four-byte
+storage. The contract tests only the false-to-true-to-false socket flag and
+direct `ENOTSOCK`; broadcast packet transmission is not implied.
+
+`pipe::{SpliceFlags, tee}` duplicates up to the requested count from one pipe
+to another through direct syscall 77 without consuming the source. It exposes
+a short copied count and retains all `SPLICE_F_*` bits for kernel validation;
+offset-bearing `splice` and raw-memory `vmsplice` remain separate contracts.
+
+`pipe::fcntl_getpipe_size` reports a pipe's current shared kernel capacity
+through direct `fcntl(F_GETPIPE_SZ)` syscall 25. It borrows the descriptor,
+preserves kernel errors for non-pipe descriptors, and deliberately makes no
+capacity-stability claim when another actor can resize the pipe; `F_SETPIPE_SZ`
+remains a separate mutating contract.
+
+`net::{sendmsg, recvmsg, MsgIoSliceMut, RecvMsg}` adds connected, vectored
+message I/O without publishing a C `msghdr`. It intentionally excludes message
+addresses, ancillary control data, and multi-message calls. Receive results
+preserve the full `MSG_TRUNC` byte count and flags while exposing only the
+initialized prefixes of caller-owned `MaybeUninit` segments.
+
+`net::{IpAddress, SocketAddress, connect}` makes the allocation-free IPv4/IPv6
+endpoint representation available directly to no-std socket code, while
+`resolver::{IpAddress, SocketAddress}` remains a source-compatible re-export.
+`connect` writes the exact stack Linux address records, rejects invalid IPv4
+scope use rather than discarding it, and forwards IPv6 scope IDs; binding,
+listening, received-address, and option operations remain separate work.
+
+`net::{bind, getsockname}` shares that same exact IPv4/IPv6 representation for
+local-address lifecycle. The decoder validates the returned sockaddr length and
+returns `AFNOSUPPORT` for address families not represented by `SocketAddress`;
+listening, peers, options, ancillary data, and received-message APIs remain
+separate capabilities.
+
+`net::getpeername` reuses that strict endpoint decoder for connected peers.
+It preserves `NOTCONN` for an unconnected socket and returns `AFNOSUPPORT`
+instead of exposing an opaque record for other address families.
+
+`net::{listen, accept, accept_with, accept4, acceptfrom, acceptfrom_with}`
+adds direct server-socket lifecycle over a borrowed listener. Accepted
+descriptors transfer unique ownership; `accept4` applies a closed atomic
+`CLOEXEC`/`NONBLOCK` flag set; and address-returning forms reuse strict
+IPv4/IPv6 decoding, closing a just-created descriptor if another family is
+rejected as `AFNOSUPPORT`. Socket options, message addresses, ancillary data,
+and multi-message operations remain separate capabilities.
+
+`net::{sendto, recvfrom}` adds addressed IPv4/IPv6 datagrams on the same
+borrowed-descriptor boundary. The endpoint codec rejects invalid IPv4 scope
+use, received source records decode strictly, and `recvfrom` retains the
+existing `Buffer` initialization contract plus `MSG_TRUNC`'s full datagram
+length. Unsupported source families return `AFNOSUPPORT` without exposing an
+opaque sockaddr.
+
+`net::netdevice::{for_each_link_name, InterfaceNameIndex, if_nameindex,
+if_freenameindex}` now covers musl's `if_nameindex` and `if_freenameindex`
+semantics. The allocation-free callback yields owned fixed interface-index/name
+records, while the alloc-gated exact path performs both
+`RTM_GETLINK(AF_UNSPEC)` and `RTM_GETADDR(AF_INET)` netlink dumps, extracts
+`IFLA_IFNAME` and `IFA_LABEL`, and suppresses duplicate `(index, name)` pairs
+like musl. Its allocation-free no-std AArch64 probe exercises the callback;
+the companion alloc-feature probe supplies a private fixed allocator and
+exercises the complete owned list. Both require direct `socket`, `sendto`,
+`recvfrom`, and `close` syscalls and reject C enumeration/address helpers and
+TLS `errno`; the callback also rejects Rust allocator symbols, while the full
+list proves it needs no public C allocator. `if_freenameindex` consumes the
+owned vector through Rust drop.
+
+`net::netdevice::InterfaceAddresses` is a separate alloc-gated direct
+`RTM_GETLINK`/`RTM_GETADDR` snapshot. It owns raw interface names, link-layer
+addresses through musl's 24-byte extension, flags, stats bytes, typed
+IPv4/IPv6 addresses and masks, broadcast/destination values, and precise
+link-local IPv6 scope. It replaces C `struct ifaddrs` and `freeifaddrs` with
+Rust-owned records; malformed framing is `BADMSG`, allocation failure is
+`NOBUFS`, and unknown families/records without a matching link are skipped.
+Its no-std AArch64 probe uses only direct `socket`, `sendto`, `recvfrom`, and
+`close` syscalls and rejects C enumeration/address helpers and TLS errno.
+
+`net::ethers` is intentionally different: musl 1.2.6 leaves the three C
+ethers host/database calls as stubs, while crabc's mature C facade deliberately
+implements real lookup. The Rust API is therefore an explicit crabc extension,
+not parity: callers supply bounded bytes to parse raw hostname records or an
+alloc-gated, source-ordered `EthernetDatabase`; it never opens
+`/etc/ethers` implicitly. Its allocation is fallible, and lookup is first
+ASCII-case-insensitive match. `IN6ADDR_ANY`, `IN6ADDR_LOOPBACK`, and
+`Ipv6Constants` are documented aliases for the complete standard
+`Ipv6Addr::{UNSPECIFIED, LOCALHOST}` values, not a C global-object identity
+claim.
 
 ---
 
@@ -3226,10 +4195,12 @@ At project completion, the following must hold.
 ## Platform
 
 ```text
-Linux AArch64 only
+crabc: Linux AArch64, little-endian, Linux >= 5.10
+crabc-rs: the Linux backend is required; macOS/AArch64 via libSystem is optional
 ```
 
-No x86_64/RISC-V burden.
+No x86_64/RISC-V/non-Linux burden for `crabc`; no speculative portability
+framework. An optional macOS `crabc-rs` backend remains a separate concern.
 
 ## Architecture
 
@@ -3247,7 +4218,7 @@ private singleton-runtime boundary is versioned, owned, tested, and listed.
 ## Rustix
 
 ```text
-normal dependency: bitflags only
+no rustix production dependency; focused normal dependencies are reviewed
 dev/test oracle: yes
 relevant Linux/AArch64 parity: documented and verified
 ```
@@ -3271,9 +4242,14 @@ unsafe only where necessary
 0 unclassified capabilities
 ```
 
+These are ledger obligations, not a requirement to expose a mechanical Rust
+wrapper for every C symbol. Deliberate profile limitations and ABI-only
+machinery must be explicitly classified.
+
 ## Dependencies
 
-Extremely small normal dependency graph.
+Extremely small normal dependency graph with focused, individually justified
+dependencies.
 
 No framework creep.
 
@@ -3290,6 +4266,11 @@ Existing C compatibility suite remains green.
 Every public unsafe operation has a precise safety contract.
 
 Every excluded/subsumed crabc capability has a rationale.
+
+The documented profile includes the Linux 5.10 MSRV, C/POSIX/C.UTF-8 locale
+baseline, limited charset set, no NSS/plugin ecosystem, system-supplied
+timezone data, no gettext framework, no internal cryptography, allocator
+boundary, and no async/process/security-policy frameworks.
 
 ---
 
@@ -3332,6 +4313,7 @@ native-safe
 native-unsafe
 native-higher-level
 rust-subsumed
+scope-exception
 abi-only
 internal-runtime
 unclassified
@@ -3485,7 +4467,7 @@ rustix, implemented differently
 
 It is:
 
-> **a tiny, idiomatic, safety-conscious Rust interface to essentially the entire useful Unix userspace substrate already implemented by crabc, with rustix-level quality for the overlap and substantially greater coverage beyond it.**
+> **a tiny, idiomatic, safety-conscious Rust interface to the useful in-scope Unix substrate implemented by crabc, with rustix-level quality for the overlap and semantic accounting for the rest.**
 
 Keep the facade thin.
 

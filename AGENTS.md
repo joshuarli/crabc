@@ -1,94 +1,119 @@
 # Agent Handoff
 
-## Mission
+## Mission and scope
 
-Build a Rust musl-compatible libc (`crabc`) with a dynamic linker that runs existing, unmodified musl-linked x86_64 Linux binaries. Implement remaining libc subsystems incrementally against `/home/root/musl` and validate with `/home/root/libc-test`.
+`crabc` is a small, auditable, modern Unix runtime: a Rust `no_std` libc and
+dynamic linker for **Linux/AArch64 little-endian**. The platform baseline is
+**Linux kernel 5.10**. This is the only active `crabc` platform; do not add
+x86_64, RISC-V, 32-bit, big-endian, or non-Linux work or abstractions unless
+the user explicitly reopens that scope.
 
-## Repo Layout
+`crabc-rs` is a separate idiomatic Rust facade for useful OS/runtime
+capabilities. It may eventually have a macOS/AArch64 libSystem backend, but
+that does not make `crabc` portable. It must not mechanically wrap C-era
+machinery just because a libc symbol exists.
+
+The governing doctrine is [`SCOPE.md`](SCOPE.md). The externally visible
+limits and classification rules are in
+[`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md). Read both before
+choosing new work. Musl is the Linux libc compatibility oracle; glibc is never
+an oracle or semantic fallback.
+
+The project pursues a useful modern Unix contract, not a Rust reimplementation
+of every historical libc facility. Core filesystem, descriptor, pipe, signal,
+fork/exec, pthread/TLS, socket, mmap, time, stdio-basic, resolver, errno, ABI,
+and dynamic-linker behavior remain high-rigor work. A public ABI symbol can be
+compatibility machinery without becoming a first-class native subsystem.
+
+## Scope rules that affect implementation
+
+- Kernel-facing code may rely on Linux 5.10 facilities. Do not add pre-5.10
+  fallbacks; document any newer requirement and raise the MSRV only centrally.
+- `malloc` implementation research is out of scope. Use the chosen mature
+  allocator strategy (currently mimalloc) behind the C allocation ABI. Do not
+  present `malloc`/`free` as idiomatic `crabc-rs` APIs.
+- Never hand-roll cryptography. Entropy syscalls are in scope; historical APIs
+  needing crypto require a proven, focused Rust dependency or an explicit
+  profile limitation.
+- Locale support is only `C`, `POSIX`, and `C.UTF-8` (with cheap UTF-8 aliases
+  only when correct). Rust-facing text is UTF-8. Do not add historical
+  encodings beyond the documented ASCII/UTF-8/UTF-16/UTF-32 compatibility set.
+- Parse conventional system files; do not build NSS, provider/plugin systems,
+  bundled tzdata, gettext, IDNA policy, locale databases, async runtimes,
+  process-management frameworks, or security-policy frameworks.
+- DNS is the documented small resolver profile: hosts/resolv.conf, A/AAAA/
+  CNAME, search, UDP, required TCP fallback, and basic retry/failover.
+- Prefer a small excellent pure-Rust dependency to bespoke crypto or optimized
+  primitives when it is easier to audit and preserves `no_std`/LTO goals. For
+  every new production dependency, document its primitive, why `core`/`alloc`
+  is insufficient, transitive normal dependencies, proc-macros/build scripts/
+  native code, allocation or global state, `no_std`, and LTO implications.
+- Scalar behavior is canonical; SIMD is a separately verified optimization.
+  Use focused kernels rather than generic SIMD or platform frameworks.
+- Keep unsafe boundaries explicit. Each public unsafe Rust API must state its
+  concrete caller obligations.
+
+## Repository layout
 
 | Path | What it is |
-|------|------------|
+|---|---|
 | `src/` | `loader` binary — minimal static-PIE ELF runner. |
 | `libc/` | `libc.so` / `libc.a` — monolithic `no_std` libc. Crate name is `c`. |
-| `ldso/` | `libldso.so` — dynamic linker (`_start` entry, self-relocating, loads DT_NEEDED, handles TLS). |
-| `include/` | Public C headers (36 files). |
-| `tests/` | Rust integration tests (39 files). Each compiles a C fixture and runs it under `libldso.so`. |
-| `tests/fixtures/` | C sources for the integration tests. |
-| `libc-test-harness/` | Shell harness that builds/runs the upstream musl `libc-test` suite against our `libc.so`. |
-| `scripts/local-ci.sh` | Reproduces the GitHub Actions CI environment locally via podman/docker. |
+| `ldso/` | `libldso.so` — dynamic linker (`_start`, relocation, DT_NEEDED, TLS). |
+| `crabc-rs/` | Idiomatic, capability-accounted Rust OS/runtime facade. |
+| `include/` | Public C headers. |
+| `tests/` | Rust integration tests and C fixtures. |
+| `compat/` | ABI, differential, corpus, loader, and crabc-rs evidence harnesses. |
+| `libc-test-harness/` | Runner for the pinned upstream musl `libc-test` suite. |
+| `scripts/dev.sh` | Docker-first Linux/AArch64 development entry point. |
 
-Subsystems live in `libc/src/*.rs` and are `include!`-ed into `libc/src/lib.rs` (a single ~14k-line `no_std` file). There are no `wave*/` directories — those were consolidated.
+`libc/src/lib.rs` includes subsystem files into one `no_std` libc crate.
+Preserve the existing implementation unless a scope limit creates real
+maintenance cost; this reset changes future prioritization, not correct code.
 
-## Build
+## Docker-first build and evidence
 
-```bash
-cargo build                 # all artifacts
-cargo build -p libc         # libc only
-cargo build -p ldso         # ldso only
-```
-
-**Requirements:** Rust nightly (`rust-toolchain.toml` enforces this), musl-gcc.
-
-**Dev profile quirks:** `opt-level = 2` + `overflow-checks = false` + `panic = "abort"` — matches musl's unsigned wraparound semantics. Also `RUST_TEST_THREADS=1` and `-C link-dead-code` from `.cargo/config.toml`.
-
-**ldso linking:** `build.rs` passes `-nostartfiles -nostdlib -e _start -Wl,-Bsymbolic`.
-
-**Cargo.lock** is in `.gitignore` (not committed).
-
-## Test
+The host development path is Apple Silicon macOS → Docker → Linux/AArch64.
+The pinned image/oracles are listed in `compat/upstreams.toml`.
 
 ```bash
-cargo test --workspace           # all integration tests
-cargo test --test math           # single subsystem
-cargo test --test ctype
-cargo test --test string
-cargo test --test ldso_real_binary
+./scripts/dev.sh image
+./scripts/dev.sh build
+./scripts/dev.sh test
+./scripts/dev.sh crabc-rs
+./scripts/dev.sh compat
+./scripts/dev.sh dashboard
 ```
 
-All integration tests follow the same pattern (see `tests/math.rs`):
-1. Compile `tests/fixtures/<name>_test.c` with `musl-gcc -fPIE -pie -I include/ ...`
-2. Link with `-Wl,--dynamic-linker target/debug/libldso.so -L target/debug -lc -Wl,--allow-shlib-undefined`
-3. Run the binary with `LD_LIBRARY_PATH=target/debug`
-4. Assert stdout matches expected string
+For a narrow C subsystem test, integration tests compile a fixture with
+`musl-gcc`, link it to `libldso.so`/`libc.so`, and assert runtime behavior.
+Use `libc-test-harness/run.sh` for the appropriate pinned musl subset, not a
+host-glibc result. `COMPATIBILITY.md` is generated evidence; do not edit it by
+hand.
 
-Math fixtures additionally need `-frounding-math -mlong-double-64`. Non-math tests use `-fno-builtin` or nothing extra.
+## Working contract
 
-## libc-test Harness
+Implementation is cheap; ambiguity is not. Spend care where meaning becomes
+durable: names, types, schemas, interfaces, state transitions, permissions,
+tests, and explanations.
 
-```bash
-cd libc-test-harness
-./run.sh              # functional subset (default) — what CI runs
-./run.sh math         # math subset
-./run.sh regression   # regression subset
-./run.sh api          # API/header compile checks
-./run.sh all          # everything
-```
+- Before editing, find the intended behavior, boundaries, callers, tests, and
+  docs. Use the smallest reversible assumption. Classify proposed scope as
+  core Unix runtime, useful POSIX/runtime, C ABI machinery, Rust-subsumed, or
+  deliberately unsupported legacy.
+- Work in vertical slices: inventory → implementation → ABI/direct-boundary
+  verification → focused observable tests → musl differential/external test →
+  verified. Do not mass-add stubs or chase symbol count.
+- Put explanations next to the definitions and maintain machine-readable
+  capability accounting. “100% coverage” for `crabc-rs` means semantic
+  accounting, not a wrapper for every C export.
+- For a bug, first add the smallest isolated regression, then fix its root
+  cause. Run the nearest hard judge before broadening verification.
+- New dependencies need the scope review above and user consultation unless
+  the user has explicitly approved the relevant dependency decision.
+- Keep C compatibility machinery boring, mature, and well tested. Port musl
+  algorithms literally in subtle math/compatibility areas; do not invent them.
 
-Reports: `libc-test-harness/reports/latest-summary.txt` and `latest-raw.txt`. The harness creates `fake-libs/` with symlinks (`libpthread.so`, `libm.so`, etc.) → `libc.so`. `LIBC_TEST_DIR` overrides `/home/root/libc-test`.
-
-## CI
-
-`.github/workflows/ci.yml` runs on push/PR to `main`. Matrix: x86_64 (ubuntu-latest) + aarch64 (ubuntu-24.04-arm, `continue-on-error: true`). Steps: build, cargo test, then `./run.sh functional` (informational only, not a gate).
-
-## Adding a Math Function
-
-1. Implement in `libc/src/math_*.rs` using musl's algorithm literally. Do **not** call the `libm` crate for functions we have implemented ourselves. The `libm` dependency is for functions we haven't ported yet.
-2. Add `include!("math_*.rs");` in `libc/src/lib.rs` if it's a new file.
-3. Add declarations to `include/math.h` only if missing (`make header` task).
-4. Add `CHECK` cases to `tests/fixtures/math_test.c`.
-5. Run `cargo test --test math` and `libc-test-harness/run.sh math`.
-
-## Critical Conventions
-
-- Port musl algorithms literally; no `libm` crate wrappers for implemented functions.
-- Each feature must have tests and a commit.
-- `long double` ABI is currently 64-bit; compile math cases with `-mlong-double-64`.
-- `libc/src/lib.rs` is a single monolithic `no_std` file (~14k lines). Subsystems are in `libc/src/*.rs` and pulled in via `include!()`.
-- The `libc` crate depends on `libm = "0.2"` for unimplemented math functions. When you port one, stop calling `libm` for it.
-
-## Known Environment Quirks
-
-- `tests/new_functions.rs` fails because `/dev/null` is a regular file here, not a char device. Pre-existing, not a code issue.
-- `RUST_TEST_THREADS=1` is forced to serialize integration tests.
-- libc-test reports many `BUILDERROR`s — our `libc.so` exports ~351 symbols vs musl's ~1420. Missing symbols cause link failures. This is expected and decreases as we add functions.
-- `opt-level = 2` in dev profile is intentional (matches musl behavior). Do not change.
+Do not run formatters, linters, or pre-commit hooks. Do not push a remote
+unless explicitly asked. Preserve unrelated dirty work. Each completed feature
+needs coherent tests, documentation/accounting, and a commit when requested.

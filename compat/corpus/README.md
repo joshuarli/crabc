@@ -1,12 +1,17 @@
 # Real Alpine package corpus
 
-This is the M8 end-to-end compatibility boundary. `manifest.toml` names exact
+This is the M8 end-to-end compatibility boundary for crabc's supported modern
+runtime profile: Linux AArch64 on Linux kernel versions 5.10 and newer.
+`manifest.toml` names exact
 Alpine v3.24 AArch64 APK archives, package versions, SHA-256 digests, and the
 unmodified package commands that make up tiers A–D. The default is Tier A;
 `--tier all` runs the complete progression. Tier A starts with Alpine's real
 `coreutils` `/bin/true`, `/bin/echo`, and `/bin/cat`, each of which must retain a
 `DT_RELR` dynamic tag. That keeps the loader regression in the real corpus,
 rather than only in a synthetic fixture.
+
+The corpus covers only these manifest workloads; it is not a claim that every
+musl-linked or glibc-linked package is supported.
 
 The runner stages two disposable roots from the same pinned Alpine image:
 

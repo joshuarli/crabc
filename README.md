@@ -1,108 +1,74 @@
 # crabc
 
-A Rust `no_std` musl-compatible libc with a dynamic linker. Development is
-currently AArch64-first: the supported maturity target is native Linux/AArch64
-under Docker on Apple Silicon macOS.
+`crabc` is a small Rust `no_std` Unix runtime: a libc, dynamic linker, and
+capability-accounted Rust facade for **Linux/AArch64 little-endian**. Its Linux
+kernel baseline is **5.10**.
 
-## Why crabc over musl?
+The project targets the useful modern Unix runtime contract—not an unlimited
+reimplementation of historical libc breadth. It is AArch64-first and
+Linux-only. x86_64, RISC-V, 32-bit, big-endian, and non-Linux `crabc` ports are
+out of scope unless explicitly reopened. `crabc-rs` may later add a separate
+macOS/AArch64 libSystem backend; that does not make the libc portable.
 
-| | musl | crabc |
-|---|---|---|
-| **Language** | C (~60k lines) | Rust `no_std` (~15k lines) |
-| **Memory safety** | Manual — depends on developer discipline | Compiler-guaranteed — no buffer overflows, use-after-free, or UB |
-| **Dynamic linker** | Separate `ld-musl-*.so` | Built-in `libldso.so` — runs musl binaries directly |
-| **Embedded/kernel** | Requires cross-compile + link | `no_std` — `use crabc_libc` directly in Rust kernels |
-| **Architecture** | 10+ arches | Linux AArch64 (current maturity target) |
-| **Dynamic exports** | 1,647 musl AArch64 baseline | 683 crabc AArch64 exports |
+Read [`SCOPE.md`](SCOPE.md) for the engineering doctrine and
+[`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) for the supported
+semantic profile and deliberate limits. In particular, compatibility evidence
+does not promise a native Rust wrapper for every C symbol.
 
-**The core advantage: a Rust libc can be integrated directly into Rust `no_std` projects without FFI or cross-compilation.**
+## What remains rigorous
+
+The scope is narrow around historical breadth, not around normal Unix
+behavior. Filesystems, descriptors and pipes, signals, fork/exec, pthread/TLS,
+sockets, mmap, time, stdio basics, the documented resolver profile, dynamic
+linking, errno, ABI, and AArch64 behavior are treated as core compatibility
+work. Musl is the compatibility oracle; glibc is neither an oracle nor a
+fallback.
 
 ## Native AArch64 development
 
-The host only needs Docker. The development image is pinned to Alpine 3.24.1,
-Rust `nightly-2026-07-24`, and a separately built musl 1.2.6 ABI oracle; see
-[`compat/upstreams.toml`](compat/upstreams.toml) for exact revisions.
+The supported development loop is Apple Silicon macOS → Docker → Linux/AArch64.
+The image and compatibility oracles are pinned in
+[`compat/upstreams.toml`](compat/upstreams.toml).
 
 ```bash
-./scripts/dev.sh image       # builds the native linux/arm64 image once
+./scripts/dev.sh image       # build the Linux/AArch64 development image
 ./scripts/dev.sh build
 ./scripts/dev.sh test
-./scripts/dev.sh symbols     # writes compat/reports/symbols/
-./scripts/dev.sh compat      # checks the symbol-parity regression ratchet
-./scripts/dev.sh libc-test functional
+./scripts/dev.sh crabc-rs    # native Rust capability suite and proofs
+./scripts/dev.sh compat      # symbol/ABI accounting ratchet
 ./scripts/dev.sh differential
-./scripts/dev.sh loader-inventory
-./scripts/dev.sh dashboard   # writes COMPATIBILITY.md from structured reports
+./scripts/dev.sh libc-test functional
+./scripts/dev.sh dashboard   # regenerate COMPATIBILITY.md from reports
 ./scripts/dev.sh shell
 ```
 
-`symbols` compares public dynamic symbols by name, ELF kind, binding, and
-visibility. It intentionally fails while the candidate differs from musl and
-leaves machine-readable evidence in `compat/reports/symbols/`.
-
-## Direct host requirements
-
-For the legacy direct-host commands below, install Rust **nightly** and
-`musl-gcc` (from `musl-tools` / `musl-dev`). The Docker commands above are the
-primary AArch64 development path.
-
-## Build
-
-```bash
-cargo build --workspace
-```
-
-This produces:
-
-- `target/debug/libc.so`
-- `target/debug/libldso.so`
-- `target/debug/loader`
-
-## Test
-
-Run all integration tests:
-
-```bash
-cargo test --workspace
-```
-
-Run a single subsystem:
-
-```bash
-cargo test --test math
-cargo test --test ctype
-cargo test --test string
-cargo test --test ldso_real_binary
-```
-
-Run the upstream musl `libc-test` harness:
-
-```bash
-cd libc-test-harness
-./run.sh              # functional subset
-./run.sh math         # math subset
-./run.sh regression   # regression subset
-./run.sh api          # API/header checks
-./run.sh all          # everything
-```
+`COMPATIBILITY.md` is generated evidence. It records the current measured
+surface; it is not a statement that every historical musl subsystem is active
+project scope.
 
 ## Project layout
 
 | Path | Description |
-|------|-------------|
-| `src/` | `loader` binary — minimal static-PIE ELF runner |
-| `libc/` | `libc.so` / `libc.a` — `no_std` libc implementation |
-| `ldso/` | `libldso.so` — dynamic linker |
+|---|---|
+| `libc/` | `libc.so` / `libc.a`: monolithic Rust `no_std` libc |
+| `ldso/` | `libldso.so`: AArch64 dynamic linker |
+| `crabc-rs/` | Idiomatic Rust OS/runtime capabilities |
 | `include/` | Public C headers |
-| `tests/` | Rust integration tests and C fixtures |
-| `libc-test-harness/` | Python runner and reporting for upstream musl `libc-test` |
+| `tests/` | Runtime integration tests and C fixtures |
+| `compat/` | ABI, differential, corpus, loader, and capability evidence |
+| `libc-test-harness/` | Pinned upstream musl `libc-test` runner |
 
-## Notes
+## Design boundaries
 
-- AArch64 `long double` compatibility is still incomplete; the upstream
-  `strtold` functional case is currently a known failure.
-- `libc-test` reports many `BUILDERROR`s until the full musl symbol set is
-  exported; this is expected.
+- Linux kernel 5.10 is the MSRV; no archaeological older-kernel fallbacks.
+- The C allocation ABI uses the chosen external allocator strategy (currently
+  mimalloc); allocator design is not a project research area.
+- No hand-rolled crypto. OS entropy is supported; crypto-heavy compatibility
+  needs a focused proven Rust crate or a documented limitation.
+- Locales are `C`, `POSIX`, and `C.UTF-8`; Rust-facing text is UTF-8. There is
+  no general locale database or historical-encoding expansion.
+- No NSS/plugin stack, bundled tzdata, gettext framework, IDNA policy, async
+  runtime, process-management framework, or security-policy framework.
 
 ## License
 
