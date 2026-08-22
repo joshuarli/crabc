@@ -9,6 +9,14 @@ import runner
 
 
 class RunnerTests(unittest.TestCase):
+    def test_crypt_profile_limitation_is_narrow_and_documented(self) -> None:
+        self.assertEqual(set(runner.PROFILE_LIMITATION_SKIPS), {("functional", "crypt")})
+        record = runner.PROFILE_LIMITATION_SKIPS[("functional", "crypt")]
+        self.assertEqual(record["kind"], "profile_limitation")
+        self.assertIn("MD5-crypt", record["reason"])
+        self.assertIn("bcrypt", record["reason"])
+        self.assertTrue((Path(runner.__file__).parent.parent / record["reference"]).is_file())
+
     def test_math_oracle_expectations_are_narrow_and_have_evidence(self) -> None:
         expected = {
             ("math", "acosh"),

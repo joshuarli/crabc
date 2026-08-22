@@ -14,8 +14,10 @@ source = "https://musl.libc.org/releases/musl-1.2.6.tar.gz"
 sha256 = "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a"
 
 [libc_test]
-repository = "https://repo.or.cz/libc-test.git"
-revision = "123433158bf985d7eb3b4072e32121b9e32a1a1a"
+# Laputa Systems carries the maintained libc-test fork. Pin the commit rather
+# than its moving master branch so every compatibility report stays reproducible.
+repository = "https://github.com/laputa-systems/libc-test.git"
+revision = "68edb8bd73dab8147ee54c8bec638f4d2b3cff37"
 
 [os_test]
 repository = "https://gitlab.com/sortix/os-test.git"

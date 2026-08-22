@@ -18,7 +18,9 @@ M0–M12 are complete. Current ledger validation records 171 verified native
 seams, no deferred native capability groups, and 52 documented non-native
 boundaries. The current generated dashboard records 1,647/1,647 required musl
 dynamic exports, no ABI metadata mismatch, 34/34 measured Alpine corpus cases,
-and no current libc-test missing-symbol blocker. These measurements are
+and no current libc-test missing-symbol blocker. The current full libc-test
+report records 405/420 passing cases, 15 documented skips, and no failures.
+These measurements are
 evidence, not a claim of complete historical libc breadth.
 
 The C `setreuid`, `setregid`, `seteuid`, and `setegid` success stubs are now

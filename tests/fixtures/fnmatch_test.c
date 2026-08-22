@@ -42,6 +42,10 @@ int main(void)
         { "[[=a=]]", "A", 0, FNM_NOMATCH },
         { "[A]", "a", 0, FNM_NOMATCH },
         { "[A]", "a", FNM_CASEFOLD, 0 },
+        /* libc-test functional/fnmatch malformed classes and casefolded ranges. */
+        { "*[![:digit:]]*/[![:d-d]", "a/b", FNM_PATHNAME, FNM_NOMATCH },
+        { "*[![:digit:]]*/[[:d-d]", "a/[", FNM_PATHNAME, FNM_NOMATCH },
+        { "[!A-C]", "b", FNM_CASEFOLD, FNM_NOMATCH },
         { 0 },
     };
 

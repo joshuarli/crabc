@@ -1,6 +1,6 @@
 # libc-test Integration Harness
 
-Builds and runs the selected [libc-test](https://git.musl-libc.org/cgit/libc-test)
+Builds and runs the selected [Laputa Systems libc-test](https://github.com/laputa-systems/libc-test)
 subsets against crabc's `libc.so` to produce a categorized failure report.
 The runtime check is scoped to Linux AArch64 on Linux kernel versions 5.10 and
 newer, with pinned musl as the behavioral oracle; it is not a claim of complete
@@ -14,7 +14,7 @@ launcher; the build, link, timeout, and test loop live in the dependency-free
 2. Creates a `fake-libs/` directory with symlinks so the linker resolves `-lc`, `-lpthread`, `-lm`, etc. against our libc.so instead of musl's.
 3. Builds libc-test's `runtest.exe` and `libtest.a` as host tools (linked against musl).
 4. Compiles and links executable tests with `musl-gcc -L fake-libs/`, then runs them via `LD_LIBRARY_PATH=fake-libs/`. API checks instead use `gcc -nostdinc` with crabc's headers plus GCC's builtin headers, so a missing crabc header cannot silently fall back to musl.
-5. Categorizes results: **PASS**, **FAIL**, **BUILDERROR** (compile/link failure), **TIMEOUT** (30s), or an explicit **SKIP** only for a documented pinned-musl environment constraint or a narrowly identified matching reference expectation.
+5. Categorizes results: **PASS**, **FAIL**, **BUILDERROR** (compile/link failure), **TIMEOUT** (30s), or an explicit **SKIP** only for a documented pinned-musl environment constraint, narrowly identified matching reference expectation, or documented profile limitation.
 
 ## Usage
 
@@ -64,6 +64,12 @@ python3 -m unittest discover -s libc-test-harness -p 'test_*.py'
 - **The current full report has no missing-symbol blockers** — retain the
   graph because later ABI changes can reintroduce one; do not infer behavior
   from an export count.
+- **`functional/crypt` is a profile-limitation skip** — its single upstream
+  executable combines the supported dependency-backed SHA-crypt boundary with
+  MD5-crypt and bcrypt, which are deliberately unsupported. The direct
+  supported-format proof remains [`tests/crypt.rs`](../tests/crypt.rs); see
+  [`crypt-profile.md`](../compat/crabc-rs/crypt-profile.md) for the precise
+  C compatibility boundary.
 - **Static linking is not comprehensively tested** — the separate focused
   static pthread/TLS lifecycle evidence is narrower than a full static
   libc-test matrix.

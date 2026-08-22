@@ -74,7 +74,7 @@ project scope.
 | `include/` | Public C headers |
 | `tests/` | Runtime integration tests and C fixtures |
 | `compat/` | ABI, differential, corpus, loader, LTO, Rustix, and capability evidence |
-| `libc-test-harness/` | Pinned upstream musl `libc-test` runner |
+| `libc-test-harness/` | Pinned Laputa Systems `libc-test` runner |
 | `docs/` | Cross-cutting design, evidence, and historical delivery records |
 | `scripts/` and `docker/` | Docker-first development commands and pinned native image |
 

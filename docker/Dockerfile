@@ -9,7 +9,7 @@ FROM alpine:3.24.1@sha256:e7a1a92a5bfeee40966aea60f0796b0e7917cc35591542701834f0
 ARG RUST_TOOLCHAIN=nightly-2026-07-24
 ARG MUSL_VERSION=1.2.6
 ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
-ARG LIBC_TEST_REV=123433158bf985d7eb3b4072e32121b9e32a1a1a
+ARG LIBC_TEST_REV=68edb8bd73dab8147ee54c8bec638f4d2b3cff37
 ARG OS_TEST_REV=5e9456d510612f83b6ec8b1a0c06d6b1303a2512
 
 ENV RUSTUP_HOME=/opt/rustup \
@@ -69,7 +69,7 @@ RUN chmod 0755 /usr/local/bin/musl-gcc
 
 # libc-test is available to the harness without requiring a mutable checkout
 # on the macOS host. The exact commit is recorded in compat/upstreams.toml.
-RUN git clone https://repo.or.cz/libc-test.git /opt/libc-test \
+RUN git clone https://github.com/laputa-systems/libc-test.git /opt/libc-test \
     && cd /opt/libc-test \
     && git checkout --detach "${LIBC_TEST_REV}" \
     && test "$(git rev-parse HEAD)" = "${LIBC_TEST_REV}" \

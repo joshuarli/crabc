@@ -37,7 +37,7 @@ ORACLE_ENVIRONMENT_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("regression", "statvfs"): {
         "kind": "oracle_environment",
         "reason": "pinned musl also reports zero inode capacity for Docker's root overlay",
-        "reference": "https://git.musl-libc.org/cgit/libc-test/tree/src/regression/statvfs.c",
+        "reference": "https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/regression/statvfs.c",
         "verified": "2026-08-20",
     },
 }
@@ -50,7 +50,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "acosh"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc return identical bits for libc-test's tolerated hard-rounding diagnostics",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/acosh.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/acosh.c + src/math/special/acosh.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/acosh.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/acosh.c + src/math/special/acosh.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -58,7 +58,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "asinh"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc return identical bits for libc-test's tolerated hard-rounding diagnostics",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/asinh.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/asinh.c + src/math/special/asinh.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/asinh.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/asinh.c + src/math/special/asinh.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -66,7 +66,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "sinh"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc return identical bits for libc-test's tolerated hard-rounding diagnostic",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/sinh.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/sinh.c + src/math/crlibm/sinh.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/sinh.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/sinh.c + src/math/crlibm/sinh.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -74,7 +74,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "j0"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc produce identical IEEE-754 vectors and libc-test X/ulperr diagnostics; only %a presentation differs",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/j0.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/j0.c + src/math/special/j0.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/j0.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/j0.c + src/math/special/j0.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-bessel-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -82,7 +82,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "jn"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc produce identical IEEE-754 vectors and libc-test X/ulperr diagnostics; only %a presentation differs",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/jn.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/jn.c + src/math/sanity/jn.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/jn.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/jn.c + src/math/sanity/jn.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-bessel-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -90,7 +90,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "jnf"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc produce identical IEEE-754 vectors and libc-test X/ulperr diagnostics; only %a presentation differs",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/jnf.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/jnf.c + src/math/sanity/jnf.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/jnf.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/jnf.c + src/math/sanity/jnf.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-bessel-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -98,7 +98,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "y0"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc produce identical IEEE-754 vectors and libc-test X/ulperr diagnostics; only %a presentation differs",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/y0.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/y0.c + src/math/special/y0.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/y0.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/y0.c + src/math/special/y0.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-bessel-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -106,7 +106,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "y0f"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc produce identical IEEE-754 vectors and libc-test X/ulperr diagnostics; only %a presentation differs",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/y0f.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/y0f.c + src/math/sanity/y0f.h + src/math/special/y0f.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/y0f.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/y0f.c + src/math/sanity/y0f.h + src/math/special/y0f.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-bessel-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -114,7 +114,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "ynf"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc produce identical IEEE-754 vectors and libc-test X/ulperr diagnostics; only %a presentation differs",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/ynf.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/ynf.c + src/math/sanity/ynf.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/ynf.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/ynf.c + src/math/sanity/ynf.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-bessel-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -122,7 +122,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "lgamma"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc return identical bits for the remaining libc-test diagnostic at special/lgamma.h:145",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/lgamma.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/lgamma.c + src/math/special/lgamma.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/lgamma.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/lgamma.c + src/math/special/lgamma.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-gamma-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -130,7 +130,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "lgammaf"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc return identical bits for the remaining libc-test diagnostic at sanity/lgammaf.h:3",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/lgammaf.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/lgammaf.c + src/math/sanity/lgammaf.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/lgammaf.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/lgammaf.c + src/math/sanity/lgammaf.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-gamma-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -138,7 +138,7 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "lgammaf_r"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc return identical bits for the remaining libc-test diagnostic at sanity/lgammaf_r.h:3",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/lgammaf_r.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/lgammaf_r.c + src/math/sanity/lgammaf_r.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/lgammaf_r.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/lgammaf_r.c + src/math/sanity/lgammaf_r.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-gamma-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
@@ -146,13 +146,29 @@ ORACLE_EXPECTATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
     ("math", "tgamma"): {
         "kind": "oracle_expectation",
         "reason": "pinned musl and crabc return identical bits for the remaining libc-test diagnostics at sanity/tgamma.h:4,7 and special/tgamma.h:47,60,62",
-        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/tgamma.c); https://git.musl-libc.org/cgit/libc-test/tree/src/math/tgamma.c + src/math/sanity/tgamma.h + src/math/special/tgamma.h",
+        "reference": "https://musl.libc.org/releases/musl-1.2.6.tar.gz (src/math/tgamma.c); https://github.com/laputa-systems/libc-test/blob/68edb8bd73dab8147ee54c8bec638f4d2b3cff37/src/math/tgamma.c + src/math/sanity/tgamma.h + src/math/special/tgamma.h",
         "verified": "2026-08-20",
         "evidence": "oracle-evidence/math-gamma-aarch64-musl-1.2.6-2026-08-20.txt",
         "architecture": "aarch64",
     },
 }
-ORACLE_SKIPS = {**ORACLE_ENVIRONMENT_SKIPS, **ORACLE_EXPECTATION_SKIPS}
+# The upstream functional/crypt program bundles supported SHA-crypt calls with
+# deliberately excluded MD5-crypt and bcrypt calls. Keep that composite test
+# visible as one profile-limitation skip; `tests/crypt.rs` directly verifies
+# the supported dependency-backed SHA boundary.
+PROFILE_LIMITATION_SKIPS: dict[tuple[str, str], dict[str, str]] = {
+    ("functional", "crypt"): {
+        "kind": "profile_limitation",
+        "reason": "the combined upstream crypt test requires deliberately unsupported MD5-crypt and bcrypt formats",
+        "reference": "compat/crabc-rs/crypt-profile.md",
+        "verified": "2026-08-22",
+    },
+}
+KNOWN_SKIPS = {
+    **ORACLE_ENVIRONMENT_SKIPS,
+    **ORACLE_EXPECTATION_SKIPS,
+    **PROFILE_LIMITATION_SKIPS,
+}
 ORACLE_FUNCTIONS: dict[str, tuple[str, int]] = {
     "acosh": ("unary", 64),
     "asinh": ("unary", 64),
@@ -864,7 +880,7 @@ def run_subset(subset: str, script_dir: Path, crabc_dir: Path, libc_test_dir: Pa
             if base.endswith("_dso"):
                 continue
             counters["TOTAL"] += 1
-            skip = ORACLE_SKIPS.get((directory, base))
+            skip = KNOWN_SKIPS.get((directory, base))
             if skip is not None and skip.get("architecture") not in (None, platform.machine()):
                 skip = None
             if skip is not None:

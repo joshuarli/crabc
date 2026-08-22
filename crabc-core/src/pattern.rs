@@ -69,12 +69,20 @@ fn bracket_end(pattern: &[u8], start: usize) -> Option<usize> {
         {
             let delimiter = pattern[cursor + 1];
             cursor += 2;
+            let mut nested_closed = false;
             while cursor + 1 < pattern.len() {
                 if pattern[cursor] == delimiter && pattern[cursor + 1] == b']' {
                     cursor += 2;
+                    nested_closed = true;
                     break;
                 }
                 cursor += 1;
+            }
+            // A malformed nested POSIX class/collating/equivalence element
+            // makes the whole bracket expression literal. In particular, its
+            // trailing `]` must not be reused as the outer expression's end.
+            if !nested_closed {
+                return None;
             }
             continue;
         }
@@ -177,11 +185,14 @@ fn bracket_matches(
 
     while cursor < end {
         if pattern[cursor] == b'-' && cursor + 1 < end && pattern[cursor + 1] != b']' {
-            let low = pattern[cursor - 1];
-            let high = pattern[cursor + 1];
+            let (mut low, mut high) = (pattern[cursor - 1], pattern[cursor + 1]);
+            if casefold_enabled(flags) {
+                low = ascii_casefold(low);
+                high = ascii_casefold(high);
+            }
             if low <= high
-                && ((candidate >= low && candidate <= high)
-                    || (folded >= low && folded <= high))
+                && folded >= low
+                && folded <= high
             {
                 return !inverted;
             }
