@@ -659,7 +659,7 @@ status = "not-applicable"
 compatibility = "feature-gated-optional-api"
 reason = "Rustix try_close is an opt-in API whose retry semantics need a separate ownership contract; crabc exposes the Linux-safe non-retrying close boundary."
 tests = ["crabc-rs/src/io.rs", "compat/rustix/tests/test_harness.py"]
-documentation = ["crabc-rs.md#81-milestone-5--primary-rustix-parity"]
+documentation = ["docs/history/crabc-rs-delivery-plan.md#81-milestone-5--primary-rustix-parity"]
 
 [[api]]
 id = "fs.alloc-dir"
@@ -787,7 +787,7 @@ status = "intentional-divergence"
 compatibility = "explicit-flag-composition"
 reason = "crabc keeps classic mount operations as one explicit mount or unmount flag boundary instead of exposing convenience helpers which hide process-wide mount-namespace changes."
 tests = ["crabc-rs/src/mount.rs", "compat/rustix/tests/test_harness.py"]
-documentation = ["crabc-rs.md#81-milestone-5--primary-rustix-parity"]
+documentation = ["docs/history/crabc-rs-delivery-plan.md#81-milestone-5--primary-rustix-parity"]
 
 [[api]]
 id = "mount.fsd"
@@ -1149,7 +1149,7 @@ status = "not-applicable"
 compatibility = "excluded-linux-extension"
 reason = "io_uring is an explicitly separate extended Linux surface, not M0 libc-native parity."
 tests = ["compat/rustix/tests/test_harness.py"]
-documentation = ["crabc-rs.md#14-treat-io_uring-separately"]
+documentation = ["docs/history/crabc-rs-delivery-plan.md#14-treat-io_uring-separately"]
 
 [[api]]
 id = "runtime.internal"
@@ -1160,4 +1160,4 @@ status = "not-applicable"
 compatibility = "excluded-internal-api"
 reason = "Rustix runtime is undocumented and unstable; it is not an application-facing M0 API."
 tests = ["compat/rustix/tests/test_harness.py"]
-documentation = ["crabc-rs.md#12-create-a-rustix-correspondence-manifest"]
+documentation = ["docs/history/crabc-rs-delivery-plan.md#12-create-a-rustix-correspondence-manifest"]

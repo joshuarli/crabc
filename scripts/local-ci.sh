@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Reproduce the GitHub Actions CI environment locally.
-# Uses podman by default; falls back to docker if podman is unavailable.
-# Requires a working container registry connection.
+# Legacy host-architecture convenience check. It does not reproduce the
+# pinned Docker-first Linux/AArch64 evidence environment; use scripts/dev.sh
+# for authoritative development and compatibility results.
 set -euo pipefail
 
 RUNNER="${CI_RUNNER:-podman}"

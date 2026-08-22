@@ -1,4 +1,4 @@
-# Immutable Rustix API/reference provenance for the M0 compatibility harness.
+# Immutable Rustix API/reference provenance for the compatibility oracle.
 #
 # This file names a repository and commit, never a developer checkout.  The
 # harness can therefore be run from a clean clone without depending on a

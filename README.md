@@ -10,10 +10,12 @@ Linux-only. x86_64, RISC-V, 32-bit, big-endian, and non-Linux `crabc` ports are
 out of scope unless explicitly reopened. `crabc-rs` may later add a separate
 macOS/AArch64 libSystem backend; that does not make the libc portable.
 
-Read [`SCOPE.md`](SCOPE.md) for the engineering doctrine and
+Read [`SCOPE.md`](SCOPE.md) for the engineering doctrine,
 [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) for the supported
-semantic profile and deliberate limits. In particular, compatibility evidence
-does not promise a native Rust wrapper for every C symbol.
+semantic profile, and [`TODO.md`](TODO.md) for the exact active Linux/AArch64
+work. [`docs/README.md`](docs/README.md) routes design, evidence, historical
+records, and code-adjacent harness guides. Compatibility evidence does not
+promise a native Rust wrapper for every C symbol.
 
 ## What remains rigorous
 
@@ -53,11 +55,14 @@ project scope.
 |---|---|
 | `libc/` | `libc.so` / `libc.a`: monolithic Rust `no_std` libc |
 | `ldso/` | `libldso.so`: AArch64 dynamic linker |
+| `crabc-core/` | Shared typed `no_std` Linux/AArch64 implementation layer |
 | `crabc-rs/` | Idiomatic Rust OS/runtime capabilities |
 | `include/` | Public C headers |
 | `tests/` | Runtime integration tests and C fixtures |
-| `compat/` | ABI, differential, corpus, loader, and capability evidence |
+| `compat/` | ABI, differential, corpus, loader, LTO, Rustix, and capability evidence |
 | `libc-test-harness/` | Pinned upstream musl `libc-test` runner |
+| `docs/` | Cross-cutting design, evidence, and historical delivery records |
+| `scripts/` and `docker/` | Docker-first development commands and pinned native image |
 
 ## Design boundaries
 

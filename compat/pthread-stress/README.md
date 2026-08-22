@@ -43,9 +43,8 @@ per-stream byte hashes and hex bytes, and the aggregate pass state.
 
 ## Development-image integration
 
-The existing `scripts/dev.sh` wrapper must provide a `pthread-stress` command
-with the same forwarding behavior as the other M6 runners. Its integration
-hook is:
+`scripts/dev.sh` provides a `pthread-stress` command with the same forwarding
+behavior as the other native runners. Its integration hook is:
 
 ```sh
 ensure_image

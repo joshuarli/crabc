@@ -27,12 +27,14 @@ cargo build -p crabc-libc
 
 Output is in `target/debug/libc.so` and `target/debug/libc.a`.
 
-## Features
+## Evidence boundary
 
-- Implements ~350+ C library functions (stdio, stdlib, string, math, pthread, etc.)
 - `no_std` — no Rust standard library dependency
 - Targets the musl ABI for Linux AArch64
-- Supports long double via `f128` on aarch64
+- Uses the AArch64 binary128 public `long double` ABI
+- The measured dynamic ABI and behavioral status is generated in
+  [`../COMPATIBILITY.md`](../COMPATIBILITY.md); an export count is never a
+  substitute for subsystem verification.
 
 ## License
 

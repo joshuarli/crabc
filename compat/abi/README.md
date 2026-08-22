@@ -45,10 +45,10 @@ applications can include directly; its `arch-internal` records are installed
 `bits/` headers that public headers include and that define AArch64 ABI layouts
 and constants. Every record carries its path relative to the pinned
 installation's `include/` directory, byte and newline counts, and the SHA-256
-of the exact installed file. This is a file-boundary inventory, not yet a
-declaration/type-layout comparison: preprocessor feature choices, macro
-expansions, declarations selected by those choices, and ABI-bearing
-`sizeof`/`offsetof` values require dedicated probes in later milestones.
+of the exact installed file. This is a file-boundary inventory; the generated
+ABI probe separately covers the selected public declaration and
+layout/constant set. It is not a claim of exhaustive feature-macro,
+declaration, or `sizeof`/`offsetof` parity for every installed header.
 
 ## `ld.so` and runtime relationship
 

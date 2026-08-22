@@ -285,7 +285,7 @@ symbols = ["__cxa_atexit", "__cxa_finalize", "__setjmp", "__sigsetjmp", "__sigse
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "compiler, unwinding, and C ABI support"
-evidence = ["libc/src/lib.rs", "libc/src/arch/aarch64.s", "crabc-rs.md#33"]
+evidence = ["libc/src/lib.rs", "libc/src/arch/aarch64.s", "docs/history/crabc-rs-delivery-plan.md#33"]
 rationale = "These exports preserve compiler and C control-transfer ABI behavior; Rust exposes neither a safe nor a meaningful direct operation for them."
 
 [[capability]]
@@ -315,9 +315,9 @@ symbols = ["abort"]
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "std::process::abort() for immediate process termination"
-source_evidence = ["crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_subsumed.rs"]
-evidence = ["crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_subsumed.rs"]
+evidence = ["docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_subsumed.rs"]
 rationale = "Only abort has the same deliberate immediate-termination operation; this record does not claim Rust equivalents for C exit hooks, errno diagnostics, or process creation."
 
 [[capability]]
@@ -340,7 +340,7 @@ status = "documented"
 scope_exception_id = "allocator-mimalloc-libc-boundary"
 scope_exception_version = 1
 scope_exception_policy = "mimalloc-backed-libc-boundary"
-evidence = ["plan.md", "crabc-rs.md", "crabc-rs/m10_subsumed_evidence.md"]
+evidence = ["docs/history/runtime-plan.md", "docs/history/crabc-rs-delivery-plan.md", "docs/evidence/crabc-rs-subsumption.md"]
 rationale = "The project deliberately keeps the public malloc family at the libc boundary while crabc-rs uses ordinary Rust allocation facilities; this is a mimalloc policy boundary, not a semantic-equivalence claim."
 
 [[capability]]
@@ -352,7 +352,7 @@ status = "documented"
 scope_exception_id = "allocator-mimalloc-libc-boundary"
 scope_exception_version = 1
 scope_exception_policy = "mimalloc-backed-libc-boundary"
-evidence = ["plan.md", "crabc-rs.md", "crabc-rs/m10_subsumed_evidence.md"]
+evidence = ["docs/history/runtime-plan.md", "docs/history/crabc-rs-delivery-plan.md", "docs/evidence/crabc-rs-subsumption.md"]
 rationale = "The project deliberately keeps malloc_usable_size at the libc boundary with the rest of the public malloc family; crabc-rs exposes no allocator-layout introspection, and this is neither Rust subsumption nor an ABI-only disposal."
 
 [[capability]]
@@ -362,9 +362,9 @@ symbols = ["bcmp", "bcopy", "bzero", "memchr", "memcmp", "memcpy", "memmem", "me
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "slice::copy_from_slice, slice::fill, slice search methods, and narrowly justified core::ptr copy operations"
-source_evidence = ["crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_subsumed.rs"]
-evidence = ["crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_subsumed.rs"]
+evidence = ["docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_subsumed.rs"]
 rationale = "These operations are ordinary byte copying, filling, comparison, or search and are better expressed by typed slices. The C pointer/overlap preconditions are not silently carried into safe Rust."
 
 [[capability]]
@@ -388,9 +388,9 @@ symbols = ["index", "rindex", "strchr", "strchrnul", "strcmp", "strcspn", "strle
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "CStr::to_bytes, byte slices, and Path component/search operations"
-source_evidence = ["crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_subsumed.rs"]
-evidence = ["crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_subsumed.rs"]
+evidence = ["docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_subsumed.rs"]
 rationale = "The selected operations are observations/searches over a byte sequence and have direct typed slice or CStr representations. No Rust API is claimed for C pointer-return, token-state, or truncating-copy behavior."
 
 [[capability]]
@@ -414,9 +414,9 @@ symbols = ["abs", "div", "ffs", "ffsl", "ffsll", "imaxabs", "imaxdiv", "labs", "
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "integer arithmetic/trailing_zeros, quotient-remainder pairs, and slice::sort"
-source_evidence = ["crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_subsumed.rs"]
-evidence = ["crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_subsumed.rs"]
+evidence = ["docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_subsumed.rs"]
 rationale = "These scalar operations have direct language or slice equivalents with typed results; C comparator/context and encoded legacy formats are deliberately excluded."
 
 [[capability]]
@@ -504,9 +504,9 @@ symbols = ["acos", "acosf", "acosh", "acoshf", "asin", "asinf", "asinh", "asinhf
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "f32/f64 intrinsic methods and operators, including mul_add and sin_cos"
-source_evidence = ["crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_subsumed.rs"]
-evidence = ["crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_subsumed.rs"]
+evidence = ["docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_subsumed.rs"]
 rationale = "The selected ordinary scalar functions have direct Rust primitive operations on this target. This record excludes fenv-sensitive rounding, exp10/pow10 extensions, and positive-part fdim semantics."
 
 [[capability]]
@@ -739,9 +739,9 @@ symbols = ["asprintf", "dprintf", "fprintf", "printf", "sprintf", "vasprintf", "
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "format_args! with std::io::Write or core::fmt::Write, plus owned String/Vec output"
-source_evidence = ["crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_subsumed.rs"]
-evidence = ["crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_subsumed.rs"]
+evidence = ["docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_subsumed.rs"]
 rationale = "Growing formatted output is a Rust language/library capability rather than a reason to reproduce C varargs. Bounded snprintf/vsnprintf truncation, required-size reporting, and destination-buffer semantics are explicitly deferred."
 
 [[capability]]
@@ -2238,9 +2238,9 @@ symbols = ["in6addr_any", "in6addr_loopback"]
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "core::net::Ipv6Addr::{UNSPECIFIED, LOCALHOST}; crabc_rs::net::ethers::{IN6ADDR_ANY, IN6ADDR_LOOPBACK, Ipv6Constants} supplies named native value aliases"
-source_evidence = ["crabc-rs/src/ethers.rs", "crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["crabc-rs/src/ethers.rs", "docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_ethers.rs", "crabc-rs/examples/m10_ethers_direct_probe.rs", "compat/crabc-rs/verify_m10_network_address.py"]
-evidence = ["crabc-rs/src/ethers.rs", "crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_ethers.rs", "crabc-rs/examples/m10_ethers_direct_probe.rs", "compat/crabc-rs/verify_m10_network_address.py"]
+evidence = ["crabc-rs/src/ethers.rs", "docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_ethers.rs", "crabc-rs/examples/m10_ethers_direct_probe.rs", "compat/crabc-rs/verify_m10_network_address.py"]
 rationale = "Musl's exported objects are the immutable all-zero and final-octet-one IPv6 values. The standard Rust values preserve those complete values without exposing C object identity, mutable globals, or a layout claim; named crabc-rs aliases make the correspondence searchable."
 
 [[capability]]
@@ -3105,9 +3105,9 @@ symbols = ["hcreate", "hcreate_r", "hdestroy", "hdestroy_r", "hsearch", "hsearch
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "std::collections::HashMap with owned key/value entries and iterator traversal"
-source_evidence = ["crabc-rs/m10_subsumed_evidence.md"]
+source_evidence = ["docs/evidence/crabc-rs-subsumption.md"]
 behavior_evidence = ["crabc-rs/tests/m10_subsumed.rs"]
-evidence = ["crabc-rs/m10_subsumed_evidence.md", "crabc-rs/tests/m10_subsumed.rs"]
+evidence = ["docs/evidence/crabc-rs-subsumption.md", "crabc-rs/tests/m10_subsumed.rs"]
 rationale = "The hash-table capability is better represented by an owning typed HashMap; this does not claim equivalence for intrusive lists or callback-comparator trees."
 
 [[capability]]
@@ -3118,7 +3118,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Rust ownership-oriented collections subsume ordinary tree/list use; crabc-rs does not need to expose intrusive C links or callback-driven traversal as a native API."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "crabc-rs/m10_subsumed_evidence.md"]
+review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "docs/evidence/crabc-rs-subsumption.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. These pointer-linked callback exports are Rust-subsumed for ordinary native use, while their exact C semantics do not become a Rust unsafe wrapper requirement."
 
 [[capability]]

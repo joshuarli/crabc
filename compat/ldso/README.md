@@ -36,8 +36,9 @@ produce the exact same process result, `nested=42\n`.
 
 This is a regression for recursive graph traversal, not an indirect test of
 ordinary libc calls: the two DSOs intentionally need no libc functionality.
-The absolute, case-local `DT_RUNPATH` makes library discovery deterministic
-while a later case will cover `$ORIGIN` and loader search precedence.
+The absolute, case-local `DT_RUNPATH` makes library discovery deterministic;
+the separate `dso-origin` and `search-path` cases cover `$ORIGIN` and search
+precedence.
 
 `nested-dlopen` uses the identical DSO graph through `dlopen`, validates the
 middle export through `dlsym`, and closes the handle. Its library directory is

@@ -1,7 +1,14 @@
-# `crabc`: Linux/AArch64 modern Unix runtime plan
+# Historical runtime delivery plan
 
-> **Scope reset — 2026-08-21.** [`SCOPE.md`](SCOPE.md) and
-> [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) are the governing
+> **Archive, not a current backlog.** This is the chronological M0–M12
+> delivery record preserved for rationale and evidence provenance. It contains
+> contemporaneous "next", "remaining", and incomplete measurements which are
+> not current commitments. Use [`TODO.md`](../../TODO.md) for active work,
+> [`SCOPE.md`](../../SCOPE.md) for governing scope, and
+> [`COMPATIBILITY.md`](../../COMPATIBILITY.md) for measured status.
+
+> **Scope reset — 2026-08-21.** [`SCOPE.md`](../../SCOPE.md) and
+> [`COMPATIBILITY-PROFILE.md`](../../COMPATIBILITY-PROFILE.md) are the governing
 > scope. Historical sections below retain completed evidence and provenance,
 > but any future-looking item that conflicts with this reset is superseded.
 > The project will not become “glibc rewritten in Rust,” nor will
@@ -1988,7 +1995,7 @@ The core laboratory is operational on native Docker `linux/arm64` and is
 intentionally Python-based where a harness needs control flow or structured
 reporting. The reproducible environment is pinned to Alpine 3.24.1, Rust
 `nightly-2026-07-24`, and musl 1.2.6; exact source revisions are in
-[`compat/upstreams.toml`](compat/upstreams.toml).
+[`compat/upstreams.toml`](../../compat/upstreams.toml).
 
 Completed evidence:
 
@@ -2015,7 +2022,7 @@ Completed evidence:
   stderr, and errno against musl. It currently passes with zero normalization.
   Successful crabc loader startup is covered by a focused regression requiring
   empty application stderr.
-- [`COMPATIBILITY.md`](COMPATIBILITY.md) is generated from the structured
+- [`COMPATIBILITY.md`](../../COMPATIBILITY.md) is generated from the structured
   reports and distinguishes exported, implemented, and verified states.
 
 Current measurements are recorded in `COMPATIBILITY.md` rather than duplicated
@@ -2856,7 +2863,7 @@ Completion evidence:
 ## Milestone 12 — native `crabc-rs` LTO proof (complete)
 
 M12 completes the bounded Linux/AArch64 optimization evidence requested by
-`crabc-rs.md`; it is separate from the older M10 C-runtime LTO matrix. The
+`crabc-rs` delivery record; it is separate from the older M10 C-runtime LTO matrix. The
 checked-in native fixture uses only `crabc-rs` direct operations for its
 inspected route, while a second fixture adds stock `std` for a dynamic-runtime
 compatibility comparison. Both path-pin the repository crates and carry their
@@ -2887,7 +2894,7 @@ each of those non-claims explicitly.
 `crabc-rs` M5 is complete for its declared direct descriptor, readiness,
 timer, and mapping slice. The pinned Rustix correspondence ledger is now
 fully classified and its documented direct-boundary/source-comparison gate is
-green. The remaining `crabc-rs.md` milestones and their explicit deferred
+green. The remaining `crabc-rs` milestones and their explicit deferred
 Linux/AArch64 surfaces are capability-accounting work; they do not activate
 another architecture.
 

@@ -1,7 +1,7 @@
 # Stage 16 LTO measurement harness
 
 `run.py` is a bounded, dependency-free measurement prototype for the four
-configurations in Stage 16 of `plan.md`:
+configurations in Stage 16 of the [historical runtime plan](../../docs/history/runtime-plan.md):
 
 | ID | Configuration | Build contract |
 | --- | --- | --- |

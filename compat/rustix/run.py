@@ -85,6 +85,7 @@ ALLOWED_COVERAGE_CLASSIFICATIONS = {
 }
 ALLOWED_COVERAGE_STATUSES = {"verified", "documented", "deferred"}
 ALLOWED_CAPABILITY_KINDS = {"semantic", "implementation"}
+COVERAGE_PHASE = "M11-core-runtime-slices"
 
 # The allocator is the one deliberate crabc-rs scope exception. Keep this
 # contract centralized: a scope exception must not become a second spelling of
@@ -95,9 +96,9 @@ ALLOCATOR_SCOPE_EXCEPTION_ID = "allocator-mimalloc-libc-boundary"
 ALLOCATOR_SCOPE_EXCEPTION_VERSION = 1
 ALLOCATOR_SCOPE_EXCEPTION_POLICY = "mimalloc-backed-libc-boundary"
 ALLOCATOR_SCOPE_EXCEPTION_EVIDENCE = (
-    "plan.md",
-    "crabc-rs.md",
-    "crabc-rs/m10_subsumed_evidence.md",
+    "docs/history/runtime-plan.md",
+    "docs/history/crabc-rs-delivery-plan.md",
+    "docs/evidence/crabc-rs-subsumption.md",
 )
 ALLOCATOR_SCOPE_EXCEPTION_SYMBOLS = {
     "memory.allocator-basic": (
@@ -471,7 +472,7 @@ def require_scope_exception_contract(
 def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
     require(data.get("schema") == "crabc.crabc-rs-coverage/v2", "bad crabc-rs coverage schema")
     require(data.get("target") == TARGET, "coverage target is not AArch64 musl")
-    require(data.get("phase") == "M9-complete", "coverage phase is not M9-complete")
+    require(data.get("phase") == COVERAGE_PHASE, f"coverage phase is not {COVERAGE_PHASE}")
     dynamic = data.get("dynamic_exports")
     policy = data.get("policy")
     capabilities = data.get("capability")
@@ -634,7 +635,7 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
         "candidate_only_by_classification": dict(sorted(candidate_only_by_classification.items())),
         "deferred_capability_count": status_counts["deferred"],
         "expanded_capabilities": expanded_groups,
-        "m9_green": True,
+        "ledger_green": True,
     }
 
 

@@ -61,8 +61,12 @@ python3 -m unittest discover -s libc-test-harness -p 'test_*.py'
 
 ## Known Limitations
 
-- **Surface parity is incomplete** — missing exports can still cause link failures. Use `latest-report.json` to see which unresolved symbols block each test; do not infer behavior from an export count.
-- **Static linking is not tested** — only dynamic-linked binaries are built.
+- **The current full report has no missing-symbol blockers** — retain the
+  graph because later ABI changes can reintroduce one; do not infer behavior
+  from an export count.
+- **Static linking is not comprehensively tested** — the separate focused
+  static pthread/TLS lifecycle evidence is narrower than a full static
+  libc-test matrix.
 - **Only functional subset is tested by default** — use `./run.sh all` for everything.
 - **`regression/statvfs` is skipped on Docker's root overlay** — it reports zero
   inode capacity under both crabc and the pinned musl oracle. The structured

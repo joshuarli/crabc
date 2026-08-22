@@ -26,7 +26,7 @@ Every planned capability is classified before implementation.
 | Core Unix runtime | High-rigor implementation and behavioral evidence. Includes filesystems, fds, pipes, signals, fork/exec, pthread/TLS, sockets, mmap, time, stdio basics, resolver behavior in this profile, dynamic linking, errno, and ABI. |
 | Useful POSIX/runtime functionality | Implement idiomatically when it benefits Rust or normal Unix software. |
 | C ABI compatibility machinery | May exist for C/Rust-std ABI reasons, but is not necessarily a first-class `crabc-rs` API. |
-| Rust-subsumed | Account for it without duplicating a better Rust facility (for example `malloc`, `printf`, `qsort`, or basic string/memory helpers). |
+| Rust-subsumed | Account for it without duplicating a better Rust facility (for example `printf`, `qsort`, or basic string/memory helpers). |
 | Deliberately unsupported legacy | Record the precise limitation and do not turn an expected profile limit into an accidental failure. |
 
 For `crabc-rs`, full coverage means **semantic accounting of every underlying

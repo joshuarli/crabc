@@ -26,7 +26,8 @@ The feature states mean:
   no test result is asserted.
 - `source_only`: source markers exist, but no focused test target is recorded.
 - `surface_only`: a name or constant exists, but implementation evidence is
-  intentionally insufficient (for example `dlclose` is currently a no-op).
+  intentionally insufficient. Runtime behavior belongs in the synthetic
+  loader differential suite, not in this source inventory.
 - `not_evidenced`: no implementation marker was found in the inspected source.
 
 ## Reproduce in native Docker

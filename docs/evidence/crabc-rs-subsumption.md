@@ -34,7 +34,8 @@ C allocator ABI or usable-size observation.
 Likewise, the public AArch64 C `long double` is IEEE-754 binary128
 (`include/float.h`, `LDBL_MANT_DIG == 113`). Rust `f32`/`f64` primitive methods
 therefore do not subsume the elementary `*l` symbols; those symbols are
-tracked as deferred native math work.
+tracked as C ABI compatibility machinery rather than a native Rust math
+backlog.
 
 The immutable IPv6 values `in6addr_any` and `in6addr_loopback` are precisely
 the all-zero and final-octet-one addresses. `core::net::Ipv6Addr::UNSPECIFIED`

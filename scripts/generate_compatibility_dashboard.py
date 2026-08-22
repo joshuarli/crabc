@@ -36,6 +36,7 @@ CORPUS_REPORT = ROOT_DIR / "compat/reports/corpus/latest.json"
 RUST_STD_REPORT = ROOT_DIR / "compat/reports/rust-std/latest.json"
 RUST_STD_DEPENDENT_REPORT = ROOT_DIR / "compat/reports/rust-std-dependent/latest.json"
 LTO_REPORT = ROOT_DIR / "compat/reports/lto/latest.json"
+M12_LTO_REPORT = ROOT_DIR / "compat/reports/lto/m12/latest.json"
 ABI_PROBE_REPORT = ROOT_DIR / "compat/reports/abi/latest.json"
 
 
@@ -235,6 +236,25 @@ def m10_report_state() -> dict[str, Any] | None:
     return report
 
 
+def m12_report_state() -> dict[str, Any] | None:
+    """Return bounded native-facade LTO evidence with its three named lanes."""
+
+    report = read_json(M12_LTO_REPORT)
+    if report is None:
+        return None
+    if report.get("schema_version") != 1 or report.get("runner") != "compat/lto/m12_run.py":
+        raise RuntimeError(f"unexpected M12 report identity in {M12_LTO_REPORT}")
+    lanes = report.get("lanes")
+    if not isinstance(lanes, dict) or not {"control-o3", "fat-lto", "stock-std-fat"}.issubset(lanes):
+        raise RuntimeError(f"incomplete M12 lane set in {M12_LTO_REPORT}")
+    for name in ("control-o3", "fat-lto", "stock-std-fat"):
+        lane = lanes[name]
+        if not isinstance(lane, dict) or not isinstance(lane.get("status"), str):
+            raise RuntimeError(f"invalid M12 lane {name} in {M12_LTO_REPORT}")
+    report["_path"] = str(M12_LTO_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -265,6 +285,7 @@ def main() -> int:
     rust_std = rust_std_report_state(RUST_STD_REPORT)
     rust_std_dependent = rust_std_report_state(RUST_STD_DEPENDENT_REPORT)
     lto = m10_report_state()
+    m12_lto = m12_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     lines = [
@@ -634,6 +655,50 @@ def main() -> int:
                 ("case", "configuration", "status", ".text", "stripped ELF", "symbols", "run", "scope / boundary"),
                 rows,
             )
+        )
+
+    lines.extend(["", "## M12 native `crabc-rs` LTO proof", ""])
+    if m12_lto is None:
+        lines.append("No M12 native-facade result. Run `./scripts/dev.sh lto-m12`.")
+    else:
+        lanes = m12_lto["lanes"]
+        claims = m12_lto.get("claims")
+        claims = claims if isinstance(claims, dict) else {}
+        passed = m12_lto.get("result") == "complete" and m12_lto.get("status") == "built"
+        lines.append(
+            "Bounded native-facade O3/fat-LTO evidence: "
+            f"**{'pass' if passed else 'FAIL'}**; report `{m12_lto['_path']}`."
+        )
+        lines.append(
+            "The named witness proves a direct Linux syscall route and raw musl/crabc runtime comparison; "
+            "it does not assert whole-program LTO or optimization inside dynamic `libc.so`."
+        )
+        rows = []
+        for name in ("control-o3", "fat-lto", "stock-std-fat"):
+            lane = lanes[name]
+            assert isinstance(lane, dict)
+            comparison = lane.get("runtime_comparison")
+            comparison = comparison if isinstance(comparison, dict) else {}
+            inspection = lane.get("inspection")
+            inspection = inspection if isinstance(inspection, dict) else {}
+            route = inspection.get("route", {})
+            route = route if isinstance(route, dict) else {}
+            rows.append(
+                (
+                    name,
+                    lane.get("status", "unknown"),
+                    comparison.get("status", "n/a"),
+                    "yes" if route.get("witness_direct_getpid") is True else "no",
+                )
+            )
+        lines.append("")
+        lines.extend(markdown_table(("lane", "artifact", "raw runtime", "direct getpid witness"), rows))
+        lines.append(
+            "Claims: direct route="
+            f"{claims.get('direct_syscall_route_proven') is True}; facade boundary eliminated="
+            f"{claims.get('facade_boundary_eliminated') is True}; whole-program LTO="
+            f"{claims.get('whole_program_lto_proven') is True}; dynamic-libc LTO="
+            f"{claims.get('stock_std_lto_into_dynamic_libc_proven') is True}."
         )
 
     lines.extend(["", "## libc-test", ""])

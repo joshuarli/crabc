@@ -44,7 +44,7 @@ class MetadataTests(unittest.TestCase):
 
 
 class CoverageLedgerTests(unittest.TestCase):
-    """M9 mutations prove the coverage ledger cannot silently become inventory again."""
+    """Ledger mutations cannot silently turn semantic accounting into inventory."""
 
     def ledger(self) -> dict[str, object]:
         return copy.deepcopy(harness.load_toml(harness.COVERAGE_PATH))
@@ -59,9 +59,9 @@ class CoverageLedgerTests(unittest.TestCase):
                 return capability
         raise AssertionError(f"missing capability fixture: {identifier}")
 
-    def test_m9_report_has_exact_zero_unclassified_accounting(self) -> None:
+    def test_current_report_has_exact_zero_unclassified_accounting(self) -> None:
         coverage = harness.validate_coverage(self.ledger())
-        self.assertTrue(coverage["m9_green"])
+        self.assertTrue(coverage["ledger_green"])
         self.assertEqual(coverage["symbol_count"], 1669)
         self.assertEqual(coverage["classified_symbol_count"], 1669)
         self.assertEqual(coverage["unclassified_symbol_count"], 0)
@@ -118,7 +118,7 @@ class CoverageLedgerTests(unittest.TestCase):
 
     def test_coverage_rejects_anchor_only_rust_subsumption_evidence(self) -> None:
         ledger = self.ledger()
-        self.capability(ledger, "error.termination.abort")["evidence"][0] = "crabc-rs.md#33"
+        self.capability(ledger, "error.termination.abort")["evidence"][0] = "docs/history/crabc-rs-delivery-plan.md#33"
         with self.assertRaisesRegex(harness.HarnessError, "anchor"):
             harness.validate_coverage(ledger)
 
@@ -133,21 +133,21 @@ class CoverageLedgerTests(unittest.TestCase):
     def test_coverage_rejects_duplicate_rust_subsumption_evidence(self) -> None:
         ledger = self.ledger()
         self.capability(ledger, "search.hash-table")["evidence"] = [
-            "crabc-rs/m10_subsumed_evidence.md",
-            "crabc-rs/m10_subsumed_evidence.md",
+            "docs/evidence/crabc-rs-subsumption.md",
+            "docs/evidence/crabc-rs-subsumption.md",
         ]
         with self.assertRaisesRegex(harness.HarnessError, "duplicate paths"):
             harness.validate_coverage(ledger)
 
     def test_coverage_requires_both_source_and_behavior_rust_subsumption_evidence(self) -> None:
         ledger = self.ledger()
-        self.capability(ledger, "numeric.scalar-basic")["source_evidence"] = ["crabc-rs.md"]
+        self.capability(ledger, "numeric.scalar-basic")["source_evidence"] = ["docs/history/crabc-rs-delivery-plan.md"]
         self.capability(ledger, "numeric.scalar-basic")["behavior_evidence"] = [
-            "crabc-rs/m10_subsumed_evidence.md"
+            "docs/evidence/crabc-rs-subsumption.md"
         ]
         self.capability(ledger, "numeric.scalar-basic")["evidence"] = [
-            "crabc-rs.md",
-            "crabc-rs/m10_subsumed_evidence.md",
+            "docs/history/crabc-rs-delivery-plan.md",
+            "docs/evidence/crabc-rs-subsumption.md",
         ]
         with self.assertRaisesRegex(harness.HarnessError, "behavior_evidence must identify"):
             harness.validate_coverage(ledger)
@@ -227,7 +227,7 @@ class CoverageLedgerTests(unittest.TestCase):
             ("scope_exception_id", "different-exception", "exception id changed"),
             ("scope_exception_version", 2, "exception version changed"),
             ("scope_exception_policy", "rust-subsumed", "exception policy changed"),
-            ("evidence", ["crabc-rs.md"], "exception evidence changed"),
+            ("evidence", ["docs/history/crabc-rs-delivery-plan.md"], "exception evidence changed"),
             ("status", "verified", "scope-exception must be documented"),
             ("rust_equivalent", "Box/Vec", "neither Rust-subsumed nor ABI-only"),
         )

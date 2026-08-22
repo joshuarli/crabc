@@ -1,4 +1,12 @@
-# Implement `crabc-rs`: a focused idiomatic Rust interface to crabc
+# Historical `crabc-rs` delivery plan
+
+> **Archive, not a current backlog.** This record preserves the architecture
+> decisions and M0–M12 delivery history. It contains initial-state statements
+> and then-current deferrals that are no longer a reliable work queue. Use
+> [`TODO.md`](../../TODO.md) for active work,
+> [`docs/design/crabc-rs.md`](../design/crabc-rs.md) for the current facade
+> contract, and [`compat/crabc-rs/coverage.toml`](../../compat/crabc-rs/coverage.toml)
+> for exact capability accounting.
 
 You are extending the measured Linux/AArch64 `crabc` implementation with a new public crate:
 
@@ -3321,7 +3329,7 @@ transposition, and password-hash serialization code has been removed. Only
 canonical non-empty `Base64ShaCrypt` salt input is accepted, and dependency
 output retains its explicit default-rounds spelling. The precise formats,
 dependency due diligence, and unsupported legacy forms are recorded in
-[`compat/crabc-rs/crypt-profile.md`](compat/crabc-rs/crypt-profile.md).
+[`compat/crabc-rs/crypt-profile.md`](../../compat/crabc-rs/crypt-profile.md).
 
 `fd::OwnedFd::close` consumes its one ownership token before direct Linux
 `close`; a Linux `EINTR` is success because the descriptor has already been

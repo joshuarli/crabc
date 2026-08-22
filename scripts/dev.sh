@@ -36,7 +36,7 @@ Commands:
   rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
   lto-m12 [options]   run the M12 native crabc-rs facade LTO proof
-  crabc-rs            run the M4 native Rust facade architecture/evidence gate
+  crabc-rs            run the native crabc-rs capability/accounting/evidence gate
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
   dashboard           generate COMPATIBILITY.md from current structured reports

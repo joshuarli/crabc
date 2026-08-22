@@ -1232,7 +1232,11 @@ The goal is:
 
 ---
 
-# Immediate action
+# Completed scope-reset checklist
+
+> Completed on 2026-08-21. This records the reset that governed M10–M12; it
+> is not an open implementation checklist. The living Linux/AArch64 backlog
+> is [`TODO.md`](TODO.md).
 
 Before continuing broad implementation work:
 
