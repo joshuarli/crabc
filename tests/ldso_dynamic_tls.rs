@@ -4,7 +4,7 @@ mod test_support;
 use std::process::Command;
 
 #[test]
-fn ldso_initializes_dlopen_tls_for_existing_threads() {
+fn ldso_preserves_pthread_identity_across_dlopen_tls_replacement() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");

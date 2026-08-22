@@ -225,9 +225,13 @@ case "$command" in
         ;;
     static-pthread-tls)
         ensure_image
-        run_in_container cargo build --workspace
+        # `libc.a` is linked directly with musl's CRT, so use the aborting
+        # release archive. The debug archive retains unwind-only Rust alloc
+        # code under the project-wide dead-code linker setting and cannot be
+        # linked into this no-unwinder static fixture.
+        run_in_container cargo build --workspace --release
         run_in_container python3 scripts/collect_environment.py
-        run_in_container python3 compat/static-pthread-tls/run.py "$@"
+        run_in_container python3 compat/static-pthread-tls/run.py --target-dir /workspace/target/release "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
         ;;
     signal-process)

@@ -8,14 +8,22 @@ static char *(*loaded_tls)(void);
 
 static void *worker(void *unused)
 {
+    pthread_t self;
     char *value;
 
     (void)unused;
+    /* A 4-KiB TLS DSO below forces this existing worker onto a replacement
+     * TLS block. The loader must preserve libc's per-thread identity state
+     * across that replacement, not merely initialize the new DSO image. */
+    self = pthread_self();
+    if (!self)
+        return (void *)1;
     while (!ready)
         ;
     value = loaded_tls();
     return value && (unsigned long)value % 4096 == 0 &&
-        strcmp(value, "dynamic") == 0 ? 0 : (void *)1;
+        strcmp(value, "dynamic") == 0 &&
+        pthread_equal(pthread_self(), self) ? 0 : (void *)1;
 }
 
 int main(void)
