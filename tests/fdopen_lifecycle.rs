@@ -1,0 +1,67 @@
+#[path = "common/mod.rs"]
+mod test_support;
+
+use std::process::{Command, Output};
+
+fn compile_fixture(binary: &std::path::Path, candidate: bool) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("tests/fixtures/fdopen_lifecycle_test.c");
+    let mut command = Command::new("musl-gcc");
+    command.args(["-fPIE", "-pie", "-fno-builtin"]);
+    if candidate {
+        command.args([
+            "-I",
+            root.join("include").to_str().unwrap(),
+            "-Wl,--dynamic-linker",
+            root.join("target/debug/libldso.so").to_str().unwrap(),
+            "-L",
+            root.join("target/debug").to_str().unwrap(),
+            "-Wl,--allow-shlib-undefined",
+        ]);
+    }
+    command.arg(&fixture).args(["-lc", "-o"]).arg(binary);
+    let status = command
+        .status()
+        .expect("failed to compile the fdopen lifecycle fixture");
+    assert!(status.success(), "fdopen lifecycle fixture compilation failed");
+}
+
+fn run(binary: &std::path::Path, path: &std::path::Path, candidate: bool) -> Output {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut command = Command::new(binary);
+    command.arg(path);
+    if candidate {
+        command.env("LD_LIBRARY_PATH", root.join("target/debug"));
+    }
+    command
+        .output()
+        .expect("failed to run the fdopen lifecycle fixture")
+}
+
+#[test]
+fn fdopen_private_storage_lifecycle_matches_pinned_musl() {
+    let reference = test_support::TempArtifact::new("fdopen-lifecycle-reference");
+    let candidate = test_support::TempArtifact::new("fdopen-lifecycle-candidate");
+    let reference_file = test_support::TempArtifact::new("fdopen-lifecycle-reference-file");
+    let candidate_file = test_support::TempArtifact::new("fdopen-lifecycle-candidate-file");
+    compile_fixture(&reference, false);
+    compile_fixture(&candidate, true);
+
+    let reference_output = run(&reference, &reference_file, false);
+    let candidate_output = run(&candidate, &candidate_file, true);
+    assert!(
+        reference_output.status.success(),
+        "pinned musl fixture failed with {:?}: {}",
+        reference_output.status.code(),
+        String::from_utf8_lossy(&reference_output.stderr),
+    );
+    assert_eq!(reference_output.stdout, b"fdopen lifecycle ok\n");
+    assert_eq!(
+        candidate_output.status,
+        reference_output.status,
+        "crabc exit status differs; stderr: {}",
+        String::from_utf8_lossy(&candidate_output.stderr),
+    );
+    assert_eq!(candidate_output.stdout, reference_output.stdout);
+    assert_eq!(candidate_output.stderr, reference_output.stderr);
+}
