@@ -18,6 +18,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
+const PT_PHDR: u32 = 6;
 const PT_TLS: u32 = 7;
 const PT_GNU_RELRO: u32 = 0x6474e552;
 const PF_R: u32 = 4;
@@ -101,6 +102,7 @@ const AT_GID: u64 = 13;
 const AT_EGID: u64 = 14;
 const AT_SECURE: u64 = 23;
 const AT_RANDOM: u64 = 25;
+const AT_EXECFN: u64 = 31;
 const AT_SYSINFO_EHDR: u64 = 33;
 
 const PROT_READ: i32 = 1;
@@ -476,7 +478,8 @@ static DLERROR_LOCK: AtomicBool = AtomicBool::new(false);
 static mut LD_LIBRARY_PATH: *const u8 = core::ptr::null();
 static mut RUNPATH: *const u8 = core::ptr::null();
 static mut RUNPATH_LEN: usize = 0;
-static mut ORIGIN_DIR: [u8; 256] = [0; 256];
+const ORIGIN_CAPACITY: usize = 256;
+static mut ORIGIN_DIR: [u8; ORIGIN_CAPACITY] = [0; ORIGIN_CAPACITY];
 static mut ORIGIN_LEN: usize = 0;
 
 // ============================================================
@@ -1189,6 +1192,129 @@ unsafe fn find_auxv_value(sp: usize, tag_wanted: u64) -> u64 {
     }
 }
 
+/// Read the already-mapped main image from the kernel's initial auxiliary
+/// vector. Linux has loaded this PIE before it transfers control to PT_INTERP,
+/// so remapping it would retain a redundant executable image and invalidate
+/// the kernel-provided load layout.
+unsafe fn kernel_main_image(sp: usize) -> KernelMainImage {
+    let phdr_address = find_auxv_value(sp, AT_PHDR);
+    let phent = find_auxv_value(sp, AT_PHENT);
+    let phnum = find_auxv_value(sp, AT_PHNUM);
+    let entry = find_auxv_value(sp, AT_ENTRY);
+    if phdr_address == 0 || entry == 0 || phent as usize != PHDR_SIZE || phnum == 0 {
+        die(97, b"auxv_main", phdr_address as usize);
+    }
+    let phnum = phnum as usize;
+    if phnum.checked_mul(PHDR_SIZE).is_none() {
+        die(97, b"auxv_phnum", phnum);
+    }
+
+    // SAFETY: `AT_PHDR` is a Linux kernel ABI address for the mapped main
+    // image's program-header table. The checked table size above bounds only
+    // our arithmetic; the kernel owns the mapping's lifetime through exec.
+    let phdr = core::ptr::with_exposed_provenance::<u8>(phdr_address as usize);
+    let mut base = None;
+    for index in 0..phnum {
+        let offset = match index.checked_mul(PHDR_SIZE) {
+            Some(offset) => offset,
+            None => die(97, b"auxv_phoff", index),
+        };
+        let header = unsafe {
+            // SAFETY: `offset` is within the kernel-advertised program-header
+            // table, whose entry size was validated against the ELF64 ABI.
+            phdr.add(offset)
+        };
+        let header_type = unsafe {
+            // SAFETY: `header` points at one complete kernel-provided ELF64
+            // program header, so its four-byte type field is initialized.
+            u32::from_le_bytes(core::ptr::read_unaligned(header.cast::<[u8; 4]>()))
+        };
+        if header_type != PT_PHDR {
+            continue;
+        }
+        let virtual_address = unsafe {
+            // SAFETY: `PH_VADDR..PH_VADDR + 8` lies inside the validated
+            // ELF64 program-header entry addressed by `header`.
+            let field = header.add(PH_VADDR).cast::<[u8; 8]>();
+            u64::from_le_bytes(core::ptr::read_unaligned(field))
+        };
+        let Some(candidate) = phdr_address.checked_sub(virtual_address) else {
+            die(97, b"auxv_phdr", virtual_address as usize);
+        };
+        if let Some(existing) = base {
+            if existing != candidate {
+                die(97, b"auxv_phdr", candidate as usize);
+            }
+        } else {
+            base = Some(candidate);
+        }
+    }
+    let Some(base) = base else {
+        die(97, b"auxv_phdr", phdr_address as usize);
+    };
+
+    KernelMainImage {
+        base,
+        phdr,
+        phnum,
+        entry,
+    }
+}
+
+/// Seed the executable `$ORIGIN` directory from Linux's kernel-owned
+/// `AT_EXECFN` path, keeping the historic 256-byte loader storage bound.
+unsafe fn initialize_main_origin(sp: usize) {
+    ORIGIN_LEN = 0;
+    let executable_address = find_auxv_value(sp, AT_EXECFN);
+    if executable_address == 0 {
+        return;
+    }
+    // SAFETY: `AT_EXECFN` names a NUL-terminated executable path in the
+    // kernel-built startup stack. The loop never reads past the loader's
+    // fixed 256-byte origin capacity.
+    let executable = core::ptr::with_exposed_provenance::<u8>(executable_address as usize);
+    let mut length = 0usize;
+    while length < ORIGIN_CAPACITY {
+        let byte = unsafe {
+            // SAFETY: the kernel owns the NUL-terminated `AT_EXECFN` string,
+            // and the loop bounds this read to the fixed origin capacity.
+            *executable.add(length)
+        };
+        if byte == 0 {
+            break;
+        }
+        length += 1;
+    }
+    let mut slash = length;
+    let mut found_slash = false;
+    while slash > 0 {
+        slash -= 1;
+        let byte = unsafe {
+            // SAFETY: `slash < length <= ORIGIN_CAPACITY`, which is the
+            // same bounded prefix already read from `AT_EXECFN` above.
+            *executable.add(slash)
+        };
+        if byte == b'/' {
+            found_slash = true;
+            break;
+        }
+    }
+    if !found_slash {
+        return;
+    }
+    unsafe {
+        // SAFETY: both source and destination hold distinct kernel/loader-
+        // owned byte ranges, and `slash < ORIGIN_CAPACITY` by the bounded
+        // search.
+        core::ptr::copy_nonoverlapping(
+            executable,
+            core::ptr::addr_of_mut!(ORIGIN_DIR).cast::<u8>(),
+            slash,
+        );
+    }
+    ORIGIN_LEN = slash;
+}
+
 unsafe fn secure_env_entry_is_unsafe(entry: *const u8) -> bool {
     let library_path = b"LD_LIBRARY_PATH=";
     let preload = b"LD_PRELOAD=";
@@ -1616,10 +1742,6 @@ const AT_FDCWD: i64 = -100;
 
 fn sys_open(path: *const u8) -> i64 {
     unsafe { <Arch as Syscalls>::syscall3(SYS_OPENAT, AT_FDCWD, path as i64, 0) }
-}
-
-fn sys_readlink(path: *const u8, buf: *mut u8, bufsz: usize) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall4(SYS_READLINKAT, AT_FDCWD, path as i64, buf as i64, bufsz as i64) }
 }
 
 fn sys_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
@@ -2157,6 +2279,20 @@ unsafe fn find_library_fd(
 struct FileIdentity {
     dev: u64,
     ino: u64,
+}
+
+/// Kernel-provided metadata for the main image already mapped before PT_INTERP
+/// gains control.
+///
+/// `phdr` has exposed provenance because the address originates in Linux's
+/// initial auxiliary vector. The kernel guarantees that the table belongs to
+/// the live main image for this process.
+#[derive(Clone, Copy)]
+struct KernelMainImage {
+    base: u64,
+    phdr: *const u8,
+    phnum: usize,
+    entry: u64,
 }
 
 /// Read the kernel file identity for an open DSO.  Symlink aliases resolve to
@@ -4916,6 +5052,24 @@ unsafe fn loaded_initial_libc_by_needed_name(
 }
 
 unsafe fn loaded_object_by_identity(identity: FileIdentity) -> Option<usize> {
+    // The main PIE's identity is not needed to build its immutable initial
+    // graph. Defer `/proc/self/exe` until a later dlopen needs alias matching.
+    if !INITIAL_LOAD_IN_PROGRESS
+        && LOADED_COUNT > 0
+        && LOADED[0].active
+        && !LOADED[0].file_identity_valid
+    {
+        let proc_exe = b"/proc/self/exe\0";
+        let fd = sys_open(proc_exe.as_ptr());
+        if fd >= 0 {
+            if let Some(main_identity) = file_identity(fd) {
+                LOADED[0].file_identity_valid = true;
+                LOADED[0].file_dev = main_identity.dev;
+                LOADED[0].file_ino = main_identity.ino;
+            }
+            sys_close(fd);
+        }
+    }
     for i in 0..LOADED_COUNT {
         let obj = &LOADED[i];
         if obj.active
@@ -4945,179 +5099,40 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     };
     LD_LIBRARY_PATH = ld_path.unwrap_or(core::ptr::null());
 
-    // 2. Open and read the executable (the PIE that invoked us as PT_INTERP)
-    let proc_exe = b"/proc/self/exe\0";
-    let fd = sys_open(proc_exe.as_ptr());
-    if fd < 0 {
-        die(99, b"open_exe", fd as usize);
-    }
-    let exec_identity = file_identity(fd);
-    {
-        let mut exe_path = [0u8; 256];
-        let r = sys_readlink(proc_exe.as_ptr(), exe_path.as_mut_ptr(), exe_path.len());
-        if r > 0 {
-            let len = r as usize;
-            let mut slash = len;
-            while slash > 0 {
-                slash -= 1;
-                if exe_path[slash] == b'/' {
-                    break;
-                }
-            }
-            ORIGIN_LEN = slash;
-            let mut i = 0;
-            while i < slash {
-                ORIGIN_DIR[i] = exe_path[i];
-                i += 1;
-            }
-        }
-    }
+    // 2. Linux has already mapped the main PIE. Consume the kernel's exact
+    // layout instead of opening and mapping a second executable image.
+    let main_image = kernel_main_image(sp);
+    let exec_base = main_image.base;
+    let phdr = main_image.phdr;
+    let e_phnum = main_image.phnum;
+    initialize_main_origin(sp);
 
-    let mut buf = [0u8; 4096];
-    let n = sys_read(fd, buf.as_mut_ptr(), buf.len());
-    if n < 64 {
-        die(98, b"read_exe", n as usize);
-    }
-
-    if buf[0] != 0x7f || buf[1] != b'E' {
-        die(97, b"elf_magic", u16::from_le_bytes([buf[0], buf[1]]) as usize);
-    }
-
-    let e_phoff = u64::from_le_bytes(buf[32..40].try_into().unwrap());
-    let e_phnum = u16::from_le_bytes(buf[56..58].try_into().unwrap());
-    let e_entry = u64::from_le_bytes(buf[24..32].try_into().unwrap());
     let mut exec_relro_vaddr = 0u64;
     let mut exec_relro_memsz = 0u64;
-    for i in 0..e_phnum as usize {
-        let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
-        let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
-        if p_type == PT_GNU_RELRO {
-            exec_relro_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
-            exec_relro_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
-            break;
-        }
-    }
-
-    // 3. Map executable's PT_LOAD segments at a safe base address.
-    //    PIE p_vaddr often starts at 0 which is below mmap_min_addr on CI.
-    //    Pre-scan to find span, probe for free region, then MAP_FIXED there.
-    let page = 4096u64;
-    let mut min_vaddr = u64::MAX;
-    let mut max_vaddr_end = 0u64;
-    for i in 0..e_phnum as usize {
-        let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
-        let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
-        if p_type != PT_LOAD {
-            continue;
-        }
-        let p_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
-        let p_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
-        if p_vaddr < min_vaddr { min_vaddr = p_vaddr; }
-        let end = p_vaddr + p_memsz;
-        if end > max_vaddr_end { max_vaddr_end = end; }
-    }
-    let image_start = min_vaddr & !(page - 1);
-    let image_end = (max_vaddr_end + page - 1) & !(page - 1);
-    let total_size = (image_end - image_start) as usize;
-    // The main PIE deserves the same kernel-selected load bias as DSOs. Keep
-    // this PROT_NONE span while MAP_FIXED overlays replace its load segments:
-    // it preserves ASLR and avoids a redundant munmap before the overlays.
-    let reservation = sys_mmap(
-        core::ptr::null_mut(),
-        total_size,
-        PROT_NONE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0,
-    );
-    if reservation as usize == MAP_FAILED {
-        die(95, b"map_exec", total_size);
-    }
-    let exec_base = (reservation as u64).wrapping_sub(image_start);
-
-    for i in 0..e_phnum as usize {
-        let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
-        let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
-        if p_type != PT_LOAD {
-            continue;
-        }
-        let p_flags = u32::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_FLAGS) as *const [u8; 4]));
-        let p_offset = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_OFFSET) as *const [u8; 8]));
-        let p_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
-        let p_filesz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_FILESZ) as *const [u8; 8]));
-        let p_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
-
-        let adj = p_vaddr & (page - 1);
-        let map_addr = exec_base + p_vaddr - adj;
-        let map_off = p_offset - adj;
-        let map_len = ((p_memsz + adj + page - 1) & !(page - 1)) as usize;
-        let prot = prot_from_flags(p_flags);
-
-        let file_map_len = ((p_filesz + adj + page - 1) & !(page - 1)) as usize;
-        if file_map_len > 0 {
-            let fptr = sys_mmap(
-                map_addr as *mut u8,
-                file_map_len,
-                prot,
-                MAP_PRIVATE | MAP_FIXED,
-                fd as i32,
-                map_off as i64,
-            );
-            if fptr as usize == MAP_FAILED {
-                die(95, b"map_exec_file", map_addr as usize);
-            }
-        }
-        if map_len > file_map_len {
-            let Some(tail_addr) = map_addr.checked_add(file_map_len as u64) else {
-                die(95, b"map_exec_tail", map_addr as usize);
-            };
-            // As for DSOs, map only pages beyond the rounded file image as
-            // anonymous BSS. The file-backed prefix can replace the retained
-            // reservation directly without a transient anonymous overlay.
-            let tail = sys_mmap(
-                tail_addr as *mut u8,
-                map_len - file_map_len,
-                prot,
-                MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
-                -1,
-                0,
-            );
-            if tail as usize == MAP_FAILED {
-                die(95, b"map_exec_tail", tail_addr as usize);
-            }
-        }
-
-        if p_memsz > p_filesz {
-            let bss_start = (exec_base + p_vaddr + p_filesz) as *mut u8;
-            let bss_len = (p_memsz - p_filesz) as usize;
-            core::ptr::write_bytes(bss_start, 0, bss_len);
-        }
-    }
-
     let mut exec_tls_image: *const u8 = core::ptr::null();
     let mut exec_tls_filesz: u64 = 0;
     let mut exec_tls_memsz: u64 = 0;
     let mut exec_tls_align: u64 = 0;
-    for i in 0..e_phnum as usize {
-        let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
+    for i in 0..e_phnum {
+        let ph = phdr.add(i * PHDR_SIZE);
         let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
-        if p_type == PT_TLS {
+        if p_type == PT_GNU_RELRO {
+            exec_relro_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
+            exec_relro_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
+        } else if p_type == PT_TLS {
             let p_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
             exec_tls_filesz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_FILESZ) as *const [u8; 8]));
             exec_tls_memsz = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_MEMSZ) as *const [u8; 8]));
             exec_tls_align = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_ALIGN) as *const [u8; 8]));
             exec_tls_image = (exec_base + p_vaddr) as *const u8;
-            break;
         }
     }
 
-    sys_close(fd);
-
-    // 4. Parse executable's PT_DYNAMIC (base = 0)
+    // 3. Parse the executable's PT_DYNAMIC table in its kernel mapping.
     let mut dyn_vaddr: u64 = 0;
     let mut dyn_memsz: u64 = 0;
-    for i in 0..e_phnum as usize {
-        let ph = buf.as_ptr().add(e_phoff as usize + i * PHDR_SIZE);
+    for i in 0..e_phnum {
+        let ph = phdr.add(i * PHDR_SIZE);
         let p_type = u32::from_le_bytes(core::ptr::read_unaligned(ph as *const [u8; 4]));
         if p_type == PT_DYNAMIC {
             dyn_vaddr = u64::from_le_bytes(core::ptr::read_unaligned(ph.add(PH_VADDR) as *const [u8; 8]));
@@ -5212,8 +5227,10 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     let exec_gnu_hash_metadata = gnu_hash_metadata(exec_gnu_hash, exec_sym_count);
     LOADED[0] = LoadedObject {
         base: exec_base,
-        map_start: exec_base.wrapping_add(image_start) as *mut u8,
-        map_size: total_size,
+        // The main image belongs to the kernel's exec mapping, not this
+        // loader. Never hand it to generic DSO cleanup.
+        map_start: core::ptr::null_mut(),
+        map_size: 0,
         symtab: (exec_base + dt_symtab) as *const u8,
         sym_count: exec_sym_count,
         gnu_hash: exec_gnu_hash,
@@ -5254,9 +5271,9 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         ref_count: usize::MAX,
         active: true,
         finalized: false,
-        file_identity_valid: exec_identity.is_some(),
-        file_dev: exec_identity.map_or(0, |id| id.dev),
-        file_ino: exec_identity.map_or(0, |id| id.ino),
+        file_identity_valid: false,
+        file_dev: 0,
+        file_ino: 0,
         initial_ld_library_path_name: false,
         name: [0; 256],
     };
@@ -5342,12 +5359,14 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     // the same map snapshot that runtime dl* queries use.
     publish_debug_state(RT_CONSISTENT);
 
-    let phdr_addr = exec_base + e_phoff;
-    build_and_jump(exec_base + e_entry, phdr_addr, e_phnum, sp, secure)
+    if secure {
+        build_and_jump(main_image.entry, phdr.addr() as u64, e_phnum as u16, sp, true)
+    }
+    jump_to_entry(main_image.entry, sp)
 }
 
 // ============================================================
-// Build a fresh stack for the target program and jump
+// Build a fresh filtered stack for secure execution and jump
 // ============================================================
 
 unsafe fn build_and_jump(
@@ -5556,6 +5575,13 @@ unsafe fn build_and_jump(
         core::ptr::write(auxv_sym as *mut *const usize, aux_base as *const usize);
     }
 
+    jump_to_entry(entry, sp)
+}
+
+/// Transfer to the already relocated main image while retaining Linux's
+/// original startup stack. Non-secure startup needs no copied argv/envp/auxv
+/// because their kernel addresses continue to describe the same main mapping.
+unsafe fn jump_to_entry(entry: u64, sp: usize) -> ! {
     #[cfg(target_arch = "x86_64")]
     core::arch::asm!(
         "mov rsp, {sp}",
@@ -5576,15 +5602,15 @@ unsafe fn build_and_jump(
 
     #[cfg(target_arch = "riscv64")]
     {
-        // Workaround: riscv64 compiler reuses entry register for other
-        // calculations. Force a volatile reload right before the asm block.
+        // The compiler may reuse `entry` while preparing the assembly block;
+        // force the final transfer operand through a volatile reload.
         let entry_ref = &entry as *const u64;
-        let entry_val = unsafe { core::ptr::read_volatile(entry_ref) };
+        let entry_value = core::ptr::read_volatile(entry_ref);
         core::arch::asm!(
             "mv sp, {sp}",
             "jr {entry}",
             sp = in(reg) sp,
-            entry = in(reg) entry_val,
+            entry = in(reg) entry_value,
             options(noreturn)
         );
     }
