@@ -5879,12 +5879,21 @@ pub unsafe extern "C" fn pthread_cond_init(cond: *mut pthread_cond_t, attr: *con
 pub unsafe extern "C" fn pthread_cond_destroy(_cond: *mut pthread_cond_t) -> c_int { 0 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_wait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t) -> c_int {
-    pthread_cond_timedwait(cond, mutex, core::ptr::null())
+    unsafe { pthread_cond_timedwait_impl(cond, mutex, core::ptr::null()) }
 }
 
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn pthread_cond_timedwait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t, abs_timeout: *const timespec) -> c_int {
+/// Implements both C condition-wait entry points without routing one public
+/// symbol through the other's interposable PLT entry.
+///
+/// The inline body preserves musl's direct internal route from
+/// `pthread_cond_wait` to timed waiting while the wrappers below retain both
+/// public C ABI symbols and their original export bindings.
+#[inline(always)]
+unsafe fn pthread_cond_timedwait_impl(
+    cond: *mut pthread_cond_t,
+    mutex: *mut pthread_mutex_t,
+    abs_timeout: *const timespec,
+) -> c_int {
     pthread_testcancel();
     let seq_ptr = &raw mut (*cond).__i[2];
     let waiters_ptr = &raw mut (*cond).__i[3];
@@ -5900,6 +5909,16 @@ pub unsafe extern "C" fn pthread_cond_timedwait(cond: *mut pthread_cond_t, mutex
     }
     if e != 0 && e != EINTR { return e; }
     0
+}
+
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn pthread_cond_timedwait(
+    cond: *mut pthread_cond_t,
+    mutex: *mut pthread_mutex_t,
+    abs_timeout: *const timespec,
+) -> c_int {
+    unsafe { pthread_cond_timedwait_impl(cond, mutex, abs_timeout) }
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_signal(cond: *mut pthread_cond_t) -> c_int {
