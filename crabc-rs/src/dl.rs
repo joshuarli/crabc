@@ -41,29 +41,32 @@ impl OpenFlags {
     pub const LOCAL: Self = Self::empty();
 }
 
-/// An owned loader diagnostic.
+/// Bounded text copied from the loader runtime.
 ///
-/// Unlike `dlerror`, this value does not borrow thread-local loader storage
-/// and remains valid across subsequent loader activity on any thread.
+/// Loader names and diagnostics are byte strings, not necessarily UTF-8, and
+/// are copied out of loader-owned storage before the private runtime call
+/// returns. An absent name is represented by `None` at the containing API,
+/// rather than being converted into a synthetic error message.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct LoaderError {
+pub struct LoaderText {
     bytes: [u8; TEXT_CAPACITY],
     len: u16,
     truncated: bool,
 }
 
-impl LoaderError {
-    fn from_wire(text: TextV1) -> Self {
+impl LoaderText {
+    fn from_wire(text: TextV1) -> Option<Self> {
         let len = core::cmp::min(text.len as usize, text.bytes.len());
-        let mut error = Self {
-            bytes: text.bytes,
+        if len == 0 {
+            return None;
+        }
+        let mut bytes = [0; TEXT_CAPACITY];
+        bytes[..len].copy_from_slice(&text.bytes[..len]);
+        Some(Self {
+            bytes,
             len: len as u16,
             truncated: (text.flags & 1) != 0,
-        };
-        if error.len == 0 {
-            error = Self::message(b"crabc dynamic loader operation failed");
-        }
-        error
+        })
     }
 
     fn message(message: &[u8]) -> Self {
@@ -77,13 +80,13 @@ impl LoaderError {
         }
     }
 
-    /// Returns the copied diagnostic bytes. They need not be UTF-8.
+    /// Returns the copied bytes. They need not be UTF-8.
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..self.len as usize]
     }
 
-    /// Returns the copied diagnostic when it is valid UTF-8.
+    /// Returns the copied text when it is valid UTF-8.
     #[inline]
     pub fn as_str(&self) -> Option<&str> {
         core::str::from_utf8(self.as_bytes()).ok()
@@ -93,6 +96,48 @@ impl LoaderError {
     #[inline]
     pub const fn is_truncated(&self) -> bool {
         self.truncated
+    }
+}
+
+/// An owned loader diagnostic.
+///
+/// Unlike `dlerror`, this value does not borrow thread-local loader storage
+/// and remains valid across subsequent loader activity on any thread.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct LoaderError {
+    text: LoaderText,
+}
+
+impl LoaderError {
+    fn from_wire(text: TextV1) -> Self {
+        Self {
+            text: LoaderText::from_wire(text)
+                .unwrap_or_else(|| LoaderText::message(b"crabc dynamic loader operation failed")),
+        }
+    }
+
+    fn message(message: &[u8]) -> Self {
+        Self {
+            text: LoaderText::message(message),
+        }
+    }
+
+    /// Returns the copied diagnostic bytes. They need not be UTF-8.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.text.as_bytes()
+    }
+
+    /// Returns the copied diagnostic when it is valid UTF-8.
+    #[inline]
+    pub fn as_str(&self) -> Option<&str> {
+        self.text.as_str()
+    }
+
+    /// Returns whether the private bounded runtime wire truncated the source.
+    #[inline]
+    pub const fn is_truncated(&self) -> bool {
+        self.text.is_truncated()
     }
 }
 
@@ -113,8 +158,8 @@ impl std::error::Error for LoaderError {}
 pub struct AddressInfo {
     image_base: Option<NonNull<c_void>>,
     symbol_address: Option<NonNull<c_void>>,
-    image_name: LoaderError,
-    symbol_name: LoaderError,
+    image_name: Option<LoaderText>,
+    symbol_name: Option<LoaderText>,
 }
 
 impl AddressInfo {
@@ -130,16 +175,16 @@ impl AddressInfo {
         self.symbol_address
     }
 
-    /// Returns the copied image name bytes.
+    /// Returns the copied image name, if the loader reported one.
     #[inline]
-    pub fn image_name(&self) -> &[u8] {
-        self.image_name.as_bytes()
+    pub fn image_name(&self) -> Option<&LoaderText> {
+        self.image_name.as_ref()
     }
 
-    /// Returns the copied nearest-symbol name bytes.
+    /// Returns the copied nearest-symbol name, if the loader reported one.
     #[inline]
-    pub fn symbol_name(&self) -> &[u8] {
-        self.symbol_name.as_bytes()
+    pub fn symbol_name(&self) -> Option<&LoaderText> {
+        self.symbol_name.as_ref()
     }
 }
 
@@ -291,8 +336,8 @@ impl Library {
         Ok(AddressInfo {
             image_base: NonNull::new(raw.image_base),
             symbol_address: NonNull::new(raw.symbol_address),
-            image_name: LoaderError::from_wire(raw.image_name),
-            symbol_name: LoaderError::from_wire(raw.symbol_name),
+            image_name: LoaderText::from_wire(raw.image_name),
+            symbol_name: LoaderText::from_wire(raw.symbol_name),
         })
     }
 
@@ -361,7 +406,8 @@ impl<T> Symbol<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LoaderError, OpenFlags};
+    use super::{AddressInfo, LoaderError, LoaderText, OpenFlags};
+    use crabc_core::runtime::TextV1;
 
     #[test]
     fn local_scope_is_zero_while_global_is_explicit() {
@@ -376,5 +422,23 @@ mod tests {
         assert_eq!(error.as_bytes(), b"native loader failure");
         assert_eq!(error.as_str(), Some("native loader failure"));
         assert!(!error.is_truncated());
+    }
+
+    #[test]
+    fn empty_loader_text_is_absent_not_an_error() {
+        assert!(LoaderText::from_wire(TextV1::empty()).is_none());
+    }
+
+    #[test]
+    fn address_info_keeps_absent_names_optional() {
+        let info = AddressInfo {
+            image_base: None,
+            symbol_address: None,
+            image_name: None,
+            symbol_name: None,
+        };
+
+        assert!(info.image_name().is_none());
+        assert!(info.symbol_name().is_none());
     }
 }

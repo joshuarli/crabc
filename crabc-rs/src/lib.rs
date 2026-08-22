@@ -46,6 +46,8 @@ pub mod pty;
 pub mod pattern;
 pub mod rand;
 pub mod time;
+#[cfg(feature = "alloc")]
+pub mod timezone;
 pub mod termios;
 pub mod thread;
 pub mod shm;

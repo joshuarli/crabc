@@ -57,6 +57,11 @@ path = "examples/m7_loader_runtime_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
+name = "m11_loader_dlfcn_basic_probe"
+path = "examples/m11_loader_dlfcn_basic_probe.rs"
+crate-type = ["staticlib"]
+
+[[example]]
 name = "m7_runtime_thread_probe"
 path = "examples/m7_runtime_thread_probe.rs"
 crate-type = ["staticlib"]

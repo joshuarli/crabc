@@ -2801,14 +2801,14 @@ python3 compat/ldso/tests/test_runner.py           3/3 PASS
 python3 compat/lto/tests/test_runner.py            11/11 PASS
 ```
 
-## Milestone 11 — scope-aligned core-runtime refinement (not started)
+## Milestone 11 — scope-aligned core-runtime refinement (complete)
 
 The former x86_64 milestone is deliberately inactive. M11 now means the next
 Linux/AArch64 refinement work selected from the post-M10 ledger; it does **not**
 activate another architecture. Any future architecture proposal needs a
 separate user decision and a new scope/profile review.
 
-The next selection must preserve the profile in `SCOPE.md` and
+This selection preserves the profile in `SCOPE.md` and
 `COMPATIBILITY-PROFILE.md`:
 
 | Priority | Post-M10 groups | Scope boundary |
@@ -2818,9 +2818,40 @@ The next selection must preserve the profile in `SCOPE.md` and
 | Useful POSIX | regex/glob, IPC, PTY/session, user databases, narrowly scoped kernel administration | Compatibility-focused implementations without a Rust regex, process-framework, or security-policy substitute. |
 | C ABI/profile machinery | stdio, locale, wide text, long-double and other C-only families | Account and test the C contract where it belongs; do not manufacture a broad Rust wrapper. |
 
-M11 has not begun. The 16 `deferred` ledger groups are the deliberately
-measured backlog; the 43 `documented` groups are not hidden M11 work unless a
-new profile decision promotes one.
+### Completion — 2026-08-21 UTC
+
+M11 is complete for its three deliberately selected Linux/AArch64 seams. This
+is not a claim that their larger legacy C families are complete:
+
+- `timezone::TimeZone` owns caller-supplied POSIX TZ or TZif v1/v2/v3 bytes
+  and provides immutable UTC-offset lookup. It validates trailing POSIX
+  continuations and does not bundle tzdata, read `TZ`, change global timezone
+  state, format local time, or control clocks.
+- The configured resolver transport now uses nonblocking UDP with one
+  monotonic deadline per server, discards malformed/wrong-ID datagrams, falls
+  back to framed TCP on `TC`, handles partial TCP I/O, and fails over in
+  configured order. It remains an explicit caller-owned configuration: system
+  discovery, hosts/search policy, CNAME completion, and netdb are not claimed
+  by this transport slice.
+- `dl::Library` now covers owned basic open/symbol/close and copied
+  diagnostics/address metadata through the private versioned runtime table.
+  Its synthetic DSO fixture proves constructor/destructor and reference-count
+  lifetimes; `dlinfo` and `dl_iterate_phdr` remain deferred introspection
+  work.
+
+The ledger records these as two native implementation capabilities and a
+verified five-symbol basic dlfcn group, while retaining the sixteen larger
+semantic deferrals. The 43 `documented` groups are not hidden M11 work unless
+a new profile decision promotes one.
+
+Completion evidence:
+
+```text
+./scripts/dev.sh test -p crabc-rs --test m11_timezone_rules  6/6 PASS
+./scripts/dev.sh test -p crabc-rs --test m11_resolver_transport  4/4 PASS
+./scripts/dev.sh test -p crabc --test m11_loader_dlfcn_basic  PASS
+./scripts/dev.sh crabc-rs  PASS
+```
 
 ### Prerequisite progress — 2026-08-20 UTC
 

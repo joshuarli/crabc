@@ -3261,11 +3261,11 @@ Status is deliberately independent of classification. `verified` records a
 native seam with direct-boundary and behavioral evidence; `deferred` records a
 meaningful capability and its intended post-M10 API, reason, and target; and
 `documented` records Rust-subsumed, ABI-only, or private-runtime behavior with
-the required rationale. The current ledger has 215 groups: 156 verified, 16
-deferred, and 43 documented. Deferred groups are explicitly post-M10 work;
-documented C-ABI and Rust-subsumed groups are accounted scope boundaries, not
-unclaimed native wrappers. Existing M0–M8 vertical slices remain evidence for
-their listed operations.
+the required rationale. At the M9 handoff the ledger had 215 groups: 156
+verified, 16 deferred, and 43 documented. Deferred groups are explicitly
+post-M10 work; documented C-ABI and Rust-subsumed groups are accounted scope
+boundaries, not unclaimed native wrappers. Existing M0–M8 vertical slices
+remain evidence for their listed operations.
 
 In particular, the public malloc family is the versioned
 `scope-exception` `allocator-mimalloc-libc-boundary` v1 and remains out of
@@ -4129,10 +4129,11 @@ claim.
 
 # 87. Milestone 11 — scope-aligned core-runtime refinement
 
-M11 has not started. It is the next Linux/AArch64 refinement milestone, not
-an architecture expansion and not a mandate to recreate a broad portable Unix
-layer. Select work from the 16 explicit post-M10 ledger deferrals in the
-following order:
+M11 is complete for its selected three-seam Linux/AArch64 refinement slice.
+It remains a refinement milestone, not an architecture expansion and not a
+mandate to recreate a broad portable Unix layer. The current ledger has 218
+groups: 159 verified, 16 deferred, and 43 documented. The remaining explicit
+deferrals stay classified for a later, separately selected milestone:
 
 1. Core runtime: calendar/timezone handling from system zoneinfo, process
    control/credentials/environment/signals, pthread/C11, dynamic loading, and
@@ -4145,6 +4146,38 @@ following order:
 4. C ABI profile: C-only stdio, locale, wide text, and long-double families
    remain rigorously documented/tested at the ABI boundary when relevant;
    they do not automatically become `crabc-rs` APIs.
+
+The initial M11 vertical slice makes three narrowly owned contracts explicit.
+`timezone::{TimeZone, UtcOffset, OffsetInfo}` parses caller-supplied POSIX TZ
+or TZif v1/v2/v3 bytes into immutable rules and answers a supplied UTC instant
+without reading `TZ`, the current clock, libc timezone globals, or TLS errno.
+It validates TZif structure and continuation rules but does not bundle tzdata,
+open a system path, implement local calendar/format/parse APIs, or change
+clock state.
+
+The existing explicit `resolver::ResolverConfig` now has a tested transport
+contract: each configured server gets one monotonic nonblocking-UDP deadline;
+short/malformed/wrong-ID packets are ignored; an accepted truncated response
+retries the same request over framed nonblocking TCP; partial I/O and
+`SO_ERROR` drive that one deadline; and failed servers advance in configured
+order. This does not claim `/etc/resolv.conf` discovery, `/etc/hosts`, search
+policy, CNAME completion, or the broad netdb/C resolver ABI.
+
+`dl::{Library, LoaderError, LoaderText, Symbol, AddressInfo}` now exposes the
+basic dynamic-loader handle contract through only the private versioned
+runtime table. A library owns its reference and is deliberately neither
+`Send` nor `Sync`; an unsafe typed symbol is lifetime-bound to that library;
+diagnostics and address metadata are copied into Rust-owned data. The
+loader-backed C fixture proves distinct DSO constructor/destructor and
+reference-count transitions, while the AArch64 static verifier rejects public
+`dl*` and TLS-errno linkage. `dlinfo` and `dl_iterate_phdr` deliberately
+remain separate deferred introspection contracts.
+
+The completion gate is `./scripts/dev.sh crabc-rs`: it runs the six timezone
+rule tests, four deterministic resolver-transport tests, loader-backed C
+fixture, no-std builds, the complete ledger check, static boundary verifiers,
+and the retained Rustix source-comparison suite in the Dockerized
+Linux/AArch64 environment.
 
 Any representative-application proof follows a completed scoped slice. It
 must demonstrate the named Linux/AArch64 contract without treating the absence

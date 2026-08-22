@@ -270,11 +270,11 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        # M9 retains M0-M8 and validates the complete, hash-pinned semantic
-        # export ledger. M8 adds three deliberately narrow semantic seams:
-        # direct AArch64 fenv state, shared byte-oriented fnmatch, and a
-        # private-runtime CFile memory stream. Keep all native and C-regression
-        # evidence together so a later facade change cannot add a C/errno hop.
+        # M11 retains M0-M10 and validates the complete, hash-pinned semantic
+        # ledger. Its first three bounded seams are immutable timezone rules,
+        # configured DNS UDP/TCP transport, and a private-runtime basic loader
+        # facade. Keep all native and C-regression evidence together so a
+        # later facade change cannot add a C/errno hop.
         # Keep no-std, native, source-compatibility, and assembly evidence
         # together so a later facade change cannot add a C/errno hop.
         run_in_container cargo check -p crabc-rs --no-default-features
@@ -283,7 +283,7 @@ case "$command" in
         run_in_container cargo check -p crabc-rs --no-default-features --features runtime-thread-alloc
         run_in_container cargo check -p crabc-rs --no-default-features --features runtime-stdio
         run_in_container cargo test -p crabc-core --lib
-        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio --test m6_signal_process --test m7_sync --test m7_resolver_netdb --test m8_fenv --test m8_fnmatch --test m10_text --test m10_text_stateful --test m10_ctype --test m10_format --test m10_number --test m10_numeric_legacy --test m10_random --test m10_memory_special --test m10_memory_vm --test m10_fs_metadata --test m10_statx --test m10_positioned --test m10_vectored --test m10_positioned_vectored --test m10_preadv2 --test m10_directory --test m10_memfd --test m10_fallocate --test m10_fadvise --test m10_sendfile --test m10_syncfs --test m10_ppoll --test m10_readiness --test m10_msync --test m10_mincore --test m10_mlock --test m10_mremap --test m10_madvise --test m10_identity --test m10_rusage --test m10_getgroups --test m10_priority --test m10_setpriority --test m10_rlimit --test m10_sleep --test m10_clock_nanosleep --test m10_time --test m10_time_dynamic --test m10_getitimer --test m10_time_timers --test m10_calendar_utc --test m10_readahead --test m10_copy_file_range --test m10_sync_file_range --test m10_network_address --test m10_ethernet_address --test m10_ethers --test m10_network_socket --test m10_network_socket_options --test m10_network_messages --test m10_network_mmsg --test m10_network_connect --test m10_network_bind_getsockname --test m10_network_getpeername --test m10_network_listen_accept --test m10_network_datagram --test m10_descriptor --test m10_subsumed
+        run_in_container cargo test -p crabc-rs --test m0_direct --test m1_foundation --test m2_filesystem --test m3_core_os --test m4_process_system --test m5_fs_io --test m5_event_time --test m5_file_mapping --test m5_descriptor_stdio --test m6_signal_process --test m7_sync --test m7_resolver_netdb --test m8_fenv --test m8_fnmatch --test m10_text --test m10_text_stateful --test m10_ctype --test m10_format --test m10_number --test m10_numeric_legacy --test m10_random --test m10_memory_special --test m10_memory_vm --test m10_fs_metadata --test m10_statx --test m10_positioned --test m10_vectored --test m10_positioned_vectored --test m10_preadv2 --test m10_directory --test m10_memfd --test m10_fallocate --test m10_fadvise --test m10_sendfile --test m10_syncfs --test m10_ppoll --test m10_readiness --test m10_msync --test m10_mincore --test m10_mlock --test m10_mremap --test m10_madvise --test m10_identity --test m10_rusage --test m10_getgroups --test m10_priority --test m10_setpriority --test m10_rlimit --test m10_sleep --test m10_clock_nanosleep --test m10_time --test m10_time_dynamic --test m10_getitimer --test m10_time_timers --test m10_calendar_utc --test m10_readahead --test m10_copy_file_range --test m10_sync_file_range --test m10_network_address --test m10_ethernet_address --test m10_ethers --test m10_network_socket --test m10_network_socket_options --test m10_network_messages --test m10_network_mmsg --test m10_network_connect --test m10_network_bind_getsockname --test m10_network_getpeername --test m10_network_listen_accept --test m10_network_datagram --test m10_descriptor --test m10_subsumed --test m11_resolver_transport --test m11_timezone_rules
         run_in_container cargo test -p crabc-rs --test m8_cfile --features runtime-stdio
         run_in_container cargo test -p crabc-rs --test m10_directory_position
         run_in_container cargo test -p crabc-rs --test m10_network_socket_type
@@ -389,10 +389,11 @@ case "$command" in
         run_in_container cargo build -p crabc-rs --example m10_utime_direct_probe --release --no-default-features
         run_in_container cargo build -p crabc-rs --example m7_resolver_direct_probe --release --no-default-features --features alloc
         run_in_container cargo build -p crabc-rs --example m7_loader_runtime_probe --release --no-default-features --features runtime-loader
+        run_in_container cargo build -p crabc-rs --example m11_loader_dlfcn_basic_probe --release --no-default-features --features runtime-loader
         run_in_container cargo build -p crabc-rs --example m7_runtime_thread_probe --release --no-default-features --features runtime-thread
         run_in_container cargo build -p crabc-rs --example m8_cfile_direct_probe --release --no-default-features --features runtime-stdio
         run_in_container cargo build -p crabc-libc
-        run_in_container cargo test -p crabc --test m7_loader_runtime --test m7_runtime_thread --test m8_cfile_runtime --test m8_fclose_lifecycle --test fenv --test fnmatch --test iconv --test iconv_error_progress --test stdio_full --test m4_stdio_exports --test m4_stdio_extensions_exports --test m4_cookie_stream_exports --test m4_wmemstream_exports --test m4_select --test m4_break_exports --test m4_memory_vm_exports --test m4_host_process_exports --test m4_filesystem_paths_exports
+        run_in_container cargo test -p crabc --test m7_loader_runtime --test m11_loader_dlfcn_basic --test m7_runtime_thread --test m8_cfile_runtime --test m8_fclose_lifecycle --test fenv --test fnmatch --test iconv --test iconv_error_progress --test stdio_full --test m4_stdio_exports --test m4_stdio_extensions_exports --test m4_cookie_stream_exports --test m4_wmemstream_exports --test m4_select --test m4_break_exports --test m4_memory_vm_exports --test m4_host_process_exports --test m4_filesystem_paths_exports
         run_in_container python3 compat/rustix/run.py --check
         run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
         run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'
@@ -466,6 +467,7 @@ case "$command" in
         run_in_container python3 compat/crabc-rs/verify_m7.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m7_resolver.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m7_loader.py --target-dir target
+        run_in_container python3 compat/crabc-rs/verify_m11_loader.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m7_runtime_thread.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m8_fenv.py --target-dir target
         run_in_container python3 compat/crabc-rs/verify_m8_fnmatch.py --target-dir target

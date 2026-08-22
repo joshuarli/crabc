@@ -1,4 +1,5 @@
-# M9 complete capability accounting for crabc's measured public ABI.
+# M11 complete capability accounting for crabc's measured public ABI plus its
+# selected timezone, resolver-transport, and basic-loader native seams.
 #
 # The dynamic symbol files are the measured AArch64 boundary from milestone
 # 10.5. The embedded candidate list makes the ledger inspectable without a
@@ -11,7 +12,7 @@
 # weakening its exact 1,669-symbol accounting.
 schema = "crabc.crabc-rs-coverage/v2"
 target = "aarch64-unknown-linux-musl"
-phase = "M9-complete"
+phase = "M11-core-runtime-slices"
 
 [policy]
 production_dependency = false
@@ -1713,6 +1714,19 @@ deferred_reason = "Local calendar and clock-control work remains useful core-run
 rationale = "Consume TZ/POSIX TZ and system zoneinfo rather than bundling tzdata; preserve the verified UTC calendar capability and keep clock mutation/discipline explicitly privileged."
 
 [[capability]]
+id = "time.timezone-rules"
+kind = "implementation"
+classification = "native-safe"
+status = "verified"
+rust_api = ["timezone::{TimeZone, TimeZoneError, UtcOffset, OffsetInfo}"]
+shared_impl = ["crabc_rs::timezone immutable POSIX TZ and TZif v1/v2/v3 rule parser"]
+native_boundary = "caller-supplied immutable POSIX TZ or TZif bytes become an owned rule set; offset lookup is pure over a supplied UTC UnixTime and never reads TZ, the clock, libc timezone globals, or TLS errno"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/timezone.rs", "crabc-rs/tests/m11_timezone_rules.rs"]
+rationale = "This is the bounded timezone-rule half of local-time work: it validates system-supplied zoneinfo snapshots and POSIX continuations without bundling tzdata or asserting process-global TZ, zoneinfo-path loading, calendar formatting, parsing, or clock-control behavior."
+
+[[capability]]
 id = "time.realtime-millis"
 kind = "semantic"
 symbols = ["ftime"]
@@ -2353,6 +2367,19 @@ uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-rs/src/resolver.rs", "crabc-rs/tests/m7_resolver_netdb.rs", "crabc-rs/examples/m7_resolver_direct_probe.rs"]
 rationale = "This is an owned IPv4/IPv6 textual conversion subset, not the full C destination-buffer, arbitrary-family, EAFNOSUPPORT, or ENOSPC contract of inet_pton/inet_ntop. Legacy integer/address constructors, byte-order helpers, interface address-list enumeration, and static-buffer aliases remain deferred."
+
+[[capability]]
+id = "network.resolver-transport"
+kind = "implementation"
+classification = "native-safe"
+status = "verified"
+rust_api = ["resolver::{Resolver, ResolverConfig} configured A/AAAA lookup transport"]
+shared_impl = ["crabc_core::resolver::exchange direct bounded DNS transport"]
+native_boundary = "direct Linux/AArch64 nonblocking socket, connect, sendto, recvfrom, ppoll, clock_gettime, SO_ERROR, and close operations over caller-owned resolver configuration and buffers"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/resolver.rs", "crabc-rs/tests/m11_resolver_transport.rs", "compat/crabc-rs/verify_m7_resolver.py"]
+rationale = "This closes the bounded configured transport: malformed or wrong-ID UDP packets are ignored within one per-server deadline, TC retries the exact query over length-prefixed TCP with partial I/O handling, and failures advance in configured order. System configuration discovery, hosts/search policy, CNAME completion, and the broad C netdb/resolver surface remain owned by their deferred semantic groups."
 
 [[capability]]
 id = "network.resolver"
@@ -3013,15 +3040,29 @@ evidence = ["crabc-rs/src/mount.rs", "crabc-rs/tests/m4_process_system.rs", "cra
 rationale = "The typed non-null C-string and isolated missing-target/error subset is verified. Successful namespace mutation, null source/type, arbitrary void-pointer data, and newer FSD mount administration remain outside this scope."
 
 [[capability]]
-id = "loader.dlfcn"
+id = "loader.dlfcn-basic"
 kind = "semantic"
-symbols = ["dl_iterate_phdr", "dladdr", "dlclose", "dlerror", "dlinfo", "dlopen", "dlsym"]
+symbols = ["dladdr", "dlclose", "dlerror", "dlopen", "dlsym"]
+classification = "native-unsafe"
+status = "verified"
+rust_api = ["dl::{Library, LoaderError, LoaderText, OpenFlags, Symbol}", "unsafe dl::Library::symbol", "dl::AddressInfo"]
+shared_impl = ["crabc_core::runtime::RuntimeV1 loader callbacks owned by libc.so and libldso.so"]
+native_boundary = "one private versioned RuntimeV1 handle boundary copies diagnostics and address metadata into Rust-owned storage; it never calls public dlfcn or TLS errno APIs"
+uses_public_c_abi = false
+uses_errno_tls = false
+evidence = ["crabc-rs/src/dl.rs", "crabc-rs/tests/m11_loader_dlfcn_basic.rs", "tests/m11_loader_dlfcn_basic.rs", "crabc-rs/examples/m11_loader_dlfcn_basic_probe.rs", "compat/crabc-rs/verify_m11_loader.py", "compat/crabc-rs/tests/test_verify_m11_loader.py"]
+rationale = "Library owns one loader reference and is deliberately !Send/!Sync; unsafe typed symbols borrow that library, diagnostics and dladdr-like metadata are copied before returning, and the synthetic DSO fixture proves constructor/destructor and reference-count lifetime behavior. dl_iterate_phdr and dlinfo remain separate introspection work."
+
+[[capability]]
+id = "loader.dlfcn-introspection"
+kind = "semantic"
+symbols = ["dl_iterate_phdr", "dlinfo"]
 classification = "native-unsafe"
 status = "deferred"
-planned_rust_api = ["dl::Library", "unsafe dl::Library::symbol", "dl::AddressInfo"]
-target_milestone = "post-M10-core-runtime"
-deferred_reason = "Dynamic loading remains core runtime work; ownership, symbol type assertions, namespace state, and program-header iteration require separate contracts."
-rationale = "Library ownership is safe; arbitrary symbol type assertions are explicit unsafe operations."
+planned_rust_api = ["dl::LoadedImageSnapshot", "dl::Library::information"]
+target_milestone = "post-M11-loader-basic"
+deferred_reason = "Program-header iteration and loader-specific information records need independent snapshot, callback/lifetime, and ABI-layout contracts; the basic handle/symbol seam deliberately does not approximate them."
+rationale = "Keep loader introspection separate from basic owned library handles, rather than exposing loader-owned iteration state, callback reentrancy, or C dlinfo record layouts without a native ownership contract."
 
 [[capability]]
 id = "crypto.crypt"
