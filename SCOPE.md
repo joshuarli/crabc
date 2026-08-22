@@ -973,6 +973,19 @@ Do not micro-optimize everything.
 
 Do keep extremely hot primitives obviously cheap.
 
+Use the optimization ladder deliberately:
+
+1. remove avoidable syscalls, allocations, indirection, and algorithmic work;
+2. choose and prove the best simple scalar algorithm and representation;
+3. inspect the resulting AArch64 code; then
+4. add narrow SIMD only when a measured remaining gap justifies its complexity.
+
+SIMD is valuable for selected hot primitives, but it is normally the last
+step—not a substitute for a vDSO path, a hash index, or an algorithmic fix.
+Math may justify an earlier, established vector kernel where its numerical
+contract is fully proved. Cryptography never does: use a focused approved
+RustCrypto dependency rather than hand-rolling a vectorized crypto primitive.
+
 ---
 
 ## 27. Use the system rather than embedding databases

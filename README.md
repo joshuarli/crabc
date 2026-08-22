@@ -17,6 +17,14 @@ work. [`docs/README.md`](docs/README.md) routes design, evidence, historical
 records, and code-adjacent harness guides. Compatibility evidence does not
 promise a native Rust wrapper for every C symbol.
 
+[`goal.md`](goal.md) defines the measurable Linux/AArch64 performance bar for
+soundly outperforming musl on the supported scorecard.
+[`goal2.md`](goal2.md) defines the follow-on measured real-software and
+`crabc-rs` application corpus needed to validate those focused wins in
+composition.
+[`pregoal.md`](pregoal.md) defines the source-build Lua gate that precedes
+performance work and promotes a CPython source build safely.
+
 The selected musl/Rustix performance evidence and current optimization frontier
 are documented in [`docs/design/performance.md`](docs/design/performance.md).
 

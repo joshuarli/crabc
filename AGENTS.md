@@ -44,6 +44,9 @@ and [`TODO.md`](TODO.md) before selecting new work.
 | Governing scope and non-goals | [`SCOPE.md`](SCOPE.md) |
 | Public support/limitation boundary | [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) |
 | Exact active work | [`TODO.md`](TODO.md) |
+| Source-build gate before performance work | [`pregoal.md`](pregoal.md) |
+| Performance completion contract | [`goal.md`](goal.md) |
+| Follow-on software-corpus validation | [`goal2.md`](goal2.md) |
 | Current measured results | [`COMPATIBILITY.md`](COMPATIBILITY.md) and `compat/reports/**` |
 | Cross-cutting document index | [`docs/README.md`](docs/README.md) |
 | Current Rust-facade architecture | [`docs/design/crabc-rs.md`](docs/design/crabc-rs.md) |
@@ -112,7 +115,10 @@ does not replace the pinned native evidence environment.
   already approved that exact decision. Document its primitive, normal
   transitive graph, build/native code, allocation/global state, `no_std`, and
   LTO consequences.
-- Scalar behavior is canonical; SIMD is a separately proven optimization.
+- Scalar behavior is canonical. Remove structural and algorithmic cost first;
+  use SIMD only as a separately proven, measured final optimization (except
+  for a fully proved established math kernel). Crypto stays in approved
+  RustCrypto primitives, never hand-rolled vector code.
 - Every public unsafe Rust API documents its concrete caller obligations.
 
 ## Working contract

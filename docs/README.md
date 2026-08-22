@@ -11,6 +11,12 @@ them; do not duplicate their command contracts here.
 - [Compatibility profile](../COMPATIBILITY-PROFILE.md) — public support and
   limitation boundary.
 - [Active TODO](../TODO.md) — the only living backlog.
+- [Source-build pre-goal](../pregoal.md) — Lua adapter-sysroot and extension
+  gate before focused performance work and CPython.
+- [Performance completion goal](../goal.md) — measurable musl-outperformance
+  gates, scorecard, and optimization sequence.
+- [Software-corpus validation goal](../goal2.md) — the subsequent real
+  software and `crabc-rs` application performance corpus.
 - [Generated compatibility dashboard](../COMPATIBILITY.md) — current measured
   status; never edit it by hand.
 - [Agent/project handoff](../AGENTS.md) — code map, development commands, and

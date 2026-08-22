@@ -61,6 +61,20 @@ reports. Read [`docs/design/performance.md`](docs/design/performance.md) before
 changing one of these routes; it records the complete selected evidence,
 interpretation boundary, and harness contract.
 
+[`goal.md`](goal.md) is the performance completion contract: it defines the
+per-workload CPU, peak-memory, syscall, correctness, and evidence gates needed
+before crabc can claim to outperform musl on its supported scorecard. It does
+not supersede this living work list.
+
+[`goal2.md`](goal2.md) is deliberately subsequent: it expands the successful
+focused scorecard into a measured corpus of real Alpine software and direct
+`crabc-rs` applications. Do not let it delay the current focused performance
+frontier.
+
+[`pregoal.md`](pregoal.md) is deliberately prior: complete its isolated Lua
+source-build and extension-loading compatibility gate before starting
+`goal.md`. It supplies the evidence and failure taxonomy for CPython 3.14.3.
+
 | Priority | Exact work still left | Evidence boundary |
 | --- | --- | --- |
 | P0 | Add a validated Linux/AArch64 vDSO `clock_gettime` route with a direct-syscall fallback, used by the C ABI and `crabc-rs`. | Current selected C route is 4.53× musl CPU; native `crabc-rs` is 7.67× Rustix. Preserve forced-fallback and malformed-vDSO tests. |
