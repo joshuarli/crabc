@@ -189,17 +189,17 @@ pub unsafe extern "C" fn _IO_putc_unlocked(c: c_int, stream: *mut FILE) -> c_int
 }
 
 // musl exposes these as weak aliases to the ordinary scanner entry points.
-// The variadic entry points must forward their ABI-owned va_list directly;
-// rebuilding a variadic list here would not preserve AArch64 register-save
-// state.  This is the same forwarding pattern used by the ordinary scanners.
+// The variadic entry points must keep their ABI-owned va_list intact;
+// rebuilding one here would not preserve AArch64 register-save state. This is
+// the same forwarding pattern used by the ordinary scanners.
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn __isoc99_fscanf(
     stream: *mut FILE,
     fmt: *const c_char,
-    args: ...
+    mut args: ...
 ) -> c_int {
-    vfscanf(stream, fmt, args)
+    vfscanf_inner(stream, fmt, &mut args)
 }
 
 #[no_mangle]

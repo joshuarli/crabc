@@ -11036,8 +11036,342 @@ pub unsafe extern "C" fn vsscanf(buf: *const c_char, fmt: *const c_char, mut arg
     vsscanf_inner(buf as *const u8, fmt, &mut args)
 }
 
+// `vfscanf` historically staged a whole line before passing it through
+// `do_vsscanf`. For an ordinary scalar format that turns one buffered read
+// into a second byte walk, an EOF probe, and (for a seekable stream) a
+// seek-back of bytes the conversion did not consume. The direct path below
+// instead follows the stream discipline used by musl's scanner: each numeric
+// or string conversion keeps at most its terminating lookahead in `ungetc`.
+//
+// It intentionally accepts only the scalar no-length-modifier grammar. The
+// allocation, wide-character, scanset, and length-modifier forms remain on
+// the established staged path so this small fast path does not obscure their
+// separate compatibility boundaries.
+unsafe fn vfscanf_fast_scalar_supported(fmt: *const c_char) -> bool {
+    let mut fi = 0usize;
+    let mut last_was_space = false;
+    loop {
+        let fc = *fmt.add(fi) as u8;
+        if fc == 0 { return !last_was_space; }
+        if is_ws_byte(fc) {
+            last_was_space = true;
+            fi += 1;
+            continue;
+        }
+        last_was_space = false;
+        if fc != b'%' {
+            fi += 1;
+            continue;
+        }
+        fi += 1;
+        if *fmt.add(fi) as u8 == b'%' {
+            fi += 1;
+            continue;
+        }
+        if *fmt.add(fi) as u8 == b'*' { fi += 1; }
+        while (*fmt.add(fi) as u8).is_ascii_digit() { fi += 1; }
+        match *fmt.add(fi) as u8 {
+            b'd' | b'u' | b'i' | b'o' | b'x' | b'X' | b'p' | b's' => fi += 1,
+            _ => return false,
+        }
+    }
+}
+
+enum FastScanToken<T> {
+    Value(T),
+    MatchFail,
+    InputFail,
+}
+
+// The stream scanner only needs a single-byte lookahead. Keeping it local
+// avoids repeatedly storing and reloading `FILE::ungotten` between adjacent
+// directives; `finish` restores the ordinary public FILE state on every exit.
+struct VfscanfFastReader {
+    stream: *mut FILE,
+    pending: c_int,
+}
+
+impl VfscanfFastReader {
+    #[inline]
+    unsafe fn get(&mut self) -> c_int {
+        if self.pending >= 0 {
+            let c = self.pending;
+            self.pending = -1;
+            c
+        } else {
+            fgetc(self.stream)
+        }
+    }
+
+    #[inline]
+    fn unread(&mut self, c: c_int) {
+        if c >= 0 { self.pending = c; }
+    }
+
+    #[inline]
+    unsafe fn finish(&mut self) {
+        if self.pending >= 0 {
+            let _ = ungetc(self.pending, self.stream);
+            self.pending = -1;
+        }
+    }
+}
+
+unsafe fn vfscanf_fast_skip_ws(reader: &mut VfscanfFastReader) -> bool {
+    loop {
+        let c = reader.get();
+        if c < 0 { return false; }
+        if !is_ws_byte(c as u8) {
+            reader.unread(c);
+            return true;
+        }
+    }
+}
+
+#[inline]
+unsafe fn vfscanf_fast_digit(c: u8, base: u32) -> Option<u64> {
+    match base {
+        8 if (b'0'..=b'7').contains(&c) => Some((c - b'0') as u64),
+        10 if c.is_ascii_digit() => Some((c - b'0') as u64),
+        16 => hex_val(c).map(|digit| digit as u64),
+        _ => None,
+    }
+}
+
+// Reads one conventional scanf integer token. `width` includes the optional
+// sign and base prefix, matching the existing `scan_int_val` contract.
+unsafe fn vfscanf_fast_int(
+    reader: &mut VfscanfFastReader, requested_base: u32, width: usize,
+) -> FastScanToken<(u64, bool)> {
+    let mut used = 0usize;
+    let mut next = || -> Option<c_int> {
+        if width != 0 && used == width { return None; }
+        let c = reader.get();
+        if c >= 0 { used += 1; }
+        Some(c)
+    };
+    let Some(mut c) = next() else { return FastScanToken::MatchFail; };
+    if c < 0 { return FastScanToken::InputFail; }
+
+    let mut negative = false;
+    if c == b'-' as c_int || c == b'+' as c_int {
+        negative = c == b'-' as c_int;
+        let Some(after_sign) = next() else { return FastScanToken::MatchFail; };
+        if after_sign < 0 { return FastScanToken::InputFail; }
+        c = after_sign;
+    }
+
+    let mut base = requested_base;
+    let mut value = 0u64;
+    let mut found = false;
+    if c == b'0' as c_int && (base == 0 || base == 16) {
+        value = 0;
+        found = true;
+        let Some(after_zero) = next() else {
+            return FastScanToken::Value((value, negative));
+        };
+        if after_zero < 0 { return FastScanToken::Value((value, negative)); }
+        if after_zero == b'x' as c_int || after_zero == b'X' as c_int {
+            base = 16;
+            found = false;
+            let Some(after_prefix) = next() else { return FastScanToken::MatchFail; };
+            if after_prefix < 0 { return FastScanToken::InputFail; }
+            c = after_prefix;
+        } else {
+            base = if base == 0 { 8 } else { 16 };
+            c = after_zero;
+        }
+    } else if base == 0 {
+        base = 10;
+    }
+
+    loop {
+        let byte = c as u8;
+        match vfscanf_fast_digit(byte, base) {
+            Some(digit) => {
+                value = value.wrapping_mul(base as u64).wrapping_add(digit);
+                found = true;
+            }
+            None => {
+                reader.unread(c);
+                return if found {
+                    FastScanToken::Value((value, negative))
+                } else {
+                    FastScanToken::MatchFail
+                };
+            }
+        }
+        let Some(after_digit) = next() else {
+            return FastScanToken::Value((value, negative));
+        };
+        if after_digit < 0 { return FastScanToken::Value((value, negative)); }
+        c = after_digit;
+    }
+}
+
+unsafe fn vfscanf_fast_string(
+    reader: &mut VfscanfFastReader, width: usize, dest: *mut c_char,
+) -> FastScanToken<()> {
+    let mut written = 0usize;
+    while width == 0 || written < width {
+        let c = reader.get();
+        if c < 0 {
+            if written == 0 { return FastScanToken::InputFail; }
+            if !dest.is_null() { *dest.add(written) = 0; }
+            return FastScanToken::Value(());
+        }
+        if is_ws_byte(c as u8) {
+            reader.unread(c);
+            break;
+        }
+        if !dest.is_null() { *dest.add(written) = c as c_char; }
+        written += 1;
+    }
+    if written == 0 {
+        FastScanToken::MatchFail
+    } else {
+        if !dest.is_null() { *dest.add(written) = 0; }
+        FastScanToken::Value(())
+    }
+}
+
+unsafe fn vfscanf_fast_scalar(
+    stream: *mut FILE, fmt: *const c_char, args: &mut VaList<'_>,
+) -> c_int {
+    let mut reader = VfscanfFastReader { stream, pending: -1 };
+    let result = vfscanf_fast_scalar_inner(&mut reader, fmt, args);
+    reader.finish();
+    result
+}
+
+unsafe fn vfscanf_fast_scalar_inner(
+    reader: &mut VfscanfFastReader, fmt: *const c_char, args: &mut VaList<'_>,
+) -> c_int {
+    let mut fi = 0usize;
+    let mut assigned = 0i32;
+    loop {
+        let fc = *fmt.add(fi) as u8;
+        if fc == 0 { return assigned; }
+        if is_ws_byte(fc) {
+            while is_ws_byte(*fmt.add(fi) as u8) { fi += 1; }
+            if !vfscanf_fast_skip_ws(reader) {
+                return if assigned == 0 { -1 } else { assigned };
+            }
+            continue;
+        }
+        if fc != b'%' {
+            let c = reader.get();
+            if c < 0 { return if assigned == 0 { -1 } else { assigned }; }
+            if c as u8 != fc {
+                reader.unread(c);
+                return assigned;
+            }
+            fi += 1;
+            continue;
+        }
+        fi += 1;
+        if *fmt.add(fi) as u8 == b'%' {
+            let c = reader.get();
+            if c < 0 { return if assigned == 0 { -1 } else { assigned }; }
+            if c != b'%' as c_int {
+                reader.unread(c);
+                return assigned;
+            }
+            fi += 1;
+            continue;
+        }
+        let suppress = if *fmt.add(fi) as u8 == b'*' { fi += 1; true } else { false };
+        let mut width = 0usize;
+        while (*fmt.add(fi) as u8).is_ascii_digit() {
+            width = width * 10 + (*fmt.add(fi) as u8 - b'0') as usize;
+            fi += 1;
+        }
+        let spec = *fmt.add(fi) as u8;
+        fi += 1;
+
+        // A forwarded C variadic list may still be backed by its caller's
+        // register-save state. Capture this directive's destination before
+        // the stream operations below, matching `do_vsscanf`'s ABI boundary.
+        let string_dest = if !suppress && spec == b's' {
+            args.next_arg::<*mut c_char>()
+        } else {
+            core::ptr::null_mut()
+        };
+        let pointer_dest = if !suppress && spec == b'p' {
+            args.next_arg::<*mut *mut c_void>()
+        } else {
+            core::ptr::null_mut()
+        };
+        let integer_dest = if !suppress && spec != b's' && spec != b'p' {
+            args.next_arg::<*mut c_int>()
+        } else {
+            core::ptr::null_mut()
+        };
+
+        if !vfscanf_fast_skip_ws(reader) {
+            return if assigned == 0 { -1 } else { assigned };
+        }
+
+        match spec {
+            b's' => {
+                match vfscanf_fast_string(reader, width, string_dest) {
+                    FastScanToken::Value(()) => if !suppress { assigned += 1; },
+                    FastScanToken::MatchFail => return assigned,
+                    FastScanToken::InputFail => return if assigned == 0 { -1 } else { assigned },
+                }
+            }
+            b'p' => {
+                match vfscanf_fast_int(reader, 16, width) {
+                    FastScanToken::Value((value, _)) => {
+                        if !suppress {
+                            if !pointer_dest.is_null() { *pointer_dest = value as usize as *mut c_void; }
+                            assigned += 1;
+                        }
+                    }
+                    FastScanToken::MatchFail => return assigned,
+                    FastScanToken::InputFail => return if assigned == 0 { -1 } else { assigned },
+                }
+            }
+            b'd' | b'u' | b'i' | b'o' | b'x' | b'X' => {
+                let base = match spec {
+                    b'd' | b'u' => 10,
+                    b'i' => 0,
+                    b'o' => 8,
+                    _ => 16,
+                };
+                match vfscanf_fast_int(reader, base, width) {
+                    FastScanToken::Value((value, negative)) => {
+                        if !suppress {
+                            if !integer_dest.is_null() {
+                                *integer_dest = if spec == b'd' && negative {
+                                    -(value as i64) as c_int
+                                } else {
+                                    value as c_int
+                                };
+                            }
+                            assigned += 1;
+                        }
+                    }
+                    FastScanToken::MatchFail => return assigned,
+                    FastScanToken::InputFail => return if assigned == 0 { -1 } else { assigned },
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn vfscanf(stream: *mut FILE, fmt: *const c_char, mut args: VaList) -> c_int {
+    vfscanf_inner(stream, fmt, &mut args)
+}
+
+unsafe fn vfscanf_inner(
+    stream: *mut FILE, fmt: *const c_char, args: &mut VaList<'_>,
+) -> c_int {
+    if vfscanf_fast_scalar_supported(fmt) {
+        return vfscanf_fast_scalar(stream, fmt, args);
+    }
     let f = &mut *stream;
     let start_ungotten_count = f.ungotten_count as usize;
     let sfunc = f.seek_fn;
@@ -11109,7 +11443,7 @@ pub unsafe extern "C" fn vfscanf(stream: *mut FILE, fmt: *const c_char, mut args
     if pos == 0 { return 0; }
 
     let mut consumed = 0usize;
-    let assigned = do_vsscanf(line.as_ptr(), pos, fmt, &mut args, &mut consumed);
+    let assigned = do_vsscanf(line.as_ptr(), pos, fmt, args, &mut consumed);
 
     if start_pos >= 0 {
         // `fgetc` may have read past the conversion into `line` and the

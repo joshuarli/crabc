@@ -74,6 +74,70 @@ static int invalidated_position_round(const char *path)
     return fclose(stream) == 0 ? 0 : 7;
 }
 
+/* A one-byte FILE buffer keeps the non-scalar staged parser's seek-back route live. */
+static int staged_seekback_round(const char *path)
+{
+    char buffer[1];
+    int value = 0;
+    int consumed = -1;
+    FILE *stream = fopen(path, "w+");
+
+    if (stream == NULL)
+        return 1;
+    if (setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) != 0)
+        return 2;
+    if (fputs("7 tail", stream) < 0 || fflush(stream) != 0
+            || fseek(stream, 0, SEEK_SET) != 0)
+        return 3;
+    if (fscanf(stream, "%d%n", &value, &consumed) != 1 || value != 7
+            || consumed != 1)
+        return 4;
+    if (fgetc(stream) != ' ' || fgetc(stream) != 't' || fgetc(stream) != 'a'
+            || fgetc(stream) != 'i' || fgetc(stream) != 'l')
+        return 5;
+    return fclose(stream) == 0 ? 0 : 6;
+}
+
+/*
+ * The direct scalar scanner consumes only the active conversion and holds its
+ * one-character delimiter in the FILE pushback state. Cover leading format
+ * whitespace, `%i`'s octal route, fixed-width strings, and a matching failure
+ * so the fast path stays equivalent to the pinned Musl stream contract.
+ */
+static int direct_scalar_boundaries_round(const char *path)
+{
+    int signed_value = 0;
+    int automatic_base = 0;
+    unsigned int hex_value = 0;
+    int failed_value = 0;
+    char word[4] = {0};
+    FILE *stream = fopen(path, "w+");
+
+    if (stream == NULL)
+        return 1;
+    if (fputs(" \t-12 034 2a abcdef tail", stream) < 0 || fflush(stream) != 0
+            || fseek(stream, 0, SEEK_SET) != 0)
+        return 2;
+    if (fscanf(stream, " %d %i %x %3s", &signed_value, &automatic_base,
+            &hex_value, word) != 4)
+        return 3;
+    if (signed_value != -12 || automatic_base != 28 || hex_value != 42
+            || strcmp(word, "abc") != 0 || fgetc(stream) != 'd')
+        return 4;
+    if (fclose(stream) != 0)
+        return 5;
+
+    stream = fopen(path, "w+");
+    if (stream == NULL)
+        return 6;
+    if (fputs("x", stream) < 0 || fflush(stream) != 0
+            || fseek(stream, 0, SEEK_SET) != 0)
+        return 7;
+    if (fscanf(stream, "%d", &failed_value) != 0 || fgetc(stream) != 'x')
+        return 8;
+    return fclose(stream) == 0 ? 0 : 9;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2)
@@ -89,11 +153,7 @@ int main(int argc, char **argv)
             return 20 + status;
     }
 
-    /*
-     * A one-byte FILE buffer cannot retain the scanner's unread literal tail.
-     * The implementation must use its seek-back route and still leave the
-     * same characters available to the following fgetc calls.
-     */
+    /* The direct scalar route must also preserve its delimiter with one-byte FILE storage. */
     {
         char buffer[1];
         FILE *stream = fopen(argv[1], "w+");
@@ -111,6 +171,16 @@ int main(int argc, char **argv)
         const int status = invalidated_position_round(argv[1]);
         if (status != 0)
             return 60 + status;
+    }
+    {
+        const int status = staged_seekback_round(argv[1]);
+        if (status != 0)
+            return 70 + status;
+    }
+    {
+        const int status = direct_scalar_boundaries_round(argv[1]);
+        if (status != 0)
+            return 80 + status;
     }
     if (unlink(argv[1]) != 0)
         return 30;

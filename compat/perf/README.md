@@ -101,10 +101,11 @@ sharing a mutable file between the reference and candidate processes.
 `w+` stream. It checks `fprintf`/`fflush`/`fseek`/`fscanf` for signed, unsigned,
 hexadecimal, and bounded string fields; then consumes the preserved literal tail
 with `fgetc` and independently checks bounded `snprintf`/`sscanf`. The direct
-musl differential uses the same contract, separately forces the scanner's
-seek-back fallback through a one-byte FILE buffer, and proves an unbuffered
-read invalidates a prior seek position before another scan. The performance row
-therefore cannot trade away the scanner's observable stream position.
+musl differential uses the same contract, exercises the scalar scanner with a
+one-byte FILE buffer, separately forces the staged `%n` fallback through its
+seek-back route, and proves an unbuffered read invalidates a prior seek position
+before another scan. The performance row therefore cannot trade away the
+scanner's observable stream position.
 
 `pthread_create_join_tls` creates a pthread key once per process, then performs
 one create/join lifecycle per operation. The child must observe static TLS at

@@ -127,7 +127,8 @@ int main(void) {
         int number;
         char word[16];
         if (__isoc99_fscanf(stream, "%d %15s", &number, word) != 2) return 25;
-        if (number != 8 || strcmp(word, "eight") != 0) return 26;
+        if (number != 8) return 26;
+        if (strcmp(word, "eight") != 0) return 52;
     }
     fclose(stream);
 
