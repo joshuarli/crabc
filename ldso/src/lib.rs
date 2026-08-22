@@ -4982,7 +4982,11 @@ unsafe fn loaded_object_by_name(name: *const u8, name_len: usize) -> Option<usiz
     if name_len == 0 {
         return None;
     }
-    for i in 0..LOADED_COUNT {
+    // `LOADED[0].name` is the main program's argv[0] for dladdr and
+    // dl_iterate_phdr. It is not an existing dlopen object: an explicit path
+    // to the executable must map a distinct object, while dlopen(NULL) takes
+    // the separate permanent global-handle path above.
+    for i in 1..LOADED_COUNT {
         if !LOADED[i].active || LOADED[i].name[0] == 0 {
             continue;
         }
@@ -5052,24 +5056,6 @@ unsafe fn loaded_initial_libc_by_needed_name(
 }
 
 unsafe fn loaded_object_by_identity(identity: FileIdentity) -> Option<usize> {
-    // The main PIE's identity is not needed to build its immutable initial
-    // graph. Defer `/proc/self/exe` until a later dlopen needs alias matching.
-    if !INITIAL_LOAD_IN_PROGRESS
-        && LOADED_COUNT > 0
-        && LOADED[0].active
-        && !LOADED[0].file_identity_valid
-    {
-        let proc_exe = b"/proc/self/exe\0";
-        let fd = sys_open(proc_exe.as_ptr());
-        if fd >= 0 {
-            if let Some(main_identity) = file_identity(fd) {
-                LOADED[0].file_identity_valid = true;
-                LOADED[0].file_dev = main_identity.dev;
-                LOADED[0].file_ino = main_identity.ino;
-            }
-            sys_close(fd);
-        }
-    }
     for i in 0..LOADED_COUNT {
         let obj = &LOADED[i];
         if obj.active
