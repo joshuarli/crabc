@@ -49,6 +49,27 @@ precedence, ndots/search candidate ordering, A/AAAA lookup, bounded CNAME
 completion, and the existing configured-order retry/failover transport. It
 does not discover NSS providers or add DNSSEC, DoH/DoT, mDNS, or IDNA policy.
 
+## Measured performance frontier
+
+The scoped C and native measurement matrix is now available through
+`./scripts/dev.sh perf --label NAME` and `./scripts/dev.sh perf-native --label
+NAME`. It compares the same musl-compiled C workload under staged musl/crabc
+runtimes and direct `crabc-rs` calls against Rustix, respectively. Timing,
+isolated user/system CPU, RSS/PSS, faults, context switches, Rust allocation
+accounting, and separate syscall diagnostics are retained in ignored local
+reports. Read [`docs/design/performance.md`](docs/design/performance.md) before
+changing one of these routes; it records the complete selected evidence,
+interpretation boundary, and harness contract.
+
+| Priority | Exact work still left | Evidence boundary |
+| --- | --- | --- |
+| P0 | Add a validated Linux/AArch64 vDSO `clock_gettime` route with a direct-syscall fallback, used by the C ABI and `crabc-rs`. | Current selected C route is 4.53× musl CPU; native `crabc-rs` is 7.67× Rustix. Preserve forced-fallback and malformed-vDSO tests. |
+| P1 | Replace linear loader symbol scans with retained GNU/SYSV hash lookup and remove per-operation uncontended-lock `gettid` work. | A 128-symbol DSO has 1.93× musl CPU and 15,010 candidate syscalls versus 18 reference calls. Preserve loader/interposition semantics. |
+| P1 | Port and prove musl-grade AArch64 `strlen`, `memchr`, `strstr`, and `memmem` implementations. | Selected scalar routes are 3.23×–5.20× musl CPU. SIMD/assembly is only an independently verified optimization. |
+| P2 | Account for and reduce non-essential loader startup mappings/syscalls. | Candidate startup is 48 traced calls versus 10 musl calls; wall timing alone is not a gate. |
+| Track | Keep mimalloc integration footprint/throughput in reports without starting allocator research. | The selected live 32-MiB case is 48,284 KiB crabc PSS versus 33,864 KiB musl. Malloc remains out of scope except for the chosen mimalloc integration. |
+| Tooling | Resolve Rustybench’s dependency-bearing `-Z build-std` duplicate-`core` limitation before using it for build-std timing. | The dependency-free M12 `std,panic_abort` fat-LTO application proof is green; the Rustybench route records explicit unsupported evidence rather than a false measurement. |
+
 ## Core runtime capability work
 
 | Ledger group | Exact work still left | Do not repeat |
@@ -72,10 +93,9 @@ selected scoped capability.
   probe is green but intentionally not exhaustive.
 - Use focused fuzzing/property/failure-path testing for high-value parsers and
   ownership state machines when changing them.
-- Benchmark a selected hot facade route against Rustix only when a design or
-  regression needs the measurement. Preserve M12’s bounded LTO proof; the
-  historical static/build-std linker-plugin lane is optional research, not a
-  compatibility blocker.
+- Expand the selected performance matrix only when a design or regression
+  requires a new route. Preserve M12’s bounded LTO/build-std proof; raw
+  one-shot LTO timings are not a benchmark substitute.
 - Extend POSIX, loader, or real-program evidence only in response to a defined
   contract. Existing selected suites are not claims of full standards or
   arbitrary Alpine DSO-graph coverage.

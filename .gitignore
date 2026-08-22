@@ -1,4 +1,6 @@
 /target
+# Isolated output directory for the Rust-native performance fixture.
+/compat/perf/native/target/
 Cargo.lock
 
 # Integration test compiled binaries

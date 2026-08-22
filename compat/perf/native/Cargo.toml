@@ -1,0 +1,36 @@
+[package]
+name = "crabc-perf-native"
+version = "0.0.0"
+edition = "2024"
+publish = false
+autobins = false
+
+# This fixture is deliberately its own workspace. It is not a production
+# dependency of crabc, Rustix, or Rustybench; all three remain explicit local
+# comparison inputs in the pinned Docker environment.
+[workspace]
+
+[features]
+default = ["crabc"]
+crabc = ["dep:crabc-rs"]
+rustix = ["dep:rustix"]
+
+[dependencies]
+rustybench = { path = "../../../rustybench" }
+crabc-rs = { path = "../../../crabc-rs", default-features = false, optional = true }
+rustix = { path = "../../../rustix", default-features = false, features = ["std", "fs", "process", "time"], optional = true }
+
+[[bench]]
+name = "native"
+path = "src/main.rs"
+harness = false
+
+# `cargo bench` selects the bench profile, not the root project's release
+# profile. Keep this explicit so the post-baseline experiment applies the same
+# whole-program optimization contract to both direct-facade executables.
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

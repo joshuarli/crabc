@@ -46,3 +46,5 @@ the scope/profile, executable contracts, or generated evidence.
   and the nearest `compat/*/README.md`.
 - Rust `std`, Rustix, and LTO evidence: [`compat/rust-std/README.md`](../compat/rust-std/README.md),
   [`compat/rustix/`](../compat/rustix/), and [`compat/lto/README.md`](../compat/lto/README.md).
+- Performance method and active optimization frontier:
+  [`design/performance.md`](design/performance.md) and [`compat/perf/README.md`](../compat/perf/README.md).

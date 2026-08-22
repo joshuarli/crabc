@@ -17,6 +17,9 @@ work. [`docs/README.md`](docs/README.md) routes design, evidence, historical
 records, and code-adjacent harness guides. Compatibility evidence does not
 promise a native Rust wrapper for every C symbol.
 
+The selected musl/Rustix performance evidence and current optimization frontier
+are documented in [`docs/design/performance.md`](docs/design/performance.md).
+
 ## What remains rigorous
 
 The scope is narrow around historical breadth, not around normal Unix
@@ -38,6 +41,8 @@ The image and compatibility oracles are pinned in
 ./scripts/dev.sh test
 ./scripts/dev.sh crabc-rs    # native Rust capability suite and proofs
 ./scripts/dev.sh lto-m12     # native crabc-rs O3/fat-LTO evidence
+./scripts/dev.sh perf --label baseline # controlled musl-vs-crabc performance evidence
+./scripts/dev.sh perf-native --label baseline # crabc-rs vs Rustix direct facade evidence
 ./scripts/dev.sh compat      # symbol/ABI accounting ratchet
 ./scripts/dev.sh differential
 ./scripts/dev.sh libc-test functional

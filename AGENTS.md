@@ -30,7 +30,7 @@ and [`TODO.md`](TODO.md) before selecting new work.
 | `src/` | Root `loader` helper/ELF runner; distinct from `ldso`. |
 | `include/` | Installed public C headers. |
 | `tests/` | Root Rust integration tests and C fixtures. |
-| `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, and capability-ledger evidence. |
+| `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, performance, and capability-ledger evidence. |
 | `libc-test-harness/` | Pinned upstream libc-test runner and its oracle evidence. |
 | `docker/` | Pinned Linux/AArch64 development image. |
 | `scripts/dev.sh` | Canonical Docker-first command dispatcher. |
@@ -47,6 +47,7 @@ and [`TODO.md`](TODO.md) before selecting new work.
 | Current measured results | [`COMPATIBILITY.md`](COMPATIBILITY.md) and `compat/reports/**` |
 | Cross-cutting document index | [`docs/README.md`](docs/README.md) |
 | Current Rust-facade architecture | [`docs/design/crabc-rs.md`](docs/design/crabc-rs.md) |
+| Performance contract and active cost frontier | [`docs/design/performance.md`](docs/design/performance.md) and [`compat/perf/README.md`](compat/perf/README.md) |
 | Exact native capability classification | [`compat/crabc-rs/coverage.toml`](compat/crabc-rs/coverage.toml) |
 | Historical M0–M12 rationale | [`docs/history/`](docs/history/) — provenance only, never a live backlog |
 | Harness mechanics | The nearest `compat/*/README.md` or package `README.md` |
@@ -81,6 +82,8 @@ container.
 ./scripts/dev.sh os-test | pthread-stress | static-pthread-tls
 ./scripts/dev.sh signal-process | resolver-network | ldso | corpus
 ./scripts/dev.sh rust-std | rust-std-dependent | lto | lto-m12
+./scripts/dev.sh perf [--label NAME]
+./scripts/dev.sh perf-native [--label NAME]
 ./scripts/dev.sh abi-probe | loader-inventory | dashboard | shell
 ```
 

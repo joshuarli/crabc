@@ -36,6 +36,8 @@ Commands:
   rust-std-dependent  run the M10.5 dependency-bearing stock Rust application
   lto [options]       run the M10 AArch64 static/build-std LTO evidence matrix
   lto-m12 [options]   run the M12 native crabc-rs facade LTO proof
+  perf [options]      measure equivalent musl/crabc C-runtime workloads (release build)
+  perf-native [options] measure crabc-rs direct facades against pinned Rustix
   crabc-rs            run the native crabc-rs capability/accounting/evidence gate
   abi-probe [options] generate selected public AArch64 ABI evidence
   loader-inventory   generate/check pinned musl and crabc loader reports
@@ -73,14 +75,26 @@ ensure_image() {
 
 run_in_container() {
     local rustix_source_host="${CRABC_RUSTIX_SOURCE_HOST:-$ROOT_DIR/../rustix}"
+    local rustybench_source_host="${CRABC_RUSTYBENCH_SOURCE_HOST:-$ROOT_DIR/../rustybench}"
     local -a rustix_mount=()
+    local -a rustybench_mount=()
     if [ -d "$rustix_source_host" ]; then
         # The comparison harness treats Rustix only as a pinned test oracle.
         # Keep a user checkout read-only and expose its container path through
         # an explicit variable; production Cargo manifests never name it.
         rustix_mount=(
             --env CRABC_RUSTIX_SOURCE=/opt/rustix
+            --env CRABC_NATIVE_RUSTIX_SOURCE=/workspace/rustix
             --volume "$rustix_source_host:/opt/rustix:ro"
+            --volume "$rustix_source_host:/workspace/rustix:ro"
+        )
+    fi
+    if [ -d "$rustybench_source_host" ]; then
+        # Rustybench is a local benchmark-tool checkout, never a crabc
+        # production dependency. Mount it only for explicit native evidence.
+        rustybench_mount=(
+            --env CRABC_RUSTYBENCH_SOURCE=/workspace/rustybench
+            --volume "$rustybench_source_host:/workspace/rustybench:ro"
         )
     fi
     docker run --rm --init \
@@ -93,6 +107,7 @@ run_in_container() {
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/opt/cargo" \
         "${rustix_mount[@]}" \
+        "${rustybench_mount[@]}" \
         "$IMAGE" "$@"
 }
 
@@ -273,6 +288,18 @@ case "$command" in
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/lto/m12_run.py "$@"
         run_in_container python3 scripts/generate_compatibility_dashboard.py
+        ;;
+    perf)
+        ensure_image
+        # Keep this separate from correctness gates. The report records the
+        # release profile source and artifact hashes, so a later optimization
+        # experiment can be compared with the baseline rather than overwrite it.
+        run_in_container cargo build --workspace --release
+        run_in_container python3 compat/perf/run.py "$@"
+        ;;
+    perf-native)
+        ensure_image
+        run_in_container python3 compat/perf/native/run.py "$@"
         ;;
     crabc-rs)
         ensure_image
