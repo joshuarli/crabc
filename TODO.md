@@ -98,9 +98,9 @@ The scalar `memset` summary in the P1 table is historical. Three current
 still scalar: explicit AArch64 GPR stores prevent LLVM from substituting NEON
 before a separately verified SIMD decision. Every fill row remains red.
 
-The pthread/TLS table's earlier `pthread-slot-publication-matrix-31` range is
-historical. `pthread-combined-stack-tls-create-matrix-31` records the current
-0.9441×–1.0258× CPU upper-bound range across three runs, with 7.000 versus
+The pthread/TLS table's earlier `pthread-combined-stack-tls-create-matrix-31`
+range is historical. `pthread-create-release-store-*-31` records the current
+0.9521×–0.9824× CPU upper-bound range across three runs, with 7.000 versus
 11.977 musl marked calls/op. A page-aligned combined allocation leaves dynamic
 TLS above the downward-growing stack and reduces the normal lifecycle to one
 `mmap`/`munmap`; cleanup refreshes a worker's current TLS block after late
