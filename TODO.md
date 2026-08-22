@@ -98,14 +98,20 @@ The scalar `memset` summary in the P1 table is historical. Three current
 still scalar: explicit AArch64 GPR stores prevent LLVM from substituting NEON
 before a separately verified SIMD decision. Every fill row remains red.
 
-The pthread/TLS table's earlier `pthread-combined-stack-tls-create-matrix-31`
-range is historical. `pthread-create-release-store-*-31` records the current
-0.9521×–0.9824× CPU upper-bound range across three runs, with 7.000 versus
-11.977 musl marked calls/op. A page-aligned combined allocation leaves dynamic
+The pthread/TLS table's earlier `pthread-create-release-store-*-31` range is
+historical. `pthread-create-tsd-loader-publish-*-31` records the current
+0.9195×–0.9541× CPU upper-bound range across three runs, with 7.000 versus
+11.977–11.990 musl marked calls/op. A page-aligned combined allocation leaves dynamic
 TLS above the downward-growing stack and reduces the normal lifecycle to one
 `mmap`/`munmap`; cleanup refreshes a worker's current TLS block after late
-`dlopen` migration. The 513-lifetime direct differential, dynamic-TLS cases,
-and broad pthread stress pass, but the CPU gate remains red.
+`dlopen` migration. Exit now bypasses the fixed TSD destructor scan when no
+live key has a destructor and clears only exact occupied values when recycling
+a slot. The loader's one-way multi-thread publication uses the inline AArch64
+compare-exchange before the first `clone`, not a repeated callback. The direct
+513-lifetime differential now also proves rearming destructor iterations,
+no-destructor slot reuse, and all `PTHREAD_KEYS_MAX` null-destructor keys;
+dynamic-TLS cases, broad pthread stress, and loader cases pass, but the CPU gate
+remains red.
 
 The pthread/TLS table's earlier `pthread_mutex_uncontended` result is
 historical. The three `pthread-mutex-release-store-*-31` reports now establish

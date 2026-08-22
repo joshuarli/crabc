@@ -119,14 +119,21 @@ happens to favor one implementation.
 | Networking and resolver | Local loopback socket I/O and a hermetic local DNS/hosts resolver scenario. No public network or ambient resolver state. | `./scripts/dev.sh resolver-network` runs one C fixture against pinned musl and crabc in a `--network none` container. It installs and restores a private resolver file only in that isolated container, uses fixed loopback DNS roles, compares exact status/stdout/stderr, and requires server-side evidence for A/AAAA/CNAME, NXDOMAIN/NODATA, malformed and wrong-ID packets, UDP truncation followed by TCP retry, search, and configured-order fallback. The same fixture covers loopback TCP/UDP IPv4/IPv6, ancillary data, readiness, shutdown, bounded I/O, EINTR, and nonblocking errors. `m11_resolver_system` and `m11_resolver_transport` add caller-owned `/etc/hosts` precedence, snapshot parsing, ndots/search ordering, and bounded native transport proofs. |
 | Native facade companion | Direct `crabc-rs` routes versus pinned Rustix: time, identity, file descriptor, allocation-avoiding buffer APIs, and errors. | Time, identity, and open/close exist; this is supporting evidence, not a musl C-ABI claim. |
 
-The Threads/TLS family table's `pthread-combined-stack-tls-create-matrix-31`
-measurement is historical. Three current `pthread-create-release-store-*-31`
-reports establish the 0.9521×–0.9824× upper-bound range:
-creators claim a free slot before detached-worker reclamation, reset it only
-after a successful claim, and allocate its stack/TLS once. The combined block
-keeps TLS above the downward-growing stack and refreshes a migrated TLS pointer
-before reclamation. The direct 513-lifetime and dynamic-TLS differentials plus
-broad pthread stress retain the lifecycle evidence.
+The Threads/TLS family table's `pthread-create-release-store-*-31` measurement
+is historical. Three current `pthread-create-tsd-loader-publish-*-31` reports
+establish a still-red 0.9195×–0.9541× CPU upper-bound range. Creators claim a
+free slot before detached-worker reclamation, reset it only after a successful
+claim, and allocate stack/TLS once. The combined block keeps TLS above the
+downward-growing stack and refreshes a migrated TLS pointer before reclamation.
+Exit skips the fixed TSD destructor scan when no destructor-bearing value
+exists, while an exact non-null bitset clears only occupied slots before reuse.
+The loader's private multi-thread transition is published once before the first
+`clone` through the inline AArch64 compare-exchange loop; later creates must not
+call the callback again. The direct differential now covers 513 lifetimes, a
+rearming destructor through `PTHREAD_DESTRUCTOR_ITERATIONS`, a no-destructor
+slot-reuse case, and all `PTHREAD_KEYS_MAX` null-destructor reservations;
+dynamic-TLS differentials, broad pthread stress, and the loader suite retain
+lifecycle evidence.
 
 The current red rows are concrete rather than hypothetical:
 
@@ -142,7 +149,7 @@ The current red rows are concrete rather than hypothetical:
 | Constructor/destructor PIE startup | 1.2346× CPU upper bound; 39 vs 9 whole-process calls; both marked `main` routes make exactly one output write | Constructor-before-`main` and destructor-after-`main` ordering are now proven without hiding their cost. Remove only loader or runtime work not required by that lifecycle. |
 | Startup-linked five-DSO graph | 1.1811× CPU upper bound; 80 vs 50 whole-process calls; marked regions contain one reference `ioctl`/`writev` output path and two candidate writes | An initial-graph cache removes 15 repeated same-path probes without applying to aliases, `$ORIGIN`, or runtime `dlopen`. The shared graph still has a red whole-process CPU result, although its syscall gate passes. |
 | C `stdio_format_parse` ×1,000 | 1.0452× CPU upper bound; 7.003 vs 6.211 marked calls/op | A successful `fseek` records its exact kernel position until I/O invalidates it, so the immediately following buffer-empty scanner avoids a redundant `SEEK_CUR` probe while other streams retain their seekability route. The direct-musl-differential contract also forces a one-byte-buffer seek-back path and invalidates the cache with an unbuffered read. The remaining read-ahead-to-EOF and stream setup keep both selected gates red. |
-| C `pthread_create_join_tls` ×1,000 | 0.9521×–0.9824× CPU upper bounds across three 31-sample `pthread-create-release-store-*-31` reports; 7.000 vs 11.977 marked calls/op | One page-aligned mapping places TLS above the downward-growing stack; candidate marked `mmap`/`munmap` now match musl at one each. Exit captures a late dynamic-TLS migration before reclaiming the original and replacement blocks. The direct-matched static-TLS, pthread-key, and create/join contract still passes over 513 lifetimes; dynamic-TLS regressions and broad pthread stress preserve delayed detached reclamation. Candidate syscalls pass, but CPU remains red. |
+| C `pthread_create_join_tls` ×1,000 | 0.9195×–0.9541× CPU upper bounds across three 31-sample `pthread-create-tsd-loader-publish-*-31` reports; 7.000 vs 11.977–11.990 marked calls/op | One page-aligned mapping places TLS above the downward-growing stack; candidate marked `mmap`/`munmap` match musl at one each. Exit fast-returns when no live key owns a destructor, and an exact occupancy bitset clears only TSD values that need clearing before slot reuse. The loader callback's one-way transition runs once before the first `clone` through inline AArch64 compare-exchange. The direct static-TLS/pthread-key/create-join differential covers 513 lifetimes, a rearming destructor, no-destructor slot reuse, and all `PTHREAD_KEYS_MAX` null-destructor keys; dynamic-TLS regressions, pthread stress, and loader cases pass. Candidate syscalls pass, but CPU remains red. |
 | C `loader_dynamic_tls_growth` ×8 | 1.2876×–1.3901× CPU upper bounds across three 31-sample reports; 8.125 vs 13.125 marked calls/op | The direct matched eight-DSO contract proves a worker predating all loads receives every initialized image and its writes are thread-local; the adjacent optimized parent/child graph proves one `dlopen` initializes every TLS module in a `DT_NEEDED` closure, while the 4-KiB-aligned regression proves TLSDESC migration refreshes its cached TP. Reusing a fitting allocation removes repeated block swaps, and the musl-matched initial `libc.so` short name removes redundant dependent-libc opens/stats without changing general runtime identity matching. The initial lowest-`PT_LOAD` file mapping now covers the final span before later fixed overlays, removing eight anonymous reservations: the trace records 17 candidate mappings versus 18 musl. The marked syscall gate passes; CPU remains red. |
 | C `pthread_mutex_uncontended` ×2,000,000 | 0.6066×–0.6109× CPU upper bounds across three 31-sample `pthread-mutex-release-store-*-31` reports; zero marked calls in both lanes | Inline AArch64 `ldaxr`/`stlxr` compare-exchange retains the acquisition contract. Normal unlock reads its advisory waiter count without an acquire barrier and emits one release `stlr` when it observes no waiter; any observed waiter retains the prior exchange-and-wake path. Direct Musl differentials, the condition handoff regression, and broad pthread stress preserve the waiter retry/wake protocol. The CPU gate passes. |
 | C `pthread_mutex_cond_ping_pong` ×10,000 | 1.0167× CPU upper bound; 6.0021 vs 6.0030 marked calls/op | The direct-matched parent/worker protocol proves each handoff's two protected increments. The verified inline atomic primitives lower the post-spin-removal 1.0372× result without changing the futex boundary or broad pthread stress result; the CPU gate remains red. |

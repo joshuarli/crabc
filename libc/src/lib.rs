@@ -4338,6 +4338,10 @@ const PTHREAD_EXPLICIT_SCHED: c_int = 1;
 const PTHREAD_BARRIER_SERIAL_THREAD: c_int = -1;
 
 const PTHREAD_KEYS_MAX: usize = 128;
+// The approved mimalloc path reserves one runtime key. Keep that private slot
+// separate from POSIX's 128-key application capacity instead of letting a null
+// destructor masquerade as a free key.
+const PTHREAD_KEY_SLOTS: usize = PTHREAD_KEYS_MAX + 1;
 const PTHREAD_DESTRUCTOR_ITERATIONS: usize = 4;
 const SEM_VALUE_MAX: c_int = 0x7fffffff;
 
@@ -4757,6 +4761,7 @@ unsafe fn sys_futex(uaddr: *mut c_int,
 
 const MAX_THREADS: usize = 64;
 const STACK_SIZE: usize = 1024 * 1024;
+const PTHREAD_TSD_WORDS: usize = (PTHREAD_KEY_SLOTS + 63) / 64;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -4774,7 +4779,14 @@ struct Thread {
     fs_base: *mut u8,
     tls_initial_block: *mut u8,
     combined_stack_tls_mapping: bool,
-    tsd: [*mut c_void; PTHREAD_KEYS_MAX],
+    tsd: [*mut c_void; PTHREAD_KEY_SLOTS],
+    // Number of non-null TSD values whose currently allocated key has a
+    // destructor. This makes the ordinary no-destructor exit path explicit
+    // without changing POSIX destructor iteration when one is required.
+    tsd_destructor_values: usize,
+    // Exact non-null slots, so recycling a thread need not clear all 128
+    // pointers merely to establish the required all-null initial state.
+    tsd_nonnull: [u64; PTHREAD_TSD_WORDS],
     cancelbuf: *mut __ptcb,
     robust_list: robust_list_head,
 }
@@ -4793,7 +4805,9 @@ static mut THREADS: [Thread; MAX_THREADS] = [Thread {
     fs_base: core::ptr::null_mut(),
     tls_initial_block: core::ptr::null_mut(),
     combined_stack_tls_mapping: false,
-    tsd: [core::ptr::null_mut(); PTHREAD_KEYS_MAX],
+    tsd: [core::ptr::null_mut(); PTHREAD_KEY_SLOTS],
+    tsd_destructor_values: 0,
+    tsd_nonnull: [0; PTHREAD_TSD_WORDS],
     cancelbuf: core::ptr::null_mut(),
     robust_list: robust_list_head {
         list: robust_list { next: core::ptr::null_mut() },
@@ -4815,7 +4829,10 @@ static mut CURRENT_THREAD: *mut Thread = core::ptr::null_mut();
 // scans and claims free entries directly, so this counter is not a capacity
 // gate for pthread lifecycle operations.
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(0);
-static mut KEY_DTORS: [Option<unsafe extern "C" fn(*mut c_void)>; PTHREAD_KEYS_MAX] = [None; PTHREAD_KEYS_MAX];
+// Allocation is independent from destruction: `None` is the valid destructor
+// for a live POSIX key, not an available-key sentinel.
+static mut KEY_IN_USE: [bool; PTHREAD_KEY_SLOTS] = [false; PTHREAD_KEY_SLOTS];
+static mut KEY_DTORS: [Option<unsafe extern "C" fn(*mut c_void)>; PTHREAD_KEY_SLOTS] = [None; PTHREAD_KEY_SLOTS];
 static NEXT_KEY: AtomicUsize = AtomicUsize::new(0);
 
 /// Reset the fixed thread-slot registry in a post-fork child.
@@ -4965,6 +4982,25 @@ unsafe fn spinlock_unlock(lock: *mut c_int, waiters: *mut c_int) {
     if a_load(waiters) > 0 { futex_wake(lock, 1); }
 }
 
+/// Clear exactly the non-null thread-specific values before slot reuse.
+///
+/// POSIX requires a new thread to observe null for every key. The bitset is
+/// updated with the pointer store in `pthread_setspecific` and key deletion,
+/// so clearing its members is equivalent to clearing the complete fixed array
+/// while avoiding writes to entries already known null.
+unsafe fn clear_thread_tsd(slot: &mut Thread) {
+    for word_index in 0..PTHREAD_TSD_WORDS {
+        let mut occupied = slot.tsd_nonnull[word_index];
+        while occupied != 0 {
+            let key = word_index * 64 + occupied.trailing_zeros() as usize;
+            slot.tsd[key] = core::ptr::null_mut();
+            occupied &= occupied - 1;
+        }
+        slot.tsd_nonnull[word_index] = 0;
+    }
+    slot.tsd_destructor_values = 0;
+}
+
 unsafe fn initialize_thread_slot(slot: &mut Thread) {
     slot.detach_state = DT_JOINABLE;
     slot.result = core::ptr::null_mut();
@@ -4978,7 +5014,7 @@ unsafe fn initialize_thread_slot(slot: &mut Thread) {
     slot.fs_base = core::ptr::null_mut();
     slot.tls_initial_block = core::ptr::null_mut();
     slot.combined_stack_tls_mapping = false;
-    core::ptr::write_bytes(slot.tsd.as_mut_ptr(), 0, PTHREAD_KEYS_MAX);
+    clear_thread_tsd(slot);
     slot.cancelbuf = core::ptr::null_mut();
     slot.robust_list = robust_list_head {
         list: robust_list { next: core::ptr::null_mut() },
@@ -5104,13 +5140,21 @@ unsafe fn alloc_thread_slot() -> Option<&'static mut Thread> {
 }
 
 unsafe fn run_key_dtors(slot: &mut Thread) {
+    // A zero count proves every TSD value either is null or belongs to a key
+    // without a destructor. Skipping the scan preserves POSIX behavior while
+    // removing the fixed 128-slot walk from ordinary worker exit.
+    if slot.tsd_destructor_values == 0 { return; }
     for _ in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
         let mut any = false;
-        for i in 0..PTHREAD_KEYS_MAX {
+        for i in 0..PTHREAD_KEY_SLOTS {
             let val = slot.tsd[i];
             if !val.is_null() {
                 if let Some(dtor) = KEY_DTORS[i] {
                     slot.tsd[i] = core::ptr::null_mut();
+                    slot.tsd_nonnull[i / 64] &= !(1_u64 << (i % 64));
+                    // `pthread_setspecific` restores this count if the
+                    // destructor rearms its key for another iteration.
+                    slot.tsd_destructor_values -= 1;
                     any = true;
                     dtor(val);
                 }
@@ -5286,11 +5330,17 @@ pub unsafe extern "C" fn pthread_create(
     let tid_ptr = &raw mut (*slot).tid;
     let flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD
         | CLONE_SYSVSEM | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID | CLONE_SETTLS;
-    // `clone` may make the child runnable before it returns. Escalate the
-    // loader's single-thread fast path first, so the child can never observe
-    // mutable loader state while the parent still treats it as unshared.
-    if let Some(mark_multithreaded) = LDSO_MARK_MULTITHREADED {
-        mark_multithreaded();
+    // `clone` may make the child runnable before it returns. Publish the
+    // loader's one-way single-thread-to-locked transition exactly once before
+    // the first clone, so a child can never observe mutable loader state while
+    // the parent still treats it as unshared. Later creates need neither the
+    // indirect callback nor its redundant compare-exchange. Use the local
+    // AArch64 primitive rather than `AtomicBool::swap`: LLVM may lower the
+    // latter to an outlined LSE capability-dispatch helper on this hot path.
+    if a_cas(&raw mut LDSO_MULTITHREAD_PUBLISHED, 0, 1) == 0 {
+        if let Some(mark_multithreaded) = LDSO_MARK_MULTITHREADED {
+            mark_multithreaded();
+        }
     }
     let tid = __rc_clone(thread_entry as *const () as usize, stack_top, flags, slot as *mut c_void, tid_ptr, fs_base as c_ulong, tid_ptr);
     if tid < 0 {
@@ -6440,22 +6490,36 @@ pub unsafe extern "C" fn pthread_key_create(key: *mut pthread_key_t, dtor: Optio
     let start = NEXT_KEY.load(Ordering::Relaxed);
     let mut j = start;
     loop {
-        if KEY_DTORS[j].is_none() {
+        if !KEY_IN_USE[j] {
+            KEY_IN_USE[j] = true;
             KEY_DTORS[j] = dtor;
-            NEXT_KEY.store((j + 1) % PTHREAD_KEYS_MAX, Ordering::Relaxed);
+            NEXT_KEY.store((j + 1) % PTHREAD_KEY_SLOTS, Ordering::Relaxed);
             *key = j as pthread_key_t;
             return 0;
         }
-        j = (j + 1) % PTHREAD_KEYS_MAX;
+        j = (j + 1) % PTHREAD_KEY_SLOTS;
         if j == start { return EAGAIN; }
     }
 }
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_key_delete(key: pthread_key_t) -> c_int {
-    KEY_DTORS[key as usize] = None;
+    let index = key as usize;
+    if index >= PTHREAD_KEY_SLOTS || !KEY_IN_USE[index] { return EINVAL; }
+    let word = index / 64;
+    let bit = 1_u64 << (index % 64);
+    let has_destructor = KEY_DTORS[index].is_some();
+    KEY_DTORS[index] = None;
+    KEY_IN_USE[index] = false;
     for i in 0..MAX_THREADS {
-        if THREADS[i].tid > 0 { THREADS[i].tsd[key as usize] = core::ptr::null_mut(); }
+        if THREADS[i].tid > 0 {
+            let slot = &mut THREADS[i];
+            if has_destructor && (slot.tsd_nonnull[word] & bit) != 0 {
+                slot.tsd_destructor_values -= 1;
+            }
+            slot.tsd[index] = core::ptr::null_mut();
+            slot.tsd_nonnull[word] &= !bit;
+        }
     }
     0
 }
@@ -6467,7 +6531,23 @@ pub unsafe extern "C" fn pthread_getspecific(key: pthread_key_t) -> *mut c_void 
 #[no_mangle]
 pub unsafe extern "C" fn pthread_setspecific(key: pthread_key_t, value: *const c_void) -> c_int {
     if let Some(slot) = find_thread() {
-        slot.tsd[key as usize] = value as *mut c_void;
+        let index = key as usize;
+        let word = index / 64;
+        let bit = 1_u64 << (index % 64);
+        let previous = slot.tsd[index];
+        if KEY_DTORS[index].is_some() {
+            if previous.is_null() && !value.is_null() {
+                slot.tsd_destructor_values += 1;
+            } else if !previous.is_null() && value.is_null() {
+                slot.tsd_destructor_values -= 1;
+            }
+        }
+        slot.tsd[index] = value as *mut c_void;
+        if value.is_null() {
+            slot.tsd_nonnull[word] &= !bit;
+        } else {
+            slot.tsd_nonnull[word] |= bit;
+        }
         0
     } else { EINVAL }
 }
@@ -17440,6 +17520,9 @@ static mut LDSO_DLSYM: Option<LdsoDlsymFn> = None;
 static mut LDSO_DLCLOSE: Option<LdsoDlcloseFn> = None;
 static mut LDSO_DLERROR: Option<LdsoDlerrorFn> = None;
 static mut LDSO_MARK_MULTITHREADED: Option<LdsoMarkMultithreadedFn> = None;
+// This state is written once and otherwise read only through `a_cas`, whose
+// exclusive loop provides the publication edge before the first `clone`.
+static mut LDSO_MULTITHREAD_PUBLISHED: c_int = 0;
 
 // `libldso.so` owns the loaded-object graph, its recursive loader lock, and
 // the TLS-backed dlerror storage. `crabc-rs` therefore cannot link a second
