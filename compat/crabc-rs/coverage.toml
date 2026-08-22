@@ -1918,11 +1918,11 @@ classification = "native-safe"
 status = "verified"
 rust_api = ["time::{ClockId, DynamicClockId, clock_getres, clock_gettime, clock_gettime_dynamic}"]
 shared_impl = ["crabc_core::time::{clock_getres_raw, clock_gettime_raw}"]
-native_boundary = "direct Linux/AArch64 clock_getres plus shared clock_gettime dispatch for typed known clocks and Rustix-shaped descriptor-backed CLOCKFD encoding, with caller-owned timespec output; eligible fixed clocks use the validated vDSO while descriptor and CPU clocks use the direct syscall"
+native_boundary = "direct Linux/AArch64 clock_getres plus shared clock_gettime dispatch for typed known clocks and Rustix-shaped descriptor-backed CLOCKFD encoding, with caller-owned timespec output; the validated Linux 5.10 AArch64 vDSO handles every clock ID and delegates unsupported descriptor/CPU IDs through its exact direct-syscall fallback"
 uses_public_c_abi = false
 uses_errno_tls = false
 evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/m10_time_dynamic.rs", "crabc-rs/examples/m10_time_dynamic_direct_probe.rs", "compat/rustix/source/m10_time_dynamic.rs", "compat/crabc-rs/verify_m10_kernel.py"]
-rationale = "Known and dynamic clock observations preserve descriptor-clock errors as Result values. Eligible fixed known clocks use the validated kernel vDSO with a direct fallback for unavailable or malformed metadata; descriptor and CPU clocks remain direct kernel syscalls. No libc or TLS errno path is exposed. Clock mutation and local calendar conversion are separate capabilities; formatting remains in the documented calendar boundary."
+rationale = "Known and dynamic clock observations preserve descriptor-clock errors as Result values. The validated Linux 5.10 AArch64 vDSO handles fixed, descriptor, and CPU IDs; its unsupported-ID path performs the exact kernel syscall, while unavailable or malformed metadata is cached as that direct fallback. No libc or TLS errno path is exposed. Clock mutation and local calendar conversion are separate capabilities; formatting remains in the documented calendar boundary."
 
 [[capability]]
 id = "time.process-interval-control"

@@ -1422,7 +1422,8 @@ pub fn clock_settime(id: ClockId, timespec: Timespec) -> Result<()> {
 /// [`Errno::INVAL`] for a descriptor that is not a clock device. The query
 /// uses the shared typed clock dispatcher with caller-owned, fully initialized
 /// output storage. Eligible fixed clock IDs use the kernel vDSO; descriptor
-/// clocks remain direct syscalls. It does not dispatch through libc or TLS
+/// clocks reach the same vDSO entry, which delegates unsupported IDs through
+/// its exact kernel syscall fallback. It does not dispatch through libc or TLS
 /// `errno`.
 pub fn clock_gettime_dynamic(id: DynamicClockId<'_>) -> Result<Timespec> {
     clock_query_result(dynamic_clock_id(id))

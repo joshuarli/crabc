@@ -57,38 +57,16 @@ struct ProgramHeaderTable {
 /// The returned value is the Linux kernel convention: zero on success or a
 /// negative errno. Absent or malformed metadata is cached as the typed direct
 /// syscall function, so the hot path has one pointer load and one indirect
-/// call. Dynamic, CPU-time, and unsupported clock IDs go directly to the
-/// kernel; the Linux 5.10 AArch64 vDSO itself implements its own syscall
-/// fallback for an eligible clock whose fast source cannot be read.
+/// call. Linux 5.10's AArch64 `__kernel_clock_gettime` performs the exact
+/// kernel syscall for IDs it cannot serve from the vDSO data page, so this
+/// route may call it for every public Linux clock ID without a duplicate
+/// user-space eligibility screen.
 ///
 /// # Safety
 ///
 /// `timespec` must be writable for one Linux/AArch64 `struct timespec`.
 #[inline(always)]
 pub(crate) unsafe fn clock_gettime_status(clock_id: i32, timespec: *mut u8) -> i32 {
-    if !vdso_clock_id_supported(clock_id) {
-        // SAFETY: The caller owns the direct Linux timespec output contract.
-        return unsafe { direct_clock_gettime(clock_id, timespec) };
-    }
-    // SAFETY: The predicate above admits only the fixed vDSO-supported set.
-    unsafe { clock_gettime_known_vdso_status(clock_id, timespec) }
-}
-
-/// Call the cached clock vDSO route for a clock ID already known to be in the
-/// fixed Linux/AArch64 vDSO-supported set.
-///
-/// # Safety
-///
-/// `clock_id` must satisfy `vdso_clock_id_supported`, and `timespec` must be
-/// writable for one Linux/AArch64 `struct timespec`. Callers with an arbitrary
-/// public C clock ID must use `clock_gettime_status` instead, so unsupported
-/// IDs retain their direct-syscall behavior.
-#[inline(always)]
-pub(crate) unsafe fn clock_gettime_known_vdso_status(
-    clock_id: i32,
-    timespec: *mut u8,
-) -> i32 {
-    debug_assert!(vdso_clock_id_supported(clock_id));
     // The cache is a single immutable function address. It protects no
     // associated mutable data, so a relaxed AArch64 load is sufficient and
     // avoids putting an acquire barrier in every clock read.
@@ -238,11 +216,6 @@ fn select_gettimeofday(base: Option<usize>) -> Gettimeofday {
     base.and_then(|base| unsafe { resolve_kernel_gettimeofday(base) })
         .and_then(|address| unsafe { validated_gettimeofday_function(address) })
         .unwrap_or(direct_gettimeofday)
-}
-
-#[inline]
-const fn vdso_clock_id_supported(clock_id: i32) -> bool {
-    matches!(clock_id, 0 | 1 | 4 | 5 | 6 | 7 | 11)
 }
 
 /// Resolves the live kernel vDSO without assigning arbitrary caller memory a
@@ -602,8 +575,7 @@ mod tests {
     use super::{
         clock_gettime_symbol_offset, direct_gettimeofday, dispatch_clock_gettime,
         gettimeofday_symbol_offset, resolve_kernel_clock_gettime, resolve_kernel_gettimeofday,
-        select_clock_gettime, select_gettimeofday, vdso_clock_id_supported, ClockGettime,
-        Gettimeofday,
+        select_clock_gettime, select_gettimeofday, ClockGettime, Gettimeofday,
     };
     use crate::param;
 
@@ -701,15 +673,6 @@ mod tests {
             unsafe { dispatch_clock_gettime(vdso_einval, 1, (&mut output as *mut Timespec).cast()) },
             -22,
         );
-    }
-
-    #[test]
-    fn dispatches_only_linux_vdso_clock_ids() {
-        assert!(vdso_clock_id_supported(0));
-        assert!(vdso_clock_id_supported(1));
-        assert!(vdso_clock_id_supported(11));
-        assert!(!vdso_clock_id_supported(2));
-        assert!(!vdso_clock_id_supported(-1));
     }
 
     #[test]

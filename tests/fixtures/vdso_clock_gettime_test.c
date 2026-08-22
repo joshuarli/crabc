@@ -30,9 +30,15 @@ int main(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "--hot") == 0)
         return 0;
 
+    struct timespec cpu;
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu) != 0
+            || cpu.tv_sec < 0 || cpu.tv_nsec < 0
+            || cpu.tv_nsec >= 1000000000L)
+        return 13;
+
     errno = 0;
     if (clock_gettime(-1, &(struct timespec){0}) != -1 || errno != EINVAL)
-        return 13;
+        return 14;
 
     puts("vdso clock route ok");
     return 0;

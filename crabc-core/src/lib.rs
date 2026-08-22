@@ -3201,24 +3201,6 @@ pub mod time {
         unsafe { crate::vdso::clock_gettime_status(clock_id, timespec) }
     }
 
-    /// Queries a known vDSO-supported Linux clock without repeating the
-    /// generic clock-ID eligibility check on the hot path.
-    ///
-    /// # Safety
-    ///
-    /// `clock_id` must be one of Linux/AArch64's fixed vDSO-supported IDs
-    /// (0, 1, 4, 5, 6, 7, or 11), and `timespec` must be writable for one
-    /// Linux/AArch64 `struct timespec`. Arbitrary user-provided IDs must use
-    /// [`clock_gettime_status_raw`] instead.
-    #[inline]
-    pub unsafe fn clock_gettime_known_vdso_status_raw(
-        clock_id: i32,
-        timespec: *mut u8,
-    ) -> i32 {
-        // SAFETY: The caller states the clock-ID and output-pointer contract.
-        unsafe { crate::vdso::clock_gettime_known_vdso_status(clock_id, timespec) }
-    }
-
     /// Sets a Linux clock without using libc, vDSO dispatch, or TLS `errno`.
     ///
     /// Linux permits only settable clocks and requires the caller to have

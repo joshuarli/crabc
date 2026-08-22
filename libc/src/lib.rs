@@ -2829,15 +2829,12 @@ unsafe fn clock_gettime_failure(status: i64) -> c_int {
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn clock_gettime(clockid: c_int, ts: *mut timespec) -> c_int {
-    // The selected C ABI clocks are the two common vDSO cases. Dispatch them
-    // straight to the already-validated cached route; every other public
-    // clock ID retains the general eligibility check and direct-syscall
-    // fallback in `sys_clock_gettime`.
-    let status = if clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC {
-        unsafe { crabc_core::time::clock_gettime_known_vdso_status_raw(clockid, ts.cast()) as i64 }
-    } else {
-        unsafe { sys_clock_gettime(clockid, ts) }
-    };
+    // Linux 5.10's AArch64 vDSO issues the exact clock_gettime syscall when
+    // an ID is not served from its data page. The shared cache falls back to
+    // that same syscall only when vDSO metadata itself is unavailable, so one
+    // resolved function call covers every public C clock ID without a second
+    // user-space eligibility screen.
+    let status = unsafe { sys_clock_gettime(clockid, ts) };
     if status == 0 {
         0
     } else {
