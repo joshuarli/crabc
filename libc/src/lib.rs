@@ -5768,18 +5768,30 @@ pub unsafe extern "C" fn pthread_mutex_init(mutex: *mut pthread_mutex_t, attr: *
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_destroy(_mutex: *mut pthread_mutex_t) -> c_int { 0 }
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_int {
+
+/// Execute the public mutex-lock state machine without an interposable call.
+///
+/// `pthread_cond_wait` uses this private route just as musl does: condition
+/// waiting must unlock and relock the supplied mutex with libc's own exact
+/// state machine, while the weak public C symbol below remains available to
+/// ordinary callers.
+#[inline(always)]
+unsafe fn pthread_mutex_lock_impl(mutex: *mut pthread_mutex_t) -> c_int {
     let type_ = (*mutex).__i[0];
-    // SAFETY: the public mutex contract supplies a live, aligned mutex whose
-    // lock word is owned by this atomic-helper family.
+    // SAFETY: the caller supplies a live, aligned mutex whose lock word is
+    // owned by this atomic-helper family.
     if (type_ & 0x8f) == PTHREAD_MUTEX_NORMAL
         && unsafe { a_cas(&raw mut (*mutex).__i[1], 0, EBUSY) } == 0
     {
         return 0;
     }
-    mutex_lock_internal(mutex, core::ptr::null())
+    unsafe { mutex_lock_internal(mutex, core::ptr::null()) }
+}
+
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_lock_impl(mutex) }
 }
 #[no_mangle]
 #[linkage = "weak"]
@@ -5791,32 +5803,40 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut pthread_mutex_t) -> c
 pub unsafe extern "C" fn pthread_mutex_timedlock(mutex: *mut pthread_mutex_t, abs_timeout: *const timespec) -> c_int {
     mutex_lock_internal(mutex, abs_timeout)
 }
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut pthread_mutex_t) -> c_int {
+
+/// Execute the public mutex-unlock state machine without an interposable call.
+///
+/// This is paired with [`pthread_mutex_lock_impl`] for condition waiting; the
+/// normal-mutex waiter hint and every release/wake edge are identical to the
+/// weak public C entry below.
+#[inline(always)]
+unsafe fn pthread_mutex_unlock_impl(mutex: *mut pthread_mutex_t) -> c_int {
     let type_ = (*mutex).__i[0];
     if (type_ & 0x8f) == PTHREAD_MUTEX_NORMAL {
-        // SAFETY: the public mutex contract supplies a live, aligned mutex
-        // lock word and waiter count are owned by this atomic-helper family.
-        // The count is an advisory wake hint, not a protected-data edge; see
-        // `a_load_relaxed` for the state-machine argument.
+        // SAFETY: the caller supplies a live, aligned mutex whose lock word
+        // and waiter count are owned by this atomic-helper family. The count
+        // is an advisory wake hint, not a protected-data edge.
         let waiters = unsafe { a_load_relaxed(&raw const (*mutex).__i[2]) };
         if waiters <= 0 {
             // A waiter that races this release either sees zero before it can
             // mark the lock, or observes its signed futex value replaced by
-            // this store and receives `EAGAIN` instead of sleeping. Thus the
-            // uncontended release needs only the release store; an observed
-            // waiter takes the established exchange-and-wake path below.
+            // this store and receives `EAGAIN` instead of sleeping.
             unsafe { a_store(&raw mut (*mutex).__i[1], 0) };
             return 0;
         }
         let old = unsafe { a_swap(&raw mut (*mutex).__i[1], 0) };
         if old < 0 || waiters > 0 {
-            futex_wake(&raw mut (*mutex).__i[1], 1);
+            unsafe { futex_wake(&raw mut (*mutex).__i[1], 1) };
         }
         return 0;
     }
-    mutex_unlock_internal(mutex)
+    unsafe { mutex_unlock_internal(mutex) }
+}
+
+#[no_mangle]
+#[linkage = "weak"]
+pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut pthread_mutex_t) -> c_int {
+    unsafe { pthread_mutex_unlock_impl(mutex) }
 }
 
 unsafe fn mutex_unlock_internal(mutex: *mut pthread_mutex_t) -> c_int {
@@ -5908,10 +5928,10 @@ unsafe fn pthread_cond_timedwait_impl(
     let waiters_ptr = &raw mut (*cond).__i[3];
     let seq = a_load(seq_ptr);
     a_fetch_add(waiters_ptr, 1);
-    pthread_mutex_unlock(mutex);
+    pthread_mutex_unlock_impl(mutex);
     let e = futex_timedwait(seq_ptr, seq, abs_timeout);
     a_fetch_sub(waiters_ptr, 1);
-    let r = pthread_mutex_lock(mutex);
+    let r = pthread_mutex_lock_impl(mutex);
     if r != 0 { return r; }
     if e == EINTR {
         pthread_testcancel();
