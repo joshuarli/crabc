@@ -107,22 +107,25 @@ The scalar `memset` summary in the P1 table is historical. Three current
 still scalar: explicit AArch64 GPR stores prevent LLVM from substituting NEON
 before a separately verified SIMD decision. Every fill row remains red.
 
-The pthread/TLS table's `pthread-initial-tp-cleanup-*-31` range is historical.
-Three current `pthread-conditional-exit-wake-{matrix,repeat,repeat2}-31`
-reports establish a still-red 0.9139×–0.9381× CPU upper-bound range, with
-6.000 crabc versus 11.966 musl marked calls/op. Normal `pthread_join` waits on
+The pthread/TLS table's `pthread-conditional-exit-wake-*-31` range is
+historical. Three current `pthread-single-postwait-cancel-{matrix,repeat,repeat2}-31`
+reports establish a still-red 0.9051×–0.9304× CPU upper-bound range, with 6.000
+crabc versus 11.966 musl marked calls/op. Normal `pthread_join` waits on
 Linux's `CLONE_CHILD_CLEARTID` word, so an ordinary worker no longer makes a
-second, unused `detach_state` futex wake. `pthread_timedjoin_np` instead marks
-interest in that same futex word before it sleeps; the one-way marker makes the
-worker either observe and wake the timed join or change its expected word first.
-The direct extension fixture proves a timeout leaves the target joinable and a
-following timed join wakes and returns its result. A page-aligned combined
-allocation still leaves dynamic TLS above the downward-growing stack and keeps
-the normal lifecycle to one `mmap`/`munmap`. Each slot retains the initial TP
-returned by the TLS bridge, while a late-`dlopen` migration retains the precise
-dynamic-TLS bridge query and replacement unmap. The 513-lifetime differential,
-dynamic-TLS cases, ten-iteration pthread stress, and loader cases pass, but the
-CPU gate remains red.
+second, unused `detach_state` futex wake. After a futex return, the next loop
+iteration is already a cancellation point; the joiner therefore performs one
+post-wait `pthread_testcancel` rather than two adjacent calls. The new
+pinned-musl stress regression cancels a blocked joiner, then proves its target
+remains joinable for a later successful join. `pthread_timedjoin_np` instead
+marks interest in that same futex word before it sleeps; the one-way marker
+makes the worker either observe and wake the timed join or change its expected
+word first. A page-aligned combined allocation still leaves dynamic TLS above
+the downward-growing stack and keeps the normal lifecycle to one
+`mmap`/`munmap`. Each slot retains the initial TP returned by the TLS bridge,
+while a late-`dlopen` migration retains the precise dynamic-TLS bridge query
+and replacement unmap. The 513-lifetime differential, dynamic-TLS cases,
+ten-iteration pthread stress, and loader cases pass, but the CPU gate remains
+red.
 
 The pthread/TLS table's earlier `pthread_mutex_uncontended` result is
 historical. The three `pthread-mutex-release-store-*-31` reports now establish

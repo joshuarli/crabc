@@ -5449,7 +5449,8 @@ pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void
         if tid == 0 { break; }
         if tid < 0 { return EINVAL; }
         sys_futex(tid_ptr, FUTEX_WAIT, tid, null_mut(), null_mut(), 0);
-        pthread_testcancel();
+        // The next iteration starts at this cancellation point. Keeping a
+        // second call here only repeats the same check after every wake.
     }
     if a_cas(&raw mut (*slot).detach_state, DT_EXITED, DT_EXITING) != DT_EXITED {
         return EINVAL;

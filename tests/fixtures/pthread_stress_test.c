@@ -565,6 +565,74 @@ static int asynchronous_stdio_probe(void) {
     return failures == 0 ? 0 : 1;
 }
 
+static pthread_mutex_t join_cancel_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t join_cancel_cond = PTHREAD_COND_INITIALIZER;
+static int join_cancel_target_ready;
+static int join_cancel_waiter_ready;
+static int join_cancel_target_release;
+
+static void *join_cancel_target_worker(void *arg) {
+    pthread_mutex_lock(&join_cancel_mutex);
+    join_cancel_target_ready = 1;
+    pthread_cond_broadcast(&join_cancel_cond);
+    while (!join_cancel_target_release)
+        pthread_cond_wait(&join_cancel_cond, &join_cancel_mutex);
+    pthread_mutex_unlock(&join_cancel_mutex);
+    return arg;
+}
+
+static void *join_cancel_waiter(void *arg) {
+    pthread_t target = *(pthread_t *)arg;
+
+    pthread_mutex_lock(&join_cancel_mutex);
+    join_cancel_waiter_ready = 1;
+    pthread_cond_broadcast(&join_cancel_cond);
+    pthread_mutex_unlock(&join_cancel_mutex);
+    return (void *)(long)pthread_join(target, NULL);
+}
+
+static int joiner_cancellation_probe(void) {
+    pthread_t target;
+    pthread_t waiter;
+    void *result = NULL;
+
+    join_cancel_target_ready = 0;
+    join_cancel_waiter_ready = 0;
+    join_cancel_target_release = 0;
+    CHECK(pthread_create(&target, NULL, join_cancel_target_worker, (void *)0x2468) == 0,
+          "create join cancellation target");
+    pthread_mutex_lock(&join_cancel_mutex);
+    while (!join_cancel_target_ready)
+        pthread_cond_wait(&join_cancel_cond, &join_cancel_mutex);
+    pthread_mutex_unlock(&join_cancel_mutex);
+
+    CHECK(pthread_create(&waiter, NULL, join_cancel_waiter, &target) == 0,
+          "create join cancellation waiter");
+    pthread_mutex_lock(&join_cancel_mutex);
+    while (!join_cancel_waiter_ready)
+        pthread_cond_wait(&join_cancel_cond, &join_cancel_mutex);
+    pthread_mutex_unlock(&join_cancel_mutex);
+    for (int i = 0; i < 64; i++)
+        sched_yield();
+    {
+        const struct timespec settle = { 0, 1000000L };
+        nanosleep(&settle, NULL);
+    }
+
+    CHECK(pthread_cancel(waiter) == 0, "cancel blocked join waiter");
+    CHECK(pthread_join(waiter, &result) == 0, "join canceled join waiter");
+    CHECK(result == PTHREAD_CANCELED, "join waiter observes cancellation");
+
+    pthread_mutex_lock(&join_cancel_mutex);
+    join_cancel_target_release = 1;
+    pthread_cond_broadcast(&join_cancel_cond);
+    pthread_mutex_unlock(&join_cancel_mutex);
+    result = NULL;
+    CHECK(pthread_join(target, &result) == 0, "join target after canceled waiter");
+    CHECK(result == (void *)0x2468, "canceled waiter leaves target joinable");
+    return failures == 0 ? 0 : 1;
+}
+
 static void run_probe_with_timeout(int (*probe)(void), const char *label) {
     pid_t child = fork();
     CHECK(child >= 0, label);
@@ -743,6 +811,7 @@ int main(void) {
     run_probe_with_timeout(deferred_stdio_probe, "deferred stdio cancellation probe");
     run_probe_with_timeout(asynchronous_read_probe, "asynchronous read cancellation probe");
     run_probe_with_timeout(asynchronous_stdio_probe, "asynchronous stdio cancellation probe");
+    run_probe_with_timeout(joiner_cancellation_probe, "joiner cancellation probe");
     test_joinable_survives_detached_churn();
     test_cancellation_cleanup();
 
