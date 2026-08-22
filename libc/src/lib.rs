@@ -4809,6 +4809,10 @@ struct Thread {
     stack_size: usize,
     fs_base: *mut u8,
     tls_initial_block: *mut u8,
+    // This is the original thread pointer returned by the TLS bridge. The
+    // worker refreshes `fs_base` before exit, so a difference records that a
+    // later dynamic-TLS expansion moved the allocation.
+    tls_initial_tp: *mut u8,
     combined_stack_tls_mapping: bool,
     tsd: [*mut c_void; PTHREAD_KEY_SLOTS],
     // Number of non-null TSD values whose currently allocated key has a
@@ -4835,6 +4839,7 @@ static mut THREADS: [Thread; MAX_THREADS] = [Thread {
     stack_size: 0,
     fs_base: core::ptr::null_mut(),
     tls_initial_block: core::ptr::null_mut(),
+    tls_initial_tp: core::ptr::null_mut(),
     combined_stack_tls_mapping: false,
     tsd: [core::ptr::null_mut(); PTHREAD_KEY_SLOTS],
     tsd_destructor_values: 0,
@@ -5048,6 +5053,7 @@ unsafe fn initialize_thread_slot(slot: &mut Thread) {
     slot.stack_size = 0;
     slot.fs_base = core::ptr::null_mut();
     slot.tls_initial_block = core::ptr::null_mut();
+    slot.tls_initial_tp = core::ptr::null_mut();
     slot.combined_stack_tls_mapping = false;
     clear_thread_tsd(slot);
     slot.cancelbuf = core::ptr::null_mut();
@@ -5062,11 +5068,13 @@ unsafe fn release_thread_slot(slot: &mut Thread) {
     let stack = slot.stack;
     let stack_size = slot.stack_size;
     let fs_base = slot.fs_base;
-    // The loader records a TLS allocation's precise base/size in its TCB.
-    // Read that metadata while the block remains mapped: a combined initial
-    // allocation includes this TCB in `stack`, so querying it after unmapping
-    // the range would dereference freed memory.
-    let current_tls = if fs_base.is_null() {
+    // An unchanged initial TP lies in the combined stack/TLS mapping, whose
+    // one unmap already releases the whole allocation. A changed TP names a
+    // dynamic-TLS replacement; query its TCB before unmapping either range so
+    // the loader can provide the replacement's precise base and size.
+    let current_tls = if fs_base.is_null()
+        || (slot.combined_stack_tls_mapping && fs_base == slot.tls_initial_tp)
+    {
         None
     } else {
         let base_offset = __rc_tls_base_offset_for(fs_base);
@@ -5360,6 +5368,7 @@ pub unsafe extern "C" fn pthread_create(
     (*slot).stack_size = mapping_size;
     (*slot).fs_base = fs_base;
     (*slot).tls_initial_block = tls_block;
+    (*slot).tls_initial_tp = fs_base;
     (*slot).combined_stack_tls_mapping = true;
     let stack_top = stack.add(stack_mapping_size);
     let tid_ptr = &raw mut (*slot).tid;

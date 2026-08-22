@@ -99,13 +99,16 @@ still scalar: explicit AArch64 GPR stores prevent LLVM from substituting NEON
 before a separately verified SIMD decision. Every fill row remains red.
 
 The pthread/TLS table's earlier `pthread-create-release-store-*-31` range is
-historical. `pthread-create-tsd-loader-publish-*-31` records the current
-0.9195×–0.9541× CPU upper-bound range across three runs, with 7.000 versus
-11.977–11.990 musl marked calls/op. A page-aligned combined allocation leaves dynamic
-TLS above the downward-growing stack and reduces the normal lifecycle to one
-`mmap`/`munmap`; cleanup refreshes a worker's current TLS block after late
-`dlopen` migration. Exit now bypasses the fixed TSD destructor scan when no
-live key has a destructor and clears only exact occupied values when recycling
+historical. `pthread-initial-tp-cleanup-{matrix,repeat,repeat2}-31` records a
+still-red 0.9206×–0.9478× CPU upper-bound range across three runs, with 7.000
+versus 11.977–11.990 musl marked calls/op. A page-aligned combined allocation
+leaves dynamic TLS above the downward-growing stack and reduces the normal
+lifecycle to one `mmap`/`munmap`. Each slot records the initial TP returned by
+the TLS bridge; after the worker refreshes its current TP at exit, an unchanged
+combined allocation releases directly, while a late-`dlopen` migration retains
+the precise dynamic-TLS bridge query and replacement unmap. Exit now bypasses
+the fixed TSD destructor scan when no live key has a destructor and clears only
+exact occupied values when recycling
 a slot. The loader's one-way multi-thread publication uses the inline AArch64
 compare-exchange before the first `clone`, not a repeated callback. The direct
 513-lifetime differential now also proves rearming destructor iterations,
