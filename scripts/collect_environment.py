@@ -33,6 +33,13 @@ def main() -> None:
 
     report = {
         "crabc_git_sha": command_output("git", "-C", str(ROOT_DIR), "rev-parse", "HEAD"),
+        # A commit alone is insufficient provenance when an evidence run could
+        # have incorporated uncommitted source. Keep this explicit so the
+        # final dashboard can distinguish its tested source parent from its
+        # generated evidence-only child.
+        "crabc_git_dirty": bool(
+            command_output("git", "-C", str(ROOT_DIR), "status", "--porcelain")
+        ),
         "target": "aarch64-unknown-linux-musl",
         "linux_kernel": command_output("uname", "-a"),
         "rustc_vv": command_output("rustc", "-Vv"),
