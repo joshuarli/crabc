@@ -127,7 +127,7 @@ Generate both loader/runtime reports after building the AArch64 workspace:
 
 The command writes the two JSON reports and then checks them again without
 writing. The candidate report includes the current `libldso.so` and
-`ldso/src/lib.rs` hashes, so it is evidence for that build only and must be
+`ldso/src/loader.rs` hashes, so it is evidence for that build only and must be
 regenerated after loader changes.
 
 ## Selected public-layout probes

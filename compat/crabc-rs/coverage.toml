@@ -279,7 +279,7 @@ symbols = ["__auxv", "__crabc_runtime_v1", "__dls2b", "__dls3", "__ldso_register
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "ldso and the append-only private RuntimeV1 bridge"
-evidence = ["ldso/src/lib.rs", "compat/crabc-rs/verify_loader_runtime.py", "compat/crabc-rs/verify_runtime_thread.py"]
+evidence = ["ldso/src/loader.rs", "compat/crabc-rs/verify_loader_runtime.py", "compat/crabc-rs/verify_runtime_thread.py"]
 rationale = "These loader, TLS, and private registration exports coordinate crabc and ldso. They have no installed application-facing header contract."
 
 [[capability]]
@@ -289,7 +289,7 @@ symbols = ["__cxa_atexit", "__cxa_finalize", "__setjmp", "__sigsetjmp", "__sigse
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "compiler, unwinding, and C ABI support"
-evidence = ["libc/src/lib.rs", "docs/history/crabc-rs-delivery-plan.md#33"]
+evidence = ["libc/src/c_abi.rs", "docs/history/crabc-rs-delivery-plan.md#33"]
 rationale = "These exports preserve compiler and C control-transfer ABI behavior; Rust exposes neither a safe nor a meaningful direct operation for them."
 
 [[capability]]
@@ -445,7 +445,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "This is the private implementation helper behind public qsort_r; native sorting is accounted for by Rust slice and collection APIs."
 reviewed = "rust-std"
-review_evidence = ["libc/src/lib.rs", "include/stdlib.h"]
+review_evidence = ["libc/src/c_abi.rs", "include/stdlib.h"]
 rationale = "The helper is not itself a C header operation and cannot be used to hide the public sorting capability."
 
 [[capability]]
@@ -521,7 +521,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The C long-double ABI is compatibility machinery; it is not an idiomatic crabc-rs operation and cannot be represented by Rust f32/f64 primitives."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/lib.rs"]
+review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/c_abi.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track, with musl/proven-equivalence math as the implementation oracle. crabc-rs does not promise a competing long-double facade merely to mirror symbols."
 
 [[capability]]
@@ -543,7 +543,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Special-function and decomposition symbols are not a coherent crabc-rs capability; any C implementation remains compatibility work guided by musl or proven equivalence."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/lib.rs"]
+review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/c_abi.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. crabc-rs does not become a second libm or expose a wrapper for every historical math export."
 
 [[capability]]
@@ -714,7 +714,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "On Linux/AArch64 off_t is already 64-bit, so this is only an ABI alias of fopen; it does not represent a distinct operation."
 reviewed = "rust-std"
-review_evidence = ["include/stdio.h", "libc/src/lib.rs"]
+review_evidence = ["include/stdio.h", "libc/src/c_abi.rs"]
 rationale = "This candidate-only alias must not be used to claim completion of path-based stdio."
 
 [[capability]]
@@ -859,9 +859,9 @@ symbols = ["remove"]
 classification = "rust-subsumed"
 status = "documented"
 rust_equivalent = "fs::unlinkat for non-directories and fs::rmdir for directories"
-source_evidence = ["crabc-rs/src/fs.rs", "libc/src/lib.rs", "tests/fixtures/filesystem_paths_exports_test.c"]
+source_evidence = ["crabc-rs/src/fs.rs", "libc/src/c_abi.rs", "tests/fixtures/filesystem_paths_exports_test.c"]
 behavior_evidence = ["crabc-rs/tests/filesystem.rs"]
-evidence = ["crabc-rs/src/fs.rs", "libc/src/lib.rs", "tests/fixtures/filesystem_paths_exports_test.c", "crabc-rs/tests/filesystem.rs"]
+evidence = ["crabc-rs/src/fs.rs", "libc/src/c_abi.rs", "tests/fixtures/filesystem_paths_exports_test.c", "crabc-rs/tests/filesystem.rs"]
 rationale = "Rust keeps file unlinking and directory removal as distinct typed operations. The C adapter now follows musl by retrying EISDIR with AT_REMOVEDIR, but its dispatch rule is not a new native API."
 
 [[capability]]
@@ -1854,7 +1854,7 @@ shared_impl = ["crabc_core::time::clock_gettime_raw"]
 native_boundary = "shared Linux/AArch64 clock_gettime dispatch over CLOCK_PROCESS_CPUTIME_ID with private validated timespec output converted to Duration; the CPU clock ID follows its direct-syscall route"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/process_cpu_time.rs", "crabc-rs/examples/process_cpu_time_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["libc/src/c_abi.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/process_cpu_time.rs", "crabc-rs/examples/process_cpu_time_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native observation uses nanosecond Duration precision and the existing infallible known-clock contract. It does not expose C clock_t microseconds, the C overflow sentinel, or calendar-time conversion."
 
 [[capability]]
@@ -2343,7 +2343,7 @@ shared_impl = ["crabc_rs::net allocation-free musl inet_aton-compatible byte par
 native_boundary = "complete borrowed byte slice, musl 1–4 component base-zero IPv4 grammar, and owned core::net::Ipv4Addr network-order result"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/ipv4_legacy.rs", "crabc-rs/examples/ipv4_legacy_direct_probe.rs", "compat/crabc-rs/verify_network_address.py"]
+evidence = ["libc/src/c_abi.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/ipv4_legacy.rs", "crabc-rs/examples/ipv4_legacy_direct_probe.rs", "compat/crabc-rs/verify_network_address.py"]
 rationale = "The parser retains musl's legacy decimal/octal/hex and abbreviated component grammar over a length-delimited byte slice. Option cleanly represents parse failure while still accepting 0xffffffff, unlike inet_addr's INADDR_NONE ambiguity; standard Ipv4Addr formatting replaces inet_ntoa's process-global static buffer."
 
 [[capability]]
@@ -2608,7 +2608,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Environment mutation is shared process-global storage with exec and foreign-code lifetime obligations. crabc-rs has no global process registry and must not invent one for C-compatible mutation."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "libc/src/lib.rs"]
+review_evidence = ["SCOPE.md", "libc/src/c_abi.rs"]
 rationale = "The C environ/setenv/unsetenv/clearenv ABI remains separately owned by libc. Native APIs accept explicit program and environment input for prepared execution and do not expose a potentially unsound global environment owner."
 
 [[capability]]
@@ -2839,7 +2839,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "These are C callback registries used by fork/exit internals; native process APIs must own their own lifecycle rather than expose libc callback lists."
 reviewed = "rust-std"
-review_evidence = ["libc/src/pthread_atfork.rs", "libc/src/lib.rs"]
+review_evidence = ["libc/src/pthread_atfork.rs", "libc/src/c_abi.rs"]
 rationale = "The private helper exports do not complete public fork or exit semantics."
 
 [[capability]]
@@ -3153,7 +3153,7 @@ shared_impl = ["crabc_core::runtime::RuntimeV1 append-only loader snapshot/infor
 native_boundary = "one bounded callback-free RuntimeV1 copy holds the ldso lock only while copying fixed records and names into caller-owned storage; no link_map, loader-owned string, Rust callback, or errno TLS crosses the boundary"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/runtime.rs", "ldso/src/lib.rs", "libc/src/dynamic_loader_introspection_exports.rs", "libc/src/lib.rs", "crabc-rs/src/dl.rs", "crabc-rs/examples/loader_dlfcn_introspection_probe.rs", "tests/loader_dlfcn_introspection.rs", "tests/fixtures/loader_dlfcn_introspection_test.c"]
+evidence = ["crabc-core/src/runtime.rs", "ldso/src/loader.rs", "libc/src/dynamic_loader_introspection_exports.rs", "libc/src/c_abi.rs", "crabc-rs/src/dl.rs", "crabc-rs/examples/loader_dlfcn_introspection_probe.rs", "tests/loader_dlfcn_introspection.rs", "tests/fixtures/loader_dlfcn_introspection_test.c"]
 rationale = "The Rust API owns a bounded image-record snapshot and copied per-handle information. Opaque addresses carry no lifetime or dereference promise, while the old RuntimeV1 prefix remains usable through V1_LEGACY_SIZE. The AArch64 fixture proves program-header/name/base copying and loader-handle information without callback reentrancy or link_map exposure."
 
 [[capability]]

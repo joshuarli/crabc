@@ -146,7 +146,7 @@ child TLS DSO; a worker predating the graph must observe both initializers and
 write only its own pair of TLS instances. The direct differential proves the
 dependency edge with `readelf -d` before comparing both runtime outputs.
 
-`ldso/src/lib.rs` records each image's introduction generation. When
+`ldso/src/loader.rs` records each image's introduction generation. When
 `expand_thread_tls` finds that a thread's recorded capacity and TP placement
 already fit every new image, it initializes only those images in place; a
 larger image or stronger alignment retains allocation replacement. This keeps

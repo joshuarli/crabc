@@ -70,7 +70,7 @@ project scope.
 
 | Path | Description |
 |---|---|
-| `libc/` | `libc.so` / `libc.a`: monolithic Rust `no_std` libc |
+| `libc/` | `libc.so` / `libc.a`: Rust `no_std` C ABI and libc-owned runtime state |
 | `ldso/` | `libldso.so`: AArch64 dynamic linker |
 | `crabc-core/` | Shared typed `no_std` Linux/AArch64 implementation layer |
 | `crabc-rs/` | Idiomatic Rust OS/runtime capabilities |

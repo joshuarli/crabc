@@ -15,7 +15,7 @@ report.
 
 [`../abi/crabc/aarch64/loader-features.json`](../abi/crabc/aarch64/loader-features.json)
 inspects the current AArch64 `target/debug/libldso.so` and
-`ldso/src/lib.rs`. Each feature records source-marker evidence and, where
+`ldso/src/loader.rs`. Each feature records source-marker evidence and, where
 available, an existing loader test target. `runtime_test_executed` and
 `verified` are intentionally `false`: generating this report does not run
 tests and does not infer a pass from a symbol, constant, or test filename.
@@ -54,7 +54,7 @@ docker run --rm --platform linux/arm64 \
 ```
 
 The candidate report is tied to the hashes of the current loader artifact and
-source. Regenerate it after changing `ldso/src/lib.rs` or rebuilding the
+source. Regenerate it after changing `ldso/src/loader.rs` or rebuilding the
 workspace.
 
 The parser/report invariants can be checked without Docker dependencies:

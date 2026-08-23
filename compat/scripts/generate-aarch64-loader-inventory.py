@@ -45,7 +45,7 @@ DEFAULT_MUSL_ROOT = Path("/opt/musl-1.2.6")
 DEFAULT_MUSL_OUTPUT = REPO_ROOT / "compat/abi/musl-1.2.6/aarch64/loader-runtime.json"
 DEFAULT_CRABC_OUTPUT = REPO_ROOT / "compat/abi/crabc/aarch64/loader-features.json"
 DEFAULT_CRABC_LDSO = REPO_ROOT / "target/debug/libldso.so"
-DEFAULT_CRABC_SOURCE = REPO_ROOT / "ldso/src/lib.rs"
+DEFAULT_CRABC_SOURCE = REPO_ROOT / "ldso/src/loader.rs"
 
 _PROGRAM_TYPES = {
     "LOAD",
@@ -541,7 +541,7 @@ def crabc_inventory(ldso: Path, source_path: Path) -> bytes:
         "candidate": {
             "artifact": "target/debug/libldso.so",
             "sha256": sha256(ldso),
-            "source": "ldso/src/lib.rs",
+            "source": "ldso/src/loader.rs",
             "source_sha256": sha256(source_path),
             "elf": elf,
         },

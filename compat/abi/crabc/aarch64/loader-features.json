@@ -34,7 +34,7 @@
           {
             "tag": "INIT_ARRAY",
             "tag_value": "0x0000000000000019",
-            "value": "0x5dd48"
+            "value": "0x5dcc8"
           },
           {
             "tag": "INIT_ARRAYSZ",
@@ -49,17 +49,17 @@
           {
             "tag": "STRTAB",
             "tag_value": "0x0000000000000005",
-            "value": "0x5e0"
+            "value": "0x618"
           },
           {
             "tag": "SYMTAB",
             "tag_value": "0x0000000000000006",
-            "value": "0x2f8"
+            "value": "0x348"
           },
           {
             "tag": "STRSZ",
             "tag_value": "0x000000000000000a",
-            "value": "457 (bytes)"
+            "value": "443 (bytes)"
           },
           {
             "tag": "SYMENT",
@@ -69,7 +69,7 @@
           {
             "tag": "PLTGOT",
             "tag_value": "0x0000000000000003",
-            "value": "0x5fe30"
+            "value": "0x5fe28"
           },
           {
             "tag": "PLTRELSZ",
@@ -84,17 +84,17 @@
           {
             "tag": "JMPREL",
             "tag_value": "0x0000000000000017",
-            "value": "0x3240"
+            "value": "0x32f8"
           },
           {
             "tag": "RELA",
             "tag_value": "0x0000000000000007",
-            "value": "0x7b0"
+            "value": "0x7d8"
           },
           {
             "tag": "RELASZ",
             "tag_value": "0x0000000000000008",
-            "value": "10896 (bytes)"
+            "value": "11040 (bytes)"
           },
           {
             "tag": "RELAENT",
@@ -114,7 +114,7 @@
           {
             "tag": "RELACOUNT",
             "tag_value": "0x000000006ffffff9",
-            "value": "453"
+            "value": "459"
           },
           {
             "tag": "NULL",
@@ -124,15 +124,15 @@
         ]
       },
       "dynamic_symbols": {
-        "public_defined": 26,
+        "public_defined": 25,
         "tables": {
-          ".dynsym": 31
+          ".dynsym": 30
         }
       },
       "header": {
         "class": "ELF64",
         "data": "2's complement, little endian",
-        "entry_point": "0x4510",
+        "entry_point": "0x45d4",
         "machine": "AArch64",
         "os_abi": "UNIX - System V",
         "program_header_count": "7",
@@ -153,9 +153,9 @@
       "program_headers": [
         {
           "alignment": "0x10000",
-          "file_size": "0x04058c",
+          "file_size": "0x041214",
           "flags": "RE",
-          "memory_size": "0x04058c",
+          "memory_size": "0x041214",
           "offset": "0x000000",
           "physical_address": "0x0000000000000000",
           "type": "LOAD",
@@ -163,23 +163,23 @@
         },
         {
           "alignment": "0x10000",
-          "file_size": "0x002308",
+          "file_size": "0x002388",
           "flags": "RW",
-          "memory_size": "0x005440",
-          "offset": "0x04dd48",
-          "physical_address": "0x000000000005dd48",
+          "memory_size": "0x0055c8",
+          "offset": "0x04dcc8",
+          "physical_address": "0x000000000005dcc8",
           "type": "LOAD",
-          "virtual_address": "0x000000000005dd48"
+          "virtual_address": "0x000000000005dcc8"
         },
         {
           "alignment": "0x8",
           "file_size": "0x000170",
           "flags": "RW",
           "memory_size": "0x000170",
-          "offset": "0x04fcc0",
-          "physical_address": "0x000000000005fcc0",
+          "offset": "0x04fcb8",
+          "physical_address": "0x000000000005fcb8",
           "type": "DYNAMIC",
-          "virtual_address": "0x000000000005fcc0"
+          "virtual_address": "0x000000000005fcb8"
         },
         {
           "alignment": "0x4",
@@ -193,13 +193,13 @@
         },
         {
           "alignment": "0x4",
-          "file_size": "0x0018a4",
+          "file_size": "0x00192c",
           "flags": "R",
-          "memory_size": "0x0018a4",
-          "offset": "0x0377b0",
-          "physical_address": "0x00000000000377b0",
+          "memory_size": "0x00192c",
+          "offset": "0x038130",
+          "physical_address": "0x0000000000038130",
           "type": "GNU_EH_FRAME",
-          "virtual_address": "0x00000000000377b0"
+          "virtual_address": "0x0000000000038130"
         },
         {
           "alignment": "0x10",
@@ -213,25 +213,25 @@
         },
         {
           "alignment": "0x1",
-          "file_size": "0x0022b8",
+          "file_size": "0x002338",
           "flags": "R",
-          "memory_size": "0x0022b8",
-          "offset": "0x04dd48",
-          "physical_address": "0x000000000005dd48",
+          "memory_size": "0x002338",
+          "offset": "0x04dcc8",
+          "physical_address": "0x000000000005dcc8",
           "type": "GNU_RELRO",
-          "virtual_address": "0x000000000005dd48"
+          "virtual_address": "0x000000000005dcc8"
         }
       ],
       "relocations": {
-        "entries": 455,
+        "entries": 461,
         "sections": [
           {
-            "declared_entries": 454,
+            "declared_entries": 460,
             "name": ".rela.dyn",
-            "observed_entries": 454,
+            "observed_entries": 460,
             "types": {
               "R_AARCH64_ABS64": 1,
-              "R_AARCH64_RELATIVE": 453
+              "R_AARCH64_RELATIVE": 459
             }
           },
           {
@@ -246,13 +246,13 @@
         "types": {
           "R_AARCH64_ABS64": 1,
           "R_AARCH64_JUMP_SLOT": 1,
-          "R_AARCH64_RELATIVE": 453
+          "R_AARCH64_RELATIVE": 459
         }
       }
     },
-    "sha256": "d9487535f838c13ec1b74f5e7c6a258c7fc57314ec53cfdd28708ebfb4ad793b",
-    "source": "ldso/src/lib.rs",
-    "source_sha256": "27b25c9d3d914365652b1903c96306c1ff94fdadb2b2aaf077ac131be19a591d"
+    "sha256": "5fb953fee27ea7d85b2d67370b9af41ce1ea8ec6e86610c3100046fe307be387",
+    "source": "ldso/src/loader.rs",
+    "source_sha256": "f23b78cf22e5d7264c232fdf2c7a21fb1ac760e1bc9cf72bb3ddd2adb8fe7c23"
   },
   "features": [
     {
@@ -270,7 +270,7 @@
         },
         {
           "marker": "run_main",
-          "occurrences": 17
+          "occurrences": 8
         }
       ],
       "state": "source_and_test_target",
@@ -293,11 +293,11 @@
         },
         {
           "marker": "MAP_FIXED",
-          "occurrences": 8
+          "occurrences": 3
         },
         {
           "marker": "PT_LOAD",
-          "occurrences": 6
+          "occurrences": 5
         }
       ],
       "state": "source_and_test_target",
@@ -324,7 +324,7 @@
       "source_markers": [
         {
           "marker": "DT_NEEDED",
-          "occurrences": 16
+          "occurrences": 20
         },
         {
           "marker": "find_library_fd",
@@ -355,15 +355,15 @@
       "source_markers": [
         {
           "marker": "resolve_symbol",
-          "occurrences": 24
+          "occurrences": 21
         },
         {
           "marker": "lookup_symbol_in_object",
-          "occurrences": 5
+          "occurrences": 6
         },
         {
           "marker": "resolve_copy_source",
-          "occurrences": 3
+          "occurrences": 2
         }
       ],
       "state": "source_and_test_target",
@@ -510,7 +510,7 @@
         },
         {
           "marker": "$ORIGIN",
-          "occurrences": 2
+          "occurrences": 4
         }
       ],
       "state": "source_and_test_target",
@@ -529,7 +529,7 @@
       "source_markers": [
         {
           "marker": "LD_LIBRARY_PATH",
-          "occurrences": 8
+          "occurrences": 28
         },
         {
           "marker": "find_env",
@@ -727,12 +727,12 @@
     {
       "description": "Process DT_RELR compressed relative relocations.",
       "name": "relr",
-      "note": "The DT_RELR corpus requires real Alpine coreutils package binaries before it compares pinned musl and crabc outcomes.",
+      "note": "The corpus requires DT_RELR in real Alpine coreutils package binaries before it compares pinned musl and crabc outcomes.",
       "runtime_test_executed": false,
       "source_markers": [
         {
           "marker": "DT_RELR",
-          "occurrences": 8
+          "occurrences": 10
         },
         {
           "marker": "DT_RELRENT",
@@ -782,7 +782,7 @@
       "source_markers": [
         {
           "marker": "AT_PHDR",
-          "occurrences": 2
+          "occurrences": 4
         },
         {
           "marker": "AT_RANDOM",
@@ -790,7 +790,7 @@
         },
         {
           "marker": "AT_BASE",
-          "occurrences": 3
+          "occurrences": 2
         },
         {
           "marker": "AT_SYSINFO_EHDR",
