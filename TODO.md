@@ -112,8 +112,8 @@ still scalar: explicit AArch64 GPR stores prevent LLVM from substituting NEON
 before a separately verified SIMD decision. Every fill row remains red.
 
 The pthread/TLS table's `pthread-conditional-exit-wake-*-31` range is
-historical. Three current `pthread-single-postwait-cancel-{matrix,repeat,repeat2}-31`
-reports establish a still-red 0.9051×–0.9304× CPU upper-bound range, with 6.000
+historical. Three current `pthread-tls-single-tcb-init-{matrix,repeat,repeat2}-31`
+reports establish a still-red 0.8911×–0.9171× CPU upper-bound range, with 6.000
 crabc versus 11.966 musl marked calls/op. Normal `pthread_join` waits on
 Linux's `CLONE_CHILD_CLEARTID` word, so an ordinary worker no longer makes a
 second, unused `detach_state` futex wake. After a futex return, the next loop

@@ -4883,7 +4883,11 @@ unsafe fn compute_tls_layout() {
     TLS_MODULE_COUNT = LOADED_COUNT;
 }
 
-unsafe fn init_tls_block(block: *mut u8) -> *mut u8 {
+/// Materialize only the per-module variable images in a fresh TLS allocation.
+/// A pthread subsequently copies its parent's ABI TCB into the same block, so
+/// it must not first initialize metadata that that copy will immediately
+/// overwrite.
+unsafe fn init_tls_images(block: *mut u8) -> *mut u8 {
     let var_base = block.add(tls_var_area_offset_from_block());
     for i in 0..TLS_MODULE_COUNT {
         if TLS_MEMSZ[i] == 0 {
@@ -4900,8 +4904,15 @@ unsafe fn init_tls_block(block: *mut u8) -> *mut u8 {
             core::ptr::write_bytes(dst.add(filesz), 0, memsz - filesz);
         }
     }
+    block.add(tls_tp_offset_from_block())
+}
+
+/// Materialize a complete initial TLS block, including its loader-owned TCB.
+/// The ldso startup path has no parent ABI state to inherit, unlike a new
+/// pthread allocation handled by `__rc_init_thread_tls` below.
+unsafe fn init_tls_block(block: *mut u8) -> *mut u8 {
+    let tp = init_tls_images(block);
     let tcb = block.add(tls_tcb_offset_from_block());
-    let tp = block.add(tls_tp_offset_from_block());
     initialize_tls_tcb(tcb, tp, TLS_TOTAL_SIZE);
     initialize_loader_thread_state(tcb, tp);
     tp
@@ -5005,17 +5016,19 @@ pub unsafe extern "C" fn __rc_init_thread_tls(block: *mut u8) -> *mut u8 {
     if block.is_null() || TLS_TOTAL_SIZE == 0 {
         return core::ptr::null_mut();
     }
-    let new_tp = init_tls_block(block);
+    let new_tp = init_tls_images(block);
+    let new_tcb = block.add(tls_tcb_offset_from_block());
     // New pthreads inherit the process's TCB ABI state (including the stack
     // protector) while receiving fresh TLS variable images.
     let old_fs = read_tp();
     if old_fs != 0 {
         let old_tcb = tcb_for_thread(old_fs) as *const u8;
-        let new_tcb = tcb_for_thread(new_tp.addr());
         core::ptr::copy_nonoverlapping(old_tcb, new_tcb, TCB_SIZE);
-        initialize_tls_tcb(new_tcb, new_tp, TLS_TOTAL_SIZE);
-        initialize_loader_thread_state(new_tcb, new_tp);
     }
+    // The parent copy above carries libc's ABI TCB fields. Rewrite only the
+    // loader-owned allocation and logical-thread metadata once afterwards.
+    initialize_tls_tcb(new_tcb, new_tp, TLS_TOTAL_SIZE);
+    initialize_loader_thread_state(new_tcb, new_tp);
     new_tp
 }
 
