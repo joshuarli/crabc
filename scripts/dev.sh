@@ -140,6 +140,18 @@ collect_symbol_report() {
     run_in_container python3 scripts/check_symbols.py
 }
 
+# Batch evidence must measure an unchanged source tree. Most harness commands
+# normally refresh the checked-in dashboard for interactive use; suppress only
+# that derived write when the final suite requests it, then run `dashboard`
+# explicitly as the evidence-only child commit.
+refresh_dashboard() {
+    if [ "${CRABC_SKIP_DASHBOARD:-0}" = "1" ]; then
+        return
+    fi
+    local runner="$1"
+    "$runner" python3 scripts/generate_compatibility_dashboard.py
+}
+
 run_workspace_tests() {
     # Without an explicit target selector, Cargo's test default also compiles
     # crabc-rs static-library examples. Those no_std proof artifacts own their
@@ -223,7 +235,7 @@ case "$command" in
                 "$symbol_status"
         fi
         run_in_container python3 scripts/check_compat_ratchet.py check
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     libc-test)
         ensure_image
@@ -233,28 +245,28 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 libc-test-harness/runner.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     differential)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/differential/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     os-test)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/os-test/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     pthread-stress)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/pthread-stress/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     static-pthread-tls)
         ensure_image
@@ -265,42 +277,42 @@ case "$command" in
         run_in_container cargo build --workspace --release
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/static-pthread-tls/run.py --target-dir /workspace/target/release "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     signal-process)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/signal-process/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     resolver-network)
         ensure_image
         run_in_resolver_container cargo build --workspace
         run_in_resolver_container python3 scripts/collect_environment.py
         run_in_resolver_container python3 compat/resolver-network/run.py "$@"
-        run_in_resolver_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_resolver_container
         ;;
     ldso)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/ldso/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     corpus)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/corpus/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     rust-std)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/rust-std/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     rust-std-dependent)
         ensure_image
@@ -309,14 +321,14 @@ case "$command" in
         run_in_container python3 compat/rust-std/run.py \
             --fixture compat/rust-std/dependent-fixture/src/main.rs \
             --report compat/reports/rust-std-dependent/latest.json "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     lto)
         ensure_image
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/lto/run.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     lto-native-facade)
         ensure_image
@@ -325,7 +337,7 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/lto/native_facade_lto.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     lua)
         ensure_image
@@ -334,7 +346,7 @@ case "$command" in
         # runner then compares those exact program bytes under musl and crabc.
         run_in_container cargo build --workspace --release
         run_in_container python3 compat/lua/run.py --target-dir target/release "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     perf)
         ensure_image
@@ -632,7 +644,7 @@ case "$command" in
         run_in_container cargo build --workspace
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/scripts/probe_aarch64_abi.py "$@"
-        run_in_container python3 scripts/generate_compatibility_dashboard.py
+        refresh_dashboard run_in_container
         ;;
     loader-inventory)
         ensure_image
