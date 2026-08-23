@@ -107,6 +107,43 @@ def check_inputs(args: argparse.Namespace, root: Path) -> None:
         raise RunnerError("cargo is unavailable")
 
 
+def render_manifest(root: Path) -> str:
+    """Render the isolated benchmark manifest with its validated local inputs.
+
+    The Docker dispatcher intentionally mounts Rustix and Rustybench outside
+    `/workspace` so test-only checkouts cannot look like repository files.
+    Cargo path dependencies are manifest-relative, so the checked-in template
+    cannot name those mounts directly. Render the exact template into the
+    disposable Cargo working directory instead of relying on an accidental
+    sibling checkout beneath the repository.
+    """
+
+    template = (root / "compat/perf/native/Cargo.toml").read_text(encoding="utf-8")
+    paths = {
+        'rustybench = { path = "../../../rustybench" }': (
+            "rustybench = { path = "
+            + json.dumps(str(comparison_source(root, "CRABC_RUSTYBENCH_SOURCE", "rustybench")))
+            + " }"
+        ),
+        'crabc-rs = { path = "../../../crabc-rs",': (
+            "crabc-rs = { path = " + json.dumps(str(root / "crabc-rs")) + ","
+        ),
+        'rustix = { path = "../../../rustix",': (
+            "rustix = { path = "
+            + json.dumps(str(comparison_source(root, "CRABC_NATIVE_RUSTIX_SOURCE", "rustix")))
+            + ","
+        ),
+        'path = "src/main.rs"': (
+            "path = " + json.dumps(str(root / "compat/perf/native/src/main.rs"))
+        ),
+    }
+    for expected, replacement in paths.items():
+        if template.count(expected) != 1:
+            raise RunnerError(f"native benchmark manifest no longer has one {expected!r} template entry")
+        template = template.replace(expected, replacement)
+    return template
+
+
 def median(values: list[int]) -> int:
     return round(statistics.median(values))
 
@@ -156,7 +193,6 @@ def aggregate_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_backend(root: Path, args: argparse.Namespace, backend: str) -> dict[str, Any]:
-    manifest = root / "compat/perf/native/Cargo.toml"
     # Build from a disposable cwd so the repository's `.cargo/config.toml`
     # cannot inject its symbol-accounting `link-dead-code` flag. An explicit
     # empty encoded flag set overrides inherited Rust flags without changing
@@ -167,23 +203,25 @@ def run_backend(root: Path, args: argparse.Namespace, backend: str) -> dict[str,
     environment["CARGO_TARGET_DIR"] = str(
         root / "target" / ("perf-native-build-std-clang" if args.build_std else "perf-native-stock-std")
     )
-    command = ["cargo"]
-    if args.build_std:
-        # Cargo's benchmark harness requires an unwind-capable std. This is
-        # the user-requested empty build-std feature experiment. The fixture
-        # deliberately has no bench-profile panic override: Cargo otherwise
-        # builds incompatible `core` units for Rustybench's proc-macro graph.
-        # The existing application proof retains its separate `panic_abort`
-        # closure.
-        command.extend(["-Z", "build-std=std", "-Z", "build-std-features="])
-    command.extend([
-        "bench", "--manifest-path", str(manifest), "--bench", "native", "--no-default-features",
-        "--features", backend, "--", "--format", "json", "--sample-count",
-        str(args.sample_count), "--sample-size", str(args.sample_size),
-    ])
     observations: list[dict[str, Any]] = []
     isolated_cwd = Path(tempfile.mkdtemp(prefix="crabc-perf-native-", dir="/tmp"))
     try:
+        manifest = isolated_cwd / "Cargo.toml"
+        manifest.write_text(render_manifest(root), encoding="utf-8")
+        command = ["cargo"]
+        if args.build_std:
+            # Cargo's benchmark harness requires an unwind-capable std. This is
+            # the user-requested empty build-std feature experiment. The fixture
+            # deliberately has no bench-profile panic override: Cargo otherwise
+            # builds incompatible `core` units for Rustybench's proc-macro graph.
+            # The existing application proof retains its separate `panic_abort`
+            # closure.
+            command.extend(["-Z", "build-std=std", "-Z", "build-std-features="])
+        command.extend([
+            "bench", "--manifest-path", str(manifest), "--bench", "native", "--no-default-features",
+            "--features", backend, "--", "--format", "json", "--sample-count",
+            str(args.sample_count), "--sample-size", str(args.sample_size),
+        ])
         for index in range(args.runs):
             result = subprocess.run(command, cwd=isolated_cwd, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
             if result.returncode != 0:

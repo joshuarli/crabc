@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 MODULE = Path(__file__).resolve().parents[1] / "run.py"
 MANIFEST = MODULE.with_name("Cargo.toml")
+ROOT = MODULE.parents[3]
 SPEC = importlib.util.spec_from_file_location("crabc_perf_native", MODULE)
 assert SPEC is not None and SPEC.loader is not None
 native = importlib.util.module_from_spec(SPEC)
@@ -62,7 +63,7 @@ class BuildStdContractTests(unittest.TestCase):
             stderr=b"",
         )
         with patch.object(native.subprocess, "run", return_value=completed) as run:
-            report = native.run_backend(Path("/repo"), args, "crabc")
+            report = native.run_backend(ROOT, args, "crabc")
 
         command = run.call_args.args[0]
         self.assertEqual(
@@ -70,6 +71,24 @@ class BuildStdContractTests(unittest.TestCase):
             ["cargo", "-Z", "build-std=std", "-Z", "build-std-features="],
         )
         self.assertEqual(report["status"], "ok")
+
+
+class ManifestRenderingTests(unittest.TestCase):
+    def test_effective_manifest_uses_validated_comparison_sources(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "CRABC_RUSTYBENCH_SOURCE": "/oracle/rustybench",
+                "CRABC_NATIVE_RUSTIX_SOURCE": "/oracle/rustix",
+            },
+            clear=True,
+        ):
+            manifest = native.render_manifest(ROOT)
+
+        self.assertIn('rustybench = { path = "/oracle/rustybench" }', manifest)
+        self.assertIn('rustix = { path = "/oracle/rustix"', manifest)
+        self.assertIn(f'crabc-rs = {{ path = "{ROOT}/crabc-rs"', manifest)
+        self.assertIn(f'path = "{ROOT}/compat/perf/native/src/main.rs"', manifest)
 
 
 if __name__ == "__main__":
