@@ -150,7 +150,9 @@ source-level fix can do that.
    direct C regressions, together with the `memcpy`/`memset` fixture, compare
    all six primitives with musl across fixed empty-to-256-KiB bands, every
    0–15-byte starting offset, 0–64-byte tails against a protected page, and
-   deterministic randomized misalignment. The `memcpy` cases stay within its
+   deterministic randomized misalignment. `memset` additionally ranges long
+   zero and nonzero fills across every 0–63-byte gap before a protected page.
+   The `memcpy` cases stay within its
    non-overlap contract and check the returned destination, source
    preservation, and destination canaries. These tests prevent an
    implementation from trading boundary safety for the selected CPU result.

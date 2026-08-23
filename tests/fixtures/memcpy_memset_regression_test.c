@@ -140,6 +140,55 @@ static int test_guard_page_matrix(void)
     return 0;
 }
 
+static int test_long_memset_guard_page_matrix(void)
+{
+    static const size_t lengths[] = {
+        65, 96, 97, 127, 128, 159, 160, 161, 191, 192, 255, 256,
+        511, 512, 1023, 2048, 4000,
+    };
+    static const int values[] = { 0, -1 };
+    long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0)
+        return 1;
+    unsigned char *mapping = mmap(NULL, (size_t)page * 2,
+        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapping == MAP_FAILED)
+        return 2;
+    if (mprotect(mapping + page, (size_t)page, PROT_NONE) != 0) {
+        munmap(mapping, (size_t)page * 2);
+        return 3;
+    }
+
+    for (size_t length_index = 0;
+        length_index < sizeof(lengths) / sizeof(lengths[0]); ++length_index) {
+        size_t length = lengths[length_index];
+        for (size_t tail = 0; tail < 64; ++tail) {
+            unsigned char *destination = mapping + page - tail - length;
+            for (size_t value_index = 0;
+                value_index < sizeof(values) / sizeof(values[0]); ++value_index) {
+                unsigned char expected = (unsigned char)values[value_index];
+                fill_bytes(mapping, (size_t)page, 0xa5);
+                if (memset(destination, values[value_index], length) != destination) {
+                    munmap(mapping, (size_t)page * 2);
+                    return 4;
+                }
+                for (size_t index = 0; index < (size_t)page; ++index) {
+                    int written = index >= (size_t)(destination - mapping)
+                        && index < (size_t)(destination - mapping) + length;
+                    if (mapping[index] != (written ? expected : 0xa5)) {
+                        munmap(mapping, (size_t)page * 2);
+                        return 5;
+                    }
+                }
+            }
+        }
+    }
+
+    if (munmap(mapping, (size_t)page * 2) != 0)
+        return 6;
+    return 0;
+}
+
 static int test_randomized_misalignment(void)
 {
     for (unsigned sample = 0; sample < 4096; ++sample) {
@@ -173,8 +222,10 @@ int main(void)
         return 1;
     if (test_guard_page_matrix() != 0)
         return 2;
-    if (test_randomized_misalignment() != 0)
+    if (test_long_memset_guard_page_matrix() != 0)
         return 3;
+    if (test_randomized_misalignment() != 0)
+        return 4;
 
     puts("memcpy/memset oracle ok");
     return 0;
