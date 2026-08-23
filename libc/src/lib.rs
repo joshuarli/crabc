@@ -6776,6 +6776,22 @@ pub unsafe extern "C" fn pthread_testcancel() {
     }
 }
 
+#[inline(always)]
+unsafe fn pthread_testcancel_current() {
+    // `pthread_cancel` names a `Thread` slot, so an unregistered caller
+    // cannot have a pending crabc cancellation request. Internal I/O paths
+    // therefore need not turn an otherwise pthread-free caller into a
+    // registry entry merely to observe that no request exists. pthread-created
+    // threads publish CURRENT_THREAD before entering user code.
+    let slot = CURRENT_THREAD;
+    if !slot.is_null()
+        && (*slot).cancel != 0
+        && (*slot).cancel_state == PTHREAD_CANCEL_ENABLE
+    {
+        do_cancel();
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn _pthread_cleanup_push(cb: *mut __ptcb, f: Option<unsafe extern "C" fn(*mut c_void)>, x: *mut c_void) {
     (*cb).__f = f;
@@ -8087,7 +8103,7 @@ unsafe extern "C" fn __stdio_read(f: *mut FILE, buf: *mut u8, len: usize) -> usi
     // Until a later successful seek establishes a new kernel position, `off`
     // is not a valid rewind origin.
     (*f).flags &= !F_POSITION_KNOWN;
-    pthread_testcancel();
+    pthread_testcancel_current();
     // Preserve musl's readv shape: send all but one requested byte directly
     // to the caller and reserve the trailing iovec for FILE lookahead. This
     // makes `fgetc` a buffered read without turning a bulk `fread` into a
@@ -8122,7 +8138,7 @@ unsafe extern "C" fn __stdio_read(f: *mut FILE, buf: *mut u8, len: usize) -> usi
         if n == 0 { (*f).flags |= F_EOF; } else { (*f).flags |= F_ERR; (*f)._err = 1; }
         // Publish the FILE error/EOF state before acting on cancellation, so
         // cleanup can safely close a stream after an interrupted read.
-        pthread_testcancel();
+        pthread_testcancel_current();
         return 0;
     }
     let read = n as usize;
