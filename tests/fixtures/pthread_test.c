@@ -19,8 +19,14 @@ int main(void) {
 
     pthread_mutex_init(&mutex, NULL);
     pthread_mutex_lock(&mutex);
-    for (int i = 0; i < 10; i++)
-        pthread_create(&threads[i], NULL, worker, NULL);
+    for (int i = 0; i < 10; i++) {
+        int result = pthread_create(&threads[i], NULL, worker, NULL);
+        if (result != 0) {
+            pthread_mutex_unlock(&mutex);
+            printf("pthread_create[%d]=%d\n", i, result);
+            return 1;
+        }
+    }
     pthread_mutex_unlock(&mutex);
     for (int i = 0; i < 10; i++)
         pthread_join(threads[i], NULL);
