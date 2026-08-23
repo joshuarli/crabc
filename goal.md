@@ -150,6 +150,21 @@ write/flush/seek, buffered reads, and `ungetc`; ten-iteration pthread stress
 retains deferred/asynchronous stdio cancellation. The marked syscall smoke
 remains 5.03 crabc versus 8.00 musl calls/op.
 
+### Handoff — `stdio_format_parse`
+
+The next local lead is `VfscanfFastReader::get` in `libc/src/lib.rs`: the
+selected scalar `vfscanf` route keeps its delimiter locally but invokes the
+public `fgetc` entry for every source byte. Release AArch64 currently shows
+`fscanf`/`vfscanf` entering the shared scanner at `0x2c560`, while the public
+`fgetc` entry begins at `0x51154` and carries its full C-ABI prologue. Before
+editing, trace whether those calls remain in the scanner's release path. A
+candidate may factor the exact `fgetc` state machine into a private helper for
+the scanner and public entry, but must retain EOF/error/read-callback behavior
+and the single-delimiter `ungetc` restoration. Run
+`stdio_format_parse_regression`, including its one-byte and staged cases,
+inspect release assembly, then collect three 31-sample performance reports;
+do not retain or document a result without all of that evidence.
+
 The current red rows are concrete rather than hypothetical:
 
 | Route | Present crabc/musl CPU evidence | Immediate cause to remove |
