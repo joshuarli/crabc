@@ -19,6 +19,14 @@ SPEC.loader.exec_module(VERIFY)
 
 
 class Verify0KernelTests(unittest.TestCase):
+    def test_multimessage_probe_keeps_the_urgent_mark_boundary_live(self) -> None:
+        probe = (ROOT / "crabc-rs/examples/network_mmsg_direct_probe.rs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("let mut first_storage = [MaybeUninit::<u8>::uninit(); 7]", probe)
+        self.assertIn("incoming[0].bytes() != 7", probe)
+        self.assertIn("match net::sockatmark(&receiver)", probe)
+
     def test_accepts_each_direct_probe_contract(self) -> None:
         for probe in VERIFY.PROBES.values():
             with self.subTest(entrypoint=probe.entrypoint):

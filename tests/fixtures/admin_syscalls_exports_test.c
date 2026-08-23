@@ -70,7 +70,8 @@ int main(void)
     char path[] = "/tmp/crabc-c-abi-admin-XXXXXX";
     const char payload[] = "admin syscall test\n";
     char old_name[16] = { 0 };
-    char new_name[] = "crabc-c-abi-admin";
+    /* Linux PR_SET_NAME stores at most 16 bytes including the terminator. */
+    char new_name[] = "crabc-c-abi";
     char observed_name[16] = { 0 };
     struct statx stx;
     int fd = -1;

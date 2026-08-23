@@ -9,7 +9,7 @@
 # validator expands patterns only against this frozen candidate set, rejects
 # selectors which match nothing, and requires exactly one semantic owner for
 # every resulting symbol. Thus patterns keep the ledger reviewable without
-# weakening its exact 1,669-symbol accounting.
+# weakening its exact 1,673-symbol accounting.
 schema = "crabc.crabc-rs-coverage/v2"
 target = "aarch64-unknown-linux-musl"
 phase = "core-runtime-slices"
@@ -23,13 +23,13 @@ little_endian_only = true
 reference_source = "../reports/symbols/musl-1.2.6-aarch64.dynamic.tsv"
 candidate_source = "../reports/symbols/crabc-aarch64.dynamic.tsv"
 reference_count = 1647
-candidate_count = 1669
-candidate_only_count = 22
+candidate_count = 1673
+candidate_only_count = 26
 missing_from_candidate_count = 0
 metadata_mismatches_count = 0
 reference_is_candidate_minus_candidate_only = true
 reference_sha256 = "93cd75cd5cffcef55541ffbd9ca496e7c18826a024d9250ee750b87c97fc9071"
-candidate_sha256 = "c7d6e53f507f530b29aa83153dc878a027b63a2859d3ec47b8148544aac123b4"
+candidate_sha256 = "a6ce9037b31e9f23804f6bcbbb26d7a98877245e0e78f41996762dbd8aecc8f3"
 candidate_symbols = [
   "_Exit", "_Fork", "_IO_feof_unlocked", "_IO_ferror_unlocked", "_IO_getc", "_IO_getc_unlocked", "_IO_putc", "_IO_putc_unlocked",
   "___environ", "__assert_fail", "__auxv", "__crabc_runtime_v1", "__crypt_blowfish", "__crypt_md5", "__crypt_r", "__crypt_sha256", "__crypt_sha512",
@@ -45,7 +45,7 @@ candidate_symbols = [
   "__iswspace_l", "__iswupper_l", "__iswxdigit_l", "__isxdigit_l", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym", "__ldso_register_mark_multithreaded",
   "__lgammal_r", "__libc_current_sigrtmax", "__libc_current_sigrtmin", "__libc_start_main", "__lxstat", "__newlocale", "__nl_langinfo", "__nl_langinfo_l",
   "__optpos", "__optreset", "__overflow", "__posix_getopt", "__progname", "__progname_full", "__qsort_r", "__rc_clone",
-  "__rc_create_thread_tls", "__rc_tls_base_offset", "__rc_tls_block_size", "__res_state", "__sched_cpucount", "__setjmp", "__signbit", "__signbitf",
+  "__rc_create_thread_tls", "__rc_init_thread_tls", "__rc_tls_base_offset", "__rc_tls_base_offset_for", "__rc_tls_block_size", "__rc_tls_block_size_for", "__res_state", "__sched_cpucount", "__setjmp", "__signbit", "__signbitf",
   "__signbitl", "__signgam", "__sigsetjmp", "__sigsetjmp_tail", "__stack_chk_fail", "__stack_chk_guard", "__strcasecmp_l", "__strcoll_l",
   "__strerror_l", "__strncasecmp_l", "__strtod_l", "__strtof_l", "__strtoimax_internal", "__strtol_internal", "__strtold_l", "__strtoll_internal",
   "__strtoul_internal", "__strtoull_internal", "__strtoumax_internal", "__strxfrm_l", "__sysv_signal", "__timezone", "__tls_get_addr", "__tolower_l",
@@ -261,8 +261,11 @@ candidate_only_symbols = [
   "__qsort_r",
   "__rc_clone",
   "__rc_create_thread_tls",
+  "__rc_init_thread_tls",
   "__rc_tls_base_offset",
+  "__rc_tls_base_offset_for",
   "__rc_tls_block_size",
+  "__rc_tls_block_size_for",
   "__sigsetjmp_tail",
   "fopen64",
   "rust_eh_personality",
@@ -272,7 +275,7 @@ candidate_only_symbols = [
 [[capability]]
 id = "runtime.loader"
 kind = "semantic"
-symbols = ["__auxv", "__crabc_runtime_v1", "__dls2b", "__dls3", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym", "__ldso_register_mark_multithreaded", "__libc_start_main", "__rc_clone", "__rc_create_thread_tls", "__rc_tls_base_offset", "__rc_tls_block_size", "__tls_get_addr", "_dl_debug_addr", "_dl_debug_state", "_dlstart", "_fini", "_init"]
+symbols = ["__auxv", "__crabc_runtime_v1", "__dls2b", "__dls3", "__ldso_register_dlclose", "__ldso_register_dlerror", "__ldso_register_dlopen", "__ldso_register_dlsym", "__ldso_register_mark_multithreaded", "__libc_start_main", "__rc_clone", "__rc_create_thread_tls", "__rc_init_thread_tls", "__rc_tls_base_offset", "__rc_tls_base_offset_for", "__rc_tls_block_size", "__rc_tls_block_size_for", "__tls_get_addr", "_dl_debug_addr", "_dl_debug_state", "_dlstart", "_fini", "_init"]
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "ldso and the append-only private RuntimeV1 bridge"
@@ -3341,6 +3344,13 @@ status = "documented"
 rationale = "Private thread TLS bridge used by libc and ldso startup."
 
 [[candidate_only]]
+name = "__rc_init_thread_tls"
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private caller-owned TLS initialization bridge used by libc pthread startup."
+
+[[candidate_only]]
 name = "__rc_tls_base_offset"
 capability = "runtime.loader"
 classification = "internal-runtime"
@@ -3348,11 +3358,25 @@ status = "documented"
 rationale = "Private TLS layout bridge, not an application operation."
 
 [[candidate_only]]
+name = "__rc_tls_base_offset_for"
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private per-thread TLS layout bridge used while reclaiming another thread's allocation."
+
+[[candidate_only]]
 name = "__rc_tls_block_size"
 capability = "runtime.loader"
 classification = "internal-runtime"
 status = "documented"
 rationale = "Private TLS layout bridge, not an application operation."
+
+[[candidate_only]]
+name = "__rc_tls_block_size_for"
+capability = "runtime.loader"
+classification = "internal-runtime"
+status = "documented"
+rationale = "Private per-thread TLS allocation-size bridge used while reclaiming another thread's allocation."
 
 [[candidate_only]]
 name = "__sigsetjmp_tail"

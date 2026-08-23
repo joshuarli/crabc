@@ -33,7 +33,7 @@ pub extern "C" fn crabc_rs_network_mmsg_direct_probe() -> i32 {
         return 1;
     }
 
-    let mut first_storage = [MaybeUninit::<u8>::uninit(); 4];
+    let mut first_storage = [MaybeUninit::<u8>::uninit(); 7];
     let mut second_storage = [MaybeUninit::<u8>::uninit(); 5];
     let mut first_buffers = [net::MsgIoSliceMut::new_uninit(&mut first_storage)];
     let mut second_buffers = [net::MsgIoSliceMut::new_uninit(&mut second_storage)];
@@ -54,7 +54,7 @@ pub extern "C" fn crabc_rs_network_mmsg_direct_probe() -> i32 {
     {
         return 2;
     }
-    if incoming[0].bytes() != 4 || incoming[1].bytes() != 5 {
+    if incoming[0].bytes() != 7 || incoming[1].bytes() != 5 {
         return 3;
     }
     let mut first_read = unsafe { incoming[0].initialized_segments() };
@@ -69,8 +69,10 @@ pub extern "C" fn crabc_rs_network_mmsg_direct_probe() -> i32 {
     }
 
     // The fixed ioctl is part of this direct proof. A datagram socket does
-    // not promise an urgent mark, so only require that the call remain a
-    // direct, typed operation and accept its kernel result.
-    let _ = net::sockatmark(&receiver);
-    0
+    // not promise an urgent mark, so propagate its kernel result rather than
+    // pretending this probe establishes a successful urgent-mark query.
+    match net::sockatmark(&receiver) {
+        Ok(_) => 0,
+        Err(error) => -error.raw(),
+    }
 }

@@ -49,6 +49,7 @@ pub extern "C" fn crabc_rs_filesystem_probe() -> i32 {
     drop(raw_dir);
 
     let mut xattr = [MaybeUninit::<u8>::uninit(); 1];
+    let _ = fs::setxattr(entry, attribute, b"fs", XattrFlags::empty());
     let _ = fs::fgetxattr(&directory, attribute, &mut xattr);
     let _ = fs::fsetxattr(&directory, attribute, b"fs", XattrFlags::empty());
     let _ = fs::fremovexattr(&directory, attribute);

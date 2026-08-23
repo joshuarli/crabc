@@ -40,8 +40,8 @@ RUSTIX_REVISION = "cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec"
 RUSTIX_VERSION = "1.1.4"
 TARGET = "aarch64-unknown-linux-musl"
 EXPECTED_REFERENCE_SYMBOLS = 1647
-EXPECTED_CANDIDATE_SYMBOLS = 1669
-EXPECTED_CANDIDATE_ONLY_SYMBOLS = 22
+EXPECTED_CANDIDATE_SYMBOLS = 1673
+EXPECTED_CANDIDATE_ONLY_SYMBOLS = 26
 EXPECTED_CANDIDATE_ONLY = (
     "__auxv",
     "__crabc_runtime_v1",
@@ -56,11 +56,15 @@ EXPECTED_CANDIDATE_ONLY = (
     "__ldso_register_dlerror",
     "__ldso_register_dlopen",
     "__ldso_register_dlsym",
+    "__ldso_register_mark_multithreaded",
     "__qsort_r",
     "__rc_clone",
     "__rc_create_thread_tls",
+    "__rc_init_thread_tls",
     "__rc_tls_base_offset",
+    "__rc_tls_base_offset_for",
     "__rc_tls_block_size",
+    "__rc_tls_block_size_for",
     "__sigsetjmp_tail",
     "fopen64",
     "rust_eh_personality",

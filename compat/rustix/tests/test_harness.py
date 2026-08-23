@@ -30,8 +30,8 @@ class MetadataTests(unittest.TestCase):
             "cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec",
         )
         self.assertEqual(report["coverage"]["reference_count"], 1647)
-        self.assertEqual(report["coverage"]["candidate_count"], 1669)
-        self.assertEqual(report["coverage"]["candidate_only_count"], 22)
+        self.assertEqual(report["coverage"]["candidate_count"], 1673)
+        self.assertEqual(report["coverage"]["candidate_only_count"], 26)
         self.assertEqual(report["production_dependencies"], [])
         self.assertFalse(report["direct_c_abi_errno_roundtrip"])
 
@@ -62,10 +62,39 @@ class CoverageLedgerTests(unittest.TestCase):
     def test_current_report_has_exact_zero_unclassified_accounting(self) -> None:
         coverage = harness.validate_coverage(self.ledger())
         self.assertTrue(coverage["ledger_green"])
-        self.assertEqual(coverage["symbol_count"], 1669)
-        self.assertEqual(coverage["classified_symbol_count"], 1669)
+        self.assertEqual(coverage["symbol_count"], 1673)
+        self.assertEqual(coverage["classified_symbol_count"], 1673)
         self.assertEqual(coverage["unclassified_symbol_count"], 0)
         self.assertEqual(coverage["unclassified_capability_count"], 0)
+
+    def test_private_loader_tls_bridges_are_candidate_only_and_owned(self) -> None:
+        """Private loader and thread-TLS bridges stay out of Rust-facing coverage."""
+
+        bridges = {
+            "__ldso_register_mark_multithreaded",
+            "__rc_init_thread_tls",
+            "__rc_tls_base_offset_for",
+            "__rc_tls_block_size_for",
+        }
+        ledger = self.ledger()
+        dynamic = ledger["dynamic_exports"]
+        assert isinstance(dynamic, dict)
+        report = harness.symbol_names(
+            harness.relative_source(str(dynamic["candidate_source"]), owner=harness.COVERAGE_PATH)
+        )
+        self.assertTrue(bridges.issubset(report))
+        self.assertTrue(bridges.issubset(dynamic["candidate_symbols"]))
+        self.assertTrue(bridges.issubset(dynamic["candidate_only_symbols"]))
+        self.assertTrue(bridges.issubset(self.capability(ledger, "runtime.loader")["symbols"]))
+
+        records = ledger["candidate_only"]
+        assert isinstance(records, list)
+        owners = {
+            record["name"]: record["capability"]
+            for record in records
+            if isinstance(record, dict) and record.get("name") in bridges
+        }
+        self.assertEqual(owners, {name: "runtime.loader" for name in bridges})
 
     def test_coverage_rejects_a_missing_symbol(self) -> None:
         ledger = self.ledger()

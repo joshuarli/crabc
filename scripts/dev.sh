@@ -19,7 +19,7 @@ Usage: ./scripts/dev.sh <command> [arguments]
 Commands:
   image               build the pinned Linux/AArch64 development image
   build [cargo args]  cargo build --workspace
-  test [cargo args]   cargo test --workspace
+  test [cargo args]   cargo test --workspace test targets (staticlib examples run under crabc-rs)
   symbols             compare libc.so exports with pinned musl 1.2.6
   compat              refresh symbol evidence and enforce its regression ratchet
   ratchet             alias for compat
@@ -139,6 +139,24 @@ collect_symbol_report() {
     run_in_container python3 scripts/check_symbols.py
 }
 
+run_workspace_tests() {
+    # Without an explicit target selector, Cargo's test default also compiles
+    # crabc-rs static-library examples. Those no_std proof artifacts own their
+    # panic handlers and are built independently by the crabc-rs evidence gate.
+    # Preserve an explicit target selection, such as documented `--test`
+    # regressions, while making the generic route integration-test only.
+    local argument
+    for argument in "$@"; do
+        case "$argument" in
+            --lib|--bins|--tests|--examples|--benches|--all-targets|--doc|--bin|--bin=*|--example|--example=*|--test|--test=*|--bench|--bench=*)
+                run_in_container cargo test --workspace "$@"
+                return
+                ;;
+        esac
+    done
+    run_in_container cargo test --workspace --tests "$@"
+}
+
 if [ "$#" -eq 0 ]; then
     usage >&2
     exit 2
@@ -164,7 +182,14 @@ case "$command" in
         # Integration tests execute target/debug/lib{c,ldso}.so directly, so
         # build their runtime artifacts before compiling the test harness.
         run_in_container cargo build --workspace
-        run_in_container cargo test --workspace "$@"
+        # crabc-rs examples are no_std static-library proofs with their own
+        # panic handlers. Cargo's default test target set compiles them with
+        # the package's default std feature; its manifest-driven crabc-rs gate
+        # builds every proof independently with its declared feature boundary.
+        # libc and ldso are no_std runtime images, not hosted lib-test
+        # executables. Their focused unit evidence belongs to their dedicated
+        # gates; this generic command runs the workspace integration regressions.
+        run_workspace_tests "$@"
         ;;
     symbols)
         ensure_image

@@ -23,6 +23,13 @@ def direct_syscalls() -> str:
 
 
 class InspectionTests(unittest.TestCase):
+    def test_filesystem_probe_exercises_the_path_xattr_write_boundary(self) -> None:
+        probe = (ROOT / "crabc-rs/examples/filesystem_probe.rs").read_text(encoding="utf-8")
+        self.assertIn(
+            'fs::setxattr(entry, attribute, b"fs", XattrFlags::empty())',
+            probe,
+        )
+
     def test_accepts_all_required_direct_aarch64_syscalls(self) -> None:
         report = checker.inspect("Machine: AArch64\n", direct_syscalls())
         self.assertTrue(report["direct_svc"])
