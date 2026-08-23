@@ -84,6 +84,6 @@ int main(void) {
     }
 
     if (wprintf(L"W") != 1 || call_vwprintf(L"%d", 7) != 1) return 29;
-    puts("c-abi wchar exports ok");
+    wprintf(L"c-abi wchar exports ok\n");
     return 0;
 }

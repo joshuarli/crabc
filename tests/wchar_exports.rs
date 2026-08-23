@@ -55,6 +55,6 @@ fn wchar_exports_under_libc_so() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "W7m4 wchar exports ok\n"
+        "W7c-abi wchar exports ok\n"
     );
 }
