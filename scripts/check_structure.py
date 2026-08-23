@@ -97,6 +97,10 @@ def main() -> int:
     if "include!(" in libc_text:
         errors.append("libc/src/lib.rs: root-level include chains are not allowed")
 
+    ldso_root = ROOT / "ldso" / "src" / "lib.rs"
+    if len(ldso_root.read_text().splitlines()) > 100:
+        errors.append("ldso/src/lib.rs: composition root exceeds 100 lines")
+
     if errors:
         print("structural check failed:", file=sys.stderr)
         print("\n".join(f"  {error}" for error in errors), file=sys.stderr)
