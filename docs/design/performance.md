@@ -183,6 +183,12 @@ bounds in the order 64-byte aligned/unaligned, 16-KiB aligned/unaligned, then
 | `getpid`, direct native | 108 ns for each crabc-rs and Rustix | no native gap in this selected route | no action |
 | Native open/close | 441 ns crabc-rs vs 450 ns Rustix | no native gap in this selected route | no action |
 
+The implemented runtime/evidence tranches are complete when they establish
+their exact behavior, direct boundary proof, and selected measurements. A red
+scorecard row is a residual release gate, not a license to relax a target or
+claim a pass. Promote one back to active implementation work only with a
+specific causal lead that can be tested against its existing contract.
+
 Every `scalar-matrix-31` row completes its timed samples and separate syscall
 diagnostic, but reports 41 crabc fresh-process calls versus 10 musl calls. The
 scalar hot loops make no syscalls; that count is shared loader/startup work and

@@ -183,18 +183,14 @@ remains 5.03 crabc versus 8.00 musl calls/op.
 
 ### Handoff — `stdio_format_parse`
 
-The next local lead is `VfscanfFastReader::get` in `libc/src/lib.rs`: the
-selected scalar `vfscanf` route keeps its delimiter locally but invokes the
-public `fgetc` entry for every source byte. Release AArch64 currently shows
-`fscanf`/`vfscanf` entering the shared scanner at `0x2c560`, while the public
-`fgetc` entry begins at `0x51154` and carries its full C-ABI prologue. Before
-editing, trace whether those calls remain in the scanner's release path. A
-candidate may factor the exact `fgetc` state machine into a private helper for
-the scanner and public entry, but must retain EOF/error/read-callback behavior
-and the single-delimiter `ungetc` restoration. Run
-`stdio_format_parse_regression`, including its one-byte and staged cases,
-inspect release assembly, then collect three 31-sample performance reports;
-do not retain or document a result without all of that evidence.
+The private `fgetc`-state-machine candidate is rejected. It preserved the
+one-byte and staged `stdio_format_parse_regression` cases, but the
+`stdio-private-fgetc-format-screen` three-sample CPU upper bound regressed to
+1.0942× musl, so the scanner retains the public entry. The row stays red and
+no source change is selected. Reopen it only with a fresh causal profile that
+retains EOF/error/read-callback behavior, single-delimiter `ungetc`
+restoration, release-assembly inspection, and the complete 31-sample evidence
+rule.
 
 The current red rows are concrete rather than hypothetical:
 
@@ -236,6 +232,15 @@ regression, and ten pthread-stress iterations preserve that state machine.
 
 No performance completion is declared while any currently selected red row or
 mandatory family fails, is omitted, or is unsupported.
+
+### Implementation-tranche closure
+
+The runtime and evidence tranches represented above are complete when their
+stated contracts, direct regressions, and selected measurements are present.
+Residual red rows remain release gates under the existing numeric targets;
+they are not hidden TODO capability work and they do not permit a weakened
+scorecard. A row becomes active implementation work again only when a concrete
+causal lead is identified and can be proved through its current boundary.
 
 ## Measurement and optimization method
 
