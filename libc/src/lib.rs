@@ -6564,7 +6564,7 @@ unsafe fn pthread_cond_timedwait_impl(
     mutex: *mut pthread_mutex_t,
     abs_timeout: *const timespec,
 ) -> c_int {
-    pthread_testcancel();
+    pthread_testcancel_current();
     let seq_ptr = &raw mut (*cond).__i[2];
     let waiters_ptr = &raw mut (*cond).__i[3];
     let seq = a_load(seq_ptr);
@@ -6577,7 +6577,7 @@ unsafe fn pthread_cond_timedwait_impl(
         return r;
     }
     if e == EINTR {
-        pthread_testcancel();
+        pthread_testcancel_current();
     }
     if e != 0 && e != EINTR {
         return e;
@@ -7643,10 +7643,11 @@ pub unsafe extern "C" fn pthread_testcancel() {
 #[inline(always)]
 unsafe fn pthread_testcancel_current() {
     // `pthread_cancel` names a `Thread` slot, so an unregistered caller
-    // cannot have a pending crabc cancellation request. Internal I/O paths
-    // therefore need not turn an otherwise pthread-free caller into a
-    // registry entry merely to observe that no request exists. pthread-created
-    // threads publish CURRENT_THREAD before entering user code.
+    // cannot have a pending crabc cancellation request. Internal I/O and
+    // blocking pthread paths therefore need not turn an otherwise
+    // pthread-free caller into a registry entry merely to observe that no
+    // request exists. pthread-created threads publish CURRENT_THREAD before
+    // entering user code.
     let slot = CURRENT_THREAD;
     if !slot.is_null() && (*slot).cancel != 0 && (*slot).cancel_state == PTHREAD_CANCEL_ENABLE {
         do_cancel();
