@@ -5804,7 +5804,9 @@ pub unsafe extern "C" fn pthread_create(
     // indirect callback nor its redundant compare-exchange. Use the local
     // AArch64 primitive rather than `AtomicBool::swap`: LLVM may lower the
     // latter to an outlined LSE capability-dispatch helper on this hot path.
-    if a_cas(&raw mut LDSO_MULTITHREAD_PUBLISHED, 0, 1) == 0 {
+    if a_load(&raw const LDSO_MULTITHREAD_PUBLISHED) == 0
+        && a_cas(&raw mut LDSO_MULTITHREAD_PUBLISHED, 0, 1) == 0
+    {
         if let Some(mark_multithreaded) = LDSO_MARK_MULTITHREADED {
             mark_multithreaded();
         }
