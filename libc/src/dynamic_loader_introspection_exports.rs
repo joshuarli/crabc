@@ -39,7 +39,6 @@ extern "C" {
     fn __ldso_dlstart() -> !;
 }
 
-#[cfg(target_arch = "aarch64")]
 core::arch::global_asm!(
     // The raw trampoline below names the bridge in assembly, so declare the
     // relocation weak there as well as in Rust's extern declaration.
@@ -54,7 +53,6 @@ core::arch::global_asm!(
 // returns.  It must not be called as a C function with ordinary arguments.
 #[no_mangle]
 #[unsafe(naked)]
-#[cfg(target_arch = "aarch64")]
 pub unsafe extern "C" fn _dlstart() -> ! {
     core::arch::naked_asm!(
         "adrp x16, :got:__ldso_dlstart",

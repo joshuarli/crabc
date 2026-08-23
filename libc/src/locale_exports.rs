@@ -418,26 +418,17 @@ pub unsafe extern "C" fn __strtof_l(s: *const c_char, end: *mut *mut c_char, loc
     strtof_l(s, end, loc)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn strtold_l(s: *const c_char, end: *mut *mut c_char, _loc: locale_t) -> f64 {
-    strtold(s, end)
-}
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn __strtold_l(s: *const c_char, end: *mut *mut c_char, loc: locale_t) -> f64 {
-    strtold_l(s, end, loc)
-}
 
-#[cfg(not(target_arch = "x86_64"))]
+
+
+
 #[no_mangle]
 pub unsafe extern "C" fn strtold_l(s: *const c_char, end: *mut *mut c_char, _loc: locale_t) -> f128 {
     strtold(s, end)
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn __strtold_l(s: *const c_char, end: *mut *mut c_char, loc: locale_t) -> f128 {

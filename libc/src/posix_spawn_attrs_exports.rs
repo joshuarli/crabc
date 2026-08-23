@@ -15,9 +15,7 @@ const CABI_SPAWN_ACTION_OPEN: c_int = 0;
 const CABI_SPAWN_ACTION_CHDIR: c_int = 1;
 const CABI_SPAWN_ACTION_FCHDIR: c_int = 2;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SPAWN_SYS_FCHDIR: i64 = 81;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SPAWN_SYS_FCHDIR: i64 = 50;
 
 #[repr(C)]
@@ -339,7 +337,7 @@ unsafe fn cabi_spawn_apply_linked_actions(
                 if result < 0 { (-result) as c_int } else { 0 }
             }
             CABI_SPAWN_ACTION_FCHDIR => {
-                let result = <Arch as Syscalls>::syscall1(CABI_SPAWN_SYS_FCHDIR, (*action).fd as i64);
+                let result = aarch64_syscall::syscall1(CABI_SPAWN_SYS_FCHDIR, (*action).fd as i64);
                 if result < 0 { (-result) as c_int } else { 0 }
             }
             _ => EINVAL,

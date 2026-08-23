@@ -5,9 +5,7 @@
 // `pselect6` ABI mutates its timeout pointer, so each wrapper passes a private
 // temporary conversion instead.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_PSELECT6: i64 = 270;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_PSELECT6: i64 = 72;
 
 #[repr(C)]
@@ -45,7 +43,7 @@ unsafe fn cabi_pselect6(
         // public 128-byte `sigset_t` representation.
         size: crabc_core::signal::KERNEL_SIGSET_SIZE,
     };
-    <Arch as Syscalls>::syscall6(
+    aarch64_syscall::syscall6(
         CABI_SYS_PSELECT6,
         nfds as i64,
         readfds as i64,

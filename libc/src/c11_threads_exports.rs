@@ -103,16 +103,11 @@ pub unsafe extern "C" fn thrd_exit(result: c_int) -> ! {
 
 // Linux sched_yield syscall numbers (the libc tree does not yet export the
 // POSIX sched_yield wrapper, so use the same raw syscall abstraction directly).
-#[cfg(target_arch = "x86_64")]
-const C11_SYS_SCHED_YIELD: i64 = 24;
-#[cfg(target_arch = "aarch64")]
-const C11_SYS_SCHED_YIELD: i64 = 124;
-#[cfg(target_arch = "riscv64")]
 const C11_SYS_SCHED_YIELD: i64 = 124;
 
 #[no_mangle]
 pub unsafe extern "C" fn thrd_yield() {
-    let _ = <Arch as Syscalls>::syscall0(C11_SYS_SCHED_YIELD);
+    let _ = aarch64_syscall::syscall0(C11_SYS_SCHED_YIELD);
 }
 
 #[no_mangle]

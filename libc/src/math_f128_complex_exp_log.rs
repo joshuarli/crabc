@@ -18,15 +18,12 @@
 // complex arithmetic and rejects arguments beyond its explicit binary128
 // Payne--Hanek table range.  No glibc symbols or semantics are involved.
 
-#[cfg(target_arch = "aarch64")]
 const F128_LN2_HI: f128 =
     f128::from_bits(0x3ffe62e42fefa39ef356000000000000);
 
-#[cfg(target_arch = "aarch64")]
 const F128_LN2_LO: f128 =
     f128::from_bits(0x3fbe93c7673007e60000000000000000);
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_pow2(e: i32) -> f128 {
     // The smallest binary128 subnormal is 2^-16494.  Constructing powers of
@@ -44,7 +41,6 @@ fn f128_pow2(e: i32) -> f128 {
     f128::from_bits(1u128 << (e + 16494) as u32)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_scalbn(x: f128, n: i32) -> f128 {
     if x == 0.0_f128 || !x.is_finite() || n == 0 {
@@ -59,7 +55,6 @@ fn f128_scalbn(x: f128, n: i32) -> f128 {
     x * f128_pow2(n)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_round_integer(x: f128) -> f128 {
     // Round to nearest, ties to even, without calling floorl/nearbyintl.
@@ -107,7 +102,6 @@ fn f128_round_integer(x: f128) -> f128 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_round_i32(x: f128) -> i32 {
     let x = f128_round_integer(x);
@@ -133,19 +127,16 @@ fn f128_round_i32(x: f128) -> i32 {
     if negative { -(value as i32) } else { value as i32 }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_signed_zero(x: f128) -> f128 {
     f128::from_bits(x.to_bits() & (1u128 << 127))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_signed_one(x: f128) -> f128 {
     f128::from_bits((x.to_bits() & (1u128 << 127)) | (0x3fffu128 << 112))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_exp_reduced(x: f128) -> (f128, i32) {
     let n = f128_round_i32(x / F128_LN2_HI);
@@ -164,7 +155,6 @@ fn f128_exp_reduced(x: f128) -> (f128, i32) {
     (sum, n)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_exp_native(x: f128) -> f128 {
     // The primary helper carries musl's three-part ln(2) reduction and a
@@ -173,7 +163,6 @@ fn f128_exp_native(x: f128) -> f128 {
     f128_primary_exp(x)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_log_native(x: f128) -> f128 {
     if x.is_nan() {
@@ -216,7 +205,6 @@ fn f128_log_native(x: f128) -> f128 {
         + (e as f128) * F128_LN2_LO
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_sincos_native(x: f128) -> (f128, f128) {
     // Reuse the native primary path's musl __rem_pio2l split.  The earlier
@@ -226,7 +214,6 @@ fn f128_sincos_native(x: f128) -> (f128, f128) {
     f128_primary_sincos(x)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_complex_mul(a: ComplexLong, b: ComplexLong) -> ComplexLong {
     // This is the C99 complex-product recovery used by musl/compiler complex
@@ -273,7 +260,6 @@ fn f128_complex_mul(a: ComplexLong, b: ComplexLong) -> ComplexLong {
     ComplexLong { re, im }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_cexp(z: ComplexLong) -> ComplexLong {
     let x = z.re;
@@ -311,13 +297,11 @@ fn f128_cexp(z: ComplexLong) -> ComplexLong {
     ComplexLong { re: e * c, im: e * s }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn cexpl(z: ComplexLong) -> ComplexLong {
     f128_cexp(z)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn clogl(z: ComplexLong) -> ComplexLong {
     // Exactly musl's long-double composition: logl(cabsl(z)) + i*cargl(z).
@@ -327,7 +311,6 @@ pub extern "C" fn clogl(z: ComplexLong) -> ComplexLong {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn cpowl(z: ComplexLong, c: ComplexLong) -> ComplexLong {
     // Exactly musl 1.2.6's cpowl.c reduction, with both operations retaining

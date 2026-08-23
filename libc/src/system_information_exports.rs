@@ -24,14 +24,10 @@ pub struct CabiSysinfo {
     pub __reserved: [u8; 256],
 }
 
-#[cfg(target_arch = "x86_64")]
-const CABI_INFO_SYS_SYSINFO: i64 = 99;
-#[cfg(target_arch = "x86_64")]
-const CABI_INFO_SYS_SCHED_GETAFFINITY: i64 = 204;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
 const CABI_INFO_SYS_SYSINFO: i64 = 179;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_INFO_SYS_SCHED_GETAFFINITY: i64 = 123;
 
 const CABI_INFO_AT_PAGESZ: c_ulong = 6;
@@ -91,7 +87,7 @@ unsafe fn cabi_info_nprocs() -> c_int {
     // zero lets this work with both smaller and larger kernel CPU masks.
     let mut mask = [0u8; CABI_INFO_CPUSET_BYTES];
     mask[0] = 1;
-    let _ = <Arch as Syscalls>::syscall3(
+    let _ = aarch64_syscall::syscall3(
         CABI_INFO_SYS_SCHED_GETAFFINITY,
         0,
         CABI_INFO_CPUSET_BYTES as i64,

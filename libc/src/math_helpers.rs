@@ -244,13 +244,9 @@ pub extern "C" fn __signbitf(x: f32) -> c_int {
     ((asuint(x) >> 31) & 1) as c_int
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn __signbitl(x: f64) -> c_int {
-    __signbit(x)
-}
 
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub extern "C" fn __signbitl(x: f128) -> c_int {
     ((x.to_bits() >> 127) & 1) as c_int

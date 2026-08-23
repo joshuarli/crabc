@@ -230,9 +230,7 @@ unsafe fn cabi_pthread_name_length(name: *const c_char) -> Result<usize, c_int> 
     Err(CABI_PTHREAD_ERANGE)
 }
 
-#[cfg(target_arch = "x86_64")]
-const CABI_PTHREAD_SYS_PRCTL: i64 = 157;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_PTHREAD_SYS_PRCTL: i64 = 167;
 
 const CABI_PTHREAD_PR_SET_NAME: i64 = 15;
@@ -243,7 +241,7 @@ const CABI_PTHREAD_O_CLOEXEC: c_int = 0x80000;
 
 #[inline]
 unsafe fn cabi_pthread_prctl_name(option: i64, name: *mut c_char) -> c_int {
-    let result = <Arch as Syscalls>::syscall5(
+    let result = aarch64_syscall::syscall5(
         CABI_PTHREAD_SYS_PRCTL,
         option,
         name as i64,
@@ -464,21 +462,13 @@ pub unsafe extern "C" fn pthread_setconcurrency(value: c_int) -> c_int {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+
+
+
+
 const CABI_PTHREAD_SYS_SCHED_SETPARAM: i64 = 142;
-#[cfg(target_arch = "x86_64")]
 const CABI_PTHREAD_SYS_SCHED_GETPARAM: i64 = 143;
-#[cfg(target_arch = "x86_64")]
 const CABI_PTHREAD_SYS_SCHED_SETSCHEDULER: i64 = 144;
-#[cfg(target_arch = "x86_64")]
-const CABI_PTHREAD_SYS_SCHED_GETSCHEDULER: i64 = 145;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const CABI_PTHREAD_SYS_SCHED_SETPARAM: i64 = 142;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const CABI_PTHREAD_SYS_SCHED_GETPARAM: i64 = 143;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-const CABI_PTHREAD_SYS_SCHED_SETSCHEDULER: i64 = 144;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_PTHREAD_SYS_SCHED_GETSCHEDULER: i64 = 145;
 
 #[inline]
@@ -505,12 +495,12 @@ pub unsafe extern "C" fn pthread_getschedparam(
         Ok(value) => value,
         Err(error) => return error,
     };
-    let result = <Arch as Syscalls>::syscall2(CABI_PTHREAD_SYS_SCHED_GETPARAM, tid as i64, param as i64);
+    let result = aarch64_syscall::syscall2(CABI_PTHREAD_SYS_SCHED_GETPARAM, tid as i64, param as i64);
     let error = cabi_pthread_syscall_errno(result);
     if error != 0 {
         return error;
     }
-    let scheduler = <Arch as Syscalls>::syscall1(CABI_PTHREAD_SYS_SCHED_GETSCHEDULER, tid as i64);
+    let scheduler = aarch64_syscall::syscall1(CABI_PTHREAD_SYS_SCHED_GETSCHEDULER, tid as i64);
     let error = cabi_pthread_syscall_errno(scheduler);
     if error != 0 {
         return error;
@@ -529,7 +519,7 @@ pub unsafe extern "C" fn pthread_setschedparam(
         Ok(value) => value,
         Err(error) => return error,
     };
-    let result = <Arch as Syscalls>::syscall3(
+    let result = aarch64_syscall::syscall3(
         CABI_PTHREAD_SYS_SCHED_SETSCHEDULER,
         tid as i64,
         policy as i64,
@@ -545,7 +535,7 @@ pub unsafe extern "C" fn pthread_setschedprio(thread: PthreadT, priority: c_int)
         Err(error) => return error,
     };
     let param = sched_param { sched_priority: priority };
-    let result = <Arch as Syscalls>::syscall2(
+    let result = aarch64_syscall::syscall2(
         CABI_PTHREAD_SYS_SCHED_SETPARAM,
         tid as i64,
         &param as *const sched_param as i64,

@@ -19,9 +19,7 @@ const CABI_DIRENT_INT_MAX: usize = 0x7fff_ffff;
 const CABI_O_PATH: c_int = 0x200000;
 const CABI_O_DIRECTORY: c_int = 0x4000;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_GETDENTS64: i64 = 217;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_GETDENTS64: i64 = 61;
 
 // getdents64's header and musl's public dirent are both 8-byte aligned on

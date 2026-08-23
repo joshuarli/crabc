@@ -722,9 +722,7 @@ const CABI_EXEC_ENOSYS: c_int = 38;
 const CABI_EXEC_EINVAL: c_int = 22;
 const CABI_EXEC_AT_EMPTY_PATH: i64 = 0x1000;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_EXEC_SYS_EXECVEAT: i64 = 322;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_EXEC_SYS_EXECVEAT: i64 = 281;
 
 #[inline]
@@ -952,7 +950,7 @@ unsafe fn cabi_execveat(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> i64 {
-    <Arch as Syscalls>::syscall5(
+    aarch64_syscall::syscall5(
         CABI_EXEC_SYS_EXECVEAT,
         fd as i64,
         b"\0".as_ptr() as i64,

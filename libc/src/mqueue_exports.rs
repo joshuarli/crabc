@@ -6,30 +6,18 @@
 // syscalls with a null timeout.  Keep the kernel's negative-errno result
 // private and use syscall_result at the C ABI boundary.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_MQ_OPEN: i64 = 240;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_MQ_UNLINK: i64 = 241;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_MQ_TIMEDSEND: i64 = 242;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_MQ_TIMEDRECEIVE: i64 = 243;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_MQ_NOTIFY: i64 = 244;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_MQ_GETSETATTR: i64 = 245;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
+
+
+
+
 const CABI_SYS_MQ_OPEN: i64 = 180;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_MQ_UNLINK: i64 = 181;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_MQ_TIMEDSEND: i64 = 182;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_MQ_TIMEDRECEIVE: i64 = 183;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_MQ_NOTIFY: i64 = 184;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_MQ_GETSETATTR: i64 = 185;
 
 // struct mq_attr is four long values followed by four reserved long values
@@ -51,7 +39,7 @@ unsafe fn cabi_mq_open(
     mode: mode_t,
     attr: *const CabiMqAttr,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_MQ_OPEN,
         name as i64,
         oflag as i64,
@@ -85,7 +73,7 @@ unsafe fn cabi_mq_kernel_name(name: *const c_char) -> *const c_char {
 
 #[inline]
 unsafe fn cabi_mq_unlink(name: *const c_char) -> i64 {
-    <Arch as Syscalls>::syscall1(CABI_SYS_MQ_UNLINK, name as i64)
+    aarch64_syscall::syscall1(CABI_SYS_MQ_UNLINK, name as i64)
 }
 
 #[inline]
@@ -96,7 +84,7 @@ unsafe fn cabi_mq_timedsend(
     msg_prio: c_uint,
     abs_timeout: *const timespec,
 ) -> i64 {
-    <Arch as Syscalls>::syscall5(
+    aarch64_syscall::syscall5(
         CABI_SYS_MQ_TIMEDSEND,
         mqdes as i64,
         msg_ptr as i64,
@@ -114,7 +102,7 @@ unsafe fn cabi_mq_timedreceive(
     msg_prio: *mut c_uint,
     abs_timeout: *const timespec,
 ) -> i64 {
-    <Arch as Syscalls>::syscall5(
+    aarch64_syscall::syscall5(
         CABI_SYS_MQ_TIMEDRECEIVE,
         mqdes as i64,
         msg_ptr as i64,
@@ -126,7 +114,7 @@ unsafe fn cabi_mq_timedreceive(
 
 #[inline]
 unsafe fn cabi_mq_notify(mqdes: c_int, notification: *const c_void) -> i64 {
-    <Arch as Syscalls>::syscall2(CABI_SYS_MQ_NOTIFY, mqdes as i64, notification as i64)
+    aarch64_syscall::syscall2(CABI_SYS_MQ_NOTIFY, mqdes as i64, notification as i64)
 }
 
 #[inline]
@@ -135,7 +123,7 @@ unsafe fn cabi_mq_getsetattr(
     new_attr: *const CabiMqAttr,
     old_attr: *mut CabiMqAttr,
 ) -> i64 {
-    <Arch as Syscalls>::syscall3(
+    aarch64_syscall::syscall3(
         CABI_SYS_MQ_GETSETATTR,
         mqdes as i64,
         new_attr as i64,
@@ -169,7 +157,7 @@ pub unsafe extern "C" fn mq_open(
 
 #[no_mangle]
 pub unsafe extern "C" fn mq_close(mqdes: c_int) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall1(SYS_CLOSE, mqdes as i64)) as c_int
+    syscall_result(aarch64_syscall::syscall1(SYS_CLOSE, mqdes as i64)) as c_int
 }
 
 #[no_mangle]

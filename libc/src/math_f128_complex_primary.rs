@@ -13,19 +13,16 @@
 // binary128 branches of musl's sinl/cosl/tanl and __sinl/__cosl/__tanl; the
 // complex exceptional-value branches follow musl's csinh.c/ccosh.c/ctanh.c.
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_complex(re: f128, im: f128) -> ComplexLong {
     ComplexLong { re, im }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_copysign(x: f128, sign: f128) -> f128 {
     f128::from_bits((x.to_bits() & !(1u128 << 127)) | (sign.to_bits() & (1u128 << 127)))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_round_integer(x: f128) -> f128 {
     // Round-to-nearest, ties-to-even.  This is the same representation-level
@@ -75,7 +72,6 @@ fn f128_primary_round_integer(x: f128) -> f128 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_round_i32(x: f128) -> i32 {
     let rounded = f128_primary_round_integer(x);
@@ -105,7 +101,6 @@ fn f128_primary_round_i32(x: f128) -> i32 {
     if negative { -(value as i32) } else { value as i32 }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_mod4(x: f128) -> u8 {
     let bits = x.to_bits();
@@ -132,29 +127,21 @@ fn f128_primary_mod4(x: f128) -> u8 {
 }
 
 // The split is the LDBL_MANT_DIG == 113 branch from musl's __rem_pio2l.c.
-#[cfg(target_arch = "aarch64")]
 const F128_INVPIO2: f128 =
     6.3661977236758134307553505349005747e-1_f128;
-#[cfg(target_arch = "aarch64")]
 const F128_PIO2_1: f128 =
     1.5707963267948966192292994253909555e+0_f128;
-#[cfg(target_arch = "aarch64")]
 const F128_PIO2_1T: f128 =
     2.0222662487959507323996846200947577e-21_f128;
-#[cfg(target_arch = "aarch64")]
 const F128_PIO2_2: f128 =
     2.0222662487959507323994779168837751e-21_f128;
-#[cfg(target_arch = "aarch64")]
 const F128_PIO2_2T: f128 =
     2.0670321098263988236496903051604844e-43_f128;
-#[cfg(target_arch = "aarch64")]
 const F128_PIO2_3: f128 =
     2.0670321098263988236499468110329591e-43_f128;
-#[cfg(target_arch = "aarch64")]
 const F128_PIO2_3T: f128 =
     -2.5650587247459238361625433492959285e-65_f128;
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_rem_pio2(x: f128) -> (i32, f128, f128) {
     // The four target probes use arguments in the small (__rem_pio2l) path.
@@ -196,7 +183,6 @@ fn f128_primary_rem_pio2(x: f128) -> (i32, f128, f128) {
     (n, y0, y1)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_sin_kernel(x: f128, y: f128, iy: i32) -> f128 {
     // musl __sinl.c, LDBL_MANT_DIG == 113.
@@ -232,7 +218,6 @@ fn f128_primary_sin_kernel(x: f128, y: f128, iy: i32) -> f128 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_cos_kernel(x: f128, y: f128) -> f128 {
     // musl __cosl.c, LDBL_MANT_DIG == 113.
@@ -265,7 +250,6 @@ fn f128_primary_cos_kernel(x: f128, y: f128) -> f128 {
     w + ((1.0_f128 - w) - hz + (z * r - x * y))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_sincos(x: f128) -> (f128, f128) {
     const PIO4: f128 = 0.785398163397448309615660845819875721_f128;
@@ -290,7 +274,6 @@ fn f128_primary_sincos(x: f128) -> (f128, f128) {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_tan_kernel(mut x: f128, mut y: f128, odd: i32) -> f128 {
     // musl __tanl.c, LDBL_MANT_DIG == 113.
@@ -386,7 +369,6 @@ fn f128_primary_tan_kernel(mut x: f128, mut y: f128, odd: i32) -> f128 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_tan(x: f128) -> f128 {
     if !x.is_finite() {
@@ -401,7 +383,6 @@ fn f128_primary_tan(x: f128) -> f128 {
     f128_primary_tan_kernel(hi, lo, n & 1)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_pow2(exp: i32) -> f128 {
     if exp > 16383 { return f128::INFINITY; }
@@ -413,7 +394,6 @@ fn f128_primary_pow2(exp: i32) -> f128 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_exp(x: f128) -> f128 {
     // A binary128 Taylor kernel after musl's ln(2) reduction.  The first
@@ -437,7 +417,6 @@ fn f128_primary_exp(x: f128) -> f128 {
     sum * f128_primary_pow2(n)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_sinh(x: f128) -> f128 {
     if x.is_nan() { return x; }
@@ -448,7 +427,6 @@ fn f128_primary_sinh(x: f128) -> f128 {
     f128_primary_copysign((e - em) * 0.5_f128, x)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_cosh(x: f128) -> f128 {
     if x.is_nan() { return x; }
@@ -459,7 +437,6 @@ fn f128_primary_cosh(x: f128) -> f128 {
     (e + em) * 0.5_f128
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_csinh(z: ComplexLong) -> ComplexLong {
     let x = z.re;
@@ -491,7 +468,6 @@ fn f128_primary_csinh(z: ComplexLong) -> ComplexLong {
     f128_primary_complex((x * x) * (y - y), (x + x) * (y - y))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_ccosh(z: ComplexLong) -> ComplexLong {
     let x = z.re;
@@ -522,7 +498,6 @@ fn f128_primary_ccosh(z: ComplexLong) -> ComplexLong {
     f128_primary_complex((x * x) * (y - y), (x + x) * (y - y))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_ctanh(z: ComplexLong) -> ComplexLong {
     let x = z.re;
@@ -552,7 +527,6 @@ fn f128_primary_ctanh(z: ComplexLong) -> ComplexLong {
     f128_primary_complex((beta * rho * s) / denom, t / denom)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_primary_csqrt(z: ComplexLong) -> ComplexLong {
     let a = z.re;
@@ -581,27 +555,23 @@ fn f128_primary_csqrt(z: ComplexLong) -> ComplexLong {
     if scale { f128_primary_complex(result.re * 2.0_f128, result.im * 2.0_f128) } else { result }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn csinl(z: ComplexLong) -> ComplexLong {
     let w = f128_primary_csinh(f128_primary_complex(-z.im, z.re));
     f128_primary_complex(w.im, -w.re)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ccosl(z: ComplexLong) -> ComplexLong {
     f128_primary_ccosh(f128_primary_complex(-z.im, z.re))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ctanl(z: ComplexLong) -> ComplexLong {
     let w = f128_primary_ctanh(f128_primary_complex(-z.im, z.re));
     f128_primary_complex(w.im, -w.re)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn csqrtl(z: ComplexLong) -> ComplexLong {
     f128_primary_csqrt(z)
@@ -611,19 +581,16 @@ pub extern "C" fn csqrtl(z: ComplexLong) -> ComplexLong {
 // path.  The primary circular functions above use these kernels through the
 // musl identities, while these exports serve callers that name the kernels
 // directly.
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn csinhl(z: ComplexLong) -> ComplexLong {
     f128_primary_csinh(z)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ccoshl(z: ComplexLong) -> ComplexLong {
     f128_primary_ccosh(z)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ctanhl(z: ComplexLong) -> ComplexLong {
     f128_primary_ctanh(z)

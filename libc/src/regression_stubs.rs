@@ -160,7 +160,7 @@ fn cabi_pathconf_name_valid(name: c_int) -> bool {
 
 #[inline]
 unsafe fn cabi_pathconf_statfs(path: *const c_char, buf: *mut CabiPathStatfs) -> c_int {
-    let result = <Arch as Syscalls>::syscall2(SYS_STATFS, path as i64, buf as i64);
+    let result = aarch64_syscall::syscall2(SYS_STATFS, path as i64, buf as i64);
     if result < 0 {
         syscall_result(result) as c_int
     } else {
@@ -170,7 +170,7 @@ unsafe fn cabi_pathconf_statfs(path: *const c_char, buf: *mut CabiPathStatfs) ->
 
 #[inline]
 unsafe fn cabi_fpathconf_statfs(fd: c_int, buf: *mut CabiPathStatfs) -> c_int {
-    let result = <Arch as Syscalls>::syscall2(SYS_FSTATFS, fd as i64, buf as i64);
+    let result = aarch64_syscall::syscall2(SYS_FSTATFS, fd as i64, buf as i64);
     if result < 0 {
         syscall_result(result) as c_int
     } else {

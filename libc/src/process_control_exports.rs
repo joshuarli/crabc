@@ -11,33 +11,22 @@ const CABI_PROCESS_ESRCH: c_int = 3;
 // per-thread mask (4), not CLOCK_THREAD_CPUTIME_ID's user-facing value.
 const CABI_CLOCK_THREAD_CPUTIME_ID: c_int = 6;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_WAITID: i64 = 247;
-#[cfg(target_arch = "riscv64")]
-const CABI_SYS_WAITID: i64 = 95;
+
+
 
 // The calls operate on the kernel's task ID; pid 0 denotes the calling task,
 // as it does for the POSIX wrappers. x86_64 uses its legacy syscall table;
 // AArch64 and RISC-V use asm-generic's distinct scheduler range.
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_SETPARAM: i64 = 142;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_GETPARAM: i64 = 143;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_SETSCHEDULER: i64 = 144;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_GETSCHEDULER: i64 = 145;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
+
+
 const CABI_SYS_SCHED_SETPARAM: i64 = 118;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SCHED_SETSCHEDULER: i64 = 119;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SCHED_GETSCHEDULER: i64 = 120;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SCHED_GETPARAM: i64 = 121;
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 unsafe fn cabi_waitid(
     idtype: c_int,
@@ -53,23 +42,7 @@ unsafe fn cabi_waitid(
     }
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[inline]
-unsafe fn cabi_waitid(
-    idtype: c_int,
-    id: c_uint,
-    info: *mut siginfo_t,
-    options: c_int,
-) -> i64 {
-    <Arch as Syscalls>::syscall5(
-        CABI_SYS_WAITID,
-        idtype as i64,
-        id as i64,
-        info as i64,
-        options as i64,
-        0,
-    )
-}
+
 
 #[no_mangle]
 pub unsafe extern "C" fn waitid(
@@ -85,7 +58,7 @@ pub unsafe extern "C" fn waitid(
 pub unsafe extern "C" fn killpg(pgrp: c_int, sig: c_int) -> c_int {
     // kill(2) interprets a negative pid as a process-group target.  Widen
     // before negating so even the INT_MIN pid_t value is represented safely.
-    syscall_result(<Arch as Syscalls>::syscall2(
+    syscall_result(aarch64_syscall::syscall2(
         SYS_KILL,
         -(pgrp as i64),
         sig as i64,
@@ -97,7 +70,7 @@ pub unsafe extern "C" fn sched_getparam(
     pid: c_int,
     param: *mut sched_param,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall2(
+    syscall_result(aarch64_syscall::syscall2(
         CABI_SYS_SCHED_GETPARAM,
         pid as i64,
         param as i64,
@@ -106,7 +79,7 @@ pub unsafe extern "C" fn sched_getparam(
 
 #[no_mangle]
 pub unsafe extern "C" fn sched_getscheduler(pid: c_int) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall1(
+    syscall_result(aarch64_syscall::syscall1(
         CABI_SYS_SCHED_GETSCHEDULER,
         pid as i64,
     )) as c_int
@@ -117,7 +90,7 @@ pub unsafe extern "C" fn sched_setparam(
     pid: c_int,
     param: *const sched_param,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall2(
+    syscall_result(aarch64_syscall::syscall2(
         CABI_SYS_SCHED_SETPARAM,
         pid as i64,
         param as i64,
@@ -130,7 +103,7 @@ pub unsafe extern "C" fn sched_setscheduler(
     policy: c_int,
     param: *const sched_param,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall3(
+    syscall_result(aarch64_syscall::syscall3(
         CABI_SYS_SCHED_SETSCHEDULER,
         pid as i64,
         policy as i64,

@@ -147,48 +147,12 @@ fn cabi_cpow_float(z: ComplexFloat, c: ComplexFloat) -> ComplexFloat {
 // Export the double and float entry points.  Keep the float reduction in
 // terms of the float helpers, matching musl's cpowf.c rather than narrowing
 // through the double implementation.
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn cpow(z: ComplexDouble, c: ComplexDouble) -> ComplexDouble {
     cabi_long_to_double(cpowl(cabi_double_to_long(z), cabi_double_to_long(c)))
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[no_mangle]
-pub extern "C" fn cpow(z: ComplexDouble, c: ComplexDouble) -> ComplexDouble {
-    cabi_cpow_double(z, c)
-}
-
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn cpowf(z: ComplexFloat, c: ComplexFloat) -> ComplexFloat {
     cabi_long_to_float(cpowl(cabi_float_to_long(z), cabi_float_to_long(c)))
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-#[no_mangle]
-pub extern "C" fn cpowf(z: ComplexFloat, c: ComplexFloat) -> ComplexFloat {
-    cabi_cpow_float(z, c)
-}
-
-// x86_64 follows musl's 64-bit long-double ABI, so cpowl is the same ABI as
-// cpow.  AArch64 uses the native binary128 implementation in
-// math_f128_complex_exp_log.rs; RISC-V retains the f64 compatibility boundary
-// after preserving its binary128 layout.
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn cpowl(z: ComplexLong, c: ComplexLong) -> ComplexLong {
-    cabi_cpow_double(z, c)
-}
-
-#[cfg(target_arch = "riscv64")]
-#[no_mangle]
-pub extern "C" fn cpowl(z: ComplexLong, c: ComplexLong) -> ComplexLong {
-    // musl's cpowl.c uses cexpl(c * clogl(z)) for binary128 long double.
-    // Existing complex transcendentals intentionally use f64-compatible
-    // arithmetic, so convert each operand only after receiving its ABI-
-    // correct binary128 pair and convert the result back before returning.
-    let z = cabi_cl_to_double(z);
-    let c = cabi_cl_to_double(c);
-    cabi_cl_from_double(cabi_cpow_double(z, c))
 }

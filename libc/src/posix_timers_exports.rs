@@ -6,26 +6,16 @@
 // after the syscall succeeds.  This avoids writing a four-byte kernel ID
 // into the caller's pointer-sized timer_t object.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_TIMER_CREATE: i64 = 222;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_TIMER_SETTIME: i64 = 223;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_TIMER_GETTIME: i64 = 224;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_TIMER_GETOVERRUN: i64 = 225;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_TIMER_DELETE: i64 = 226;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
+
+
+
 const CABI_SYS_TIMER_CREATE: i64 = 107;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_TIMER_SETTIME: i64 = 110;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_TIMER_GETTIME: i64 = 108;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_TIMER_GETOVERRUN: i64 = 109;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_TIMER_DELETE: i64 = 111;
 
 #[inline]
@@ -34,7 +24,7 @@ unsafe fn cabi_timer_create(
     event: *const c_void,
     timerid: *mut c_int,
 ) -> i64 {
-    <Arch as Syscalls>::syscall3(
+    aarch64_syscall::syscall3(
         CABI_SYS_TIMER_CREATE,
         clockid as i64,
         event as i64,
@@ -44,17 +34,17 @@ unsafe fn cabi_timer_create(
 
 #[inline]
 unsafe fn cabi_timer_delete(timerid: *mut c_void) -> i64 {
-    <Arch as Syscalls>::syscall1(CABI_SYS_TIMER_DELETE, timerid as i64)
+    aarch64_syscall::syscall1(CABI_SYS_TIMER_DELETE, timerid as i64)
 }
 
 #[inline]
 unsafe fn cabi_timer_getoverrun(timerid: *mut c_void) -> i64 {
-    <Arch as Syscalls>::syscall1(CABI_SYS_TIMER_GETOVERRUN, timerid as i64)
+    aarch64_syscall::syscall1(CABI_SYS_TIMER_GETOVERRUN, timerid as i64)
 }
 
 #[inline]
 unsafe fn cabi_timer_gettime(timerid: *mut c_void, value: *mut CabiItimerspec) -> i64 {
-    <Arch as Syscalls>::syscall2(
+    aarch64_syscall::syscall2(
         CABI_SYS_TIMER_GETTIME,
         timerid as i64,
         value as i64,
@@ -68,7 +58,7 @@ unsafe fn cabi_timer_settime(
     value: *const CabiItimerspec,
     old_value: *mut CabiItimerspec,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_TIMER_SETTIME,
         timerid as i64,
         flags as i64,

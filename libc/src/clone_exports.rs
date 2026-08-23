@@ -82,38 +82,7 @@ unsafe extern "C" fn cabi_clone_start(arg: *mut c_void) -> c_int {
 // particular, clone's C `flags` argument is an int, while the kernel expects
 // an unsigned long in its first syscall argument; each helper widens the
 // low 32 bits in the architecture's syscall register explicitly.
-#[cfg(target_arch = "x86_64")]
-core::arch::global_asm!(
-    ".text",
-    ".global __crabc_clone",
-    ".hidden __crabc_clone",
-    ".type __crabc_clone, @function",
-    "__crabc_clone:",
-    "mov rax, rdi",
-    "mov edi, edx",
-    "mov rdx, r8",
-    "mov r10, [rsp + 8]",
-    "mov r8, r9",
-    "mov r9, rax",
-    "and rsi, -16",
-    "sub rsi, 8",
-    "mov [rsi], rcx",
-    "mov eax, 56",
-    "syscall",
-    "test rax, rax",
-    "jnz 1f",
-    "xor ebp, ebp",
-    "pop rdi",
-    "call r9",
-    "mov edi, eax",
-    "mov eax, 60",
-    "syscall",
-    "hlt",
-    "1:",
-    "ret",
-);
 
-#[cfg(target_arch = "aarch64")]
 core::arch::global_asm!(
     ".global __crabc_clone",
     ".hidden __crabc_clone",
@@ -140,37 +109,7 @@ core::arch::global_asm!(
     "svc #0",
 );
 
-#[cfg(target_arch = "riscv64")]
-core::arch::global_asm!(
-    ".global __crabc_clone",
-    ".hidden __crabc_clone",
-    ".type __crabc_clone, %function",
-    "__crabc_clone:",
-    // Align stack and save func,arg.
-    "andi a1,a1,-16",
-    "addi a1,a1,-16",
-    "sd a0,0(a1)",
-    "sd a3,8(a1)",
-    // syscall(SYS_clone, flags, stack, ptid, tls, ctid).
-    "slli a0,a2,32",
-    "srli a0,a0,32",
-    "mv a2,a4",
-    "mv a3,a5",
-    "mv a4,a6",
-    "li a7,220",
-    "ecall",
-    "beqz a0,1f",
-    "ret",
-    // Child: callback result is the exit status.
-    "1:",
-    "ld a1,0(sp)",
-    "ld a0,8(sp)",
-    "jalr a1",
-    "li a7,93",
-    "ecall",
-);
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
 extern "C" {
     fn __crabc_clone(
         func: usize,

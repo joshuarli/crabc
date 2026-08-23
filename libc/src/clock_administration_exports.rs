@@ -5,20 +5,9 @@
 // the kernel's EPERM (and never a fabricated success).  The timex layout is
 // the native 64-bit musl/Linux ABI used by both x86_64 and AArch64.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_CLOCK_ADJTIME: i64 = 305;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_ADJTIMEX: i64 = 159;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SETTIMEOFDAY: i64 = 164;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_STIME: i64 = 25;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_CLOCK_ADJTIME: i64 = 266;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_ADJTIMEX: i64 = 171;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SETTIMEOFDAY: i64 = 170;
 
 #[repr(C)]
@@ -50,24 +39,19 @@ const CABI_ADJ_OFFSET_SINGLESHOT: c_uint = 0x8001;
 
 #[inline]
 unsafe fn cabi_clock_adjtime(clock_id: c_int, tx: *mut CabiTimex) -> i64 {
-    <Arch as Syscalls>::syscall2(CABI_SYS_CLOCK_ADJTIME, clock_id as i64, tx as i64)
+    aarch64_syscall::syscall2(CABI_SYS_CLOCK_ADJTIME, clock_id as i64, tx as i64)
 }
 
 #[inline]
 unsafe fn cabi_adjtimex(tx: *mut CabiTimex) -> i64 {
-    <Arch as Syscalls>::syscall1(CABI_SYS_ADJTIMEX, tx as i64)
+    aarch64_syscall::syscall1(CABI_SYS_ADJTIMEX, tx as i64)
 }
 
 #[inline]
 unsafe fn cabi_settimeofday(tv: *const timeval, tz: *const c_void) -> i64 {
-    <Arch as Syscalls>::syscall2(CABI_SYS_SETTIMEOFDAY, tv as i64, tz as i64)
+    aarch64_syscall::syscall2(CABI_SYS_SETTIMEOFDAY, tv as i64, tz as i64)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-unsafe fn cabi_stime(seconds: *const TimeT) -> i64 {
-    <Arch as Syscalls>::syscall1(CABI_SYS_STIME, seconds as i64)
-}
 
 #[no_mangle]
 pub unsafe extern "C" fn clock_adjtime(clock_id: c_int, tx: *mut CabiTimex) -> c_int {
@@ -131,15 +115,10 @@ pub unsafe extern "C" fn settimeofday(tv: *const timeval, tz: *const c_void) -> 
 
 #[no_mangle]
 pub unsafe extern "C" fn stime(seconds: *const TimeT) -> c_int {
-    #[cfg(target_arch = "x86_64")]
-    {
-        return syscall_result(cabi_stime(seconds)) as c_int;
-    }
 
     // arm64 and riscv64 omit the legacy stime syscall.  Keep the musl
     // contract by translating to settimeofday's native syscall instead.
-    #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-    {
+        {
         if seconds.is_null() {
             ERRNO = EFAULT;
             return -1;

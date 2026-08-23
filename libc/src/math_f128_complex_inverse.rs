@@ -9,13 +9,11 @@
 // The ordinary long-double compatibility layer narrows to f64 and therefore
 // cannot be used by these entry points.
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_complex(re: f128, im: f128) -> ComplexLong {
     ComplexLong { re, im }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_log(x: f128) -> f128 {
     // AArch64 uses IEEE binary128 for long double.  musl 1.2.6 still
@@ -85,7 +83,6 @@ fn f128_log(x: f128) -> f128 {
     2.0_f128 * sum + (exponent as f128) * LN2
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_clog(re: f128, im: f128) -> ComplexLong {
     // This is clogl(z) = log(hypotl(re, im)) + i atan2l(im, re).  Both real
@@ -94,7 +91,6 @@ fn f128_clog(re: f128, im: f128) -> ComplexLong {
     f128_complex(f128_log(hypotl(re, im)), atan2l(im, re))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_csqrt(re: f128, im: f128) -> ComplexLong {
     // Algorithm 312, matching musl's csqrtl identity.  Scale the largest
@@ -142,13 +138,11 @@ fn f128_csqrt(re: f128, im: f128) -> ComplexLong {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_copysign(x: f128, sign: f128) -> f128 {
     f128::from_bits((x.to_bits() & !(1u128 << 127)) | (sign.to_bits() & (1u128 << 127)))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_casin(z: ComplexLong) -> ComplexLong {
     // musl 1.2.6 src/complex/casinl.c (the non-64-bit-long-double branch):
@@ -209,7 +203,6 @@ fn f128_casin(z: ComplexLong) -> ComplexLong {
     f128_complex(r.im, -r.re)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_cacos(z: ComplexLong) -> ComplexLong {
     // PI/2 is the high-precision binary128 literal used by musl's cacosl.c.
@@ -219,7 +212,6 @@ fn f128_cacos(z: ComplexLong) -> ComplexLong {
     f128_complex(PI_2 - w.re, -w.im)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_catan(z: ComplexLong) -> ComplexLong {
     // musl 1.2.6 src/complex/catanl.c, preserving its operation order.
@@ -273,14 +265,12 @@ fn f128_catan(z: ComplexLong) -> ComplexLong {
     f128_complex(real, 0.25_f128 * f128_log(a))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_casinh(z: ComplexLong) -> ComplexLong {
     let w = f128_casin(f128_complex(-z.im, z.re));
     f128_complex(w.im, -w.re)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_cacosh(z: ComplexLong) -> ComplexLong {
     let im_negative = z.im.is_sign_negative();
@@ -292,7 +282,6 @@ fn f128_cacosh(z: ComplexLong) -> ComplexLong {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_catanh(z: ComplexLong) -> ComplexLong {
     let w = f128_catan(f128_complex(-z.im, z.re));

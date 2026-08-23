@@ -11,7 +11,6 @@
 // feature dispatch, and covers its own short, aligned, unaligned, and long
 // paths.
 
-#[cfg(target_arch = "aarch64")]
 core::arch::global_asm!(
     r#"
     .text
@@ -153,7 +152,6 @@ __crabc_aarch64_memcpy:
 // schedule GPR-only until a separately proved SIMD decision is made. They
 // carry no call boundary after inlining and have ordinary memory side effects,
 // so no `nomem` option may be used.
-#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn memset_store_byte(destination: *mut u8, value: u8) {
     // SAFETY: the caller proves `destination` names one writable byte.
@@ -167,7 +165,6 @@ unsafe fn memset_store_byte(destination: *mut u8, value: u8) {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn memset_store_word(destination: *mut u8, value: u32) {
     // SAFETY: the caller proves `destination` names four writable bytes with
@@ -182,7 +179,6 @@ unsafe fn memset_store_word(destination: *mut u8, value: u32) {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn memset_store_32_bytes(destination: *mut u8, value: u64) {
     // SAFETY: the caller proves `destination` starts one aligned, writable
@@ -206,7 +202,6 @@ unsafe fn memset_store_32_bytes(destination: *mut u8, value: u64) {
 /// pointer. The early writes establish that every later fixed offset lies
 /// within the caller's `length`-byte range; the final loop can therefore omit
 /// a scalar tail without writing beyond the supplied object.
-#[cfg(target_arch = "aarch64")]
 #[inline]
 unsafe fn memset_scalar(destination: *mut u8, value: u8, mut length: usize) {
     if length == 0 {

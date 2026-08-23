@@ -17,35 +17,28 @@ pub struct ComplexFloat {
     im: f32,
 }
 
-#[cfg(target_arch = "x86_64")]
-pub type ComplexLong = ComplexDouble;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 #[repr(C)]
 pub struct ComplexLong {
     re: f128,
     im: f128,
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn cabi_double_to_long(z: ComplexDouble) -> ComplexLong {
     ComplexLong { re: z.re as f128, im: z.im as f128 }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn cabi_float_to_long(z: ComplexFloat) -> ComplexLong {
     ComplexLong { re: z.re as f128, im: z.im as f128 }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn cabi_long_to_double(z: ComplexLong) -> ComplexDouble {
     ComplexDouble { re: z.re as f64, im: z.im as f64 }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn cabi_long_to_float(z: ComplexLong) -> ComplexFloat {
     ComplexFloat { re: z.re as f32, im: z.im as f32 }
@@ -78,13 +71,7 @@ fn cabi_cproj_float(z: ComplexFloat) -> ComplexFloat {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn cabi_cproj_long(z: ComplexLong) -> ComplexLong {
-    cabi_cproj_double(z)
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 #[inline]
 fn cabi_cproj_long(z: ComplexLong) -> ComplexLong {
     if z.re.is_infinite() || z.im.is_infinite() {
@@ -111,13 +98,7 @@ pub extern "C" fn crealf(z: ComplexFloat) -> f32 {
     z.re
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn creall(z: ComplexLong) -> f64 {
-    z.re
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 #[no_mangle]
 pub extern "C" fn creall(z: ComplexLong) -> f128 {
     z.re
@@ -133,13 +114,7 @@ pub extern "C" fn cimagf(z: ComplexFloat) -> f32 {
     z.im
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn cimagl(z: ComplexLong) -> f64 {
-    z.im
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 #[no_mangle]
 pub extern "C" fn cimagl(z: ComplexLong) -> f128 {
     z.im
@@ -155,13 +130,7 @@ pub extern "C" fn conjf(z: ComplexFloat) -> ComplexFloat {
     ComplexFloat { re: z.re, im: -z.im }
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn conjl(z: ComplexLong) -> ComplexLong {
-    conj(z)
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 #[no_mangle]
 pub extern "C" fn conjl(z: ComplexLong) -> ComplexLong {
     ComplexLong { re: z.re, im: -z.im }
@@ -177,13 +146,7 @@ pub extern "C" fn cprojf(z: ComplexFloat) -> ComplexFloat {
     cabi_cproj_float(z)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn cprojl(z: ComplexLong) -> ComplexLong {
-    cabi_cproj_long(z)
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 #[no_mangle]
 pub extern "C" fn cprojl(z: ComplexLong) -> ComplexLong {
     cabi_cproj_long(z)
@@ -199,7 +162,6 @@ pub extern "C" fn cabsf(z: ComplexFloat) -> f32 {
     cabi_cabs_float(z)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn cabi_cabs_double(z: ComplexDouble) -> f64 {
     // The source contract checks the correctly rounded binary64 result,
@@ -209,31 +171,16 @@ fn cabi_cabs_double(z: ComplexDouble) -> f64 {
     hypotl(z.re as f128, z.im as f128) as f64
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[inline]
-fn cabi_cabs_double(z: ComplexDouble) -> f64 {
-    hypot(z.re, z.im)
-}
 
-#[cfg(target_arch = "aarch64")]
+
 #[inline]
 fn cabi_cabs_float(z: ComplexFloat) -> f32 {
     hypotl(z.re as f128, z.im as f128) as f32
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[inline]
-fn cabi_cabs_float(z: ComplexFloat) -> f32 {
-    hypotf(z.re, z.im)
-}
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn cabsl(z: ComplexLong) -> f64 {
-    hypotl(z.re, z.im)
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 #[no_mangle]
 pub extern "C" fn cabsl(z: ComplexLong) -> f128 {
     hypotl(z.re, z.im)
@@ -249,37 +196,21 @@ pub extern "C" fn cargf(z: ComplexFloat) -> f32 {
     cabi_carg_float(z)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn cabi_carg_double(z: ComplexDouble) -> f64 {
     cargl(cabi_double_to_long(z)) as f64
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[inline]
-fn cabi_carg_double(z: ComplexDouble) -> f64 {
-    unsafe { atan2(z.im, z.re) }
-}
 
-#[cfg(target_arch = "aarch64")]
+
 #[inline]
 fn cabi_carg_float(z: ComplexFloat) -> f32 {
     cargl(cabi_float_to_long(z)) as f32
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[inline]
-fn cabi_carg_float(z: ComplexFloat) -> f32 {
-    unsafe { atan2f(z.im, z.re) }
-}
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn cargl(z: ComplexLong) -> f64 {
-    atan2l(z.im, z.re)
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 #[no_mangle]
 pub extern "C" fn cargl(z: ComplexLong) -> f128 {
     atan2l(z.im, z.re)

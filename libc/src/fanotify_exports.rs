@@ -3,18 +3,14 @@
 // notification class, but crabc never substitutes a synthetic descriptor or
 // mark result.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_FANOTIFY_INIT: i64 = 300;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_FANOTIFY_MARK: i64 = 301;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
 const CABI_SYS_FANOTIFY_INIT: i64 = 262;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_FANOTIFY_MARK: i64 = 263;
 
 #[no_mangle]
 pub unsafe extern "C" fn fanotify_init(flags: c_uint, event_f_flags: c_uint) -> c_int {
-    let result = <Arch as Syscalls>::syscall2(
+    let result = aarch64_syscall::syscall2(
         CABI_SYS_FANOTIFY_INIT,
         flags as i64,
         event_f_flags as i64,
@@ -35,7 +31,7 @@ pub unsafe extern "C" fn fanotify_mark(
     dirfd: c_int,
     pathname: *const c_char,
 ) -> c_int {
-    let result = <Arch as Syscalls>::syscall5(
+    let result = aarch64_syscall::syscall5(
         CABI_SYS_FANOTIFY_MARK,
         fanotify_fd as i64,
         flags as i64,

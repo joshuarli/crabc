@@ -81,14 +81,10 @@ pub unsafe extern "C" fn __sysv_signal(signum: c_int, handler: usize) -> usize {
 
 // Linux uses the generic syscall numbers on AArch64/RISC-V and a distinct
 // ordering for getpriority/setpriority on x86_64.
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_GETPRIORITY: i64 = 140;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SETPRIORITY: i64 = 141;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
 const CABI_SYS_GETPRIORITY: i64 = 141;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SETPRIORITY: i64 = 140;
 
 const CABI_PRIO_PROCESS: c_int = 0;
@@ -108,7 +104,7 @@ unsafe fn cabi_priority_errno(result: i64) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn getpriority(which: c_int, who: c_uint) -> c_int {
-    let result = <Arch as Syscalls>::syscall2(CABI_SYS_GETPRIORITY, which as i64, who as i64);
+    let result = aarch64_syscall::syscall2(CABI_SYS_GETPRIORITY, which as i64, who as i64);
     if result < 0 {
         ERRNO = (-result) as c_int;
         return -1;
@@ -121,7 +117,7 @@ pub unsafe extern "C" fn getpriority(which: c_int, who: c_uint) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn setpriority(which: c_int, who: c_uint, value: c_int) -> c_int {
-    let result = <Arch as Syscalls>::syscall3(
+    let result = aarch64_syscall::syscall3(
         CABI_SYS_SETPRIORITY,
         which as i64,
         who as i64,

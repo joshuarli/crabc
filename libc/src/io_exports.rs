@@ -17,66 +17,36 @@ pub struct CabiIoVec {
     iov_len: SizeT,
 }
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_READV: i64 = 19;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_WRITEV: i64 = 20;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_FADVISE64: i64 = 221;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SENDFILE: i64 = 40;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SPLICE: i64 = 275;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_TEE: i64 = 276;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_VMSPLICE: i64 = 278;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_FALLOCATE: i64 = 285;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_PREADV: i64 = 295;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_PWRITEV: i64 = 296;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_PREADV2: i64 = 327;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_PWRITEV2: i64 = 328;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_COPY_FILE_RANGE: i64 = 326;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_PROCESS_VM_READV: i64 = 310;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_PROCESS_VM_WRITEV: i64 = 311;
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const CABI_SYS_READV: i64 = 65;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_WRITEV: i64 = 66;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_PREADV: i64 = 69;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_PWRITEV: i64 = 70;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_PREADV2: i64 = 286;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_PWRITEV2: i64 = 287;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SENDFILE: i64 = 71;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_VMSPLICE: i64 = 75;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SPLICE: i64 = 76;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_TEE: i64 = 77;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_FALLOCATE: i64 = 47;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_FADVISE64: i64 = 223;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_COPY_FILE_RANGE: i64 = 285;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_PROCESS_VM_READV: i64 = 270;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_PROCESS_VM_WRITEV: i64 = 271;
 
 #[inline]
@@ -87,18 +57,18 @@ fn cabi_offset_parts(offset: c_long) -> (i64, i64) {
 
 #[inline]
 unsafe fn cabi_readv(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int) -> i64 {
-    <Arch as Syscalls>::syscall3(CABI_SYS_READV, fd as i64, iov as i64, iovcnt as i64)
+    aarch64_syscall::syscall3(CABI_SYS_READV, fd as i64, iov as i64, iovcnt as i64)
 }
 
 #[inline]
 unsafe fn cabi_writev(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int) -> i64 {
-    <Arch as Syscalls>::syscall3(CABI_SYS_WRITEV, fd as i64, iov as i64, iovcnt as i64)
+    aarch64_syscall::syscall3(CABI_SYS_WRITEV, fd as i64, iov as i64, iovcnt as i64)
 }
 
 #[inline]
 unsafe fn cabi_preadv(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int, offset: c_long) -> i64 {
     let (lo, hi) = cabi_offset_parts(offset);
-    <Arch as Syscalls>::syscall5(
+    aarch64_syscall::syscall5(
         CABI_SYS_PREADV,
         fd as i64,
         iov as i64,
@@ -111,7 +81,7 @@ unsafe fn cabi_preadv(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int, offset: c
 #[inline]
 unsafe fn cabi_pwritev(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int, offset: c_long) -> i64 {
     let (lo, hi) = cabi_offset_parts(offset);
-    <Arch as Syscalls>::syscall5(
+    aarch64_syscall::syscall5(
         CABI_SYS_PWRITEV,
         fd as i64,
         iov as i64,
@@ -136,7 +106,7 @@ unsafe fn cabi_preadv2(
         return cabi_preadv(fd, iov, iovcnt, offset);
     }
     let (lo, hi) = cabi_offset_parts(offset);
-    <Arch as Syscalls>::syscall6(
+    aarch64_syscall::syscall6(
         CABI_SYS_PREADV2,
         fd as i64,
         iov as i64,
@@ -162,7 +132,7 @@ unsafe fn cabi_pwritev2(
         return cabi_pwritev(fd, iov, iovcnt, offset);
     }
     let (lo, hi) = cabi_offset_parts(offset);
-    <Arch as Syscalls>::syscall6(
+    aarch64_syscall::syscall6(
         CABI_SYS_PWRITEV2,
         fd as i64,
         iov as i64,
@@ -182,7 +152,7 @@ unsafe fn cabi_copy_file_range(
     len: SizeT,
     flags: c_uint,
 ) -> i64 {
-    <Arch as Syscalls>::syscall6(
+    aarch64_syscall::syscall6(
         CABI_SYS_COPY_FILE_RANGE,
         fd_in as i64,
         off_in as i64,
@@ -202,7 +172,7 @@ unsafe fn cabi_process_vm_readv(
     remote_iovcnt: SizeT,
     flags: SizeT,
 ) -> i64 {
-    <Arch as Syscalls>::syscall6(
+    aarch64_syscall::syscall6(
         CABI_SYS_PROCESS_VM_READV,
         pid as i64,
         local_iov as i64,
@@ -222,7 +192,7 @@ unsafe fn cabi_process_vm_writev(
     remote_iovcnt: SizeT,
     flags: SizeT,
 ) -> i64 {
-    <Arch as Syscalls>::syscall6(
+    aarch64_syscall::syscall6(
         CABI_SYS_PROCESS_VM_WRITEV,
         pid as i64,
         local_iov as i64,
@@ -240,7 +210,7 @@ unsafe fn cabi_sendfile(
     offset: *mut c_long,
     count: SizeT,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_SENDFILE,
         out_fd as i64,
         in_fd as i64,
@@ -258,7 +228,7 @@ unsafe fn cabi_splice(
     len: SizeT,
     flags: c_uint,
 ) -> i64 {
-    <Arch as Syscalls>::syscall6(
+    aarch64_syscall::syscall6(
         CABI_SYS_SPLICE,
         fd_in as i64,
         off_in as i64,
@@ -271,7 +241,7 @@ unsafe fn cabi_splice(
 
 #[inline]
 unsafe fn cabi_tee(fd_in: c_int, fd_out: c_int, len: SizeT, flags: c_uint) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_TEE,
         fd_in as i64,
         fd_out as i64,
@@ -287,7 +257,7 @@ unsafe fn cabi_vmsplice(
     nr_segs: SizeT,
     flags: c_uint,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_VMSPLICE,
         fd as i64,
         iov as i64,
@@ -298,7 +268,7 @@ unsafe fn cabi_vmsplice(
 
 #[inline]
 unsafe fn cabi_fallocate(fd: c_int, mode: c_int, offset: c_long, len: c_long) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_FALLOCATE,
         fd as i64,
         mode as i64,
@@ -309,7 +279,7 @@ unsafe fn cabi_fallocate(fd: c_int, mode: c_int, offset: c_long, len: c_long) ->
 
 #[inline]
 unsafe fn cabi_fadvise(fd: c_int, offset: c_long, len: c_long, advice: c_int) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_FADVISE64,
         fd as i64,
         offset as i64,

@@ -7,39 +7,25 @@
 // Keep the ABI adapter here rather than passing an uninitialised public
 // msghdr directly to the kernel.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_ACCEPT4: i64 = 288;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_ACCEPT4: i64 = 242;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_GETPEERNAME: i64 = 52;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_GETPEERNAME: i64 = 205;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_GETSOCKOPT: i64 = 55;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_GETSOCKOPT: i64 = 209;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SENDMSG: i64 = 46;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_SENDMSG: i64 = 211;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_RECVMSG: i64 = 47;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_RECVMSG: i64 = 212;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_RECVMMSG: i64 = 299;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_RECVMMSG: i64 = 243;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_IOCTL: i64 = 16;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_IOCTL: i64 = 29;
 
 // Linux's IOV_MAX, and the bound used by musl's 64-bit sendmmsg path.
@@ -102,7 +88,7 @@ unsafe fn cabi_zero_cmsg_padding(control: *mut u8, length: usize) {
 // maximum (255 descriptors), which is also the bound used by musl itself.
 unsafe fn cabi_sendmsg_raw(fd: c_int, msg: *const c_void, flags: c_int) -> i64 {
     if msg.is_null() {
-        return <Arch as Syscalls>::syscall3(CABI_SYS_SENDMSG, fd as i64, 0, flags as i64);
+        return aarch64_syscall::syscall3(CABI_SYS_SENDMSG, fd as i64, 0, flags as i64);
     }
 
     let mut header: CabiMsghdr;
@@ -127,7 +113,7 @@ unsafe fn cabi_sendmsg_raw(fd: c_int, msg: *const c_void, flags: c_int) -> i64 {
         header.msg_control = control as *mut c_void;
     }
 
-    <Arch as Syscalls>::syscall3(
+    aarch64_syscall::syscall3(
         CABI_SYS_SENDMSG,
         fd as i64,
         &header as *const CabiMsghdr as i64,
@@ -137,13 +123,13 @@ unsafe fn cabi_sendmsg_raw(fd: c_int, msg: *const c_void, flags: c_int) -> i64 {
 
 unsafe fn cabi_recvmsg_raw(fd: c_int, msg: *mut c_void, flags: c_int) -> i64 {
     if msg.is_null() {
-        return <Arch as Syscalls>::syscall3(CABI_SYS_RECVMSG, fd as i64, 0, flags as i64);
+        return aarch64_syscall::syscall3(CABI_SYS_RECVMSG, fd as i64, 0, flags as i64);
     }
 
     let mut header = core::ptr::read_unaligned(msg as *const CabiMsghdr);
     header.msg_iovlen_pad = 0;
     header.msg_controllen_pad = 0;
-    let result = <Arch as Syscalls>::syscall3(
+    let result = aarch64_syscall::syscall3(
         CABI_SYS_RECVMSG,
         fd as i64,
         &mut header as *mut CabiMsghdr as i64,
@@ -163,7 +149,7 @@ pub unsafe extern "C" fn accept4(
     len: *mut c_uint,
     flags: c_int,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall4(
+    syscall_result(aarch64_syscall::syscall4(
         CABI_SYS_ACCEPT4,
         fd as i64,
         addr as i64,
@@ -178,7 +164,7 @@ pub unsafe extern "C" fn getpeername(
     addr: *mut c_void,
     len: *mut c_uint,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall3(
+    syscall_result(aarch64_syscall::syscall3(
         CABI_SYS_GETPEERNAME,
         fd as i64,
         addr as i64,
@@ -194,7 +180,7 @@ pub unsafe extern "C" fn getsockopt(
     optval: *mut c_void,
     optlen: *mut c_uint,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall5(
+    syscall_result(aarch64_syscall::syscall5(
         CABI_SYS_GETSOCKOPT,
         fd as i64,
         level as i64,
@@ -273,7 +259,7 @@ pub unsafe extern "C" fn recvmmsg(
         header.msg_controllen_pad = 0;
         index += 1;
     }
-    syscall_result(<Arch as Syscalls>::syscall5(
+    syscall_result(aarch64_syscall::syscall5(
         CABI_SYS_RECVMMSG,
         fd as i64,
         messages as i64,
@@ -286,7 +272,7 @@ pub unsafe extern "C" fn recvmmsg(
 #[no_mangle]
 pub unsafe extern "C" fn sockatmark(fd: c_int) -> c_int {
     let mut at_mark = 0 as c_int;
-    let result = <Arch as Syscalls>::syscall3(
+    let result = aarch64_syscall::syscall3(
         CABI_SYS_IOCTL,
         fd as i64,
         0x8905,

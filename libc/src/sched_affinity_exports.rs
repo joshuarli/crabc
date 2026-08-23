@@ -13,42 +13,28 @@
 // behavioral mismatch, not a real compatibility implementation.
 const CABI_ESRCH: c_int = 3;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_YIELD: i64 = 24;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_SCHED_YIELD: i64 = 124;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_GET_PRIORITY_MAX: i64 = 146;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_GET_PRIORITY_MIN: i64 = 147;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_RR_GET_INTERVAL: i64 = 148;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
+
 const CABI_SYS_SCHED_GET_PRIORITY_MAX: i64 = 125;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SCHED_GET_PRIORITY_MIN: i64 = 126;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_SCHED_RR_GET_INTERVAL: i64 = 127;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_SETAFFINITY: i64 = 203;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_SCHED_SETAFFINITY: i64 = 122;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_SCHED_GETAFFINITY: i64 = 204;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_SCHED_GETAFFINITY: i64 = 123;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_GETCPU: i64 = 309;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_GETCPU: i64 = 168;
 
 #[inline]
 unsafe fn cabi_sched_rr_get_interval(pid: c_int, interval: *mut timespec) -> i64 {
-    <Arch as Syscalls>::syscall2(
+    aarch64_syscall::syscall2(
         CABI_SYS_SCHED_RR_GET_INTERVAL,
         pid as i64,
         interval as i64,
@@ -57,7 +43,7 @@ unsafe fn cabi_sched_rr_get_interval(pid: c_int, interval: *mut timespec) -> i64
 
 #[inline]
 unsafe fn cabi_sched_setaffinity(pid: c_int, cpusetsize: SizeT, mask: *const c_void) -> i64 {
-    <Arch as Syscalls>::syscall3(
+    aarch64_syscall::syscall3(
         CABI_SYS_SCHED_SETAFFINITY,
         pid as i64,
         cpusetsize as i64,
@@ -67,7 +53,7 @@ unsafe fn cabi_sched_setaffinity(pid: c_int, cpusetsize: SizeT, mask: *const c_v
 
 #[inline]
 unsafe fn cabi_sched_getaffinity(pid: c_int, cpusetsize: SizeT, mask: *mut c_void) -> i64 {
-    let result = <Arch as Syscalls>::syscall3(
+    let result = aarch64_syscall::syscall3(
         CABI_SYS_SCHED_GETAFFINITY,
         pid as i64,
         cpusetsize as i64,
@@ -92,7 +78,7 @@ unsafe fn cabi_sched_getaffinity(pid: c_int, cpusetsize: SizeT, mask: *mut c_voi
 
 #[inline]
 unsafe fn cabi_getcpu(cpu: *mut c_uint, node: *mut c_uint) -> i64 {
-    <Arch as Syscalls>::syscall3(CABI_SYS_GETCPU, cpu as i64, node as i64, 0)
+    aarch64_syscall::syscall3(CABI_SYS_GETCPU, cpu as i64, node as i64, 0)
 }
 
 #[inline]
@@ -141,7 +127,7 @@ pub unsafe extern "C" fn sched_getcpu() -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall1(
+    syscall_result(aarch64_syscall::syscall1(
         CABI_SYS_SCHED_GET_PRIORITY_MAX,
         policy as i64,
     )) as c_int
@@ -149,7 +135,7 @@ pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn sched_get_priority_min(policy: c_int) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall1(
+    syscall_result(aarch64_syscall::syscall1(
         CABI_SYS_SCHED_GET_PRIORITY_MIN,
         policy as i64,
     )) as c_int

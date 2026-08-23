@@ -51,13 +51,8 @@ pub unsafe extern "C" fn nanf(_tag: *const c_char) -> f32 {
     f32::from_bits(0x7fc0_0000)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn nanl(_tag: *const c_char) -> f64 {
-    f64::from_bits(0x7ff8_0000_0000_0000)
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 #[no_mangle]
 pub unsafe extern "C" fn nanl(_tag: *const c_char) -> f128 {
     f128::from_bits(0x7fff_8000_0000_0000_0000_0000_0000_0000)

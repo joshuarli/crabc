@@ -14,21 +14,8 @@
 // AArch64 and riscv64 pass IEEE binary128 in registers/stack slots described
 // by Rust's f128.  Classify the representation directly so subnormals and
 // non-canonical NaNs do not get narrowed through f64.
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn __fpclassifyl(x: f64) -> c_int {
-    let bits = x.to_bits();
-    let exponent = (bits >> 52) & 0x7ff;
-    if exponent == 0 {
-        if (bits << 1) != 0 { FP_SUBNORMAL } else { FP_ZERO }
-    } else if exponent == 0x7ff {
-        if (bits << 12) != 0 { FP_NAN } else { FP_INFINITE }
-    } else {
-        FP_NORMAL
-    }
-}
 
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 #[no_mangle]
 pub extern "C" fn __fpclassifyl(x: f128) -> c_int {
     let bits = x.to_bits();
@@ -63,10 +50,6 @@ macro_rules! compat_binary {
 
 macro_rules! compat_long_unary {
     ($long:ident, $implementation:path) => {
-        #[cfg(target_arch = "x86_64")]
-        #[no_mangle]
-        pub extern "C" fn $long(x: f64) -> f64 { $implementation(x) }
-        #[cfg(not(target_arch = "x86_64"))]
         #[no_mangle]
         pub extern "C" fn $long(x: f128) -> f128 { $implementation(x as f64) as f128 }
     };
@@ -74,11 +57,6 @@ macro_rules! compat_long_unary {
 
 macro_rules! compat_long_unary_weak {
     ($long:ident, $implementation:path) => {
-        #[cfg(target_arch = "x86_64")]
-        #[no_mangle]
-        #[linkage = "weak"]
-        pub extern "C" fn $long(x: f64) -> f64 { $implementation(x) }
-        #[cfg(not(target_arch = "x86_64"))]
         #[no_mangle]
         #[linkage = "weak"]
         pub extern "C" fn $long(x: f128) -> f128 { $implementation(x as f64) as f128 }
@@ -87,10 +65,6 @@ macro_rules! compat_long_unary_weak {
 
 macro_rules! compat_long_binary {
     ($long:ident, $implementation:path) => {
-        #[cfg(target_arch = "x86_64")]
-        #[no_mangle]
-        pub extern "C" fn $long(x: f64, y: f64) -> f64 { $implementation(x, y) }
-        #[cfg(not(target_arch = "x86_64"))]
         #[no_mangle]
         pub extern "C" fn $long(x: f128, y: f128) -> f128 {
             $implementation(x as f64, y as f64) as f128
@@ -100,10 +74,6 @@ macro_rules! compat_long_binary {
 
 macro_rules! compat_long_ternary {
     ($long:ident, $implementation:path) => {
-        #[cfg(target_arch = "x86_64")]
-        #[no_mangle]
-        pub extern "C" fn $long(x: f64, y: f64, z: f64) -> f64 { $implementation(x, y, z) }
-        #[cfg(not(target_arch = "x86_64"))]
         #[no_mangle]
         pub extern "C" fn $long(x: f128, y: f128, z: f128) -> f128 {
             $implementation(x as f64, y as f64, z as f64) as f128
@@ -113,10 +83,6 @@ macro_rules! compat_long_ternary {
 
 macro_rules! compat_long_to_int {
     ($long:ident, $implementation:path, $result:ty) => {
-        #[cfg(target_arch = "x86_64")]
-        #[no_mangle]
-        pub extern "C" fn $long(x: f64) -> $result { $implementation(x) as $result }
-        #[cfg(not(target_arch = "x86_64"))]
         #[no_mangle]
         pub extern "C" fn $long(x: f128) -> $result { $implementation(x as f64) as $result }
     };
@@ -235,8 +201,7 @@ compat_long_unary!(asinhl, libm::asinh);
 compat_long_unary!(asinl, libm::asin);
 compat_long_unary!(atanhl, libm::atanh);
 compat_long_unary!(atanl, libm::atan);
-#[cfg(target_arch = "x86_64")]
-compat_long_binary!(atan2l, libm::atan2);
+
 compat_long_unary!(cbrtl, libm::cbrt);
 compat_long_unary!(ceill, ceil);
 compat_long_binary!(copysignl, copysign);
@@ -254,8 +219,7 @@ compat_long_unary!(floorl, floor);
 compat_long_binary!(fmaxl, libm::fmax);
 compat_long_binary!(fminl, libm::fmin);
 compat_long_binary!(fmodl, fmod);
-#[cfg(target_arch = "x86_64")]
-compat_long_binary!(hypotl, hypot);
+
 compat_long_unary!(log10l, log10);
 compat_long_unary!(log1pl, libm::log1p);
 compat_long_unary!(log2l, log2);
@@ -291,12 +255,8 @@ pub extern "C" fn pow10(x: f64) -> f64 { exp10(x) }
 pub extern "C" fn pow10f(x: f32) -> f32 { exp10f(x) }
 compat_long_unary_weak!(pow10l, exp10);
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn frexpl(x: f64, exponent: *mut c_int) -> f64 {
-    frexp(x, exponent)
-}
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub unsafe extern "C" fn frexpl(x: f128, exponent: *mut c_int) -> f128 {
     frexp(x as f64, exponent) as f128
@@ -349,33 +309,24 @@ pub extern "C" fn y1f(x: f32) -> f32 {
     libm::y1f(x)
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn ldexpl(x: f64, exponent: c_int) -> f64 { ldexp(x, exponent) }
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub unsafe extern "C" fn ldexpl(x: f128, exponent: c_int) -> f128 {
     ldexp(x as f64, exponent) as f128
 }
 
 compat_long_unary!(lgammal, libm::lgamma);
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-#[linkage = "weak"]
-pub unsafe extern "C" fn lgammal_r(x: f64, sign: *mut c_int) -> f64 { lgamma_r_impl(x, sign) }
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn lgammal_r(x: f128, sign: *mut c_int) -> f128 {
     lgamma_r_impl(x as f64, sign) as f128
 }
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn __lgammal_r(x: f64, sign: *mut c_int) -> f64 {
-    lgamma_r_impl(x, sign)
-}
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub unsafe extern "C" fn __lgammal_r(x: f128, sign: *mut c_int) -> f128 {
     lgamma_r_impl(x as f64, sign) as f128
@@ -406,10 +357,8 @@ pub extern "C" fn logbf(x: f32) -> f32 {
 }
 compat_long_unary!(logbl, logb);
 
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn modfl(x: f64, integer: *mut f64) -> f64 { modf(x, integer) }
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub unsafe extern "C" fn modfl(x: f128, integer: *mut f128) -> f128 {
     let mut integral = 0.0;
@@ -424,8 +373,7 @@ pub unsafe extern "C" fn nearbyint(x: f64) -> f64 {
     // FE_INEXACT.  Calling rint here lets LLVM legally lower the operation to
     // FRINTX after the environment-restoration sequence, which reintroduces
     // the very flag nearbyint is required to avoid.
-    #[cfg(target_arch = "aarch64")]
-    {
+        {
         let result: f64;
         core::arch::asm!(
             "frinti {result:d}, {input:d}",
@@ -440,28 +388,11 @@ pub unsafe extern "C" fn nearbyint(x: f64) -> f64 {
     // x86 that arithmetic may set the x87 status word even after MXCSR is
     // cleared, so save and restore the complete environment and then replay
     // every newly raised exception except FE_INEXACT (nearbyint's contract).
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        let mut env = core::mem::MaybeUninit::<fenv_t>::uninit();
-        fegetenv(env.as_mut_ptr());
-        let before = fetestexcept(FE_ALL_EXCEPT);
-        let result = rint(x);
-        let after = fetestexcept(FE_ALL_EXCEPT);
-        fesetenv(env.as_ptr());
-        // Some targets report the arithmetic status through a second FP status
-        // register when the saved environment is restored.  Make the one
-        // deliberately suppressed flag explicit after restoration as well.
-        feclearexcept(FE_INEXACT);
-        if before & FE_INEXACT != 0 { feraiseexcept(FE_INEXACT); }
-        let raised = (after & !before) & !FE_INEXACT;
-        if raised != 0 { feraiseexcept(raised); }
-        return result;
-    }
+
 }
 #[no_mangle]
 pub unsafe extern "C" fn nearbyintf(x: f32) -> f32 {
-    #[cfg(target_arch = "aarch64")]
-    {
+        {
         let result: f32;
         core::arch::asm!(
             "frinti {result:s}, {input:s}",
@@ -472,28 +403,13 @@ pub unsafe extern "C" fn nearbyintf(x: f32) -> f32 {
         result
     }
 
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        let mut env = core::mem::MaybeUninit::<fenv_t>::uninit();
-        fegetenv(env.as_mut_ptr());
-        let before = fetestexcept(FE_ALL_EXCEPT);
-        let result = rintf(x);
-        let after = fetestexcept(FE_ALL_EXCEPT);
-        fesetenv(env.as_ptr());
-        feclearexcept(FE_INEXACT);
-        if before & FE_INEXACT != 0 { feraiseexcept(FE_INEXACT); }
-        let raised = (after & !before) & !FE_INEXACT;
-        if raised != 0 { feraiseexcept(raised); }
-        result
-    }
+
 }
 compat_long_unary!(nearbyintl, rint);
 #[no_mangle]
 pub extern "C" fn nexttoward(x: f64, y: f64) -> f64 { libm::nextafter(x, y) }
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn nexttowardf(x: f32, y: f64) -> f32 { libm::nextafterf(x, y as f32) }
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub extern "C" fn nexttowardf(x: f32, y: f128) -> f32 { libm::nextafterf(x, y as f32) }
 compat_long_binary!(nexttowardl, libm::nextafter);
@@ -510,12 +426,8 @@ pub unsafe extern "C" fn remquof(x: f32, y: f32, quotient: *mut c_int) -> f32 {
     if !quotient.is_null() { *quotient = bits; }
     value
 }
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn remquol(x: f64, y: f64, quotient: *mut c_int) -> f64 {
-    remquo(x, y, quotient)
-}
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub unsafe extern "C" fn remquol(x: f128, y: f128, quotient: *mut c_int) -> f128 {
     remquo(x as f64, y as f64, quotient) as f128
@@ -572,19 +484,14 @@ pub extern "C" fn scalbf(x: f32, exponent: f32) -> f32 {
     if exponent < c_int::MIN as f32 { return scalbnf(x, -256); }
     scalbnf(x, exponent as c_int)
 }
-#[no_mangle]
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn scalblnl(x: f64, exponent: c_long) -> f64 { scalbln(x, exponent) }
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub extern "C" fn scalblnl(x: f128, exponent: c_long) -> f128 {
     scalbln(x as f64, exponent) as f128
 }
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub extern "C" fn scalbnl(x: f64, exponent: c_int) -> f64 { scalbn(x, exponent) }
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub extern "C" fn scalbnl(x: f128, exponent: c_int) -> f128 {
     scalbn(x as f64, exponent) as f128
@@ -602,13 +509,8 @@ pub unsafe extern "C" fn sincosf(x: f32, sin_out: *mut f32, cos_out: *mut f32) {
     if !sin_out.is_null() { *sin_out = sin_value; }
     if !cos_out.is_null() { *cos_out = cos_value; }
 }
-#[no_mangle]
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn sincosl(x: f64, sin_out: *mut f64, cos_out: *mut f64) {
-    sincos(x, sin_out, cos_out)
-}
-#[cfg(not(target_arch = "x86_64"))]
+
+
 #[no_mangle]
 pub unsafe extern "C" fn sincosl(x: f128, sin_out: *mut f128, cos_out: *mut f128) {
     let (sin_value, cos_value) = libm::sincos(x as f64);

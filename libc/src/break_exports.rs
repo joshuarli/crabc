@@ -5,14 +5,11 @@
 // contract: `brk` and every non-zero `sbrk` request fail with ENOMEM, while
 // `sbrk(0)` remains the one raw-kernel query.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_BRK: i64 = 12;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_BRK: i64 = 214;
 
 #[inline]
 unsafe fn cabi_break(address: *mut c_void) -> *mut c_void {
-    <Arch as Syscalls>::syscall1(CABI_SYS_BRK, address as i64) as usize as *mut c_void
+    aarch64_syscall::syscall1(CABI_SYS_BRK, address as i64) as usize as *mut c_void
 }
 
 #[no_mangle]

@@ -3,24 +3,16 @@
 // the timeval-based timestamp calls translate to the existing utimensat
 // helper so their microsecond contract is preserved.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_FACCESSAT2: i64 = 439;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_FACCESSAT2: i64 = 439;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_FCHDIR: i64 = 81;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_FCHDIR: i64 = 50;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_MKNODAT: i64 = 259;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_MKNODAT: i64 = 33;
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_FLOCK: i64 = 73;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
 const CABI_SYS_FLOCK: i64 = 32;
 
 const CABI_S_IFIFO: c_uint = 0o010000;
@@ -53,7 +45,7 @@ unsafe fn cabi_faccessat(
     if flags == 0 {
         // SYS_faccessat has no flags argument; the fourth register is ignored
         // by Linux and is kept zero for the architecture's syscall ABI.
-        <Arch as Syscalls>::syscall4(
+        aarch64_syscall::syscall4(
             SYS_FACCESSAT,
             dirfd as i64,
             path as i64,
@@ -61,7 +53,7 @@ unsafe fn cabi_faccessat(
             0,
         )
     } else {
-        <Arch as Syscalls>::syscall4(
+        aarch64_syscall::syscall4(
             CABI_SYS_FACCESSAT2,
             dirfd as i64,
             path as i64,
@@ -73,7 +65,7 @@ unsafe fn cabi_faccessat(
 
 #[inline]
 unsafe fn cabi_fchdir(fd: c_int) -> i64 {
-    <Arch as Syscalls>::syscall1(CABI_SYS_FCHDIR, fd as i64)
+    aarch64_syscall::syscall1(CABI_SYS_FCHDIR, fd as i64)
 }
 
 #[inline]
@@ -83,7 +75,7 @@ unsafe fn cabi_mknodat(
     mode: c_uint,
     dev: c_ulong,
 ) -> i64 {
-    <Arch as Syscalls>::syscall4(
+    aarch64_syscall::syscall4(
         CABI_SYS_MKNODAT,
         dirfd as i64,
         path as i64,

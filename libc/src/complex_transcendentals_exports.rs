@@ -556,34 +556,8 @@ fn cabi_catanh_float(z: ComplexFloat) -> ComplexFloat {
 
 // Export the double and float entry points.  Select the ABI path at compile
 // time so the fallback body is not left as unreachable code in native builds.
-#[cfg(not(target_arch = "aarch64"))]
-#[inline]
-fn cabi_cexp_float(z: ComplexFloat) -> ComplexFloat {
-    let x = z.re;
-    let y = z.im;
-    if y == 0.0 {
-        return cabi_cf(expf(x), y);
-    }
-    if x == 0.0 {
-        return cabi_cf(cosf(y), sinf(y));
-    }
-    if !y.is_finite() {
-        if is_inff(x) && x.is_sign_negative() {
-            return cabi_cf(0.0, 0.0);
-        }
-        if is_inff(x) && x.is_sign_positive() {
-            return cabi_cf(x, y - y);
-        }
-        return cabi_cf(y - y, y - y);
-    }
-    if x >= 88.0 && x < 193.0 {
-        return cabi_cf_scaled_exp(x, y, 0);
-    }
-    let e = expf(x);
-    cabi_cf(e * cosf(y), e * sinf(y))
-}
 
-#[cfg(target_arch = "aarch64")]
+
 macro_rules! cabi_export_complex_double {
     ($($name:ident => $long:ident),* $(,)?) => {
         $(
@@ -595,19 +569,8 @@ macro_rules! cabi_export_complex_double {
     };
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-macro_rules! cabi_export_complex_double {
-    ($($name:ident => $fallback:ident),* $(,)?) => {
-        $(
-            #[no_mangle]
-            pub extern "C" fn $name(z: ComplexDouble) -> ComplexDouble {
-                $fallback(z)
-            }
-        )*
-    };
-}
 
-#[cfg(target_arch = "aarch64")]
+
 cabi_export_complex_double!(
     cexp => cexpl,
     clog => clogl,
@@ -626,26 +589,8 @@ cabi_export_complex_double!(
     catanh => catanhl,
 );
 
-#[cfg(not(target_arch = "aarch64"))]
-cabi_export_complex_double!(
-    cexp => cabi_cd_exp,
-    clog => cabi_cd_clog,
-    csin => cabi_csin_double,
-    ccos => cabi_ccos_double,
-    ctan => cabi_ctan_double,
-    csqrt => cabi_csqrt_double,
-    csinh => cabi_csinh_double,
-    ccosh => cabi_ccosh_double,
-    ctanh => cabi_ctanh_double,
-    casin => cabi_casin_double,
-    cacos => cabi_cacos_double,
-    catan => cabi_catan_double,
-    casinh => cabi_casinh_double,
-    cacosh => cabi_cacosh_double,
-    catanh => cabi_catanh_double,
-);
 
-#[cfg(target_arch = "aarch64")]
+
 macro_rules! cabi_export_complex_float {
     ($($name:ident => $long:ident),* $(,)?) => {
         $(
@@ -657,19 +602,8 @@ macro_rules! cabi_export_complex_float {
     };
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-macro_rules! cabi_export_complex_float {
-    ($($name:ident => $fallback:ident),* $(,)?) => {
-        $(
-            #[no_mangle]
-            pub extern "C" fn $name(z: ComplexFloat) -> ComplexFloat {
-                $fallback(z)
-            }
-        )*
-    };
-}
 
-#[cfg(target_arch = "aarch64")]
+
 cabi_export_complex_float!(
     cexpf => cexpl,
     clogf => clogl,
@@ -688,124 +622,39 @@ cabi_export_complex_float!(
     catanhf => catanhl,
 );
 
-#[cfg(not(target_arch = "aarch64"))]
-cabi_export_complex_float!(
-    cexpf => cabi_cexp_float,
-    clogf => cabi_cf_clog,
-    csinf => cabi_csin_float,
-    ccosf => cabi_ccos_float,
-    ctanf => cabi_ctan_float,
-    csqrtf => cabi_cf_sqrt,
-    csinhf => cabi_csinh_float,
-    ccoshf => cabi_ccosh_float,
-    ctanhf => cabi_ctanh_float,
-    casinf => cabi_casin_float,
-    cacosf => cabi_cacos_float,
-    catanf => cabi_catan_float,
-    casinhf => cabi_casinh_float,
-    cacoshf => cabi_cacosh_float,
-    catanhf => cabi_catanh_float,
-);
+
 
 // x86_64 uses the 64-bit long-double ABI, so these are aliases at the ABI
 // boundary.  AArch64 uses native binary128 implementations below.  RISC-V
 // retains the preexisting f64 compatibility boundary used by math_compat.rs.
-#[cfg(target_arch = "x86_64")]
-macro_rules! cabi_long_complex_aliases {
-    ($($name:ident => $helper:ident),* $(,)?) => {
-        $(
-            #[no_mangle]
-            pub extern "C" fn $name(z: ComplexLong) -> ComplexLong {
-                $helper(z)
-            }
-        )*
-    };
-}
 
-#[cfg(target_arch = "x86_64")]
-cabi_long_complex_aliases!(
-    cexpl => cexp,
-    clogl => clog,
-    csinl => csin,
-    ccosl => ccos,
-    ctanl => ctan,
-    csqrtl => csqrt,
-    csinhl => csinh,
-    ccoshl => ccosh,
-    ctanhl => ctanh,
-    casinl => casin,
-    cacosl => cacos,
-    catanl => catan,
-    casinhl => casinh,
-    cacoshl => cacosh,
-    catanhl => catanh,
-);
 
-#[cfg(target_arch = "riscv64")]
-#[inline]
-fn cabi_cl_to_double(z: ComplexLong) -> ComplexDouble {
-    cabi_cd(z.re as f64, z.im as f64)
-}
 
-#[cfg(target_arch = "riscv64")]
-#[inline]
-fn cabi_cl_from_double(z: ComplexDouble) -> ComplexLong {
-    ComplexLong { re: z.re as f128, im: z.im as f128 }
-}
 
-#[cfg(target_arch = "riscv64")]
-macro_rules! cabi_long_complex_compat {
-    ($($name:ident => $helper:ident),* $(,)?) => {
-        $(
-            #[no_mangle]
-            pub extern "C" fn $name(z: ComplexLong) -> ComplexLong {
-                cabi_cl_from_double($helper(cabi_cl_to_double(z)))
-            }
-        )*
-    };
-}
 
-#[cfg(target_arch = "riscv64")]
-cabi_long_complex_compat!(
-    cexpl => cabi_cd_exp,
-    clogl => cabi_cd_clog,
-    csinl => cabi_csin_double,
-    ccosl => cabi_ccos_double,
-    ctanl => cabi_ctan_double,
-    csqrtl => cabi_csqrt_double,
-    csinhl => cabi_csinh_double,
-    ccoshl => cabi_ccosh_double,
-    ctanhl => cabi_ctanh_double,
-    casinl => cabi_casin_double,
-    cacosl => cabi_cacos_double,
-    catanl => cabi_catan_double,
-    casinhl => cabi_casinh_double,
-    cacoshl => cabi_cacosh_double,
-    catanhl => cabi_catanh_double,
-);
+
+
+
+
+
+
 
 // The native AArch64 long-double ABI is binary128. These inverse functions
 // therefore bypass the legacy f64 compatibility aliases above.
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn casinl(z: ComplexLong) -> ComplexLong { f128_casin(z) }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn cacosl(z: ComplexLong) -> ComplexLong { f128_cacos(z) }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn catanl(z: ComplexLong) -> ComplexLong { f128_catan(z) }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn casinhl(z: ComplexLong) -> ComplexLong { f128_casinh(z) }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn cacoshl(z: ComplexLong) -> ComplexLong { f128_cacosh(z) }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn catanhl(z: ComplexLong) -> ComplexLong { f128_catanh(z) }

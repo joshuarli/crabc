@@ -2,13 +2,9 @@
 // the C caller, so the libc boundary intentionally forwards it as opaque
 // storage and lets the kernel report both required size and filesystem support.
 
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_NAME_TO_HANDLE_AT: i64 = 303;
-#[cfg(target_arch = "x86_64")]
-const CABI_SYS_OPEN_BY_HANDLE_AT: i64 = 304;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+
+
 const CABI_SYS_NAME_TO_HANDLE_AT: i64 = 264;
-#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 const CABI_SYS_OPEN_BY_HANDLE_AT: i64 = 265;
 
 #[no_mangle]
@@ -19,7 +15,7 @@ pub unsafe extern "C" fn name_to_handle_at(
     mount_id: *mut c_int,
     flags: c_int,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall5(
+    syscall_result(aarch64_syscall::syscall5(
         CABI_SYS_NAME_TO_HANDLE_AT,
         dirfd as i64,
         path as i64,
@@ -35,7 +31,7 @@ pub unsafe extern "C" fn open_by_handle_at(
     handle: *mut c_void,
     flags: c_int,
 ) -> c_int {
-    syscall_result(<Arch as Syscalls>::syscall3(
+    syscall_result(aarch64_syscall::syscall3(
         CABI_SYS_OPEN_BY_HANDLE_AT,
         mount_fd as i64,
         handle as i64,

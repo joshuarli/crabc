@@ -4,16 +4,12 @@
 // operations must not cross that narrowing boundary because cabsl and cargl
 // are tested at the target's full binary128 precision.
 
-#[cfg(target_arch = "aarch64")]
 const F128_HYPOT_SPLIT: f128 = 144115188075855873.0_f128; // 2^57 + 1
 
-#[cfg(target_arch = "aarch64")]
 const F128_HYPOT_SCALE_UP: f128 = f128::from_bits((26383u128) << 112); // 2^10000
 
-#[cfg(target_arch = "aarch64")]
 const F128_HYPOT_SCALE_DOWN: f128 = f128::from_bits((6383u128) << 112); // 2^-10000
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_sqrt(x: f128) -> f128 {
     // LLVM lowers f128::sqrt to the C sqrtl symbol on AArch64.  That symbol
@@ -54,7 +50,6 @@ fn f128_sqrt(x: f128) -> f128 {
     root * scale
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_square(x: f128) -> (f128, f128) {
     // Dekker split, matching musl's hypotl.c for LDBL_MANT_DIG == 113.
@@ -66,7 +61,6 @@ fn f128_square(x: f128) -> (f128, f128) {
     (hi, lo)
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn hypotl(x: f128, y: f128) -> f128 {
     let mut ux = x.to_bits() & !(1u128 << 127);
@@ -112,7 +106,6 @@ pub extern "C" fn hypotl(x: f128, y: f128) -> f128 {
 }
 
 // The high/low split is the same one shared by musl's atanl and atan2l.
-#[cfg(target_arch = "aarch64")]
 const F128_ATAN_HI: [f128; 4] = [
     4.63647609000806116214256231461214397e-01_f128,
     7.85398163397448309615660845819875699e-01_f128,
@@ -120,7 +113,6 @@ const F128_ATAN_HI: [f128; 4] = [
     1.57079632679489661923132169163975140e+00_f128,
 ];
 
-#[cfg(target_arch = "aarch64")]
 const F128_ATAN_LO: [f128; 4] = [
     4.89509642257333492668618435220297706e-36_f128,
     2.16795253253094525619926100651083806e-35_f128,
@@ -128,7 +120,6 @@ const F128_ATAN_LO: [f128; 4] = [
     4.33590506506189051239852201302167613e-35_f128,
 ];
 
-#[cfg(target_arch = "aarch64")]
 const F128_ATAN_T: [f128; 24] = [
     3.33333333333333333333333333333333125e-01_f128,
     -1.99999999999999999999999999999180430e-01_f128,
@@ -156,7 +147,6 @@ const F128_ATAN_T: [f128; 24] = [
     -2.58521121597609872727919154569765469e-03_f128,
 ];
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_atan_t_even(x: f128) -> f128 {
     F128_ATAN_T[0]
@@ -173,7 +163,6 @@ fn f128_atan_t_even(x: f128) -> f128 {
                                                 + x * F128_ATAN_T[22]))))))))))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_atan_t_odd(x: f128) -> f128 {
     F128_ATAN_T[1]
@@ -190,7 +179,6 @@ fn f128_atan_t_odd(x: f128) -> f128 {
                                                 + x * F128_ATAN_T[23]))))))))))
 }
 
-#[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_atan(x: f128) -> f128 {
     let bits = x.to_bits();
@@ -257,7 +245,6 @@ fn f128_atan(x: f128) -> f128 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn atan2l(y: f128, x: f128) -> f128 {
     if x.is_nan() || y.is_nan() {

@@ -229,7 +229,6 @@ pub unsafe extern "C" fn atan(x: f64) -> f64 {
 const INVTRIG_PI: f64 = asdouble(0x400921FB54442D18);
 const INVTRIG_PI_LO: f64 = asdouble(0x3CA1A62633145C07);
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
     // GCC lowers the C99 `carg` builtin directly to atan2 on AArch64,
@@ -250,80 +249,7 @@ pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
     result
 }
 
-#[cfg(not(target_arch = "aarch64"))]
-#[no_mangle]
-unsafe extern "C" fn cabi_atan2_fallback(y: f64, x: f64) -> f64 {
-    if is_nan(x) || is_nan(y) {
-        return x + y;
-    }
-    let mut ix: u32 = 0;
-    let mut lx: u32 = 0;
-    let mut iy: u32 = 0;
-    let mut ly: u32 = 0;
-    extract_words(&mut ix, &mut lx, x);
-    extract_words(&mut iy, &mut ly, y);
 
-    if (ix.wrapping_sub(0x3ff00000) | lx) == 0 {
-        // x = 1.0
-        return atan(y);
-    }
-    let m = ((iy >> 31) & 1) | ((ix >> 30) & 2); // 2*sign(x)+sign(y)
-    ix &= 0x7fffffff;
-    iy &= 0x7fffffff;
-
-    // when y = 0
-    if (iy | ly) == 0 {
-        match m {
-            0 | 1 => return y,              // atan(+-0,+anything)=+-0
-            2 => return INVTRIG_PI,          // atan(+0,-anything) = pi
-            3 => return -INVTRIG_PI,         // atan(-0,-anything) =-pi
-            _ => core::hint::unreachable_unchecked(),
-        }
-    }
-    // when x = 0
-    if (ix | lx) == 0 {
-        return if (m & 1) != 0 { -INVTRIG_PI / 2.0 } else { INVTRIG_PI / 2.0 };
-    }
-    // when x is INF
-    if ix == 0x7ff00000 {
-        if iy == 0x7ff00000 {
-            match m {
-                0 => return INVTRIG_PI / 4.0,           // atan(+INF,+INF)
-                1 => return -INVTRIG_PI / 4.0,          // atan(-INF,+INF)
-                2 => return 3.0 * INVTRIG_PI / 4.0,     // atan(+INF,-INF)
-                3 => return -3.0 * INVTRIG_PI / 4.0,    // atan(-INF,-INF)
-                _ => core::hint::unreachable_unchecked(),
-            }
-        } else {
-            match m {
-                0 => return 0.0,                // atan(+...,+INF)
-                1 => return -0.0,               // atan(-...,+INF)
-                2 => return INVTRIG_PI,          // atan(+...,-INF)
-                3 => return -INVTRIG_PI,         // atan(-...,-INF)
-                _ => core::hint::unreachable_unchecked(),
-            }
-        }
-    }
-    // |y/x| > 0x1p64
-    if ix.wrapping_add(64 << 20) < iy || iy == 0x7ff00000 {
-        return if (m & 1) != 0 { -INVTRIG_PI / 2.0 } else { INVTRIG_PI / 2.0 };
-    }
-
-    // z = atan(|y/x|) without spurious underflow
-    let z;
-    if (m & 2) != 0 && iy.wrapping_add(64 << 20) < ix {
-        // |y/x| < 0x1p-64, x<0
-        z = 0.0;
-    } else {
-        z = atan(fabs(y / x));
-    }
-    match m {
-        0 => z,                              // atan(+,+)
-        1 => -z,                             // atan(-,+)
-        2 => INVTRIG_PI - (z - INVTRIG_PI_LO), // atan(+,-)
-        _ => (z - INVTRIG_PI_LO) - INVTRIG_PI, // atan(-,-)
-    }
-}
 
 // ============================================================
 // Single-precision: shared constants for asinf/acosf
@@ -525,7 +451,6 @@ pub unsafe extern "C" fn atanf(x: f32) -> f32 {
 const INVTRIG_PI_F: f32 = asfloat(0x40490fdb);
 const INVTRIG_PI_LO_F: f32 = asfloat(0xb3bbbd2e);
 
-#[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
     let result = atan2l(y as f128, x as f128) as f32;
@@ -536,89 +461,4 @@ pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
         }
     }
     result
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-#[no_mangle]
-unsafe extern "C" fn cabi_atan2f_fallback(y: f32, x: f32) -> f32 {
-    if is_nanf(x) || is_nanf(y) {
-        return x + y;
-    }
-    let ix: u32;
-    let iy: u32;
-    ix = get_float_word(x);
-    iy = get_float_word(y);
-
-    if ix == 0x3f800000 {
-        // x=1.0
-        return atanf(y);
-    }
-    let m = ((iy >> 31) & 1) | ((ix >> 30) & 2); // 2*sign(x)+sign(y)
-    let ix = ix & 0x7fffffff;
-    let iy = iy & 0x7fffffff;
-
-    // when y = 0
-    if iy == 0 {
-        match m {
-            0 | 1 => return y,              // atan(+-0,+anything)=+-0
-            2 => return INVTRIG_PI_F,        // atan(+0,-anything) = pi
-            3 => return -INVTRIG_PI_F,       // atan(-0,-anything) =-pi
-            _ => core::hint::unreachable_unchecked(),
-        }
-    }
-    // when x = 0
-    if ix == 0 {
-        return if (m & 1) != 0 { -INVTRIG_PI_F / 2.0 } else { INVTRIG_PI_F / 2.0 };
-    }
-    // when x is INF
-    if ix == 0x7f800000 {
-        if iy == 0x7f800000 {
-            match m {
-                0 => return INVTRIG_PI_F / 4.0,           // atan(+INF,+INF)
-                1 => return -INVTRIG_PI_F / 4.0,          // atan(-INF,+INF)
-                2 => return 3.0 * INVTRIG_PI_F / 4.0,     // atan(+INF,-INF)
-                3 => return -3.0 * INVTRIG_PI_F / 4.0,    // atan(-INF,-INF)
-                _ => core::hint::unreachable_unchecked(),
-            }
-        } else {
-            match m {
-                0 => return 0.0f32,             // atan(+...,+INF)
-                1 => return -0.0f32,            // atan(-...,+INF)
-                2 => return INVTRIG_PI_F,        // atan(+...,-INF)
-                3 => return -INVTRIG_PI_F,       // atan(-...,-INF)
-                _ => core::hint::unreachable_unchecked(),
-            }
-        }
-    }
-    // |y/x| > 0x1p26
-    if ix.wrapping_add(26 << 23) < iy || iy == 0x7f800000 {
-        return if (m & 1) != 0 { -INVTRIG_PI_F / 2.0 } else { INVTRIG_PI_F / 2.0 };
-    }
-
-    // z = atan(|y/x|) with correct underflow
-    let z;
-    if (m & 2) != 0 && iy.wrapping_add(26 << 23) < ix {
-        // |y/x| < 0x1p-26, x < 0
-        z = 0.0f32;
-    } else {
-        z = atanf(fabsf(y / x));
-    }
-    match m {
-        0 => z,                                  // atan(+,+)
-        1 => -z,                                 // atan(-,+)
-        2 => INVTRIG_PI_F - (z - INVTRIG_PI_LO_F), // atan(+,-)
-        _ => (z - INVTRIG_PI_LO_F) - INVTRIG_PI_F, // atan(-,-)
-    }
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-#[no_mangle]
-pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
-    cabi_atan2_fallback(y, x)
-}
-
-#[cfg(not(target_arch = "aarch64"))]
-#[no_mangle]
-pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
-    cabi_atan2f_fallback(y, x)
 }
