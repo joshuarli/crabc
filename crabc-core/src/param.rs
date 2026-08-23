@@ -35,22 +35,22 @@ pub fn auxv_value(tag: usize) -> Option<usize> {
     // SAFETY: `PROC_SELF_AUXV` is a static, NUL-terminated path and the
     // direct open seam does not retain the pointer after returning.
     let fd =
-        unsafe { super::fs::openat_raw(super::AT_FDCWD, PROC_SELF_AUXV.as_ptr(), 0, 0) }.ok()?;
+        unsafe { crate::fs::openat_raw(crate::AT_FDCWD, PROC_SELF_AUXV.as_ptr(), 0, 0) }.ok()?;
 
     let value = read_auxv_value(fd, tag);
     // The descriptor is private to this query. Linux releases it even when
     // the read failed, so no retry is attempted for EINTR here.
-    let _ = super::io::close(fd);
+    let _ = crate::io::close(fd);
     value
 }
 
 #[inline]
-fn read_auxv_value(fd: super::RawFd, requested_tag: usize) -> Option<usize> {
+fn read_auxv_value(fd: crate::RawFd, requested_tag: usize) -> Option<usize> {
     let mut record = [0u8; AUXV_RECORD_BYTES];
     let mut filled = 0usize;
 
     loop {
-        let count = super::io::read(fd, &mut record[filled..]).ok()?;
+        let count = crate::io::read(fd, &mut record[filled..]).ok()?;
         if count == 0 {
             return None;
         }

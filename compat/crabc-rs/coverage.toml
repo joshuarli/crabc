@@ -298,7 +298,7 @@ kind = "implementation"
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "crabc-core private RuntimeV1 consumers"
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/dl.rs", "crabc-rs/src/runtime_thread.rs", "crabc-rs/src/cfile.rs"]
+evidence = ["crabc-core/src/runtime.rs", "crabc-rs/src/dl.rs", "crabc-rs/src/runtime_thread.rs", "crabc-rs/src/cfile.rs"]
 rationale = "The loader, thread/TLS, and CFile facades are useful native implementation capabilities not represented by an additional public export."
 
 [[capability]]
@@ -875,7 +875,7 @@ shared_impl = ["crabc_core::process::chroot"]
 native_boundary = "direct Linux/AArch64 chroot syscall over a checked NUL-terminated path"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/process_chroot.rs", "crabc-rs/examples/process_chroot_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_chroot.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/process_chroot.rs", "crabc-rs/examples/process_chroot_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_chroot.rs"]
 rationale = "The Rustix-shaped path operation is memory-safe but process-global: callers coordinate affected threads and preserve any directory descriptors needed after the root change. The regression exercises only an ENOENT path, never irreversibly changes a test process root."
 
 [[capability]]
@@ -889,7 +889,7 @@ shared_impl = ["crabc_core::fs::statx_raw"]
 native_boundary = "direct Linux/AArch64 statx syscall over a private 256-byte aligned kernel record, typed directory descriptor/path/at flags, a closed recognized field mask, and caller-owned MaybeUninit output"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/statx.rs", "crabc-rs/examples/statx_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "libc/src/filesystem_stats_exports.rs"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/statx.rs", "crabc-rs/examples/statx_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "libc/src/filesystem_stats_exports.rs"]
 rationale = "The reserved STATX bit is rejected before the syscall and unknown requested bits are masked to the private record's understood layout. The result mask is authoritative for optional observations. This stateless direct contract preserves kernel ENOSYS and other errors; it intentionally does not reproduce musl's fstatat fallback or Rustix's process-wide availability cache."
 
 [[capability]]
@@ -987,7 +987,7 @@ shared_impl = ["crabc_core::fs::mknodat"]
 native_boundary = "direct Linux/AArch64 mknodat syscall over a borrowed directory descriptor, explicit FileType, checked permission/special mode bits, and exact dev_t word"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/special_nodes.rs", "crabc-rs/examples/special_nodes_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/special_nodes.rs", "crabc-rs/examples/special_nodes_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native facade separates the node kind from creation permissions and rejects metadata-only Unknown plus caller-supplied type bits before the syscall. FIFO conveniences supply the only valid zero device word themselves; device-node privilege and device-number validation remain kernel errors rather than unsafe Rust memory operations."
 
 [[capability]]
@@ -1001,7 +1001,7 @@ shared_impl = ["crabc_core::fs::{fchown, fchownat}"]
 native_boundary = "direct Linux/AArch64 fchown and fchownat syscalls over borrowed paths or descriptors, opaque Uid/Gid, explicit Option no-change fields, and a closed ownership-only at-flag type"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/ownership.rs", "crabc-rs/examples/ownership_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/ownership.rs", "crabc-rs/examples/ownership_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "AArch64 implements pathname ownership through fchownat. None is the sole spelling for Linux's all-ones no-change sentinel; a raw all-ones Uid or Gid is rejected, and ChownFlags deliberately cannot carry unrelated AT_* family bits."
 
 [[capability]]
@@ -1015,7 +1015,7 @@ shared_impl = ["crabc_core::fs::access"]
 native_boundary = "direct Linux/AArch64 three-argument faccessat syscall with AT_FDCWD and a closed real-ID access mode"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/access.rs", "crabc-rs/examples/access_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/access.rs", "crabc-rs/examples/access_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The bounded facade preserves standard access() current-directory and real-ID semantics, including existence mode, without claiming faccessat directory-descriptor flags or faccessat2 behavior."
 
 [[capability]]
@@ -1029,7 +1029,7 @@ shared_impl = ["crabc_core::fs::accessat"]
 native_boundary = "direct Linux/AArch64 faccessat for empty flags and faccessat2 for the closed EACCESS/SYMLINK_NOFOLLOW flag subset over a borrowed directory descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/filesystem_paths_exports.rs", "crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/accessat.rs", "crabc-rs/examples/accessat_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/at.rs", "compat/rustix/source/accessat.rs"]
+evidence = ["libc/src/filesystem_paths_exports.rs", "crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/accessat.rs", "crabc-rs/examples/accessat_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/at.rs", "compat/rustix/source/accessat.rs"]
 rationale = "Empty flags select the direct three-argument faccessat syscall; EACCESS or SYMLINK_NOFOLLOW selects faccessat2. The facade rejects all distinguishable unsupported at-family bits before the syscall; Linux's reused REMOVEDIR/EACCESS bit is necessarily interpreted as EACCESS. It deliberately adds no Rustix/musl fallback, credential emulation, or process-global availability cache, so an old kernel's ENOSYS remains observable."
 
 [[capability]]
@@ -1043,7 +1043,7 @@ shared_impl = ["crabc_core::fs::truncate"]
 native_boundary = "direct Linux/AArch64 truncate syscall over an Arg pathname and checked signed loff_t length"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/truncate.rs", "crabc-rs/examples/truncate_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/truncate.rs", "crabc-rs/examples/truncate_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The unsigned byte count is rejected before path conversion when it cannot fit Linux loff_t, so invalid values cannot mutate the selected file; descriptor truncation remains its separately verified borrowed-descriptor operation."
 
 [[capability]]
@@ -1057,7 +1057,7 @@ shared_impl = ["crabc_core::fs::copy_file_range"]
 native_boundary = "direct Linux/AArch64 copy_file_range syscall with borrowed descriptors, staged optional loff_t offsets, and zero flags"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/copy_file_range.rs", "crabc-rs/examples/copy_file_range_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/copy_file_range.rs", "crabc-rs/examples/copy_file_range_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native operation preserves Linux's explicit-offset versus descriptor-position modes, returns short copy counts including EOF zero, validates signed offset/range bounds before the syscall, and commits caller offsets only after a successful kernel result."
 
 [[capability]]
@@ -1071,7 +1071,7 @@ shared_impl = ["crabc_core::process::getcwd_raw"]
 native_boundary = "direct Linux/AArch64 getcwd syscall over caller-owned Buffer<u8> with a returned initialized NUL-terminated prefix"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/getcwd.rs", "crabc-rs/examples/getcwd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/getcwd.rs", "crabc-rs/examples/getcwd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The allocation-free form preserves the exact initialized prefix and its terminator, while the alloc-gated convenience retries only ERANGE and returns a CString. No C allocation convention, public C ABI, or TLS errno crosses either facade."
 
 [[capability]]
@@ -1085,7 +1085,7 @@ shared_impl = ["crabc_core::process::{chdir, fchdir}"]
 native_boundary = "direct Linux/AArch64 chdir and fchdir syscalls over an Arg pathname or borrowed directory descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/process_cwd.rs", "crabc-rs/examples/process_cwd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/process_cwd.rs", "crabc-rs/examples/process_cwd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "Both operations mutate the process-global current directory. They are safe in the Rustix/std sense, but callers must coordinate concurrent pathname work; the tested guard restores the original directory through an owned descriptor even on an error path."
 
 [[capability]]
@@ -1246,7 +1246,7 @@ shared_impl = ["crabc_core::fs::fadvise64"]
 native_boundary = "direct Linux/AArch64 fadvise64 syscall with a borrowed descriptor and checked signed ranges"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fadvise.rs", "crabc-rs/examples/fadvise_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fadvise.rs", "crabc-rs/examples/fadvise_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native API models the six POSIX advice policies as a closed type and distinguishes an advisory range to end-of-file from an explicit nonzero range. It validates the signed Linux ABI before the syscall without reproducing C's direct-error interface."
 
 [[capability]]
@@ -1273,7 +1273,7 @@ shared_impl = ["crabc_core::io::fcntl_get_seals"]
 native_boundary = "direct Linux/AArch64 fcntl syscall 25 with fixed F_GET_SEALS command 1034 over a borrowed eligible inode descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fcntl_seals.rs", "crabc-rs/examples/fcntl_seals_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/fcntl.rs", "compat/rustix/source/fcntl_seals.rs"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fcntl_seals.rs", "crabc-rs/examples/fcntl_seals_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/fcntl.rs", "compat/rustix/source/fcntl_seals.rs"]
 rationale = "The exact Rustix-shaped observer retains all returned Linux seal bits, including future bits, without mutating the inode. An allow-sealing memfd starts unsealed, a plain memfd starts F_SEAL_SEAL, and ineligible descriptors retain their direct kernel EINVAL. The public C fcntl symbol remains owned by io.status-flags."
 
 [[capability]]
@@ -1286,7 +1286,7 @@ shared_impl = ["crabc_core::io::fcntl_add_seals"]
 native_boundary = "direct Linux/AArch64 fcntl syscall 25 with fixed F_ADD_SEALS command 1033 and immediate seal bits over a borrowed eligible inode descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fcntl_seals.rs", "crabc-rs/examples/fcntl_add_seals_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/fcntl.rs", "compat/rustix/source/fcntl_add_seals.rs"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fcntl_seals.rs", "crabc-rs/examples/fcntl_add_seals_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/fcntl.rs", "compat/rustix/source/fcntl_add_seals.rs"]
 rationale = "The exact Rustix-shaped mutator adds only the supplied seal bits to a sealing-capable inode. Plain memfds and inodes already carrying F_SEAL_SEAL retain direct EPERM; a successful mutation can be observed through the separate seal-observation capability. The public C fcntl symbol remains owned by io.status-flags."
 
 [[capability]]
@@ -1314,7 +1314,7 @@ shared_impl = ["crabc_core::io direct Linux/AArch64 pread64 and pwrite64 syscall
 native_boundary = "borrowed descriptor, caller-owned initialized or MaybeUninit buffer, and explicit non-negative u64 offset; no public C ABI or TLS errno"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/positioned.rs", "crabc-rs/examples/positioned_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/io.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/positioned.rs", "crabc-rs/examples/positioned_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The typed positioned operations preserve descriptor offset and Buffer initialization contracts. Vectored, flag-bearing, splice, and sync extensions remain separate unsafe descriptor work."
 
 [[capability]]
@@ -1328,7 +1328,7 @@ shared_impl = ["crabc_core::io::{close, fcntl_raw}", "crabc_core::fs::lseek", "c
 native_boundary = "an owned close boundary, typed current-offset advisory locks, borrowed descriptors plus optional staged offsets for splice, and an explicit unsafe raw-memory vmsplice boundary; no public C ABI or TLS errno"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fd.rs", "crabc-rs/src/fs.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/descriptor.rs", "crabc-rs/examples/descriptor_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/pipe_splice.rs", "../rustix/src/pipe.rs"]
+evidence = ["crabc-core/src/io.rs", "crabc-core/src/fs.rs", "crabc-core/src/pipe.rs", "crabc-rs/src/fd.rs", "crabc-rs/src/fs.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/descriptor.rs", "crabc-rs/examples/descriptor_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/pipe_splice.rs", "../rustix/src/pipe.rs"]
 rationale = "OwnedFd close consumes before Linux's non-retrying close, current-position record locking avoids C command/negative-length traps, splice retains Rustix's source shape, and vmsplice keeps direction, mutability, and GIFT lifetime obligations explicit. tee and generic fcntl remain independently owned contracts."
 
 [[capability]]
@@ -1342,7 +1342,7 @@ shared_impl = ["crabc_core::io::{fcntl_getfl, fcntl_setfl}"]
 native_boundary = "direct Linux/AArch64 fcntl syscall with F_GETFL and F_SETFL immediate commands over a borrowed descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fcntl_flags.rs", "crabc-rs/examples/fcntl_flags_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/fcntl.rs"]
+evidence = ["crabc-core/src/io.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/fcntl_flags.rs", "crabc-rs/examples/fcntl_flags_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/fcntl.rs"]
 rationale = "The closed OFlags type retains unknown observed status bits and follows Rustix's get/set split. F_SETFL changes the shared open-file description, so duplicates observe it; descriptor-local FD_CLOEXEC remains the separately typed F_GETFD/F_SETFD contract. Kernel-permission and filesystem errors remain direct Result errors."
 
 [[capability]]
@@ -1356,7 +1356,7 @@ shared_impl = ["crabc_core::fs::sync"]
 native_boundary = "direct Linux/AArch64 zero-argument sync syscall with its specified unit success contract"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/filesystem_sync.rs", "crabc-rs/examples/filesystem_sync_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/filesystem_sync.rs", "crabc-rs/examples/filesystem_sync_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "Global sync is neither descriptor- nor mount-scoped. Linux waits for kernel/filesystem writeback completion, while POSIX permits scheduling-only behavior; neither promise establishes persistence past a device volatile cache."
 
 [[capability]]
@@ -1370,7 +1370,7 @@ shared_impl = ["crabc_core::io::sync_file_range"]
 native_boundary = "direct Linux/AArch64 sync_file_range syscall with a borrowed descriptor, checked signed loff_t range, and closed flags"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/sync_file_range.rs", "crabc-rs/examples/sync_file_range_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/io.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/sync_file_range.rs", "crabc-rs/examples/sync_file_range_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The facade exposes only Linux WAIT_BEFORE, WRITE, and WAIT_AFTER. It rejects unknown flags and unrepresentable range values before syscall 84, retains zero-length-to-EOF semantics, and never transfers descriptor ownership."
 
 [[capability]]
@@ -1384,7 +1384,7 @@ shared_impl = ["crabc_core::fs::readahead"]
 native_boundary = "direct Linux/AArch64 readahead syscall with a borrowed descriptor and checked signed loff_t half-open range"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/readahead.rs", "crabc-rs/examples/readahead_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/readahead.rs", "crabc-rs/examples/readahead_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The safe native boundary takes unsigned byte offsets and lengths, rejects values or checked range ends outside Linux's signed loff_t range before the syscall, and leaves the borrowed descriptor position unchanged."
 
 [[capability]]
@@ -1398,7 +1398,7 @@ shared_impl = ["crabc_core::io::sendfile"]
 native_boundary = "direct Linux/AArch64 sendfile syscall over two borrowed descriptors and an optional mutable input offset"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/sendfile.rs", "crabc-rs/examples/sendfile_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/sendfile.rs"]
+evidence = ["crabc-core/src/fs.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/sendfile.rs", "crabc-rs/examples/sendfile_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/fs/sendfile.rs"]
 rationale = "The native API preserves Linux's two distinct offset modes: an explicit mutable offset leaves the input descriptor position intact, while no offset advances it. Descriptor ownership remains borrowed and offsets outside signed off_t are rejected before the syscall."
 
 [[capability]]
@@ -1412,7 +1412,7 @@ shared_impl = ["crabc_core::io::{preadv2_raw, pwritev2_raw}"]
 native_boundary = "direct Linux/AArch64 preadv2/pwritev2 syscalls with explicit low/high offset words and closed RWF flags"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/preadv2.rs", "crabc-rs/examples/preadv2_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/backend/libc/c.rs"]
+evidence = ["crabc-core/src/io.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/preadv2.rs", "crabc-rs/examples/preadv2_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/backend/libc/c.rs"]
 rationale = "The borrowed-slice contract matches positioned vectored I/O, while the closed flag set rejects unknown kernel bits. The explicit u64::MAX current-offset sentinel retains Linux's special semantics without weakening ordinary positioned offsets."
 
 [[capability]]
@@ -1426,7 +1426,7 @@ shared_impl = ["crabc_core::fs::syncfs"]
 native_boundary = "direct Linux/AArch64 syncfs syscall over a borrowed descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/syncfs.rs", "crabc-rs/examples/syncfs_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/io.rs", "crabc-rs/src/fs.rs", "crabc-rs/tests/syncfs.rs", "crabc-rs/examples/syncfs_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The bounded native facade flushes the mounted filesystem associated with a borrowed descriptor; single-file durability and remaining descriptor extensions remain separately specified."
 
 [[capability]]
@@ -1440,7 +1440,7 @@ shared_impl = ["crabc_core::io::{Iovec, readv_raw, writev_raw}"]
 native_boundary = "direct Linux/AArch64 readv/writev syscalls over borrowed descriptor and disjoint initialized slice segments"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/vectored.rs", "crabc-rs/examples/vectored_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/io.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/vectored.rs", "crabc-rs/examples/vectored_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native wrappers retain slice lifetimes and pointer provenance, permit explicit short-operation retries through advancing segments, and make initialized-only vectored reads explicit. Positioned-vector and flag-bearing operations are tracked in separate verified rows; splice and sync extensions remain separate work."
 
 [[capability]]
@@ -1454,7 +1454,7 @@ shared_impl = ["crabc_core::io::{preadv_raw, pwritev_raw}"]
 native_boundary = "direct Linux/AArch64 preadv/pwritev syscalls with the kernel ABI's low/high 32-bit offset words"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/positioned_vectored.rs", "crabc-rs/examples/positioned_vectored_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/backend/libc/c.rs"]
+evidence = ["crabc-core/src/io.rs", "crabc-rs/src/io.rs", "crabc-rs/tests/positioned_vectored.rs", "crabc-rs/examples/positioned_vectored_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/backend/libc/c.rs"]
 rationale = "The native façade retains disjoint initialized segment borrows and preserves the descriptor offset. It encodes the complete u64 file offset explicitly in AArch64's two-word syscall ABI, leaving newer flag-bearing vector and splice families separate."
 
 [[capability]]
@@ -1538,7 +1538,7 @@ shared_impl = ["crabc_core::pipe::tee_raw"]
 native_boundary = "direct Linux/AArch64 tee syscall 77 over borrowed source/destination pipe descriptors, scalar length, and retained SPLICE_F flags"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/io_exports.rs", "crabc-core/src/lib.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/pipe_tee.rs", "crabc-rs/examples/pipe_tee_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/pipe.rs", "compat/rustix/source/pipe_tee.rs"]
+evidence = ["libc/src/io_exports.rs", "crabc-core/src/pipe.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/pipe_tee.rs", "crabc-rs/examples/pipe_tee_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/pipe.rs", "compat/rustix/source/pipe_tee.rs"]
 rationale = "tee copies up to the requested count between pipes without consuming the source. Its short-result and kernel-validation contract is independent from splice-family transfer semantics."
 
 [[capability]]
@@ -1551,7 +1551,7 @@ shared_impl = ["crabc_core::pipe::fcntl_getpipe_size"]
 native_boundary = "direct Linux/AArch64 fcntl syscall 25 with fixed F_GETPIPE_SZ command 1032 over a borrowed pipe descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/pipe_size.rs", "crabc-rs/examples/pipe_size_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/pipe.rs", "compat/rustix/source/pipe_size.rs"]
+evidence = ["crabc-core/src/pipe.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/pipe_size.rs", "crabc-rs/examples/pipe_size_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/pipe.rs", "compat/rustix/source/pipe_size.rs"]
 rationale = "The exact Rustix-shaped observer reports a pipe's current kernel capacity without resizing it. It returns ordinary kernel errors for non-pipe descriptors and makes no stability claim when another actor can resize the shared pipe; F_SETPIPE_SZ remains a separate mutating contract. The public C fcntl symbol remains owned by io.status-flags."
 
 [[capability]]
@@ -1565,7 +1565,7 @@ shared_impl = ["crabc_core::event::{epoll_create1,epoll_pwait_raw,pselect6_raw}"
 native_boundary = "direct Linux/AArch64 epoll_create1, epoll_pwait, and pselect6 operations with explicit signal-mask size and Rustix-compatible mutable descriptor-set storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/event.rs", "crabc-rs/tests/readiness.rs", "crabc-rs/examples/readiness_direct_probe.rs", "libc/src/poll_events_exports.rs", "libc/src/select_exports.rs", "tests/fixtures/select_test.c", "tests/select.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/event/select.rs", "compat/rustix/source/readiness.rs"]
+evidence = ["crabc-core/src/event.rs", "crabc-rs/src/event.rs", "crabc-rs/tests/readiness.rs", "crabc-rs/examples/readiness_direct_probe.rs", "libc/src/poll_events_exports.rs", "libc/src/select_exports.rs", "tests/fixtures/select_test.c", "tests/select.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/event/select.rs", "compat/rustix/source/readiness.rs"]
 rationale = "Legacy epoll creation is represented by a positive-size constructor and epoll_pwait shares the typed event buffer while retaining an optional borrowed kernel signal mask. Select and pselect expose Linux's in-place descriptor-set mutation and raw-descriptor lifetime obligation through an unsafe Rustix-compatible bit-vector API; timeouts are copied before pselect6."
 
 [[capability]]
@@ -1621,7 +1621,7 @@ shared_impl = ["crabc_core::event::{eventfd_read, eventfd_write}"]
 native_boundary = "direct Linux/AArch64 read/write syscalls over a private exact-size eventfd u64 counter record"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/event.rs", "crabc-rs/tests/eventfd.rs", "crabc-rs/examples/eventfd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/event.rs", "crabc-rs/src/event.rs", "crabc-rs/tests/eventfd.rs", "crabc-rs/examples/eventfd_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The typed helpers borrow the descriptor and issue exactly one private eight-byte counter record, preserving Linux's EAGAIN and invalid-all-ones errors without exposing a partial raw buffer or C wrapper boundary."
 
 [[capability]]
@@ -1649,7 +1649,7 @@ shared_impl = ["crabc_core::process::brk_raw", "crabc_core::mm::{mlockall_raw, m
 native_boundary = "explicitly unsafe kernel-break, mapped-range advisory, and file-page-remapping calls plus process-global lock policy; no native allocator is introduced"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/mm.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/memory_vm.rs", "crabc-rs/examples/memory_vm_direct_probe.rs", "tests/fixtures/break_exports_test.c", "tests/fixtures/memory_vm_exports_test.c", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/memory_vm.rs"]
+evidence = ["crabc-core/src/mm.rs", "crabc-core/src/process.rs", "crabc-rs/src/mm.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/memory_vm.rs", "crabc-rs/examples/memory_vm_direct_probe.rs", "tests/fixtures/break_exports_test.c", "tests/fixtures/memory_vm_exports_test.c", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/memory_vm.rs"]
 rationale = "The native break query remains raw and cannot coordinate an allocator. POSIX DONTNEED follows musl's successful no-op rather than Linux page discard; legacy file remapping fixes C-only protection/flag words to zero, and global lock policy stays explicit."
 
 [[capability]]
@@ -1663,7 +1663,7 @@ shared_impl = ["crabc_core::mm::{mremap_raw, mremap_fixed_raw}"]
 native_boundary = "direct Linux/AArch64 mremap syscall over caller-owned mapping ranges"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/mremap.rs", "crabc-rs/examples/mremap_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/mm/mmap.rs"]
+evidence = ["crabc-core/src/mm.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/mremap.rs", "crabc-rs/examples/mremap_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/mm/mmap.rs"]
 rationale = "The unsafe contract consumes the old mapping on success and, for the separate fixed-address form, also invalidates the replaced destination. The public flags expose only MAYMOVE; FIXED is bound to the explicit destination API and DONTUNMAP remains deferred because it changes old-range ownership."
 
 [[capability]]
@@ -1677,7 +1677,7 @@ shared_impl = ["crabc_core::mm::{mlock_raw, mlock2_raw, munlock_raw}"]
 native_boundary = "direct Linux/AArch64 mlock, mlock2, and munlock syscalls over a caller-proven mapped range"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/mlock.rs", "crabc-rs/examples/mlock_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/mm/mmap.rs"]
+evidence = ["crabc-core/src/mm.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/mlock.rs", "crabc-rs/examples/mlock_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/mm/mmap.rs"]
 rationale = "The explicit unsafe boundary retains mapping lifetime, rounded-range validity, pointer provenance, and memlock-budget effects. It covers per-range locking only; process-wide mlockall/munlockall is covered by the separate memory.vm capability."
 
 [[capability]]
@@ -1691,7 +1691,7 @@ shared_impl = ["crabc_core::mm::mincore_raw"]
 native_boundary = "direct Linux/AArch64 mincore syscall over a caller-proven mapping and exclusive caller-owned residency vector"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/mincore.rs", "crabc-rs/examples/mincore_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/mm.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/mincore.rs", "crabc-rs/examples/mincore_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The unsafe boundary keeps mapping alignment/lifetime/provenance and output-vector disjointness explicit. A 4 KiB AArch64 lower bound produces a safe output-capacity upper bound for supported larger kernel page sizes."
 
 [[capability]]
@@ -1705,7 +1705,7 @@ shared_impl = ["crabc_core::mm::msync_raw"]
 native_boundary = "direct Linux/AArch64 msync syscall over a caller-proven mapped range"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/msync.rs", "crabc-rs/examples/msync_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/mm/msync.rs"]
+evidence = ["crabc-core/src/mm.rs", "crabc-rs/src/mm.rs", "crabc-rs/tests/msync.rs", "crabc-rs/examples/msync_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/mm/msync.rs"]
 rationale = "The unsafe boundary keeps page alignment, mapping lifetime, pointer provenance, and possible cache invalidation explicit. Linux validates synchronization flags; no C sentinel or errno adaptation crosses the native interface."
 
 [[capability]]
@@ -1826,7 +1826,7 @@ shared_impl = ["crabc_core::time::clock_settime_raw"]
 native_boundary = "direct Linux/AArch64 clock_settime syscall over validated ClockId and canonical Timespec"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_settime.rs", "crabc-rs/examples/time_settime_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/time_settime.rs"]
+evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_settime.rs", "crabc-rs/examples/time_settime_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/time_settime.rs"]
 rationale = "The native API requires a canonical Timespec before crossing the boundary. The behavioral test uses CLOCK_MONOTONIC only, retaining the kernel's EINVAL or EPERM response without mutating wall-clock state."
 
 [[capability]]
@@ -1868,7 +1868,7 @@ shared_impl = ["crabc_core::time::{getitimer_raw, KernelItimerval}"]
 native_boundary = "direct Linux/AArch64 getitimer syscall over a private validated itimerval wire record"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/getitimer.rs", "crabc-rs/examples/getitimer_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/getitimer.rs", "crabc-rs/examples/getitimer_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The closed selector enum exposes only the three Linux interval timers and the read-only result validates signed timeval fields before converting them to private Rust Duration values. Timer mutation and signal delivery remain separate work."
 
 [[capability]]
@@ -1882,7 +1882,7 @@ shared_impl = ["crabc_core::process::times_raw", "crabc_core::process::KernelPro
 native_boundary = "direct Linux/AArch64 times syscall over a private validated four-word tms record and separate elapsed-tick return"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/times.rs", "crabc-rs/examples/times_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/times.rs", "crabc-rs/examples/times_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The facade keeps all five observations in opaque clock ticks and does not invent CLK_TCK, expose C tms storage, or collapse the syscall's independent elapsed return into process CPU accounting."
 
 [[capability]]
@@ -1910,7 +1910,7 @@ shared_impl = ["crabc_core::time::{KernelWallClockParts, gettimeofday}"]
 native_boundary = "direct Linux/AArch64 gettimeofday syscall with a null legacy timezone pointer and a normalized UTC UnixTime result"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time.rs", "crabc-rs/examples/time_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time.rs", "crabc-rs/examples/time_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native result preserves signed epoch seconds and canonical nanoseconds without exposing C timeval, timezone state, vDSO/libc routing, or TLS errno. Legacy calendar, formatting, and clock-control interfaces remain separate work."
 
 [[capability]]
@@ -1924,7 +1924,7 @@ shared_impl = ["crabc_core::time::{clock_getres_raw, clock_gettime_raw}"]
 native_boundary = "direct Linux/AArch64 clock_getres plus shared clock_gettime dispatch for typed known clocks and Rustix-shaped descriptor-backed CLOCKFD encoding, with caller-owned timespec output; the validated Linux 5.10 AArch64 vDSO handles every clock ID and delegates unsupported descriptor/CPU IDs through its exact direct-syscall fallback"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_dynamic.rs", "crabc-rs/examples/time_dynamic_direct_probe.rs", "compat/rustix/source/time_dynamic.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_dynamic.rs", "crabc-rs/examples/time_dynamic_direct_probe.rs", "compat/rustix/source/time_dynamic.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "Known and dynamic clock observations preserve descriptor-clock errors as Result values. The validated Linux 5.10 AArch64 vDSO handles fixed, descriptor, and CPU IDs; its unsupported-ID path performs the exact kernel syscall, while unavailable or malformed metadata is cached as that direct fallback. No libc or TLS errno path is exposed. Clock mutation and local calendar conversion are separate capabilities; formatting remains in the documented calendar boundary."
 
 [[capability]]
@@ -1938,7 +1938,7 @@ shared_impl = ["crabc_core::time::setitimer_raw"]
 native_boundary = "validated microsecond interval settings over the direct Linux/AArch64 process-global setitimer syscall"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_timers.rs", "crabc-rs/examples/time_timers_direct_probe.rs", "tests/fixtures/host_process_exports_test.c", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_timers.rs", "crabc-rs/examples/time_timers_direct_probe.rs", "tests/fixtures/host_process_exports_test.c", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native API returns the complete prior timer setting rather than C's lossy alias values and rejects sub-microsecond duration precision. It makes real, virtual, and profiling timer scope explicit; C alarm's fractional remaining-time ceiling is separately regressed."
 
 [[capability]]
@@ -1952,7 +1952,7 @@ shared_impl = ["crabc_core::time::{timer_create_raw, timer_delete_raw, timer_get
 native_boundary = "owned private kernel timer IDs, typed nanosecond specifications, and private 64-byte Linux sigevent records"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_timers.rs", "crabc-rs/examples/time_timers_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/time_timers.rs", "crabc-rs/examples/time_timers_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The owner exposes explicit deletion with best-effort Drop cleanup and accepts only no-notification, process-signal, or thread-directed signal delivery. Raw timer_t pointers, C structs, TLS errno, and callback-owned lifetimes do not cross the native boundary."
 
 [[capability]]
@@ -1988,7 +1988,7 @@ shared_impl = ["crabc_core::time::nanosleep_raw"]
 native_boundary = "direct Linux/AArch64 nanosleep syscall over core::time::Duration and explicit interrupted remaining time"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/sleep.rs", "crabc-rs/examples/sleep_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/time.rs", "crabc-rs/src/time.rs", "crabc-rs/tests/sleep.rs", "crabc-rs/examples/sleep_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native sleep operation does not hide EINTR or silently retry. It uses a valid Rust Duration input, reports completion or kernel-provided remaining duration, and leaves C seconds/microseconds aliases and process-global timer behavior separate."
 
 [[capability]]
@@ -2016,7 +2016,7 @@ shared_impl = ["crabc_core::net::{sendmmsg_raw, recvmmsg_raw}"]
 native_boundary = "private Linux/AArch64 mmsghdr records with retained send/receive borrows, initialized-prefix access, per-record result fields, and a mutable optional timeout"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_mmsg.rs", "crabc-rs/examples/network_mmsg_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_mmsg.rs", "crabc-rs/examples/network_mmsg_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "Batch syscall completion is explicitly partial rather than retried or collapsed into one C errno result. Incoming records retain exclusive destination borrows and only expose initialized prefixes; address and ancillary-control records remain separate native contracts."
 
 [[capability]]
@@ -2030,7 +2030,7 @@ shared_impl = ["crabc_core::io::ioctl_raw"]
 native_boundary = "borrowed socket descriptor and private four-byte SIOCATMARK output storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_mmsg.rs", "crabc-rs/examples/network_mmsg_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_mmsg.rs", "crabc-rs/examples/network_mmsg_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The fixed ioctl request and typed boolean result avoid exposing a generic ioctl pointer interface, C sentinel return, or TLS errno state."
 
 [[capability]]
@@ -2044,7 +2044,7 @@ shared_impl = ["crabc_core::net::{sendmsg_raw, recvmsg_raw}"]
 native_boundary = "direct Linux/AArch64 sendmsg and recvmsg syscalls over private msghdr records and borrowed typed iovec slices"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_messages.rs", "crabc-rs/examples/network_messages_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_messages.rs", "crabc-rs/examples/network_messages_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The connected-socket facade supplies no public address, raw msghdr, ancillary-control, or multi-message API. Send retains source borrows; receive exposes only the initialized MaybeUninit prefixes while preserving MSG_TRUNC's full length and returned kernel message flags."
 
 [[capability]]
@@ -2058,7 +2058,7 @@ shared_impl = ["crabc_core::net::{set_socket_reuseaddr, socket_reuseaddr}"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_REUSEADDR getsockopt and setsockopt syscalls over private four-byte integer storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_options.rs", "crabc-rs/examples/network_socket_options_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_options.rs", "crabc-rs/examples/network_socket_options_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The only exposed socket option is SO_REUSEADDR as a Rust bool. Callers cannot supply arbitrary C levels, names, pointers, or lengths; the core seam checks the returned four-byte option length and preserves kernel errors."
 
 [[capability]]
@@ -2071,7 +2071,7 @@ shared_impl = ["crabc_core::net::socket_type"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_TYPE getsockopt syscall over private four-byte type storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/sys/socket.h", "crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_type.rs", "crabc-rs/examples/network_socket_type_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_type.rs"]
+evidence = ["include/sys/socket.h", "crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_type.rs", "crabc-rs/examples/network_socket_type_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_type.rs"]
 rationale = "The exact Rustix module path returns the existing raw-preserving SocketType value for a borrowed descriptor. Linux's option level, name, output buffer, and length remain fixed; a regular descriptor remains a direct ENOTSOCK error, and broader socket options stay deferred."
 
 [[capability]]
@@ -2084,7 +2084,7 @@ shared_impl = ["crabc_core::net::socket_protocol"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_PROTOCOL getsockopt syscall over private four-byte protocol storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/sys/socket.h", "crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_protocol.rs", "crabc-rs/examples/network_socket_protocol_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_protocol.rs"]
+evidence = ["include/sys/socket.h", "crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_protocol.rs", "crabc-rs/examples/network_socket_protocol_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_protocol.rs"]
 rationale = "The exact Rustix module path maps Linux's zero protocol result to None and preserves any nonzero raw protocol word in the matching Protocol type. The option level, name, output buffer, and length are fixed; non-socket descriptors preserve ENOTSOCK, while broader socket options stay deferred."
 
 [[capability]]
@@ -2097,7 +2097,7 @@ shared_impl = ["crabc_core::net::socket_cookie"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_COOKIE getsockopt syscall over private eight-byte cookie storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_cookie.rs", "crabc-rs/examples/network_socket_cookie_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_cookie.rs"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_cookie.rs", "crabc-rs/examples/network_socket_cookie_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_cookie.rs"]
 rationale = "The exact Rustix module path returns Linux's opaque socket cookie as an unchanged u64 from a borrowed socket. Repeated reads on a live socket are stable, but the interface deliberately makes no broader lifetime or global-uniqueness claim; non-socket descriptors preserve ENOTSOCK and broader socket options remain deferred. The public C getsockopt symbol remains owned by network.socket-option-reuseaddr."
 
 [[capability]]
@@ -2110,7 +2110,7 @@ shared_impl = ["crabc_core::net::socket_domain"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_DOMAIN getsockopt syscall over private four-byte signed family storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_domain.rs", "crabc-rs/examples/network_socket_domain_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_domain.rs"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_domain.rs", "crabc-rs/examples/network_socket_domain_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_domain.rs"]
 rationale = "The exact Rustix module path converts the fixed SO_DOMAIN result into the existing closed AddressFamily representation. Signed or out-of-u16 values become OPNOTSUPP rather than an unchecked enum; non-socket descriptors preserve ENOTSOCK, and broad socket options remain deferred. The public C getsockopt symbol remains owned by network.socket-option-reuseaddr."
 
 [[capability]]
@@ -2123,7 +2123,7 @@ shared_impl = ["crabc_core::net::socket_acceptconn"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_ACCEPTCONN getsockopt syscall over private four-byte integer storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/sys/socket.h", "crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_acceptconn.rs", "crabc-rs/examples/network_socket_acceptconn_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_acceptconn.rs"]
+evidence = ["include/sys/socket.h", "crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_acceptconn.rs", "crabc-rs/examples/network_socket_acceptconn_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_acceptconn.rs"]
 rationale = "The exact Rustix module path returns whether a borrowed stream socket is currently listening. The option level, name, output buffer, and length are fixed; its before/after listen transition is explicitly tested, non-socket descriptors preserve ENOTSOCK, and broader socket options remain deferred. The public C getsockopt symbol remains owned by network.socket-option-reuseaddr."
 
 [[capability]]
@@ -2136,7 +2136,7 @@ shared_impl = ["crabc_core::net::{set_socket_oobinline, socket_oobinline}"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_OOBINLINE getsockopt and setsockopt syscalls over private four-byte integer storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/sys/socket.h", "crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_oobinline.rs", "crabc-rs/examples/network_socket_oobinline_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_oobinline.rs"]
+evidence = ["include/sys/socket.h", "crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_oobinline.rs", "crabc-rs/examples/network_socket_oobinline_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_oobinline.rs"]
 rationale = "The exact Rustix module paths observe and set the per-socket OOBINLINE flag as a Rust bool. The level, option name, four-byte integer storage, and length stay fixed; false-to-true-to-false behavior and non-socket ENOTSOCK errors are tested, while urgent-data I/O and broader socket options remain separate work. The public C getsockopt and setsockopt symbols remain owned by network.socket-option-reuseaddr."
 
 [[capability]]
@@ -2149,7 +2149,7 @@ shared_impl = ["crabc_core::net::{set_socket_broadcast, socket_broadcast}"]
 native_boundary = "direct Linux/AArch64 SOL_SOCKET/SO_BROADCAST getsockopt and setsockopt syscalls over private four-byte integer storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/sys/socket.h", "crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_broadcast.rs", "crabc-rs/examples/network_socket_broadcast_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_broadcast.rs"]
+evidence = ["include/sys/socket.h", "crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket_broadcast.rs", "crabc-rs/examples/network_socket_broadcast_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/sockopt.rs", "compat/rustix/source/socket_broadcast.rs"]
 rationale = "The exact Rustix module paths observe and set only the per-socket BROADCAST flag as a Rust bool. The level, option name, four-byte storage, and length stay fixed; false-to-true-to-false behavior and non-socket ENOTSOCK errors are tested, while broadcast transmission and broad socket options remain separate work. The public C getsockopt and setsockopt symbols remain owned by network.socket-option-reuseaddr."
 
 [[capability]]
@@ -2177,7 +2177,7 @@ shared_impl = ["crabc_core::net::{listen, accept_raw, accept4_raw}"]
 native_boundary = "direct Linux/AArch64 listen, accept, and accept4 syscalls with borrowed listener and OwnedFd results"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_listen_accept.rs", "crabc-rs/examples/network_listen_accept_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/socket.rs"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_listen_accept.rs", "crabc-rs/examples/network_listen_accept_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/net/socket.rs"]
 rationale = "Listening preserves Linux's signed backlog semantics. Accepted descriptors have unique ownership; accept4 exposes a closed atomic CLOEXEC/NONBLOCK flag set, while peer-returning forms strictly decode only IPv4/IPv6 and close a just-created descriptor when decoding rejects another family."
 
 [[capability]]
@@ -2205,7 +2205,7 @@ shared_impl = ["crabc_core::net::getpeername_raw"]
 native_boundary = "direct Linux/AArch64 getpeername syscall into aligned private sockaddr storage"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_getpeername.rs", "crabc-rs/examples/network_getpeername_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_getpeername.rs", "crabc-rs/examples/network_getpeername_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "Peer lookup shares the exact endpoint decoder used for local addresses, validating returned lengths and returning AFNOSUPPORT for unrepresented families. Linux's NOTCONN is preserved for unconnected sockets."
 
 [[capability]]
@@ -2219,7 +2219,7 @@ shared_impl = ["crabc_core::net::{bind_raw, getsockname_raw}"]
 native_boundary = "direct Linux/AArch64 bind and getsockname syscalls over exact stack sockaddr records"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_bind_getsockname.rs", "crabc-rs/examples/network_bind_getsockname_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_bind_getsockname.rs", "crabc-rs/examples/network_bind_getsockname_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "Binding shares the exact allocation-free IPv4/IPv6 encoder with connect. Local-address decoding validates returned storage lengths and explicitly rejects unsupported address families rather than exposing a partial opaque socket-address buffer."
 
 [[capability]]
@@ -2233,7 +2233,7 @@ shared_impl = ["crabc_core::net::{socket, shutdown}"]
 native_boundary = "direct Linux/AArch64 socket and shutdown syscalls with typed scalar arguments and OwnedFd lifetime"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket.rs", "crabc-rs/examples/network_socket_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/net.rs", "crabc-rs/src/net.rs", "crabc-rs/tests/network_socket.rs", "crabc-rs/examples/network_socket_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "Socket construction uses a closed creation-flag set, a Rustix-shaped nonzero raw protocol word forwarded bit-for-bit into the Linux C-int slot, and unique descriptor ownership. It does not claim socket-address encoding, connection/listen/accept lifecycle, options, ancillary data, or multi-message operations."
 
 [[capability]]
@@ -2425,7 +2425,7 @@ shared_impl = ["crabc_core::resolver::exchange direct bounded DNS transport"]
 native_boundary = "direct Linux/AArch64 nonblocking socket, connect, sendto, recvfrom, ppoll, clock_gettime, SO_ERROR, and close operations over caller-owned resolver configuration and buffers"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/resolver.rs", "crabc-rs/tests/resolver_transport.rs", "compat/crabc-rs/verify_resolver.py"]
+evidence = ["crabc-core/src/resolver.rs", "crabc-rs/src/resolver.rs", "crabc-rs/tests/resolver_transport.rs", "compat/crabc-rs/verify_resolver.py"]
 rationale = "This closes the bounded configured transport: malformed or wrong-ID UDP packets are ignored within one per-server deadline, TC retries the exact query over length-prefixed TCP with partial I/O handling, and failures advance in configured order. Caller-owned system configuration and resolver policy are verified by the separate semantic resolver row below; the broad C netdb/resolver surface remains outside this native API."
 
 [[capability]]
@@ -2439,7 +2439,7 @@ shared_impl = ["crabc_rs::resolver::ResolverConfig bounded resolv.conf/hosts sna
 native_boundary = "direct Linux/AArch64 open/read of caller-selected resolver snapshots or /etc/resolv.conf and /etc/hosts, then typed A/AAAA/CNAME queries over caller-owned configured transport"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/resolver.rs", "crabc-rs/src/netdb.rs", "crabc-core/src/lib.rs", "crabc-rs/tests/resolver_system.rs", "crabc-rs/tests/resolver_transport.rs", "crabc-rs/examples/resolver_direct_probe.rs", "compat/crabc-rs/verify_resolver.py"]
+evidence = ["crabc-rs/src/resolver.rs", "crabc-rs/src/netdb.rs", "crabc-core/src/resolver.rs", "crabc-rs/tests/resolver_system.rs", "crabc-rs/tests/resolver_transport.rs", "crabc-rs/examples/resolver_direct_probe.rs", "compat/crabc-rs/verify_resolver.py"]
 rationale = "Keep DNS deliberately small: conventional host configuration and the documented query family only. Do not add DNSSEC, DoH, DoT, mDNS, IDNA, or provider/plugin registries; the C ABI track remains separately evidenced."
 
 [[capability]]
@@ -2490,7 +2490,7 @@ shared_impl = ["crabc_core::process::pidfd_open_raw"]
 native_boundary = "direct Linux/AArch64 pidfd_open syscall 434 over a typed nonzero Pid, retained PIDFD flags, and a freshly owned descriptor"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/sys/syscall.h", "crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/pidfd_open.rs", "crabc-rs/examples/pidfd_open_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/pidfd.rs", "compat/rustix/source/pidfd_open.rs"]
+evidence = ["include/sys/syscall.h", "crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/pidfd_open.rs", "crabc-rs/examples/pidfd_open_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/pidfd.rs", "compat/rustix/source/pidfd_open.rs"]
 rationale = "pidfd_open is a Linux kernel extension with no measured musl C export, so it is recorded as a native implementation capability rather than assigned to a C symbol. The returned descriptor stabilizes process identity across PID reuse; ENOSYS, target-lifetime, permission, descriptor-limit, and kernel flag-validation errors remain direct with no availability cache or fallback."
 
 [[capability]]
@@ -2503,7 +2503,7 @@ shared_impl = ["crabc_core::process::{KernelFlock, fcntl_getlk_raw}"]
 native_boundary = "direct Linux/AArch64 fcntl syscall 25 with fixed F_GETLK command 5 and a private validated struct flock record"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/fcntl.h", "crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/fcntl_getlk.rs", "crabc-rs/examples/fcntl_getlk_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/fcntl_getlk.rs", "compat/rustix/source/fcntl_getlk.rs"]
+evidence = ["include/fcntl.h", "crabc-core/src/io.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/fcntl_getlk.rs", "crabc-rs/examples/fcntl_getlk_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/fcntl_getlk.rs", "compat/rustix/source/fcntl_getlk.rs"]
 rationale = "The exact Rustix-shaped query turns a first conflicting process-associated record lock into Some(Flock), and F_UNLCK into None. Input and returned ranges, lock types, offset origins, and PIDs are validated before becoming safe Rust values. The forked regression is necessary because a process never reports its own fcntl locks as conflicts. Mutating lock operations and the public C fcntl symbol remain separate; the latter is owned by io.status-flags."
 
 [[capability]]
@@ -2555,7 +2555,7 @@ shared_impl = ["crabc_core::thread::{setresuid_raw, setresgid_raw}"]
 native_boundary = "direct Linux/AArch64 setresuid and setresgid syscalls over typed optional UID/GID words; None is the kernel all-ones no-change sentinel"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/thread_credentials.rs", "crabc-rs/examples/thread_credentials_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/id.rs", "compat/rustix/source/thread_credentials.rs"]
+evidence = ["crabc-core/src/thread.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/thread_credentials.rs", "crabc-rs/examples/thread_credentials_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/id.rs", "compat/rustix/source/thread_credentials.rs"]
 rationale = "These unsafe Rustix-shaped operations retain Linux's calling-task-only scope and reject an explicit all-ones typed ID so it cannot acquire the None sentinel meaning. The broader C credential family is an explicitly documented non-native boundary because musl's process-wide synchronization is a different contract."
 
 [[capability]]
@@ -2569,7 +2569,7 @@ shared_impl = ["crabc_core::process::{setfsuid_raw, setfsgid_raw}"]
 native_boundary = "direct Linux/AArch64 setfsuid and setfsgid syscalls over typed optional UID/GID words; None is the kernel all-ones query sentinel and the return is the previous filesystem identity"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/fs_credentials.rs", "crabc-rs/examples/fs_credentials_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/fs_credentials.rs", "crabc-rs/examples/fs_credentials_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "These unsafe Linux calling-task operations reserve the all-ones query word for None and reject an explicit all-ones typed ID. Linux returns the previous filesystem identity when a requested change is denied, so ordinary process credential synchronization and failure semantics are not claimed; that broader musl contract is an explicitly documented non-native boundary."
 
 [[capability]]
@@ -2583,7 +2583,7 @@ shared_impl = ["crabc_core::process::{KernelRlimit64, setrlimit_raw}"]
 native_boundary = "direct Linux/AArch64 prlimit64 syscall with PID zero, private rlimit64 input, and null old-limit output"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/process_limits_umask_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_setrlimit.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/process_limits_umask_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_setrlimit.rs"]
 rationale = "The closed resource vocabulary and infinity-aware value validate current <= maximum before a process-wide mutation. The focused regression restores its changed core limit; callers still coordinate any concurrent limit users."
 
 [[capability]]
@@ -2597,7 +2597,7 @@ shared_impl = ["crabc_core::process::umask_raw"]
 native_boundary = "direct Linux/AArch64 umask syscall over the existing typed Mode bitset"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/process_limits_umask_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_umask.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/process_limits_umask_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/process_umask.rs"]
 rationale = "umask is a memory-safe but process-global mutation. The native API returns the previous typed mask and the regression restores it before the test ends."
 
 [[capability]]
@@ -2621,7 +2621,7 @@ shared_impl = ["crabc_core::thread::futex_raw"]
 native_boundary = "borrowed AtomicU32 futex word with an optional borrowed Linux/AArch64 Timespec and direct futex syscall 98"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/futex.rs", "crabc-rs/examples/futex_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/futex.rs", "compat/rustix/source/futex.rs"]
+evidence = ["crabc-core/src/thread.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/futex.rs", "crabc-rs/examples/futex_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/futex.rs", "compat/rustix/source/futex.rs"]
 rationale = "Futex wait/wake is a Linux kernel extension with no measured musl C export, so this is a bounded native implementation capability. AtomicU32 makes the required four-byte alignment and word lifetime explicit; Linux EAGAIN, EINTR, timeout, wake-count, and kernel flag validation remain direct. PI, requeue, bitset, fd, and waitv operations remain deferred."
 
 [[capability]]
@@ -2649,7 +2649,7 @@ shared_impl = ["crabc_core::thread::sched_getcpu"]
 native_boundary = "direct Linux/AArch64 getcpu syscall with private valid stack output storage and null node/cache outputs"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_cpu.rs", "crabc-rs/examples/sched_cpu_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/thread.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_cpu.rs", "crabc-rs/examples/sched_cpu_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The kernel writes the current CPU identifier into facade-owned valid storage, leaving no fallible user-memory case. The result is transient scheduler observation, not affinity, pinning, or a stable thread attribute."
 
 [[capability]]
@@ -2663,7 +2663,7 @@ shared_impl = ["crabc_core::thread::sched_getaffinity_raw"]
 native_boundary = "direct Linux/AArch64 sched_getaffinity syscall into a private fixed 128-byte mask, exposed as Rustix-shaped CpuSet"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/sched_affinity_exports.rs", "crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_getaffinity.rs", "crabc-rs/examples/sched_getaffinity_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/sched.rs", "compat/rustix/source/sched_getaffinity.rs"]
+evidence = ["libc/src/sched_affinity_exports.rs", "crabc-core/src/thread.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_getaffinity.rs", "crabc-rs/examples/sched_getaffinity_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/sched.rs", "compat/rustix/source/sched_getaffinity.rs"]
 rationale = "The fixed 1024-bit CpuSet agrees with the pinned Rustix shape, including allocation-free local construction and bit operations. Linux's EINVAL for a too-small mask is retained without allocation, retry, or truncation; a successful short kernel write has its private unwritten tail cleared. The returned set is a transient scheduler snapshot, not a cross-call stability guarantee."
 
 [[capability]]
@@ -2677,7 +2677,7 @@ shared_impl = ["crabc_core::thread::sched_setaffinity_raw"]
 native_boundary = "direct Linux/AArch64 sched_setaffinity syscall over a Rustix-shaped fixed 128-byte CpuSet and an optional typed task ID"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/sched_affinity_exports.rs", "crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_setaffinity.rs", "crabc-rs/examples/sched_setaffinity_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/sched.rs", "compat/rustix/source/sched_getaffinity.rs"]
+evidence = ["libc/src/sched_affinity_exports.rs", "crabc-core/src/thread.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_setaffinity.rs", "crabc-rs/examples/sched_setaffinity_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/thread/sched.rs", "compat/rustix/source/sched_getaffinity.rs"]
 rationale = "The facade exposes the explicit per-task scheduling mutation that pairs with the fixed CpuSet value. Linux may intersect the requested set with present/cpuset-permitted CPUs and reports an empty effective set as EINVAL; those kernel results remain direct. The test reapplies the task's observed mask, so it exercises the mutation path without intentionally changing the test task's eligible CPUs."
 
 [[capability]]
@@ -2691,7 +2691,7 @@ shared_impl = ["crabc_core::thread::sched_rr_get_interval_raw"]
 native_boundary = "direct Linux/AArch64 sched_rr_get_interval syscall with typed optional Pid selection, private caller-owned timespec output, and checked conversion to Duration"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["libc/src/sched_affinity_exports.rs", "crabc-core/src/lib.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_rr_interval.rs", "crabc-rs/examples/sched_rr_interval_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["libc/src/sched_affinity_exports.rs", "crabc-core/src/thread.rs", "crabc-rs/src/thread.rs", "crabc-rs/tests/sched_rr_interval.rs", "crabc-rs/examples/sched_rr_interval_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "None preserves Linux PID-zero current-task selection while Some(Pid) retains exact task lookup, permission, and exit-race behavior. The native operation only observes the round-robin interval; policy selection and parameter queries remain separate, while affinity and scheduler mutation are covered by their own capabilities."
 
 [[capability]]
@@ -2705,7 +2705,7 @@ shared_impl = ["crabc_core::process::getpriority_raw"]
 native_boundary = "direct Linux/AArch64 getpriority syscall with typed selector and encoded-success translation"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/priority.rs", "crabc-rs/examples/priority_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/priority.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/priority.rs", "crabc-rs/examples/priority_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/priority.rs"]
 rationale = "The facade keeps the [-20, 19] nice range closed and translates Linux's [40, 1] raw success encoding directly into Result, so a valid C -1 nice value is never conflated with errno. Priority mutation is tracked by the separate verified scheduling-priority-mutation capability."
 
 [[capability]]
@@ -2719,7 +2719,7 @@ shared_impl = ["crabc_core::process::setpriority_raw"]
 native_boundary = "direct Linux/AArch64 setpriority syscall over closed PriorityTarget and Priority scalar values"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/setpriority.rs", "crabc-rs/examples/setpriority_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/priority.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/setpriority.rs", "crabc-rs/examples/setpriority_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/priority.rs"]
 rationale = "The [-20, 19] Priority range is closed before the kernel boundary and process, process-group, and user targets are typed. This operation has an intentional scheduling side effect but no Rust memory-safety precondition; callers coordinate affected tasks and receive direct kernel permission or target errors. The C nice increment/translation behavior remains deferred."
 
 [[capability]]
@@ -2733,7 +2733,7 @@ shared_impl = ["crabc_core::process::{getgroups_count_raw, getgroups_raw}"]
 native_boundary = "direct Linux/AArch64 getgroups syscall with a typed caller-owned Gid buffer"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/getgroups.rs", "crabc-rs/examples/getgroups_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/id.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/getgroups.rs", "crabc-rs/examples/getgroups_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/id.rs"]
 rationale = "The read-only query/fill seam preserves Linux's separate supplementary-list semantics, uses opaque Gid values, and documents EINVAL retry behavior when process credentials change between count and fill. Process-wide credential mutation remains separately scoped; resource-limit mutation is covered by its verified capability."
 
 [[capability]]
@@ -2747,7 +2747,7 @@ shared_impl = ["crabc_core::process::{KernelRusageTimeval, KernelRusage, getrusa
 native_boundary = "direct Linux/AArch64 getrusage syscall into a private initialized kernel-prefix record"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rusage.rs", "crabc-rs/examples/rusage_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rusage.rs", "crabc-rs/examples/rusage_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The read-only facade exposes only the fourteen initialized Linux counters and two timeval records. Musl's uninitialized reserved compatibility tail is deliberately omitted rather than read or represented."
 
 [[capability]]
@@ -2761,7 +2761,7 @@ shared_impl = ["crabc_core::process::{getresuid_raw, getresgid_raw}"]
 native_boundary = "direct Linux/AArch64 getresuid/getresgid syscalls into private caller-owned words"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/identity.rs", "crabc-rs/examples/identity_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/identity.rs", "crabc-rs/examples/identity_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The read-only triples retain opaque UID/GID types for real, effective, and saved-set identities. Authority-changing credential operations remain an explicitly separate capability."
 
 [[capability]]
@@ -2775,7 +2775,7 @@ shared_impl = ["crabc_core::process::{KernelRlimit64, getrlimit_raw}"]
 native_boundary = "direct Linux/AArch64 prlimit64 syscall with PID zero, null new-limit, and private rlimit64 output"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/rlimit_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/rlimit_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The native operation is intentionally read-only: a closed Linux resource vocabulary and infinity-aware result represent observations without changing process-wide limit state."
 
 [[capability]]
@@ -2864,7 +2864,7 @@ shared_impl = ["crabc_core::ipc fixed-arity Linux/AArch64 mq_open/mq_unlink/mq_g
 native_boundary = "typed POSIX named message queues with caller-borrowed send/receive buffers, validated priorities and attributes, explicit nonblocking flags, and absolute CLOCK_REALTIME deadlines; no variadic C ABI or global state"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/ipc.rs", "crabc-rs/tests/ipc.rs", "crabc-rs/examples/ipc_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/ipc.rs", "crabc-rs/src/ipc.rs", "crabc-rs/tests/ipc.rs", "crabc-rs/examples/ipc_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The first IPC slice is the owned POSIX named-message-queue mechanism only: open/create, unlink, descriptor ownership, attributes, priority ordering, caller buffers, nonblocking errors, and absolute realtime deadlines. mq_notify, SysV IPC, named semaphores, AIO, and aggregate framework abstractions remain outside scope."
 
 [[capability]]
@@ -3027,7 +3027,7 @@ shared_impl = ["crabc_core::inotify direct init1/add_watch/rm_watch syscalls"]
 native_boundary = "owned Linux/AArch64 inotify descriptor with typed creation flags, byte-preserving caller paths and event names, caller-owned read buffers, and validated variable-length event records"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["include/sys/inotify.h", "crabc-core/src/lib.rs", "crabc-rs/src/system.rs", "crabc-rs/tests/inotify.rs", "crabc-rs/examples/inotify_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "tests/fixtures/poll_events_test.c", "tests/poll_events.rs"]
+evidence = ["include/sys/inotify.h", "crabc-core/src/inotify.rs", "crabc-rs/src/system.rs", "crabc-rs/tests/inotify.rs", "crabc-rs/examples/inotify_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "tests/fixtures/poll_events_test.c", "tests/poll_events.rs"]
 rationale = "Inotify is the selected bounded Linux administration-adjacent mechanism: descriptor ownership closes all watches, paths and event names remain bytes, malformed record boundaries are rejected, and queue-overflow/unknown-mask observations remain explicit. It does not expose namespaces, capability mutation, ptrace, process_vm, fanotify, or a system-administration framework."
 
 [[capability]]
@@ -3055,7 +3055,7 @@ shared_impl = ["crabc_core::process::scheduler_priority_bounds_raw"]
 native_boundary = "direct Linux/AArch64 sched_get_priority_max/min syscalls over a closed SCHED_OTHER/SCHED_FIFO/SCHED_RR policy vocabulary and two scalar outputs"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/scheduler_priority_bounds.rs", "crabc-rs/examples/scheduler_priority_bounds_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "libc/src/sched_affinity_exports.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/scheduler_priority_bounds.rs", "crabc-rs/examples/scheduler_priority_bounds_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "libc/src/sched_affinity_exports.rs"]
 rationale = "The query is read-only and preserves kernel errors. Its closed policy set avoids claiming the evolving newer Linux scheduler policies; an inverted min/max pair is rejected as a malformed kernel result rather than exposed as a Rust value. Scheduler selection and parameter queries remain separate; affinity and priority mutation are covered by their own capabilities."
 
 [[capability]]
@@ -3069,7 +3069,7 @@ shared_impl = ["crabc_core::process::getrlimit_for_raw"]
 native_boundary = "direct Linux/AArch64 prlimit64 syscall with a typed optional target Pid, closed Resource selector, null new-limit pointer, and private initialized output"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/rlimit_for_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/rlimit.rs"]
+evidence = ["crabc-core/src/process.rs", "crabc-rs/src/process.rs", "crabc-rs/tests/rlimit.rs", "crabc-rs/examples/rlimit_for_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "../rustix/src/process/rlimit.rs"]
 rationale = "The operation is strictly read-only: None selects the calling task and Some preserves the exact selected-PID race and permission errors. The existing infinity-aware Rlimit representation remains exact. Limit mutation through setrlimit is covered by the separate verified resource-limit-mutation capability."
 
 [[capability]]
@@ -3083,7 +3083,7 @@ shared_impl = ["crabc_core::system::sysinfo"]
 native_boundary = "direct Linux/AArch64 sysinfo snapshot converted from the kernel's fixed 16.16 load words"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "crabc-rs/src/system.rs", "crabc-rs/tests/load_average.rs", "crabc-rs/examples/load_average_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "libc/src/system_information_exports.rs"]
+evidence = ["crabc-core/src/system.rs", "crabc-rs/src/system.rs", "crabc-rs/tests/load_average.rs", "crabc-rs/examples/load_average_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "libc/src/system_information_exports.rs"]
 rationale = "The owned three-value observation retains Linux's one/five/fifteen-minute ordering and divides each unsigned fixed-point word by the exact 65536 scale. It intentionally avoids C getloadavg's partial caller buffer, negative-count, and sentinel protocol."
 
 [[capability]]
@@ -3153,7 +3153,7 @@ shared_impl = ["crabc_core::runtime::RuntimeV1 append-only loader snapshot/infor
 native_boundary = "one bounded callback-free RuntimeV1 copy holds the ldso lock only while copying fixed records and names into caller-owned storage; no link_map, loader-owned string, Rust callback, or errno TLS crosses the boundary"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/lib.rs", "ldso/src/lib.rs", "libc/src/dynamic_loader_introspection_exports.rs", "libc/src/lib.rs", "crabc-rs/src/dl.rs", "crabc-rs/examples/loader_dlfcn_introspection_probe.rs", "tests/loader_dlfcn_introspection.rs", "tests/fixtures/loader_dlfcn_introspection_test.c"]
+evidence = ["crabc-core/src/runtime.rs", "ldso/src/lib.rs", "libc/src/dynamic_loader_introspection_exports.rs", "libc/src/lib.rs", "crabc-rs/src/dl.rs", "crabc-rs/examples/loader_dlfcn_introspection_probe.rs", "tests/loader_dlfcn_introspection.rs", "tests/fixtures/loader_dlfcn_introspection_test.c"]
 rationale = "The Rust API owns a bounded image-record snapshot and copied per-handle information. Opaque addresses carry no lifetime or dereference promise, while the old RuntimeV1 prefix remains usable through V1_LEGACY_SIZE. The AArch64 fixture proves program-header/name/base copying and loader-handle information without callback reentrancy or link_map exposure."
 
 [[capability]]

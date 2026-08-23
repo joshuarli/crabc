@@ -192,8 +192,8 @@ unsafe fn published_gettimeofday_function(address: usize) -> Gettimeofday {
 unsafe extern "C" fn direct_clock_gettime(clock_id: i32, timespec: *mut u8) -> i32 {
     // SAFETY: The caller owns the writable Linux timespec output contract.
     (unsafe {
-        crate::syscall2(
-            crate::SYS_CLOCK_GETTIME,
+        crate::syscall::syscall2(
+            crate::syscall::SYS_CLOCK_GETTIME,
             clock_id as usize,
             timespec as usize,
         )
@@ -202,7 +202,13 @@ unsafe extern "C" fn direct_clock_gettime(clock_id: i32, timespec: *mut u8) -> i
 
 unsafe extern "C" fn direct_gettimeofday(timeval: *mut u8, timezone: *mut u8) -> i32 {
     // SAFETY: the caller owns the kernel two-pointer output contract.
-    (unsafe { crate::syscall2(crate::SYS_GETTIMEOFDAY, timeval as usize, timezone as usize) })
+    (unsafe {
+        crate::syscall::syscall2(
+            crate::syscall::SYS_GETTIMEOFDAY,
+            timeval as usize,
+            timezone as usize,
+        )
+    })
         as i32
 }
 
