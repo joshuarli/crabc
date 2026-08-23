@@ -19,6 +19,7 @@ Usage: ./scripts/dev.sh <command> [arguments]
 Commands:
   image               build the pinned Linux/AArch64 development image
   build [cargo args]  cargo build --workspace
+  structure           check repository ownership and composition invariants
   test [cargo args]   cargo test --workspace test targets (staticlib examples run under crabc-rs)
   symbols             compare libc.so exports with pinned musl 1.2.6
   compat              refresh symbol evidence and enforce its regression ratchet
@@ -176,6 +177,13 @@ case "$command" in
     build)
         ensure_image
         run_in_container cargo build --workspace "$@"
+        ;;
+    structure)
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        python3 "$ROOT_DIR/scripts/check_structure.py"
         ;;
     test)
         ensure_image

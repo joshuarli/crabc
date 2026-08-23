@@ -21,6 +21,9 @@ jobs:
       - name: Build the pinned native development image
         run: ./scripts/dev.sh image
 
+      - name: Check repository structure
+        run: ./scripts/dev.sh structure
+
       - name: Build crabc
         run: ./scripts/dev.sh build
 
