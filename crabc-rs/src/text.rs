@@ -1084,7 +1084,7 @@ mod tests {
         assert_eq!(
             binary.parse_u64(b"102"),
             Err(NumberParseError::InvalidDigit {
-                index: 4,
+                index: 2,
                 byte: b'2'
             })
         );
@@ -1236,7 +1236,8 @@ mod tests {
         assert!(letter.contains(AsciiClass::UPPER));
         assert!(letter.is_alpha());
         assert!(!letter.is_digit());
-        assert_eq!(letter.bits(), AsciiClass::UPPER.bits());
+        assert!(letter.is_xdigit());
+        assert_eq!(letter.bits(), AsciiClass::UPPER.bits() | AsciiClass::XDIGIT.bits());
     }
 
     #[test]
