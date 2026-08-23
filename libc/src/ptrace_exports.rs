@@ -11,7 +11,7 @@ pub unsafe extern "C" fn ptrace(request: c_int, mut args: ...) -> c_long {
     let pid = args.next_arg::<c_int>();
     let address = args.next_arg::<*mut c_void>();
     let data = args.next_arg::<*mut c_void>();
-    syscall_result(aarch64_syscall::syscall4(
+    syscall_result(aarch64::syscall::syscall4(
         CABI_SYS_PTRACE,
         request as i64,
         pid as i64,

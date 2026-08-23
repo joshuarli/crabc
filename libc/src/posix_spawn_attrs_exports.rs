@@ -337,7 +337,7 @@ unsafe fn cabi_spawn_apply_linked_actions(
                 if result < 0 { (-result) as c_int } else { 0 }
             }
             CABI_SPAWN_ACTION_FCHDIR => {
-                let result = aarch64_syscall::syscall1(CABI_SPAWN_SYS_FCHDIR, (*action).fd as i64);
+                let result = aarch64::syscall::syscall1(CABI_SPAWN_SYS_FCHDIR, (*action).fd as i64);
                 if result < 0 { (-result) as c_int } else { 0 }
             }
             _ => EINVAL,

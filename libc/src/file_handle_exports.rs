@@ -15,7 +15,7 @@ pub unsafe extern "C" fn name_to_handle_at(
     mount_id: *mut c_int,
     flags: c_int,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall5(
+    syscall_result(aarch64::syscall::syscall5(
         CABI_SYS_NAME_TO_HANDLE_AT,
         dirfd as i64,
         path as i64,
@@ -31,7 +31,7 @@ pub unsafe extern "C" fn open_by_handle_at(
     handle: *mut c_void,
     flags: c_int,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall3(
+    syscall_result(aarch64::syscall::syscall3(
         CABI_SYS_OPEN_BY_HANDLE_AT,
         mount_fd as i64,
         handle as i64,

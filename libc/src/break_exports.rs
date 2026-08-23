@@ -9,7 +9,7 @@ const CABI_SYS_BRK: i64 = 214;
 
 #[inline]
 unsafe fn cabi_break(address: *mut c_void) -> *mut c_void {
-    aarch64_syscall::syscall1(CABI_SYS_BRK, address as i64) as usize as *mut c_void
+    aarch64::syscall::syscall1(CABI_SYS_BRK, address as i64) as usize as *mut c_void
 }
 
 #[no_mangle]

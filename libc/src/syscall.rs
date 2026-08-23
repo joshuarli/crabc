@@ -11,7 +11,7 @@ pub unsafe extern "C" fn syscall(num: c_long, mut args: ...) -> c_long {
     let e: c_long = args.next_arg();
     let f: c_long = args.next_arg();
 
-    let result = aarch64_syscall::syscall6(
+    let result = aarch64::syscall::syscall6(
         num as i64, a as i64, b as i64, c as i64, d as i64, e as i64, f as i64,
     );
 

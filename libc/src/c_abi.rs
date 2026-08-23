@@ -30,8 +30,10 @@ include!("math_bessel.rs");
 include!("math_gamma.rs");
 include!("math_compat.rs");
 include!("math_f128.rs");
-include!("aarch64_atomic.rs");
-include!("aarch64_memory.rs");
+// These fragments define linkage-sensitive C ABI primitives in this lexical
+// scope; a normal child module would require broad visibility changes.
+include!("c_abi/aarch64/atomic.rs");
+include!("c_abi/aarch64/memory.rs");
 
 // This is a Linux mmap syscall sentinel, used by thread, semaphore, and AIO
 // mappings. It is deliberately independent from the malloc implementation.
@@ -98,9 +100,9 @@ const MAP_ANONYMOUS: i32 = 0x20;
 // Concrete Linux/AArch64 syscall boundary
 // ============================================================
 
-mod aarch64_syscall;
+mod aarch64;
 
-use aarch64_syscall::{SYS_CLOSE, SYS_LSEEK, SYS_SHMGET, SYS_SHMAT, SYS_SHMCTL, SYS_NANOSLEEP, SYS_SETITIMER, SYS_SOCKET, SYS_CONNECT, SYS_ACCEPT, SYS_SHUTDOWN, SYS_BIND, SYS_LISTEN, SYS_GETSOCKNAME, SYS_SETSOCKOPT, SYS_EXECVE, SYS_KILL, SYS_UNAME, SYS_SEMGET, SYS_SEMOP, SYS_SEMCTL, SYS_SEMTIMEDOP, SYS_SHMDT, SYS_MSGGET, SYS_MSGSND, SYS_MSGRCV, SYS_MSGCTL, SYS_FCNTL, SYS_TRUNCATE, SYS_GETCWD, SYS_CHDIR, SYS_UMASK, SYS_GETRLIMIT, SYS_SETUID, SYS_SETGID, SYS_SETPGID, SYS_GETGROUPS, SYS_SETGROUPS, SYS_GETPGID, SYS_GETSID, SYS_SETRLIMIT, SYS_SETHOSTNAME, SYS_FUTEX, SYS_CLOCK_NANOSLEEP, SYS_EXIT_GROUP, SYS_NEWFSTATAT, SYS_SET_ROBUST_LIST, SYS_FACCESSAT, SYS_STATFS, SYS_FSTATFS, SYS_GETPID, SYS_EXIT, SYS_SETSID, SYS_SYNC, SYS_GETGID, SYS_GETEUID, SYS_GETEGID, SYS_GETTID, SYS_CLOCK_SETTIME, SYS_PPOLL, SYS_PREAD64, SYS_PWRITE64};
+use aarch64::syscall::{SYS_CLOSE, SYS_LSEEK, SYS_SHMGET, SYS_SHMAT, SYS_SHMCTL, SYS_NANOSLEEP, SYS_SETITIMER, SYS_SOCKET, SYS_CONNECT, SYS_ACCEPT, SYS_SHUTDOWN, SYS_BIND, SYS_LISTEN, SYS_GETSOCKNAME, SYS_SETSOCKOPT, SYS_EXECVE, SYS_KILL, SYS_UNAME, SYS_SEMGET, SYS_SEMOP, SYS_SEMCTL, SYS_SEMTIMEDOP, SYS_SHMDT, SYS_MSGGET, SYS_MSGSND, SYS_MSGRCV, SYS_MSGCTL, SYS_FCNTL, SYS_TRUNCATE, SYS_GETCWD, SYS_CHDIR, SYS_UMASK, SYS_GETRLIMIT, SYS_SETUID, SYS_SETGID, SYS_SETPGID, SYS_GETGROUPS, SYS_SETGROUPS, SYS_GETPGID, SYS_GETSID, SYS_SETRLIMIT, SYS_SETHOSTNAME, SYS_FUTEX, SYS_CLOCK_NANOSLEEP, SYS_EXIT_GROUP, SYS_NEWFSTATAT, SYS_SET_ROBUST_LIST, SYS_FACCESSAT, SYS_STATFS, SYS_FSTATFS, SYS_GETPID, SYS_EXIT, SYS_SETSID, SYS_SYNC, SYS_GETGID, SYS_GETEUID, SYS_GETEGID, SYS_GETTID, SYS_CLOCK_SETTIME, SYS_PPOLL, SYS_PREAD64, SYS_PWRITE64};
 
 // ============================================================
 // Syscall wrappers (raw, no_std)
@@ -148,17 +150,17 @@ unsafe fn sys_close(fd: i64) -> i64 {
 
 #[inline]
 unsafe fn sys_lseek(fd: i64, offset: i64, whence: i64) -> i64 {
-    aarch64_syscall::syscall3(SYS_LSEEK, fd as i64, offset as i64, whence as i64)
+    aarch64::syscall::syscall3(SYS_LSEEK, fd as i64, offset as i64, whence as i64)
 }
 
 #[inline]
 unsafe fn sys_pread64(fd: c_int, buf: *mut u8, count: usize, offset: i64) -> i64 {
-    aarch64_syscall::syscall4(SYS_PREAD64, fd as i64, buf as i64, count as i64, offset)
+    aarch64::syscall::syscall4(SYS_PREAD64, fd as i64, buf as i64, count as i64, offset)
 }
 
 #[inline]
 unsafe fn sys_pwrite64(fd: c_int, buf: *const u8, count: usize, offset: i64) -> i64 {
-    aarch64_syscall::syscall4(SYS_PWRITE64, fd as i64, buf as i64, count as i64, offset)
+    aarch64::syscall::syscall4(SYS_PWRITE64, fd as i64, buf as i64, count as i64, offset)
 }
 
 unsafe fn sys_mmap(
@@ -2250,12 +2252,12 @@ pub unsafe extern "C" fn sigprocmask(
 
 #[inline]
 unsafe fn sys_kill(pid: c_int, sig: c_int) -> i64 {
-    aarch64_syscall::syscall2(SYS_KILL, pid as i64, sig as i64)
+    aarch64::syscall::syscall2(SYS_KILL, pid as i64, sig as i64)
 }
 
 #[inline]
 unsafe fn sys_getpid() -> i64 {
-    aarch64_syscall::syscall0(SYS_GETPID)
+    aarch64::syscall::syscall0(SYS_GETPID)
 }
 
 #[no_mangle]
@@ -2680,12 +2682,12 @@ unsafe fn sys_fstat(fd: i32, buf: *mut u8) -> i64 {
 
 #[inline]
 unsafe fn sys_getrlimit(resource: i32, rlim: *mut u8) -> i64 {
-    aarch64_syscall::syscall2(SYS_GETRLIMIT, resource as i64, rlim as i64)
+    aarch64::syscall::syscall2(SYS_GETRLIMIT, resource as i64, rlim as i64)
 }
 
 #[inline]
 unsafe fn sys_setrlimit(resource: i32, rlim: *const u8) -> i64 {
-    aarch64_syscall::syscall2(SYS_SETRLIMIT, resource as i64, rlim as i64)
+    aarch64::syscall::syscall2(SYS_SETRLIMIT, resource as i64, rlim as i64)
 }
 
 #[inline]
@@ -2756,17 +2758,17 @@ unsafe fn sys_getuid() -> i64 {
 
 #[inline]
 unsafe fn sys_getgid() -> i64 {
-    aarch64_syscall::syscall0(SYS_GETGID)
+    aarch64::syscall::syscall0(SYS_GETGID)
 }
 
 #[inline]
 unsafe fn sys_geteuid() -> i64 {
-    aarch64_syscall::syscall0(SYS_GETEUID)
+    aarch64::syscall::syscall0(SYS_GETEUID)
 }
 
 #[inline]
 unsafe fn sys_getegid() -> i64 {
-    aarch64_syscall::syscall0(SYS_GETEGID)
+    aarch64::syscall::syscall0(SYS_GETEGID)
 }
 
 #[no_mangle]
@@ -3287,7 +3289,7 @@ pub struct sockaddr {
 
 #[inline]
 unsafe fn sys_socket(domain: c_int, ty: c_int, protocol: c_int) -> i64 {
-    aarch64_syscall::syscall3(SYS_SOCKET, domain as i64, ty as i64, protocol as i64)
+    aarch64::syscall::syscall3(SYS_SOCKET, domain as i64, ty as i64, protocol as i64)
 }
 
 #[inline]
@@ -3300,22 +3302,22 @@ unsafe fn sys_socketpair(domain: c_int, ty: c_int, protocol: c_int, sv: *mut c_i
 
 #[inline]
 unsafe fn sys_bind(fd: c_int, addr: *const sockaddr, len: c_uint) -> i64 {
-    aarch64_syscall::syscall3(SYS_BIND, fd as i64, addr as i64, len as i64)
+    aarch64::syscall::syscall3(SYS_BIND, fd as i64, addr as i64, len as i64)
 }
 
 #[inline]
 unsafe fn sys_listen(fd: c_int, backlog: c_int) -> i64 {
-    aarch64_syscall::syscall2(SYS_LISTEN, fd as i64, backlog as i64)
+    aarch64::syscall::syscall2(SYS_LISTEN, fd as i64, backlog as i64)
 }
 
 #[inline]
 unsafe fn sys_accept(fd: c_int, addr: *mut sockaddr, len: *mut c_uint) -> i64 {
-    aarch64_syscall::syscall3(SYS_ACCEPT, fd as i64, addr as i64, len as i64)
+    aarch64::syscall::syscall3(SYS_ACCEPT, fd as i64, addr as i64, len as i64)
 }
 
 #[inline]
 unsafe fn sys_connect(fd: c_int, addr: *const sockaddr, len: c_uint) -> i64 {
-    aarch64_syscall::syscall3(SYS_CONNECT, fd as i64, addr as i64, len as i64)
+    aarch64::syscall::syscall3(SYS_CONNECT, fd as i64, addr as i64, len as i64)
 }
 
 #[inline]
@@ -3354,7 +3356,7 @@ unsafe fn sys_recvfrom(
 
 #[inline]
 unsafe fn sys_shutdown(fd: c_int, how: c_int) -> i64 {
-    aarch64_syscall::syscall2(SYS_SHUTDOWN, fd as i64, how as i64)
+    aarch64::syscall::syscall2(SYS_SHUTDOWN, fd as i64, how as i64)
 }
 
 #[inline]
@@ -3365,7 +3367,7 @@ unsafe fn sys_setsockopt(
     optval: *const c_void,
     optlen: c_uint,
 ) -> i64 {
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         SYS_SETSOCKOPT,
         fd as i64,
         level as i64,
@@ -3377,7 +3379,7 @@ unsafe fn sys_setsockopt(
 
 #[inline]
 unsafe fn sys_getsockname(fd: c_int, addr: *mut sockaddr, len: *mut c_uint) -> i64 {
-    aarch64_syscall::syscall3(SYS_GETSOCKNAME, fd as i64, addr as i64, len as i64)
+    aarch64::syscall::syscall3(SYS_GETSOCKNAME, fd as i64, addr as i64, len as i64)
 }
 
 #[no_mangle]
@@ -3986,7 +3988,7 @@ unsafe fn static_tls_create_block() -> *mut u8 {
 
 #[inline]
 unsafe fn sys_gettid() -> i64 {
-    aarch64_syscall::syscall0(SYS_GETTID)
+    aarch64::syscall::syscall0(SYS_GETTID)
 }
 
 #[inline]
@@ -3998,7 +4000,7 @@ unsafe fn sys_futex(
     uaddr2: *mut c_int,
     val3: c_int,
 ) -> i64 {
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         SYS_FUTEX,
         uaddr as i64,
         futex_op as i64,
@@ -4182,7 +4184,7 @@ unsafe fn futex_unlock_pi(addr: *mut c_int) -> c_int {
 
 #[inline]
 unsafe fn sys_set_robust_list(head: *mut robust_list_head, len: usize) -> i64 {
-    aarch64_syscall::syscall2(SYS_SET_ROBUST_LIST, head as i64, len as i64)
+    aarch64::syscall::syscall2(SYS_SET_ROBUST_LIST, head as i64, len as i64)
 }
 
 unsafe fn futex_timedwait(
@@ -13632,12 +13634,12 @@ pub unsafe extern "C" fn _exit(code: c_int) -> ! {
 
 #[inline]
 unsafe fn sys_exit_group(code: c_int) -> ! {
-    aarch64_syscall::syscall_noreturn1(SYS_EXIT_GROUP, code as i64)
+    aarch64::syscall::syscall_noreturn1(SYS_EXIT_GROUP, code as i64)
 }
 
 #[inline]
 unsafe fn sys_exit_thread(code: c_int) -> ! {
-    aarch64_syscall::syscall_noreturn1(SYS_EXIT, code as i64)
+    aarch64::syscall::syscall_noreturn1(SYS_EXIT, code as i64)
 }
 
 #[no_mangle]
@@ -16859,7 +16861,7 @@ unsafe fn sys_clock_getres(clockid: c_int, ts: *mut timespec) -> i64 {
 }
 
 unsafe fn sys_clock_settime(clockid: c_int, ts: *const timespec) -> i64 {
-    aarch64_syscall::syscall2(SYS_CLOCK_SETTIME, clockid as i64, ts as i64)
+    aarch64::syscall::syscall2(SYS_CLOCK_SETTIME, clockid as i64, ts as i64)
 }
 
 unsafe fn sys_clock_nanosleep(
@@ -16868,7 +16870,7 @@ unsafe fn sys_clock_nanosleep(
     req: *const timespec,
     rem: *mut timespec,
 ) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         SYS_CLOCK_NANOSLEEP,
         clockid as i64,
         flags as i64,
@@ -18309,7 +18311,7 @@ unsafe fn sys_dup2(oldfd: i32, newfd: i32) -> i64 {
 
 #[inline]
 unsafe fn sys_access(path: *const u8, mode: i32) -> i64 {
-    aarch64_syscall::syscall4(SYS_FACCESSAT, AT_FDCWD as i64, path as i64, mode as i64, 0)
+    aarch64::syscall::syscall4(SYS_FACCESSAT, AT_FDCWD as i64, path as i64, mode as i64, 0)
 }
 
 #[inline]
@@ -18324,17 +18326,17 @@ unsafe fn sys_rmdir(path: *const u8) -> i64 {
 
 #[inline]
 unsafe fn sys_chdir(path: *const u8) -> i64 {
-    aarch64_syscall::syscall1(SYS_CHDIR, path as i64)
+    aarch64::syscall::syscall1(SYS_CHDIR, path as i64)
 }
 
 #[inline]
 unsafe fn sys_getcwd(buf: *mut u8, size: usize) -> i64 {
-    aarch64_syscall::syscall2(SYS_GETCWD, buf as i64, size as i64)
+    aarch64::syscall::syscall2(SYS_GETCWD, buf as i64, size as i64)
 }
 
 #[inline]
 unsafe fn sys_sethostname(name: *const u8, len: usize) -> i64 {
-    aarch64_syscall::syscall2(SYS_SETHOSTNAME, name as i64, len as i64)
+    aarch64::syscall::syscall2(SYS_SETHOSTNAME, name as i64, len as i64)
 }
 
 #[inline]
@@ -18349,7 +18351,7 @@ unsafe fn sys_gethostname(buf: *mut u8, len: usize) -> i64 {
         domainname: [u8; 65],
     }
     let mut uts: UtsName = core::mem::zeroed();
-    let result = aarch64_syscall::syscall1(SYS_UNAME, &mut uts as *mut UtsName as i64);
+    let result = aarch64::syscall::syscall1(SYS_UNAME, &mut uts as *mut UtsName as i64);
     if result < 0 {
         return result;
     }
@@ -18371,11 +18373,11 @@ unsafe fn sys_gethostname(buf: *mut u8, len: usize) -> i64 {
 }
 
 unsafe fn sys_truncate(path: *const u8, length: i64) -> i64 {
-    aarch64_syscall::syscall2(SYS_TRUNCATE, path as i64, length as i64)
+    aarch64::syscall::syscall2(SYS_TRUNCATE, path as i64, length as i64)
 }
 
 unsafe fn sys_nanosleep(req: *const timespec, rem: *mut timespec) -> i64 {
-    aarch64_syscall::syscall2(SYS_NANOSLEEP, req as i64, rem as i64)
+    aarch64::syscall::syscall2(SYS_NANOSLEEP, req as i64, rem as i64)
 }
 
 const ITIMER_REAL: i32 = 0;
@@ -18390,7 +18392,7 @@ unsafe fn sys_alarm(seconds: c_uint) -> i64 {
     let mut new: itimerval = core::mem::zeroed();
     new.it_value.tv_sec = seconds as c_long;
     let mut old: itimerval = core::mem::zeroed();
-    let r = aarch64_syscall::syscall3(
+    let r = aarch64::syscall::syscall3(
         SYS_SETITIMER,
         ITIMER_REAL as i64,
         &new as *const _ as i64,
@@ -18409,13 +18411,13 @@ unsafe fn sys_alarm(seconds: c_uint) -> i64 {
 unsafe fn sys_pause() -> i64 {
 
         {
-        aarch64_syscall::syscall4(SYS_PPOLL, 0, 0, 0, 0)
+        aarch64::syscall::syscall4(SYS_PPOLL, 0, 0, 0, 0)
     }
 
 }
 
 unsafe fn sys_sync() {
-    let _ = aarch64_syscall::syscall0(SYS_SYNC);
+    let _ = aarch64::syscall::syscall0(SYS_SYNC);
 }
 
 unsafe fn sys_symlink(target: *const u8, linkpath: *const u8) -> i64 {
@@ -18478,39 +18480,39 @@ unsafe fn sys_fchmodat(dirfd: i32, path: *const u8, mode: u32, flags: i32) -> i6
 }
 
 unsafe fn sys_umask(mask: u32) -> u32 {
-    aarch64_syscall::syscall1(SYS_UMASK, mask as i64) as u32
+    aarch64::syscall::syscall1(SYS_UMASK, mask as i64) as u32
 }
 
 unsafe fn sys_getgroups(size: i32, list: *mut c_uint) -> i64 {
-    aarch64_syscall::syscall2(SYS_GETGROUPS, size as i64, list as i64)
+    aarch64::syscall::syscall2(SYS_GETGROUPS, size as i64, list as i64)
 }
 
 unsafe fn sys_setgroups(size: usize, list: *const c_uint) -> i64 {
-    aarch64_syscall::syscall2(SYS_SETGROUPS, size as i64, list as i64)
+    aarch64::syscall::syscall2(SYS_SETGROUPS, size as i64, list as i64)
 }
 
 unsafe fn sys_setuid(uid: c_uint) -> i64 {
-    aarch64_syscall::syscall1(SYS_SETUID, uid as i64)
+    aarch64::syscall::syscall1(SYS_SETUID, uid as i64)
 }
 
 unsafe fn sys_setgid(gid: c_uint) -> i64 {
-    aarch64_syscall::syscall1(SYS_SETGID, gid as i64)
+    aarch64::syscall::syscall1(SYS_SETGID, gid as i64)
 }
 
 unsafe fn sys_setsid() -> i64 {
-    aarch64_syscall::syscall0(SYS_SETSID)
+    aarch64::syscall::syscall0(SYS_SETSID)
 }
 
 unsafe fn sys_setpgid(pid: c_int, pgid: c_int) -> i64 {
-    aarch64_syscall::syscall2(SYS_SETPGID, pid as i64, pgid as i64)
+    aarch64::syscall::syscall2(SYS_SETPGID, pid as i64, pgid as i64)
 }
 
 unsafe fn sys_getpgid(pid: c_int) -> i64 {
-    aarch64_syscall::syscall1(SYS_GETPGID, pid as i64)
+    aarch64::syscall::syscall1(SYS_GETPGID, pid as i64)
 }
 
 unsafe fn sys_getsid(pid: c_int) -> i64 {
-    aarch64_syscall::syscall1(SYS_GETSID, pid as i64)
+    aarch64::syscall::syscall1(SYS_GETSID, pid as i64)
 }
 
 unsafe fn sys_mkdirat(dirfd: i32, path: *const u8, mode: u32) -> i64 {
@@ -20628,7 +20630,7 @@ struct kernel_stat64 {
 // sys_stat = 4 on x86_64
 #[inline]
 unsafe fn sys_stat(path: *const u8, statbuf: *mut kernel_stat64) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         SYS_NEWFSTATAT,
         AT_FDCWD as i64,
         path as i64,
@@ -21453,12 +21455,12 @@ const EIDRM: c_int = 43;
 
 #[inline]
 unsafe fn sys_msgget(key: c_int, msgflg: c_int) -> i64 {
-    aarch64_syscall::syscall2(SYS_MSGGET, key as i64, msgflg as i64)
+    aarch64::syscall::syscall2(SYS_MSGGET, key as i64, msgflg as i64)
 }
 
 #[inline]
 unsafe fn sys_msgsnd(msqid: c_int, msgp: *const c_void, msgsz: usize, msgflg: c_int) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         SYS_MSGSND,
         msqid as i64,
         msgp as i64,
@@ -21475,7 +21477,7 @@ unsafe fn sys_msgrcv(
     msgtyp: c_long,
     msgflg: c_int,
 ) -> i64 {
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         SYS_MSGRCV,
         msqid as i64,
         msgp as i64,
@@ -21487,22 +21489,22 @@ unsafe fn sys_msgrcv(
 
 #[inline]
 unsafe fn sys_msgctl(msqid: c_int, cmd: c_int, buf: *mut c_void) -> i64 {
-    aarch64_syscall::syscall3(SYS_MSGCTL, msqid as i64, cmd as i64, buf as i64)
+    aarch64::syscall::syscall3(SYS_MSGCTL, msqid as i64, cmd as i64, buf as i64)
 }
 
 #[inline]
 unsafe fn sys_semget(key: c_int, nsems: c_int, semflg: c_int) -> i64 {
-    aarch64_syscall::syscall3(SYS_SEMGET, key as i64, nsems as i64, semflg as i64)
+    aarch64::syscall::syscall3(SYS_SEMGET, key as i64, nsems as i64, semflg as i64)
 }
 
 #[inline]
 unsafe fn sys_semop(semid: c_int, sops: *const c_void, nsops: usize) -> i64 {
-    aarch64_syscall::syscall3(SYS_SEMOP, semid as i64, sops as i64, nsops as i64)
+    aarch64::syscall::syscall3(SYS_SEMOP, semid as i64, sops as i64, nsops as i64)
 }
 
 #[inline]
 unsafe fn sys_semctl(semid: c_int, semnum: c_int, cmd: c_int, arg: *mut c_void) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         SYS_SEMCTL,
         semid as i64,
         semnum as i64,
@@ -21513,22 +21515,22 @@ unsafe fn sys_semctl(semid: c_int, semnum: c_int, cmd: c_int, arg: *mut c_void) 
 
 #[inline]
 unsafe fn sys_shmget(key: c_int, size: usize, shmflg: c_int) -> i64 {
-    aarch64_syscall::syscall3(SYS_SHMGET, key as i64, size as i64, shmflg as i64)
+    aarch64::syscall::syscall3(SYS_SHMGET, key as i64, size as i64, shmflg as i64)
 }
 
 #[inline]
 unsafe fn sys_shmat(shmid: c_int, shmaddr: *const c_void, shmflg: c_int) -> i64 {
-    aarch64_syscall::syscall3(SYS_SHMAT, shmid as i64, shmaddr as i64, shmflg as i64)
+    aarch64::syscall::syscall3(SYS_SHMAT, shmid as i64, shmaddr as i64, shmflg as i64)
 }
 
 #[inline]
 unsafe fn sys_shmdt(shmaddr: *const c_void) -> i64 {
-    aarch64_syscall::syscall1(SYS_SHMDT, shmaddr as i64)
+    aarch64::syscall::syscall1(SYS_SHMDT, shmaddr as i64)
 }
 
 #[inline]
 unsafe fn sys_shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> i64 {
-    aarch64_syscall::syscall3(SYS_SHMCTL, shmid as i64, cmd as i64, buf as i64)
+    aarch64::syscall::syscall3(SYS_SHMCTL, shmid as i64, cmd as i64, buf as i64)
 }
 
 // ftok

@@ -58,7 +58,7 @@ pub unsafe extern "C" fn waitid(
 pub unsafe extern "C" fn killpg(pgrp: c_int, sig: c_int) -> c_int {
     // kill(2) interprets a negative pid as a process-group target.  Widen
     // before negating so even the INT_MIN pid_t value is represented safely.
-    syscall_result(aarch64_syscall::syscall2(
+    syscall_result(aarch64::syscall::syscall2(
         SYS_KILL,
         -(pgrp as i64),
         sig as i64,
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn sched_getparam(
     pid: c_int,
     param: *mut sched_param,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall2(
+    syscall_result(aarch64::syscall::syscall2(
         CABI_SYS_SCHED_GETPARAM,
         pid as i64,
         param as i64,
@@ -79,7 +79,7 @@ pub unsafe extern "C" fn sched_getparam(
 
 #[no_mangle]
 pub unsafe extern "C" fn sched_getscheduler(pid: c_int) -> c_int {
-    syscall_result(aarch64_syscall::syscall1(
+    syscall_result(aarch64::syscall::syscall1(
         CABI_SYS_SCHED_GETSCHEDULER,
         pid as i64,
     )) as c_int
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn sched_setparam(
     pid: c_int,
     param: *const sched_param,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall2(
+    syscall_result(aarch64::syscall::syscall2(
         CABI_SYS_SCHED_SETPARAM,
         pid as i64,
         param as i64,
@@ -103,7 +103,7 @@ pub unsafe extern "C" fn sched_setscheduler(
     policy: c_int,
     param: *const sched_param,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall3(
+    syscall_result(aarch64::syscall::syscall3(
         CABI_SYS_SCHED_SETSCHEDULER,
         pid as i64,
         policy as i64,

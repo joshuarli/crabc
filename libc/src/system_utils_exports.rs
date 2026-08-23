@@ -104,7 +104,7 @@ unsafe fn cabi_priority_errno(result: i64) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn getpriority(which: c_int, who: c_uint) -> c_int {
-    let result = aarch64_syscall::syscall2(CABI_SYS_GETPRIORITY, which as i64, who as i64);
+    let result = aarch64::syscall::syscall2(CABI_SYS_GETPRIORITY, which as i64, who as i64);
     if result < 0 {
         ERRNO = (-result) as c_int;
         return -1;
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn getpriority(which: c_int, who: c_uint) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn setpriority(which: c_int, who: c_uint, value: c_int) -> c_int {
-    let result = aarch64_syscall::syscall3(
+    let result = aarch64::syscall::syscall3(
         CABI_SYS_SETPRIORITY,
         which as i64,
         who as i64,

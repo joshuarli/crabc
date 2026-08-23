@@ -950,7 +950,7 @@ unsafe fn cabi_execveat(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> i64 {
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         CABI_EXEC_SYS_EXECVEAT,
         fd as i64,
         b"\0".as_ptr() as i64,

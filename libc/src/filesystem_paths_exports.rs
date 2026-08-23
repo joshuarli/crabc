@@ -45,7 +45,7 @@ unsafe fn cabi_faccessat(
     if flags == 0 {
         // SYS_faccessat has no flags argument; the fourth register is ignored
         // by Linux and is kept zero for the architecture's syscall ABI.
-        aarch64_syscall::syscall4(
+        aarch64::syscall::syscall4(
             SYS_FACCESSAT,
             dirfd as i64,
             path as i64,
@@ -53,7 +53,7 @@ unsafe fn cabi_faccessat(
             0,
         )
     } else {
-        aarch64_syscall::syscall4(
+        aarch64::syscall::syscall4(
             CABI_SYS_FACCESSAT2,
             dirfd as i64,
             path as i64,
@@ -65,7 +65,7 @@ unsafe fn cabi_faccessat(
 
 #[inline]
 unsafe fn cabi_fchdir(fd: c_int) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_FCHDIR, fd as i64)
+    aarch64::syscall::syscall1(CABI_SYS_FCHDIR, fd as i64)
 }
 
 #[inline]
@@ -75,7 +75,7 @@ unsafe fn cabi_mknodat(
     mode: c_uint,
     dev: c_ulong,
 ) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         CABI_SYS_MKNODAT,
         dirfd as i64,
         path as i64,

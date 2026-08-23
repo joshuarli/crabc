@@ -218,12 +218,12 @@ pub unsafe extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn inotify_init() -> c_int {
-    syscall_result(aarch64_syscall::syscall1(CABI_SYS_INOTIFY_INIT1, 0)) as c_int
+    syscall_result(aarch64::syscall::syscall1(CABI_SYS_INOTIFY_INIT1, 0)) as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn inotify_init1(flags: c_int) -> c_int {
-    syscall_result(aarch64_syscall::syscall1(CABI_SYS_INOTIFY_INIT1, flags as i64)) as c_int
+    syscall_result(aarch64::syscall::syscall1(CABI_SYS_INOTIFY_INIT1, flags as i64)) as c_int
 }
 
 #[no_mangle]
@@ -232,7 +232,7 @@ pub unsafe extern "C" fn inotify_add_watch(
     path: *const c_char,
     mask: u32,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall3(
+    syscall_result(aarch64::syscall::syscall3(
         CABI_SYS_INOTIFY_ADD_WATCH,
         fd as i64,
         path as i64,
@@ -242,7 +242,7 @@ pub unsafe extern "C" fn inotify_add_watch(
 
 #[no_mangle]
 pub unsafe extern "C" fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
-    syscall_result(aarch64_syscall::syscall2(
+    syscall_result(aarch64::syscall::syscall2(
         CABI_SYS_INOTIFY_RM_WATCH,
         fd as i64,
         wd as i64,

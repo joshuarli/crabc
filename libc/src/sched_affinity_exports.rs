@@ -34,7 +34,7 @@ const CABI_SYS_GETCPU: i64 = 168;
 
 #[inline]
 unsafe fn cabi_sched_rr_get_interval(pid: c_int, interval: *mut timespec) -> i64 {
-    aarch64_syscall::syscall2(
+    aarch64::syscall::syscall2(
         CABI_SYS_SCHED_RR_GET_INTERVAL,
         pid as i64,
         interval as i64,
@@ -43,7 +43,7 @@ unsafe fn cabi_sched_rr_get_interval(pid: c_int, interval: *mut timespec) -> i64
 
 #[inline]
 unsafe fn cabi_sched_setaffinity(pid: c_int, cpusetsize: SizeT, mask: *const c_void) -> i64 {
-    aarch64_syscall::syscall3(
+    aarch64::syscall::syscall3(
         CABI_SYS_SCHED_SETAFFINITY,
         pid as i64,
         cpusetsize as i64,
@@ -53,7 +53,7 @@ unsafe fn cabi_sched_setaffinity(pid: c_int, cpusetsize: SizeT, mask: *const c_v
 
 #[inline]
 unsafe fn cabi_sched_getaffinity(pid: c_int, cpusetsize: SizeT, mask: *mut c_void) -> i64 {
-    let result = aarch64_syscall::syscall3(
+    let result = aarch64::syscall::syscall3(
         CABI_SYS_SCHED_GETAFFINITY,
         pid as i64,
         cpusetsize as i64,
@@ -78,7 +78,7 @@ unsafe fn cabi_sched_getaffinity(pid: c_int, cpusetsize: SizeT, mask: *mut c_voi
 
 #[inline]
 unsafe fn cabi_getcpu(cpu: *mut c_uint, node: *mut c_uint) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_GETCPU, cpu as i64, node as i64, 0)
+    aarch64::syscall::syscall3(CABI_SYS_GETCPU, cpu as i64, node as i64, 0)
 }
 
 #[inline]
@@ -127,7 +127,7 @@ pub unsafe extern "C" fn sched_getcpu() -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
-    syscall_result(aarch64_syscall::syscall1(
+    syscall_result(aarch64::syscall::syscall1(
         CABI_SYS_SCHED_GET_PRIORITY_MAX,
         policy as i64,
     )) as c_int
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn sched_get_priority_min(policy: c_int) -> c_int {
-    syscall_result(aarch64_syscall::syscall1(
+    syscall_result(aarch64::syscall::syscall1(
         CABI_SYS_SCHED_GET_PRIORITY_MIN,
         policy as i64,
     )) as c_int

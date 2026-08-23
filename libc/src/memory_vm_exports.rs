@@ -44,17 +44,17 @@ unsafe fn cabi_mprotect(addr: *mut c_void, len: SizeT, prot: c_int) -> i64 {
 
 #[inline]
 unsafe fn cabi_madvise(addr: *mut c_void, len: SizeT, advice: c_int) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_MADVISE, addr as i64, len as i64, advice as i64)
+    aarch64::syscall::syscall3(CABI_SYS_MADVISE, addr as i64, len as i64, advice as i64)
 }
 
 #[inline]
 unsafe fn cabi_mincore(addr: *mut c_void, len: SizeT, vec: *mut u8) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_MINCORE, addr as i64, len as i64, vec as i64)
+    aarch64::syscall::syscall3(CABI_SYS_MINCORE, addr as i64, len as i64, vec as i64)
 }
 
 #[inline]
 unsafe fn cabi_msync(addr: *mut c_void, len: SizeT, flags: c_int) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_MSYNC, addr as i64, len as i64, flags as i64)
+    aarch64::syscall::syscall3(CABI_SYS_MSYNC, addr as i64, len as i64, flags as i64)
 }
 
 #[inline]
@@ -65,7 +65,7 @@ unsafe fn cabi_mremap(
     flags: c_int,
     new_address: *mut c_void,
 ) -> i64 {
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         CABI_SYS_MREMAP,
         old_address as i64,
         old_size as i64,
@@ -77,27 +77,27 @@ unsafe fn cabi_mremap(
 
 #[inline]
 unsafe fn cabi_mlock(addr: *const c_void, len: SizeT) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_MLOCK, addr as i64, len as i64)
+    aarch64::syscall::syscall2(CABI_SYS_MLOCK, addr as i64, len as i64)
 }
 
 #[inline]
 unsafe fn cabi_munlock(addr: *const c_void, len: SizeT) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_MUNLOCK, addr as i64, len as i64)
+    aarch64::syscall::syscall2(CABI_SYS_MUNLOCK, addr as i64, len as i64)
 }
 
 #[inline]
 unsafe fn cabi_mlockall(flags: c_int) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_MLOCKALL, flags as i64)
+    aarch64::syscall::syscall1(CABI_SYS_MLOCKALL, flags as i64)
 }
 
 #[inline]
 unsafe fn cabi_munlockall() -> i64 {
-    aarch64_syscall::syscall0(CABI_SYS_MUNLOCKALL)
+    aarch64::syscall::syscall0(CABI_SYS_MUNLOCKALL)
 }
 
 #[inline]
 unsafe fn cabi_mlock2(addr: *const c_void, len: SizeT, flags: c_uint) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_MLOCK2, addr as i64, len as i64, flags as i64)
+    aarch64::syscall::syscall3(CABI_SYS_MLOCK2, addr as i64, len as i64, flags as i64)
 }
 
 #[inline]
@@ -108,7 +108,7 @@ unsafe fn cabi_remap_file_pages(
     pgoff: SizeT,
     flags: c_int,
 ) -> i64 {
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         CABI_SYS_REMAP_FILE_PAGES,
         addr as i64,
         size as i64,

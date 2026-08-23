@@ -24,7 +24,7 @@ unsafe fn cabi_timer_create(
     event: *const c_void,
     timerid: *mut c_int,
 ) -> i64 {
-    aarch64_syscall::syscall3(
+    aarch64::syscall::syscall3(
         CABI_SYS_TIMER_CREATE,
         clockid as i64,
         event as i64,
@@ -34,17 +34,17 @@ unsafe fn cabi_timer_create(
 
 #[inline]
 unsafe fn cabi_timer_delete(timerid: *mut c_void) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_TIMER_DELETE, timerid as i64)
+    aarch64::syscall::syscall1(CABI_SYS_TIMER_DELETE, timerid as i64)
 }
 
 #[inline]
 unsafe fn cabi_timer_getoverrun(timerid: *mut c_void) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_TIMER_GETOVERRUN, timerid as i64)
+    aarch64::syscall::syscall1(CABI_SYS_TIMER_GETOVERRUN, timerid as i64)
 }
 
 #[inline]
 unsafe fn cabi_timer_gettime(timerid: *mut c_void, value: *mut CabiItimerspec) -> i64 {
-    aarch64_syscall::syscall2(
+    aarch64::syscall::syscall2(
         CABI_SYS_TIMER_GETTIME,
         timerid as i64,
         value as i64,
@@ -58,7 +58,7 @@ unsafe fn cabi_timer_settime(
     value: *const CabiItimerspec,
     old_value: *mut CabiItimerspec,
 ) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         CABI_SYS_TIMER_SETTIME,
         timerid as i64,
         flags as i64,

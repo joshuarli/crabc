@@ -87,7 +87,7 @@ unsafe fn cabi_info_nprocs() -> c_int {
     // zero lets this work with both smaller and larger kernel CPU masks.
     let mut mask = [0u8; CABI_INFO_CPUSET_BYTES];
     mask[0] = 1;
-    let _ = aarch64_syscall::syscall3(
+    let _ = aarch64::syscall::syscall3(
         CABI_INFO_SYS_SCHED_GETAFFINITY,
         0,
         CABI_INFO_CPUSET_BYTES as i64,

@@ -20,7 +20,7 @@ const CABI_SYS_SETFSGID: i64 = 152;
 #[inline]
 unsafe fn cabi_chown(path: *const c_char, owner: c_uint, group: c_uint) -> i64 {
         {
-        aarch64_syscall::syscall5(
+        aarch64::syscall::syscall5(
             CABI_SYS_FCHOWNAT,
             AT_FDCWD as i64,
             path as i64,
@@ -33,7 +33,7 @@ unsafe fn cabi_chown(path: *const c_char, owner: c_uint, group: c_uint) -> i64 {
 
 #[inline]
 unsafe fn cabi_fchown(fd: c_int, owner: c_uint, group: c_uint) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_FCHOWN, fd as i64, owner as i64, group as i64)
+    aarch64::syscall::syscall3(CABI_SYS_FCHOWN, fd as i64, owner as i64, group as i64)
 }
 
 #[inline]
@@ -44,7 +44,7 @@ unsafe fn cabi_fchownat(
     group: c_uint,
     flags: c_int,
 ) -> i64 {
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         CABI_SYS_FCHOWNAT,
         dirfd as i64,
         path as i64,
@@ -57,7 +57,7 @@ unsafe fn cabi_fchownat(
 #[inline]
 unsafe fn cabi_lchown(path: *const c_char, owner: c_uint, group: c_uint) -> i64 {
         {
-        aarch64_syscall::syscall5(
+        aarch64::syscall::syscall5(
             CABI_SYS_FCHOWNAT,
             AT_FDCWD as i64,
             path as i64,
@@ -70,17 +70,17 @@ unsafe fn cabi_lchown(path: *const c_char, owner: c_uint, group: c_uint) -> i64 
 
 #[inline]
 unsafe fn cabi_chroot(path: *const c_char) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_CHROOT, path as i64)
+    aarch64::syscall::syscall1(CABI_SYS_CHROOT, path as i64)
 }
 
 #[inline]
 unsafe fn cabi_setfsuid(uid: c_uint) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_SETFSUID, uid as i64)
+    aarch64::syscall::syscall1(CABI_SYS_SETFSUID, uid as i64)
 }
 
 #[inline]
 unsafe fn cabi_setfsgid(gid: c_uint) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_SETFSGID, gid as i64)
+    aarch64::syscall::syscall1(CABI_SYS_SETFSGID, gid as i64)
 }
 
 #[no_mangle]
@@ -150,12 +150,12 @@ const CABI_SYS_CAPSET: i64 = 91;
 
 #[inline]
 unsafe fn cabi_capget(header: *mut CabiCapUserHeader, data: *mut CabiCapUserData) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_CAPGET, header as i64, data as i64)
+    aarch64::syscall::syscall2(CABI_SYS_CAPGET, header as i64, data as i64)
 }
 
 #[inline]
 unsafe fn cabi_capset(header: *const CabiCapUserHeader, data: *const CabiCapUserData) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_CAPSET, header as i64, data as i64)
+    aarch64::syscall::syscall2(CABI_SYS_CAPSET, header as i64, data as i64)
 }
 
 #[no_mangle]

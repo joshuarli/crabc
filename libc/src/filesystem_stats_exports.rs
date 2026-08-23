@@ -37,12 +37,12 @@ pub struct CabiTimeb {
 
 #[inline]
 unsafe fn cabi_statfs(path: *const c_char, buf: *mut CabiStatfs) -> i64 {
-    aarch64_syscall::syscall2(SYS_STATFS, path as i64, buf as i64)
+    aarch64::syscall::syscall2(SYS_STATFS, path as i64, buf as i64)
 }
 
 #[inline]
 unsafe fn cabi_fstatfs(fd: c_int, buf: *mut CabiStatfs) -> i64 {
-    aarch64_syscall::syscall2(SYS_FSTATFS, fd as i64, buf as i64)
+    aarch64::syscall::syscall2(SYS_FSTATFS, fd as i64, buf as i64)
 }
 
 #[no_mangle]

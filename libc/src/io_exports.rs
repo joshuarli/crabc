@@ -57,18 +57,18 @@ fn cabi_offset_parts(offset: c_long) -> (i64, i64) {
 
 #[inline]
 unsafe fn cabi_readv(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_READV, fd as i64, iov as i64, iovcnt as i64)
+    aarch64::syscall::syscall3(CABI_SYS_READV, fd as i64, iov as i64, iovcnt as i64)
 }
 
 #[inline]
 unsafe fn cabi_writev(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_WRITEV, fd as i64, iov as i64, iovcnt as i64)
+    aarch64::syscall::syscall3(CABI_SYS_WRITEV, fd as i64, iov as i64, iovcnt as i64)
 }
 
 #[inline]
 unsafe fn cabi_preadv(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int, offset: c_long) -> i64 {
     let (lo, hi) = cabi_offset_parts(offset);
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         CABI_SYS_PREADV,
         fd as i64,
         iov as i64,
@@ -81,7 +81,7 @@ unsafe fn cabi_preadv(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int, offset: c
 #[inline]
 unsafe fn cabi_pwritev(fd: c_int, iov: *const CabiIoVec, iovcnt: c_int, offset: c_long) -> i64 {
     let (lo, hi) = cabi_offset_parts(offset);
-    aarch64_syscall::syscall5(
+    aarch64::syscall::syscall5(
         CABI_SYS_PWRITEV,
         fd as i64,
         iov as i64,
@@ -106,7 +106,7 @@ unsafe fn cabi_preadv2(
         return cabi_preadv(fd, iov, iovcnt, offset);
     }
     let (lo, hi) = cabi_offset_parts(offset);
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         CABI_SYS_PREADV2,
         fd as i64,
         iov as i64,
@@ -132,7 +132,7 @@ unsafe fn cabi_pwritev2(
         return cabi_pwritev(fd, iov, iovcnt, offset);
     }
     let (lo, hi) = cabi_offset_parts(offset);
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         CABI_SYS_PWRITEV2,
         fd as i64,
         iov as i64,
@@ -152,7 +152,7 @@ unsafe fn cabi_copy_file_range(
     len: SizeT,
     flags: c_uint,
 ) -> i64 {
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         CABI_SYS_COPY_FILE_RANGE,
         fd_in as i64,
         off_in as i64,
@@ -172,7 +172,7 @@ unsafe fn cabi_process_vm_readv(
     remote_iovcnt: SizeT,
     flags: SizeT,
 ) -> i64 {
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         CABI_SYS_PROCESS_VM_READV,
         pid as i64,
         local_iov as i64,
@@ -192,7 +192,7 @@ unsafe fn cabi_process_vm_writev(
     remote_iovcnt: SizeT,
     flags: SizeT,
 ) -> i64 {
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         CABI_SYS_PROCESS_VM_WRITEV,
         pid as i64,
         local_iov as i64,
@@ -210,7 +210,7 @@ unsafe fn cabi_sendfile(
     offset: *mut c_long,
     count: SizeT,
 ) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         CABI_SYS_SENDFILE,
         out_fd as i64,
         in_fd as i64,
@@ -228,7 +228,7 @@ unsafe fn cabi_splice(
     len: SizeT,
     flags: c_uint,
 ) -> i64 {
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         CABI_SYS_SPLICE,
         fd_in as i64,
         off_in as i64,
@@ -241,7 +241,7 @@ unsafe fn cabi_splice(
 
 #[inline]
 unsafe fn cabi_tee(fd_in: c_int, fd_out: c_int, len: SizeT, flags: c_uint) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         CABI_SYS_TEE,
         fd_in as i64,
         fd_out as i64,
@@ -257,7 +257,7 @@ unsafe fn cabi_vmsplice(
     nr_segs: SizeT,
     flags: c_uint,
 ) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         CABI_SYS_VMSPLICE,
         fd as i64,
         iov as i64,
@@ -268,7 +268,7 @@ unsafe fn cabi_vmsplice(
 
 #[inline]
 unsafe fn cabi_fallocate(fd: c_int, mode: c_int, offset: c_long, len: c_long) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         CABI_SYS_FALLOCATE,
         fd as i64,
         mode as i64,
@@ -279,7 +279,7 @@ unsafe fn cabi_fallocate(fd: c_int, mode: c_int, offset: c_long, len: c_long) ->
 
 #[inline]
 unsafe fn cabi_fadvise(fd: c_int, offset: c_long, len: c_long, advice: c_int) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         CABI_SYS_FADVISE64,
         fd as i64,
         offset as i64,

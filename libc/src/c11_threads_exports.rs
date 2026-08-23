@@ -107,7 +107,7 @@ const C11_SYS_SCHED_YIELD: i64 = 124;
 
 #[no_mangle]
 pub unsafe extern "C" fn thrd_yield() {
-    let _ = aarch64_syscall::syscall0(C11_SYS_SCHED_YIELD);
+    let _ = aarch64::syscall::syscall0(C11_SYS_SCHED_YIELD);
 }
 
 #[no_mangle]

@@ -43,7 +43,7 @@ unsafe fn cabi_pselect6(
         // public 128-byte `sigset_t` representation.
         size: crabc_core::signal::KERNEL_SIGSET_SIZE,
     };
-    aarch64_syscall::syscall6(
+    aarch64::syscall::syscall6(
         CABI_SYS_PSELECT6,
         nfds as i64,
         readfds as i64,

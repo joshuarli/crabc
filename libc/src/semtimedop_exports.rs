@@ -9,7 +9,7 @@ unsafe fn cabi_sys_semtimedop(
     operation_count: usize,
     timeout: *const timespec,
 ) -> i64 {
-    aarch64_syscall::syscall4(
+    aarch64::syscall::syscall4(
         SYS_SEMTIMEDOP,
         semid as i64,
         operations as i64,

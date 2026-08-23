@@ -88,7 +88,7 @@ unsafe fn cabi_zero_cmsg_padding(control: *mut u8, length: usize) {
 // maximum (255 descriptors), which is also the bound used by musl itself.
 unsafe fn cabi_sendmsg_raw(fd: c_int, msg: *const c_void, flags: c_int) -> i64 {
     if msg.is_null() {
-        return aarch64_syscall::syscall3(CABI_SYS_SENDMSG, fd as i64, 0, flags as i64);
+        return aarch64::syscall::syscall3(CABI_SYS_SENDMSG, fd as i64, 0, flags as i64);
     }
 
     let mut header: CabiMsghdr;
@@ -113,7 +113,7 @@ unsafe fn cabi_sendmsg_raw(fd: c_int, msg: *const c_void, flags: c_int) -> i64 {
         header.msg_control = control as *mut c_void;
     }
 
-    aarch64_syscall::syscall3(
+    aarch64::syscall::syscall3(
         CABI_SYS_SENDMSG,
         fd as i64,
         &header as *const CabiMsghdr as i64,
@@ -123,13 +123,13 @@ unsafe fn cabi_sendmsg_raw(fd: c_int, msg: *const c_void, flags: c_int) -> i64 {
 
 unsafe fn cabi_recvmsg_raw(fd: c_int, msg: *mut c_void, flags: c_int) -> i64 {
     if msg.is_null() {
-        return aarch64_syscall::syscall3(CABI_SYS_RECVMSG, fd as i64, 0, flags as i64);
+        return aarch64::syscall::syscall3(CABI_SYS_RECVMSG, fd as i64, 0, flags as i64);
     }
 
     let mut header = core::ptr::read_unaligned(msg as *const CabiMsghdr);
     header.msg_iovlen_pad = 0;
     header.msg_controllen_pad = 0;
-    let result = aarch64_syscall::syscall3(
+    let result = aarch64::syscall::syscall3(
         CABI_SYS_RECVMSG,
         fd as i64,
         &mut header as *mut CabiMsghdr as i64,
@@ -149,7 +149,7 @@ pub unsafe extern "C" fn accept4(
     len: *mut c_uint,
     flags: c_int,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall4(
+    syscall_result(aarch64::syscall::syscall4(
         CABI_SYS_ACCEPT4,
         fd as i64,
         addr as i64,
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn getpeername(
     addr: *mut c_void,
     len: *mut c_uint,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall3(
+    syscall_result(aarch64::syscall::syscall3(
         CABI_SYS_GETPEERNAME,
         fd as i64,
         addr as i64,
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn getsockopt(
     optval: *mut c_void,
     optlen: *mut c_uint,
 ) -> c_int {
-    syscall_result(aarch64_syscall::syscall5(
+    syscall_result(aarch64::syscall::syscall5(
         CABI_SYS_GETSOCKOPT,
         fd as i64,
         level as i64,
@@ -259,7 +259,7 @@ pub unsafe extern "C" fn recvmmsg(
         header.msg_controllen_pad = 0;
         index += 1;
     }
-    syscall_result(aarch64_syscall::syscall5(
+    syscall_result(aarch64::syscall::syscall5(
         CABI_SYS_RECVMMSG,
         fd as i64,
         messages as i64,
@@ -272,7 +272,7 @@ pub unsafe extern "C" fn recvmmsg(
 #[no_mangle]
 pub unsafe extern "C" fn sockatmark(fd: c_int) -> c_int {
     let mut at_mark = 0 as c_int;
-    let result = aarch64_syscall::syscall3(
+    let result = aarch64::syscall::syscall3(
         CABI_SYS_IOCTL,
         fd as i64,
         0x8905,

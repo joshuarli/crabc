@@ -10,7 +10,7 @@ const CABI_SYS_FANOTIFY_MARK: i64 = 263;
 
 #[no_mangle]
 pub unsafe extern "C" fn fanotify_init(flags: c_uint, event_f_flags: c_uint) -> c_int {
-    let result = aarch64_syscall::syscall2(
+    let result = aarch64::syscall::syscall2(
         CABI_SYS_FANOTIFY_INIT,
         flags as i64,
         event_f_flags as i64,
@@ -31,7 +31,7 @@ pub unsafe extern "C" fn fanotify_mark(
     dirfd: c_int,
     pathname: *const c_char,
 ) -> c_int {
-    let result = aarch64_syscall::syscall5(
+    let result = aarch64::syscall::syscall5(
         CABI_SYS_FANOTIFY_MARK,
         fanotify_fd as i64,
         flags as i64,

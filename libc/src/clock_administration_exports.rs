@@ -39,17 +39,17 @@ const CABI_ADJ_OFFSET_SINGLESHOT: c_uint = 0x8001;
 
 #[inline]
 unsafe fn cabi_clock_adjtime(clock_id: c_int, tx: *mut CabiTimex) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_CLOCK_ADJTIME, clock_id as i64, tx as i64)
+    aarch64::syscall::syscall2(CABI_SYS_CLOCK_ADJTIME, clock_id as i64, tx as i64)
 }
 
 #[inline]
 unsafe fn cabi_adjtimex(tx: *mut CabiTimex) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_ADJTIMEX, tx as i64)
+    aarch64::syscall::syscall1(CABI_SYS_ADJTIMEX, tx as i64)
 }
 
 #[inline]
 unsafe fn cabi_settimeofday(tv: *const timeval, tz: *const c_void) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_SETTIMEOFDAY, tv as i64, tz as i64)
+    aarch64::syscall::syscall2(CABI_SYS_SETTIMEOFDAY, tv as i64, tz as i64)
 }
 
 

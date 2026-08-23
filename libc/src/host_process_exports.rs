@@ -94,17 +94,17 @@ unsafe fn cabi_uname_raw(uts: *mut CabiUtsName) -> i64 {
 
 #[inline]
 unsafe fn cabi_sethostname(name: *const c_char, len: usize) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_SETHOSTNAME, name as i64, len as i64)
+    aarch64::syscall::syscall2(CABI_SYS_SETHOSTNAME, name as i64, len as i64)
 }
 
 #[inline]
 unsafe fn cabi_setdomainname(name: *const c_char, len: usize) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_SETDOMAINNAME, name as i64, len as i64)
+    aarch64::syscall::syscall2(CABI_SYS_SETDOMAINNAME, name as i64, len as i64)
 }
 
 #[inline]
 unsafe fn cabi_getresuid(ruid: *mut c_uint, euid: *mut c_uint, suid: *mut c_uint) -> i64 {
-    aarch64_syscall::syscall3(
+    aarch64::syscall::syscall3(
         CABI_SYS_GETRESUID,
         ruid as i64,
         euid as i64,
@@ -114,7 +114,7 @@ unsafe fn cabi_getresuid(ruid: *mut c_uint, euid: *mut c_uint, suid: *mut c_uint
 
 #[inline]
 unsafe fn cabi_setresuid(ruid: c_uint, euid: c_uint, suid: c_uint) -> i64 {
-    aarch64_syscall::syscall3(
+    aarch64::syscall::syscall3(
         CABI_SYS_SETRESUID,
         ruid as i64,
         euid as i64,
@@ -124,7 +124,7 @@ unsafe fn cabi_setresuid(ruid: c_uint, euid: c_uint, suid: c_uint) -> i64 {
 
 #[inline]
 unsafe fn cabi_getresgid(rgid: *mut c_uint, egid: *mut c_uint, sgid: *mut c_uint) -> i64 {
-    aarch64_syscall::syscall3(
+    aarch64::syscall::syscall3(
         CABI_SYS_GETRESGID,
         rgid as i64,
         egid as i64,
@@ -134,7 +134,7 @@ unsafe fn cabi_getresgid(rgid: *mut c_uint, egid: *mut c_uint, sgid: *mut c_uint
 
 #[inline]
 unsafe fn cabi_setresgid(rgid: c_uint, egid: c_uint, sgid: c_uint) -> i64 {
-    aarch64_syscall::syscall3(
+    aarch64::syscall::syscall3(
         CABI_SYS_SETRESGID,
         rgid as i64,
         egid as i64,
@@ -144,12 +144,12 @@ unsafe fn cabi_setresgid(rgid: c_uint, egid: c_uint, sgid: c_uint) -> i64 {
 
 #[inline]
 unsafe fn cabi_getrusage(who: c_int, usage: *mut CabiRusage) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_GETRUSAGE, who as i64, usage as i64)
+    aarch64::syscall::syscall2(CABI_SYS_GETRUSAGE, who as i64, usage as i64)
 }
 
 #[inline]
 unsafe fn cabi_getitimer(which: c_int, old: *mut CabiItimerval) -> i64 {
-    aarch64_syscall::syscall2(CABI_SYS_GETITIMER, which as i64, old as i64)
+    aarch64::syscall::syscall2(CABI_SYS_GETITIMER, which as i64, old as i64)
 }
 
 #[inline]
@@ -158,12 +158,12 @@ unsafe fn cabi_setitimer(
     new: *const CabiItimerval,
     old: *mut CabiItimerval,
 ) -> i64 {
-    aarch64_syscall::syscall3(CABI_SYS_SETITIMER, which as i64, new as i64, old as i64)
+    aarch64::syscall::syscall3(CABI_SYS_SETITIMER, which as i64, new as i64, old as i64)
 }
 
 #[inline]
 unsafe fn cabi_times(buffer: *mut CabiTms) -> i64 {
-    aarch64_syscall::syscall1(CABI_SYS_TIMES, buffer as i64)
+    aarch64::syscall::syscall1(CABI_SYS_TIMES, buffer as i64)
 }
 
 #[no_mangle]
