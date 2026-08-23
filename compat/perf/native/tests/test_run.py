@@ -6,9 +6,12 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 MODULE = Path(__file__).resolve().parents[1] / "run.py"
+MANIFEST = MODULE.with_name("Cargo.toml")
 SPEC = importlib.util.spec_from_file_location("crabc_perf_native", MODULE)
 assert SPEC is not None and SPEC.loader is not None
 native = importlib.util.module_from_spec(SPEC)
@@ -44,6 +47,29 @@ class AggregateRunsTests(unittest.TestCase):
         self.assertEqual(getpid["median_ns"], 20)
         self.assertEqual(getpid["process_resources"]["rss_bytes"], 20)
         self.assertEqual(getpid["invocation_count"], 3)
+
+
+class BuildStdContractTests(unittest.TestCase):
+    def test_bench_profile_does_not_split_build_std_core_by_panic_strategy(self) -> None:
+        bench_profile = MANIFEST.read_text(encoding="utf-8").split("[profile.bench]", 1)[1]
+        self.assertNotIn("panic =", bench_profile)
+
+    def test_build_std_runner_keeps_the_empty_feature_contract(self) -> None:
+        args = SimpleNamespace(build_std=True, sample_count=1, sample_size=1, runs=1)
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout=b'{"schema": 1, "benchmarks": []}',
+            stderr=b"",
+        )
+        with patch.object(native.subprocess, "run", return_value=completed) as run:
+            report = native.run_backend(Path("/repo"), args, "crabc")
+
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command[:5],
+            ["cargo", "-Z", "build-std=std", "-Z", "build-std-features="],
+        )
+        self.assertEqual(report["status"], "ok")
 
 
 if __name__ == "__main__":

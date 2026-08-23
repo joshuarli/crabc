@@ -170,8 +170,11 @@ def run_backend(root: Path, args: argparse.Namespace, backend: str) -> dict[str,
     command = ["cargo"]
     if args.build_std:
         # Cargo's benchmark harness requires an unwind-capable std. This is
-        # the user-requested empty build-std feature experiment; the existing
-        # application proof retains its separate `panic_abort` closure.
+        # the user-requested empty build-std feature experiment. The fixture
+        # deliberately has no bench-profile panic override: Cargo otherwise
+        # builds incompatible `core` units for Rustybench's proc-macro graph.
+        # The existing application proof retains its separate `panic_abort`
+        # closure.
         command.extend(["-Z", "build-std=std", "-Z", "build-std-features="])
     command.extend([
         "bench", "--manifest-path", str(manifest), "--bench", "native", "--no-default-features",

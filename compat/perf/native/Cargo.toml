@@ -28,9 +28,11 @@ harness = false
 # `cargo bench` selects the bench profile, not the root project's release
 # profile. Keep this explicit so the post-baseline experiment applies the same
 # whole-program optimization contract to both direct-facade executables.
+# Do not set `panic` here: Cargo ignores it for the benchmark executable but
+# applies it to a subset of `-Z build-std` units. That would make Rustybench's
+# proc-macro graph load a second, incompatible `core` lang-item crate.
 [profile.bench]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
 strip = true

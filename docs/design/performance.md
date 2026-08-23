@@ -113,9 +113,9 @@ source, fixture, toolchain, and measurement conditions. Fat LTO, one codegen
 unit, and stripping are build choices, not replacements for removing a syscall
 or fixing an algorithm. For standard-library-aware applications, record exact
 `-Z build-std=std -Z build-std-features=` invocations and artifacts. The
-dependency-free native-facade LTO proof is bounded evidence only; Rustybench's
-dependency-bearing `build-std` route remains explicitly unsupported until its
-duplicate-`core` failure is resolved.
+dependency-free native-facade LTO proof is bounded evidence only; the
+Rustybench dependency-bearing route uses the same unwind-capable build-std
+closure and records it as a separate measurement lane.
 
 ## Optimization doctrine
 
@@ -320,10 +320,11 @@ The dependency-free native-facade stock-`std` fixture successfully builds the cu
 embedded bitcode, and dynamic crabc runtime; its musl/crabc raw-output runtime
 comparison passes. Run it with `./scripts/dev.sh lto-native-facade`.
 
-Rustybench’s proc-macro Cargo benchmark graph currently cannot combine with
-`-Z build-std` on this native musl host: Cargo produces duplicate `core` lang
-items while compiling its host proc-macro dependency. `perf-native --build-std`
-records this explicitly as unsupported evidence rather than inventing a result.
-That is a Rustybench integration limitation to close before using Rustybench
-for dependency-bearing build-std timing; it is not evidence of a crabc runtime
-regression.
+Rustybench’s proc-macro Cargo benchmark graph supports `-Z build-std` on this
+native musl host when the fixture leaves `profile.bench.panic` unset. A bench
+profile `panic = "abort"` is ignored for the benchmark executable but caused
+Cargo to compile both abort and unwind `core` units for the dependency graph,
+which then failed with duplicate `core` lang items. `perf-native --build-std`
+therefore records dependency-bearing build-std timing with the benchmark
+profile's default unwind strategy. This is tooling configuration evidence, not
+a crabc runtime compatibility result.
