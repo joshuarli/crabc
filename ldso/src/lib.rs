@@ -3,8 +3,18 @@
 #![feature(linkage)]
 #![allow(dead_code, deref_nullptr)]
 
+#[cfg(not(all(target_os = "linux", target_arch = "aarch64", target_endian = "little")))]
+compile_error!("crabc-ldso supports Linux/AArch64 little-endian only");
+
+mod aarch64;
+
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use aarch64::{
+    syscall1, syscall2, syscall3, syscall6, syscall_noreturn1, SYS_CLOSE, SYS_EXIT, SYS_FSTAT,
+    SYS_LSEEK, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_OPENAT, SYS_READ, SYS_WRITE,
+};
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -52,16 +62,11 @@ const DT_RELR: u64 = 36;
 const DT_RELRENT: u64 = 37;
 const DT_GNU_HASH: u64 = 0x6ffffef5;
 
-const R_X86_64_64: u64 = 1;
-const R_X86_64_COPY: u64 = 5;
-const R_X86_64_GLOB_DAT: u64 = 6;
-const R_X86_64_JUMP_SLOT: u64 = 7;
-const R_X86_64_RELATIVE: u64 = 8;
-const R_X86_64_DTPMOD64: u64 = 16;
-const R_X86_64_DTPOFF64: u64 = 17;
-const R_X86_64_TPOFF64: u64 = 18;
-
 const R_AARCH64_NONE: u64 = 0;
+// This non-standard relocation value was historically accepted by the loader
+// as a COPY relocation on the prior supported build. Keep that narrow behavior
+// for malformed-input compatibility without reviving an inactive ABI table.
+const LEGACY_COPY_RELOCATION: u64 = 5;
 const R_AARCH64_ABS64: u64 = 257;
 const R_AARCH64_GLOB_DAT: u64 = 1025;
 const R_AARCH64_JUMP_SLOT: u64 = 1026;
@@ -73,16 +78,6 @@ const R_AARCH64_TLSLE_ADD_TPREL_HI12: u64 = 549;
 const R_AARCH64_TLSLE_ADD_TPREL_LO12: u64 = 550;
 const R_AARCH64_TLSLE_ADD_TPREL_LO12_NC: u64 = 551;
 const R_AARCH64_TLSDESC: u64 = 1031;
-
-const R_RISCV_RELATIVE: u64 = 3;
-const R_RISCV_64: u64 = 2;
-const R_RISCV_GLOB_DAT: u64 = 5; // skipped, RISC-V uses R_RISCV_64=2 as GLOB_DAT
-const R_RISCV_JUMP_SLOT: u64 = 5;
-const R_RISCV_TLS_DTPMOD64: u64 = 7;
-const R_RISCV_TLS_DTPREL64: u64 = 9;
-const R_RISCV_TLS_TPREL64: u64 = 11;
-const R_RISCV_TLSDESC: u64 = 772;
-const R_RISCV_COPY: u64 = 4;
 
 const RTLD_LAZY: i32 = 1;
 const RTLD_NOW: i32 = 2;
@@ -511,105 +506,8 @@ static mut ORIGIN_LEN: usize = 0;
 // _start: self-relocate ldso, then call run_main(sp)
 // ============================================================
 
-#[cfg(not(test))]
-#[cfg(target_arch = "x86_64")]
-core::arch::global_asm!(
-    ".global _start",
-    ".type _start, @function",
-    "_start:",
-    "mov rdi, rsp",
-    "mov rax, [rsp]",
-    "lea rbx, [rsp + 8]",
-    "lea rcx, [rbx + rax*8]",
-    "add rcx, 8",
-    "2:",
-    "cmp qword ptr [rcx], 0",
-    "je 3f",
-    "add rcx, 8",
-    "jmp 2b",
-    "3:",
-    "add rcx, 8",
-    "xor rsi, rsi",
-    "4:",
-    "mov rax, [rcx]",
-    "cmp rax, 0",
-    "je 5f",
-    "cmp rax, 7",
-    "jne 6f",
-    "mov rsi, [rcx + 8]",
-    "6:",
-    "add rcx, 16",
-    "jmp 4b",
-    "5:",
-    "mov rax, [rsi + 32]",
-    "movzx rcx, word ptr [rsi + 56]",
-    "lea r8, [rsi + rax]",
-    "xor r9, r9",
-    "7:",
-    "cmp r9, rcx",
-    "jge 8f",
-    "mov eax, [r8]",
-    "cmp eax, 2",
-    "je 9f",
-    "add r8, 56",
-    "inc r9",
-    "jmp 7b",
-    "9:",
-    "mov r10, [r8 + 16]",
-    "mov r11, [r8 + 40]",
-    "add r10, rsi",
-    "xor rax, rax",
-    "xor rbx, rbx",
-    "mov rcx, r10",
-    "lea rdx, [r10 + r11]",
-    "10:",
-    "cmp rcx, rdx",
-    "jge 11f",
-    "mov r12, [rcx]",
-    "mov r13, [rcx + 8]",
-    "cmp r12, 0",
-    "je 11f",
-    "cmp r12, 7",
-    "jne 12f",
-    "lea rax, [rsi + r13]",
-    "12:",
-    "cmp r12, 8",
-    "jne 13f",
-    "mov rbx, r13",
-    "13:",
-    "add rcx, 16",
-    "jmp 10b",
-    "11:",
-    "test rbx, rbx",
-    "jz 8f",
-    "test rax, rax",
-    "jz 8f",
-    "xor rcx, rcx",
-    "14:",
-    "cmp rcx, rbx",
-    "jge 8f",
-    "mov r12, [rax + rcx]",
-    "mov r13, [rax + rcx + 8]",
-    "mov r14, [rax + rcx + 16]",
-    "and r13d, 0xffffffff",
-    "cmp r13d, 8",
-    "jne 15f",
-    "add r12, rsi",
-    "add r14, rsi",
-    "mov [r12], r14",
-    "15:",
-    "add rcx, 24",
-    "jmp 14b",
-    "8:",
-    ".hidden {run_main}",
-    "call {run_main}",
-    "ud2",
-    run_main = sym run_main,
-);
-
 // aarch64 _start: self-relocate ldso, then call run_main(sp, ldso_base)
 #[cfg(not(test))]
-#[cfg(target_arch = "aarch64")]
 core::arch::global_asm!(
     ".global _start",
     ".type _start, @function",
@@ -705,104 +603,6 @@ core::arch::global_asm!(
     run_main = sym run_main,
 );
 
-// riscv64 _start: self-relocate ldso, then call run_main(sp, ldso_base)
-#[cfg(not(test))]
-#[cfg(target_arch = "riscv64")]
-core::arch::global_asm!(
-    ".global _start",
-    ".type _start, @function",
-    "_start:",
-    // Save sp into s0 (frame pointer, callee-saved)
-    "mv s0, sp",
-    // Walk stack: argc, argv[], NULL, envp[], NULL, auxv[]
-    "ld a0, 0(sp)",              // argc
-    "add a1, sp, 8",            // &argv[0]
-    "slli a2, a0, 3",
-    "add a2, a1, a2",           // skip argv[]
-    "addi a2, a2, 8",           // skip NULL after argv -> &envp[0]
-    "2:",
-    "ld a3, 0(a2)",
-    "beqz a3, 3f",
-    "addi a2, a2, 8",
-    "j 2b",
-    "3:",
-    "addi a2, a2, 8",           // &auxv[0]
-    "li s1, 0",                 // ldso_base = 0
-    "4:",
-    "ld a3, 0(a2)",             // auxv tag
-    "beqz a3, 5f",              // AT_NULL -> done
-    "li a4, 7",                 // AT_BASE
-    "bne a3, a4, 6f",
-    "ld s1, 8(a2)",             // ldso_base
-    "6:",
-    "addi a2, a2, 16",
-    "j 4b",
-    "5:",
-    // s1 = ldso_base. Walk ldso's ELF phdrs to find PT_DYNAMIC.
-    "ld a0, 32(s1)",            // e_phoff
-    "lhu a1, 56(s1)",           // e_phnum
-    "add a2, s1, a0",           // phdr table
-    "li a3, 0",                 // i
-    "7:",
-    "bgeu a3, a1, 8f",
-    "lw a4, 0(a2)",             // p_type
-    "li a5, 2",                 // PT_DYNAMIC
-    "beq a4, a5, 9f",
-    "addi a2, a2, 56",          // next phdr (PHDR_SIZE=56)
-    "addi a3, a3, 1",
-    "j 7b",
-    "9:",
-    // Found PT_DYNAMIC. Read DT_RELA and DT_RELASZ from dynamic section.
-    "ld a4, 16(a2)",            // p_vaddr
-    "ld a5, 40(a2)",            // p_memsz
-    "add a4, a4, s1",           // dyn_addr = base + p_vaddr
-    "add a5, a4, a5",           // dyn_end
-    "li a6, 0",                 // rela = 0
-    "li a7, 0",                 // relasz = 0
-    "10:",
-    "bgeu a4, a5, 11f",
-    "ld t0, 0(a4)",             // d_tag
-    "ld t1, 8(a4)",             // d_val
-    "beqz t0, 11f",             // DT_NULL
-    "li t2, 7",                 // DT_RELA
-    "bne t0, t2, 12f",
-    "add a6, s1, t1",           // rela = base + d_val
-    "12:",
-    "li t2, 8",                 // DT_RELASZ
-    "bne t0, t2, 13f",
-    "mv a7, t1",                // relasz = d_val
-    "13:",
-    "addi a4, a4, 16",
-    "j 10b",
-    "11:",
-    // Apply R_RISCV_RELATIVE (type 3) relocations.
-    "beqz a7, 8f",
-    "beqz a6, 8f",
-    "add t3, a6, a7",           // table_end
-    "14:",
-    "bgeu a6, t3, 8f",
-    "ld t4, 0(a6)",             // r_offset
-    "ld t5, 8(a6)",             // r_info
-    "ld t6, 16(a6)",            // r_addend
-    "li t0, 3",                 // R_RISCV_RELATIVE
-    "slli t1, t5, 32",
-    "srli t1, t1, 32", // r_type = r_info & 0xffffffff
-    "bne t1, t0, 15f",
-    "add t4, t4, s1",           // slot = base + r_offset
-    "add t6, t6, s1",           // val = base + r_addend
-    "sd t6, 0(t4)",
-    "15:",
-    "addi a6, a6, 24",
-    "j 14b",
-    "8:",
-    ".hidden {run_main}",
-    "mv a0, s0",               // sp
-    "mv a1, s1",               // ldso_base
-    "call {run_main}",
-    "unimp",
-    run_main = sym run_main,
-);
-
 // ============================================================
 // Entry point
 // ============================================================
@@ -812,7 +612,7 @@ core::arch::global_asm!(
 // initial stack/register convention and must never be called as a C function.
 #[no_mangle]
 #[unsafe(naked)]
-#[cfg(all(target_arch = "aarch64", not(test)))]
+#[cfg(not(test))]
 pub unsafe extern "C" fn __ldso_dlstart() -> ! {
     core::arch::naked_asm!("b _start");
 }
@@ -1368,396 +1168,7 @@ unsafe fn secure_env_entry_is_unsafe(entry: *const u8) -> bool {
 // Syscall wrappers (raw, no_std)
 // ============================================================
 
-trait Syscalls {
-    unsafe fn syscall0(n: i64) -> i64;
-    unsafe fn syscall1(n: i64, a1: i64) -> i64;
-    unsafe fn syscall2(n: i64, a1: i64, a2: i64) -> i64;
-    unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64;
-    unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64;
-    unsafe fn syscall5(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64) -> i64;
-    unsafe fn syscall6(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64;
-    unsafe fn syscall_noreturn1(n: i64, a1: i64) -> !;
-}
-
-struct X86_64;
-struct Aarch64;
-struct Riscv64;
-
-#[cfg(target_arch = "x86_64")]
-impl Syscalls for X86_64 {
-    #[inline(always)]
-    unsafe fn syscall0(n: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") n => result,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall1(n: i64, a1: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") n => result,
-            in("rdi") a1,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall2(n: i64, a1: i64, a2: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") n => result,
-            in("rdi") a1,
-            in("rsi") a2,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") n => result,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") n => result,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            in("r10") a4,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall5(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") n => result,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            in("r10") a4,
-            in("r8") a5,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall6(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "syscall",
-            inlateout("rax") n => result,
-            in("rdi") a1,
-            in("rsi") a2,
-            in("rdx") a3,
-            in("r10") a4,
-            in("r8") a5,
-            in("r9") a6,
-            lateout("rcx") _,
-            lateout("r11") _,
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall_noreturn1(n: i64, a1: i64) -> ! {
-        core::arch::asm!(
-            "syscall",
-            in("rax") n,
-            in("rdi") a1,
-            options(noreturn)
-        );
-    }
-}
-
-#[cfg(target_arch = "aarch64")]
-impl Syscalls for Aarch64 {
-    #[inline(always)]
-    unsafe fn syscall0(n: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "svc #0",
-            inlateout("x8") n => _,
-            lateout("x0") result,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall1(n: i64, a1: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "svc #0",
-            inlateout("x8") n => _,
-            inlateout("x0") a1 => result,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall2(n: i64, a1: i64, a2: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "svc #0",
-            inlateout("x8") n => _,
-            inlateout("x0") a1 => result,
-            inlateout("x1") a2 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "svc #0",
-            inlateout("x8") n => _,
-            inlateout("x0") a1 => result,
-            inlateout("x1") a2 => _,
-            inlateout("x2") a3 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "svc #0",
-            inlateout("x8") n => _,
-            inlateout("x0") a1 => result,
-            inlateout("x1") a2 => _,
-            inlateout("x2") a3 => _,
-            inlateout("x3") a4 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall5(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "svc #0",
-            inlateout("x8") n => _,
-            inlateout("x0") a1 => result,
-            inlateout("x1") a2 => _,
-            inlateout("x2") a3 => _,
-            inlateout("x3") a4 => _,
-            inlateout("x4") a5 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall6(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "svc #0",
-            inlateout("x8") n => _,
-            inlateout("x0") a1 => result,
-            inlateout("x1") a2 => _,
-            inlateout("x2") a3 => _,
-            inlateout("x3") a4 => _,
-            inlateout("x4") a5 => _,
-            inlateout("x5") a6 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall_noreturn1(n: i64, a1: i64) -> ! {
-        core::arch::asm!(
-            "svc #0",
-            in("x8") n,
-            in("x0") a1,
-            options(noreturn, nostack),
-        );
-    }
-}
-
-#[cfg(target_arch = "riscv64")]
-impl Syscalls for Riscv64 {
-    #[inline(always)]
-    unsafe fn syscall0(n: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "ecall",
-            inlateout("a7") n => _,
-            lateout("a0") result,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall1(n: i64, a1: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "ecall",
-            inlateout("a7") n => _,
-            inlateout("a0") a1 => result,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall2(n: i64, a1: i64, a2: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "ecall",
-            inlateout("a7") n => _,
-            inlateout("a0") a1 => result,
-            inlateout("a1") a2 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall3(n: i64, a1: i64, a2: i64, a3: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "ecall",
-            inlateout("a7") n => _,
-            inlateout("a0") a1 => result,
-            inlateout("a1") a2 => _,
-            inlateout("a2") a3 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall4(n: i64, a1: i64, a2: i64, a3: i64, a4: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "ecall",
-            inlateout("a7") n => _,
-            inlateout("a0") a1 => result,
-            inlateout("a1") a2 => _,
-            inlateout("a2") a3 => _,
-            inlateout("a3") a4 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall5(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "ecall",
-            inlateout("a7") n => _,
-            inlateout("a0") a1 => result,
-            inlateout("a1") a2 => _,
-            inlateout("a2") a3 => _,
-            inlateout("a3") a4 => _,
-            inlateout("a4") a5 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall6(n: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64 {
-        let result: i64;
-        core::arch::asm!(
-            "ecall",
-            inlateout("a7") n => _,
-            inlateout("a0") a1 => result,
-            inlateout("a1") a2 => _,
-            inlateout("a2") a3 => _,
-            inlateout("a3") a4 => _,
-            inlateout("a4") a5 => _,
-            inlateout("a5") a6 => _,
-            options(nostack),
-        );
-        result
-    }
-    #[inline(always)]
-    unsafe fn syscall_noreturn1(n: i64, a1: i64) -> ! {
-        core::arch::asm!(
-            "ecall",
-            in("a7") n,
-            in("a0") a1,
-            options(noreturn, nostack),
-        );
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-type Arch = X86_64;
-#[cfg(target_arch = "aarch64")]
-type Arch = Aarch64;
-#[cfg(target_arch = "riscv64")]
-type Arch = Riscv64;
-
-// Architecture-specific syscall numbers
-#[cfg(target_arch = "x86_64")]
-mod sysnr {
-    pub const SYS_READ: i64 = 0;
-    pub const SYS_WRITE: i64 = 1;
-    pub const SYS_OPENAT: i64 = 257;
-    pub const SYS_CLOSE: i64 = 3;
-    pub const SYS_FSTAT: i64 = 5;
-    pub const SYS_LSEEK: i64 = 8;
-    pub const SYS_MMAP: i64 = 9;
-    pub const SYS_MPROTECT: i64 = 10;
-    pub const SYS_MUNMAP: i64 = 11;
-    pub const SYS_READLINKAT: i64 = 267;
-    pub const SYS_GETTID: i64 = 186;
-    pub const SYS_ARCH_PRCTL: i64 = 158;
-    pub const SYS_EXIT: i64 = 60;
-}
-#[cfg(target_arch = "aarch64")]
-mod sysnr {
-    pub const SYS_READ: i64 = 63;
-    pub const SYS_WRITE: i64 = 64;
-    pub const SYS_OPENAT: i64 = 56;
-    pub const SYS_CLOSE: i64 = 57;
-    pub const SYS_FSTAT: i64 = 80;
-    pub const SYS_LSEEK: i64 = 62;
-    pub const SYS_MMAP: i64 = 222;
-    pub const SYS_MPROTECT: i64 = 226;
-    pub const SYS_MUNMAP: i64 = 215;
-    pub const SYS_READLINKAT: i64 = 78;
-    pub const SYS_GETTID: i64 = 178;
-    pub const SYS_EXIT: i64 = 93;
-}
-#[cfg(target_arch = "riscv64")]
-mod sysnr {
-    pub const SYS_READ: i64 = 63;
-    pub const SYS_WRITE: i64 = 64;
-    pub const SYS_OPENAT: i64 = 56;
-    pub const SYS_CLOSE: i64 = 57;
-    pub const SYS_FSTAT: i64 = 80;
-    pub const SYS_LSEEK: i64 = 62;
-    pub const SYS_MMAP: i64 = 222;
-    pub const SYS_MUNMAP: i64 = 215;
-    pub const SYS_READLINKAT: i64 = 78;
-    pub const SYS_GETTID: i64 = 178;
-    pub const SYS_EXIT: i64 = 93;
-}
-pub use sysnr::*;
+// The syscall implementation and AArch64 numbers live in `aarch64`.
 
 const AT_FDCWD: i64 = -100;
 
@@ -1766,24 +1177,24 @@ const AT_FDCWD: i64 = -100;
 // ============================================================
 
 fn sys_open(path: *const u8) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall3(SYS_OPENAT, AT_FDCWD, path as i64, 0) }
+    unsafe { syscall3(SYS_OPENAT, AT_FDCWD, path as i64, 0) }
 }
 
 fn sys_read(fd: i64, buf: *mut u8, count: usize) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall3(SYS_READ, fd, buf as i64, count as i64) }
+    unsafe { syscall3(SYS_READ, fd, buf as i64, count as i64) }
 }
 
 fn sys_fstat(fd: i64, buf: *mut u8) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall2(SYS_FSTAT, fd, buf as i64) }
+    unsafe { syscall2(SYS_FSTAT, fd, buf as i64) }
 }
 
 fn sys_write(fd: i64, buf: *const u8, count: usize) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall3(SYS_WRITE, fd, buf as i64, count as i64) }
+    unsafe { syscall3(SYS_WRITE, fd, buf as i64, count as i64) }
 }
 
 fn sys_close(fd: i64) {
     unsafe {
-        <Arch as Syscalls>::syscall1(SYS_CLOSE, fd);
+        syscall1(SYS_CLOSE, fd);
     }
 }
 
@@ -1939,7 +1350,7 @@ unsafe fn dlerror_node_locked() -> *mut DlErrorNode {
 
 fn sys_mmap(addr: *mut u8, length: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8 {
     let result = unsafe {
-        <Arch as Syscalls>::syscall6(
+        syscall6(
             SYS_MMAP,
             addr as i64,
             length as i64,
@@ -1955,33 +1366,20 @@ fn sys_mmap(addr: *mut u8, length: usize, prot: i32, flags: i32, fd: i32, offset
     result as *mut u8
 }
 
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn sys_mprotect(addr: *mut u8, length: usize, prot: i32) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall3(SYS_MPROTECT, addr as i64, length as i64, prot as i64) }
+    unsafe { syscall3(SYS_MPROTECT, addr as i64, length as i64, prot as i64) }
 }
 
 fn sys_exit(code: i32) -> ! {
-    unsafe { <Arch as Syscalls>::syscall_noreturn1(SYS_EXIT, code as i64) }
+    unsafe { syscall_noreturn1(SYS_EXIT, code as i64) }
 }
 
 fn sys_lseek(fd: i64, offset: i64) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall3(SYS_LSEEK, fd, offset, 0) }
+    unsafe { syscall3(SYS_LSEEK, fd, offset, 0) }
 }
 
-#[cfg(target_arch = "x86_64")]
-fn sys_arch_prctl(code: i64, addr: u64) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall2(SYS_ARCH_PRCTL, code, addr as i64) }
-}
 
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-unsafe fn read_tp() -> usize {
-    let tp: usize;
-    core::arch::asm!("mov {}, fs:[0]", out(reg) tp);
-    tp
-}
 
-#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn read_tp() -> usize {
     let tp: usize;
@@ -1989,31 +1387,13 @@ unsafe fn read_tp() -> usize {
     tp
 }
 
-#[cfg(target_arch = "riscv64")]
-#[inline(always)]
-unsafe fn read_tp() -> usize {
-    let tp: usize;
-    core::arch::asm!("mv {}, tp", out(reg) tp);
-    tp
-}
 
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-unsafe fn write_tp(addr: usize) {
-    sys_arch_prctl(0x1002, addr as u64);
-}
 
-#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn write_tp(addr: usize) {
     core::arch::asm!("msr tpidr_el0, {}", in(reg) addr);
 }
 
-#[cfg(target_arch = "riscv64")]
-#[inline(always)]
-unsafe fn write_tp(addr: usize) {
-    core::arch::asm!("mv tp, {}", in(reg) addr);
-}
 
 unsafe fn write_stderr(msg: &[u8]) {
     let _ = sys_write(2, msg.as_ptr(), msg.len());
@@ -2419,7 +1799,7 @@ struct KernelMainImage {
 /// the same `(st_dev, st_ino)` pair, while distinct files remain distinct even
 /// when their DT_NEEDED names happen to match.
 fn file_identity(fd: i64) -> Option<FileIdentity> {
-    // The first two fields of Linux's x86_64, AArch64, and RISC-V stat
+    // The first two fields of Linux/AArch64 stat
     // layouts are st_dev and st_ino.  Keep the buffer private to the loader;
     // no libc struct layout is needed at this boundary.
     let mut stat = [0u8; 128];
@@ -2435,7 +1815,7 @@ fn file_identity(fd: i64) -> Option<FileIdentity> {
 /// Load a shared object from an already-open fd at the given base address.
 /// Registers it in the LOADED array. Returns true on success.
 fn sys_munmap(addr: *mut u8, length: usize) -> i64 {
-    unsafe { <Arch as Syscalls>::syscall2(SYS_MUNMAP, addr as i64, length as i64) }
+    unsafe { syscall2(SYS_MUNMAP, addr as i64, length as i64) }
 }
 
 unsafe fn load_dso_from_fd(
@@ -3052,9 +2432,9 @@ unsafe fn resolve_symbol_with_size(name: *const u8, exclude: usize) -> (u64, usi
         // before the main executable and DT_NEEDED objects are registered.
         // Resolve this libc GOT trampoline target explicitly to the named raw
         // entry bridge rather than leaving its GLOB_DAT slot at zero.
-        #[cfg(all(not(test), target_arch = "aarch64"))]
+        #[cfg(not(test))]
         return (__ldso_dlstart as *const () as usize as u64, 0);
-        #[cfg(not(all(not(test), target_arch = "aarch64")))]
+        #[cfg(test)]
         return (0, 0);
     }
     let name_gnu_hash = gnu_symbol_hash(name, name_len);
@@ -3181,48 +2561,15 @@ unsafe fn tls_tprel_offset(obj_idx: usize, sym_idx: usize, addend: i64) -> i64 {
 }
 
 unsafe fn tls_var_area_offset_from_block() -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        0
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        TLS_TP_OFFSET
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        TCB_SIZE
-    }
+    TLS_TP_OFFSET
 }
 
 unsafe fn tls_tcb_offset_from_block() -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        TLS_TOTAL_SIZE
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        0
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        0
-    }
+    0
 }
 
 unsafe fn tls_tp_offset_from_block() -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        TLS_TOTAL_SIZE
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        TLS_TP_OFFSET
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        TCB_SIZE
-    }
+    TLS_TP_OFFSET
 }
 
 /// Read the TP offset recorded in one allocation's TCB. AArch64 can raise
@@ -3230,61 +2577,25 @@ unsafe fn tls_tp_offset_from_block() -> usize {
 /// initial image, so consulting the process-global value would mislocate an
 /// older thread's TCB.
 unsafe fn thread_tp_offset(fs_base: usize) -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let _ = fs_base;
-        TLS_TOTAL_SIZE
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let recorded = core::ptr::read_unaligned((fs_base as *const usize).add(1));
-        if recorded >= TCB_SIZE {
-            recorded
-        } else {
-            TLS_TP_OFFSET
-        }
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        let _ = fs_base;
-        TCB_SIZE
+    let recorded = core::ptr::read_unaligned((fs_base as *const usize).add(1));
+    if recorded >= TCB_SIZE {
+        recorded
+    } else {
+        TLS_TP_OFFSET
     }
 }
 
 unsafe fn tcb_for_thread(fs_base: usize) -> *mut u8 {
-    #[cfg(target_arch = "x86_64")]
-    {
-        fs_base as *mut u8
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        (fs_base.wrapping_sub(thread_tp_offset(fs_base))) as *mut u8
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        fs_base.wrapping_sub(TCB_SIZE) as *mut u8
-    }
+    (fs_base.wrapping_sub(thread_tp_offset(fs_base))) as *mut u8
 }
 
-/// Return the TP-relative distance from a thread's allocation base.  x86_64
-/// stores its TCB at TP and therefore uses the recorded variable-area size;
+/// Return the TP-relative distance from a thread's allocation base.
+///
 /// AArch64 records the TP offset in the otherwise-unused gap immediately
 /// above TP, because late TLS can raise that offset for future allocations.
 unsafe fn thread_block_tp_offset(fs_base: usize, data_size: usize) -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        data_size
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let _ = data_size;
-        thread_tp_offset(fs_base)
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        let _ = (fs_base, data_size);
-        TCB_SIZE
-    }
+    let _ = data_size;
+    thread_tp_offset(fs_base)
 }
 
 /// Initialize loader-owned TCB metadata for one TLS allocation.  The
@@ -3292,8 +2603,6 @@ unsafe fn thread_block_tp_offset(fs_base: usize, data_size: usize) -> usize {
 /// strongly aligned TLS image: old threads remain on their old allocation
 /// until their next TLS lookup and must still be unmapped from its true base.
 unsafe fn initialize_tls_tcb(tcb: *mut u8, tp: *mut u8, data_size: usize) {
-    #[cfg(not(target_arch = "aarch64"))]
-    let _ = tp;
     core::ptr::write_unaligned(tcb as *mut u64, tcb as u64);
     core::ptr::write_unaligned(tcb.add(TCB_GENERATION_OFFSET) as *mut u64, TLS_GENERATION);
     core::ptr::write_unaligned(tcb.add(TCB_BLOCK_SIZE_OFFSET) as *mut usize, data_size);
@@ -3308,16 +2617,13 @@ unsafe fn initialize_tls_tcb(tcb: *mut u8, tp: *mut u8, data_size: usize) {
         tcb.add(TCB_TLS_MODULE_COUNT_OFFSET) as *mut usize,
         TLS_MODULE_COUNT,
     );
-    #[cfg(target_arch = "aarch64")]
-    {
-        // TP+8 is in the ABI-mandated gap before the first positive TLS
-        // offset (GAP_ABOVE_TP is 16), so it is safe metadata storage even
-        // when the TCB is below TP by several pages.
-        core::ptr::write_unaligned(
-            tp.add(TCB_GENERATION_OFFSET) as *mut usize,
-            tls_tp_offset_from_block(),
-        );
-    }
+    // TP+8 is in the ABI-mandated gap before the first positive TLS offset
+    // (GAP_ABOVE_TP is 16), so it is safe metadata storage even when the TCB
+    // is below TP by several pages.
+    core::ptr::write_unaligned(
+        tp.add(TCB_GENERATION_OFFSET) as *mut usize,
+        tls_tp_offset_from_block(),
+    );
 }
 
 /// Initialize fields that identify one logical thread rather than one TLS
@@ -3331,18 +2637,7 @@ unsafe fn initialize_loader_thread_state(tcb: *mut u8, tp: *mut u8) {
 }
 
 unsafe fn tls_var_area_offset_from_tp() -> usize {
-    #[cfg(target_arch = "x86_64")]
-    {
-        TLS_TOTAL_SIZE
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        0
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        0
-    }
+    0
 }
 
 // ============================================================
@@ -3384,14 +2679,12 @@ unsafe fn process_relocation_suffix(first_new: usize) {
 /// Lock every mapped GNU_RELRO span after all relocations that may touch it.
 /// Runtime transactions relocate only their newly appended graph suffix, so
 /// sealing is an independent protection step rather than its completion mark.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn apply_relro() {
     apply_relro_suffix(0);
 }
 
 /// Seal GNU RELRO only for the dependency-graph suffix appended by one
 /// `dlopen`. Earlier maps were sealed in their own completed transaction.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn apply_relro_suffix(first_new: usize) {
     const PAGE: u64 = 4096;
     for i in first_new.min(LOADED_COUNT)..LOADED_COUNT {
@@ -3524,20 +2817,7 @@ unsafe fn apply_rela_table(
         let r_sym_idx = (r_info >> 32) as usize;
         let slot = (base + r_offset) as *mut u64;
 
-        #[cfg(target_arch = "riscv64")]
-        if r_type == R_RISCV_COPY {
-            if !copy_only {
-                continue;
-            }
-            let (src, sym_size) = resolve_copy_source(obj_idx, r_sym_idx);
-            if src != 0 && sym_size != 0 {
-                let dst = (base + r_offset) as *mut u8;
-                core::ptr::copy_nonoverlapping(src as *const u8, dst, sym_size);
-            }
-            continue;
-        }
-        #[cfg(not(target_arch = "riscv64"))]
-        if r_type == R_X86_64_COPY {
+        if r_type == LEGACY_COPY_RELOCATION {
             if !copy_only {
                 continue;
             }
@@ -3553,48 +2833,18 @@ unsafe fn apply_rela_table(
         }
 
         match r_type {
-            R_X86_64_RELATIVE | R_AARCH64_RELATIVE | R_RISCV_RELATIVE => {
+            R_AARCH64_RELATIVE => {
                 *slot = (base as i64 + r_addend) as u64;
             }
-            R_X86_64_64 | R_AARCH64_ABS64 | R_RISCV_64 => {
+            R_AARCH64_ABS64 => {
                 let sym_value = resolve_symbol_from_index(obj_idx, r_sym_idx);
                 *slot = (sym_value as i64 + r_addend) as u64;
             }
-            #[cfg(target_arch = "riscv64")]
-            R_RISCV_JUMP_SLOT => {
-                let sym_value = resolve_symbol_from_index(obj_idx, r_sym_idx);
-                *slot = sym_value;
-            }
-            #[cfg(target_arch = "riscv64")]
-            R_RISCV_TLS_DTPMOD64 => {
-                let module = if r_sym_idx == 0 {
-                    obj_idx
-                } else {
-                    resolve_symbol_module(obj_idx, r_sym_idx)
-                };
-                *slot = (module + 1) as u64;
-            }
-            #[cfg(target_arch = "riscv64")]
-            R_RISCV_TLS_DTPREL64 => {
-                let off = (tls_sym_offset(obj_idx, r_sym_idx) as i64 + r_addend) as u64;
-                *slot = off;
-            }
-            #[cfg(target_arch = "riscv64")]
-            R_RISCV_TLS_TPREL64 => {
-                let fs_off = tls_tprel_offset(obj_idx, r_sym_idx, r_addend);
-                *slot = fs_off as u64;
-            }
-            #[cfg(not(target_arch = "riscv64"))]
-            R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
-                let sym_value = resolve_symbol_from_index(obj_idx, r_sym_idx);
-                *slot = sym_value;
-            }
-            #[cfg(not(target_arch = "riscv64"))]
             R_AARCH64_GLOB_DAT | R_AARCH64_JUMP_SLOT => {
                 let sym_value = resolve_symbol_from_index(obj_idx, r_sym_idx);
                 *slot = sym_value;
             }
-            R_X86_64_DTPMOD64 | R_AARCH64_TLS_DTPMOD64 => {
+            R_AARCH64_TLS_DTPMOD64 => {
                 let module = if r_sym_idx == 0 {
                     obj_idx
                 } else {
@@ -3602,11 +2852,11 @@ unsafe fn apply_rela_table(
                 };
                 *slot = (module + 1) as u64;
             }
-            R_X86_64_DTPOFF64 | R_AARCH64_TLS_DTPREL64 => {
+            R_AARCH64_TLS_DTPREL64 => {
                 let off = (tls_sym_offset(obj_idx, r_sym_idx) as i64 + r_addend) as u64;
                 *slot = off;
             }
-            R_X86_64_TPOFF64 | R_AARCH64_TLS_TPREL64 => {
+            R_AARCH64_TLS_TPREL64 => {
                 let fs_off = tls_tprel_offset(obj_idx, r_sym_idx, r_addend);
                 *slot = fs_off as u64;
             }
@@ -3626,10 +2876,9 @@ unsafe fn apply_rela_table(
             let imm = (fs_off & 0xFFF) as u32;
             let new_insn = (insn & !(0xFFFu32 << 10)) | (imm << 10);
             core::ptr::write_unaligned(slot as *mut u32, new_insn);
-        } else if r_type == R_AARCH64_TLSDESC || r_type == R_RISCV_TLSDESC {
+        } else if r_type == R_AARCH64_TLSDESC {
             let fs_off = tls_tprel_offset(obj_idx, r_sym_idx, r_addend);
             let desc = slot as *mut [u64; 2];
-            #[cfg(target_arch = "aarch64")]
             if obj_idx >= TLS_STATIC_MODULE_COUNT {
                 let module = if r_sym_idx == 0 {
                     obj_idx
@@ -3735,7 +2984,6 @@ const TLSDESC_OFFSET_MASK: usize = (1usize << TLSDESC_MODULE_SHIFT) - 1;
 // to a larger TLS block, so its stub refreshes `x1` from the new TP instead of
 // restoring the now-stale value that musl's non-migrating resolver restores.
 // The temporary frame preserves LR while the private Rust helper runs.
-#[cfg(target_arch = "aarch64")]
 core::arch::global_asm!(
     ".text",
     ".global __tlsdesc_static",
@@ -3828,17 +3076,8 @@ unsafe fn expand_thread_tls() -> bool {
     let old_tp_offset = thread_block_tp_offset(old_fs, old_data);
     let old_block = (old_fs as usize).wrapping_sub(old_tp_offset) as *mut u8;
     let old_var_base = {
-        #[cfg(target_arch = "x86_64")]
-        {
-            old_block
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
+                {
             old_fs as *mut u8
-        }
-        #[cfg(target_arch = "riscv64")]
-        {
-            old_block
         }
     };
 
@@ -3879,7 +3118,7 @@ unsafe fn expand_thread_tls() -> bool {
     core::ptr::copy_nonoverlapping(old_var_base, new_var_base, copy_size);
     initialize_missing_tls_images(new_var_base, old_module_count);
     let tcb = block.add(tls_tcb_offset_from_block());
-    // Preserve libc's TCB fields (notably the x86_64 stack canary) while
+    // Preserve libc's TCB fields while
     // replacing the allocation.  Only the loader-owned metadata below is
     // rewritten after the copy.
     core::ptr::copy_nonoverlapping(old_tcb, tcb, TCB_SIZE);
@@ -3937,8 +3176,7 @@ unsafe fn register_tls_for_new_modules(first_new: usize) -> bool {
             tls_unlock();
             return false;
         }
-        #[cfg(target_arch = "aarch64")]
-        if align > TLS_TP_OFFSET {
+                if align > TLS_TP_OFFSET {
             // AArch64's TP is above the TCB and static TLS. A late DSO with a
             // stronger PT_TLS alignment needs a correspondingly larger gap in
             // newly allocated blocks; existing threads retain their recorded
@@ -4241,8 +3479,7 @@ pub unsafe extern "C" fn __ldso_dlopen(filename: *const u8, flags: i32) -> *mut 
     // then copy that relocated image into the current thread's TLS block.
     let tls_update = register_tls_for_new_modules(first_new);
     process_relocation_suffix(first_new);
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    apply_relro_suffix(first_new);
+        apply_relro_suffix(first_new);
     if tls_update {
         initialize_new_module_tls();
     }
@@ -4757,7 +3994,6 @@ pub unsafe extern "C" fn __ldso_dlinfo(handle: *mut u8, request: i32, arg: *mut 
 
 unsafe fn compute_tls_layout() {
     let mut total: usize = 0;
-    #[cfg(target_arch = "aarch64")]
     let mut tp_alignment: usize = TCB_SIZE;
     for i in 0..LOADED_COUNT {
         let obj = &LOADED[i];
@@ -4766,7 +4002,6 @@ unsafe fn compute_tls_layout() {
         } else {
             1
         };
-        #[cfg(target_arch = "aarch64")]
         if align > tp_alignment {
             tp_alignment = align;
         }
@@ -4778,108 +4013,38 @@ unsafe fn compute_tls_layout() {
     }
     total += total;
     TLS_TOTAL_SIZE = (total + 4095) & !4095;
-    #[cfg(target_arch = "aarch64")]
-    {
-        TLS_TP_OFFSET = tp_alignment;
-        // AArch64 uses TLS_ABOVE_TP: static TLS starts at a positive offset
-        // from TP.  The static linker has already encoded those offsets in
-        // local-exec instructions, so the first module must begin at the next
-        // boundary of its PT_TLS alignment *relative to TP*.  Matching the
-        // file-image address here is wrong when the TCB itself is not aligned
-        // to that boundary (for example a 4 KiB-aligned TLS variable).
-        const GAP_ABOVE_TP: usize = 16;
-        let mut offset = GAP_ABOVE_TP;
-        for i in 0..LOADED_COUNT {
-            let obj = &LOADED[i];
-            if obj.tls_memsz == 0 {
-                TLS_LAYOUT_OFFSET[i] = 0;
-                TLS_FILESZ[i] = 0;
-                TLS_MEMSZ[i] = 0;
-                TLS_IMAGE[i] = core::ptr::null();
-                continue;
-            }
-            let align = if obj.tls_align > 0 {
-                obj.tls_align as usize
-            } else {
-                1
-            };
-            offset = (offset + align - 1) & !(align - 1);
-            TLS_LAYOUT_OFFSET[i] = offset;
-            TLS_FILESZ[i] = obj.tls_filesz;
-            TLS_MEMSZ[i] = obj.tls_memsz;
-            TLS_IMAGE[i] = obj.tls_image;
-            let block_size = ((obj.tls_memsz as usize + align - 1) / align) * align;
-            offset += block_size;
+    TLS_TP_OFFSET = tp_alignment;
+    // AArch64 uses TLS_ABOVE_TP: static TLS starts at a positive offset from
+    // TP. The static linker has already encoded those offsets in local-exec
+    // instructions, so the first module must begin at the next boundary of
+    // its PT_TLS alignment *relative to TP*. Matching the file-image address
+    // here is wrong when the TCB itself is not aligned to that boundary (for
+    // example a 4 KiB-aligned TLS variable).
+    const GAP_ABOVE_TP: usize = 16;
+    let mut offset = GAP_ABOVE_TP;
+    for i in 0..LOADED_COUNT {
+        let obj = &LOADED[i];
+        if obj.tls_memsz == 0 {
+            TLS_LAYOUT_OFFSET[i] = 0;
+            TLS_FILESZ[i] = 0;
+            TLS_MEMSZ[i] = 0;
+            TLS_IMAGE[i] = core::ptr::null();
+            continue;
         }
-        TLS_USED_SIZE = offset;
+        let align = if obj.tls_align > 0 {
+            obj.tls_align as usize
+        } else {
+            1
+        };
+        offset = (offset + align - 1) & !(align - 1);
+        TLS_LAYOUT_OFFSET[i] = offset;
+        TLS_FILESZ[i] = obj.tls_filesz;
+        TLS_MEMSZ[i] = obj.tls_memsz;
+        TLS_IMAGE[i] = obj.tls_image;
+        let block_size = ((obj.tls_memsz as usize + align - 1) / align) * align;
+        offset += block_size;
     }
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        // x86_64 places the variable area below TP; modules are laid out from the
-        // end of the variable area (closest to TP) backwards.
-        let mut end = TLS_TOTAL_SIZE;
-        for i in 0..LOADED_COUNT {
-            let obj = &LOADED[i];
-            if obj.tls_memsz == 0 {
-                TLS_LAYOUT_OFFSET[i] = 0;
-                TLS_FILESZ[i] = 0;
-                TLS_MEMSZ[i] = 0;
-                TLS_IMAGE[i] = core::ptr::null();
-                continue;
-            }
-            let align = if obj.tls_align > 0 {
-                obj.tls_align as usize
-            } else {
-                1
-            };
-            let block_size = ((obj.tls_memsz as usize + align - 1) / align) * align;
-            end -= block_size;
-            end &= !(align - 1);
-            TLS_LAYOUT_OFFSET[i] = end;
-            TLS_FILESZ[i] = obj.tls_filesz;
-            TLS_MEMSZ[i] = obj.tls_memsz;
-            TLS_IMAGE[i] = obj.tls_image;
-        }
-        // Existing x86_64 modules are placed at the high end of the variable
-        // area.  Late modules append after the capacity frontier; using
-        // `TLS_TOTAL_SIZE - end` here would place the first late module over
-        // the static images.
-        TLS_USED_SIZE = TLS_TOTAL_SIZE;
-    }
-
-    #[cfg(target_arch = "riscv64")]
-    {
-        // RISC-V uses TLS_ABOVE_TP like aarch64 but with GAP_ABOVE_TP=0.
-        let mut offset: usize = 0;
-        for i in 0..LOADED_COUNT {
-            let obj = &LOADED[i];
-            if obj.tls_memsz == 0 {
-                TLS_LAYOUT_OFFSET[i] = 0;
-                TLS_FILESZ[i] = 0;
-                TLS_MEMSZ[i] = 0;
-                TLS_IMAGE[i] = core::ptr::null();
-                continue;
-            }
-            let align = if obj.tls_align > 0 {
-                obj.tls_align as usize
-            } else {
-                1
-            };
-            let image = obj.tls_image as usize;
-            let var_base_mod = TCB_SIZE % align;
-            let desired = image.wrapping_sub(var_base_mod).wrapping_sub(offset) & (align - 1);
-            offset += desired;
-            TLS_LAYOUT_OFFSET[i] = offset;
-            TLS_FILESZ[i] = obj.tls_filesz;
-            TLS_MEMSZ[i] = obj.tls_memsz;
-            TLS_IMAGE[i] = obj.tls_image;
-            let block_size = ((obj.tls_memsz as usize + align - 1) / align) * align;
-            offset += block_size;
-        }
-        TLS_USED_SIZE = offset;
-    }
-
+    TLS_USED_SIZE = offset;
     TLS_MODULE_COUNT = LOADED_COUNT;
 }
 
@@ -5554,8 +4719,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
 
     process_all_relocations();
     register_dlopen_callbacks();
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    apply_relro();
+        apply_relro();
 
     // Always allocate a TCB so that %fs-relative accesses (e.g. stack canary
     // at %fs:0x28) work even when there is no TLS data in the binary.
@@ -5831,17 +4995,8 @@ unsafe fn build_and_jump(
 /// original startup stack. Non-secure startup needs no copied argv/envp/auxv
 /// because their kernel addresses continue to describe the same main mapping.
 unsafe fn jump_to_entry(entry: u64, sp: usize) -> ! {
-    #[cfg(target_arch = "x86_64")]
-    core::arch::asm!(
-        "mov rsp, {sp}",
-        "jmp {entry}",
-        sp = in(reg) sp,
-        entry = in(reg) entry,
-        options(noreturn)
-    );
 
-    #[cfg(target_arch = "aarch64")]
-    core::arch::asm!(
+        core::arch::asm!(
         "mov sp, {sp}",
         "br {entry}",
         sp = in(reg) sp,
@@ -5849,20 +5004,6 @@ unsafe fn jump_to_entry(entry: u64, sp: usize) -> ! {
         options(noreturn)
     );
 
-    #[cfg(target_arch = "riscv64")]
-    {
-        // The compiler may reuse `entry` while preparing the assembly block;
-        // force the final transfer operand through a volatile reload.
-        let entry_ref = &entry as *const u64;
-        let entry_value = core::ptr::read_volatile(entry_ref);
-        core::arch::asm!(
-            "mv sp, {sp}",
-            "jr {entry}",
-            sp = in(reg) sp,
-            entry = in(reg) entry_value,
-            options(noreturn)
-        );
-    }
 }
 
 // ============================================================
