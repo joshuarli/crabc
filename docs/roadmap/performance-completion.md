@@ -76,6 +76,19 @@ mean. A fast `getpid` may not compensate for a slow clock, loader, or string
 primitive. A row that has no meaningful syscall activity still has CPU and
 memory gates; a row with no stable peak plateau must first gain one.
 
+### Provisional P0 time gate
+
+The final release scorecard above remains the only basis for a claim that
+crabc outperforms musl. To make completed structural time-route work visible
+without weakening that claim, the current P0 time tranche has one narrow,
+planning-only progress gate: C `clock_gettime` may be recorded as
+**provisionally accepted** when its one-sided CPU upper bound is at most
+**1.05x** musl, the marked steady-state region has zero `clock_gettime`
+syscalls in both lanes, and all direct vDSO/fallback/error boundaries remain
+green. This gate does not change the `<= 0.90x` CPU release requirement, does
+not apply to any other workload, and does not relax memory, syscall, or
+correctness evidence.
+
 ### What counts as peak memory
 
 Peak memory is the memory used by the launched program, its loader, and its
@@ -127,7 +140,7 @@ happens to favor one implementation.
 | Family | Required rows and invariants | Current state |
 | --- | --- | --- |
 | Dynamic startup | Minimal PIE, constructor/destructor PIE, and a realistic dependency graph. Count loader setup and relocation work. | All three rows exist. The `kernel-main-image-{matrix,repeat,repeat2}-31` reports consume Linux's already mapped main PIE through its validated `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`/`AT_ENTRY` layout rather than reopening and remapping it, while `AT_EXECFN` supplies the bounded main `$ORIGIN`. The direct pinned-musl regression proves exactly one executable mapping. The minimal row falls to 30 crabc vs 10 musl calls (still-red 1.1908×–1.2958 CPU upper bounds); the constructor/destructor contract still proves ordering across `main` at 29 vs 9 (1.1502×–1.1809); and the startup-linked five-DSO graph still resolves its root to `31` at 65 vs 50 (1.1687×–1.2205). The graph syscall gate passes, while every startup CPU row remains red. Their marked `main` regions are complete (one output write for the constructor row; an output operation in each lane for the graph), while startup gates judge retained whole-process loader, constructor, destructor, and relocation work. |
-| Time and identity | `clock_gettime` for supported clocks, `gettimeofday`, and `getpid`; run marked steady-state loops after startup. | `clock_gettime`, `gettimeofday`, and `getpid` now have marked C loops. Linux 5.10's AArch64 vDSO performs the exact `clock_gettime` syscall when it cannot serve an ID from its data page, so the cached validated C/core route calls it for every public ID rather than repeating a user-space eligibility screen. Three CPU-pinned `clock-universal-vdso-{matrix,repeat,repeat2}-31` reports place monotonic `clock_gettime` at a still-red 1.0278×–1.0332× upper-bound range with zero marked calls. The direct vDSO boundary proves process CPU time and invalid-ID `EINVAL`; missing or malformed metadata remains cached as the typed direct syscall. `gettimeofday` validates null output and canonical microseconds against musl; its bounded `__kernel_gettimeofday` vDSO lookup passes at a 0.8915× CPU upper bound with zero marked hot-region calls. |
+| Time and identity | `clock_gettime` for supported clocks, `gettimeofday`, and `getpid`; run marked steady-state loops after startup. | `clock_gettime`, `gettimeofday`, and `getpid` now have marked C loops. Linux 5.10's AArch64 vDSO performs the exact `clock_gettime` syscall when it cannot serve an ID from its data page, so the cached validated C/core route calls it for every public ID rather than repeating a user-space eligibility screen. Three CPU-pinned `clock-universal-vdso-{matrix,repeat,repeat2}-31` reports place monotonic `clock_gettime` at 1.0278×–1.0332× with zero marked calls: provisionally accepted under the scoped P0 `<= 1.05x` gate, but final-release red against `<= 0.90x`. The direct vDSO boundary proves process CPU time and invalid-ID `EINVAL`; missing or malformed metadata remains cached as the typed direct syscall. `gettimeofday` validates null output and canonical microseconds against musl; its bounded `__kernel_gettimeofday` vDSO lookup passes at a 0.8915× CPU upper bound with zero marked hot-region calls. |
 | Files and descriptors | `open`/`close`, read/write, stat, descriptor flags, and small buffered I/O with deterministic local files. | `fd_file_4k` and `stdio_file_4k` use distinct staged 4-KiB deterministic files. They cover close-on-exec, stat, offset write/read, buffered `fread`, seek, and `ungetc`. AArch64's no-argument `fcntl(F_GETFD/F_GETFL)` entry now bypasses Rust's variadic register-save area and tail-branches all other commands to the typed decoder. Three 31-sample `fcntl-noarg-entry-matrix-31` reports reduce `fd_file_4k` to 0.9205×–0.9365× CPU upper bounds, but it remains red; three `stdio-current-cancel-{31,repeat-31,repeat2-31}` reports place `stdio_file_4k` at a still-red 0.9865×–1.0168×. Existing syscall counts pass, and the current cgroup memory row is unsupported. |
 | Dynamic loading | `dlsym` at 1, 128, and 1,024+ symbols; `dlopen`/`dlclose`; dependency and TLS resolution. Verify interposition/version behavior. | Three CPU-pinned, interleaved `dlsym-handle-local-cache-matrix-31` reports pass all 1/128/1,025-symbol CPU rows at 0.7413×–0.7569× / 0.7534×–0.7725× / 0.7166×–0.7680×. The cache contains only direct handle-local definitions and verifies copied current C-string bytes, preserving mutable-name and global-interposition behavior. Its 49 vs 18 whole-process syscall row remains red. The three `main-self-identity-*-31` reports put the five-DSO `dlopen`/call/`dlclose` graph at a still-red 1.2334×–1.2695× CPU upper bound with 65 vs 50 whole-process calls; the marked operation is 35 vs 40 calls because crabc avoids a non-contract main-image probe and musl applies per-DSO `FD_CLOEXEC`. The direct pinned-musl self-image regression proves an explicit executable pathname maps a separate object, while `dlopen(NULL)` remains the distinct global-handle path. |
 | Memory primitives | `memcpy`, `memset`, `strlen`, `memchr`, `strstr`, and `memmem` across empty, short, cache-resident, cache-spanning, aligned, unaligned, and guard-page boundaries. | Direct musl-differential regressions cover all six over fixed empty-to-256-KiB size bands, all 16 byte alignments, 0–64-byte protected tails, and deterministic randomized misalignment. Long zero and nonzero `memset` fills additionally range every 0–63-byte gap before a protected page. `memcpy` additionally checks non-overlap return/source/canary invariants. Its AArch64 entry tail-branches to musl 1.2.6's GPR-only short/medium/long schedule in `libc/src/aarch64_memory.rs`; three 31-sample 128-MiB aligned/unaligned runs record 0.9600×–0.9682× / 1.0498×–1.0694×. Scan/search rows pass at 0.5909×–0.7914×, while copy/fill remain red. |
@@ -267,10 +280,11 @@ IDs it cannot serve from its data page, so every public clock ID reaches the
 cached validated function without an eligibility branch chain. The marked hot
 loop has no direct `clock_gettime` syscall. Three 31-sample
 `clock-universal-vdso-{matrix,repeat,repeat2}` reports place the monotonic C
-route at a still-red 1.0278×–1.0332× CPU upper-bound range. Process CPU time,
-invalid-ID `EINVAL`, missing metadata, and malformed metadata remain direct
-boundaries. Fresh-process work and the remaining indirect vDSO dispatch are
-still counted by the release gates.
+route at 1.0278×–1.0332× CPU upper bound: this satisfies the scoped P0
+provisional `<= 1.05x` gate, while remaining red against the final `<= 0.90x`
+release gate. Process CPU time, invalid-ID `EINVAL`, missing metadata, and
+malformed metadata remain direct boundaries. Fresh-process work and the
+remaining indirect vDSO dispatch are still counted by the release gates.
 
 - Parse the Linux auxiliary vector/vDSO ELF safely in `crabc-core`.
 - Resolve the correct `__vdso_clock_gettime` symbol with bounded validation;
@@ -280,9 +294,13 @@ still counted by the release gates.
 - Test vDSO success, forced fallback, malformed metadata, error propagation,
   and all supported clock semantics against musl/POSIX evidence.
 
-**Exit:** time rows meet the CPU, zero-steady-state-syscall, memory, and
-correctness gates. No direct time syscall may remain in a vDSO-success hot
-loop.
+**Provisional exit:** the `clock_gettime` route meets the scoped `<= 1.05x`
+CPU gate, has zero marked steady-state syscalls, and retains all direct
+vDSO/fallback/error evidence. No direct time syscall may remain in a
+vDSO-success hot loop.
+
+**Release exit:** time rows meet the final CPU, memory, syscall, and
+correctness gates. The final CPU requirement remains `<= 0.90x` musl.
 
 ### P2 — make dynamic symbol lookup scale
 

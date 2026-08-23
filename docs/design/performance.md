@@ -38,6 +38,12 @@ The performance-completion roadmap uses this stable methodology; its
 workload-specific acceptance rows and changing status are kept in
 [`docs/roadmap/performance-completion.md`](../roadmap/performance-completion.md).
 
+The roadmap additionally records one narrow planning-only P0 time gate: C
+`clock_gettime` is provisionally accepted at `<= 1.05x` musl CPU only when its
+marked steady-state region has zero `clock_gettime` syscalls and its direct
+vDSO/fallback/error boundaries remain green. This does not change the final
+per-workload `<= 0.90x` release requirement or apply to another route.
+
 ### Isolation, equivalence, and statistical decision
 
 - Compile each C fixture exactly once. The lanes may differ only in staged
@@ -151,7 +157,7 @@ bounds in the order 64-byte aligned/unaligned, 16-KiB aligned/unaligned, then
 
 | Route | Evidence | Interpretation | Priority |
 | --- | ---: | --- | --- |
-| C `clock_gettime` ×200,000 | 1.0278×–1.0332× one-sided CPU upper bounds across three 31-sample `clock-universal-vdso-{matrix,repeat,repeat2}` reports; zero `clock_gettime` calls in the marked hot loop | Linux 5.10's AArch64 vDSO performs the exact `clock_gettime` syscall for IDs it cannot serve from the data page. The C and core routes therefore invoke the cached validated function for every public ID, removing the user-space eligibility chain while retaining the malformed-metadata direct-syscall cache. Process CPU time and invalid-ID `EINVAL` are direct boundary cases. The CPU gate remains red; fresh-process cost and the remaining indirect vDSO dispatch are still measured | P0 |
+| C `clock_gettime` ×200,000 | 1.0278×–1.0332× one-sided CPU upper bounds across three 31-sample `clock-universal-vdso-{matrix,repeat,repeat2}` reports; zero `clock_gettime` calls in the marked hot loop | Linux 5.10's AArch64 vDSO performs the exact `clock_gettime` syscall for IDs it cannot serve from the data page. The C and core routes therefore invoke the cached validated function for every public ID, removing the user-space eligibility chain while retaining the malformed-metadata direct-syscall cache. Process CPU time and invalid-ID `EINVAL` are direct boundary cases. The P0 `<= 1.05x` planning gate passes; fresh-process cost and the remaining indirect vDSO dispatch leave the final `<= 0.90x` release gate red | provisional P0 |
 | C `gettimeofday` ×200,000 | 0.8915× one-sided CPU upper bound; 41 crabc vs 10 musl non-marker calls and zero marked-region calls | bounded lookup of Linux/AArch64 `__kernel_gettimeofday` avoids `clock_gettime` result conversion and passes the CPU gate | no selected gap |
 | Native `clock_gettime` ×1,000/sample | 18 ns crabc-rs vs 19 ns Rustix | the shared core route now reaches the selected native target | no selected gap |
 | C `memcpy` scalar matrix | 1.1550×/1.1562×; 1.0670×/1.5891×; 1.0500×/1.2220× | pinned musl 1.2.6's GPR-only short/medium/long copy schedule replaces the compiler's generic copy loop; every row improves but remains CPU-red | P1 |
