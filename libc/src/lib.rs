@@ -6562,7 +6562,12 @@ unsafe fn pthread_cond_timedwait_impl(
     mutex: *mut pthread_mutex_t,
     abs_timeout: *const timespec,
 ) -> c_int {
-    pthread_testcancel();
+    // A cancellation request can name only a published `Thread` slot. This
+    // private route therefore preserves the cancellation-point check without
+    // routing each contended handoff through the public lazy-registration
+    // entry; pthread-created waiters publish `CURRENT_THREAD` before user
+    // code, while an unregistered foreign caller cannot have such a request.
+    pthread_testcancel_current();
     let seq_ptr = &raw mut (*cond).__i[2];
     let waiters_ptr = &raw mut (*cond).__i[3];
     let seq = a_load(seq_ptr);
@@ -6575,7 +6580,7 @@ unsafe fn pthread_cond_timedwait_impl(
         return r;
     }
     if e == EINTR {
-        pthread_testcancel();
+        pthread_testcancel_current();
     }
     if e != 0 && e != EINTR {
         return e;
