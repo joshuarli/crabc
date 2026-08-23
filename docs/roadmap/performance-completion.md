@@ -123,12 +123,12 @@ This fixture cannot satisfy the universal PSS gate under any allocator
 configuration: it writes all 32 MiB (32,768 KiB) of payload, while 90% of the
 observed musl process PSS is only about 30,470 KiB. Even a candidate with zero
 runtime or allocator overhead would fail. We will not write a new allocator or
-hide this row. The goal is blocked on a user scope decision; choose one of:
-
-- approve a different mimalloc configuration/version or a focused integration
-  change;
-- exempt allocator-dominated rows from the universal peak-memory target; or
-- reopen allocator design as project scope.
+hide this row. The user selected the retained mimalloc strategy: do not change
+its configuration, version, or integration, and do not reopen allocator design.
+This resolves the implementation-scope decision, not the measurement: the row
+remains visible and non-passing, and `crabc` cannot claim all-front performance
+completion while it is selected. Reopening allocator work requires explicit new
+user direction.
 
 ## Mandatory workload families
 
