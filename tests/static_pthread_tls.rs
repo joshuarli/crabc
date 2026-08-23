@@ -11,7 +11,7 @@ use std::process::Command;
 
 #[test]
 fn static_pthread_tls_lifecycle_links_against_libc_a() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let libc_a = manifest_dir.join("target/debug/libc.a");
     assert!(libc_a.exists(), "libc.a not found at {}", libc_a.display());

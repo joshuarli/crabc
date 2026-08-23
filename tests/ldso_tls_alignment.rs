@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn ldso_preserves_static_tls_initializers_and_alignment() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = root.join("tests/fixtures");
     let include = root.join("include");
     let target = root.join("target/debug");

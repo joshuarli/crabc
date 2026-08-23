@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn ldso_runs_real_printf_binary() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
 
     let ldso_path = manifest_dir.join("target/debug/libldso.so");

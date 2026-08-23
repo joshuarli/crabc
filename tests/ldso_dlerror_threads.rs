@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn ldso_dlerror_is_thread_local() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixture = manifest_dir.join("tests/fixtures/ldso_dlerror_threads_test.c");
     let target = manifest_dir.join("target/debug");
     let binary = test_support::TempArtifact::new("ldso_dlerror_threads_test");

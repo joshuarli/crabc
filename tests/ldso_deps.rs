@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn ldso_runs_pie_with_dependency() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let target = manifest_dir
         .join("target/debug")

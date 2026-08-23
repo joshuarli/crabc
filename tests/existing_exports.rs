@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn existing_math_exports_have_musl_abi() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
     let target = manifest_dir.join("target/debug");

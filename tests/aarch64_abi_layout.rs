@@ -13,7 +13,7 @@ fn public_aarch64_layout_matches_pinned_musl() {
     use std::path::Path;
     use std::process::Command;
 
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = Path::new(test_support::REPOSITORY_ROOT);
     let fixture = manifest_dir.join("tests/fixtures/aarch64_abi_layout_test.c");
     let include = manifest_dir.join("include");
     let reference_include = Path::new("/opt/musl-1.2.6/include");

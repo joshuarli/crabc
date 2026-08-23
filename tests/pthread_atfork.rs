@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn pthread_atfork_handlers_fire_in_order() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
     let wave1 = manifest_dir.join("include");

@@ -9,7 +9,7 @@ static PTHREAD_EXTENSIONS_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 fn pthread_extensions_under_loader() {
     let _guard = PTHREAD_EXTENSIONS_TEST_LOCK.lock();
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
     let target = manifest_dir.join("target/debug");

@@ -1,5 +1,8 @@
 use std::process::Command;
 
+#[path = "common/mod.rs"]
+mod test_support;
+
 fn parse_count(stdout: &str, label: &str) -> i32 {
     stdout
         .lines()
@@ -23,7 +26,7 @@ fn wave5_libc_test_functional_networking_and_fcntl() {
         return;
     }
 
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let harness = manifest_dir.join("libc-test-harness/run.sh");
 
     let output = Command::new(&harness)

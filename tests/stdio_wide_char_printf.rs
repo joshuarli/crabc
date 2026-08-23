@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn stdio_printf_wide_character_conversion_under_libc_so() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let binary = test_support::TempArtifact::new("stdio_wide_char_printf_test");
     let status = Command::new("musl-gcc")
         .args([

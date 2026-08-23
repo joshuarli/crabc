@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn errno_is_thread_local_and_fd_wrappers_translate_failures() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
     let ldso_path = manifest_dir.join("target/debug/libldso.so");

@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn ldso_reuses_the_kernel_mapped_main_pie() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixture = root.join("tests/fixtures/ldso_kernel_main_mapping_test.c");
     let target = root.join("target/debug");
     let reference = test_support::TempArtifact::new("ldso-kernel-main-reference");

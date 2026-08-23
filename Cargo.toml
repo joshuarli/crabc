@@ -1,5 +1,12 @@
 [workspace]
 members = ["ldso", "libc", "crabc-core", "crabc-rs"]
+resolver = "2"
+
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joshuarli/crabc"
 
 [profile.dev]
 panic = "abort"
@@ -12,16 +19,3 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
-
-[package]
-name = "crabc"
-version = "0.3.0"
-edition = "2021"
-description = "A Rust musl-compatible libc with a dynamic linker"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/mengzhuo/crabc"
-readme = "README.md"
-
-[[bin]]
-name = "loader"
-path = "src/main.rs"

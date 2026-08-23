@@ -31,7 +31,7 @@ fn assert_weak_function_export(library: &std::path::Path, name: &str) {
 
 #[test]
 fn weak_init_fini_exports_preserve_startup_and_finalization_order() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/init_fini_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-init-fini");

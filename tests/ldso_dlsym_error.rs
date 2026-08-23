@@ -4,7 +4,7 @@ mod test_support;
 use std::process::{Command, Output};
 
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixture = manifest_dir.join("tests/fixtures/ldso_dlsym_error_test.c");
     let target = manifest_dir.join("target/debug");
     let mut command = Command::new("musl-gcc");
@@ -31,7 +31,7 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let mut command = Command::new(binary);
     if candidate {
         command.env("LD_LIBRARY_PATH", manifest_dir.join("target/debug"));

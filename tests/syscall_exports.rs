@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn syscall_filesystem_exports_under_libc_so() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
     let target = manifest_dir.join("target/debug");

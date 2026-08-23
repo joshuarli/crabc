@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn crypt_under_libc_so() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
 
     let libc_path = manifest_dir.join("target/debug/libc.so");
     assert!(libc_path.exists(), "libc.so not found");

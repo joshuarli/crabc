@@ -26,7 +26,7 @@ fn build_dso(source: &std::path::Path, output: &std::path::Path) {
 
 #[test]
 fn native_loader_introspection_copies_bounded_records() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = root.join("tests/fixtures");
     let target = root.join("target");
     let debug = target.join("debug");

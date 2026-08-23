@@ -4,7 +4,7 @@ mod test_support;
 use std::process::{Command, Output};
 
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixture = root.join("tests/fixtures/ldso_main_self_dlopen_test.c");
     let target = root.join("target/debug");
     let mut command = Command::new("musl-gcc");
@@ -32,7 +32,7 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let mut command = Command::new(binary);
     if candidate {
         command.env("LD_LIBRARY_PATH", root.join("target/debug"));

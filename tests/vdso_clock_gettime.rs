@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn c_clock_gettime_uses_vdso_in_the_steady_state_hot_loop() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/vdso_clock_gettime_test.c");
     let binary = test_support::TempArtifact::new("vdso-clock-gettime");

@@ -41,7 +41,7 @@ fn compile_parent(source: &std::path::Path, directory: &std::path::Path, output:
 }
 
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let fixture = root.join("tests/fixtures/dynamic_tls_dependency_test.c");
     let mut command = Command::new("musl-gcc");
@@ -76,7 +76,7 @@ fn run(
     directory: &std::path::Path,
     candidate: bool,
 ) -> Output {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let mut command = Command::new(binary);
     command.arg(parent).env("LD_LIBRARY_PATH", directory);
     if candidate {
@@ -96,7 +96,7 @@ fn run(
 
 #[test]
 fn dynamic_tls_dependency_graph_matches_pinned_musl() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = root.join("tests/fixtures");
     let reference = test_support::TempArtifact::new("dynamic-tls-dependency-reference");
     let candidate = test_support::TempArtifact::new("dynamic-tls-dependency-candidate");

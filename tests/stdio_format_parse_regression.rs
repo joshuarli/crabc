@@ -4,7 +4,7 @@ mod test_support;
 use std::process::{Command, Output};
 
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let fixture = root.join("tests/fixtures/stdio_format_parse_regression_test.c");
     let mut command = Command::new("musl-gcc");
@@ -31,7 +31,7 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
 }
 
 fn run(binary: &std::path::Path, path: &std::path::Path, candidate: bool) -> Output {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let mut command = Command::new(binary);
     command.arg(path);
     if candidate {

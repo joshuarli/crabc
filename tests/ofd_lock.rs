@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn open_file_description_locks_forward_the_flock_pointer() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/ofd_lock_test.c");
     let binary = test_support::TempArtifact::new("crabc-ofd-lock");

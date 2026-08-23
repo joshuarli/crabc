@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn native_cfile_uses_libc_owned_memory_stream_state() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target");
     let debug = target.join("debug");
     let archive = target.join("release/examples/libcfile_direct_probe.a");

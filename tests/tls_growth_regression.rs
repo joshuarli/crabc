@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 const MODULES: u32 = 8;
 
 fn compile_tls_dsos(directory: &std::path::Path) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let source = root.join("compat/perf/fixtures/tls_growth_dso.c");
     for index in 0..MODULES {
         let binary = directory.join(format!("libbench_tls_growth_{index}.so"));
@@ -35,7 +35,7 @@ fn compile_tls_dsos(directory: &std::path::Path) {
 }
 
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let fixture = root.join("tests/fixtures/tls_growth_regression_test.c");
     let mut command = Command::new("musl-gcc");
@@ -65,7 +65,7 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
 }
 
 fn run(binary: &std::path::Path, directory: &std::path::Path, candidate: bool) -> Output {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let mut command = Command::new(binary);
     command.arg(directory).env("LD_LIBRARY_PATH", directory);
     if candidate {

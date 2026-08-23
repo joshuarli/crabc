@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn ldso_self_relocates_at_the_auxv_interpreter_base() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let source = root.join("tests/fixtures/ldso_self_relocation_test.c");
     let binary = test_support::TempArtifact::new("crabc-ldso-self-relocation");
     let target = root.join("target/debug");

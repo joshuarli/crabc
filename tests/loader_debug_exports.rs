@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn loader_debug_exports_report_post_startup_rendezvous() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/loader_debug_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-loader-debug-exports");

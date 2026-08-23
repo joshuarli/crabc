@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn dynamic_loader_introspection_reports_real_objects() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let source = root.join("tests/fixtures/dynamic_loader_introspection_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-dynamic-loader-introspection");
     let target = root.join("target/debug");

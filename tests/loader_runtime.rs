@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn native_loader_runtime_uses_ldso_owned_state() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target");
     let debug = target.join("debug");
     let archive = target.join("release/examples/libloader_runtime_probe.a");

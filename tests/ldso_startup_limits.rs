@@ -7,7 +7,7 @@ use std::process::Command;
 
 #[test]
 fn ldso_preserves_large_startup_vectors_and_auxv() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixture = manifest_dir.join("tests/fixtures/ldso_startup_limits_test.c");
     let target = manifest_dir.join("target/debug");
     let binary = test_support::TempArtifact::new("ldso_startup_limits_test");

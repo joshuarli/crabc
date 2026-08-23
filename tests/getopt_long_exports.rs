@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn getopt_long_exports_under_libc_so() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/getopt_long_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-getopt-long");

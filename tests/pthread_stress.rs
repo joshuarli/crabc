@@ -9,7 +9,7 @@ static PTHREAD_STRESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 fn pthread_lifecycle_stress_under_libc_so() {
     let _guard = PTHREAD_STRESS_TEST_LOCK.lock().unwrap();
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
     let target = manifest_dir.join("target/debug");

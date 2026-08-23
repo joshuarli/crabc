@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn legacy_des_bit_array_apis_under_libc_so() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/legacy_des_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-legacy-des");

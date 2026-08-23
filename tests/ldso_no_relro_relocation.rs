@@ -22,7 +22,7 @@ fn compile_shared(source: &std::path::Path, output: &std::path::Path) {
 }
 
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let fixture = root.join("tests/fixtures/ldso_no_relro_relocation_test.c");
     let mut command = Command::new("musl-gcc");
@@ -54,7 +54,7 @@ fn run(
     second: &std::path::Path,
     candidate: bool,
 ) -> Output {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let mut command = Command::new(binary);
     command
         .args([first, second])
@@ -76,7 +76,7 @@ fn run(
 
 #[test]
 fn late_load_does_not_repeat_no_relro_relocations() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = root.join("tests/fixtures");
     let reference = test_support::TempArtifact::new("no-relro-relocation-reference");
     let candidate = test_support::TempArtifact::new("no-relro-relocation-candidate");

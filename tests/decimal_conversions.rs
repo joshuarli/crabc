@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn decimal_conversions_under_libc_so() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/decimal_conversions_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-decimal-conversions");

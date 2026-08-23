@@ -409,7 +409,7 @@ case "$command" in
         # its required feature set independent without duplicating target names here.
         run_in_container python3 compat/crabc-rs/build_examples.py
         run_in_container cargo build -p crabc-libc
-        run_in_container cargo test -p crabc --test loader_runtime --test loader_dlfcn_basic --test loader_dlfcn_introspection --test runtime_thread --test cfile_runtime --test fclose_lifecycle --test fenv --test fnmatch --test iconv --test iconv_error_progress --test stdio_full --test stdio_exports --test stdio_extensions_exports --test cookie_stream_exports --test wmemstream_exports --test select --test break_exports --test memory_vm_exports --test host_process_exports --test filesystem_paths_exports
+        run_in_container cargo test -p crabc-libc --test loader_runtime --test loader_dlfcn_basic --test loader_dlfcn_introspection --test runtime_thread --test cfile_runtime --test fclose_lifecycle --test fenv --test fnmatch --test iconv --test iconv_error_progress --test stdio_full --test stdio_exports --test stdio_extensions_exports --test cookie_stream_exports --test wmemstream_exports --test select --test break_exports --test memory_vm_exports --test host_process_exports --test filesystem_paths_exports
         run_in_container python3 compat/rustix/run.py --check
         run_in_container python3 -m unittest discover -s compat/rustix/tests -p 'test_*.py'
         run_in_container python3 -m unittest discover -s compat/crabc-rs/tests -p 'test_*.py'

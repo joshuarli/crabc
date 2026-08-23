@@ -1,10 +1,10 @@
 [package]
 name = "crabc-libc"
-version = "0.3.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "A Rust no_std musl-compatible libc implementation"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/mengzhuo/crabc"
+license.workspace = true
+repository.workspace = true
 readme = "README.md"
 
 [lib]
@@ -22,3 +22,898 @@ libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["e
 # is the existing mimalloc-backed C allocation strategy in `crypt_impl.rs`.
 base64ct = { version = "1.8", default-features = false }
 sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
+
+# The repository-level C and loader fixtures remain in ../tests so their
+# evidence paths are stable. Explicit targets make crabc-libc their owner
+# after the workspace root becomes virtual, while preserving one process per
+# test target and Cargo's existing parallel execution topology.
+
+[[test]]
+name = "aarch64_abi_layout"
+path = "../tests/aarch64_abi_layout.rs"
+
+
+[[test]]
+name = "aarch64_network_headers"
+path = "../tests/aarch64_network_headers.rs"
+
+
+[[test]]
+name = "admin_kernel_exports"
+path = "../tests/admin_kernel_exports.rs"
+
+
+[[test]]
+name = "admin_syscalls_exports"
+path = "../tests/admin_syscalls_exports.rs"
+
+
+[[test]]
+name = "advanced_io_exports"
+path = "../tests/advanced_io_exports.rs"
+
+
+[[test]]
+name = "allocator"
+path = "../tests/allocator.rs"
+
+
+[[test]]
+name = "break_exports"
+path = "../tests/break_exports.rs"
+
+
+[[test]]
+name = "c11_threads"
+path = "../tests/c11_threads.rs"
+
+
+[[test]]
+name = "cfile_runtime"
+path = "../tests/cfile_runtime.rs"
+
+
+[[test]]
+name = "clock_administration"
+path = "../tests/clock_administration.rs"
+
+
+[[test]]
+name = "clone_exports"
+path = "../tests/clone_exports.rs"
+
+
+[[test]]
+name = "compat_exports"
+path = "../tests/compat_exports.rs"
+
+
+[[test]]
+name = "complex_basic_exports"
+path = "../tests/complex_basic_exports.rs"
+
+
+[[test]]
+name = "complex_powers_exports"
+path = "../tests/complex_powers_exports.rs"
+
+
+[[test]]
+name = "complex_transcendentals_exports"
+path = "../tests/complex_transcendentals_exports.rs"
+
+
+[[test]]
+name = "cookie_stream_exports"
+path = "../tests/cookie_stream_exports.rs"
+
+
+[[test]]
+name = "credentials_profile"
+path = "../tests/credentials_profile.rs"
+
+
+[[test]]
+name = "crypt"
+path = "../tests/crypt.rs"
+
+
+[[test]]
+name = "ctype"
+path = "../tests/ctype.rs"
+
+
+[[test]]
+name = "ctype_assert_exports"
+path = "../tests/ctype_assert_exports.rs"
+
+
+[[test]]
+name = "daemon"
+path = "../tests/daemon.rs"
+
+
+[[test]]
+name = "decimal_conversions"
+path = "../tests/decimal_conversions.rs"
+
+
+[[test]]
+name = "directory_streams_exports"
+path = "../tests/directory_streams_exports.rs"
+
+
+[[test]]
+name = "dn_expand"
+path = "../tests/dn_expand.rs"
+
+
+[[test]]
+name = "dns_packet_helpers"
+path = "../tests/dns_packet_helpers.rs"
+
+
+[[test]]
+name = "dso_tls"
+path = "../tests/dso_tls.rs"
+
+
+[[test]]
+name = "dup_exports"
+path = "../tests/dup_exports.rs"
+
+
+[[test]]
+name = "dynamic_loader_introspection"
+path = "../tests/dynamic_loader_introspection.rs"
+
+
+[[test]]
+name = "dynamic_tls_dependency"
+path = "../tests/dynamic_tls_dependency.rs"
+
+
+[[test]]
+name = "errno_syscall"
+path = "../tests/errno_syscall.rs"
+
+
+[[test]]
+name = "error_reporting_exports"
+path = "../tests/error_reporting_exports.rs"
+
+
+[[test]]
+name = "ether_interfaces"
+path = "../tests/ether_interfaces.rs"
+
+
+[[test]]
+name = "exec_family"
+path = "../tests/exec_family.rs"
+
+
+[[test]]
+name = "existing_exports"
+path = "../tests/existing_exports.rs"
+
+
+[[test]]
+name = "extended_attributes_exports"
+path = "../tests/extended_attributes_exports.rs"
+
+
+[[test]]
+name = "fanotify_exports"
+path = "../tests/fanotify_exports.rs"
+
+
+[[test]]
+name = "fclose_lifecycle"
+path = "../tests/fclose_lifecycle.rs"
+
+
+[[test]]
+name = "fd_filesystem"
+path = "../tests/fd_filesystem.rs"
+
+
+[[test]]
+name = "fdopen_lifecycle"
+path = "../tests/fdopen_lifecycle.rs"
+
+
+[[test]]
+name = "fenv"
+path = "../tests/fenv.rs"
+
+
+[[test]]
+name = "file_handle_exports"
+path = "../tests/file_handle_exports.rs"
+
+
+[[test]]
+name = "filesystem_paths_exports"
+path = "../tests/filesystem_paths_exports.rs"
+
+
+[[test]]
+name = "filesystem_stats_exports"
+path = "../tests/filesystem_stats_exports.rs"
+
+
+[[test]]
+name = "filesystem_traversal"
+path = "../tests/filesystem_traversal.rs"
+
+
+[[test]]
+name = "fnmatch"
+path = "../tests/fnmatch.rs"
+
+
+[[test]]
+name = "getdate"
+path = "../tests/getdate.rs"
+
+
+[[test]]
+name = "getlogin_exports"
+path = "../tests/getlogin_exports.rs"
+
+
+[[test]]
+name = "getopt_exports"
+path = "../tests/getopt_exports.rs"
+
+
+[[test]]
+name = "getopt_long_exports"
+path = "../tests/getopt_long_exports.rs"
+
+
+[[test]]
+name = "gettext_exports"
+path = "../tests/gettext_exports.rs"
+
+
+[[test]]
+name = "gettimeofday_regression"
+path = "../tests/gettimeofday_regression.rs"
+
+
+[[test]]
+name = "group"
+path = "../tests/group.rs"
+
+
+[[test]]
+name = "header_surface"
+path = "../tests/header_surface.rs"
+
+
+[[test]]
+name = "host_process_exports"
+path = "../tests/host_process_exports.rs"
+
+
+[[test]]
+name = "iconv"
+path = "../tests/iconv.rs"
+
+
+[[test]]
+name = "iconv_error_progress"
+path = "../tests/iconv_error_progress.rs"
+
+
+[[test]]
+name = "identity_exports"
+path = "../tests/identity_exports.rs"
+
+
+[[test]]
+name = "if_nameindex"
+path = "../tests/if_nameindex.rs"
+
+
+[[test]]
+name = "ifaddrs"
+path = "../tests/ifaddrs.rs"
+
+
+[[test]]
+name = "init_fini_exports"
+path = "../tests/init_fini_exports.rs"
+
+
+[[test]]
+name = "integer_numeric"
+path = "../tests/integer_numeric.rs"
+
+
+[[test]]
+name = "io_exports"
+path = "../tests/io_exports.rs"
+
+
+[[test]]
+name = "ioctl_exports"
+path = "../tests/ioctl_exports.rs"
+
+
+[[test]]
+name = "kernel_admin_syscalls"
+path = "../tests/kernel_admin_syscalls.rs"
+
+
+[[test]]
+name = "kernel_resource_ops"
+path = "../tests/kernel_resource_ops.rs"
+
+
+[[test]]
+name = "ldso_alias_dedup"
+path = "../tests/ldso_alias_dedup.rs"
+
+
+[[test]]
+name = "ldso_deps"
+path = "../tests/ldso_deps.rs"
+
+
+[[test]]
+name = "ldso_dlerror_threads"
+path = "../tests/ldso_dlerror_threads.rs"
+
+
+[[test]]
+name = "ldso_dlsym_error"
+path = "../tests/ldso_dlsym_error.rs"
+
+
+[[test]]
+name = "ldso_dynamic_tls"
+path = "../tests/ldso_dynamic_tls.rs"
+
+
+[[test]]
+name = "ldso_interp"
+path = "../tests/ldso_interp.rs"
+
+
+[[test]]
+name = "ldso_kernel_main_mapping"
+path = "../tests/ldso_kernel_main_mapping.rs"
+
+
+[[test]]
+name = "ldso_main_self_dlopen"
+path = "../tests/ldso_main_self_dlopen.rs"
+
+
+[[test]]
+name = "ldso_no_relro_relocation"
+path = "../tests/ldso_no_relro_relocation.rs"
+
+
+[[test]]
+name = "ldso_real_binary"
+path = "../tests/ldso_real_binary.rs"
+
+
+[[test]]
+name = "ldso_self_relocation"
+path = "../tests/ldso_self_relocation.rs"
+
+
+[[test]]
+name = "ldso_startup"
+path = "../tests/ldso_startup.rs"
+
+
+[[test]]
+name = "ldso_startup_limits"
+path = "../tests/ldso_startup_limits.rs"
+
+
+[[test]]
+name = "ldso_tls"
+path = "../tests/ldso_tls.rs"
+
+
+[[test]]
+name = "ldso_tls_alignment"
+path = "../tests/ldso_tls_alignment.rs"
+
+
+[[test]]
+name = "legacy_des"
+path = "../tests/legacy_des.rs"
+
+
+[[test]]
+name = "legacy_formatting"
+path = "../tests/legacy_formatting.rs"
+
+
+[[test]]
+name = "legacy_resolver"
+path = "../tests/legacy_resolver.rs"
+
+
+[[test]]
+name = "linux_capabilities"
+path = "../tests/linux_capabilities.rs"
+
+
+[[test]]
+name = "loader_debug_exports"
+path = "../tests/loader_debug_exports.rs"
+
+
+[[test]]
+name = "loader_dlfcn_basic"
+path = "../tests/loader_dlfcn_basic.rs"
+
+
+[[test]]
+name = "loader_dlfcn_introspection"
+path = "../tests/loader_dlfcn_introspection.rs"
+
+
+[[test]]
+name = "loader_runtime"
+path = "../tests/loader_runtime.rs"
+
+
+[[test]]
+name = "loader_startup"
+path = "../tests/loader_startup.rs"
+
+
+[[test]]
+name = "locale"
+path = "../tests/locale.rs"
+
+
+[[test]]
+name = "locale_exports"
+path = "../tests/locale_exports.rs"
+
+
+[[test]]
+name = "lrand48"
+path = "../tests/lrand48.rs"
+
+
+[[test]]
+name = "math"
+path = "../tests/math.rs"
+
+
+[[test]]
+name = "memchr_regression"
+path = "../tests/memchr_regression.rs"
+
+
+[[test]]
+name = "memcpy_memset_regression"
+path = "../tests/memcpy_memset_regression.rs"
+
+
+[[test]]
+name = "memmem_regression"
+path = "../tests/memmem_regression.rs"
+
+
+[[test]]
+name = "memory_vm_exports"
+path = "../tests/memory_vm_exports.rs"
+
+
+[[test]]
+name = "mqueue_exports"
+path = "../tests/mqueue_exports.rs"
+
+
+[[test]]
+name = "net"
+path = "../tests/net.rs"
+
+
+[[test]]
+name = "network_databases"
+path = "../tests/network_databases.rs"
+
+
+[[test]]
+name = "network_globals_exports"
+path = "../tests/network_globals_exports.rs"
+
+
+[[test]]
+name = "new_functions"
+path = "../tests/new_functions.rs"
+
+
+[[test]]
+name = "ofd_lock"
+path = "../tests/ofd_lock.rs"
+
+
+[[test]]
+name = "passwd"
+path = "../tests/passwd.rs"
+
+
+[[test]]
+name = "path_configuration_exports"
+path = "../tests/path_configuration_exports.rs"
+
+
+[[test]]
+name = "poll_events"
+path = "../tests/poll_events.rs"
+
+
+[[test]]
+name = "posix_aio"
+path = "../tests/posix_aio.rs"
+
+
+[[test]]
+name = "posix_spawn_attrs_exports"
+path = "../tests/posix_spawn_attrs_exports.rs"
+
+
+[[test]]
+name = "posix_timers"
+path = "../tests/posix_timers.rs"
+
+
+[[test]]
+name = "process"
+path = "../tests/process.rs"
+
+
+[[test]]
+name = "process_control_exports"
+path = "../tests/process_control_exports.rs"
+
+
+[[test]]
+name = "program_utils_exports"
+path = "../tests/program_utils_exports.rs"
+
+
+[[test]]
+name = "pthread"
+path = "../tests/pthread.rs"
+
+
+[[test]]
+name = "pthread_atfork"
+path = "../tests/pthread_atfork.rs"
+
+
+[[test]]
+name = "pthread_create_join_tls_regression"
+path = "../tests/pthread_create_join_tls_regression.rs"
+
+
+[[test]]
+name = "pthread_extensions"
+path = "../tests/pthread_extensions.rs"
+
+
+[[test]]
+name = "pthread_mutex_cond_ping_pong_regression"
+path = "../tests/pthread_mutex_cond_ping_pong_regression.rs"
+
+
+[[test]]
+name = "pthread_mutex_uncontended_regression"
+path = "../tests/pthread_mutex_uncontended_regression.rs"
+
+
+[[test]]
+name = "pthread_stress"
+path = "../tests/pthread_stress.rs"
+
+
+[[test]]
+name = "ptrace_exports"
+path = "../tests/ptrace_exports.rs"
+
+
+[[test]]
+name = "pty_interfaces"
+path = "../tests/pty_interfaces.rs"
+
+
+[[test]]
+name = "quick_exit_exports"
+path = "../tests/quick_exit_exports.rs"
+
+
+[[test]]
+name = "random"
+path = "../tests/random.rs"
+
+
+[[test]]
+name = "runtime_thread"
+path = "../tests/runtime_thread.rs"
+
+
+[[test]]
+name = "scalar_exports"
+path = "../tests/scalar_exports.rs"
+
+
+[[test]]
+name = "sched_affinity_exports"
+path = "../tests/sched_affinity_exports.rs"
+
+
+[[test]]
+name = "select"
+path = "../tests/select.rs"
+
+
+[[test]]
+name = "semtimedop"
+path = "../tests/semtimedop.rs"
+
+
+[[test]]
+name = "setjmp"
+path = "../tests/setjmp.rs"
+
+
+[[test]]
+name = "shadow"
+path = "../tests/shadow.rs"
+
+
+[[test]]
+name = "signal"
+path = "../tests/signal.rs"
+
+
+[[test]]
+name = "signal_helpers_exports"
+path = "../tests/signal_helpers_exports.rs"
+
+
+[[test]]
+name = "socket"
+path = "../tests/socket.rs"
+
+
+[[test]]
+name = "socket_messages_exports"
+path = "../tests/socket_messages_exports.rs"
+
+
+[[test]]
+name = "static_hello"
+path = "../tests/static_hello.rs"
+
+
+[[test]]
+name = "static_pthread_tls"
+path = "../tests/static_pthread_tls.rs"
+
+
+[[test]]
+name = "statvfs"
+path = "../tests/statvfs.rs"
+
+
+[[test]]
+name = "stdio_exports"
+path = "../tests/stdio_exports.rs"
+
+
+[[test]]
+name = "stdio_extensions_exports"
+path = "../tests/stdio_extensions_exports.rs"
+
+
+[[test]]
+name = "stdio_format_parse_regression"
+path = "../tests/stdio_format_parse_regression.rs"
+
+
+[[test]]
+name = "stdio_full"
+path = "../tests/stdio_full.rs"
+
+
+[[test]]
+name = "stdio_input"
+path = "../tests/stdio_input.rs"
+
+
+[[test]]
+name = "stdio_printf_edges"
+path = "../tests/stdio_printf_edges.rs"
+
+
+[[test]]
+name = "stdio_wide_char_printf"
+path = "../tests/stdio_wide_char_printf.rs"
+
+
+[[test]]
+name = "stdlib"
+path = "../tests/stdlib.rs"
+
+
+[[test]]
+name = "string"
+path = "../tests/string.rs"
+
+
+[[test]]
+name = "string_exports"
+path = "../tests/string_exports.rs"
+
+
+[[test]]
+name = "strlen_regression"
+path = "../tests/strlen_regression.rs"
+
+
+[[test]]
+name = "strstr_regression"
+path = "../tests/strstr_regression.rs"
+
+
+[[test]]
+name = "strtol"
+path = "../tests/strtol.rs"
+
+
+[[test]]
+name = "strtold"
+path = "../tests/strtold.rs"
+
+
+[[test]]
+name = "strverscmp"
+path = "../tests/strverscmp.rs"
+
+
+[[test]]
+name = "syscall"
+path = "../tests/syscall.rs"
+
+
+[[test]]
+name = "syscall_exports"
+path = "../tests/syscall_exports.rs"
+
+
+[[test]]
+name = "sysconf"
+path = "../tests/sysconf.rs"
+
+
+[[test]]
+name = "syslog_interfaces"
+path = "../tests/syslog_interfaces.rs"
+
+
+[[test]]
+name = "system_information_exports"
+path = "../tests/system_information_exports.rs"
+
+
+[[test]]
+name = "system_utils_exports"
+path = "../tests/system_utils_exports.rs"
+
+
+[[test]]
+name = "tempnam_exports"
+path = "../tests/tempnam_exports.rs"
+
+
+[[test]]
+name = "terminal"
+path = "../tests/terminal.rs"
+
+
+[[test]]
+name = "terminal_extended_exports"
+path = "../tests/terminal_extended_exports.rs"
+
+
+[[test]]
+name = "time_extensions"
+path = "../tests/time_extensions.rs"
+
+
+[[test]]
+name = "timer_signal_fds_exports"
+path = "../tests/timer_signal_fds_exports.rs"
+
+
+
+[[test]]
+name = "tls_get_addr"
+path = "../tests/tls_get_addr.rs"
+
+
+[[test]]
+name = "tls_growth_regression"
+path = "../tests/tls_growth_regression.rs"
+
+
+[[test]]
+name = "ttyname_exports"
+path = "../tests/ttyname_exports.rs"
+
+
+[[test]]
+name = "unicode_encoders"
+path = "../tests/unicode_encoders.rs"
+
+
+[[test]]
+name = "usershell_exports"
+path = "../tests/usershell_exports.rs"
+
+
+[[test]]
+name = "utmp_databases"
+path = "../tests/utmp_databases.rs"
+
+
+[[test]]
+name = "va_list_abi"
+path = "../tests/va_list_abi.rs"
+
+
+[[test]]
+name = "vdso_clock_gettime"
+path = "../tests/vdso_clock_gettime.rs"
+
+
+[[test]]
+name = "wave3"
+path = "../tests/wave3.rs"
+
+
+[[test]]
+name = "wave4"
+path = "../tests/wave4.rs"
+
+
+[[test]]
+name = "wave5"
+path = "../tests/wave5.rs"
+
+
+[[test]]
+name = "wchar_exports"
+path = "../tests/wchar_exports.rs"
+
+
+[[test]]
+name = "wchar_stream_exports"
+path = "../tests/wchar_stream_exports.rs"
+
+
+[[test]]
+name = "wmemstream_exports"
+path = "../tests/wmemstream_exports.rs"
+
+
+[[test]]
+name = "wordexp"
+path = "../tests/wordexp.rs"

@@ -55,12 +55,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "crabc"
-version = "0.3.0"
-
-[[package]]
 name = "crabc-core"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "crabc-ldso"

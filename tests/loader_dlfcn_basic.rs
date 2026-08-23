@@ -31,7 +31,7 @@ fn build_dso(
 
 #[test]
 fn native_loader_basic_owns_handles_and_uses_private_runtime() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = root.join("tests/fixtures");
     let target = root.join("target");
     let debug = target.join("debug");

@@ -11,6 +11,10 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// The repository root remains the authority for C fixtures and installed
+/// headers even though `crabc-libc` owns these integration-test targets.
+pub const REPOSITORY_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
+
 static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 
 /// A generated test artifact in its own unique temporary directory.

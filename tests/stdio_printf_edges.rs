@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn stdio_printf_edge_cases_under_libc_so() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let binary = test_support::TempArtifact::new("stdio_printf_edges_test");
     let mut args = vec![
         "-fPIE".to_string(),

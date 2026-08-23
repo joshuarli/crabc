@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn dso_tls_works_in_main_and_pthread_threads() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
     let include = manifest_dir.join("include");
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
