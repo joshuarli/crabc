@@ -13,7 +13,10 @@ use std::process::Command;
 fn static_pthread_tls_lifecycle_links_against_libc_a() {
     let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
-    let libc_a = manifest_dir.join("target/debug/libc.a");
+    // Conventional static C executables do not carry Rust's unwinder. Match
+    // `static_hello` and the dedicated runner by linking the aborting release
+    // archive produced by the generic test command.
+    let libc_a = manifest_dir.join("target/release/libc.a");
     assert!(libc_a.exists(), "libc.a not found at {}", libc_a.display());
 
     let arch = "aarch64";
