@@ -1,10 +1,9 @@
 use crabc_rs::{fs, pty, termios, Errno};
 
 fn pty_master() -> crabc_rs::OwnedFd {
-    let master = pty::openpt(
-        pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC,
-    )
-    .expect("open disposable PTY master");
+    let master =
+        pty::openpt(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
+            .expect("open disposable PTY master");
     pty::grantpt(&master).expect("grant PTY");
     pty::unlockpt(&master).expect("unlock PTY");
     master

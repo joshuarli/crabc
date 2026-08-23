@@ -12,11 +12,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 #[no_mangle]
 pub extern "C" fn crabc_rs_sched_getaffinity_direct_probe() -> i32 {
     match thread::sched_getaffinity(None) {
-        Ok(mask)
-            if !mask.is_empty() && mask.count() <= thread::CpuSet::MAX_CPU as u32 =>
-        {
-            0
-        }
+        Ok(mask) if !mask.is_empty() && mask.count() <= thread::CpuSet::MAX_CPU as u32 => 0,
         Ok(_) => 1,
         Err(error) => -error.raw(),
     }

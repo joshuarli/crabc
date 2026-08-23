@@ -1,8 +1,8 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
-use crabc_rs::{process, signal, thread};
 use crabc_rs::time::{self, ClockId, SleepError, SleepOutcome, Timespec};
+use crabc_rs::{process, signal, thread};
 
 static SIGNAL_DELIVERED: AtomicBool = AtomicBool::new(false);
 
@@ -12,10 +12,7 @@ unsafe extern "C" fn interrupt_handler(_: process::Signal) {
 
 #[test]
 fn native_nanosleep_completes_a_zero_duration_without_c_state() {
-    assert_eq!(
-        time::nanosleep(Duration::ZERO),
-        Ok(SleepOutcome::Completed),
-    );
+    assert_eq!(time::nanosleep(Duration::ZERO), Ok(SleepOutcome::Completed),);
 }
 
 #[test]

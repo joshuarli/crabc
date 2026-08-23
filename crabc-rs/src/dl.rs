@@ -308,7 +308,9 @@ impl LoadedImageSnapshot {
             return Err(runtime_error(error));
         }
         if count > records.len() {
-            return Err(LoaderError::message(b"loader returned too many image records"));
+            return Err(LoaderError::message(
+                b"loader returned too many image records",
+            ));
         }
         let mut images = [LoadedImage::from_wire(LoaderImageV1::empty()); LOADER_SNAPSHOT_CAPACITY];
         for index in 0..count {
@@ -384,13 +386,17 @@ fn runtime() -> core::result::Result<&'static RuntimeV1, LoaderError> {
     // immutable process-lifetime data.
     let runtime = unsafe { __crabc_runtime_v1() };
     if runtime.is_null() {
-        return Err(LoaderError::message(b"crabc dynamic loader runtime unavailable"));
+        return Err(LoaderError::message(
+            b"crabc dynamic loader runtime unavailable",
+        ));
     }
     // SAFETY: The non-null table belongs to the loaded libc runtime and is
     // immutable for the process lifetime by its private ABI contract.
     let runtime = unsafe { &*runtime };
     if runtime.abi_version != V1_ABI_VERSION || runtime.abi_size < V1_LEGACY_SIZE as u32 {
-        return Err(LoaderError::message(b"incompatible crabc dynamic loader runtime"));
+        return Err(LoaderError::message(
+            b"incompatible crabc dynamic loader runtime",
+        ));
     }
     Ok(runtime)
 }
@@ -398,7 +404,9 @@ fn runtime() -> core::result::Result<&'static RuntimeV1, LoaderError> {
 fn introspection_runtime() -> core::result::Result<&'static RuntimeV1, LoaderError> {
     let runtime = runtime()?;
     if runtime.abi_size < size_of::<RuntimeV1>() as u32 {
-        return Err(LoaderError::message(b"crabc loader introspection unavailable"));
+        return Err(LoaderError::message(
+            b"crabc loader introspection unavailable",
+        ));
     }
     Ok(runtime)
 }
@@ -426,14 +434,8 @@ impl Library {
         let mut error = TextV1::empty();
         // SAFETY: `path` is NUL-terminated, and both mutable outputs point to
         // stack storage with the private v1 wire layouts.
-        if unsafe {
-            (runtime.loader_open)(
-                path.as_ptr(),
-                flags.bits(),
-                &mut handle,
-                &mut error,
-            )
-        } != 0
+        if unsafe { (runtime.loader_open)(path.as_ptr(), flags.bits(), &mut handle, &mut error) }
+            != 0
         {
             return Err(runtime_error(error));
         }
@@ -455,7 +457,10 @@ impl Library {
         let mut error = TextV1::empty();
         // SAFETY: A null path is the private table's typed main-program
         // request; both output pointers have their exact v1 layouts.
-        if unsafe { (runtime.loader_open)(core::ptr::null(), flags.bits(), &mut handle, &mut error) } != 0 {
+        if unsafe {
+            (runtime.loader_open)(core::ptr::null(), flags.bits(), &mut handle, &mut error)
+        } != 0
+        {
             return Err(runtime_error(error));
         }
         let handle = NonNull::new(handle)
@@ -470,7 +475,8 @@ impl Library {
     fn raw_handle(&self) -> NonNull<c_void> {
         // A Library only loses its handle during the consuming `close` path,
         // so a borrowed library always has an active opaque loader reference.
-        self.handle.expect("active Library must retain its loader handle")
+        self.handle
+            .expect("active Library must retain its loader handle")
     }
 
     /// Looks up and unsafely interprets a symbol as `T`.
@@ -486,8 +492,11 @@ impl Library {
         &self,
         name: &CStr,
     ) -> core::result::Result<Symbol<'_, T>, LoaderError> {
-        if size_of::<T>() != size_of::<*mut c_void>() || align_of::<T>() > align_of::<*mut c_void>() {
-            return Err(LoaderError::message(b"loader symbol type is not pointer-sized"));
+        if size_of::<T>() != size_of::<*mut c_void>() || align_of::<T>() > align_of::<*mut c_void>()
+        {
+            return Err(LoaderError::message(
+                b"loader symbol type is not pointer-sized",
+            ));
         }
         let runtime = runtime()?;
         let mut address = core::ptr::null_mut();
@@ -547,9 +556,8 @@ impl Library {
         // SAFETY: The handle is live for this borrow and both output values
         // are caller-owned exact v1 wire storage. The loader performs a
         // callback-free copy while holding its own lock.
-        if unsafe {
-            (runtime.loader_information)(self.raw_handle().as_ptr(), &mut raw, &mut error)
-        } != 0
+        if unsafe { (runtime.loader_information)(self.raw_handle().as_ptr(), &mut raw, &mut error) }
+            != 0
         {
             return Err(runtime_error(error));
         }

@@ -5,8 +5,7 @@ fn parse_count(stdout: &str, label: &str) -> i32 {
         .lines()
         .find(|l| l.trim_start().starts_with(label))
         .and_then(|l| {
-            l.splitn(2, label)
-                .nth(1)
+            l.split_once(label).map(|x| x.1)
                 .map(|v| v.trim().parse::<i32>().unwrap_or(0))
         })
         .unwrap_or(0)
@@ -14,7 +13,8 @@ fn parse_count(stdout: &str, label: &str) -> i32 {
 
 #[test]
 fn wave4_libc_test_regression_zero_failures() {
-    let libc_test_dir = std::env::var("LIBC_TEST_DIR").unwrap_or_else(|_| "/home/root/libc-test".into());
+    let libc_test_dir =
+        std::env::var("LIBC_TEST_DIR").unwrap_or_else(|_| "/home/root/libc-test".into());
     if !std::path::Path::new(&libc_test_dir).join("src").is_dir() {
         eprintln!(
             "skipping wave4_libc_test_regression_zero_failures: libc-test source not found at {}",

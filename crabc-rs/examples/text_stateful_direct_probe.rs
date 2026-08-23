@@ -25,7 +25,11 @@ pub extern "C" fn crabc_rs_text_stateful_direct_probe() -> i32 {
     {
         return 2;
     }
-    if builder.write_padded(b"123456789012345", 15).ok().map(|copy| copy.copied()) != Some(15)
+    if builder
+        .write_padded(b"123456789012345", 15)
+        .ok()
+        .map(|copy| copy.copied())
+        != Some(15)
         || builder.as_c_str().to_bytes() != b"123456789012345"
     {
         return 3;

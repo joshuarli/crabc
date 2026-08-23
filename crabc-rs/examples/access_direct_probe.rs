@@ -20,9 +20,8 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 pub extern "C" fn crabc_rs_access_direct_probe() -> i32 {
     // SAFETY: Both byte strings are static, non-null, and NUL-terminated.
     let current_directory = unsafe { CStr::from_bytes_with_nul_unchecked(b"/\0") };
-    let missing = unsafe {
-        CStr::from_bytes_with_nul_unchecked(b"/crabc-rs-native-access-no-such-entry\0")
-    };
+    let missing =
+        unsafe { CStr::from_bytes_with_nul_unchecked(b"/crabc-rs-native-access-no-such-entry\0") };
 
     if let Err(error) = fs::access(current_directory, Access::EXISTS) {
         return -error.raw();

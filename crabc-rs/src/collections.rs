@@ -20,9 +20,7 @@ impl Search {
     where
         F: FnMut(&T, &T) -> Ordering,
     {
-        slice
-            .binary_search_by(|element| compare(element, key))
-            .ok()
+        slice.binary_search_by(|element| compare(element, key)).ok()
     }
 
     /// Descriptive alias for [`Self::binary`].
@@ -217,33 +215,24 @@ impl CallbackSort {
     ///
     /// The ordering is intentionally unstable, matching the useful contract
     /// of `qsort_r`: equal elements have no preserved relative-order promise.
-    pub fn unstable<T, Context, F>(
-        values: &mut [T],
-        context: &mut Context,
-        mut compare: F,
-    ) where
+    pub fn unstable<T, Context, F>(values: &mut [T], context: &mut Context, mut compare: F)
+    where
         F: FnMut(&mut Context, &T, &T) -> Ordering,
     {
         values.sort_unstable_by(|left, right| compare(context, left, right));
     }
 
     /// Descriptive alias for [`Self::unstable`].
-    pub fn sort_unstable_with<T, Context, F>(
-        values: &mut [T],
-        context: &mut Context,
-        compare: F,
-    ) where
+    pub fn sort_unstable_with<T, Context, F>(values: &mut [T], context: &mut Context, compare: F)
+    where
         F: FnMut(&mut Context, &T, &T) -> Ordering,
     {
         Self::unstable(values, context, compare);
     }
 
     /// Standard-library-shaped spelling for context-aware unstable sorting.
-    pub fn sort_unstable<T, Context, F>(
-        values: &mut [T],
-        context: &mut Context,
-        compare: F,
-    ) where
+    pub fn sort_unstable<T, Context, F>(values: &mut [T], context: &mut Context, compare: F)
+    where
         F: FnMut(&mut Context, &T, &T) -> Ordering,
     {
         Self::unstable(values, context, compare);
@@ -281,9 +270,18 @@ mod tests {
     #[test]
     fn binary_and_linear_search_keep_comparator_order_explicit() {
         let values = [1, 3, 5, 7, 9];
-        assert_eq!(Search::binary(&values, &5, |left, right| left.cmp(right)), Some(2));
-        assert_eq!(Search::linear(&values, &7, |left, right| left.cmp(right)), Some(3));
-        assert_eq!(Search::bsearch(&values, &4, |left, right| left.cmp(right)), None);
+        assert_eq!(
+            Search::binary(&values, &5, |left, right| left.cmp(right)),
+            Some(2)
+        );
+        assert_eq!(
+            Search::linear(&values, &7, |left, right| left.cmp(right)),
+            Some(3)
+        );
+        assert_eq!(
+            Search::bsearch(&values, &4, |left, right| left.cmp(right)),
+            None
+        );
     }
 
     #[test]

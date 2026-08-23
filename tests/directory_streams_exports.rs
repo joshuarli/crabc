@@ -29,7 +29,10 @@ fn directory_stream_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to compile directory stream fixture");
-    assert!(status.success(), "directory stream fixture compilation failed");
+    assert!(
+        status.success(),
+        "directory stream fixture compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)

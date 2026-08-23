@@ -20,8 +20,7 @@ fn sendmmsg_and_recvmmsg_preserve_each_record_and_timeout() {
         net::MMsgHdr::new_send(&second_payload),
     ];
     assert_eq!(
-        net::sendmmsg(&sender, &mut outgoing, net::SendFlags::empty())
-            .expect("send two datagrams"),
+        net::sendmmsg(&sender, &mut outgoing, net::SendFlags::empty()).expect("send two datagrams"),
         2,
     );
     assert_eq!(outgoing[0].bytes(), 3);
@@ -71,7 +70,10 @@ fn recvmmsg_keeps_partial_success_and_does_not_read_uninitialized_storage() {
     .expect("create datagram pair");
     let payload = [io::IoSlice::new(b"partial")];
     let mut outgoing = [net::MMsgHdr::new_send(&payload)];
-    assert_eq!(net::sendmmsg(&sender, &mut outgoing, net::SendFlags::empty()), Ok(1));
+    assert_eq!(
+        net::sendmmsg(&sender, &mut outgoing, net::SendFlags::empty()),
+        Ok(1)
+    );
 
     let mut first_storage = [MaybeUninit::<u8>::uninit(); 7];
     let mut second_storage = [MaybeUninit::<u8>::uninit(); 8];
@@ -82,12 +84,7 @@ fn recvmmsg_keeps_partial_success_and_does_not_read_uninitialized_storage() {
         net::MMsgHdr::new_recv(&mut second_buffers),
     ];
     assert_eq!(
-        net::recvmmsg(
-            &receiver,
-            &mut incoming,
-            net::RecvFlags::DONTWAIT,
-            None,
-        ),
+        net::recvmmsg(&receiver, &mut incoming, net::RecvFlags::DONTWAIT, None,),
         Ok(1),
     );
     assert_eq!(incoming[0].bytes(), 7);
@@ -113,12 +110,7 @@ fn recvmmsg_empty_nonblocking_queue_returns_again() {
     let mut buffers = [net::MsgIoSliceMut::new(&mut storage)];
     let mut incoming = [net::MMsgHdr::new_recv(&mut buffers)];
     assert_eq!(
-        net::recvmmsg(
-            &receiver,
-            &mut incoming,
-            net::RecvFlags::DONTWAIT,
-            None,
-        ),
+        net::recvmmsg(&receiver, &mut incoming, net::RecvFlags::DONTWAIT, None,),
         Err(Errno::AGAIN),
     );
     assert_eq!(storage, [0xa5_u8; 4]);

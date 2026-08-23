@@ -63,7 +63,10 @@ fn timerfd_set_get_and_epoll_wait_use_direct_linux_layouts() {
         time::TimerfdTimerFlags::empty(),
         &time::Itimerspec {
             it_interval: time::Timespec::default(),
-            it_value: time::Timespec { tv_sec: 0, tv_nsec: 1_000_000 },
+            it_value: time::Timespec {
+                tv_sec: 0,
+                tv_nsec: 1_000_000,
+            },
         },
     )
     .expect("arm a one-shot timerfd");
@@ -83,7 +86,10 @@ fn timerfd_set_get_and_epoll_wait_use_direct_linux_layouts() {
     )
     .expect("register timerfd readiness");
 
-    let timeout = time::Timespec { tv_sec: 0, tv_nsec: 100_000_000 };
+    let timeout = time::Timespec {
+        tv_sec: 0,
+        tv_nsec: 100_000_000,
+    };
     let mut events = [MaybeUninit::uninit(); 1];
     let (ready, _) = event::epoll::wait(&epoll, &mut events, Some(&timeout))
         .expect("timerfd should become readable before the timeout");
@@ -92,6 +98,9 @@ fn timerfd_set_get_and_epoll_wait_use_direct_linux_layouts() {
     assert_eq!(ready[0].data.u64(), 0xa11);
 
     let mut expirations = [0_u8; 8];
-    assert_eq!(io::read(&timer, &mut expirations).expect("consume timer expiration"), 8);
+    assert_eq!(
+        io::read(&timer, &mut expirations).expect("consume timer expiration"),
+        8
+    );
     assert!(u64::from_ne_bytes(expirations) >= 1);
 }

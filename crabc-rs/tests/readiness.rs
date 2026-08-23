@@ -18,23 +18,15 @@ fn legacy_epoll_create_and_masked_wait_use_direct_linux_seams() {
     let timeout = time::Timespec::default();
     let empty = crabc_rs::signal::SignalSet::EMPTY;
     let mut events = [MaybeUninit::uninit(); 2];
-    let (ready, _) = event::epoll::wait_with_mask(
-        &epoll,
-        &mut events,
-        Some(&timeout),
-        Some(&empty),
-    )
-    .expect("masked empty epoll wait");
+    let (ready, _) =
+        event::epoll::wait_with_mask(&epoll, &mut events, Some(&timeout), Some(&empty))
+            .expect("masked empty epoll wait");
     assert!(ready.is_empty());
 
     assert_eq!(io::write(&writer, b"r").expect("write readiness byte"), 1);
-    let (ready, _) = event::epoll::wait_with_mask(
-        &epoll,
-        &mut events,
-        Some(&timeout),
-        Some(&empty),
-    )
-    .expect("masked epoll wait for readable pipe");
+    let (ready, _) =
+        event::epoll::wait_with_mask(&epoll, &mut events, Some(&timeout), Some(&empty))
+            .expect("masked epoll wait for readable pipe");
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].data.u64(), 0xfeed);
 }
@@ -47,7 +39,10 @@ fn select_sets_are_rustix_shaped_and_pselect_preserves_timeout() {
     let mut readfds = std::vec![event::FdSetElement::default(); elements];
     event::fd_set_insert(&mut readfds, reader.as_raw_fd());
     assert_eq!(event::fd_set_bound(&readfds), nfds);
-    assert_eq!(event::FdSetIter::new(&readfds).collect::<std::vec::Vec<_>>(), vec![reader.as_raw_fd()]);
+    assert_eq!(
+        event::FdSetIter::new(&readfds).collect::<std::vec::Vec<_>>(),
+        vec![reader.as_raw_fd()]
+    );
 
     let timeout = time::Timespec::default();
     // SAFETY: The pipe reader remains owned and open, and the set has enough
@@ -72,7 +67,10 @@ fn select_sets_are_rustix_shaped_and_pselect_preserves_timeout() {
     }
     .expect("masked pselect");
     assert_eq!(ready, 1);
-    assert_eq!(event::FdSetIter::new(&readfds).collect::<std::vec::Vec<_>>(), vec![reader.as_raw_fd()]);
+    assert_eq!(
+        event::FdSetIter::new(&readfds).collect::<std::vec::Vec<_>>(),
+        vec![reader.as_raw_fd()]
+    );
 
     event::fd_set_remove(&mut readfds, reader.as_raw_fd());
     assert_eq!(event::fd_set_bound(&readfds), 0);

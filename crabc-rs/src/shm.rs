@@ -15,9 +15,9 @@ pub use crate::fs::{Mode, OFlags};
 /// `..`, or contain `/`, and the kernel descriptor is always close-on-exec.
 #[inline]
 pub fn open<P: Arg>(name: P, flags: OFlags, mode: Mode) -> Result<OwnedFd> {
-    name.into_with_c_str(|name| with_shm_path(name, |path| {
-        fs::open(path, flags | OFlags::CLOEXEC, mode)
-    }))
+    name.into_with_c_str(|name| {
+        with_shm_path(name, |path| fs::open(path, flags | OFlags::CLOEXEC, mode))
+    })
 }
 
 /// Unlinks a POSIX shared-memory object.
@@ -32,7 +32,10 @@ where
     F: FnOnce(&CStr) -> Result<T>,
 {
     let name = name.to_bytes();
-    let first = name.iter().position(|byte| *byte != b'/').ok_or(Errno::INVAL)?;
+    let first = name
+        .iter()
+        .position(|byte| *byte != b'/')
+        .ok_or(Errno::INVAL)?;
     let name = &name[first..];
     if name.len() > 255 {
         return Err(Errno::NAMETOOLONG);

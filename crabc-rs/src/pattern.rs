@@ -148,12 +148,7 @@ pub fn glob_at<Fd: AsFd>(dirfd: Fd, pattern: &[u8]) -> Result<Vec<GlobPath>> {
     )?;
     let mut matches = Vec::new();
     let mut prefix = Vec::new();
-    expand_directory(
-        directory.as_fd(),
-        &components,
-        &mut prefix,
-        &mut matches,
-    )?;
+    expand_directory(directory.as_fd(), &components, &mut prefix, &mut matches)?;
     matches.sort_unstable();
     Ok(matches)
 }
@@ -190,7 +185,11 @@ fn expand_directory(
 
     while let Some(entry) = entries.next() {
         let entry = entry?;
-        if !fnmatch(component.as_c_str(), entry.file_name(), FnmatchFlags::PERIOD) {
+        if !fnmatch(
+            component.as_c_str(),
+            entry.file_name(),
+            FnmatchFlags::PERIOD,
+        ) {
             continue;
         }
 
@@ -207,7 +206,9 @@ fn expand_directory(
         prefix.extend_from_slice(&name);
 
         if components.len() == 1 {
-            matches.push(GlobPath { bytes: prefix.clone() });
+            matches.push(GlobPath {
+                bytes: prefix.clone(),
+            });
         } else {
             match fs::openat(
                 directory,
@@ -215,12 +216,7 @@ fn expand_directory(
                 fs::OFlags::RDONLY | fs::OFlags::DIRECTORY | fs::OFlags::CLOEXEC,
                 fs::Mode::empty(),
             ) {
-                Ok(child) => expand_directory(
-                    child.as_fd(),
-                    &components[1..],
-                    prefix,
-                    matches,
-                )?,
+                Ok(child) => expand_directory(child.as_fd(), &components[1..], prefix, matches)?,
                 Err(Errno::NOENT | Errno::NOTDIR) => {}
                 Err(error) => return Err(error),
             }

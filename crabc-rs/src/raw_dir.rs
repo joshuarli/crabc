@@ -36,9 +36,7 @@ impl<'buffer, Fd: AsFd> RawDir<'buffer, Fd> {
     /// held across the next call.
     #[inline]
     pub fn new(fd: Fd, buffer: &'buffer mut [MaybeUninit<u8>]) -> Self {
-        let offset = buffer
-            .as_ptr()
-            .align_offset(LINUX_DIRENT64_ALIGNMENT);
+        let offset = buffer.as_ptr().align_offset(LINUX_DIRENT64_ALIGNMENT);
         let buffer = if offset < buffer.len() {
             &mut buffer[offset..]
         } else {
@@ -108,7 +106,8 @@ impl<'buffer, Fd: AsFd> RawDir<'buffer, Fd> {
         // record has valid field alignment beyond the aligned buffer start.
         let inode = unsafe { core::ptr::read_unaligned(base.cast::<u64>()) };
         let cookie = unsafe { core::ptr::read_unaligned(base.add(8).cast::<i64>()) };
-        let record_length = unsafe { core::ptr::read_unaligned(base.add(16).cast::<u16>()) } as usize;
+        let record_length =
+            unsafe { core::ptr::read_unaligned(base.add(16).cast::<u16>()) } as usize;
         let d_type = unsafe { base.add(18).read() };
         if record_length <= LINUX_DIRENT64_HEADER_SIZE || record_length > remaining {
             self.offset = self.initialized;

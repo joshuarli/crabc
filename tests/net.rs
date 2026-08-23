@@ -37,7 +37,10 @@ fn net_functions_under_libc_so() {
     assert!(status.success(), "musl-gcc net_test compilation failed");
 
     let output = Command::new(&bin)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .output()
         .expect("failed to run net_test");
 

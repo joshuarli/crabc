@@ -4,8 +4,13 @@ use crabc_rs::timezone::TimeZone;
 fn instant(year: i64, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> UnixTime {
     let calendar = CalendarTime::from_ymdhms(year, month, day, hour, minute, second)
         .expect("test civil time is valid");
-    UnixTime::from_parts(calendar.unix_seconds().expect("test civil time is representable"), 0)
-        .expect("whole seconds are normalized")
+    UnixTime::from_parts(
+        calendar
+            .unix_seconds()
+            .expect("test civil time is representable"),
+        0,
+    )
+    .expect("whole seconds are normalized")
 }
 
 #[test]
@@ -57,12 +62,18 @@ fn local_calendar_converts_dst_boundaries_and_copies_offset_metadata() {
 
     let before_end = LocalCalendar::from_unix_time(instant(2024, 11, 3, 5, 59, 59), &zone)
         .expect("local calendar before DST end");
-    assert_eq!((before_end.calendar().hour(), before_end.calendar().minute()), (1, 59));
+    assert_eq!(
+        (before_end.calendar().hour(), before_end.calendar().minute()),
+        (1, 59)
+    );
     assert!(before_end.is_daylight_saving());
 
     let at_end = LocalCalendar::from_unix_time(instant(2024, 11, 3, 6, 0, 0), &zone)
         .expect("local calendar at DST end");
-    assert_eq!((at_end.calendar().hour(), at_end.calendar().minute()), (1, 0));
+    assert_eq!(
+        (at_end.calendar().hour(), at_end.calendar().minute()),
+        (1, 0)
+    );
     assert_eq!(at_end.offset().seconds_east_of_utc(), -18_000);
     assert!(!at_end.is_daylight_saving());
     assert_eq!(at_end.abbreviation(), b"EST");
@@ -79,7 +90,11 @@ fn local_calendar_preserves_instant_and_handles_positive_offset_day_crossing() {
     assert_eq!(local.calendar().month(), 1);
     assert_eq!(local.calendar().day(), 2);
     assert_eq!(
-        (local.calendar().hour(), local.calendar().minute(), local.calendar().second()),
+        (
+            local.calendar().hour(),
+            local.calendar().minute(),
+            local.calendar().second()
+        ),
         (1, 30, 0),
     );
     assert_eq!(local.nanoseconds(), 42);

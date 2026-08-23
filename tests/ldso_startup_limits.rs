@@ -1,9 +1,9 @@
 #[path = "common/mod.rs"]
 mod test_support;
 
-use std::process::Command;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+use std::process::Command;
 
 #[test]
 fn ldso_preserves_large_startup_vectors_and_auxv() {
@@ -31,7 +31,10 @@ fn ldso_preserves_large_startup_vectors_and_auxv() {
         ])
         .status()
         .expect("failed to run musl-gcc for startup limits fixture");
-    assert!(status.success(), "startup limits fixture compilation failed");
+    assert!(
+        status.success(),
+        "startup limits fixture compilation failed"
+    );
 
     let mut command = Command::new(&binary);
     #[cfg(unix)]

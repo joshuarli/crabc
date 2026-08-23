@@ -36,13 +36,25 @@ fn seek_tell_sync_and_truncate_use_the_direct_file_descriptor_seams() {
 
     assert_eq!(io::write(&file, b"0123456789").expect("write fixture"), 10);
     assert_eq!(fs::tell(&file).expect("tell after write"), 10);
-    assert_eq!(fs::seek(&file, SeekFrom::Start(3)).expect("seek from start"), 3);
-    assert_eq!(fs::seek(&file, SeekFrom::Current(2)).expect("seek from current"), 5);
-    assert_eq!(fs::seek(&file, SeekFrom::End(-2)).expect("seek from end"), 8);
+    assert_eq!(
+        fs::seek(&file, SeekFrom::Start(3)).expect("seek from start"),
+        3
+    );
+    assert_eq!(
+        fs::seek(&file, SeekFrom::Current(2)).expect("seek from current"),
+        5
+    );
+    assert_eq!(
+        fs::seek(&file, SeekFrom::End(-2)).expect("seek from end"),
+        8
+    );
     assert_eq!(fs::tell(&file).expect("tell after seeks"), 8);
 
     fs::ftruncate(&file, 5).expect("truncate fixture");
-    assert_eq!(fs::seek(&file, SeekFrom::End(0)).expect("seek to truncated end"), 5);
+    assert_eq!(
+        fs::seek(&file, SeekFrom::End(0)).expect("seek to truncated end"),
+        5
+    );
     fs::fsync(&file).expect("flush file data and metadata");
     fs::fdatasync(&file).expect("flush file data");
 
@@ -76,7 +88,10 @@ fn truncate_rejects_unrepresentable_length_without_changing_file_size() {
         Err(Errno::INVAL),
         "a length outside signed Linux loff_t must be rejected",
     );
-    assert!(!borrow_called.get(), "invalid length must be rejected before the syscall");
+    assert!(
+        !borrow_called.get(),
+        "invalid length must be rejected before the syscall"
+    );
     assert_eq!(
         fs::seek(&file, SeekFrom::End(0)).expect("read size after rejected truncate"),
         10,
@@ -102,10 +117,19 @@ fn sparse_file_seek_variants_preserve_rustix_offsets() {
     )
     .expect("create sparse file");
 
-    assert_eq!(fs::seek(&file, SeekFrom::Start(4096)).expect("seek past end"), 4096);
+    assert_eq!(
+        fs::seek(&file, SeekFrom::Start(4096)).expect("seek past end"),
+        4096
+    );
     io::write(&file, b"tail").expect("write sparse tail");
-    assert_eq!(fs::seek(&file, SeekFrom::Data(0)).expect("find sparse data"), 4096);
-    assert_eq!(fs::seek(&file, SeekFrom::Hole(0)).expect("find initial sparse hole"), 0);
+    assert_eq!(
+        fs::seek(&file, SeekFrom::Data(0)).expect("find sparse data"),
+        4096
+    );
+    assert_eq!(
+        fs::seek(&file, SeekFrom::Hole(0)).expect("find initial sparse hole"),
+        0
+    );
 
     drop(file);
     fs::unlink(&path).expect("remove sparse file fixture");

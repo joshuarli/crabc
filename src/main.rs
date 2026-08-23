@@ -26,7 +26,8 @@ fn load_and_run(path: &str, argv: &[String]) -> Result<(), String> {
     let ehdr = parse_ehdr(&data).map_err(|e| e.to_string())?;
     let phdrs = parse_phdrs(&data, &ehdr).map_err(|e| e.to_string())?;
 
-    let load_bias = map_segments(phdrs, file.as_raw_fd(), ehdr.e_type).map_err(|e| e.to_string())?;
+    let load_bias =
+        map_segments(phdrs, file.as_raw_fd(), ehdr.e_type).map_err(|e| e.to_string())?;
 
     apply_relocations(&data, phdrs, load_bias).map_err(|e| e.to_string())?;
 

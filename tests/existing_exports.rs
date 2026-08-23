@@ -43,7 +43,10 @@ fn existing_math_exports_have_musl_abi() {
         .args(&args)
         .status()
         .expect("failed to run musl-gcc for existing_exports_test");
-    assert!(status.success(), "musl-gcc existing_exports_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc existing_exports_test compilation failed"
+    );
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", &target)

@@ -15,7 +15,11 @@ fn ldso_runs_pie_with_dependency() {
     // Build ldso
 
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
-    assert!(ldso_path.exists(), "libldso.so not found at {}", ldso_path.display());
+    assert!(
+        ldso_path.exists(),
+        "libldso.so not found at {}",
+        ldso_path.display()
+    );
 
     // Build libfoo.so
     let libfoo_src = fixtures.join("libfoo.c");

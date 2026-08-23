@@ -17,51 +17,51 @@ extern crate alloc;
 extern crate std;
 
 pub mod buffer;
-pub mod collections;
 #[cfg(feature = "runtime-stdio")]
 pub mod cfile;
+pub mod collections;
 #[cfg(feature = "runtime-loader")]
 pub mod dl;
-#[cfg(feature = "runtime-thread")]
-pub mod runtime_thread;
 pub mod event;
-pub mod fenv;
 pub mod fd;
+pub mod fenv;
 pub mod ffi;
 pub mod fs;
 pub mod io;
-pub mod ipc;
 pub mod ioctl;
-pub mod mm;
+pub mod ipc;
 pub mod memory;
+pub mod mm;
 pub mod mount;
-pub mod numeric;
+pub mod net;
 #[cfg(feature = "alloc")]
 pub mod netdb;
-pub mod net;
+pub mod numeric;
 pub mod param;
 pub mod path;
+pub mod pattern;
 pub mod pipe;
 pub mod process;
 pub mod pty;
-pub mod pattern;
 pub mod rand;
+mod raw_dir;
+#[cfg(feature = "alloc")]
+pub mod resolver;
+#[cfg(feature = "runtime-thread")]
+pub mod runtime_thread;
+pub mod shm;
+pub mod signal;
+pub mod stdio;
+pub mod sync;
+pub mod system;
+pub mod termios;
+pub mod text;
+pub mod thread;
 pub mod time;
 #[cfg(feature = "alloc")]
 pub mod timezone;
 #[cfg(feature = "alloc")]
 pub mod users;
-pub mod termios;
-pub mod thread;
-pub mod shm;
-pub mod signal;
-pub mod stdio;
-pub mod system;
-pub mod sync;
-pub mod text;
-#[cfg(feature = "alloc")]
-pub mod resolver;
-mod raw_dir;
 
 pub use crabc_core::{Errno, Result};
 pub use fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};

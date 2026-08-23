@@ -28,17 +28,13 @@ pub extern "C" fn crabc_rs_fenv_direct_probe() -> i32 {
             return 3;
         }
         let held = fenv::hold_exceptions();
-        if held.exceptions() != raised
-            || !fenv::test_exceptions(ExceptionFlags::ALL).is_empty()
-        {
+        if held.exceptions() != raised || !fenv::test_exceptions(ExceptionFlags::ALL).is_empty() {
             return 4;
         }
 
         fenv::raise_exceptions(ExceptionFlags::OVERFLOW);
         fenv::update_environment(held);
-        if fenv::test_exceptions(ExceptionFlags::ALL)
-            != (raised | ExceptionFlags::OVERFLOW)
-        {
+        if fenv::test_exceptions(ExceptionFlags::ALL) != (raised | ExceptionFlags::OVERFLOW) {
             return 5;
         }
         0

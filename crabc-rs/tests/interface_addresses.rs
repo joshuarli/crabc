@@ -1,4 +1,4 @@
-use crabc_rs::net::{IpAddress, netdevice};
+use crabc_rs::net::{netdevice, IpAddress};
 
 #[test]
 fn snapshot_contains_loopback_link_and_ip_without_external_interfaces() {
@@ -45,6 +45,9 @@ fn snapshot_keeps_link_records_before_address_records() {
         .rposition(|entry| matches!(entry, netdevice::InterfaceAddress::Link(_)));
 
     if let (Some(first_ip), Some(last_link)) = (first_ip, last_link) {
-        assert!(last_link < first_ip, "the RTM_GETLINK dump must precede RTM_GETADDR");
+        assert!(
+            last_link < first_ip,
+            "the RTM_GETLINK dump must precede RTM_GETADDR"
+        );
     }
 }

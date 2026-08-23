@@ -49,8 +49,8 @@ fn current_physical_bytes() -> Vec<u8> {
 
 fn read_logical(pwd: Option<&CStr>) -> Vec<u8> {
     let mut storage = [MaybeUninit::<u8>::uninit(); 4096];
-    let (initialized, _) = process::get_current_dir_name(pwd, &mut storage)
-        .expect("read current directory name");
+    let (initialized, _) =
+        process::get_current_dir_name(pwd, &mut storage).expect("read current directory name");
     CStr::from_bytes_with_nul(initialized)
         .expect("result includes one trailing NUL")
         .to_bytes_with_nul()
@@ -98,8 +98,8 @@ fn validated_pwd_preserves_non_utf8_bytes() {
     std::os::unix::fs::symlink(&non_utf8_real, &non_utf8_logical)
         .expect("create non-UTF-8 logical symlink");
     process::chdir(&non_utf8_logical).expect("enter non-UTF-8 symlink");
-    let pwd = CString::new(non_utf8_logical.as_os_str().as_bytes())
-        .expect("non-UTF-8 path has no NUL");
+    let pwd =
+        CString::new(non_utf8_logical.as_os_str().as_bytes()).expect("non-UTF-8 path has no NUL");
 
     assert_eq!(read_logical(Some(pwd.as_c_str())), pwd.as_bytes_with_nul());
 
@@ -123,15 +123,15 @@ fn validated_pwd_reports_range_without_falling_back() {
 #[test]
 fn alloc_convenience_reuses_owned_buffer_for_logical_and_physical_results() {
     let (guard, root, logical) = logical_fixture();
-    let logical_result = process::get_current_dir_name_alloc(
-        Some(logical.as_c_str()),
-        vec![0; 2],
-    )
-    .expect("allocate logical current directory name");
-    assert_eq!(logical_result.as_bytes_with_nul(), logical.as_bytes_with_nul());
+    let logical_result = process::get_current_dir_name_alloc(Some(logical.as_c_str()), vec![0; 2])
+        .expect("allocate logical current directory name");
+    assert_eq!(
+        logical_result.as_bytes_with_nul(),
+        logical.as_bytes_with_nul()
+    );
 
-    let physical = process::get_current_dir_name_alloc(None, Vec::new())
-        .expect("allocate physical fallback");
+    let physical =
+        process::get_current_dir_name_alloc(None, Vec::new()).expect("allocate physical fallback");
     assert_eq!(physical.as_bytes_with_nul(), current_physical_bytes());
 
     drop(guard);

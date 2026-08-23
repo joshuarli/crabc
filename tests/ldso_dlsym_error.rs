@@ -36,9 +36,7 @@ fn run(binary: &std::path::Path, candidate: bool) -> Output {
     if candidate {
         command.env("LD_LIBRARY_PATH", manifest_dir.join("target/debug"));
     }
-    command
-        .output()
-        .expect("failed to run dlsym error fixture")
+    command.output().expect("failed to run dlsym error fixture")
 }
 
 #[test]

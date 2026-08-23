@@ -3,10 +3,7 @@ use crabc_rs::io;
 use crabc_rs::Errno;
 
 fn open_tempfile() -> Result<TempFile, Errno> {
-    TempFile::open(
-        "/tmp",
-        Mode::RUSR | Mode::WUSR,
-    )
+    TempFile::open("/tmp", Mode::RUSR | Mode::WUSR)
 }
 
 #[test]
@@ -24,15 +21,27 @@ fn anonymous_tempfile_owns_cloexec_unlinked_regular_file() {
         "anonymous temporary files must be close-on-exec",
     );
     let metadata = fs::fstat(&file).expect("stat anonymous temporary file");
-    assert_eq!(FileType::from_raw_mode(metadata.st_mode), FileType::RegularFile);
-    assert_eq!(metadata.st_nlink, 0, "O_TMPFILE must not create a directory entry");
+    assert_eq!(
+        FileType::from_raw_mode(metadata.st_mode),
+        FileType::RegularFile
+    );
+    assert_eq!(
+        metadata.st_nlink, 0,
+        "O_TMPFILE must not create a directory entry"
+    );
     assert_eq!(metadata.st_size, 0);
     assert_eq!(Mode::from_raw_mode(metadata.st_mode).bits() & !0o7777, 0);
 
-    assert_eq!(io::write(&file, b"anonymous").expect("write temporary file"), 9);
+    assert_eq!(
+        io::write(&file, b"anonymous").expect("write temporary file"),
+        9
+    );
     fs::seek(&file, fs::SeekFrom::Start(0)).expect("rewind temporary file");
     let mut content = [0_u8; 9];
-    assert_eq!(io::read(&file, &mut content).expect("read temporary file"), 9);
+    assert_eq!(
+        io::read(&file, &mut content).expect("read temporary file"),
+        9
+    );
     assert_eq!(&content, b"anonymous");
 }
 
@@ -47,7 +56,10 @@ fn anonymous_tempfile_supports_descriptor_relative_directory() {
     match TempFile::open_at(&directory, ".", Mode::RUSR | Mode::WUSR) {
         Ok(file) => {
             let metadata = fs::fstat(&file).expect("stat descriptor-relative temporary file");
-            assert_eq!(FileType::from_raw_mode(metadata.st_mode), FileType::RegularFile);
+            assert_eq!(
+                FileType::from_raw_mode(metadata.st_mode),
+                FileType::RegularFile
+            );
             assert_eq!(metadata.st_nlink, 0);
         }
         Err(Errno::OPNOTSUPP) => {}

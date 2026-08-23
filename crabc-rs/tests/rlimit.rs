@@ -1,5 +1,5 @@
-use crabc_rs::process::{self, Resource, Rlimit};
 use crabc_rs::process::Mode;
+use crabc_rs::process::{self, Resource, Rlimit};
 use crabc_rs::Errno;
 
 const RESOURCES: &[Resource] = &[
@@ -27,7 +27,9 @@ fn assert_limit_invariant(resource: Resource, limit: Rlimit) {
             current <= maximum,
             "{resource:?} returned a soft limit above its hard limit",
         ),
-        (None, Some(_)) => panic!("{resource:?} cannot have an unlimited soft limit below a finite hard limit"),
+        (None, Some(_)) => {
+            panic!("{resource:?} cannot have an unlimited soft limit below a finite hard limit")
+        }
         (Some(_), None) | (None, None) => {}
     }
 }
@@ -101,11 +103,17 @@ fn setrlimit_changes_a_safe_process_limit_and_restores_it() {
             maximum: original.maximum,
         };
         process::setrlimit(resource, changed).expect("change core limit through prlimit64");
-        assert_eq!(process::getrlimit(resource).expect("read changed core limit"), changed);
+        assert_eq!(
+            process::getrlimit(resource).expect("read changed core limit"),
+            changed
+        );
     }
 
     process::setrlimit(resource, original).expect("restore core limit through prlimit64");
-    assert_eq!(process::getrlimit(resource).expect("read restored core limit"), original);
+    assert_eq!(
+        process::getrlimit(resource).expect("read restored core limit"),
+        original
+    );
 }
 
 #[test]

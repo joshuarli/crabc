@@ -339,9 +339,10 @@ impl<'a> IntoIterator for &'a EthernetDatabase {
 #[cfg(feature = "alloc")]
 fn ascii_case_equal(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len()
-        && left.iter().zip(right).all(|(&left, &right)| {
-            ascii_lower(left) == ascii_lower(right)
-        })
+        && left
+            .iter()
+            .zip(right)
+            .all(|(&left, &right)| ascii_lower(left) == ascii_lower(right))
 }
 
 #[cfg(feature = "alloc")]

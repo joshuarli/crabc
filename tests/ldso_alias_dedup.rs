@@ -48,7 +48,10 @@ fn ldso_deduplicates_needed_symlink_aliases() {
         .args(["-d", bin.to_str().unwrap()])
         .output()
         .expect("failed to inspect alias fixture dynamic section");
-    assert!(dynamic.status.success(), "readelf alias fixture inspection failed");
+    assert!(
+        dynamic.status.success(),
+        "readelf alias fixture inspection failed"
+    );
     let dynamic = String::from_utf8_lossy(&dynamic.stdout);
     for alias in [
         "libpthread.so",
@@ -66,7 +69,10 @@ fn ldso_deduplicates_needed_symlink_aliases() {
     }
 
     let output = Command::new(&bin)
-        .env("LD_LIBRARY_PATH", format!("{}:{}", fake_libs.display(), target.display()))
+        .env(
+            "LD_LIBRARY_PATH",
+            format!("{}:{}", fake_libs.display(), target.display()),
+        )
         .output()
         .expect("failed to run alias dedup fixture");
     assert!(

@@ -45,7 +45,10 @@ fn statat_fstat_and_unlinkat_share_direct_metadata_contract() {
 
         let by_fd = fs::fstat(&file).expect("fstat direct descriptor");
         assert_eq!(by_fd.st_size, 2);
-        assert_eq!(FileType::from_raw_mode(by_fd.st_mode), FileType::RegularFile);
+        assert_eq!(
+            FileType::from_raw_mode(by_fd.st_mode),
+            FileType::RegularFile
+        );
         assert!(Mode::from_raw_mode(by_fd.st_mode).contains(Mode::RUSR | Mode::WUSR));
 
         let by_path = fs::statat(&directory, "record", AtFlags::empty())
@@ -107,7 +110,12 @@ fn links_renames_and_bounded_readlink_use_the_direct_path_seam() {
 
         fs::linkat(&directory, "record", &directory, "hard", AtFlags::empty())
             .expect("create hard link");
-        assert_eq!(fs::statat(&directory, "hard", AtFlags::empty()).unwrap().st_ino, record.st_ino);
+        assert_eq!(
+            fs::statat(&directory, "hard", AtFlags::empty())
+                .unwrap()
+                .st_ino,
+            record.st_ino
+        );
 
         fs::symlinkat("record", &directory, "symbolic").expect("create symbolic link");
         assert_eq!(
@@ -169,7 +177,13 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
         .expect("create record");
         fs::chmodat(&directory, "record", Mode::empty(), AtFlags::empty())
             .expect("chmodat regular file");
-        assert_eq!(fs::statat(&directory, "record", AtFlags::empty()).unwrap().st_mode & 0o700, 0);
+        assert_eq!(
+            fs::statat(&directory, "record", AtFlags::empty())
+                .unwrap()
+                .st_mode
+                & 0o700,
+            0
+        );
         fs::fchmod(&file, Mode::RWXU).expect("restore permissions through fchmod");
         let absolute = format!("{root}/record");
         fs::chmod(&absolute, Mode::RUSR).expect("chmod absolute file");
@@ -193,8 +207,14 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
         );
 
         let times = Timestamps {
-            last_access: Timespec { tv_sec: 44_000, tv_nsec: 45_000 },
-            last_modification: Timespec { tv_sec: 46_000, tv_nsec: 47_000 },
+            last_access: Timespec {
+                tv_sec: 44_000,
+                tv_nsec: 45_000,
+            },
+            last_modification: Timespec {
+                tv_sec: 46_000,
+                tv_nsec: 47_000,
+            },
         };
         fs::utimensat(&directory, "record", &times, AtFlags::empty())
             .expect("set timestamps through pathname");
@@ -202,8 +222,14 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
         assert_eq!((by_path.st_mtime, by_path.st_mtime_nsec), (46_000, 47_000));
 
         let by_fd_times = Timestamps {
-            last_access: Timespec { tv_sec: 48_000, tv_nsec: 49_000 },
-            last_modification: Timespec { tv_sec: 50_000, tv_nsec: 51_000 },
+            last_access: Timespec {
+                tv_sec: 48_000,
+                tv_nsec: 49_000,
+            },
+            last_modification: Timespec {
+                tv_sec: 50_000,
+                tv_nsec: 51_000,
+            },
         };
         fs::futimens(&file, &by_fd_times).expect("set timestamps through descriptor");
         let by_fd = fs::fstat(&file).unwrap();
@@ -236,7 +262,11 @@ fn raw_dir_preserves_record_lifetimes_alignment_and_long_names() {
             );
         }
         assert_eq!(
-            FileType::from_raw_mode(fs::statat(&directory, "short", AtFlags::empty()).unwrap().st_mode),
+            FileType::from_raw_mode(
+                fs::statat(&directory, "short", AtFlags::empty())
+                    .unwrap()
+                    .st_mode
+            ),
             FileType::RegularFile,
         );
         assert_eq!(
@@ -248,13 +278,9 @@ fn raw_dir_preserves_record_lifetimes_alignment_and_long_names() {
             FileType::RegularFile,
         );
 
-        let iteration_directory = fs::openat(
-            CWD,
-            root,
-            OFlags::RDONLY | OFlags::DIRECTORY,
-            Mode::empty(),
-        )
-        .expect("open directory descriptor for RawDir");
+        let iteration_directory =
+            fs::openat(CWD, root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
+                .expect("open directory descriptor for RawDir");
         let mut unaligned = [MaybeUninit::uninit(); 4097];
         let mut entries = RawDir::new(&iteration_directory, &mut unaligned[1..]);
         let mut names = Vec::new();
@@ -263,7 +289,10 @@ fn raw_dir_preserves_record_lifetimes_alignment_and_long_names() {
             names.push(entry.file_name().to_bytes().to_vec());
         }
         assert!(entries.is_buffer_empty());
-        assert!(names.iter().any(|name| name == b"short"), "entries: {names:?}");
+        assert!(
+            names.iter().any(|name| name == b"short"),
+            "entries: {names:?}"
+        );
         assert!(
             names.iter().any(|name| name == long_name.as_bytes()),
             "entries: {names:?}",
@@ -271,8 +300,9 @@ fn raw_dir_preserves_record_lifetimes_alignment_and_long_names() {
         drop(entries);
         drop(iteration_directory);
 
-        let small_directory = fs::openat(CWD, root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
-            .expect("open second directory descriptor");
+        let small_directory =
+            fs::openat(CWD, root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
+                .expect("open second directory descriptor");
         let mut too_small = [MaybeUninit::uninit(); 1];
         let mut too_small_iter = RawDir::new(&small_directory, &mut too_small);
         assert_eq!(
@@ -336,8 +366,13 @@ fn openat2_and_nofollow_preserve_linux_aarch64_path_resolution_rules() {
         );
         fs::symlinkat("record", &directory, "symbolic").expect("create fixture symlink");
 
-        fs::openat(&directory, "symbolic", OFlags::RDONLY | OFlags::NOFOLLOW, Mode::empty())
-            .expect_err("O_NOFOLLOW must reject a final symlink on Linux/AArch64");
+        fs::openat(
+            &directory,
+            "symbolic",
+            OFlags::RDONLY | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .expect_err("O_NOFOLLOW must reject a final symlink on Linux/AArch64");
         assert_eq!(
             fs::openat(
                 &directory,
@@ -427,7 +462,10 @@ fn extended_attributes_preserve_path_link_fd_and_buffer_contracts() {
             fs::llistxattr(&path, &mut listed).unwrap(),
             fs::flistxattr(&file, &mut listed).unwrap(),
         ] {
-            assert!(xattr_list_contains(&listed[..list_length], b"user.crabc-rs"));
+            assert!(xattr_list_contains(
+                &listed[..list_length],
+                b"user.crabc-rs"
+            ));
         }
 
         fs::removexattr(&path, "user.crabc-rs").expect("remove path xattr");

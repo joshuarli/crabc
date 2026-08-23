@@ -6,7 +6,11 @@ fn native_wall_clock_is_a_normalized_unix_epoch_value() {
 
     assert!(now >= UnixTime::UNIX_EPOCH);
     assert!(now.nanoseconds() < NANOS_PER_SECOND);
-    assert_eq!(now.nanoseconds() % 1_000, 0, "gettimeofday precision is microseconds");
+    assert_eq!(
+        now.nanoseconds() % 1_000,
+        0,
+        "gettimeofday precision is microseconds"
+    );
 }
 
 #[test]

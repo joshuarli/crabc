@@ -47,7 +47,10 @@ pub extern "C" fn crabc_rs_ppoll_direct_probe() -> i32 {
         return 1;
     }
     let empty = signal::SignalSet::EMPTY;
-    let timeout = time::Timespec { tv_sec: 1, tv_nsec: 0 };
+    let timeout = time::Timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
     if event::ppoll(&mut fds, Some(&timeout), Some(&empty)) != Err(crabc_rs::Errno::INTR) {
         return 2;
     }

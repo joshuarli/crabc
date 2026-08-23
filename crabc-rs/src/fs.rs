@@ -16,7 +16,11 @@ use alloc::ffi::CString;
 use alloc::vec::Vec;
 
 use crate::buffer::Buffer;
-use crate::{path::Arg, process::{Gid, Uid}, AsFd, BorrowedFd, OwnedFd, Result};
+use crate::{
+    path::Arg,
+    process::{Gid, Uid},
+    AsFd, BorrowedFd, OwnedFd, Result,
+};
 
 pub use crate::{RawDir, RawDirEntry};
 
@@ -250,7 +254,9 @@ impl NamedTempFile {
     }
 
     fn unlink(&self) -> Result<()> {
-        let name = unsafe { CStr::from_bytes_with_nul_unchecked(&self.name[..self.name_len as usize + 1]) };
+        let name = unsafe {
+            CStr::from_bytes_with_nul_unchecked(&self.name[..self.name_len as usize + 1])
+        };
         unlinkat(&self.parent, name, AtFlags::empty())
     }
 }
@@ -348,9 +354,8 @@ fn create_temp_file_at_bytes<Fd: AsFd>(
             candidate[prefix.len() + index * 2 + 1] = hex[(byte & 0x0f) as usize];
         }
         candidate[name_len] = 0;
-        let candidate_cstr = unsafe {
-            CStr::from_bytes_with_nul_unchecked(&candidate[..name_len + 1])
-        };
+        let candidate_cstr =
+            unsafe { CStr::from_bytes_with_nul_unchecked(&candidate[..name_len + 1]) };
         match openat(
             parent.as_fd(),
             candidate_cstr,
@@ -492,10 +497,7 @@ impl<'buffer> Dir<'buffer> {
     /// Path arguments remain byte-oriented through [`Arg`]; no UTF-8 or
     /// process-global C `DIR` state is involved.
     #[inline]
-    pub fn open<P: Arg>(
-        path: P,
-        buffer: &'buffer mut [MaybeUninit<u8>],
-    ) -> Result<Self> {
+    pub fn open<P: Arg>(path: P, buffer: &'buffer mut [MaybeUninit<u8>]) -> Result<Self> {
         Self::openat(CWD, path, buffer)
     }
 
@@ -1280,8 +1282,7 @@ impl From<StatFs> for StatVfs {
             f_files: statfs.f_files,
             f_ffree: statfs.f_ffree,
             f_favail: statfs.f_ffree,
-            f_fsid: u64::from(statfs.f_fsid[0] as u32)
-                | (u64::from(statfs.f_fsid[1] as u32) << 32),
+            f_fsid: u64::from(statfs.f_fsid[0] as u32) | (u64::from(statfs.f_fsid[1] as u32) << 32),
             f_flag: StatVfsMountFlags::from_bits_retain(statfs.f_flags as u64),
             f_namemax: statfs.f_namelen as u64,
         }
@@ -1462,7 +1463,12 @@ pub fn open<P: Arg>(path: P, oflags: OFlags, create_mode: Mode) -> Result<OwnedF
 #[inline]
 #[doc(alias = "creat")]
 pub fn create<P: Arg>(path: P, mode: Mode) -> Result<OwnedFd> {
-    openat(CWD, path, OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC, mode)
+    openat(
+        CWD,
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC,
+        mode,
+    )
 }
 
 /// Repositions an open file descriptor using Linux's `lseek` operation.
@@ -1540,8 +1546,9 @@ pub fn fadvise<Fd: AsFd>(
     advice: Advice,
 ) -> Result<()> {
     let offset = i64::try_from(offset).map_err(|_| crate::Errno::INVAL)?;
-    let length = len
-        .map_or(Ok(0), |length| i64::try_from(length.get()).map_err(|_| crate::Errno::INVAL))?;
+    let length = len.map_or(Ok(0), |length| {
+        i64::try_from(length.get()).map_err(|_| crate::Errno::INVAL)
+    })?;
     crabc_core::fs::fadvise64(fd.as_fd().as_raw_fd(), offset, length, advice as u32)
 }
 
@@ -1567,11 +1574,7 @@ pub fn readahead<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
         return Err(crate::Errno::INVAL);
     }
 
-    crabc_core::fs::readahead(
-        fd.as_fd().as_raw_fd(),
-        offset as i64,
-        length as usize,
-    )
+    crabc_core::fs::readahead(fd.as_fd().as_raw_fd(), offset as i64, length as usize)
 }
 
 /// Transfers up to `count` bytes from a borrowed input descriptor to a
@@ -1722,12 +1725,7 @@ pub fn ftruncate<Fd: AsFd>(fd: Fd, length: u64) -> Result<()> {
 /// current file position. `ALLOCATE` extends the file when necessary;
 /// `KEEP_SIZE` suppresses that extension.
 #[inline]
-pub fn fallocate<Fd: AsFd>(
-    fd: Fd,
-    flags: FallocateFlags,
-    offset: u64,
-    length: u64,
-) -> Result<()> {
+pub fn fallocate<Fd: AsFd>(fd: Fd, flags: FallocateFlags, offset: u64, length: u64) -> Result<()> {
     if FallocateFlags::from_bits(flags.bits()).is_none()
         || (flags.contains(FallocateFlags::PUNCH_HOLE)
             && !flags.contains(FallocateFlags::KEEP_SIZE))
@@ -1857,12 +1855,7 @@ pub fn fgetxattr<Fd: AsFd, Name: Arg, Buf: Buffer<u8>>(
         // SAFETY: `Buffer` supplies writable output storage and `name` is a
         // NUL-terminated pathname for the direct syscall.
         unsafe {
-            crabc_core::fs::fgetxattr_raw(
-                fd.as_raw_fd(),
-                name.as_ptr().cast(),
-                pointer,
-                length,
-            )
+            crabc_core::fs::fgetxattr_raw(fd.as_raw_fd(), name.as_ptr().cast(), pointer, length)
         }
     })?;
     // SAFETY: A successful fgetxattr initialized exactly the returned prefix.
@@ -2304,11 +2297,8 @@ pub fn create_temp_dir_into<P: Arg, Prefix: Arg, Buf: Buffer<u8>>(
                 Mode::empty(),
             )?;
             let mut basename = [0u8; TEMP_DIR_NAME_MAX + 1];
-            let basename_length = create_temp_dir_at_bytes(
-                &directory,
-                prefix_bytes,
-                &mut basename,
-            )?;
+            let basename_length =
+                create_temp_dir_at_bytes(&directory, prefix_bytes, &mut basename)?;
 
             // SAFETY: `pointer` has `capacity` writable bytes from the sealed
             // `Buffer` contract, and the exact output length was checked above.
@@ -2319,11 +2309,7 @@ pub fn create_temp_dir_into<P: Arg, Prefix: Arg, Buf: Buffer<u8>>(
                     pointer.add(offset).write(b'/');
                     offset += 1;
                 }
-                ptr::copy_nonoverlapping(
-                    basename.as_ptr(),
-                    pointer.add(offset),
-                    basename_length,
-                );
+                ptr::copy_nonoverlapping(basename.as_ptr(), pointer.add(offset), basename_length);
             }
             Ok(total)
         })
@@ -2434,9 +2420,8 @@ fn create_temp_dir_at_bytes<Fd: AsFd>(
             candidate[prefix.len() + index * 2] = hex[(byte >> 4) as usize];
             candidate[prefix.len() + index * 2 + 1] = hex[(byte & 0x0f) as usize];
         }
-        let candidate_cstr = unsafe {
-            CStr::from_bytes_with_nul_unchecked(&candidate[..name_length + 1])
-        };
+        let candidate_cstr =
+            unsafe { CStr::from_bytes_with_nul_unchecked(&candidate[..name_length + 1]) };
         match crabc_core::fs::mkdirat(parent.as_raw_fd(), candidate_cstr, TEMP_DIR_MODE.bits()) {
             Ok(()) => {
                 output[..name_length].copy_from_slice(&candidate[..name_length]);
@@ -2610,10 +2595,7 @@ const CANONICAL_MAX_SYMLINKS: usize = 40;
 /// Linux/musl limit of forty links and returns [`crate::Errno::LOOP`] when the
 /// limit is reached.
 #[inline]
-pub fn canonicalize_into<P: Arg, Buf: Buffer<u8>>(
-    path: P,
-    mut output: Buf,
-) -> Result<Buf::Output> {
+pub fn canonicalize_into<P: Arg, Buf: Buffer<u8>>(path: P, mut output: Buf) -> Result<Buf::Output> {
     let (pointer, capacity) = output.parts_mut();
     let initialized = path.into_with_c_str(|path| {
         canonicalize_bytes(path.to_bytes(), |resolved| {
@@ -2756,11 +2738,7 @@ impl CanonicalWorkspace {
 
             let candidate = self.open_component(&current, component, false)?;
             let mut link_target = [MaybeUninit::<u8>::uninit(); CANONICAL_PATH_MAX];
-            let link_length = self.readlink_component(
-                &current,
-                component,
-                &mut link_target,
-            )?;
+            let link_length = self.readlink_component(&current, component, &mut link_target)?;
 
             if let Some(link_length) = link_length {
                 if self.symlink_count == CANONICAL_MAX_SYMLINKS {
@@ -2830,7 +2808,9 @@ impl CanonicalWorkspace {
             unsafe {
                 ptr::copy(
                     self.resolved.as_ptr(),
-                    self.resolved.as_mut_ptr().add(base_len + usize::from(separator)),
+                    self.resolved
+                        .as_mut_ptr()
+                        .add(base_len + usize::from(separator)),
                     self.resolved_len,
                 );
                 ptr::copy_nonoverlapping(cwd.as_ptr(), self.resolved.as_mut_ptr(), base_len);
@@ -2865,7 +2845,12 @@ impl CanonicalWorkspace {
             after += 1;
         }
         self.pending_pos = end;
-        Some((start, end, after < self.pending_len, after == self.pending_len && end < after))
+        Some((
+            start,
+            end,
+            after < self.pending_len,
+            after == self.pending_len && end < after,
+        ))
     }
 
     fn splice_target(&mut self, target_len: usize, component_end: usize) -> Result<()> {
@@ -2882,11 +2867,7 @@ impl CanonicalWorkspace {
                 self.pending.as_mut_ptr().add(target_len),
                 suffix_len,
             );
-            ptr::copy_nonoverlapping(
-                self.target.as_ptr(),
-                self.pending.as_mut_ptr(),
-                target_len,
-            );
+            ptr::copy_nonoverlapping(self.target.as_ptr(), self.pending.as_mut_ptr(), target_len);
         }
         self.pending_len = total;
         self.pending_pos = 0;
@@ -2949,7 +2930,12 @@ impl CanonicalWorkspace {
 
     fn open_path(&self, path: &[u8]) -> Result<OwnedFd> {
         with_path_cstr(path, |path| {
-            openat(CWD, path, OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty())
+            openat(
+                CWD,
+                path,
+                OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
         })
     }
 
@@ -2961,7 +2947,11 @@ impl CanonicalWorkspace {
     ) -> Result<OwnedFd> {
         with_path_cstr(component, |component| {
             let flags = OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-            let flags = if directory_only { flags | OFlags::DIRECTORY } else { flags };
+            let flags = if directory_only {
+                flags | OFlags::DIRECTORY
+            } else {
+                flags
+            };
             openat(directory, component, flags, Mode::empty())
         })
     }
@@ -3058,11 +3048,7 @@ pub fn link<P: Arg, Q: Arg>(old_path: P, new_path: Q) -> Result<()> {
 
 /// Creates a symbolic link relative to `new_dirfd`.
 #[inline]
-pub fn symlinkat<P: Arg, Q: Arg, Fd: AsFd>(
-    target: P,
-    new_dirfd: Fd,
-    new_path: Q,
-) -> Result<()> {
+pub fn symlinkat<P: Arg, Q: Arg, Fd: AsFd>(target: P, new_dirfd: Fd, new_path: Q) -> Result<()> {
     let new_dirfd = new_dirfd.as_fd();
     target.into_with_c_str(|target| {
         new_path.into_with_c_str(|new_path| {
@@ -3085,7 +3071,13 @@ pub fn renameat<P: Arg, Q: Arg, PFd: AsFd, QFd: AsFd>(
     new_dirfd: QFd,
     new_path: Q,
 ) -> Result<()> {
-    renameat_with(old_dirfd, old_path, new_dirfd, new_path, RenameFlags::empty())
+    renameat_with(
+        old_dirfd,
+        old_path,
+        new_dirfd,
+        new_path,
+        RenameFlags::empty(),
+    )
 }
 
 /// Renames a path or directory with Linux `renameat2` flags.
@@ -3339,11 +3331,7 @@ pub fn lutimes<P: Arg>(path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
 /// microsecond fields return [`crate::Errno::INVAL`] before path conversion or
 /// the syscall.
 #[inline]
-pub fn futimesat<P: Arg, Fd: AsFd>(
-    dirfd: Fd,
-    path: P,
-    times: Option<&[Timeval; 2]>,
-) -> Result<()> {
+pub fn futimesat<P: Arg, Fd: AsFd>(dirfd: Fd, path: P, times: Option<&[Timeval; 2]>) -> Result<()> {
     let converted = match times {
         None => None,
         Some(times) => Some([
@@ -3548,7 +3536,10 @@ pub fn lock_from_current<Fd: AsFd>(
         }
         CurrentLockRange::Backward(length) => {
             let length = i64::try_from(length.get()).map_err(|_| crate::Errno::RANGE)?;
-            (current.checked_sub(length).ok_or(crate::Errno::RANGE)?, length)
+            (
+                current.checked_sub(length).ok_or(crate::Errno::RANGE)?,
+                length,
+            )
         }
     };
     let (command, lock_type) = match operation {

@@ -37,9 +37,7 @@ pub extern "C" fn crabc_rs_pipe_tee_direct_probe() -> i32 {
         return 2;
     }
     let mut duplicated = [0_u8; 3];
-    if io::read(&destination_reader, &mut duplicated).ok() != Some(3)
-        || duplicated != *b"tee"
-    {
+    if io::read(&destination_reader, &mut duplicated).ok() != Some(3) || duplicated != *b"tee" {
         return 3;
     }
     0

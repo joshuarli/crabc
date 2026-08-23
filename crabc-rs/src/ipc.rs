@@ -79,12 +79,18 @@ impl MessagePriority {
     /// Constructs a priority, rejecting values outside the POSIX range.
     #[must_use]
     pub const fn new(value: u32) -> Option<Self> {
-        if value <= MAX_MESSAGE_PRIORITY { Some(Self(value)) } else { None }
+        if value <= MAX_MESSAGE_PRIORITY {
+            Some(Self(value))
+        } else {
+            None
+        }
     }
 
     /// Returns the Linux priority value.
     #[must_use]
-    pub const fn value(self) -> u32 { self.0 }
+    pub const fn value(self) -> u32 {
+        self.0
+    }
 }
 
 /// Queue capacity and status attributes.
@@ -120,19 +126,27 @@ impl QueueAttributes {
 
     /// Returns queue status flags.
     #[must_use]
-    pub const fn flags(self) -> QueueFlags { self.flags }
+    pub const fn flags(self) -> QueueFlags {
+        self.flags
+    }
 
     /// Returns the maximum number of queued messages.
     #[must_use]
-    pub const fn max_messages(self) -> u64 { self.max_messages }
+    pub const fn max_messages(self) -> u64 {
+        self.max_messages
+    }
 
     /// Returns the maximum message size in bytes.
     #[must_use]
-    pub const fn message_size(self) -> usize { self.message_size }
+    pub const fn message_size(self) -> usize {
+        self.message_size
+    }
 
     /// Returns the current number of queued messages.
     #[must_use]
-    pub const fn current_messages(self) -> u64 { self.current_messages }
+    pub const fn current_messages(self) -> u64 {
+        self.current_messages
+    }
 
     fn to_kernel(self) -> crabc_core::ipc::KernelMqAttr {
         crabc_core::ipc::KernelMqAttr {
@@ -171,11 +185,15 @@ pub struct MessageQueue {
 impl MessageQueue {
     fn from_raw_fd(fd: i32) -> Self {
         // SAFETY: Linux returned a newly owned message-queue descriptor.
-        Self { fd: unsafe { OwnedFd::from_raw_fd(fd) } }
+        Self {
+            fd: unsafe { OwnedFd::from_raw_fd(fd) },
+        }
     }
 
     /// Closes the queue descriptor immediately; dropping also closes it.
-    pub fn close(self) -> Result<()> { self.fd.close() }
+    pub fn close(self) -> Result<()> {
+        self.fd.close()
+    }
 
     /// Returns the current queue attributes without changing them.
     pub fn attributes(&self) -> Result<QueueAttributes> {
@@ -188,7 +206,10 @@ impl MessageQueue {
             mq_flags: if enabled { MQ_O_NONBLOCK as i64 } else { 0 },
             ..crabc_core::ipc::KernelMqAttr::default()
         };
-        QueueAttributes::from_kernel(crabc_core::ipc::getsetattr(self.fd.as_raw_fd(), Some(&new_attr))?)
+        QueueAttributes::from_kernel(crabc_core::ipc::getsetattr(
+            self.fd.as_raw_fd(),
+            Some(&new_attr),
+        )?)
     }
 
     /// Sends one message, waiting according to the queue's blocking mode.
@@ -197,7 +218,12 @@ impl MessageQueue {
     }
 
     /// Sends one message until an absolute `CLOCK_REALTIME` deadline.
-    pub fn send_until(&self, message: &[u8], priority: MessagePriority, deadline: Timespec) -> Result<()> {
+    pub fn send_until(
+        &self,
+        message: &[u8],
+        priority: MessagePriority,
+        deadline: Timespec,
+    ) -> Result<()> {
         let deadline = kernel_deadline(deadline)?;
         self.send_with_deadline(message, priority, Some(&deadline))
     }
@@ -217,7 +243,11 @@ impl MessageQueue {
     }
 
     /// Receives one message until an absolute `CLOCK_REALTIME` deadline.
-    pub fn receive_until(&self, buffer: &mut [u8], deadline: Timespec) -> Result<(usize, MessagePriority)> {
+    pub fn receive_until(
+        &self,
+        buffer: &mut [u8],
+        deadline: Timespec,
+    ) -> Result<(usize, MessagePriority)> {
         let deadline = kernel_deadline(deadline)?;
         self.receive_with_deadline(buffer, Some(&deadline))
     }
@@ -240,7 +270,9 @@ impl MessageQueue {
 }
 
 impl AsFd for MessageQueue {
-    fn as_fd(&self) -> BorrowedFd<'_> { self.fd.as_fd() }
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
 }
 
 /// Opens an existing POSIX message queue.

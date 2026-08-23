@@ -38,7 +38,10 @@ fn shell_word_expansion_under_libc_so() {
 
     let output = Command::new(&bin)
         .env("FOO", "bar baz")
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .output()
         .expect("failed to run wordexp_test");
 

@@ -10,7 +10,10 @@ fn native_realtime_millis_is_current_and_normalized() {
     // coarse observation window rather than a monotonic-ordering assertion.
     assert!(observed.seconds() >= before.tv_sec.saturating_sub(1));
     assert!(observed.seconds() <= after.tv_sec.saturating_add(1));
-    assert!(observed.seconds() > 0, "the test clock should be after 1970");
+    assert!(
+        observed.seconds() > 0,
+        "the test clock should be after 1970"
+    );
     assert!(observed.milliseconds() < 1_000);
 
     // When the three reads remain in one second, the millisecond observation

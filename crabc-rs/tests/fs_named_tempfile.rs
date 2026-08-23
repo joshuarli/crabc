@@ -22,9 +22,15 @@ fn named_tempfile_is_exclusive_private_cloexec_and_drop_unlinks() {
             .expect("read named temporary descriptor flags")
             .contains(io::FdFlags::CLOEXEC));
         let metadata = native_fs::fstat(file.as_fd()).expect("stat named temporary file");
-        assert_eq!(native_fs::FileType::from_raw_mode(metadata.st_mode), native_fs::FileType::RegularFile);
+        assert_eq!(
+            native_fs::FileType::from_raw_mode(metadata.st_mode),
+            native_fs::FileType::RegularFile
+        );
         assert_eq!(metadata.st_nlink, 1);
-        assert_eq!(native_fs::Mode::from_raw_mode(metadata.st_mode).bits() & 0o077, 0);
+        assert_eq!(
+            native_fs::Mode::from_raw_mode(metadata.st_mode).bits() & 0o077,
+            0
+        );
         full_path(&file)
     };
     assert!(!Path::new(std::ffi::OsStr::from_bytes(&path)).exists());

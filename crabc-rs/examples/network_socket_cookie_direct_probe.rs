@@ -30,5 +30,9 @@ pub extern "C" fn crabc_rs_network_socket_cookie_direct_probe() -> i32 {
         Ok(cookie) => cookie,
         Err(error) => return -error.raw(),
     };
-    if first == second { 0 } else { 1 }
+    if first == second {
+        0
+    } else {
+        1
+    }
 }

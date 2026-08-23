@@ -11,15 +11,27 @@ fn network_globals_exports_under_libc_so() {
     let binary = test_support::TempArtifact::new("crabc-c-abi-network-globals");
     let status = Command::new("musl-gcc")
         .args([
-            "-fPIE", "-pie", "-fno-builtin", "-I",
-            root.join("include").to_str().unwrap(), "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(), "-L",
-            target.to_str().unwrap(), source.to_str().unwrap(),
-            "-Wl,--allow-shlib-undefined", "-lc", "-o", binary.to_str().unwrap(),
+            "-fPIE",
+            "-pie",
+            "-fno-builtin",
+            "-I",
+            root.join("include").to_str().unwrap(),
+            "-Wl,--dynamic-linker",
+            target.join("libldso.so").to_str().unwrap(),
+            "-L",
+            target.to_str().unwrap(),
+            source.to_str().unwrap(),
+            "-Wl,--allow-shlib-undefined",
+            "-lc",
+            "-o",
+            binary.to_str().unwrap(),
         ])
         .status()
         .expect("failed to run musl-gcc for network_globals_exports_test");
-    assert!(status.success(), "network_globals_exports_test compilation failed");
+    assert!(
+        status.success(),
+        "network_globals_exports_test compilation failed"
+    );
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)
         .output()
@@ -32,5 +44,8 @@ fn network_globals_exports_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi network globals exports ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi network globals exports ok\n"
+    );
 }

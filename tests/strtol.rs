@@ -35,10 +35,7 @@ fn strtol_under_libldso() {
         ])
         .status()
         .expect("failed to run musl-gcc for strtol_test");
-    assert!(
-        status.success(),
-        "musl-gcc strtol_test compilation failed"
-    );
+    assert!(status.success(), "musl-gcc strtol_test compilation failed");
 
     let output = Command::new(&bin)
         .env(

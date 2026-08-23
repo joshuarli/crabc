@@ -5,11 +5,9 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use crabc_core::runtime::{
     CFileHandleV1, LoaderAddressV1, LoaderImageV1, LoaderInformationV1, RuntimeV1, TextV1,
-    ThreadDestructorV1,
-    ThreadHandleV1, ThreadStartV1, CFILE_MODE_APPEND, CFILE_MODE_APPEND_UPDATE,
-    CFILE_MODE_READ, CFILE_MODE_READ_UPDATE, CFILE_MODE_WRITE,
-    CFILE_MODE_WRITE_UPDATE, V1_ABI_VERSION,
-    V1_LEGACY_SIZE,
+    ThreadDestructorV1, ThreadHandleV1, ThreadStartV1, CFILE_MODE_APPEND, CFILE_MODE_APPEND_UPDATE,
+    CFILE_MODE_READ, CFILE_MODE_READ_UPDATE, CFILE_MODE_WRITE, CFILE_MODE_WRITE_UPDATE,
+    V1_ABI_VERSION, V1_LEGACY_SIZE,
 };
 use crabc_rs::cfile::{CFile, FileMode, SeekFrom};
 use crabc_rs::Errno;
@@ -71,7 +69,11 @@ unsafe extern "C" fn loader_information(
     22
 }
 
-unsafe extern "C" fn thread_create(_: ThreadStartV1, _: *mut c_void, _: *mut ThreadHandleV1) -> c_int {
+unsafe extern "C" fn thread_create(
+    _: ThreadStartV1,
+    _: *mut c_void,
+    _: *mut ThreadHandleV1,
+) -> c_int {
     22
 }
 
@@ -268,7 +270,8 @@ fn cfile_uses_the_private_runtime_for_lifetime_io_and_mode_contracts() {
     EOF.store(false, Ordering::SeqCst);
 
     let mut storage = [0u8; 16];
-    let mut stream = CFile::from_memory(&mut storage, FileMode::ReadUpdate).expect("open update stream");
+    let mut stream =
+        CFile::from_memory(&mut storage, FileMode::ReadUpdate).expect("open update stream");
     assert_eq!(OPEN_MODE.load(Ordering::SeqCst), CFILE_MODE_READ_UPDATE);
     assert_eq!(stream.write(b"abc").expect("write"), 3);
     stream.flush().expect("flush");
@@ -283,38 +286,59 @@ fn cfile_uses_the_private_runtime_for_lifetime_io_and_mode_contracts() {
     assert_eq!(stream.tell().expect("reset position"), 0);
     assert!(!stream.eof().expect("reset EOF indicator"));
     stream.close().expect("explicit close");
-    assert_eq!(CLOSES.load(Ordering::SeqCst), 1, "explicit close consumes the handle once");
+    assert_eq!(
+        CLOSES.load(Ordering::SeqCst),
+        1,
+        "explicit close consumes the handle once"
+    );
 
     let mut write_storage = [0u8; 4];
-    let mut write_only = CFile::from_memory(&mut write_storage, FileMode::Write).expect("open write stream");
+    let mut write_only =
+        CFile::from_memory(&mut write_storage, FileMode::Write).expect("open write stream");
     assert_eq!(OPEN_MODE.load(Ordering::SeqCst), CFILE_MODE_WRITE);
     let reads = READS.load(Ordering::SeqCst);
     assert_eq!(write_only.read(&mut byte), Err(Errno::BADF));
-    assert_eq!(READS.load(Ordering::SeqCst), reads, "wrong-direction read never reaches libc");
+    assert_eq!(
+        READS.load(Ordering::SeqCst),
+        reads,
+        "wrong-direction read never reaches libc"
+    );
     drop(write_only);
 
     let mut read_storage = [0u8; 4];
-    let mut read_only = CFile::from_memory(&mut read_storage, FileMode::Read).expect("open read stream");
+    let mut read_only =
+        CFile::from_memory(&mut read_storage, FileMode::Read).expect("open read stream");
     assert_eq!(OPEN_MODE.load(Ordering::SeqCst), CFILE_MODE_READ);
     let writes = WRITES.load(Ordering::SeqCst);
     assert_eq!(read_only.write(b"x"), Err(Errno::BADF));
-    assert_eq!(WRITES.load(Ordering::SeqCst), writes, "wrong-direction write never reaches libc");
+    assert_eq!(
+        WRITES.load(Ordering::SeqCst),
+        writes,
+        "wrong-direction write never reaches libc"
+    );
     drop(read_only);
 
     let mut append_storage = [0u8; 4];
-    let append = CFile::from_memory(&mut append_storage, FileMode::Append).expect("open append stream");
+    let append =
+        CFile::from_memory(&mut append_storage, FileMode::Append).expect("open append stream");
     assert_eq!(OPEN_MODE.load(Ordering::SeqCst), CFILE_MODE_APPEND);
     drop(append);
     let mut write_update_storage = [0u8; 4];
-    let write_update = CFile::from_memory(&mut write_update_storage, FileMode::WriteUpdate).expect("open write-update stream");
+    let write_update = CFile::from_memory(&mut write_update_storage, FileMode::WriteUpdate)
+        .expect("open write-update stream");
     assert_eq!(OPEN_MODE.load(Ordering::SeqCst), CFILE_MODE_WRITE_UPDATE);
     drop(write_update);
     let mut append_update_storage = [0u8; 4];
-    let append_update = CFile::from_memory(&mut append_update_storage, FileMode::AppendUpdate).expect("open append-update stream");
+    let append_update = CFile::from_memory(&mut append_update_storage, FileMode::AppendUpdate)
+        .expect("open append-update stream");
     assert_eq!(OPEN_MODE.load(Ordering::SeqCst), CFILE_MODE_APPEND_UPDATE);
     drop(append_update);
 
-    assert_eq!(CLOSES.load(Ordering::SeqCst), 6, "drop closes every remaining libc stream exactly once");
+    assert_eq!(
+        CLOSES.load(Ordering::SeqCst),
+        6,
+        "drop closes every remaining libc stream exactly once"
+    );
 }
 
 #[test]
@@ -322,9 +346,13 @@ fn std_io_adapters_preserve_the_no_std_cfile_contract() {
     use std::io::{Read, Seek, Write};
 
     let mut storage = [0u8; 8];
-    let mut stream = CFile::from_memory(&mut storage, FileMode::ReadUpdate).expect("open update stream");
+    let mut stream =
+        CFile::from_memory(&mut storage, FileMode::ReadUpdate).expect("open update stream");
     stream.write_all(b"std").expect("std write");
-    assert_eq!(Seek::seek(&mut stream, std::io::SeekFrom::End(-2)).expect("std seek"), 6);
+    assert_eq!(
+        Seek::seek(&mut stream, std::io::SeekFrom::End(-2)).expect("std seek"),
+        6
+    );
     let mut byte = [0; 1];
     assert_eq!(Read::read(&mut stream, &mut byte).expect("std read"), 1);
     Write::flush(&mut stream).expect("std flush");

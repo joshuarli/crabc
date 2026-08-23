@@ -35,7 +35,10 @@ fn terminal_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for terminal_test");
-    assert!(status.success(), "musl-gcc terminal_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc terminal_test compilation failed"
+    );
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", &target)

@@ -24,7 +24,10 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let status = command
         .status()
         .expect("failed to compile the pthread create/join TLS regression fixture");
-    assert!(status.success(), "pthread create/join TLS regression fixture compilation failed");
+    assert!(
+        status.success(),
+        "pthread create/join TLS regression fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {
@@ -53,7 +56,10 @@ fn pthread_create_join_tls_matches_pinned_musl() {
         reference_output.status.code(),
         String::from_utf8_lossy(&reference_output.stderr),
     );
-    assert_eq!(reference_output.stdout, b"pthread create/join tls contract ok\n");
+    assert_eq!(
+        reference_output.stdout,
+        b"pthread create/join tls contract ok\n"
+    );
     assert_eq!(
         candidate_output.status,
         reference_output.status,

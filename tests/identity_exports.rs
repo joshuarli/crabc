@@ -29,7 +29,10 @@ fn identity_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for identity_exports_test");
-    assert!(status.success(), "musl-gcc identity_exports_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc identity_exports_test compilation failed"
+    );
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)
         .output()
@@ -42,5 +45,8 @@ fn identity_exports_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi identity exports ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi identity exports ok\n"
+    );
 }

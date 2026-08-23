@@ -3,11 +3,26 @@ use crabc_rs::text::{ConvertError, TextConverter, TextEncoding, Unrepresentable}
 #[test]
 fn native_text_facade_supports_only_the_documented_strict_subset() {
     assert_eq!(TextEncoding::from_name(b"utf8"), Some(TextEncoding::Utf8));
-    assert_eq!(TextEncoding::from_name(b"UTF_16LE"), Some(TextEncoding::Utf16Le));
-    assert_eq!(TextEncoding::from_name(b"UTF-16BE"), Some(TextEncoding::Utf16Be));
-    assert_eq!(TextEncoding::from_name(b"UTF-32LE"), Some(TextEncoding::Utf32Le));
-    assert_eq!(TextEncoding::from_name(b"UCS4BE"), Some(TextEncoding::Utf32Be));
-    assert_eq!(TextEncoding::from_name(b"wchar-t"), Some(TextEncoding::WChar));
+    assert_eq!(
+        TextEncoding::from_name(b"UTF_16LE"),
+        Some(TextEncoding::Utf16Le)
+    );
+    assert_eq!(
+        TextEncoding::from_name(b"UTF-16BE"),
+        Some(TextEncoding::Utf16Be)
+    );
+    assert_eq!(
+        TextEncoding::from_name(b"UTF-32LE"),
+        Some(TextEncoding::Utf32Le)
+    );
+    assert_eq!(
+        TextEncoding::from_name(b"UCS4BE"),
+        Some(TextEncoding::Utf32Be)
+    );
+    assert_eq!(
+        TextEncoding::from_name(b"wchar-t"),
+        Some(TextEncoding::WChar)
+    );
     assert_eq!(TextEncoding::from_name(b"ASCII"), Some(TextEncoding::Ascii));
 
     // The C iconv vocabulary remains wider than this native Rust slice.
@@ -84,7 +99,9 @@ fn native_text_scalar_variants_preserve_explicit_byte_order() {
     for &(encoding, expected) in cases {
         let mut encoded = [0u8; 16];
         let mut encoder = TextConverter::new(TextEncoding::Utf8, encoding);
-        let encoded_progress = encoder.convert(input, &mut encoded).expect("encode scalars");
+        let encoded_progress = encoder
+            .convert(input, &mut encoded)
+            .expect("encode scalars");
         assert_eq!(encoded_progress.consumed, input.len());
         assert_eq!(&encoded[..encoded_progress.produced], expected);
 

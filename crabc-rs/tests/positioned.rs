@@ -26,7 +26,10 @@ fn positioned_reads_and_writes_do_not_change_file_position() {
     .expect("create positioned-I/O fixture");
 
     assert_eq!(io::write(&file, b"abcdef").expect("write fixture"), 6);
-    assert_eq!(fs::seek(&file, SeekFrom::Start(2)).expect("set descriptor position"), 2);
+    assert_eq!(
+        fs::seek(&file, SeekFrom::Start(2)).expect("set descriptor position"),
+        2
+    );
 
     assert_eq!(io::pwrite(&file, b"XY", 4).expect("positioned write"), 2);
     assert_eq!(
@@ -69,7 +72,8 @@ fn positioned_read_supports_uninitialized_storage() {
     io::write(&file, b"kernel-buffer").expect("write uninitialized fixture");
 
     let mut buffer = [core::mem::MaybeUninit::<u8>::uninit(); 6];
-    let (initialized, remaining) = io::pread(&file, &mut buffer, 6).expect("pread into spare storage");
+    let (initialized, remaining) =
+        io::pread(&file, &mut buffer, 6).expect("pread into spare storage");
     assert_eq!(initialized, b"-buffe" as &[u8]);
     assert!(remaining.is_empty());
 

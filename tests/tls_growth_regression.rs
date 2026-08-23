@@ -27,7 +27,10 @@ fn compile_tls_dsos(directory: &std::path::Path) {
             .arg(binary)
             .status()
             .expect("failed to compile a dynamic TLS growth DSO");
-        assert!(status.success(), "dynamic TLS growth DSO compilation failed");
+        assert!(
+            status.success(),
+            "dynamic TLS growth DSO compilation failed"
+        );
     }
 }
 
@@ -48,11 +51,17 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
             "-Wl,--allow-shlib-undefined",
         ]);
     }
-    command.arg(&fixture).args(["-ldl", "-lpthread", "-lc", "-o"]).arg(binary);
+    command
+        .arg(&fixture)
+        .args(["-ldl", "-lpthread", "-lc", "-o"])
+        .arg(binary);
     let status = command
         .status()
         .expect("failed to compile the dynamic TLS growth regression fixture");
-    assert!(status.success(), "dynamic TLS growth regression fixture compilation failed");
+    assert!(
+        status.success(),
+        "dynamic TLS growth regression fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, directory: &std::path::Path, candidate: bool) -> Output {
@@ -62,7 +71,11 @@ fn run(binary: &std::path::Path, directory: &std::path::Path, candidate: bool) -
     if candidate {
         command.env(
             "LD_LIBRARY_PATH",
-            format!("{}:{}", directory.display(), root.join("target/debug").display()),
+            format!(
+                "{}:{}",
+                directory.display(),
+                root.join("target/debug").display()
+            ),
         );
     }
     command

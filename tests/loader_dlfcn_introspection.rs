@@ -18,7 +18,10 @@ fn build_dso(source: &std::path::Path, output: &std::path::Path) {
         ])
         .status()
         .expect("failed to run musl-gcc for loader introspection DSO");
-    assert!(status.success(), "loader introspection DSO compilation failed");
+    assert!(
+        status.success(),
+        "loader introspection DSO compilation failed"
+    );
 }
 
 #[test]
@@ -27,8 +30,7 @@ fn native_loader_introspection_copies_bounded_records() {
     let fixtures = root.join("tests/fixtures");
     let target = root.join("target");
     let debug = target.join("debug");
-    let archive = target
-        .join("release/examples/libloader_dlfcn_introspection_probe.a");
+    let archive = target.join("release/examples/libloader_dlfcn_introspection_probe.a");
     let dso_source = fixtures.join("loader_dlfcn_basic_dso.c");
     let fixture = fixtures.join("loader_dlfcn_introspection_test.c");
     let dso = test_support::TempArtifact::new("libloader_dlfcn_introspection.so");
@@ -51,10 +53,16 @@ fn native_loader_introspection_copies_bounded_records() {
         ])
         .status()
         .expect("failed to build the loader introspection probe archive");
-    assert!(probe_build.success(), "loader introspection probe archive did not build");
+    assert!(
+        probe_build.success(),
+        "loader introspection probe archive did not build"
+    );
     assert!(debug.join("libldso.so").is_file(), "libldso.so not found");
     assert!(debug.join("libc.so").is_file(), "libc.so not found");
-    assert!(archive.is_file(), "loader introspection probe archive not found");
+    assert!(
+        archive.is_file(),
+        "loader introspection probe archive not found"
+    );
 
     let status = Command::new("musl-gcc")
         .args([
@@ -75,7 +83,10 @@ fn native_loader_introspection_copies_bounded_records() {
         ])
         .status()
         .expect("failed to compile loader introspection fixture");
-    assert!(status.success(), "loader introspection fixture compilation failed");
+    assert!(
+        status.success(),
+        "loader introspection fixture compilation failed"
+    );
 
     let library_path = format!("{}:{}", debug.display(), dso.parent().display());
     let output = Command::new(&binary)

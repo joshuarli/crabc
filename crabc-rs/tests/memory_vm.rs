@@ -20,7 +20,10 @@ fn mapped_page() -> *mut crabc_rs::ffi::c_void {
 fn native_kernel_brk_query_can_be_replayed_without_allocator_bookkeeping() {
     let current = unsafe { process::kernel_brk(core::ptr::null_mut()) }
         .expect("Linux brk query is a direct pointer result");
-    assert!(!current.is_null(), "the process has a non-null current break");
+    assert!(
+        !current.is_null(),
+        "the process has a non-null current break"
+    );
 
     let replayed = unsafe { process::kernel_brk(current) }
         .expect("replaying the current break must remain a no-op");
@@ -35,7 +38,10 @@ fn native_mlockall_and_munlockall_preserve_process_scope() {
             mm::munlockall().expect("undo successful process-wide lock");
         }
         Err(error) => assert!(
-            matches!(error, Errno::PERM | Errno::AGAIN | Errno::NOMEM | Errno::INVAL),
+            matches!(
+                error,
+                Errno::PERM | Errno::AGAIN | Errno::NOMEM | Errno::INVAL
+            ),
             "unexpected mlockall error: {error:?}"
         ),
     }
@@ -64,14 +70,8 @@ fn native_posix_madvise_uses_the_non_discarding_policy_vocabulary() {
 #[test]
 fn native_remap_file_pages_keeps_legacy_kernel_errors_typed() {
     let mapping = mapped_page();
-    let error = unsafe {
-        mm::remap_file_pages(
-            mapping,
-            PAGE_SIZE,
-            0,
-        )
-    }
-    .expect_err("an anonymous mapping is not a remappable file mapping");
+    let error = unsafe { mm::remap_file_pages(mapping, PAGE_SIZE, 0) }
+        .expect_err("an anonymous mapping is not a remappable file mapping");
     assert_eq!(error, Errno::INVAL);
 
     unsafe { mm::munmap(mapping, PAGE_SIZE) }.expect("unmap rejected remap mapping");

@@ -62,7 +62,10 @@ fn chdir_and_fchdir_restore_process_cwd_after_failure() {
 
         // Force the fallible path while the process is away from its entry
         // directory. CwdGuard must restore the original descriptor on return.
-        assert_eq!(process::chdir("/crabc-rs-native-cwd-does-not-exist"), Err(Errno::NOENT));
+        assert_eq!(
+            process::chdir("/crabc-rs-native-cwd-does-not-exist"),
+            Err(Errno::NOENT)
+        );
         Err(Errno::IO)
     })();
 

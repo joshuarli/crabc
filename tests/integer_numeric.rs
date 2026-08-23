@@ -35,7 +35,10 @@ fn integer_and_nan_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for integer_numeric_test");
-    assert!(status.success(), "musl-gcc integer_numeric_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc integer_numeric_test compilation failed"
+    );
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", &target)

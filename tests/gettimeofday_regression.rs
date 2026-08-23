@@ -21,8 +21,13 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
         ]);
     }
     command.arg(&fixture).args(["-lc", "-o"]).arg(binary);
-    let status = command.status().expect("failed to compile the gettimeofday regression fixture");
-    assert!(status.success(), "gettimeofday regression fixture compilation failed");
+    let status = command
+        .status()
+        .expect("failed to compile the gettimeofday regression fixture");
+    assert!(
+        status.success(),
+        "gettimeofday regression fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {
@@ -31,7 +36,9 @@ fn run(binary: &std::path::Path, candidate: bool) -> Output {
     if candidate {
         command.env("LD_LIBRARY_PATH", root.join("target/debug"));
     }
-    command.output().expect("failed to run the gettimeofday regression fixture")
+    command
+        .output()
+        .expect("failed to run the gettimeofday regression fixture")
 }
 
 #[test]

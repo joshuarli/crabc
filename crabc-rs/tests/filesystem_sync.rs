@@ -1,5 +1,5 @@
-use crabc_rs::{fs, io};
 use crabc_rs::fs::{Mode, OFlags};
+use crabc_rs::{fs, io};
 
 const PATH: &[u8] = b"/tmp/crabc-rs-native-sync";
 

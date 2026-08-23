@@ -4,9 +4,9 @@
 //! is supported by Linux at runtime. Dynamic descriptor clocks retain a
 //! fallible result because the kernel can reject a descriptor-backed clock.
 
+use bitflags::bitflags;
 use core::mem::MaybeUninit;
 use core::time::Duration;
-use bitflags::bitflags;
 
 use crate::{process::Pid, process::Signal, AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
@@ -137,8 +137,8 @@ impl CalendarTime {
             return Err(Errno::INVAL);
         }
 
-        let seconds = calendar_seconds(year, month, day, hour, minute, second)
-            .ok_or(Errno::RANGE)?;
+        let seconds =
+            calendar_seconds(year, month, day, hour, minute, second).ok_or(Errno::RANGE)?;
         let value = Self::from_unix_seconds(seconds)?;
         // This check also documents that the constructor is strict rather
         // than silently inheriting C's field-normalization behavior.
@@ -156,35 +156,51 @@ impl CalendarTime {
 
     /// Returns the proleptic Gregorian year.
     #[must_use]
-    pub const fn year(self) -> i64 { self.year }
+    pub const fn year(self) -> i64 {
+        self.year
+    }
 
     /// Returns the one-based Gregorian month.
     #[must_use]
-    pub const fn month(self) -> u8 { self.month }
+    pub const fn month(self) -> u8 {
+        self.month
+    }
 
     /// Returns the one-based day of the month.
     #[must_use]
-    pub const fn day(self) -> u8 { self.day }
+    pub const fn day(self) -> u8 {
+        self.day
+    }
 
     /// Returns the hour in UTC, in `0..24`.
     #[must_use]
-    pub const fn hour(self) -> u8 { self.hour }
+    pub const fn hour(self) -> u8 {
+        self.hour
+    }
 
     /// Returns the minute in UTC, in `0..60`.
     #[must_use]
-    pub const fn minute(self) -> u8 { self.minute }
+    pub const fn minute(self) -> u8 {
+        self.minute
+    }
 
     /// Returns the second in UTC, in `0..60`.
     #[must_use]
-    pub const fn second(self) -> u8 { self.second }
+    pub const fn second(self) -> u8 {
+        self.second
+    }
 
     /// Returns the weekday with Sunday as zero, matching musl's `tm_wday`.
     #[must_use]
-    pub const fn weekday(self) -> u8 { self.weekday }
+    pub const fn weekday(self) -> u8 {
+        self.weekday
+    }
 
     /// Returns the zero-based day of the year, matching musl's `tm_yday`.
     #[must_use]
-    pub const fn yearday(self) -> u16 { self.yearday }
+    pub const fn yearday(self) -> u16 {
+        self.yearday
+    }
 
     /// Converts this normalized UTC value back to signed Unix-epoch seconds.
     #[inline]
@@ -344,8 +360,7 @@ impl RealtimeMillis {
 /// timezone state, or TLS `errno` participates in the observation.
 #[inline]
 pub fn realtime_millis() -> Result<RealtimeMillis> {
-    RealtimeMillis::from_timespec(clock_query_result(ClockId::Realtime as i32)?)
-        .ok_or(Errno::RANGE)
+    RealtimeMillis::from_timespec(clock_query_result(ClockId::Realtime as i32)?).ok_or(Errno::RANGE)
 }
 
 /// Computes the difference between two signed Unix-epoch seconds.
@@ -374,12 +389,8 @@ const LEAPOCH_SECONDS: i128 = 946_684_800 + 86_400 * (31 + 29);
 const DAYS_PER_400_YEARS: i128 = 365 * 400 + 97;
 const DAYS_PER_100_YEARS: i128 = 365 * 100 + 24;
 const DAYS_PER_4_YEARS: i128 = 365 * 4 + 1;
-const MARCH_BASED_DAYS: [i128; 12] = [
-    31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29,
-];
-const MONTH_DAYS_BEFORE: [i128; 12] = [
-    0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334,
-];
+const MARCH_BASED_DAYS: [i128; 12] = [31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29];
+const MONTH_DAYS_BEFORE: [i128; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
 
 #[inline]
 fn is_leap_year(year: i64) -> bool {
@@ -391,7 +402,13 @@ fn days_in_month(year: i64, month: u8) -> u8 {
     let days = match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 => if is_leap_year(year) { 29 } else { 28 },
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
         _ => 0,
     };
     days
@@ -500,13 +517,19 @@ fn calendar_from_unix_seconds(seconds: i64) -> Result<CalendarTime> {
     let cycles_400 = days.div_euclid(DAYS_PER_400_YEARS);
     let mut remaining_days = days.rem_euclid(DAYS_PER_400_YEARS);
     let mut cycles_100 = remaining_days / DAYS_PER_100_YEARS;
-    if cycles_100 == 4 { cycles_100 -= 1; }
+    if cycles_100 == 4 {
+        cycles_100 -= 1;
+    }
     remaining_days -= cycles_100 * DAYS_PER_100_YEARS;
     let mut cycles_4 = remaining_days / DAYS_PER_4_YEARS;
-    if cycles_4 == 25 { cycles_4 -= 1; }
+    if cycles_4 == 25 {
+        cycles_4 -= 1;
+    }
     remaining_days -= cycles_4 * DAYS_PER_4_YEARS;
     let mut years_in_cycle = remaining_days / 365;
-    if years_in_cycle == 4 { years_in_cycle -= 1; }
+    if years_in_cycle == 4 {
+        years_in_cycle -= 1;
+    }
     remaining_days -= years_in_cycle * 365;
 
     let leap = years_in_cycle == 0 && (cycles_4 != 0 || cycles_100 == 0);
@@ -517,9 +540,7 @@ fn calendar_from_unix_seconds(seconds: i64) -> Result<CalendarTime> {
 
     let years = years_in_cycle + 4 * cycles_4 + 100 * cycles_100 + 400 * cycles_400;
     let mut month_index = 0usize;
-    while month_index < MARCH_BASED_DAYS.len()
-        && MARCH_BASED_DAYS[month_index] <= remaining_days
-    {
+    while month_index < MARCH_BASED_DAYS.len() && MARCH_BASED_DAYS[month_index] <= remaining_days {
         remaining_days -= MARCH_BASED_DAYS[month_index];
         month_index += 1;
     }
@@ -706,7 +727,10 @@ fn duration_from_timespec(timespec: Timespec) -> core::result::Result<Duration, 
     if timespec.tv_sec < 0 || !(0..1_000_000_000).contains(&timespec.tv_nsec) {
         return Err(SleepError::InvalidRemaining);
     }
-    Ok(Duration::new(timespec.tv_sec as u64, timespec.tv_nsec as u32))
+    Ok(Duration::new(
+        timespec.tv_sec as u64,
+        timespec.tv_nsec as u32,
+    ))
 }
 
 #[inline]
@@ -865,7 +889,10 @@ fn duration_from_itimerval_timeval(
     if value.tv_sec < 0 || value.tv_usec < 0 || value.tv_usec >= 1_000_000 {
         return None;
     }
-    Some(Duration::new(value.tv_sec as u64, (value.tv_usec as u32) * 1_000))
+    Some(Duration::new(
+        value.tv_sec as u64,
+        (value.tv_usec as u32) * 1_000,
+    ))
 }
 
 /// Errors returned when controlling a Linux process interval timer.
@@ -912,8 +939,7 @@ pub fn setitimer(
         )
         .map_err(IntervalTimerError::Kernel)?;
         let old_value = old_value.assume_init();
-        interval_from_kernel_itimerval(old_value)
-            .ok_or(IntervalTimerError::InvalidSpecification)
+        interval_from_kernel_itimerval(old_value).ok_or(IntervalTimerError::InvalidSpecification)
     }
 }
 
@@ -954,9 +980,7 @@ pub fn ualarm(
 }
 
 #[inline]
-fn kernel_itimerval_from_interval(
-    value: IntervalTimerValue,
-) -> crabc_core::time::KernelItimerval {
+fn kernel_itimerval_from_interval(value: IntervalTimerValue) -> crabc_core::time::KernelItimerval {
     fn timeval(duration: Duration) -> crabc_core::time::KernelItimervalTimeval {
         crabc_core::time::KernelItimervalTimeval {
             tv_sec: duration.as_secs() as i64,
@@ -977,7 +1001,10 @@ fn interval_from_kernel_itimerval(
         if value.tv_sec < 0 || value.tv_usec < 0 || value.tv_usec >= 1_000_000 {
             return None;
         }
-        Some(Duration::new(value.tv_sec as u64, (value.tv_usec as u32) * 1_000))
+        Some(Duration::new(
+            value.tv_sec as u64,
+            (value.tv_usec as u32) * 1_000,
+        ))
     }
     IntervalTimerValue::new(duration(value.it_interval)?, duration(value.it_value)?)
 }
@@ -1046,7 +1073,11 @@ pub enum TimerNotification {
     /// Deliver `signal` with the supplied integer payload.
     Signal { signal: Signal, value: i32 },
     /// Deliver `signal` directly to `thread` with the supplied payload.
-    ThreadId { thread: Pid, signal: Signal, value: i32 },
+    ThreadId {
+        thread: Pid,
+        signal: Signal,
+        value: i32,
+    },
 }
 
 /// Errors returned by POSIX timer creation and operations.
@@ -1126,8 +1157,7 @@ impl PosixTimer {
                 old_value.as_mut_ptr().cast(),
             )
             .map_err(TimerError::Kernel)?;
-            timer_spec_from_kernel(old_value.assume_init())
-                .ok_or(TimerError::InvalidSpecification)
+            timer_spec_from_kernel(old_value.assume_init()).ok_or(TimerError::InvalidSpecification)
         }
     }
 
@@ -1189,7 +1219,12 @@ fn kernel_sigevent(notification: TimerNotification) -> KernelSigevent {
             thread,
             signal,
             value,
-        } => (value as u32 as usize, signal.as_raw(), 4, thread.as_raw_pid()),
+        } => (
+            value as u32 as usize,
+            signal.as_raw(),
+            4,
+            thread.as_raw_pid(),
+        ),
     };
     let mut event = KernelSigevent {
         value,
@@ -1318,19 +1353,14 @@ pub fn clock_getcpuclockid(pid: Option<Pid>) -> Result<ProcessClockId> {
     let raw_pid = Pid::as_raw(pid) as u32;
     // This is musl's `(-pid-1)*8 + 2` encoding evaluated with the same
     // unsigned wraparound as the Linux clock-id ABI.
-    let id = raw_pid
-        .wrapping_neg()
-        .wrapping_sub(1)
-        .wrapping_shl(3)
-        | ClockId::ProcessCPUTime as u32;
+    let id =
+        raw_pid.wrapping_neg().wrapping_sub(1).wrapping_shl(3) | ClockId::ProcessCPUTime as u32;
     let id = id as i32;
     let mut resolution = MaybeUninit::<Timespec>::uninit();
     // SAFETY: `resolution` is writable storage for the Linux timespec, and
     // the encoded scalar is validated by the kernel before construction of
     // the typed process-clock value.
-    match unsafe {
-        crabc_core::time::clock_getres_raw(id, resolution.as_mut_ptr().cast())
-    } {
+    match unsafe { crabc_core::time::clock_getres_raw(id, resolution.as_mut_ptr().cast()) } {
         Err(Errno::INVAL) => Err(Errno::SRCH),
         Err(error) => Err(error),
         Ok(()) => {
@@ -1410,9 +1440,7 @@ pub fn clock_settime(id: ClockId, timespec: Timespec) -> Result<()> {
 
     // SAFETY: `Timespec` is the exact Linux/AArch64 `struct timespec` layout,
     // and its nanosecond field was validated immediately above.
-    unsafe {
-        crabc_core::time::clock_settime_raw(id as i32, (&timespec as *const Timespec).cast())
-    }
+    unsafe { crabc_core::time::clock_settime_raw(id as i32, (&timespec as *const Timespec).cast()) }
 }
 
 /// Returns the current value of a known or descriptor-backed Linux clock.
@@ -1455,10 +1483,7 @@ fn dynamic_clock_id(id: DynamicClockId<'_>) -> i32 {
 #[inline]
 pub fn process_cpu_time() -> Duration {
     let value = clock_gettime(ClockId::ProcessCPUTime);
-    if value.tv_sec < 0
-        || value.tv_nsec < 0
-        || value.tv_nsec >= NANOS_PER_SECOND as i64
-    {
+    if value.tv_sec < 0 || value.tv_nsec < 0 || value.tv_nsec >= NANOS_PER_SECOND as i64 {
         panic!("Linux process CPU clock returned an invalid timespec");
     }
     Duration::new(value.tv_sec as u64, value.tv_nsec as u32)
@@ -1563,10 +1588,7 @@ pub fn timerfd_gettime<Fd: AsFd>(fd: Fd) -> Result<Itimerspec> {
     }
 }
 
-fn clock_query(
-    id: ClockId,
-    query: unsafe fn(i32, *mut u8) -> Result<()>,
-) -> Timespec {
+fn clock_query(id: ClockId, query: unsafe fn(i32, *mut u8) -> Result<()>) -> Timespec {
     let mut value = MaybeUninit::<Timespec>::uninit();
     // SAFETY: `value` has exactly the Linux/AArch64 `timespec` layout and
     // the enum contains only statically supported Linux clock identifiers.

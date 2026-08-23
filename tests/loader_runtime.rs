@@ -8,8 +8,7 @@ fn native_loader_runtime_uses_ldso_owned_state() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let target = root.join("target");
     let debug = target.join("debug");
-    let archive = target
-        .join("release/examples/libloader_runtime_probe.a");
+    let archive = target.join("release/examples/libloader_runtime_probe.a");
     let fixture = root.join("tests/fixtures/loader_runtime_test.c");
     let binary = test_support::TempArtifact::new("crabc-runtime-loader-runtime");
 
@@ -28,7 +27,10 @@ fn native_loader_runtime_uses_ldso_owned_state() {
         ])
         .status()
         .expect("failed to build the native loader probe archive");
-    assert!(probe_build.success(), "native loader probe archive did not build");
+    assert!(
+        probe_build.success(),
+        "native loader probe archive did not build"
+    );
     assert!(debug.join("libldso.so").is_file(), "libldso.so not found");
     assert!(debug.join("libc.so").is_file(), "libc.so not found");
     assert!(archive.is_file(), "native loader probe archive not found");
@@ -52,7 +54,10 @@ fn native_loader_runtime_uses_ldso_owned_state() {
         ])
         .status()
         .expect("failed to compile native loader runtime fixture");
-    assert!(status.success(), "native loader runtime fixture did not compile");
+    assert!(
+        status.success(),
+        "native loader runtime fixture did not compile"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &debug)

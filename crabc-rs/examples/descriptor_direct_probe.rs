@@ -29,17 +29,7 @@ pub extern "C" fn crabc_rs_descriptor_direct_probe() -> i32 {
         Ok(pair) => pair,
         Err(error) => return -error.raw(),
     };
-    if pipe::splice(
-        &file,
-        None,
-        &writer,
-        None,
-        6,
-        pipe::SpliceFlags::empty(),
-    )
-    .ok()
-        != Some(6)
-    {
+    if pipe::splice(&file, None, &writer, None, 6, pipe::SpliceFlags::empty()).ok() != Some(6) {
         return 3;
     }
     let mut copied = [0_u8; 6];
@@ -52,9 +42,7 @@ pub extern "C" fn crabc_rs_descriptor_direct_probe() -> i32 {
         return 5;
     }
     let mut transferred = [0_u8; 8];
-    if io::read(&reader, &mut transferred).ok() != Some(8)
-        || transferred != *b"vmsplice"
-    {
+    if io::read(&reader, &mut transferred).ok() != Some(8) || transferred != *b"vmsplice" {
         return 6;
     }
 

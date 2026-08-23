@@ -11,11 +11,14 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
 }
 
-const DSO: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"libloader_dlfcn_introspection.so\0") };
+const DSO: &CStr =
+    unsafe { CStr::from_bytes_with_nul_unchecked(b"libloader_dlfcn_introspection.so\0") };
 
 fn has_image(snapshot: &LoadedImageSnapshot) -> bool {
     snapshot.images().iter().any(|image| {
-        image.image_name().is_some_and(|name| name.as_bytes() == DSO.to_bytes())
+        image
+            .image_name()
+            .is_some_and(|name| name.as_bytes() == DSO.to_bytes())
             && image.image_base().is_some()
             && image.program_headers().is_some()
             && image.program_header_count() != 0

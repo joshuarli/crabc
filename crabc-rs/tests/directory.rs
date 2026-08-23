@@ -19,8 +19,13 @@ fn dir_owns_close_on_exec_descriptor_and_preserves_byte_names() {
     let root = scratch_path();
     let _ = fs::rmdir(&root);
     fs::mkdir(&root, Mode::RWXU).expect("create directory fixture");
-    let directory = fs::openat(CWD, &root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
-        .expect("open fixture directory");
+    let directory = fs::openat(
+        CWD,
+        &root,
+        OFlags::RDONLY | OFlags::DIRECTORY,
+        Mode::empty(),
+    )
+    .expect("open fixture directory");
     let byte_name = b"entry-\xff";
     let file = fs::openat(
         &directory,
@@ -49,11 +54,19 @@ fn dir_owns_close_on_exec_descriptor_and_preserves_byte_names() {
         }
     }
     assert!(found, "directory entry names must remain byte-oriented");
-    assert!(stream.next().is_none(), "end-of-directory is represented by None");
+    assert!(
+        stream.next().is_none(),
+        "end-of-directory is represented by None"
+    );
 
     drop(stream);
-    let directory = fs::openat(CWD, &root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
-        .expect("reopen fixture directory for cleanup");
+    let directory = fs::openat(
+        CWD,
+        &root,
+        OFlags::RDONLY | OFlags::DIRECTORY,
+        Mode::empty(),
+    )
+    .expect("reopen fixture directory for cleanup");
     fs::unlinkat(&directory, &byte_name[..], fs::AtFlags::empty()).expect("remove byte entry");
     drop(directory);
     fs::rmdir(&root).expect("remove directory fixture");
@@ -67,8 +80,17 @@ fn dir_reports_small_buffer_error_once_and_then_stops() {
 
     let mut storage = [MaybeUninit::uninit(); 1];
     let mut stream = Dir::open(&root, &mut storage).expect("open owned directory stream");
-    assert_eq!(stream.next().expect("small buffer must report an error").unwrap_err(), Errno::INVAL);
-    assert!(stream.next().is_none(), "a failed stream must not silently continue");
+    assert_eq!(
+        stream
+            .next()
+            .expect("small buffer must report an error")
+            .unwrap_err(),
+        Errno::INVAL
+    );
+    assert!(
+        stream.next().is_none(),
+        "a failed stream must not silently continue"
+    );
     drop(stream);
 
     fs::rmdir(&root).expect("remove directory fixture");

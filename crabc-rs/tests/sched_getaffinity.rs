@@ -4,10 +4,9 @@ use crabc_rs::Errno;
 
 #[test]
 fn sched_getaffinity_returns_nonempty_bounded_snapshots() {
-    let first = thread::sched_getaffinity(None)
-        .expect("read the calling task's CPU-affinity mask");
-    let second = thread::sched_getaffinity(None)
-        .expect("read the calling task's CPU-affinity mask again");
+    let first = thread::sched_getaffinity(None).expect("read the calling task's CPU-affinity mask");
+    let second =
+        thread::sched_getaffinity(None).expect("read the calling task's CPU-affinity mask again");
 
     assert!(!first.is_empty());
     assert!(first.count() > 0);
@@ -54,18 +53,11 @@ fn sched_getaffinity_preserves_kernel_capacity_and_missing_task_errors() {
     let mut too_small = [0u8; 1];
     assert_eq!(
         unsafe {
-            crabc_core::thread::sched_getaffinity_raw(
-                0,
-                too_small.as_mut_ptr(),
-                too_small.len(),
-            )
+            crabc_core::thread::sched_getaffinity_raw(0, too_small.as_mut_ptr(), too_small.len())
         },
         Err(Errno::INVAL),
     );
 
     let missing = Pid::from_raw(i32::MAX).expect("i32::MAX is a non-zero typed PID");
-    assert_eq!(
-        thread::sched_getaffinity(Some(missing)),
-        Err(Errno::SRCH),
-    );
+    assert_eq!(thread::sched_getaffinity(Some(missing)), Err(Errno::SRCH),);
 }

@@ -17,7 +17,9 @@ pub extern "C" fn crabc_rs_network_address_direct_probe() -> i32 {
     }
 
     let address = NetworkU32::from_bytes([192, 0, 2, 7]);
-    if address.to_host() != 0xc000_0207 || NetworkU32::from_host(address.to_host()).to_bytes() != [192, 0, 2, 7] {
+    if address.to_host() != 0xc000_0207
+        || NetworkU32::from_host(address.to_host()).to_bytes() != [192, 0, 2, 7]
+    {
         return 2;
     }
     0

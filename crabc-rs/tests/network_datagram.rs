@@ -1,7 +1,7 @@
 use core::mem::MaybeUninit;
 use std::io::ErrorKind;
-use std::os::unix::net::UnixDatagram;
 use std::net::UdpSocket;
+use std::os::unix::net::UnixDatagram;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crabc_rs::net;
@@ -68,10 +68,11 @@ fn sendto_and_recvfrom_round_trip_an_ipv6_source() {
             if matches!(
                 error.kind(),
                 ErrorKind::AddrNotAvailable | ErrorKind::Unsupported
-            ) => {
-                eprintln!("skipping IPv6 loopback fixture: {error}");
-                return;
-            }
+            ) =>
+        {
+            eprintln!("skipping IPv6 loopback fixture: {error}");
+            return;
+        }
         Err(error) => panic!("probe IPv6 loopback availability: {error}"),
     }
 
@@ -113,7 +114,10 @@ fn sendto_and_recvfrom_round_trip_an_ipv6_source() {
     assert_eq!(initialized, payload.len());
     assert_eq!(received, payload.len());
     assert_eq!(&buffer[..initialized], payload);
-    assert_eq!(source.ip(), IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+    assert_eq!(
+        source.ip(),
+        IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+    );
     assert_eq!(source.scope_id(), 0);
 }
 
@@ -165,7 +169,12 @@ fn sendto_rejects_an_ipv4_scope_instead_of_discarding_it() {
     let destination = SocketAddress::new_scoped(IpAddress::V4([127, 0, 0, 1]), 9, 7);
 
     assert_eq!(
-        net::sendto(&sender, b"invalid-scope", net::SendFlags::empty(), destination),
+        net::sendto(
+            &sender,
+            b"invalid-scope",
+            net::SendFlags::empty(),
+            destination
+        ),
         Err(Errno::INVAL),
     );
 }

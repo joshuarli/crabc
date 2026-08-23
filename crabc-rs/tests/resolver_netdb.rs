@@ -1,6 +1,8 @@
 use crabc_rs::net::{AddressFamily, SocketType};
 use crabc_rs::netdb::{HostDatabase, ProtocolDatabase, ServiceDatabase, ServiceProtocol};
-use crabc_rs::resolver::{IpAddress, LookupFlags, LookupOptions, NameInfoOptions, Resolver, ResolverConfig};
+use crabc_rs::resolver::{
+    IpAddress, LookupFlags, LookupOptions, NameInfoOptions, Resolver, ResolverConfig,
+};
 
 #[test]
 fn native_resolver_keeps_numeric_results_owned_and_typed() {
@@ -19,7 +21,10 @@ fn native_resolver_keeps_numeric_results_owned_and_typed() {
         .expect("numeric lookup does not need a nameserver");
 
     assert_eq!(results.as_slice().len(), 1);
-    assert_eq!(results.as_slice()[0].address().ip(), IpAddress::parse(b"2001:db8::42").unwrap());
+    assert_eq!(
+        results.as_slice()[0].address().ip(),
+        IpAddress::parse(b"2001:db8::42").unwrap()
+    );
     assert_eq!(results.as_slice()[0].address().port(), 443);
     assert_eq!(results.as_slice()[0].socket_type(), SocketType::STREAM);
     assert_eq!(results.as_slice()[0].protocol(), 6);
@@ -29,15 +34,16 @@ fn native_resolver_keeps_numeric_results_owned_and_typed() {
 #[test]
 fn native_reverse_numeric_fallback_has_no_global_state() {
     let resolver = Resolver::new(ResolverConfig::default());
-    let address = crabc_rs::resolver::SocketAddress::new(
-        IpAddress::parse(b"192.0.2.7").unwrap(),
-        53,
-    );
+    let address =
+        crabc_rs::resolver::SocketAddress::new(IpAddress::parse(b"192.0.2.7").unwrap(), 53);
     let result = resolver
         .reverse_lookup(
             address,
             Some(53),
-            NameInfoOptions { numeric_host: true, ..NameInfoOptions::default() },
+            NameInfoOptions {
+                numeric_host: true,
+                ..NameInfoOptions::default()
+            },
         )
         .expect("numeric reverse lookup does not need a nameserver");
     assert_eq!(result.host(), "192.0.2.7");
@@ -70,11 +76,15 @@ fn native_dns_uses_the_caller_configured_direct_fixture() {
         response.extend_from_slice(&[0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
         response.extend_from_slice(&request[12..length]);
         response.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 30, 0, 4, 198, 51, 100, 7]);
-        server.send_to(&response, peer).expect("send deterministic DNS answer");
+        server
+            .send_to(&response, peer)
+            .expect("send deterministic DNS answer");
     });
 
     let mut config = ResolverConfig::new();
-    config.add_nameserver_on_port(IpAddress::parse(b"127.0.0.1").unwrap(), port).unwrap();
+    config
+        .add_nameserver_on_port(IpAddress::parse(b"127.0.0.1").unwrap(), port)
+        .unwrap();
     config.set_attempts(1).unwrap();
     config.set_timeout_ms(500).unwrap();
     let resolver = Resolver::new(config);
@@ -82,12 +92,19 @@ fn native_dns_uses_the_caller_configured_direct_fixture() {
         .lookup(
             Some("native.test"),
             None,
-            LookupOptions { family: AddressFamily::INET, flags: LookupFlags::CANONNAME, ..LookupOptions::default() },
+            LookupOptions {
+                family: AddressFamily::INET,
+                flags: LookupFlags::CANONNAME,
+                ..LookupOptions::default()
+            },
         )
         .expect("direct DNS fixture resolves through native API");
     worker.join().expect("DNS fixture completed");
     assert_eq!(result.canonical_name(), Some("native.test"));
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"198.51.100.7").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"198.51.100.7").unwrap()
+    );
 }
 
 #[test]
@@ -102,7 +119,13 @@ fn caller_owned_netdb_parsers_return_typed_copies() {
     assert_eq!(host.name(), "example.test");
     assert_eq!(host.aliases(), &["alias.test"]);
     assert_eq!(host.addresses().len(), 2);
-    assert_eq!(hosts.lookup("example.test", Some(AddressFamily::INET6)).unwrap().addresses(), &[IpAddress::parse(b"2001:db8::7").unwrap()]);
+    assert_eq!(
+        hosts
+            .lookup("example.test", Some(AddressFamily::INET6))
+            .unwrap()
+            .addresses(),
+        &[IpAddress::parse(b"2001:db8::7").unwrap()]
+    );
 
     let services = ServiceDatabase::from_bytes(b"https 443/tcp www\ndomain 53/udp\n")
         .expect("valid services fixture");
@@ -111,10 +134,16 @@ fn caller_owned_netdb_parsers_return_typed_copies() {
         .expect("service alias resolves");
     assert_eq!(https.port(), 443);
     assert_eq!(https.protocol(), ServiceProtocol::Tcp);
-    assert_eq!(services.lookup_port(53, Some(ServiceProtocol::Udp)).unwrap().name(), "domain");
+    assert_eq!(
+        services
+            .lookup_port(53, Some(ServiceProtocol::Udp))
+            .unwrap()
+            .name(),
+        "domain"
+    );
 
-    let protocols = ProtocolDatabase::from_bytes(b"tcp 6\nudp 17\n")
-        .expect("valid protocols fixture");
+    let protocols =
+        ProtocolDatabase::from_bytes(b"tcp 6\nudp 17\n").expect("valid protocols fixture");
     assert_eq!(protocols.lookup_name("TCP").unwrap().number(), 6);
     assert_eq!(protocols.lookup_number(17).unwrap().name(), "udp");
 }
@@ -135,11 +164,14 @@ fn netdb_snapshots_own_input_and_enumerate_source_order() {
     let services = ServiceDatabase::from_bytes(b"custom 4242/custom-proto alias\n")
         .expect("valid service fixture");
     assert_eq!(services.entries().len(), 1);
-    assert_eq!(services.iter().next().unwrap().protocol_name(), "custom-proto");
+    assert_eq!(
+        services.iter().next().unwrap().protocol_name(),
+        "custom-proto"
+    );
     assert_eq!(services.lookup("ALIAS", None).unwrap().port(), 4242);
 
-    let protocols = ProtocolDatabase::from_bytes(b"custom 253 alias\n")
-        .expect("valid protocol fixture");
+    let protocols =
+        ProtocolDatabase::from_bytes(b"custom 253 alias\n").expect("valid protocol fixture");
     assert_eq!(protocols.entries().len(), 1);
     assert_eq!(protocols.iter().count(), protocols.len());
     assert_eq!(protocols.lookup_name("ALIAS").unwrap().number(), 253);
@@ -149,10 +181,22 @@ fn netdb_snapshots_own_input_and_enumerate_source_order() {
 fn malformed_netdb_records_reject_the_complete_snapshot() {
     use crabc_rs::netdb::NetDbError;
 
-    assert_eq!(HostDatabase::from_bytes(b"not-an-address only-name"), Err(NetDbError::InvalidInput));
-    assert_eq!(ServiceDatabase::from_bytes(b"broken 80/tcp/extra"), Err(NetDbError::InvalidInput));
-    assert_eq!(ProtocolDatabase::from_bytes(b"broken 65536"), Err(NetDbError::Overflow));
-    assert_eq!(ProtocolDatabase::from_bytes(b"bad\xff 1"), Err(NetDbError::InvalidInput));
+    assert_eq!(
+        HostDatabase::from_bytes(b"not-an-address only-name"),
+        Err(NetDbError::InvalidInput)
+    );
+    assert_eq!(
+        ServiceDatabase::from_bytes(b"broken 80/tcp/extra"),
+        Err(NetDbError::InvalidInput)
+    );
+    assert_eq!(
+        ProtocolDatabase::from_bytes(b"broken 65536"),
+        Err(NetDbError::Overflow)
+    );
+    assert_eq!(
+        ProtocolDatabase::from_bytes(b"bad\xff 1"),
+        Err(NetDbError::InvalidInput)
+    );
 }
 
 #[test]
@@ -164,13 +208,15 @@ fn system_netdb_loaders_match_their_direct_file_snapshots() {
     assert_eq!(hosts.iter().count(), hosts.len());
 
     let services_bytes = std::fs::read("/etc/services").expect("system services file");
-    let services_expected = ServiceDatabase::from_bytes(&services_bytes).expect("parse system services bytes");
+    let services_expected =
+        ServiceDatabase::from_bytes(&services_bytes).expect("parse system services bytes");
     let services = ServiceDatabase::from_system().expect("direct services loader");
     assert_eq!(services, services_expected);
     assert_eq!(services.iter().count(), services.len());
 
     let protocols_bytes = std::fs::read("/etc/protocols").expect("system protocols file");
-    let protocols_expected = ProtocolDatabase::from_bytes(&protocols_bytes).expect("parse system protocols bytes");
+    let protocols_expected =
+        ProtocolDatabase::from_bytes(&protocols_bytes).expect("parse system protocols bytes");
     let protocols = ProtocolDatabase::from_system().expect("direct protocols loader");
     assert_eq!(protocols, protocols_expected);
     assert_eq!(protocols.iter().count(), protocols.len());
@@ -182,7 +228,10 @@ fn unsupported_addrconfig_is_explicit() {
     let result = resolver.lookup(
         Some("127.0.0.1"),
         None,
-        LookupOptions { flags: LookupFlags::ADDRCONFIG, ..LookupOptions::default() },
+        LookupOptions {
+            flags: LookupFlags::ADDRCONFIG,
+            ..LookupOptions::default()
+        },
     );
     assert_eq!(result, Err(crabc_rs::resolver::ResolveError::InvalidInput));
 }

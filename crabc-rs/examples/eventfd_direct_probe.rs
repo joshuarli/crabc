@@ -28,9 +28,7 @@ pub extern "C" fn crabc_rs_eventfd_direct_probe() -> i32 {
     if event::eventfd_read(&counter) != Err(Errno::AGAIN) {
         return 1;
     }
-    if event::eventfd_write(&counter, 5).is_err()
-        || event::eventfd_write(&counter, 7).is_err()
-    {
+    if event::eventfd_write(&counter, 5).is_err() || event::eventfd_write(&counter, 7).is_err() {
         return 2;
     }
     if event::eventfd_read(&counter) != Ok(12) {

@@ -6,7 +6,10 @@ fn process_thread_and_system_identity_use_direct_kernel_state() {
     assert!(pid.as_raw_pid() > 0);
     assert!(process::getppid().map_or(true, |parent| parent.as_raw_pid() > 0));
     process::test_kill_process(pid).expect("the current process accepts a signal-zero probe");
-    assert_eq!(process::getpgid(None).expect("get current process group"), process::getpgrp());
+    assert_eq!(
+        process::getpgid(None).expect("get current process group"),
+        process::getpgrp()
+    );
     assert!(thread::gettid().as_raw_pid() > 0);
     thread::sched_yield();
 
@@ -32,10 +35,18 @@ fn terminal_and_pty_operations_have_typed_linux_contracts() {
     assert!(termios::isatty(&slave));
     let mut attributes = termios::tcgetattr(&slave).expect("read slave terminal attributes");
     attributes.make_raw();
-    attributes.set_speed(9_600).expect("set a portable numeric baud rate");
-    assert_eq!((attributes.input_speed(), attributes.output_speed()), (9_600, 9_600));
+    attributes
+        .set_speed(9_600)
+        .expect("set a portable numeric baud rate");
+    assert_eq!(
+        (attributes.input_speed(), attributes.output_speed()),
+        (9_600, 9_600)
+    );
     assert_eq!(attributes.set_speed(123_456).unwrap_err(), Errno::INVAL);
-    assert_eq!((attributes.input_speed(), attributes.output_speed()), (9_600, 9_600));
+    assert_eq!(
+        (attributes.input_speed(), attributes.output_speed()),
+        (9_600, 9_600)
+    );
     termios::tcsetattr(&slave, termios::OptionalActions::Now, &attributes)
         .expect("apply raw terminal attributes");
     let size = termios::tcgetwinsize(&slave).expect("read slave terminal size");
@@ -61,8 +72,17 @@ fn shm_namespace_and_mount_errors_remain_direct_and_state_free() {
     .expect("create a close-on-exec shared-memory object");
     drop(descriptor);
     shm::unlink(&name).expect("unlink shared-memory object");
-    assert_eq!(shm::open("/", fs::OFlags::RDWR, fs::Mode::empty()).unwrap_err(), Errno::INVAL);
+    assert_eq!(
+        shm::open("/", fs::OFlags::RDWR, fs::Mode::empty()).unwrap_err(),
+        Errno::INVAL
+    );
 
-    let result = mount::unmount("/crabc-rs-c-abi-definitely-not-mounted", mount::UnmountFlags::empty());
-    assert!(result.is_err(), "a nonexistent mount point must not report success");
+    let result = mount::unmount(
+        "/crabc-rs-c-abi-definitely-not-mounted",
+        mount::UnmountFlags::empty(),
+    );
+    assert!(
+        result.is_err(),
+        "a nonexistent mount point must not report success"
+    );
 }

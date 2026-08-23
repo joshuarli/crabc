@@ -6,21 +6,10 @@ fn ip_value_types_round_trip_constructor_bits_and_octets() {
     assert_eq!(ipv4.octets(), [192, 0, 2, 7]);
     assert_eq!(Ipv4Addr::from_bits(ipv4.to_bits()), ipv4);
 
-    let ipv6 = Ipv6Addr::new(
-        0x2001,
-        0x0db8,
-        0,
-        0,
-        0,
-        0,
-        0x0042,
-        0x0007,
-    );
+    let ipv6 = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0x0042, 0x0007);
     assert_eq!(
         ipv6.octets(),
-        [
-            0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 0, 0x07,
-        ]
+        [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 0, 0x07,]
     );
     assert_eq!(Ipv6Addr::from_bits(ipv6.to_bits()), ipv6);
 }

@@ -5,7 +5,9 @@
 
 #![no_std]
 
-use crabc_rs::mm::{mlock, mlock_with, mmap_anonymous, munlock, munmap, MapFlags, MlockFlags, ProtFlags};
+use crabc_rs::mm::{
+    mlock, mlock_with, mmap_anonymous, munlock, munmap, MapFlags, MlockFlags, ProtFlags,
+};
 
 const PAGE_SIZE: usize = 4096;
 

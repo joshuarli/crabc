@@ -36,7 +36,9 @@ bitflags! {
 }
 
 impl From<OpenptFlags> for fs::OFlags {
-    fn from(value: OpenptFlags) -> Self { Self::from_bits_retain(value.bits()) }
+    fn from(value: OpenptFlags) -> Self {
+        Self::from_bits_retain(value.bits())
+    }
 }
 
 /// An owned Linux pseudoterminal master/slave pair.
@@ -75,12 +77,16 @@ impl PtyPair {
     /// Borrows the PTY master descriptor.
     #[inline]
     #[must_use]
-    pub fn master(&self) -> BorrowedFd<'_> { self.master.as_fd() }
+    pub fn master(&self) -> BorrowedFd<'_> {
+        self.master.as_fd()
+    }
 
     /// Borrows the PTY slave descriptor.
     #[inline]
     #[must_use]
-    pub fn slave(&self) -> BorrowedFd<'_> { self.slave.as_fd() }
+    pub fn slave(&self) -> BorrowedFd<'_> {
+        self.slave.as_fd()
+    }
 
     /// Transfers both descriptors out of the pair in master/slave order.
     #[inline]
@@ -107,7 +113,9 @@ impl PtyPair {
         let argument = usize::from(steal) as *mut u8;
         // SAFETY: The method contract requires a live PTY slave and a caller
         // that has serialized the process-global terminal transition.
-        unsafe { crabc_core::io::ioctl_raw(self.slave.as_raw_fd(), TIOCSCTTY, argument)?; }
+        unsafe {
+            crabc_core::io::ioctl_raw(self.slave.as_raw_fd(), TIOCSCTTY, argument)?;
+        }
         Ok(())
     }
 
@@ -159,7 +167,13 @@ pub fn unlockpt<Fd: AsFd>(fd: Fd) -> Result<()> {
     let mut unlocked = 0_i32;
     let fd = fd.as_fd();
     // SAFETY: TIOCSPTLCK reads one Linux int from stable storage.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCSPTLCK, (&mut unlocked as *mut i32).cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TIOCSPTLCK,
+            (&mut unlocked as *mut i32).cast(),
+        )?;
+    }
     Ok(())
 }
 
@@ -169,7 +183,13 @@ pub fn ioctl_tiocgptpeer<Fd: AsFd>(fd: Fd, flags: OpenptFlags) -> Result<OwnedFd
     let fd = fd.as_fd();
     // SAFETY: TIOCGPTPEER encodes `O_*` flags in the ioctl argument word and
     // returns a newly-owned descriptor as its successful integer result.
-    let raw = unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCGPTPEER, flags.bits() as usize as *mut u8)? };
+    let raw = unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TIOCGPTPEER,
+            flags.bits() as usize as *mut u8,
+        )?
+    };
     // SAFETY: a successful TIOCGPTPEER result is a newly allocated fd.
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
@@ -207,7 +227,9 @@ pub fn ptsname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString> 
     };
     // SAFETY: `ptsname_raw` initialized exactly `length + 1` bytes, including
     // the trailing NUL, in the vector's spare capacity.
-    unsafe { path.set_len(length + 1); }
+    unsafe {
+        path.set_len(length + 1);
+    }
     // SAFETY: The fixed ASCII PTY path has one trailing NUL and no interior
     // NUL bytes.
     Ok(unsafe { CString::from_vec_with_nul_unchecked(path) })
@@ -228,7 +250,9 @@ fn ptsname_raw<'buffer>(
         digits[digit_count] = b'0' + (value % 10) as u8;
         digit_count += 1;
         value /= 10;
-        if value == 0 { break; }
+        if value == 0 {
+            break;
+        }
     }
 
     let length = PTY_NAME_PREFIX.len() + digit_count;
@@ -255,6 +279,8 @@ fn pty_number<Fd: AsFd>(fd: Fd) -> Result<i32> {
     let mut number = 0_i32;
     let fd = fd.as_fd();
     // SAFETY: TIOCGPTN initializes one Linux int in stable writable storage.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCGPTN, (&mut number as *mut i32).cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCGPTN, (&mut number as *mut i32).cast())?;
+    }
     Ok(number)
 }

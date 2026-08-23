@@ -55,7 +55,10 @@ pub mod opcode {
         number: u8,
         data_size: usize,
     ) -> Opcode {
-        assert!(data_size <= SIZE_MASK as usize, "ioctl payload is too large");
+        assert!(
+            data_size <= SIZE_MASK as usize,
+            "ioctl payload is too large"
+        );
         let direction = match direction {
             Direction::None => 0,
             Direction::Read => 2,
@@ -132,7 +135,10 @@ pub unsafe trait Ioctl {
 /// See [`Ioctl`]. The typed request narrows the raw ABI but cannot prove a
 /// third-party driver follows the claimed protocol.
 #[inline]
-pub unsafe fn ioctl<Fd: AsFd, Request: Ioctl>(fd: Fd, mut request: Request) -> Result<Request::Output> {
+pub unsafe fn ioctl<Fd: AsFd, Request: Ioctl>(
+    fd: Fd,
+    mut request: Request,
+) -> Result<Request::Output> {
     let fd = fd.as_fd();
     let opcode = request.opcode();
     let argument = request.as_ptr();
@@ -245,7 +251,11 @@ impl<const OPCODE: Opcode, Input> Setter<OPCODE, Input> {
 
 impl<const OPCODE: Opcode, Input: fmt::Debug> fmt::Debug for Setter<OPCODE, Input> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("Setter").field(&OPCODE).field(&self.input).finish()
+        formatter
+            .debug_tuple("Setter")
+            .field(&OPCODE)
+            .field(&self.input)
+            .finish()
     }
 }
 

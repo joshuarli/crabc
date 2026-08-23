@@ -10,7 +10,10 @@ fn if_nameindex_includes_links_and_deduplicates_records() {
     let socket = ioctl_socket();
     let entries = netdevice::if_nameindex().expect("enumerate interface names");
 
-    assert!(!entries.is_empty(), "the kernel must expose at least loopback");
+    assert!(
+        !entries.is_empty(),
+        "the kernel must expose at least loopback"
+    );
     assert!(
         entries
             .iter()
@@ -20,9 +23,7 @@ fn if_nameindex_includes_links_and_deduplicates_records() {
 
     assert!(
         entries.iter().enumerate().all(|(position, entry)| {
-            entries[..position]
-                .iter()
-                .all(|previous| previous != entry)
+            entries[..position].iter().all(|previous| previous != entry)
         }),
         "musl-shaped enumeration must suppress duplicate index/name pairs"
     );
@@ -62,7 +63,9 @@ fn link_stream_is_owned_and_reports_loopback_without_duplicates() {
     netdevice::for_each_link_name(|entry| {
         assert!(entry.index().get() > 0);
         assert!(!entry.name().as_bytes().is_empty());
-        assert!(!entries.iter().any(|seen: &netdevice::InterfaceNameIndex| seen == &entry));
+        assert!(!entries
+            .iter()
+            .any(|seen: &netdevice::InterfaceNameIndex| seen == &entry));
         entries.push(entry);
         Ok(())
     })

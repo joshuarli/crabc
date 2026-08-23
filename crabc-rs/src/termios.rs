@@ -111,7 +111,14 @@ impl Termios {
     /// Sets this configuration to the POSIX raw-mode transformation.
     #[inline]
     pub fn make_raw(&mut self) {
-        self.input_modes &= !(0x0000_0001 | 0x0000_0002 | 0x0000_0008 | 0x0000_0020 | 0x0000_0040 | 0x0000_0080 | 0x0000_0100 | 0x0000_0400);
+        self.input_modes &= !(0x0000_0001
+            | 0x0000_0002
+            | 0x0000_0008
+            | 0x0000_0020
+            | 0x0000_0040
+            | 0x0000_0080
+            | 0x0000_0100
+            | 0x0000_0400);
         self.output_modes &= !0x0000_0001;
         self.local_modes &= !(0x0000_0001 | 0x0000_0002 | 0x0000_0008 | 0x0000_0040 | 0x0000_8000);
         self.control_modes = (self.control_modes & !(0x0000_0030 | 0x0000_0100)) | 0x0000_0030;
@@ -121,11 +128,15 @@ impl Termios {
 
     /// Returns the numeric input baud rate.
     #[inline]
-    pub const fn input_speed(&self) -> u32 { self.input_speed }
+    pub const fn input_speed(&self) -> u32 {
+        self.input_speed
+    }
 
     /// Returns the numeric output baud rate.
     #[inline]
-    pub const fn output_speed(&self) -> u32 { self.output_speed }
+    pub const fn output_speed(&self) -> u32 {
+        self.output_speed
+    }
 
     /// Sets both numeric baud rates.
     #[inline]
@@ -170,12 +181,16 @@ impl core::ops::Index<SpecialCodeIndex> for SpecialCodes {
     type Output = u8;
 
     #[inline]
-    fn index(&self, index: SpecialCodeIndex) -> &Self::Output { &self.0[index.0] }
+    fn index(&self, index: SpecialCodeIndex) -> &Self::Output {
+        &self.0[index.0]
+    }
 }
 
 impl core::ops::IndexMut<SpecialCodeIndex> for SpecialCodes {
     #[inline]
-    fn index_mut(&mut self, index: SpecialCodeIndex) -> &mut Self::Output { &mut self.0[index.0] }
+    fn index_mut(&mut self, index: SpecialCodeIndex) -> &mut Self::Output {
+        &mut self.0[index.0]
+    }
 }
 
 impl core::fmt::Debug for SpecialCodes {
@@ -192,7 +207,9 @@ impl core::fmt::Debug for SpecialCodes {
             let index = SpecialCodeIndex::from_raw(index);
             write!(formatter, "{:?}: {:?}", index, SpecialCode(self[index]))?;
         }
-        if !first { formatter.write_str(" ")?; }
+        if !first {
+            formatter.write_str(" ")?;
+        }
         formatter.write_str("}")
     }
 }
@@ -221,7 +238,9 @@ pub struct SpecialCodeIndex(usize);
 
 impl SpecialCodeIndex {
     #[inline]
-    const fn from_raw(index: usize) -> Self { Self(index) }
+    const fn from_raw(index: usize) -> Self {
+        Self(index)
+    }
 
     /// `VINTR` — interrupt character.
     pub const VINTR: Self = Self(0);
@@ -291,17 +310,30 @@ const _: [(); 19] = [(); core::mem::size_of::<SpecialCodes>()];
 /// Timing of a terminal-attribute update.
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[repr(u32)]
-pub enum OptionalActions { Now = 0, Drain = 1, Flush = 2 }
+pub enum OptionalActions {
+    Now = 0,
+    Drain = 1,
+    Flush = 2,
+}
 
 /// Queue selection for [`tcflush`].
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[repr(u32)]
-pub enum QueueSelector { IFlush = 0, OFlush = 1, IOFlush = 2 }
+pub enum QueueSelector {
+    IFlush = 0,
+    OFlush = 1,
+    IOFlush = 2,
+}
 
 /// Flow-control action for [`tcflow`].
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 #[repr(u32)]
-pub enum Action { OOff = 0, OOn = 1, IOff = 2, IOn = 3 }
+pub enum Action {
+    OOff = 0,
+    OOn = 1,
+    IOff = 2,
+    IOn = 3,
+}
 
 /// Linux `struct winsize`.
 #[repr(C)]
@@ -333,7 +365,13 @@ pub fn tcgetattr<Fd: AsFd>(fd: Fd) -> Result<Termios> {
     let fd = fd.as_fd();
     // SAFETY: `kernel` is the exact legacy Linux tty ABI, its speed words are
     // initialized above, and the descriptor borrow remains live for the call.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TCGETS, (&mut kernel as *mut KernelTermios).cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TCGETS,
+            (&mut kernel as *mut KernelTermios).cast(),
+        )?;
+    }
     let mut termios = Termios::from(kernel);
     termios.output_speed = decode_speed(termios.control_modes & CBAUD).ok_or(Errno::RANGE)?;
     let input = (termios.control_modes & CIBAUD) >> IBSHIFT;
@@ -352,17 +390,34 @@ pub fn tcsetattr<Fd: AsFd>(fd: Fd, action: OptionalActions, termios: &Termios) -
     let fd = fd.as_fd();
     // SAFETY: the legacy kernel reads this exact private record for the
     // selected action. It does not write through the argument pointer.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TCSETS + action as u32, (&mut kernel as *mut KernelTermios).cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TCSETS + action as u32,
+            (&mut kernel as *mut KernelTermios).cast(),
+        )?;
+    }
     Ok(())
 }
 
 /// Returns the terminal window size.
 #[inline]
 pub fn tcgetwinsize<Fd: AsFd>(fd: Fd) -> Result<Winsize> {
-    let mut size = Winsize { ws_row: 0, ws_col: 0, ws_xpixel: 0, ws_ypixel: 0 };
+    let mut size = Winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
     let fd = fd.as_fd();
     // SAFETY: TIOCGWINSZ initializes this exact Linux layout.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCGWINSZ, (&mut size as *mut Winsize).cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TIOCGWINSZ,
+            (&mut size as *mut Winsize).cast(),
+        )?;
+    }
     Ok(size)
 }
 
@@ -372,7 +427,13 @@ pub fn tcsetwinsize<Fd: AsFd>(fd: Fd, size: Winsize) -> Result<()> {
     let mut size = size;
     let fd = fd.as_fd();
     // SAFETY: TIOCSWINSZ reads this exact Linux layout.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCSWINSZ, (&mut size as *mut Winsize).cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(
+            fd.as_raw_fd(),
+            TIOCSWINSZ,
+            (&mut size as *mut Winsize).cast(),
+        )?;
+    }
     Ok(())
 }
 
@@ -407,7 +468,9 @@ pub fn tcsetpgrp<Fd: AsFd>(fd: Fd, pgrp: Pid) -> Result<()> {
     let mut pgrp = pgrp.as_raw_pid();
     let fd = fd.as_fd();
     // SAFETY: TIOCSPGRP reads one Linux int from stable storage.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCSPGRP, (&mut pgrp as *mut i32).cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(fd.as_raw_fd(), TIOCSPGRP, (&mut pgrp as *mut i32).cast())?;
+    }
     Ok(())
 }
 
@@ -427,7 +490,9 @@ fn ioctl_get_pid(fd: crate::BorrowedFd<'_>, request: u32) -> Result<Pid> {
     let mut raw = MaybeUninit::<i32>::uninit();
     // SAFETY: TIOCGPGRP and TIOCGSID each initialize one Linux `pid_t` on
     // success, and `raw` remains writable for the duration of the syscall.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), request, raw.as_mut_ptr().cast())?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(fd.as_raw_fd(), request, raw.as_mut_ptr().cast())?;
+    }
     // SAFETY: the successful ioctl initialized the complete pid_t value.
     let raw = unsafe { raw.assume_init() };
     Pid::from_raw(raw).ok_or(Errno::NOTSUP)
@@ -436,7 +501,9 @@ fn ioctl_get_pid(fd: crate::BorrowedFd<'_>, request: u32) -> Result<Pid> {
 /// Returns whether a descriptor is a terminal. This deliberately discards the
 /// underlying ioctl error, matching Rustix's boolean API.
 #[inline]
-pub fn isatty<Fd: AsFd>(fd: Fd) -> bool { tcgetattr(fd).is_ok() }
+pub fn isatty<Fd: AsFd>(fd: Fd) -> bool {
+    tcgetattr(fd).is_ok()
+}
 
 /// Returns the pathname of the tty open on `fd` into caller-owned storage.
 ///
@@ -496,10 +563,7 @@ pub fn ttyname<Fd: AsFd, B: Into<Vec<u8>>>(fd: Fd, reuse: B) -> Result<CString> 
 
 /// Implements the shared ttyname validation and pathname read for both the
 /// caller-buffered and allocating APIs. The returned length excludes NUL.
-fn ttyname_raw(
-    fd: crate::BorrowedFd<'_>,
-    buffer: &mut [MaybeUninit<u8>],
-) -> Result<usize> {
+fn ttyname_raw(fd: crate::BorrowedFd<'_>, buffer: &mut [MaybeUninit<u8>]) -> Result<usize> {
     let fd_stat = fs::fstat(fd)?;
 
     // A character-device mode bit alone is not enough to establish that an
@@ -513,11 +577,8 @@ fn ttyname_raw(
 
     let mut proc_path_storage = [0_u8; PROC_SELF_FD_BUFFER_LEN];
     let proc_self_fd_path = proc_self_fd_path(fd.as_raw_fd(), &mut proc_path_storage)?;
-    let (initialized, uninitialized) = fs::readlinkat_raw(
-        fs::CWD,
-        proc_self_fd_path,
-        &mut *buffer,
-    )?;
+    let (initialized, uninitialized) =
+        fs::readlinkat_raw(fs::CWD, proc_self_fd_path, &mut *buffer)?;
 
     // A full readlink buffer may have truncated the target; reserve space for
     // the NUL we add below and retry through the public allocation loop.
@@ -572,32 +633,63 @@ fn proc_self_fd_path<'buffer>(
 
 /// Waits for terminal output to drain.
 #[inline]
-pub fn tcdrain<Fd: AsFd>(fd: Fd) -> Result<()> { ioctl_value(fd, TCSBRK, 1) }
+pub fn tcdrain<Fd: AsFd>(fd: Fd) -> Result<()> {
+    ioctl_value(fd, TCSBRK, 1)
+}
 /// Flushes selected terminal queues.
 #[inline]
-pub fn tcflush<Fd: AsFd>(fd: Fd, queue: QueueSelector) -> Result<()> { ioctl_value(fd, TCFLSH, queue as i32) }
+pub fn tcflush<Fd: AsFd>(fd: Fd, queue: QueueSelector) -> Result<()> {
+    ioctl_value(fd, TCFLSH, queue as i32)
+}
 /// Applies terminal flow control.
 #[inline]
-pub fn tcflow<Fd: AsFd>(fd: Fd, action: Action) -> Result<()> { ioctl_value(fd, TCXONC, action as i32) }
+pub fn tcflow<Fd: AsFd>(fd: Fd, action: Action) -> Result<()> {
+    ioctl_value(fd, TCXONC, action as i32)
+}
 /// Sends a terminal break using Linux's implementation-defined duration.
 #[inline]
-pub fn tcsendbreak<Fd: AsFd>(fd: Fd) -> Result<()> { ioctl_value(fd, TCSBRK, 0) }
+pub fn tcsendbreak<Fd: AsFd>(fd: Fd) -> Result<()> {
+    ioctl_value(fd, TCSBRK, 0)
+}
 
 #[inline]
 fn ioctl_value<Fd: AsFd>(fd: Fd, request: u32, value: i32) -> Result<()> {
     let fd = fd.as_fd();
     // SAFETY: these tty requests encode their integer argument in the ioctl
     // pointer word and do not dereference it.
-    unsafe { crabc_core::io::ioctl_raw(fd.as_raw_fd(), request, value as isize as *mut u8)?; }
+    unsafe {
+        crabc_core::io::ioctl_raw(fd.as_raw_fd(), request, value as isize as *mut u8)?;
+    }
     Ok(())
 }
 
 fn speed_code(speed: u32) -> Option<u32> {
-    const SPEEDS: &[(u32, u32)] = &[(0, 0), (50, 1), (75, 2), (110, 3), (134, 4), (150, 5), (200, 6), (300, 7), (600, 8), (1200, 9), (1800, 10), (2400, 11), (4800, 12), (9600, 13), (19200, 14), (38400, 15)];
-    SPEEDS.iter().find_map(|&(rate, code)| (rate == speed).then_some(code))
+    const SPEEDS: &[(u32, u32)] = &[
+        (0, 0),
+        (50, 1),
+        (75, 2),
+        (110, 3),
+        (134, 4),
+        (150, 5),
+        (200, 6),
+        (300, 7),
+        (600, 8),
+        (1200, 9),
+        (1800, 10),
+        (2400, 11),
+        (4800, 12),
+        (9600, 13),
+        (19200, 14),
+        (38400, 15),
+    ];
+    SPEEDS
+        .iter()
+        .find_map(|&(rate, code)| (rate == speed).then_some(code))
 }
 
 fn decode_speed(code: u32) -> Option<u32> {
-    const SPEEDS: [u32; 16] = [0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400];
+    const SPEEDS: [u32; 16] = [
+        0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800, 2400, 4800, 9600, 19200, 38400,
+    ];
     SPEEDS.get(code as usize).copied()
 }

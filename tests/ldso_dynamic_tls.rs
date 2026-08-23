@@ -50,10 +50,16 @@ fn ldso_preserves_pthread_identity_across_dlopen_tls_replacement() {
         ])
         .status()
         .expect("failed to build dynamic TLS test executable");
-    assert!(status.success(), "dynamic TLS test executable compilation failed");
+    assert!(
+        status.success(),
+        "dynamic TLS test executable compilation failed"
+    );
 
     let output = Command::new(&binary)
-        .env("LD_LIBRARY_PATH", format!("{}:{}", temp_dir.display(), target.display()))
+        .env(
+            "LD_LIBRARY_PATH",
+            format!("{}:{}", temp_dir.display(), target.display()),
+        )
         .output()
         .expect("failed to run dynamic TLS test executable");
     assert!(

@@ -47,5 +47,8 @@ fn basic_fd_and_filesystem_contract_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "fd filesystem ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "fd filesystem ok\n"
+    );
 }

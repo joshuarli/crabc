@@ -24,7 +24,10 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let status = command
         .status()
         .expect("failed to compile the pthread mutex uncontended regression fixture");
-    assert!(status.success(), "pthread mutex uncontended regression fixture compilation failed");
+    assert!(
+        status.success(),
+        "pthread mutex uncontended regression fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {
@@ -53,7 +56,10 @@ fn pthread_mutex_uncontended_matches_pinned_musl() {
         reference_output.status.code(),
         String::from_utf8_lossy(&reference_output.stderr),
     );
-    assert_eq!(reference_output.stdout, b"pthread mutex uncontended contract ok\n");
+    assert_eq!(
+        reference_output.stdout,
+        b"pthread mutex uncontended contract ok\n"
+    );
     assert_eq!(
         candidate_output.status,
         reference_output.status,

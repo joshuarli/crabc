@@ -32,7 +32,11 @@ fn math_functions_under_libc_so() {
         "-Wl,--dynamic-linker".to_string(),
         ldso_path.to_str().unwrap().to_string(),
         "-L".to_string(),
-        manifest_dir.join("target/debug").to_str().unwrap().to_string(),
+        manifest_dir
+            .join("target/debug")
+            .to_str()
+            .unwrap()
+            .to_string(),
         src.to_str().unwrap().to_string(),
         "-Wl,--allow-shlib-undefined".to_string(),
         "-lc".to_string(),
@@ -46,7 +50,10 @@ fn math_functions_under_libc_so() {
     assert!(status.success(), "musl-gcc math_test compilation failed");
 
     let output = Command::new(&bin)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .output()
         .expect("failed to run math_test");
 

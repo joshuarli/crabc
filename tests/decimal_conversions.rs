@@ -12,15 +12,28 @@ fn decimal_conversions_under_libc_so() {
 
     let status = Command::new("musl-gcc")
         .args([
-            "-fPIE", "-pie", "-fno-builtin", "-D_GNU_SOURCE", "-I",
-            root.join("include").to_str().unwrap(), "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(), "-L",
-            target.to_str().unwrap(), source.to_str().unwrap(),
-            "-Wl,--allow-shlib-undefined", "-lc", "-o", binary.to_str().unwrap(),
+            "-fPIE",
+            "-pie",
+            "-fno-builtin",
+            "-D_GNU_SOURCE",
+            "-I",
+            root.join("include").to_str().unwrap(),
+            "-Wl,--dynamic-linker",
+            target.join("libldso.so").to_str().unwrap(),
+            "-L",
+            target.to_str().unwrap(),
+            source.to_str().unwrap(),
+            "-Wl,--allow-shlib-undefined",
+            "-lc",
+            "-o",
+            binary.to_str().unwrap(),
         ])
         .status()
         .expect("failed to compile decimal-conversion fixture");
-    assert!(status.success(), "decimal-conversion fixture compilation failed");
+    assert!(
+        status.success(),
+        "decimal-conversion fixture compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)

@@ -35,10 +35,7 @@ fn fnmatch_posix_classes_under_libldso() {
         ])
         .status()
         .expect("failed to run musl-gcc for fnmatch_test");
-    assert!(
-        status.success(),
-        "musl-gcc fnmatch_test compilation failed"
-    );
+    assert!(status.success(), "musl-gcc fnmatch_test compilation failed");
 
     let output = Command::new(&bin)
         .env(

@@ -46,31 +46,45 @@ pub struct User {
 impl User {
     /// Returns the login name exactly as recorded in the local file.
     #[must_use]
-    pub fn name(&self) -> &str { &self.name }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 
     /// Returns the password field, which is normally a placeholder such as `x`.
     #[must_use]
-    pub fn password(&self) -> &str { &self.password }
+    pub fn password(&self) -> &str {
+        &self.password
+    }
 
     /// Returns the numeric user identifier.
     #[must_use]
-    pub const fn uid(&self) -> Uid { self.uid }
+    pub const fn uid(&self) -> Uid {
+        self.uid
+    }
 
     /// Returns the primary numeric group identifier.
     #[must_use]
-    pub const fn gid(&self) -> Gid { self.gid }
+    pub const fn gid(&self) -> Gid {
+        self.gid
+    }
 
     /// Returns the GECOS field exactly as recorded.
     #[must_use]
-    pub fn gecos(&self) -> &str { &self.gecos }
+    pub fn gecos(&self) -> &str {
+        &self.gecos
+    }
 
     /// Returns the recorded home directory spelling.
     #[must_use]
-    pub fn home(&self) -> &str { &self.home }
+    pub fn home(&self) -> &str {
+        &self.home
+    }
 
     /// Returns the recorded login-shell spelling.
     #[must_use]
-    pub fn shell(&self) -> &str { &self.shell }
+    pub fn shell(&self) -> &str {
+        &self.shell
+    }
 }
 
 /// An immutable, source-order `/etc/passwd` snapshot.
@@ -85,7 +99,9 @@ impl UserDatabase {
         let mut entries = Vec::new();
         for line in input.split(|&byte| byte == b'\n') {
             let line = without_line_ending(line);
-            if ignorable(line) { continue; }
+            if ignorable(line) {
+                continue;
+            }
             let fields = split_exact(line, 7)?;
             entries.push(User {
                 name: required_text(fields[0])?,
@@ -119,25 +135,35 @@ impl UserDatabase {
 
     /// Returns records in source order, including duplicate identifiers.
     #[must_use]
-    pub fn entries(&self) -> &[User] { &self.entries }
+    pub fn entries(&self) -> &[User] {
+        &self.entries
+    }
 
     /// Returns whether this snapshot contains no records.
     #[must_use]
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 
     /// Returns the number of source records.
     #[must_use]
-    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 
     /// Iterates over records in source order.
-    pub fn iter(&self) -> core::slice::Iter<'_, User> { self.entries.iter() }
+    pub fn iter(&self) -> core::slice::Iter<'_, User> {
+        self.entries.iter()
+    }
 }
 
 impl<'a> IntoIterator for &'a UserDatabase {
     type Item = &'a User;
     type IntoIter = core::slice::Iter<'a, User>;
 
-    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
 }
 
 /// An owned conventional `/etc/group` record.
@@ -152,19 +178,27 @@ pub struct Group {
 impl Group {
     /// Returns the group name exactly as recorded.
     #[must_use]
-    pub fn name(&self) -> &str { &self.name }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 
     /// Returns the password field, which is normally a placeholder such as `x`.
     #[must_use]
-    pub fn password(&self) -> &str { &self.password }
+    pub fn password(&self) -> &str {
+        &self.password
+    }
 
     /// Returns the numeric group ID.
     #[must_use]
-    pub const fn gid(&self) -> Gid { self.gid }
+    pub const fn gid(&self) -> Gid {
+        self.gid
+    }
 
     /// Returns member login names in the file's comma-separated order.
     #[must_use]
-    pub fn members(&self) -> &[String] { &self.members }
+    pub fn members(&self) -> &[String] {
+        &self.members
+    }
 }
 
 /// An immutable, source-order `/etc/group` snapshot.
@@ -179,7 +213,9 @@ impl GroupDatabase {
         let mut entries = Vec::new();
         for line in input.split(|&byte| byte == b'\n') {
             let line = without_line_ending(line);
-            if ignorable(line) { continue; }
+            if ignorable(line) {
+                continue;
+            }
             let fields = split_exact(line, 4)?;
             entries.push(Group {
                 name: required_text(fields[0])?,
@@ -210,25 +246,35 @@ impl GroupDatabase {
 
     /// Returns records in source order, including duplicate identifiers.
     #[must_use]
-    pub fn entries(&self) -> &[Group] { &self.entries }
+    pub fn entries(&self) -> &[Group] {
+        &self.entries
+    }
 
     /// Returns whether this snapshot contains no records.
     #[must_use]
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 
     /// Returns the number of source records.
     #[must_use]
-    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 
     /// Iterates over records in source order.
-    pub fn iter(&self) -> core::slice::Iter<'_, Group> { self.entries.iter() }
+    pub fn iter(&self) -> core::slice::Iter<'_, Group> {
+        self.entries.iter()
+    }
 }
 
 impl<'a> IntoIterator for &'a GroupDatabase {
     type Item = &'a Group;
     type IntoIter = core::slice::Iter<'a, Group>;
 
-    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
 }
 
 /// The two conventional local account-file snapshots acquired together.
@@ -240,10 +286,7 @@ pub struct Database {
 
 impl Database {
     /// Parses independently supplied passwd and group snapshots.
-    pub fn from_bytes(
-        passwd: &[u8],
-        group: &[u8],
-    ) -> core::result::Result<Self, DatabaseError> {
+    pub fn from_bytes(passwd: &[u8], group: &[u8]) -> core::result::Result<Self, DatabaseError> {
         Ok(Self {
             users: UserDatabase::from_bytes(passwd)?,
             groups: GroupDatabase::from_bytes(group)?,
@@ -263,11 +306,15 @@ impl Database {
 
     /// Returns the owned passwd snapshot.
     #[must_use]
-    pub const fn users(&self) -> &UserDatabase { &self.users }
+    pub const fn users(&self) -> &UserDatabase {
+        &self.users
+    }
 
     /// Returns the owned group snapshot.
     #[must_use]
-    pub const fn groups(&self) -> &GroupDatabase { &self.groups }
+    pub const fn groups(&self) -> &GroupDatabase {
+        &self.groups
+    }
 }
 
 fn without_line_ending(line: &[u8]) -> &[u8] {
@@ -278,25 +325,42 @@ fn ignorable(line: &[u8]) -> bool {
     line.is_empty() || line.first() == Some(&b'#')
 }
 
-fn split_exact<'a>(line: &'a [u8], expected: usize) -> core::result::Result<Vec<&'a [u8]>, DatabaseError> {
+fn split_exact<'a>(
+    line: &'a [u8],
+    expected: usize,
+) -> core::result::Result<Vec<&'a [u8]>, DatabaseError> {
     let fields: Vec<_> = line.split(|&byte| byte == b':').collect();
-    if fields.len() == expected { Ok(fields) } else { Err(DatabaseError::InvalidInput) }
+    if fields.len() == expected {
+        Ok(fields)
+    } else {
+        Err(DatabaseError::InvalidInput)
+    }
 }
 
 fn required_text(value: &[u8]) -> core::result::Result<String, DatabaseError> {
-    if value.is_empty() { Err(DatabaseError::InvalidInput) } else { text(value) }
+    if value.is_empty() {
+        Err(DatabaseError::InvalidInput)
+    } else {
+        text(value)
+    }
 }
 
 fn text(value: &[u8]) -> core::result::Result<String, DatabaseError> {
-    if value.contains(&0) { return Err(DatabaseError::InvalidInput); }
+    if value.contains(&0) {
+        return Err(DatabaseError::InvalidInput);
+    }
     String::from_utf8(value.to_vec()).map_err(|_| DatabaseError::InvalidInput)
 }
 
 fn identifier(value: &[u8]) -> core::result::Result<u32, DatabaseError> {
-    if value.is_empty() { return Err(DatabaseError::InvalidInput); }
+    if value.is_empty() {
+        return Err(DatabaseError::InvalidInput);
+    }
     let mut result = 0u64;
     for &byte in value {
-        if !byte.is_ascii_digit() { return Err(DatabaseError::InvalidInput); }
+        if !byte.is_ascii_digit() {
+            return Err(DatabaseError::InvalidInput);
+        }
         result = result
             .checked_mul(10)
             .and_then(|number| number.checked_add((byte - b'0') as u64))
@@ -306,8 +370,13 @@ fn identifier(value: &[u8]) -> core::result::Result<u32, DatabaseError> {
 }
 
 fn members(value: &[u8]) -> core::result::Result<Vec<String>, DatabaseError> {
-    if value.is_empty() { return Ok(Vec::new()); }
-    value.split(|&byte| byte == b',').map(required_text).collect()
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(|&byte| byte == b',')
+        .map(required_text)
+        .collect()
 }
 
 const MAX_SYSTEM_FILE_BYTES: usize = 1024 * 1024;
@@ -323,9 +392,16 @@ fn read_system_file(path: &[u8]) -> core::result::Result<Vec<u8>, DatabaseError>
             Err(crate::Errno::INTR) => continue,
             Err(error) => return Err(DatabaseError::System(error)),
         };
-        if read == 0 { break; }
-        let new_length = snapshot.len().checked_add(read).ok_or(DatabaseError::Overflow)?;
-        if new_length > MAX_SYSTEM_FILE_BYTES { return Err(DatabaseError::Overflow); }
+        if read == 0 {
+            break;
+        }
+        let new_length = snapshot
+            .len()
+            .checked_add(read)
+            .ok_or(DatabaseError::Overflow)?;
+        if new_length > MAX_SYSTEM_FILE_BYTES {
+            return Err(DatabaseError::Overflow);
+        }
         snapshot.extend_from_slice(&chunk[..read]);
     }
     Ok(snapshot)

@@ -39,7 +39,10 @@ fn pthread_lifecycle_stress_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for pthread_stress_test");
-    assert!(status.success(), "musl-gcc pthread_stress_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc pthread_stress_test compilation failed"
+    );
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", target)
@@ -52,5 +55,8 @@ fn pthread_lifecycle_stress_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "pthread stress ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "pthread stress ok\n"
+    );
 }

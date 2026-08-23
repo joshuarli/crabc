@@ -9,10 +9,18 @@ fn ldso_runs_real_printf_binary() {
     let fixtures = manifest_dir.join("tests/fixtures");
 
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
-    assert!(ldso_path.exists(), "libldso.so not found at {}", ldso_path.display());
+    assert!(
+        ldso_path.exists(),
+        "libldso.so not found at {}",
+        ldso_path.display()
+    );
 
     let libc_path = manifest_dir.join("target/debug/libc.so");
-    assert!(libc_path.exists(), "libc.so not found at {}", libc_path.display());
+    assert!(
+        libc_path.exists(),
+        "libc.so not found at {}",
+        libc_path.display()
+    );
 
     let hello_src = fixtures.join("hello.c");
     let hello_bin = test_support::TempArtifact::new("hello");
@@ -26,7 +34,7 @@ fn ldso_runs_real_printf_binary() {
             manifest_dir.join("target/debug").to_str().unwrap(),
             hello_src.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
-                        "-lc",
+            "-lc",
             "-o",
             hello_bin.to_str().unwrap(),
         ])
@@ -35,7 +43,10 @@ fn ldso_runs_real_printf_binary() {
     assert!(status.success(), "musl-gcc hello compilation failed");
 
     let output = Command::new(&hello_bin)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .output()
         .expect("failed to run hello");
 
@@ -47,8 +58,7 @@ fn ldso_runs_real_printf_binary() {
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "hello\n");
     assert_eq!(
-        output.stderr,
-        b"",
+        output.stderr, b"",
         "a successfully started program must not receive loader diagnostics on stderr"
     );
 }

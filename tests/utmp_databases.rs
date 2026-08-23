@@ -30,10 +30,7 @@ fn utmp_databases_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for utmp_databases_test");
-    assert!(
-        status.success(),
-        "utmp_databases_test compilation failed"
-    );
+    assert!(status.success(), "utmp_databases_test compilation failed");
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)
         .output()

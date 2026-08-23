@@ -65,7 +65,13 @@ pub fn mount<'a, Source: Arg, Target: Arg, Fs: Arg, Data: Into<Option<&'a CStr>>
         target.into_with_c_str(|target| {
             file_system_type.into_with_c_str(|file_system_type| {
                 option_into_with_c_str(data.into(), |data| {
-                    crabc_core::mount::mount(Some(source), target, Some(file_system_type), flags.bits(), data)
+                    crabc_core::mount::mount(
+                        Some(source),
+                        target,
+                        Some(file_system_type),
+                        flags.bits(),
+                        data,
+                    )
                 })
             })
         })

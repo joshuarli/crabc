@@ -46,5 +46,8 @@ fn ldso_preserves_static_tls_initializers_and_alignment() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "ldso tls alignment ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "ldso tls alignment ok\n"
+    );
 }

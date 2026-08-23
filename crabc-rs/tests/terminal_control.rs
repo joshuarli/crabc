@@ -1,10 +1,9 @@
 use crabc_rs::{pipe, process, pty, termios, Errno, OwnedFd};
 
 fn pty_master() -> OwnedFd {
-    let master = pty::openpt(
-        pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC,
-    )
-    .expect("open disposable PTY master");
+    let master =
+        pty::openpt(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
+            .expect("open disposable PTY master");
     pty::grantpt(&master).expect("grant PTY");
     pty::unlockpt(&master).expect("unlock PTY");
     master
@@ -19,10 +18,11 @@ fn terminal_control_child(master: &OwnedFd) -> ! {
     // Opening the slave without O_NOCTTY from this new session makes this
     // child the controlling-terminal/session owner. The parent never changes
     // its own session or foreground process group.
-    let slave = match pty::ioctl_tiocgptpeer(master, pty::OpenptFlags::RDWR | pty::OpenptFlags::CLOEXEC) {
-        Ok(slave) => slave,
-        Err(_) => process::exit_immediately(11),
-    };
+    let slave =
+        match pty::ioctl_tiocgptpeer(master, pty::OpenptFlags::RDWR | pty::OpenptFlags::CLOEXEC) {
+            Ok(slave) => slave,
+            Err(_) => process::exit_immediately(11),
+        };
     let original = match termios::tcgetattr(&slave) {
         Ok(attributes) => attributes,
         Err(_) => process::exit_immediately(12),
@@ -65,7 +65,8 @@ fn terminal_control_child(master: &OwnedFd) -> ! {
 #[test]
 fn terminal_control_round_trips_attributes_and_session_state_in_isolated_child() {
     let master = pty_master();
-    let child = match unsafe { process::fork_raw() }.expect("fork isolated terminal-control child") {
+    let child = match unsafe { process::fork_raw() }.expect("fork isolated terminal-control child")
+    {
         process::ForkResult::Parent { child } => child,
         process::ForkResult::Child => terminal_control_child(&master),
     };
@@ -73,7 +74,11 @@ fn terminal_control_round_trips_attributes_and_session_state_in_isolated_child()
     let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
         .expect("reap terminal-control child")
         .expect("terminal-control child status");
-    assert_eq!(status.exit_status(), Some(0), "terminal-control child status: {status:?}");
+    assert_eq!(
+        status.exit_status(),
+        Some(0),
+        "terminal-control child status: {status:?}"
+    );
 }
 
 #[test]
@@ -84,7 +89,10 @@ fn terminal_control_ioctls_report_notty_for_a_non_terminal() {
     let pid = process::getpid();
 
     assert!(matches!(termios::tcgetattr(&reader), Err(Errno::NOTTY)));
-    assert_eq!(termios::tcsetattr(&reader, termios::OptionalActions::Now, &attributes), Err(Errno::NOTTY));
+    assert_eq!(
+        termios::tcsetattr(&reader, termios::OptionalActions::Now, &attributes),
+        Err(Errno::NOTTY)
+    );
     assert_eq!(termios::tcgetpgrp(&reader), Err(Errno::NOTTY));
     assert_eq!(termios::tcsetpgrp(&reader, pid), Err(Errno::NOTTY));
     assert_eq!(termios::tcgetsid(&reader), Err(Errno::NOTTY));

@@ -3,8 +3,8 @@
 //! These operations issue Linux/AArch64 syscalls through `crabc-core`; they
 //! do not use libc's process wrappers or its thread-local `errno` channel.
 
-use core::fmt;
 use core::ffi::c_void;
+use core::fmt;
 use core::mem::MaybeUninit;
 use core::num::NonZeroI32;
 use core::ptr;
@@ -16,19 +16,19 @@ use crate::buffer::Buffer;
 pub use crate::fs::Mode;
 use crate::path::Arg;
 use crate::signal::SigInfo;
-use crate::{AsFd, OwnedFd, Result};
-use core::ffi::CStr;
 #[cfg(feature = "alloc")]
 use crate::Errno;
+use crate::{AsFd, OwnedFd, Result};
+use core::ffi::CStr;
 
+#[cfg(feature = "alloc")]
+use crate::{BorrowedFd, RawFd};
 #[cfg(feature = "alloc")]
 use alloc::ffi::CString;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 #[cfg(feature = "alloc")]
 use core::convert::Infallible;
-#[cfg(feature = "alloc")]
-use crate::{BorrowedFd, RawFd};
 
 /// A process identifier as a raw Linux `pid_t`.
 pub type RawPid = i32;
@@ -1208,11 +1208,8 @@ pub fn getpriority_user(uid: Uid) -> Result<Priority> {
 /// rejects an inverted kernel record as [`crate::Errno::RANGE`] rather than
 /// exposing an impossible range.
 #[inline]
-pub fn scheduler_priority_bounds(
-    policy: SchedulerPolicy,
-) -> Result<SchedulerPriorityBounds> {
-    let (minimum, maximum) =
-        crabc_core::process::scheduler_priority_bounds_raw(policy.as_raw())?;
+pub fn scheduler_priority_bounds(policy: SchedulerPolicy) -> Result<SchedulerPriorityBounds> {
+    let (minimum, maximum) = crabc_core::process::scheduler_priority_bounds_raw(policy.as_raw())?;
     if minimum > maximum {
         return Err(crate::Errno::RANGE);
     }
@@ -1739,7 +1736,10 @@ fn wait_raw(target: i32, options: WaitOptions) -> Result<Option<(Pid, WaitStatus
         return Ok(None);
     }
     // Linux returns a positive child PID whenever wait4 reports a state.
-    Ok(Some((unsafe { Pid::from_raw_unchecked(pid) }, WaitStatus(status))))
+    Ok(Some((
+        unsafe { Pid::from_raw_unchecked(pid) },
+        WaitStatus(status),
+    )))
 }
 
 /// Target selection for Linux `waitid`.
@@ -1914,7 +1914,16 @@ pub unsafe fn register_atfork(
     }
     // SAFETY: The atfork lock serializes mutation; `count` was checked to fit
     // the static array. Registered callbacks are copied function pointers.
-    unsafe { core::ptr::addr_of_mut!(ATFORK_CALLBACKS).cast::<AtFork>().add(count).write(AtFork { prepare, parent, child }) };
+    unsafe {
+        core::ptr::addr_of_mut!(ATFORK_CALLBACKS)
+            .cast::<AtFork>()
+            .add(count)
+            .write(AtFork {
+                prepare,
+                parent,
+                child,
+            })
+    };
     ATFORK_COUNT.store(count + 1, Ordering::Release);
     atfork_unlock();
     Ok(())
@@ -1937,9 +1946,8 @@ pub unsafe fn fork() -> Result<ForkResult> {
     // native atfork registry while it is between prepare and child/parent
     // completion. Failure is retained as a non-fatal kernel condition; clone
     // itself still supplies the definitive result.
-    let mask_changed = unsafe {
-        crabc_core::signal::rt_sigprocmask_raw(0, &all_signals, &mut old_mask).is_ok()
-    };
+    let mask_changed =
+        unsafe { crabc_core::signal::rt_sigprocmask_raw(0, &all_signals, &mut old_mask).is_ok() };
     let result = unsafe { fork_raw() };
     if has_handlers {
         match result {
@@ -1950,9 +1958,8 @@ pub unsafe fn fork() -> Result<ForkResult> {
     if mask_changed {
         // SAFETY: `old_mask` is the initialized word returned by the earlier
         // successful mask query, and no Rust memory survives this syscall.
-        let _ = unsafe {
-            crabc_core::signal::rt_sigprocmask_raw(2, &old_mask, core::ptr::null_mut())
-        };
+        let _ =
+            unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &old_mask, core::ptr::null_mut()) };
     }
     result
 }
@@ -1973,7 +1980,11 @@ struct AtFork {
     child: Option<unsafe extern "C" fn()>,
 }
 
-const EMPTY_ATFORK: AtFork = AtFork { prepare: None, parent: None, child: None };
+const EMPTY_ATFORK: AtFork = AtFork {
+    prepare: None,
+    parent: None,
+    child: None,
+};
 
 // This process-global registry intentionally belongs to the native facade,
 // rather than the stateless syscall crate. It uses fixed storage so callback
@@ -2136,7 +2147,10 @@ impl<'fd> FdAction<'fd> {
     /// Prepares a child `dup2` action while retaining a borrow of `from`.
     #[inline]
     pub fn dup2<Fd: AsFd + ?Sized>(from: &'fd Fd, to: RawFd) -> Self {
-        Self::Dup2 { from: from.as_fd(), to }
+        Self::Dup2 {
+            from: from.as_fd(),
+            to,
+        }
     }
 }
 
@@ -2160,7 +2174,11 @@ impl<'mask> SpawnOptions<'mask> {
     #[inline]
     #[must_use]
     pub const fn new() -> Self {
-        Self { process_group: None, new_session: false, signal_mask: None }
+        Self {
+            process_group: None,
+            new_session: false,
+            signal_mask: None,
+        }
     }
 
     /// Assigns the child to `pgid`; `None` creates a group led by the child.
@@ -2336,7 +2354,11 @@ impl<'fd> PreparedExec<'fd> {
             // SAFETY: `mask` is a one-word kernel signal-set value retained by
             // this prepared object's borrow through the direct syscall.
             unsafe {
-                crabc_core::signal::rt_sigprocmask_raw(2, mask.kernel_bits(), core::ptr::null_mut())?;
+                crabc_core::signal::rt_sigprocmask_raw(
+                    2,
+                    mask.kernel_bits(),
+                    core::ptr::null_mut(),
+                )?;
             }
         }
         for action in &self.actions {

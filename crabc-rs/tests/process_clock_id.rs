@@ -21,14 +21,17 @@ fn process_clock_id_maps_unknown_process_to_srch() {
     // wrapping to the ordinary current-process clock. The typed resolver must
     // reject it instead of validating an aliased clock for the wrong process.
     let pid = process::Pid::from_raw(i32::MAX).expect("positive test PID");
-    assert_eq!(time::clock_getcpuclockid(Some(pid)), Err(crabc_rs::Errno::SRCH));
+    assert_eq!(
+        time::clock_getcpuclockid(Some(pid)),
+        Err(crabc_rs::Errno::SRCH)
+    );
 }
 
 #[test]
 fn process_clock_id_can_read_cpu_time_through_dynamic_clock() {
     let id = time::clock_getcpuclockid(None).expect("current process CPU clock");
-    let before = time::clock_gettime_dynamic(DynamicClockId::Process(id))
-        .expect("process CPU clock query");
+    let before =
+        time::clock_gettime_dynamic(DynamicClockId::Process(id)).expect("process CPU clock query");
 
     let mut checksum = 0u64;
     for value in 0..500_000u64 {
@@ -36,8 +39,8 @@ fn process_clock_id_can_read_cpu_time_through_dynamic_clock() {
         std::hint::black_box(checksum);
     }
 
-    let after = time::clock_gettime_dynamic(DynamicClockId::Process(id))
-        .expect("process CPU clock query");
+    let after =
+        time::clock_gettime_dynamic(DynamicClockId::Process(id)).expect("process CPU clock query");
     assert_ne!(checksum, 0);
     assert!((0..1_000_000_000).contains(&before.tv_nsec));
     assert!((0..1_000_000_000).contains(&after.tv_nsec));

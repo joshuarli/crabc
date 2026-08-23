@@ -232,12 +232,5 @@ pub unsafe fn vmsplice<PipeFd: AsFd>(
     // SAFETY: The caller upholds vmsplice's direction, page-retention, and
     // mutability obligations documented above. The iovec array remains live
     // for the syscall and its elements preserve their source lifetimes.
-    unsafe {
-        crabc_core::pipe::vmsplice_raw(
-            fd.as_fd().as_raw_fd(),
-            iovecs,
-            count,
-            flags.bits(),
-        )
-    }
+    unsafe { crabc_core::pipe::vmsplice_raw(fd.as_fd().as_raw_fd(), iovecs, count, flags.bits()) }
 }

@@ -29,7 +29,10 @@ fn stdio_extension_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to compile stdio extension fixture");
-    assert!(status.success(), "stdio extension fixture compilation failed");
+    assert!(
+        status.success(),
+        "stdio extension fixture compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)

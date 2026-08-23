@@ -158,10 +158,7 @@ impl CpuSet {
     /// Counts the CPUs present in this affinity mask.
     #[inline]
     pub fn count(&self) -> u32 {
-        self.0
-            .iter()
-            .map(|word| word.count_ones())
-            .sum()
+        self.0.iter().map(|word| word.count_ones()).sum()
     }
 
     /// Returns whether the mask contains no CPUs.
@@ -210,7 +207,11 @@ pub fn sched_getaffinity(pid: Option<Pid>) -> Result<CpuSet> {
         // SAFETY: `written <= size` above, and the remainder lies within the
         // initialized mask storage returned by the kernel.
         unsafe {
-            core::ptr::write_bytes(mask.0.as_mut_ptr().cast::<u8>().add(written), 0, size - written);
+            core::ptr::write_bytes(
+                mask.0.as_mut_ptr().cast::<u8>().add(written),
+                0,
+                size - written,
+            );
         }
     }
     Ok(mask)
@@ -229,11 +230,7 @@ pub fn sched_setaffinity(pid: Option<Pid>, cpuset: &CpuSet) -> Result<()> {
     let size = core::mem::size_of_val(&cpuset.0);
     // SAFETY: `cpuset` owns readable storage for exactly `size` bytes.
     unsafe {
-        crabc_core::thread::sched_setaffinity_raw(
-            Pid::as_raw(pid),
-            cpuset.0.as_ptr().cast(),
-            size,
-        )
+        crabc_core::thread::sched_setaffinity_raw(Pid::as_raw(pid), cpuset.0.as_ptr().cast(), size)
     }
 }
 

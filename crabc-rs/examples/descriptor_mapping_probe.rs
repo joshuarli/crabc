@@ -53,11 +53,10 @@ pub extern "C" fn crabc_rs_descriptor_mapping_probe() -> i32 {
         Ok(duplicate) => duplicate,
         Err(error) => return -error.raw(),
     };
-    let cloexec_duplicate =
-        match io::fcntl_dupfd_cloexec(&file, fcntl_duplicate.as_raw_fd() + 1) {
-            Ok(duplicate) => duplicate,
-            Err(error) => return -error.raw(),
-        };
+    let cloexec_duplicate = match io::fcntl_dupfd_cloexec(&file, fcntl_duplicate.as_raw_fd() + 1) {
+        Ok(duplicate) => duplicate,
+        Err(error) => return -error.raw(),
+    };
     if let Err(error) = io::fcntl_getfd(&cloexec_duplicate) {
         return -error.raw();
     }
@@ -111,21 +110,15 @@ pub extern "C" fn crabc_rs_descriptor_mapping_probe() -> i32 {
         return -error.raw();
     }
     let mut events = [MaybeUninit::uninit(); 1];
-    if let Err(error) = event::epoll::wait(
-        &epoll,
-        &mut events,
-        Some(&time::Timespec::default()),
-    ) {
+    if let Err(error) = event::epoll::wait(&epoll, &mut events, Some(&time::Timespec::default())) {
         return -error.raw();
     }
 
-    let timer = match time::timerfd_create(
-        time::TimerfdClockId::Monotonic,
-        time::TimerfdFlags::CLOEXEC,
-    ) {
-        Ok(timer) => timer,
-        Err(error) => return -error.raw(),
-    };
+    let timer =
+        match time::timerfd_create(time::TimerfdClockId::Monotonic, time::TimerfdFlags::CLOEXEC) {
+            Ok(timer) => timer,
+            Err(error) => return -error.raw(),
+        };
     if let Err(error) = time::timerfd_settime(
         &timer,
         time::TimerfdTimerFlags::empty(),

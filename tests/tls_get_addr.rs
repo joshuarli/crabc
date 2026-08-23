@@ -48,7 +48,10 @@ fn public_tls_get_addr_resolves_a_dso_tls_image() {
     assert!(status.success(), "TLS ABI test compilation failed");
 
     let output = Command::new(&binary)
-        .env("LD_LIBRARY_PATH", format!("{}:{}", temp_dir.display(), target.display()))
+        .env(
+            "LD_LIBRARY_PATH",
+            format!("{}:{}", temp_dir.display(), target.display()),
+        )
         .output()
         .expect("failed to run TLS ABI test");
     assert!(

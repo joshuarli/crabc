@@ -31,7 +31,10 @@ fn ldso_dlerror_is_thread_local() {
         ])
         .status()
         .expect("failed to run musl-gcc for dlerror thread fixture");
-    assert!(status.success(), "dlerror thread fixture compilation failed");
+    assert!(
+        status.success(),
+        "dlerror thread fixture compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)
@@ -43,5 +46,8 @@ fn ldso_dlerror_is_thread_local() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "dlerror threads ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "dlerror threads ok\n"
+    );
 }

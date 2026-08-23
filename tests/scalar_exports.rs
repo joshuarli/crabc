@@ -11,10 +11,20 @@ fn scalar_math_and_bit_exports_under_libc_so() {
     let binary = test_support::TempArtifact::new("crabc-c-abi-scalar");
     let status = Command::new("musl-gcc")
         .args([
-            "-fPIE", "-pie", "-fno-builtin", "-I", root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker", target.join("libldso.so").to_str().unwrap(), "-L",
-            target.to_str().unwrap(), source.to_str().unwrap(), "-Wl,--allow-shlib-undefined",
-            "-lc", "-o", binary.to_str().unwrap(),
+            "-fPIE",
+            "-pie",
+            "-fno-builtin",
+            "-I",
+            root.join("include").to_str().unwrap(),
+            "-Wl,--dynamic-linker",
+            target.join("libldso.so").to_str().unwrap(),
+            "-L",
+            target.to_str().unwrap(),
+            source.to_str().unwrap(),
+            "-Wl,--allow-shlib-undefined",
+            "-lc",
+            "-o",
+            binary.to_str().unwrap(),
         ])
         .status()
         .expect("failed to compile scalar fixture");
@@ -24,6 +34,14 @@ fn scalar_math_and_bit_exports_under_libc_so() {
         .output()
         .expect("failed to run scalar fixture");
     let _ = std::fs::remove_file(&binary);
-    assert!(output.status.success(), "stdout: {}, stderr: {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi scalar exports ok\n");
+    assert!(
+        output.status.success(),
+        "stdout: {}, stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi scalar exports ok\n"
+    );
 }

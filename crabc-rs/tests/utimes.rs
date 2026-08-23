@@ -61,14 +61,8 @@ fn utimes_follows_a_final_symlink_and_updates_the_target() {
 
     fs::utimes(LINK_PATH, None).expect("set target timestamps to current time");
     let current = fs::fstat(&target).expect("observe current target timestamps");
-    assert!(
-        current.st_atime > 12
-            || current.st_atime == 12 && current.st_atime_nsec > 222_222_000
-    );
-    assert!(
-        current.st_mtime > 12
-            || current.st_mtime == 12 && current.st_mtime_nsec > 222_222_000
-    );
+    assert!(current.st_atime > 12 || current.st_atime == 12 && current.st_atime_nsec > 222_222_000);
+    assert!(current.st_mtime > 12 || current.st_mtime == 12 && current.st_mtime_nsec > 222_222_000);
 
     drop(target);
     remove_stale(LINK_PATH);

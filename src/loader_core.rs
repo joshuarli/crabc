@@ -452,8 +452,6 @@ pub type Arch = Aarch64;
 #[cfg(target_arch = "riscv64")]
 pub type Arch = Riscv64;
 
-
-
 // Architecture-specific syscall numbers
 #[cfg(target_arch = "x86_64")]
 mod sysnr {
@@ -478,7 +476,17 @@ pub unsafe fn sys_mmap(
     fd: i32,
     offset: i64,
 ) -> *mut u8 {
-    unsafe { <Arch as Syscalls>::syscall6(SYS_MMAP, addr as i64, length as i64, prot as i64, flags as i64, fd as i64, offset) as *mut u8 }
+    unsafe {
+        <Arch as Syscalls>::syscall6(
+            SYS_MMAP,
+            addr as i64,
+            length as i64,
+            prot as i64,
+            flags as i64,
+            fd as i64,
+            offset,
+        ) as *mut u8
+    }
 }
 
 pub fn parse_ehdr(data: &[u8]) -> Result<Ehdr, &'static str> {
@@ -660,7 +668,7 @@ pub unsafe fn self_relocate(base: usize, phdrs: &[Phdr]) {
 
         while pos + 16 <= dyn_end {
             let d_tag = u64::from_le_bytes(unsafe { *(pos as *const [u8; 8]) });
-            let d_val = u64::from_le_bytes(unsafe { *(((pos + 8) as *const [u8; 8])) });
+            let d_val = u64::from_le_bytes(unsafe { *((pos + 8) as *const [u8; 8]) });
             if d_tag == DT_NULL {
                 break;
             }

@@ -30,7 +30,10 @@ fn c_clock_gettime_uses_vdso_in_the_steady_state_hot_loop() {
         ])
         .status()
         .expect("failed to compile the vDSO clock_gettime fixture");
-    assert!(status.success(), "vDSO clock_gettime fixture compilation failed");
+    assert!(
+        status.success(),
+        "vDSO clock_gettime fixture compilation failed"
+    );
 
     let output = Command::new(&*binary)
         .env("LD_LIBRARY_PATH", &target)

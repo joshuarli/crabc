@@ -63,10 +63,16 @@ pub extern "C" fn crabc_rs_calendar_local_direct_probe() -> i32 {
         Ok(local) => local,
         Err(error) => return -error.raw(),
     };
-    if (local.calendar().year(), local.calendar().month(), local.calendar().day())
-        != (2024, 3, 10)
-        || (local.calendar().hour(), local.calendar().minute(), local.calendar().second())
-            != (3, 0, 0)
+    if (
+        local.calendar().year(),
+        local.calendar().month(),
+        local.calendar().day(),
+    ) != (2024, 3, 10)
+        || (
+            local.calendar().hour(),
+            local.calendar().minute(),
+            local.calendar().second(),
+        ) != (3, 0, 0)
         || local.offset().seconds_east_of_utc() != -14_400
         || !local.is_daylight_saving()
         || local.abbreviation() != b"EDT"

@@ -273,19 +273,16 @@ pub fn sync_file_range(
     if SyncFileRangeFlags::from_bits(flags.bits()).is_none()
         || offset > i64::MAX as u64
         || length > i64::MAX as u64
-        || offset.checked_add(length).map_or(true, |end| end > i64::MAX as u64)
+        || offset
+            .checked_add(length)
+            .map_or(true, |end| end > i64::MAX as u64)
     {
         return Err(crate::Errno::INVAL);
     }
 
     // The checks above establish the exact non-negative signed `loff_t`
     // representation and preserve Linux's zero-length-to-EOF convention.
-    crabc_core::io::sync_file_range(
-        fd.as_raw_fd(),
-        offset as i64,
-        length as i64,
-        flags.bits(),
-    )
+    crabc_core::io::sync_file_range(fd.as_raw_fd(), offset as i64, length as i64, flags.bits())
 }
 
 /// Reads bytes into initialized or potentially uninitialized storage.
@@ -348,9 +345,8 @@ pub fn pread<Fd: AsFd, Buf: Buffer<u8>>(
     let (pointer, length) = buffer.parts_mut();
     // SAFETY: `Buffer` supplies writable storage for exactly `length` bytes,
     // and the descriptor borrow keeps the fd open for this syscall.
-    let initialized = unsafe {
-        crabc_core::io::pread_raw(fd.as_raw_fd(), pointer.cast(), length, offset)?
-    };
+    let initialized =
+        unsafe { crabc_core::io::pread_raw(fd.as_raw_fd(), pointer.cast(), length, offset)? };
     // SAFETY: A successful kernel pread initializes its returned prefix and
     // never reports a length larger than the supplied buffer.
     unsafe { Ok(buffer.assume_init(initialized)) }
@@ -366,11 +362,7 @@ pub fn pread<Fd: AsFd, Buf: Buffer<u8>>(
 /// represented explicitly. `offset` is a non-negative Linux file offset;
 /// values above `i64::MAX` return `EINVAL`.
 #[inline]
-pub fn preadv<Fd: AsFd>(
-    fd: Fd,
-    buffers: &mut [IoSliceMut<'_>],
-    offset: u64,
-) -> Result<usize> {
+pub fn preadv<Fd: AsFd>(fd: Fd, buffers: &mut [IoSliceMut<'_>], offset: u64) -> Result<usize> {
     let fd = fd.as_fd();
     // SAFETY: `IoSliceMut` is `repr(transparent)` over the Linux iovec record;
     // each value was built from a live, disjoint mutable byte slice. The
@@ -460,9 +452,7 @@ pub fn pwrite<Fd: AsFd>(fd: Fd, buffer: &[u8], offset: u64) -> Result<usize> {
     let fd = fd.as_fd();
     // SAFETY: `buffer` is valid immutable storage for its exact length, and
     // the descriptor borrow keeps the fd open for this syscall.
-    unsafe {
-        crabc_core::io::pwrite_raw(fd.as_raw_fd(), buffer.as_ptr(), buffer.len(), offset)
-    }
+    unsafe { crabc_core::io::pwrite_raw(fd.as_raw_fd(), buffer.as_ptr(), buffer.len(), offset) }
 }
 
 /// Writes initialized byte segments at `offset` without changing the
@@ -472,11 +462,7 @@ pub fn pwrite<Fd: AsFd>(fd: Fd, buffer: &[u8], offset: u64) -> Result<usize> {
 /// return a short count. `offset` is a non-negative Linux file offset; values
 /// above `i64::MAX` return `EINVAL`.
 #[inline]
-pub fn pwritev<Fd: AsFd>(
-    fd: Fd,
-    buffers: &[IoSlice<'_>],
-    offset: u64,
-) -> Result<usize> {
+pub fn pwritev<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>], offset: u64) -> Result<usize> {
     let fd = fd.as_fd();
     // SAFETY: `IoSlice` is `repr(transparent)` over the Linux iovec record;
     // each value was built from a live immutable byte slice. The descriptor,

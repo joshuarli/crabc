@@ -34,10 +34,16 @@ fn stdio_full_functions_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for stdio_full_test");
-    assert!(status.success(), "musl-gcc stdio_full_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc stdio_full_test compilation failed"
+    );
 
     let output = Command::new(&bin)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .output()
         .expect("failed to run stdio_full_test");
 

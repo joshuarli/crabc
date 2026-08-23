@@ -12,10 +12,20 @@ fn legacy_des_bit_array_apis_under_libc_so() {
 
     let status = Command::new("musl-gcc")
         .args([
-            "-fPIE", "-pie", "-fno-builtin", "-I", root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker", target.join("libldso.so").to_str().unwrap(),
-            "-L", target.to_str().unwrap(), source.to_str().unwrap(),
-            "-Wl,--allow-shlib-undefined", "-lc", "-o", binary.to_str().unwrap(),
+            "-fPIE",
+            "-pie",
+            "-fno-builtin",
+            "-I",
+            root.join("include").to_str().unwrap(),
+            "-Wl,--dynamic-linker",
+            target.join("libldso.so").to_str().unwrap(),
+            "-L",
+            target.to_str().unwrap(),
+            source.to_str().unwrap(),
+            "-Wl,--allow-shlib-undefined",
+            "-lc",
+            "-o",
+            binary.to_str().unwrap(),
         ])
         .status()
         .expect("failed to run musl-gcc for legacy_des_test");
@@ -32,5 +42,8 @@ fn legacy_des_bit_array_apis_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi legacy des unsupported\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi legacy des unsupported\n"
+    );
 }

@@ -41,7 +41,10 @@ fn public_system_misc_headers_match_pinned_musl() {
     let status = custom
         .status()
         .expect("failed to run musl-gcc for public header probe");
-    assert!(status.success(), "candidate public header probe compilation failed");
+    assert!(
+        status.success(),
+        "candidate public header probe compilation failed"
+    );
 
     let mut oracle = Command::new("musl-gcc");
     oracle.args([
@@ -60,7 +63,10 @@ fn public_system_misc_headers_match_pinned_musl() {
     let status = oracle
         .status()
         .expect("failed to run musl-gcc for pinned public header probe");
-    assert!(status.success(), "pinned public header probe compilation failed");
+    assert!(
+        status.success(),
+        "pinned public header probe compilation failed"
+    );
 
     let custom_output = Command::new(&custom_bin)
         .output()

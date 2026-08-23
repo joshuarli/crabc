@@ -60,12 +60,22 @@ fn sync_file_range_rejects_unknown_flags_and_unrepresentable_ranges() {
         "unknown flags must be rejected before the syscall",
     );
     assert_eq!(
-        io::sync_file_range(file.as_fd(), i64::MAX as u64 + 1, 0, SyncFileRangeFlags::empty()),
+        io::sync_file_range(
+            file.as_fd(),
+            i64::MAX as u64 + 1,
+            0,
+            SyncFileRangeFlags::empty()
+        ),
         Err(Errno::INVAL),
         "an offset outside signed Linux loff_t must be rejected",
     );
     assert_eq!(
-        io::sync_file_range(file.as_fd(), i64::MAX as u64, 1, SyncFileRangeFlags::empty()),
+        io::sync_file_range(
+            file.as_fd(),
+            i64::MAX as u64,
+            1,
+            SyncFileRangeFlags::empty()
+        ),
         Err(Errno::INVAL),
         "offset plus length must fit signed Linux loff_t",
     );

@@ -17,10 +17,7 @@ fn memfd_owns_a_cloexec_descriptor_and_preserves_content() {
         "MFD_CLOEXEC must become FD_CLOEXEC on the owned descriptor",
     );
     let payload = b"memfd_buf";
-    assert_eq!(
-        io::write(&file, payload).expect("write memfd content"),
-        9,
-    );
+    assert_eq!(io::write(&file, payload).expect("write memfd content"), 9,);
     assert_eq!(
         fs::seek(&file, SeekFrom::Start(0)).expect("rewind memfd"),
         0,

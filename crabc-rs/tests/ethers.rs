@@ -10,7 +10,10 @@ fn line_parser_borrows_valid_records_and_classifies_non_records() {
     let EthernetLine::Record(record) = parsed else {
         panic!("valid ethers line must produce a record: {parsed:?}");
     };
-    assert_eq!(record.address(), EthernetAddress::new([0, 1, 0x2a, 3, 4, 0xff]));
+    assert_eq!(
+        record.address(),
+        EthernetAddress::new([0, 1, 0x2a, 3, 4, 0xff])
+    );
     assert_eq!(record.hostname(), b"Router");
 
     assert_eq!(parse_line(b" \t\r\n"), EthernetLine::Blank);
@@ -40,7 +43,9 @@ fn database_skips_invalid_lines_retains_source_order_and_matches_first_case_inse
         Some(EthernetAddress::new([0, 0, 0, 0, 0, 1]))
     );
     assert_eq!(
-        database.lookup_hostname_entry(b"other").map(|entry| entry.hostname()),
+        database
+            .lookup_hostname_entry(b"other")
+            .map(|entry| entry.hostname()),
         Some(b"Other".as_slice())
     );
     assert!(database.lookup_hostname(b"missing").is_none());

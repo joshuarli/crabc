@@ -7,10 +7,7 @@ use crabc_rs::pattern::{glob, glob_at, GlobPath};
 use crabc_rs::Errno;
 
 fn fixture_root() -> PathBuf {
-    let root = PathBuf::from(format!(
-        "/tmp/crabc-rs-compat-glob-{}",
-        std::process::id()
-    ));
+    let root = PathBuf::from(format!("/tmp/crabc-rs-compat-glob-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("nested")).expect("create glob fixture directories");
     fs::write(root.join("z.txt"), b"z").expect("write z fixture");

@@ -27,12 +27,7 @@ pub extern "C" fn crabc_rs_fs_metadata_direct_probe() -> i32 {
         return 1;
     }
 
-    let directory = match fs::openat(
-        CWD,
-        path,
-        OFlags::RDONLY | OFlags::DIRECTORY,
-        Mode::empty(),
-    ) {
+    let directory = match fs::openat(CWD, path, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty()) {
         Ok(fd) => fd,
         Err(error) => return -error.raw(),
     };

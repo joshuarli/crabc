@@ -8,7 +8,10 @@ use crabc_rs::Errno;
 #[test]
 fn udp_getpeername_round_trips_connected_ipv4_endpoint() {
     let server = UdpSocket::bind("127.0.0.1:0").expect("bind isolated IPv4 UDP fixture");
-    let port = server.local_addr().expect("read IPv4 fixture address").port();
+    let port = server
+        .local_addr()
+        .expect("read IPv4 fixture address")
+        .port();
     let socket = net::socket(
         net::AddressFamily::INET,
         net::SocketType::DGRAM,
@@ -19,20 +22,31 @@ fn udp_getpeername_round_trips_connected_ipv4_endpoint() {
     let expected = SocketAddress::new(IpAddress::V4([127, 0, 0, 1]), port);
 
     net::connect(&socket, expected).expect("connect native IPv4 UDP socket");
-    assert_eq!(net::getpeername(&socket).expect("read native IPv4 peer endpoint"), expected);
+    assert_eq!(
+        net::getpeername(&socket).expect("read native IPv4 peer endpoint"),
+        expected
+    );
 }
 
 #[test]
 fn udp_getpeername_round_trips_connected_ipv6_endpoint() {
     let server = match UdpSocket::bind("[::1]:0") {
         Ok(server) => server,
-        Err(error) if matches!(error.kind(), ErrorKind::AddrNotAvailable | ErrorKind::Unsupported) => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::AddrNotAvailable | ErrorKind::Unsupported
+            ) =>
+        {
             eprintln!("skipping IPv6 loopback fixture: {error}");
             return;
         }
         Err(error) => panic!("bind isolated IPv6 UDP fixture: {error}"),
     };
-    let port = server.local_addr().expect("read IPv6 fixture address").port();
+    let port = server
+        .local_addr()
+        .expect("read IPv6 fixture address")
+        .port();
     let socket = net::socket(
         net::AddressFamily::INET6,
         net::SocketType::DGRAM,
@@ -46,7 +60,10 @@ fn udp_getpeername_round_trips_connected_ipv6_endpoint() {
     );
 
     net::connect(&socket, expected).expect("connect native IPv6 UDP socket");
-    assert_eq!(net::getpeername(&socket).expect("read native IPv6 peer endpoint"), expected);
+    assert_eq!(
+        net::getpeername(&socket).expect("read native IPv6 peer endpoint"),
+        expected
+    );
 }
 
 #[test]

@@ -38,7 +38,10 @@ fn pthread_extensions_under_loader() {
         ])
         .status()
         .expect("failed to compile c-abi pthread extension fixture");
-    assert!(status.success(), "c-abi pthread extension fixture compilation failed");
+    assert!(
+        status.success(),
+        "c-abi pthread extension fixture compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", target.to_str().unwrap())
@@ -52,5 +55,8 @@ fn pthread_extensions_under_loader() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi pthread extensions ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi pthread extensions ok\n"
+    );
 }

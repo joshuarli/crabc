@@ -24,7 +24,10 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let status = command
         .status()
         .expect("failed to compile the stdio format/parse regression fixture");
-    assert!(status.success(), "stdio format/parse regression fixture compilation failed");
+    assert!(
+        status.success(),
+        "stdio format/parse regression fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, path: &std::path::Path, candidate: bool) -> Output {

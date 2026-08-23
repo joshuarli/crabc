@@ -33,7 +33,10 @@ pub extern "C" fn crabc_rs_network_connect_direct_probe() -> i32 {
         Err(_) => return 1,
     };
     let v4 = SocketAddress::new(IpAddress::V4([127, 0, 0, 1]), 9);
-    let v6 = SocketAddress::new(IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]), 9);
+    let v6 = SocketAddress::new(
+        IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+        9,
+    );
     if net::connect(&ipv4, v4).is_err() || net::connect(&ipv6, v6).is_err() {
         return 1;
     }

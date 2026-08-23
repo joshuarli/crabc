@@ -21,20 +21,21 @@ fn preadv2_and_pwritev2_support_positioned_sentinel_and_high_offsets() {
 
     let current_writes = [io::IoSlice::new(b"ab"), io::IoSlice::new(b"CD")];
     assert_eq!(
-        io::pwritev2(
-            &file,
-            &current_writes,
-            u64::MAX,
-            ReadWriteFlags::empty(),
-        )
-        .expect("current-offset pwritev2"),
+        io::pwritev2(&file, &current_writes, u64::MAX, ReadWriteFlags::empty(),)
+            .expect("current-offset pwritev2"),
         4,
     );
-    assert_eq!(fs::tell(&file).expect("position after sentinel pwritev2"), 6);
+    assert_eq!(
+        fs::tell(&file).expect("position after sentinel pwritev2"),
+        6
+    );
 
     fs::seek(&file, SeekFrom::Start(0)).expect("rewind after sentinel write");
     let mut content = [0_u8; 10];
-    assert_eq!(io::read(&file, &mut content).expect("read sentinel result"), 10);
+    assert_eq!(
+        io::read(&file, &mut content).expect("read sentinel result"),
+        10
+    );
     assert_eq!(&content, b"01abCD6789");
 
     fs::seek(&file, SeekFrom::Start(2)).expect("set current read position");
@@ -45,13 +46,8 @@ fn preadv2_and_pwritev2_support_positioned_sentinel_and_high_offsets() {
         io::IoSliceMut::new(&mut second),
     ];
     assert_eq!(
-        io::preadv2(
-            &file,
-            &mut current_reads,
-            u64::MAX,
-            ReadWriteFlags::empty(),
-        )
-        .expect("current-offset preadv2"),
+        io::preadv2(&file, &mut current_reads, u64::MAX, ReadWriteFlags::empty(),)
+            .expect("current-offset preadv2"),
         4,
     );
     assert_eq!(&first, b"ab");
@@ -63,16 +59,14 @@ fn preadv2_and_pwritev2_support_positioned_sentinel_and_high_offsets() {
     let high_offset = (1_u64 << 32) + 7;
     let high_writes = [io::IoSlice::new(b"hi"), io::IoSlice::new(b"GH")];
     assert_eq!(
-        io::pwritev2(
-            &file,
-            &high_writes,
-            high_offset,
-            ReadWriteFlags::empty(),
-        )
-        .expect("high-offset pwritev2"),
+        io::pwritev2(&file, &high_writes, high_offset, ReadWriteFlags::empty(),)
+            .expect("high-offset pwritev2"),
         4,
     );
-    assert_eq!(fs::tell(&file).expect("position after high-offset write"), 6);
+    assert_eq!(
+        fs::tell(&file).expect("position after high-offset write"),
+        6
+    );
 
     let mut high_first = [0_u8; 2];
     let mut high_second = [0_u8; 2];
@@ -81,13 +75,8 @@ fn preadv2_and_pwritev2_support_positioned_sentinel_and_high_offsets() {
         io::IoSliceMut::new(&mut high_second),
     ];
     assert_eq!(
-        io::preadv2(
-            &file,
-            &mut high_reads,
-            high_offset,
-            ReadWriteFlags::empty(),
-        )
-        .expect("high-offset preadv2"),
+        io::preadv2(&file, &mut high_reads, high_offset, ReadWriteFlags::empty(),)
+            .expect("high-offset preadv2"),
         4,
     );
     assert_eq!(&high_first, b"hi");

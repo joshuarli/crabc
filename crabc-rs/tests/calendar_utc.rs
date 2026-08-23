@@ -8,8 +8,14 @@ fn gmtime_matches_musl_epoch_and_pre_epoch_boundaries() {
     assert_eq!((epoch.weekday(), epoch.yearday()), (4, 0));
 
     let before = time::gmtime(-1).expect("one second before epoch is representable");
-    assert_eq!((before.year(), before.month(), before.day()), (1969, 12, 31));
-    assert_eq!((before.hour(), before.minute(), before.second()), (23, 59, 59));
+    assert_eq!(
+        (before.year(), before.month(), before.day()),
+        (1969, 12, 31)
+    );
+    assert_eq!(
+        (before.hour(), before.minute(), before.second()),
+        (23, 59, 59)
+    );
     assert_eq!((before.weekday(), before.yearday()), (3, 364));
 }
 
@@ -29,11 +35,16 @@ fn leap_day_round_trips_through_timegm() {
         ),
         (2000, 2, 29, 12, 34, 56, 2, 59),
     );
-    assert_eq!(time::timegm(&leap).expect("normalized calendar value"), 951_827_696);
+    assert_eq!(
+        time::timegm(&leap).expect("normalized calendar value"),
+        951_827_696
+    );
 
-    let constructed = CalendarTime::from_ymdhms(2024, 2, 29, 12, 34, 56)
-        .expect("valid leap day");
-    assert_eq!(time::timegm(&constructed).expect("normalized calendar value"), 1_709_210_096);
+    let constructed = CalendarTime::from_ymdhms(2024, 2, 29, 12, 34, 56).expect("valid leap day");
+    assert_eq!(
+        time::timegm(&constructed).expect("normalized calendar value"),
+        1_709_210_096
+    );
 }
 
 #[test]
@@ -47,7 +58,13 @@ fn calendar_cycle_boundaries_match_musls_gregorian_anchors() {
     for (seconds, (year, month, day, weekday, yearday)) in anchors {
         let value = time::gmtime(seconds).expect("Gregorian anchor is representable");
         assert_eq!(
-            (value.year(), value.month(), value.day(), value.weekday(), value.yearday()),
+            (
+                value.year(),
+                value.month(),
+                value.day(),
+                value.weekday(),
+                value.yearday()
+            ),
             (year, month, day, weekday, yearday),
         );
         assert_eq!(time::timegm(&value).expect("anchor inverse"), seconds);

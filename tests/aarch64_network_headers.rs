@@ -42,7 +42,10 @@ fn public_aarch64_network_headers_match_pinned_musl() {
     let status = custom
         .status()
         .expect("failed to run musl-gcc for network-header ABI probe");
-    assert!(status.success(), "candidate network-header probe compilation failed");
+    assert!(
+        status.success(),
+        "candidate network-header probe compilation failed"
+    );
 
     let mut oracle = Command::new("musl-gcc");
     oracle.args([
@@ -59,7 +62,10 @@ fn public_aarch64_network_headers_match_pinned_musl() {
     let status = oracle
         .status()
         .expect("failed to run musl-gcc for musl network-header ABI probe");
-    assert!(status.success(), "musl network-header probe compilation failed");
+    assert!(
+        status.success(),
+        "musl network-header probe compilation failed"
+    );
 
     let custom_output = Command::new(&custom_bin)
         .output()

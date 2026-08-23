@@ -10,7 +10,10 @@ fn network_values_keep_host_and_wire_order_explicit() {
     let address = NetworkU32::from_host(0x0102_0304);
     assert_eq!(address.to_bytes(), [1, 2, 3, 4]);
     assert_eq!(address.to_host(), 0x0102_0304);
-    assert_eq!(NetworkU32::from_bytes([0xc0, 0x00, 0x02, 0x07]).to_host(), 0xc000_0207);
+    assert_eq!(
+        NetworkU32::from_bytes([0xc0, 0x00, 0x02, 0x07]).to_host(),
+        0xc000_0207
+    );
 }
 
 #[test]

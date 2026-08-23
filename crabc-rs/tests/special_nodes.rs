@@ -78,8 +78,12 @@ fn mknodat_and_mkfifo_variants_create_typed_fifos() {
     fs::mkfifo(fixture.path("mkfifo"), mode).expect("mkfifo FIFO");
     assert_fifo(&fixture.path("mkfifo"), mode);
 
-    let directory = fs::open(&fixture.root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
-        .expect("open fixture directory");
+    let directory = fs::open(
+        &fixture.root,
+        OFlags::RDONLY | OFlags::DIRECTORY,
+        Mode::empty(),
+    )
+    .expect("open fixture directory");
     fs::mkfifoat(&directory, "mkfifoat", mode).expect("mkfifoat FIFO");
     let metadata = fs::statat(&directory, "mkfifoat", AtFlags::empty()).expect("statat FIFO");
     assert_eq!(FileType::from_raw_mode(metadata.st_mode), FileType::Fifo);

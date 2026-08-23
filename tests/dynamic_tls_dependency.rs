@@ -11,14 +11,13 @@ fn compile_shared(source: &std::path::Path, output: &std::path::Path) {
         .arg(output)
         .status()
         .expect("failed to compile dynamic TLS dependency DSO");
-    assert!(status.success(), "dynamic TLS dependency DSO compilation failed");
+    assert!(
+        status.success(),
+        "dynamic TLS dependency DSO compilation failed"
+    );
 }
 
-fn compile_parent(
-    source: &std::path::Path,
-    directory: &std::path::Path,
-    output: &std::path::Path,
-) {
+fn compile_parent(source: &std::path::Path, directory: &std::path::Path, output: &std::path::Path) {
     let status = Command::new("musl-gcc")
         .args([
             "-O3",
@@ -35,7 +34,10 @@ fn compile_parent(
         .arg(output)
         .status()
         .expect("failed to compile parent dynamic TLS dependency DSO");
-    assert!(status.success(), "parent dynamic TLS dependency DSO compilation failed");
+    assert!(
+        status.success(),
+        "parent dynamic TLS dependency DSO compilation failed"
+    );
 }
 
 fn compile_fixture(binary: &std::path::Path, candidate: bool) {
@@ -55,21 +57,36 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
             "-Wl,--allow-shlib-undefined",
         ]);
     }
-    command.arg(fixture).args(["-ldl", "-lpthread", "-lc", "-o"]).arg(binary);
+    command
+        .arg(fixture)
+        .args(["-ldl", "-lpthread", "-lc", "-o"])
+        .arg(binary);
     let status = command
         .status()
         .expect("failed to compile dynamic TLS dependency fixture");
-    assert!(status.success(), "dynamic TLS dependency fixture compilation failed");
+    assert!(
+        status.success(),
+        "dynamic TLS dependency fixture compilation failed"
+    );
 }
 
-fn run(binary: &std::path::Path, parent: &std::path::Path, directory: &std::path::Path, candidate: bool) -> Output {
+fn run(
+    binary: &std::path::Path,
+    parent: &std::path::Path,
+    directory: &std::path::Path,
+    candidate: bool,
+) -> Output {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut command = Command::new(binary);
     command.arg(parent).env("LD_LIBRARY_PATH", directory);
     if candidate {
         command.env(
             "LD_LIBRARY_PATH",
-            format!("{}:{}", directory.display(), root.join("target/debug").display()),
+            format!(
+                "{}:{}",
+                directory.display(),
+                root.join("target/debug").display()
+            ),
         );
     }
     command
@@ -98,7 +115,10 @@ fn dynamic_tls_dependency_graph_matches_pinned_musl() {
         .arg(&parent)
         .output()
         .expect("failed to inspect parent dynamic TLS dependency DSO");
-    assert!(dependencies.status.success(), "readelf failed for parent dynamic TLS DSO");
+    assert!(
+        dependencies.status.success(),
+        "readelf failed for parent dynamic TLS DSO"
+    );
     assert!(
         String::from_utf8_lossy(&dependencies.stdout)
             .contains("Shared library: [libtls_dependency_child.so]"),
@@ -115,7 +135,10 @@ fn dynamic_tls_dependency_graph_matches_pinned_musl() {
         reference_output.status.code(),
         String::from_utf8_lossy(&reference_output.stderr),
     );
-    assert_eq!(reference_output.stdout, b"dynamic TLS dependency graph ok\n");
+    assert_eq!(
+        reference_output.stdout,
+        b"dynamic TLS dependency graph ok\n"
+    );
     assert_eq!(candidate_output.status, reference_output.status);
     assert_eq!(candidate_output.stdout, reference_output.stdout);
     assert_eq!(candidate_output.stderr, reference_output.stderr);

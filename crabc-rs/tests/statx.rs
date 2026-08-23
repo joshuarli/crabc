@@ -46,9 +46,8 @@ fn statx_basic_metadata_matches_stat_and_reports_valid_mask() {
 
 #[test]
 fn statx_rejects_reserved_mask_before_kernel_entry() {
-    let mask = StatxFlags::from_bits_retain(
-        StatxFlags::BASIC_STATS.bits() | StatxFlags::RESERVED_MASK,
-    );
+    let mask =
+        StatxFlags::from_bits_retain(StatxFlags::BASIC_STATS.bits() | StatxFlags::RESERVED_MASK);
     let error = fs::statx(CWD, "/tmp", AtFlags::empty(), mask)
         .expect_err("STATX__RESERVED must be rejected");
     assert_eq!(error, Errno::INVAL);

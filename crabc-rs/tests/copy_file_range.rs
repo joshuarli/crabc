@@ -49,14 +49,20 @@ fn copy_file_range_preserves_explicit_positions_and_reports_short_copies() {
     );
     assert_eq!(input_offset, 5, "the input offset advances by the copy");
     assert_eq!(output_offset, 9, "the output offset advances by the copy");
-    assert_eq!(fs::tell(&input).expect("input position after explicit copy"), 7);
+    assert_eq!(
+        fs::tell(&input).expect("input position after explicit copy"),
+        7
+    );
     assert_eq!(
         fs::tell(&output).expect("output position after explicit copy"),
         3,
     );
 
     let mut positioned = [0_u8; 4];
-    assert_eq!(io::pread(&output, &mut positioned, 5).expect("read explicit output"), 4);
+    assert_eq!(
+        io::pread(&output, &mut positioned, 5).expect("read explicit output"),
+        4
+    );
     assert_eq!(&positioned, b"1234");
 
     let mut short_input_offset = 8;
@@ -73,12 +79,24 @@ fn copy_file_range_preserves_explicit_positions_and_reports_short_copies() {
         2,
     );
     assert_eq!(short_input_offset, 10, "short input offset advances by two");
-    assert_eq!(short_output_offset, 2, "short output offset advances by two");
-    assert_eq!(fs::tell(&input).expect("input position after short copy"), 7);
-    assert_eq!(fs::tell(&output).expect("output position after short copy"), 3);
+    assert_eq!(
+        short_output_offset, 2,
+        "short output offset advances by two"
+    );
+    assert_eq!(
+        fs::tell(&input).expect("input position after short copy"),
+        7
+    );
+    assert_eq!(
+        fs::tell(&output).expect("output position after short copy"),
+        3
+    );
 
     let mut short_output = [0_u8; 2];
-    assert_eq!(io::pread(&output, &mut short_output, 0).expect("read short output"), 2);
+    assert_eq!(
+        io::pread(&output, &mut short_output, 0).expect("read short output"),
+        2
+    );
     assert_eq!(&short_output, b"89");
 
     assert_eq!(
@@ -86,11 +104,20 @@ fn copy_file_range_preserves_explicit_positions_and_reports_short_copies() {
             .expect("copy using shared descriptor positions"),
         2,
     );
-    assert_eq!(fs::tell(&input).expect("input position after shared copy"), 9);
-    assert_eq!(fs::tell(&output).expect("output position after shared copy"), 5);
+    assert_eq!(
+        fs::tell(&input).expect("input position after shared copy"),
+        9
+    );
+    assert_eq!(
+        fs::tell(&output).expect("output position after shared copy"),
+        5
+    );
 
     let mut shared_output = [0_u8; 2];
-    assert_eq!(io::pread(&output, &mut shared_output, 3).expect("read shared output"), 2);
+    assert_eq!(
+        io::pread(&output, &mut shared_output, 3).expect("read shared output"),
+        2
+    );
     assert_eq!(&shared_output, b"78");
 
     let mut invalid_input_offset = i64::MAX as u64 + 1;
@@ -110,8 +137,14 @@ fn copy_file_range_preserves_explicit_positions_and_reports_short_copies() {
         unchanged_output_offset, 17,
         "an invalid request must not initialize or roll back the output offset",
     );
-    assert_eq!(fs::tell(&input).expect("input position after rejected copy"), 9);
-    assert_eq!(fs::tell(&output).expect("output position after rejected copy"), 5);
+    assert_eq!(
+        fs::tell(&input).expect("input position after rejected copy"),
+        9
+    );
+    assert_eq!(
+        fs::tell(&output).expect("output position after rejected copy"),
+        5
+    );
 
     // A syscall error must not expose a partially updated temporary output
     // offset, even when the input offset itself was valid.

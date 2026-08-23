@@ -27,11 +27,9 @@ pub struct TempArtifact {
 impl TempArtifact {
     pub fn new(stem: &str) -> Self {
         let serial = NEXT_ARTIFACT.fetch_add(1, Ordering::Relaxed);
-        let stem = stem.replace('/', "-").replace('\\', "-");
-        let dir = std::env::temp_dir().join(format!(
-            "crabc-artifact-{}-{serial}",
-            std::process::id()
-        ));
+        let stem = stem.replace(['/', '\\'], "-");
+        let dir =
+            std::env::temp_dir().join(format!("crabc-artifact-{}-{serial}", std::process::id()));
         std::fs::create_dir(&dir).expect("failed to create temporary artifact directory");
         let path = dir.join(stem);
         Self { dir, path }

@@ -380,7 +380,10 @@ impl<T: ?Sized> Deref for RwLockReadGuard<'_, T> {
 
 impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLockReadGuard<'_, T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("RwLockReadGuard").field(&&**self).finish()
+        formatter
+            .debug_tuple("RwLockReadGuard")
+            .field(&&**self)
+            .finish()
     }
 }
 
@@ -425,7 +428,10 @@ impl<T: ?Sized> DerefMut for RwLockWriteGuard<'_, T> {
 
 impl<T: ?Sized + fmt::Debug> fmt::Debug for RwLockWriteGuard<'_, T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("RwLockWriteGuard").field(&&**self).finish()
+        formatter
+            .debug_tuple("RwLockWriteGuard")
+            .field(&&**self)
+            .finish()
     }
 }
 
@@ -636,12 +642,9 @@ impl Once {
                 }
                 Err(CONTENDED) => return Ok(()),
                 Err(LOCKED) => {
-                    let _ = self.state.compare_exchange(
-                        LOCKED,
-                        3,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    );
+                    let _ =
+                        self.state
+                            .compare_exchange(LOCKED, 3, Ordering::AcqRel, Ordering::Acquire);
                 }
                 Err(3) => {
                     // SAFETY: `state` is a live private futex word.

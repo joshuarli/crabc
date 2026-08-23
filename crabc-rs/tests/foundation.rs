@@ -12,7 +12,10 @@ fn cstr(bytes: &'static [u8]) -> &'static CStr {
 #[test]
 fn errno_and_fd_traits_preserve_the_direct_ownership_contract() {
     assert_eq!(Errno::INVAL.raw_os_error(), 22);
-    assert_eq!(Errno::from_raw_os_error(Errno::BADF.raw_os_error()), Errno::BADF);
+    assert_eq!(
+        Errno::from_raw_os_error(Errno::BADF.raw_os_error()),
+        Errno::BADF
+    );
 
     let owner = fs::openat(CWD, "/dev/null", OFlags::RDONLY, Mode::empty())
         .expect("path::Arg string path reaches openat directly");
@@ -43,7 +46,9 @@ fn typed_ioctl_wrappers_use_direct_kernel_state() {
     use std::os::unix::net::UnixStream;
 
     let (mut writer, reader) = UnixStream::pair().expect("create a local byte stream");
-    writer.write_all(b"abc").expect("seed deterministic readable bytes");
+    writer
+        .write_all(b"abc")
+        .expect("seed deterministic readable bytes");
 
     assert_eq!(io::ioctl_fionread(&reader).expect("FIONREAD"), 3);
     // SAFETY: `FIONREAD` initializes one Linux C `int` at the getter pointer.
@@ -59,10 +64,8 @@ fn typed_ioctl_wrappers_use_direct_kernel_state() {
 
     // SAFETY: `-1` is passed only to syscall 29, whose kernel-defined error
     // contract accepts any integer descriptor and returns a typed error.
-    let error = unsafe {
-        crabc_core::io::ioctl_raw(-1, 0x541b, core::ptr::null_mut())
-    }
-    .expect_err("invalid descriptor must not use C errno");
+    let error = unsafe { crabc_core::io::ioctl_raw(-1, 0x541b, core::ptr::null_mut()) }
+        .expect_err("invalid descriptor must not use C errno");
     assert_eq!(error, Errno::BADF);
 }
 

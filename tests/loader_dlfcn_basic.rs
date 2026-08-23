@@ -35,8 +35,7 @@ fn native_loader_basic_owns_handles_and_uses_private_runtime() {
     let fixtures = root.join("tests/fixtures");
     let target = root.join("target");
     let debug = target.join("debug");
-    let archive = target
-        .join("release/examples/libloader_dlfcn_basic_probe.a");
+    let archive = target.join("release/examples/libloader_dlfcn_basic_probe.a");
     let dso_source = fixtures.join("loader_dlfcn_basic_dso.c");
     let fixture = fixtures.join("loader_dlfcn_basic_test.c");
     let close_dso = test_support::TempArtifact::new("libloader_dlfcn_close.so");
@@ -73,7 +72,10 @@ fn native_loader_basic_owns_handles_and_uses_private_runtime() {
         ])
         .status()
         .expect("failed to build the native loader probe archive");
-    assert!(probe_build.success(), "native loader probe archive did not build");
+    assert!(
+        probe_build.success(),
+        "native loader probe archive did not build"
+    );
     assert!(debug.join("libldso.so").is_file(), "libldso.so not found");
     assert!(debug.join("libc.so").is_file(), "libc.so not found");
     assert!(archive.is_file(), "native loader probe archive not found");

@@ -30,10 +30,7 @@ fn network_device_index_to_name_rejects_invalid_indices() {
         netdevice::index_to_name_inlined(&socket, 0),
         Err(Errno::NODEV),
     );
-    assert_eq!(
-        netdevice::index_to_name(&socket, 0),
-        Err(Errno::NODEV),
-    );
+    assert_eq!(netdevice::index_to_name(&socket, 0), Err(Errno::NODEV),);
 }
 
 #[test]

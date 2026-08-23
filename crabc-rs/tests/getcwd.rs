@@ -14,7 +14,11 @@ fn getcwd_returns_a_nul_terminated_initialized_prefix() {
     let mut storage = [MaybeUninit::<u8>::uninit(); BUFFER_CAPACITY];
     let (initialized, untouched) = process::getcwd(&mut storage).expect("read current directory");
 
-    assert_eq!(initialized.last(), Some(&0), "getcwd includes its NUL terminator");
+    assert_eq!(
+        initialized.last(),
+        Some(&0),
+        "getcwd includes its NUL terminator"
+    );
     assert_eq!(untouched.len(), BUFFER_CAPACITY - initialized.len());
     let path = CStr::from_bytes_with_nul(initialized).expect("kernel returned one trailing NUL");
     assert_eq!(path.to_bytes(), expected);

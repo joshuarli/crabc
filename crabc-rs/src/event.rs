@@ -13,8 +13,8 @@ use core::ptr;
 
 use crate::buffer::Buffer;
 use crate::signal::SignalSet;
-use crate::{AsFd, BorrowedFd, OwnedFd, Result};
 pub use crate::time::Timespec;
+use crate::{AsFd, BorrowedFd, OwnedFd, Result};
 
 bitflags! {
     /// Linux `POLL*` flags used by [`poll`].
@@ -311,7 +311,10 @@ pub mod epoll {
     ) -> Result<()> {
         let epoll = epoll.as_fd();
         let source = source.as_fd();
-        let event = Event { flags: event_flags, data };
+        let event = Event {
+            flags: event_flags,
+            data,
+        };
         // SAFETY: `event` is a naturally aligned AArch64 epoll record alive
         // for the syscall; both descriptor borrows remain open for the call.
         unsafe {
@@ -335,7 +338,10 @@ pub mod epoll {
     ) -> Result<()> {
         let epoll = epoll.as_fd();
         let source = source.as_fd();
-        let event = Event { flags: event_flags, data };
+        let event = Event {
+            flags: event_flags,
+            data,
+        };
         // SAFETY: See [`add`]; operation three selects Linux `EPOLL_CTL_MOD`.
         unsafe {
             crabc_core::event::epoll_ctl_raw(
@@ -424,9 +430,7 @@ pub mod epoll {
         let millis = timeout
             .tv_sec
             .checked_mul(1_000)
-            .and_then(|seconds| {
-                seconds.checked_add((timeout.tv_nsec + 999_999) / 1_000_000)
-            })
+            .and_then(|seconds| seconds.checked_add((timeout.tv_nsec + 999_999) / 1_000_000))
             .and_then(|millis| i32::try_from(millis).ok())
             .ok_or(crate::Errno::INVAL)?;
         Ok(millis)
@@ -582,11 +586,9 @@ pub unsafe fn pselect(
         fds.as_mut_ptr().cast()
     });
     let mut timeout = timeout.copied();
-    let timeout = timeout
-        .as_mut()
-        .map_or(core::ptr::null_mut(), |timeout| {
-            (timeout as *mut Timespec).cast()
-        });
+    let timeout = timeout.as_mut().map_or(core::ptr::null_mut(), |timeout| {
+        (timeout as *mut Timespec).cast()
+    });
     let sigmask = mask.map_or(core::ptr::null(), |mask| {
         (mask.kernel_bits() as *const u64).cast()
     });
@@ -654,9 +656,8 @@ pub fn ppoll(
 pub fn pause() {
     // SAFETY: Null pointers and zero descriptor count are the intentional
     // kernel ABI for an indefinite signal-only ppoll wait.
-    let result = unsafe {
-        crabc_core::event::ppoll_raw(ptr::null_mut(), 0, ptr::null(), ptr::null(), 0)
-    };
+    let result =
+        unsafe { crabc_core::event::ppoll_raw(ptr::null_mut(), 0, ptr::null(), ptr::null(), 0) };
     debug_assert_eq!(result, Err(crate::Errno::INTR));
 }
 

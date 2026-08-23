@@ -524,7 +524,10 @@ enum EncodeError {
     Unrepresentable,
 }
 
-fn decode_scalar(encoding: Encoding, input: &[u8]) -> core::result::Result<(u32, usize), DecodeError> {
+fn decode_scalar(
+    encoding: Encoding,
+    input: &[u8],
+) -> core::result::Result<(u32, usize), DecodeError> {
     match encoding {
         Encoding::Utf8 => decode_utf8(input),
         Encoding::Ascii => decode_ascii(input),
@@ -600,10 +603,7 @@ fn decode_utf16be(input: &[u8]) -> core::result::Result<(u32, usize), DecodeErro
     decode_utf16(input, true)
 }
 
-fn decode_utf16(
-    input: &[u8],
-    big_endian: bool,
-) -> core::result::Result<(u32, usize), DecodeError> {
+fn decode_utf16(input: &[u8], big_endian: bool) -> core::result::Result<(u32, usize), DecodeError> {
     if input.len() < 2 {
         return Err(DecodeError::Incomplete);
     }
@@ -644,10 +644,7 @@ fn decode_utf32be(input: &[u8]) -> core::result::Result<(u32, usize), DecodeErro
     decode_utf32(input, true)
 }
 
-fn decode_utf32(
-    input: &[u8],
-    big_endian: bool,
-) -> core::result::Result<(u32, usize), DecodeError> {
+fn decode_utf32(input: &[u8], big_endian: bool) -> core::result::Result<(u32, usize), DecodeError> {
     if input.len() < 4 {
         return Err(DecodeError::Incomplete);
     }
@@ -747,7 +744,9 @@ fn encode_scalar(
         }
         _ => {
             let table = Iso8859::from_encoding(encoding).ok_or(EncodeError::Unrepresentable)?;
-            output[0] = table.encode(codepoint).ok_or(EncodeError::Unrepresentable)?;
+            output[0] = table
+                .encode(codepoint)
+                .ok_or(EncodeError::Unrepresentable)?;
             Ok(1)
         }
     }
@@ -878,10 +877,7 @@ mod tests {
         let conversion = to_utf32be.convert(input, &mut utf32be).unwrap();
         assert_eq!(
             &utf32be[..conversion.produced],
-            &[
-                0x00, 0x00, 0x00, 0x41, 0x00, 0x00, 0x20, 0xac, 0x00, 0x01, 0xf6,
-                0x00
-            ]
+            &[0x00, 0x00, 0x00, 0x41, 0x00, 0x00, 0x20, 0xac, 0x00, 0x01, 0xf6, 0x00]
         );
 
         let mut wchar = [0u8; 16];
@@ -889,10 +885,7 @@ mod tests {
         let conversion = to_wchar.convert(input, &mut wchar).unwrap();
         assert_eq!(
             &wchar[..conversion.produced],
-            &[
-                0x41, 0x00, 0x00, 0x00, 0xac, 0x20, 0x00, 0x00, 0x00, 0xf6, 0x01,
-                0x00
-            ]
+            &[0x41, 0x00, 0x00, 0x00, 0xac, 0x20, 0x00, 0x00, 0x00, 0xf6, 0x01, 0x00]
         );
 
         let mut decoded = [0u8; 16];
@@ -919,8 +912,7 @@ mod tests {
             })
         );
         assert_eq!(
-            Converter::new(Encoding::Utf16Be, Encoding::Utf8)
-                .convert(&[0xd8], &mut decoded),
+            Converter::new(Encoding::Utf16Be, Encoding::Utf8).convert(&[0xd8], &mut decoded),
             Err(ConvertError::Incomplete {
                 consumed: 0,
                 produced: 0,
@@ -951,11 +943,14 @@ mod tests {
         let conversion = converter
             .convert_with("é".as_bytes(), &mut output, Unrepresentable::Byte(b'*'))
             .unwrap();
-        assert_eq!(conversion, super::Conversion {
-            consumed: 2,
-            produced: 1,
-            substitutions: 1,
-        });
+        assert_eq!(
+            conversion,
+            super::Conversion {
+                consumed: 2,
+                produced: 1,
+                substitutions: 1,
+            }
+        );
         assert_eq!(&output[..1], b"*");
     }
 
@@ -1003,11 +998,14 @@ mod tests {
             let mut encoded = [0u8; 2];
             let mut to_table = Converter::new(Encoding::Utf8, encoding);
             let conversion = to_table.convert(b"AZ", &mut encoded).unwrap();
-            assert_eq!(conversion, super::Conversion {
-                consumed: 2,
-                produced: 2,
-                substitutions: 0,
-            });
+            assert_eq!(
+                conversion,
+                super::Conversion {
+                    consumed: 2,
+                    produced: 2,
+                    substitutions: 0,
+                }
+            );
             assert_eq!(&encoded, b"AZ");
 
             let mut decoded = [0u8; 2];

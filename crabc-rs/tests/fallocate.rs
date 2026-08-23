@@ -75,8 +75,7 @@ fn fallocate_rejects_unsupported_modes_and_unrepresentable_ranges() {
         Errno::INVAL,
     );
     assert_eq!(
-        fs::fallocate(&file, FallocateFlags::ALLOCATE, i64::MAX as u64, 1)
-            .unwrap_err(),
+        fs::fallocate(&file, FallocateFlags::ALLOCATE, i64::MAX as u64, 1).unwrap_err(),
         Errno::INVAL,
         "offset plus length must fit signed Linux loff_t",
     );

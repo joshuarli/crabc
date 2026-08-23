@@ -53,7 +53,7 @@ fn timer_notification_vocabulary_excludes_thread_callbacks() {
         signal,
         value: 7,
     };
-    let timer = PosixTimer::new(ClockId::Monotonic, notification)
-        .expect("create a thread-directed timer");
+    let timer =
+        PosixTimer::new(ClockId::Monotonic, notification).expect("create a thread-directed timer");
     drop(timer);
 }

@@ -53,5 +53,10 @@ fn lrand48_musl_vectors_under_libldso() {
         output.status.code(),
         stderr
     );
-    assert_eq!(stdout.trim(), "lrand48 ok", "expected lrand48 ok in: {}", stdout);
+    assert_eq!(
+        stdout.trim(),
+        "lrand48 ok",
+        "expected lrand48 ok in: {}",
+        stdout
+    );
 }

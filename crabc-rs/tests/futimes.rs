@@ -58,14 +58,8 @@ fn futimes_converts_microseconds_and_supports_current_time() {
 
     fs::futimes(&file, None).expect("set both timestamps to current time");
     let current = fs::fstat(&file).expect("observe current-time futimes timestamps");
-    assert!(
-        current.st_atime > 42
-            || current.st_atime == 42 && current.st_atime_nsec > 654_321_000
-    );
-    assert!(
-        current.st_mtime > 42
-            || current.st_mtime == 42 && current.st_mtime_nsec > 654_321_000
-    );
+    assert!(current.st_atime > 42 || current.st_atime == 42 && current.st_atime_nsec > 654_321_000);
+    assert!(current.st_mtime > 42 || current.st_mtime == 42 && current.st_mtime_nsec > 654_321_000);
 
     drop(file);
     fs::unlink(PATH).expect("remove disposable futimes fixture");

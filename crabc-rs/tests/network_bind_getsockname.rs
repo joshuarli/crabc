@@ -28,7 +28,12 @@ fn udp_bind_zero_and_getsockname_round_trip_ipv4() {
 fn udp_bind_zero_and_getsockname_round_trip_ipv6() {
     match UdpSocket::bind("[::1]:0") {
         Ok(server) => drop(server),
-        Err(error) if matches!(error.kind(), ErrorKind::AddrNotAvailable | ErrorKind::Unsupported) => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::AddrNotAvailable | ErrorKind::Unsupported
+            ) =>
+        {
             eprintln!("skipping IPv6 loopback fixture: {error}");
             return;
         }
@@ -42,7 +47,10 @@ fn udp_bind_zero_and_getsockname_round_trip_ipv6() {
         None,
     )
     .expect("create native IPv6 UDP socket");
-    let requested = SocketAddress::new(IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]), 0);
+    let requested = SocketAddress::new(
+        IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+        0,
+    );
 
     net::bind(&socket, requested).expect("bind native IPv6 UDP socket to port zero");
     let actual = net::getsockname(&socket).expect("read native IPv6 local endpoint");

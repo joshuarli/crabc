@@ -46,15 +46,21 @@ pub struct HostEntry {
 impl HostEntry {
     /// Returns the canonical host name.
     #[must_use]
-    pub fn name(&self) -> &str { &self.name }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 
     /// Returns aliases owned by this entry.
     #[must_use]
-    pub fn aliases(&self) -> &[String] { &self.aliases }
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
 
     /// Returns addresses in source order.
     #[must_use]
-    pub fn addresses(&self) -> &[IpAddress] { &self.addresses }
+    pub fn addresses(&self) -> &[IpAddress] {
+        &self.addresses
+    }
 }
 
 /// A deterministic, caller-owned hosts database.
@@ -70,23 +76,40 @@ impl HostDatabase {
         for line in input.split(|&byte| byte == b'\n' || byte == b'\r') {
             let line = line.split(|&byte| byte == b'#').next().unwrap_or_default();
             let fields = fields(line);
-            if fields.is_empty() { continue; }
-            if fields.len() < 2 { return Err(NetDbError::InvalidInput); }
+            if fields.is_empty() {
+                continue;
+            }
+            if fields.len() < 2 {
+                return Err(NetDbError::InvalidInput);
+            }
             let address = IpAddress::parse(fields[0]).ok_or(NetDbError::InvalidInput)?;
             let name = text(fields[1])?;
             let mut aliases = Vec::new();
             for field in &fields[2..] {
                 aliases.push(text(field)?);
             }
-            if let Some(existing) = entries.iter_mut().find(|entry| entry.name.eq_ignore_ascii_case(&name)) {
-                if !existing.addresses.contains(&address) { existing.addresses.push(address); }
+            if let Some(existing) = entries
+                .iter_mut()
+                .find(|entry| entry.name.eq_ignore_ascii_case(&name))
+            {
+                if !existing.addresses.contains(&address) {
+                    existing.addresses.push(address);
+                }
                 for alias in aliases {
-                    if !existing.aliases.iter().any(|known| known.eq_ignore_ascii_case(&alias)) {
+                    if !existing
+                        .aliases
+                        .iter()
+                        .any(|known| known.eq_ignore_ascii_case(&alias))
+                    {
                         existing.aliases.push(alias);
                     }
                 }
             } else {
-                entries.push(HostEntry { name, aliases, addresses: vec![address] });
+                entries.push(HostEntry {
+                    name,
+                    aliases,
+                    addresses: vec![address],
+                });
             }
         }
         Ok(Self { entries })
@@ -99,14 +122,25 @@ impl HostDatabase {
 
     /// Returns a cloned owned match by canonical name or alias.
     #[must_use]
-    pub fn lookup(&self, name: &str, family: Option<crate::net::AddressFamily>) -> Option<HostEntry> {
+    pub fn lookup(
+        &self,
+        name: &str,
+        family: Option<crate::net::AddressFamily>,
+    ) -> Option<HostEntry> {
         self.entries.iter().find_map(|entry| {
             let matches_name = entry.name.eq_ignore_ascii_case(name)
-                || entry.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(name));
-            if !matches_name { return None; }
+                || entry
+                    .aliases
+                    .iter()
+                    .any(|alias| alias.eq_ignore_ascii_case(name));
+            if !matches_name {
+                return None;
+            }
             let mut result = entry.clone();
             if let Some(family) = family {
-                result.addresses.retain(|address| address.family() == family);
+                result
+                    .addresses
+                    .retain(|address| address.family() == family);
             }
             (!result.addresses.is_empty()).then_some(result)
         })
@@ -114,26 +148,36 @@ impl HostDatabase {
 
     /// Returns the number of parsed entries.
     #[must_use]
-    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 
     /// Returns whether the database contains no entries.
     #[must_use]
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 
     /// Returns entries in source order, after repeated canonical names have
     /// been merged according to the hosts parser's duplicate policy.
     #[must_use]
-    pub fn entries(&self) -> &[HostEntry] { &self.entries }
+    pub fn entries(&self) -> &[HostEntry] {
+        &self.entries
+    }
 
     /// Iterates over entries in source order.
-    pub fn iter(&self) -> core::slice::Iter<'_, HostEntry> { self.entries.iter() }
+    pub fn iter(&self) -> core::slice::Iter<'_, HostEntry> {
+        self.entries.iter()
+    }
 }
 
 impl<'a> IntoIterator for &'a HostDatabase {
     type Item = &'a HostEntry;
     type IntoIter = core::slice::Iter<'a, HostEntry>;
 
-    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
 }
 
 /// A service transport understood by the bounded netdb slice.
@@ -181,24 +225,34 @@ pub struct ServiceEntry {
 impl ServiceEntry {
     /// Returns the canonical service name.
     #[must_use]
-    pub fn name(&self) -> &str { &self.name }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 
     /// Returns aliases owned by this entry.
     #[must_use]
-    pub fn aliases(&self) -> &[String] { &self.aliases }
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
 
     /// Returns the host-order service port.
     #[must_use]
-    pub const fn port(&self) -> u16 { self.port }
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
 
     /// Returns the parsed transport protocol.
     #[must_use]
-    pub const fn protocol(&self) -> ServiceProtocol { self.protocol }
+    pub const fn protocol(&self) -> ServiceProtocol {
+        self.protocol
+    }
 
     /// Returns the original protocol token, including tokens classified as
     /// [`ServiceProtocol::Other`].
     #[must_use]
-    pub fn protocol_name(&self) -> &str { &self.protocol_name }
+    pub fn protocol_name(&self) -> &str {
+        &self.protocol_name
+    }
 }
 
 /// A deterministic, caller-owned services database.
@@ -214,13 +268,25 @@ impl ServiceDatabase {
         for line in input.split(|&byte| byte == b'\n' || byte == b'\r') {
             let line = line.split(|&byte| byte == b'#').next().unwrap_or_default();
             let fields = fields(line);
-            if fields.is_empty() { continue; }
-            if fields.len() < 2 { return Err(NetDbError::InvalidInput); }
+            if fields.is_empty() {
+                continue;
+            }
+            if fields.len() < 2 {
+                return Err(NetDbError::InvalidInput);
+            }
             let (port, protocol, protocol_name) = parse_service_spec(fields[1])?;
             let name = text(fields[0])?;
             let mut aliases = Vec::new();
-            for field in &fields[2..] { aliases.push(text(field)?); }
-            entries.push(ServiceEntry { name, aliases, port, protocol, protocol_name });
+            for field in &fields[2..] {
+                aliases.push(text(field)?);
+            }
+            entries.push(ServiceEntry {
+                name,
+                aliases,
+                port,
+                protocol,
+                protocol_name,
+            });
         }
         Ok(Self { entries })
     }
@@ -233,42 +299,65 @@ impl ServiceDatabase {
     /// Returns a cloned owned match by name or alias and optional protocol.
     #[must_use]
     pub fn lookup(&self, name: &str, protocol: Option<ServiceProtocol>) -> Option<ServiceEntry> {
-        self.entries.iter().find(|entry| {
-            let matches_name = entry.name.eq_ignore_ascii_case(name)
-                || entry.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(name));
-            matches_name && protocol.map_or(true, |requested| requested == entry.protocol)
-        }).cloned()
+        self.entries
+            .iter()
+            .find(|entry| {
+                let matches_name = entry.name.eq_ignore_ascii_case(name)
+                    || entry
+                        .aliases
+                        .iter()
+                        .any(|alias| alias.eq_ignore_ascii_case(name));
+                matches_name && protocol.map_or(true, |requested| requested == entry.protocol)
+            })
+            .cloned()
     }
 
     /// Returns a cloned owned match by host-order port and optional protocol.
     #[must_use]
-    pub fn lookup_port(&self, port: u16, protocol: Option<ServiceProtocol>) -> Option<ServiceEntry> {
-        self.entries.iter().find(|entry| {
-            entry.port == port && protocol.map_or(true, |requested| requested == entry.protocol)
-        }).cloned()
+    pub fn lookup_port(
+        &self,
+        port: u16,
+        protocol: Option<ServiceProtocol>,
+    ) -> Option<ServiceEntry> {
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.port == port && protocol.map_or(true, |requested| requested == entry.protocol)
+            })
+            .cloned()
     }
 
     /// Returns the number of parsed entries.
     #[must_use]
-    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 
     /// Returns whether the database contains no entries.
     #[must_use]
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 
     /// Returns entries in source order.
     #[must_use]
-    pub fn entries(&self) -> &[ServiceEntry] { &self.entries }
+    pub fn entries(&self) -> &[ServiceEntry] {
+        &self.entries
+    }
 
     /// Iterates over entries in source order.
-    pub fn iter(&self) -> core::slice::Iter<'_, ServiceEntry> { self.entries.iter() }
+    pub fn iter(&self) -> core::slice::Iter<'_, ServiceEntry> {
+        self.entries.iter()
+    }
 }
 
 impl<'a> IntoIterator for &'a ServiceDatabase {
     type Item = &'a ServiceEntry;
     type IntoIter = core::slice::Iter<'a, ServiceEntry>;
 
-    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
 }
 
 /// An owned `/etc/protocols`-style entry.
@@ -282,15 +371,21 @@ pub struct ProtocolEntry {
 impl ProtocolEntry {
     /// Returns the canonical protocol name.
     #[must_use]
-    pub fn name(&self) -> &str { &self.name }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 
     /// Returns aliases owned by this entry.
     #[must_use]
-    pub fn aliases(&self) -> &[String] { &self.aliases }
+    pub fn aliases(&self) -> &[String] {
+        &self.aliases
+    }
 
     /// Returns the Linux protocol number.
     #[must_use]
-    pub const fn number(&self) -> u16 { self.number }
+    pub const fn number(&self) -> u16 {
+        self.number
+    }
 }
 
 /// A deterministic, caller-owned protocols database.
@@ -306,13 +401,23 @@ impl ProtocolDatabase {
         for line in input.split(|&byte| byte == b'\n' || byte == b'\r') {
             let line = line.split(|&byte| byte == b'#').next().unwrap_or_default();
             let fields = fields(line);
-            if fields.is_empty() { continue; }
-            if fields.len() < 2 { return Err(NetDbError::InvalidInput); }
+            if fields.is_empty() {
+                continue;
+            }
+            if fields.len() < 2 {
+                return Err(NetDbError::InvalidInput);
+            }
             let name = text(fields[0])?;
             let number = parse_u16(fields[1])?;
             let mut aliases = Vec::new();
-            for field in &fields[2..] { aliases.push(text(field)?); }
-            entries.push(ProtocolEntry { name, aliases, number });
+            for field in &fields[2..] {
+                aliases.push(text(field)?);
+            }
+            entries.push(ProtocolEntry {
+                name,
+                aliases,
+                number,
+            });
         }
         Ok(Self { entries })
     }
@@ -325,43 +430,64 @@ impl ProtocolDatabase {
     /// Returns a cloned owned match by name or alias.
     #[must_use]
     pub fn lookup_name(&self, name: &str) -> Option<ProtocolEntry> {
-        self.entries.iter().find(|entry| {
-            entry.name.eq_ignore_ascii_case(name)
-                || entry.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(name))
-        }).cloned()
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.name.eq_ignore_ascii_case(name)
+                    || entry
+                        .aliases
+                        .iter()
+                        .any(|alias| alias.eq_ignore_ascii_case(name))
+            })
+            .cloned()
     }
 
     /// Returns a cloned owned match by Linux protocol number.
     #[must_use]
     pub fn lookup_number(&self, number: u16) -> Option<ProtocolEntry> {
-        self.entries.iter().find(|entry| entry.number == number).cloned()
+        self.entries
+            .iter()
+            .find(|entry| entry.number == number)
+            .cloned()
     }
 
     /// Returns the number of parsed entries.
     #[must_use]
-    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 
     /// Returns whether the database contains no entries.
     #[must_use]
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 
     /// Returns entries in source order.
     #[must_use]
-    pub fn entries(&self) -> &[ProtocolEntry] { &self.entries }
+    pub fn entries(&self) -> &[ProtocolEntry] {
+        &self.entries
+    }
 
     /// Iterates over entries in source order.
-    pub fn iter(&self) -> core::slice::Iter<'_, ProtocolEntry> { self.entries.iter() }
+    pub fn iter(&self) -> core::slice::Iter<'_, ProtocolEntry> {
+        self.entries.iter()
+    }
 }
 
 impl<'a> IntoIterator for &'a ProtocolDatabase {
     type Item = &'a ProtocolEntry;
     type IntoIter = core::slice::Iter<'a, ProtocolEntry>;
 
-    fn into_iter(self) -> Self::IntoIter { self.entries.iter() }
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter()
+    }
 }
 
 fn text(value: &[u8]) -> core::result::Result<String, NetDbError> {
-    if value.is_empty() || value.contains(&0) { return Err(NetDbError::InvalidInput); }
+    if value.is_empty() || value.contains(&0) {
+        return Err(NetDbError::InvalidInput);
+    }
     String::from_utf8(value.to_vec()).map_err(|_| NetDbError::InvalidInput)
 }
 
@@ -371,7 +497,9 @@ fn fields(line: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
-fn parse_service_spec(value: &[u8]) -> core::result::Result<(u16, ServiceProtocol, String), NetDbError> {
+fn parse_service_spec(
+    value: &[u8],
+) -> core::result::Result<(u16, ServiceProtocol, String), NetDbError> {
     let Some(separator) = value.iter().position(|&byte| byte == b'/') else {
         return Err(NetDbError::InvalidInput);
     };
@@ -380,16 +508,24 @@ fn parse_service_spec(value: &[u8]) -> core::result::Result<(u16, ServiceProtoco
     if protocol_name.as_bytes().contains(&b'/') {
         return Err(NetDbError::InvalidInput);
     }
-    let protocol = ServiceProtocol::parse(protocol_name.as_bytes()).ok_or(NetDbError::InvalidInput)?;
+    let protocol =
+        ServiceProtocol::parse(protocol_name.as_bytes()).ok_or(NetDbError::InvalidInput)?;
     Ok((port, protocol, protocol_name))
 }
 
 fn parse_u16(value: &[u8]) -> core::result::Result<u16, NetDbError> {
-    if value.is_empty() { return Err(NetDbError::InvalidInput); }
+    if value.is_empty() {
+        return Err(NetDbError::InvalidInput);
+    }
     let mut result = 0u32;
     for &byte in value {
-        if !byte.is_ascii_digit() { return Err(NetDbError::InvalidInput); }
-        result = result.checked_mul(10).and_then(|value| value.checked_add((byte - b'0') as u32)).ok_or(NetDbError::Overflow)?;
+        if !byte.is_ascii_digit() {
+            return Err(NetDbError::InvalidInput);
+        }
+        result = result
+            .checked_mul(10)
+            .and_then(|value| value.checked_add((byte - b'0') as u32))
+            .ok_or(NetDbError::Overflow)?;
     }
     u16::try_from(result).map_err(|_| NetDbError::Overflow)
 }
@@ -407,7 +543,9 @@ fn read_system_file(path: &[u8]) -> core::result::Result<Vec<u8>, NetDbError> {
             Err(crate::Errno::INTR) => continue,
             Err(error) => return Err(NetDbError::System(error)),
         };
-        if read == 0 { break; }
+        if read == 0 {
+            break;
+        }
         let new_length = snapshot
             .len()
             .checked_add(read)

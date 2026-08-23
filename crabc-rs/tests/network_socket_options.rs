@@ -22,8 +22,5 @@ fn reuseaddr_preserves_kernel_not_socket_error() {
     let file = std::fs::File::open("Cargo.toml").expect("open a regular file");
 
     assert_eq!(net::socket_reuseaddr(&file), Err(Errno::NOTSOCK));
-    assert_eq!(
-        net::set_socket_reuseaddr(&file, true),
-        Err(Errno::NOTSOCK)
-    );
+    assert_eq!(net::set_socket_reuseaddr(&file, true), Err(Errno::NOTSOCK));
 }

@@ -57,11 +57,7 @@ fn ldso_startup_argv_env() {
         output.status.code(),
         stderr
     );
-    assert!(
-        stdout.contains("argc=1"),
-        "expected argc=1 in: {}",
-        stdout
-    );
+    assert!(stdout.contains("argc=1"), "expected argc=1 in: {}", stdout);
     assert!(
         !stdout.contains("argv0=") || !stdout.contains("argv0=\n"),
         "argv[0] should not be empty: {}",

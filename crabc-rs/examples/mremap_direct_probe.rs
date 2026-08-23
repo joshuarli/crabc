@@ -31,9 +31,7 @@ pub extern "C" fn crabc_rs_mremap_direct_probe() -> i32 {
     unsafe { mapping.cast::<u8>().write(0x5a) };
     let successor = unsafe { mremap(mapping, PAGE_SIZE, PAGE_SIZE * 2, MremapFlags::MAYMOVE) };
     let (successor, status) = match successor {
-        Ok(successor) if unsafe { successor.cast::<u8>().read() } == 0x5a => {
-            (successor, 0)
-        }
+        Ok(successor) if unsafe { successor.cast::<u8>().read() } == 0x5a => (successor, 0),
         Ok(successor) => (successor, -crabc_rs::Errno::IO.raw()),
         Err(error) => {
             // A failed mremap leaves the original mapping valid.

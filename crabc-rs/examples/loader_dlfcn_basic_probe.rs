@@ -15,8 +15,10 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
 }
 
-const CLOSE_DSO: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"libloader_dlfcn_close.so\0") };
-const DROP_DSO: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"libloader_dlfcn_drop.so\0") };
+const CLOSE_DSO: &CStr =
+    unsafe { CStr::from_bytes_with_nul_unchecked(b"libloader_dlfcn_close.so\0") };
+const DROP_DSO: &CStr =
+    unsafe { CStr::from_bytes_with_nul_unchecked(b"libloader_dlfcn_drop.so\0") };
 const VALUE: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"loader_dlfcn_value\0") };
 const CLOSE_STATE: &CStr =
     unsafe { CStr::from_bytes_with_nul_unchecked(b"loader_dlfcn_close_state\0") };

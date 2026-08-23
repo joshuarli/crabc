@@ -17,9 +17,12 @@ pub extern "C" fn crabc_rs_process_limits_umask_direct_probe() -> i32 {
         Ok(limit) => limit,
         Err(error) => return -error.raw(),
     };
-    process::setrlimit(Resource::Core, Rlimit {
-        current: limit.current,
-        maximum: limit.maximum,
-    })
+    process::setrlimit(
+        Resource::Core,
+        Rlimit {
+            current: limit.current,
+            maximum: limit.maximum,
+        },
+    )
     .map_or_else(|error| -error.raw(), |_| 0)
 }

@@ -42,5 +42,8 @@ fn dup_exports_preserve_linux_equal_descriptor_contracts() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "descriptor dup exports ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "descriptor dup exports ok\n"
+    );
 }

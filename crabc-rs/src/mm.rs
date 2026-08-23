@@ -240,15 +240,8 @@ pub unsafe fn mmap_anonymous(
 ) -> Result<*mut c_void> {
     // SAFETY: The caller owns the mapping and pointer-provenance contract.
     unsafe {
-        crabc_core::mm::mmap_raw(
-            ptr.cast(),
-            len,
-            prot.bits(),
-            flags.bits() | 0x20,
-            -1,
-            0,
-        )
-        .map(|mapping| mapping.cast())
+        crabc_core::mm::mmap_raw(ptr.cast(), len, prot.bits(), flags.bits() | 0x20, -1, 0)
+            .map(|mapping| mapping.cast())
     }
 }
 
@@ -339,14 +332,8 @@ pub unsafe fn mremap_fixed(
     // SAFETY: The caller owns both mapping lifetime/provenance contracts and
     // must invalidate both input pointers after a successful operation.
     unsafe {
-        crabc_core::mm::mremap_fixed_raw(
-            ptr.cast(),
-            old_len,
-            new_len,
-            flags,
-            new_ptr.cast(),
-        )
-        .map(|mapping| mapping.cast())
+        crabc_core::mm::mremap_fixed_raw(ptr.cast(), old_len, new_len, flags, new_ptr.cast())
+            .map(|mapping| mapping.cast())
     }
 }
 
@@ -488,11 +475,7 @@ pub unsafe fn madvise(ptr: *mut c_void, len: usize, advice: Advice) -> Result<()
 /// still supplied by the caller; errors are direct Linux [`crate::Errno`]
 /// values rather than C `errno` state.
 #[inline]
-pub unsafe fn posix_madvise(
-    ptr: *mut c_void,
-    len: usize,
-    advice: PosixAdvice,
-) -> Result<()> {
+pub unsafe fn posix_madvise(ptr: *mut c_void, len: usize, advice: PosixAdvice) -> Result<()> {
     // SAFETY: The caller owns the mapped-range and pointer-provenance
     // contract. The typed advice is one of POSIX's five policies.
     unsafe { crabc_core::mm::posix_madvise_raw(ptr.cast(), len, advice as u32) }
@@ -511,20 +494,10 @@ pub unsafe fn posix_madvise(
 /// satisfy Linux's `remap_file_pages(2)` contract.  No Rust references may be
 /// retained across a call which changes the mapping's page association.
 #[inline]
-pub unsafe fn remap_file_pages(
-    ptr: *mut c_void,
-    len: usize,
-    page_offset: usize,
-) -> Result<()> {
+pub unsafe fn remap_file_pages(ptr: *mut c_void, len: usize, page_offset: usize) -> Result<()> {
     // SAFETY: The caller owns the mapping-lifetime and pointer-provenance
     // obligations; Linux validates the range and file-page offset.
-    unsafe {
-        crabc_core::mm::remap_file_pages_raw(
-            ptr.cast(),
-            len,
-            page_offset,
-        )
-    }
+    unsafe { crabc_core::mm::remap_file_pages_raw(ptr.cast(), len, page_offset) }
 }
 
 /// Queries Linux residency for each page intersecting a mapped range.
@@ -550,11 +523,7 @@ pub unsafe fn remap_file_pages(
 /// function returns. For a zero-length range, an empty output slice is
 /// sufficient, but Linux still validates `ptr` according to its syscall ABI.
 #[inline]
-pub unsafe fn mincore(
-    ptr: *mut c_void,
-    len: usize,
-    residency: &mut [u8],
-) -> Result<()> {
+pub unsafe fn mincore(ptr: *mut c_void, len: usize, residency: &mut [u8]) -> Result<()> {
     let required = len
         .checked_add(MINCORE_PAGE_SIZE - 1)
         .map(|rounded| rounded / MINCORE_PAGE_SIZE)

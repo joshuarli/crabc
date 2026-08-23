@@ -42,5 +42,8 @@ fn semtimedop_under_libldso() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi semtimedop ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi semtimedop ok\n"
+    );
 }

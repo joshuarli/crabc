@@ -4,8 +4,7 @@
 //! Link-free no-std proof for musl's classful IPv4 helpers.
 
 use crabc_rs::net::{
-    ipv4_local_number, ipv4_network_number, make_ipv4_address,
-    parse_ipv4_network_number, Ipv4Addr,
+    ipv4_local_number, ipv4_network_number, make_ipv4_address, parse_ipv4_network_number, Ipv4Addr,
 };
 
 #[panic_handler]

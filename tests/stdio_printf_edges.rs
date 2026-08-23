@@ -8,20 +8,26 @@ fn stdio_printf_edge_cases_under_libc_so() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let binary = test_support::TempArtifact::new("stdio_printf_edges_test");
     let mut args = vec![
-            "-fPIE".to_string(),
-            "-pie".to_string(),
-            "-I".to_string(),
-            root.join("include").to_str().unwrap().to_string(),
-            "-Wl,--dynamic-linker".to_string(),
-            root.join("target/debug/libldso.so").to_str().unwrap().to_string(),
-            "-L".to_string(),
-            root.join("target/debug").to_str().unwrap().to_string(),
-            root.join("tests/fixtures/stdio_printf_edges_test.c").to_str().unwrap().to_string(),
-            "-Wl,--allow-shlib-undefined".to_string(),
-            "-lc".to_string(),
-            "-o".to_string(),
-            binary.to_str().unwrap().to_string(),
-        ];
+        "-fPIE".to_string(),
+        "-pie".to_string(),
+        "-I".to_string(),
+        root.join("include").to_str().unwrap().to_string(),
+        "-Wl,--dynamic-linker".to_string(),
+        root.join("target/debug/libldso.so")
+            .to_str()
+            .unwrap()
+            .to_string(),
+        "-L".to_string(),
+        root.join("target/debug").to_str().unwrap().to_string(),
+        root.join("tests/fixtures/stdio_printf_edges_test.c")
+            .to_str()
+            .unwrap()
+            .to_string(),
+        "-Wl,--allow-shlib-undefined".to_string(),
+        "-lc".to_string(),
+        "-o".to_string(),
+        binary.to_str().unwrap().to_string(),
+    ];
     // crabc's x86_64 ABI uses binary64 long double, while musl-gcc defaults
     // to the x87 80-bit ABI on that host.
     if cfg!(target_arch = "x86_64") {
@@ -31,7 +37,10 @@ fn stdio_printf_edge_cases_under_libc_so() {
         .args(args)
         .status()
         .expect("failed to compile stdio printf edge fixture");
-    assert!(status.success(), "stdio printf edge fixture compilation failed");
+    assert!(
+        status.success(),
+        "stdio printf edge fixture compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", root.join("target/debug"))

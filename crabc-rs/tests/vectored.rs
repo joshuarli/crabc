@@ -27,7 +27,10 @@ fn vectored_pipe_io_preserves_order_and_reports_short_reads() {
         io::IoSlice::new(b"defgh"),
         io::IoSlice::new(b""),
     ];
-    assert_eq!(io::writev(&writer, &writes).expect("writev pipe payload"), 8);
+    assert_eq!(
+        io::writev(&writer, &writes).expect("writev pipe payload"),
+        8
+    );
 
     let mut no_reads: [io::IoSliceMut<'static>; 0] = [];
     assert_eq!(io::readv(&reader, &mut no_reads).expect("empty readv"), 0);
@@ -83,7 +86,10 @@ fn vectored_file_io_uses_each_segment_and_updates_file_position() {
     let mut first = [0_u8; 4];
     let mut second = [0_u8; 5];
     let read = {
-        let mut reads = [io::IoSliceMut::new(&mut first), io::IoSliceMut::new(&mut second)];
+        let mut reads = [
+            io::IoSliceMut::new(&mut first),
+            io::IoSliceMut::new(&mut second),
+        ];
         io::readv(&file, &mut reads).expect("readv file payload")
     };
 

@@ -239,10 +239,10 @@ pub const AT_FDCWD: RawFd = -100;
 pub mod fenv;
 /// Allocation-free character-set conversion shared by the native and C facades.
 pub mod iconv;
-/// Stateless byte-oriented filename pattern matching shared by both facades.
-pub mod pattern;
 /// Direct, allocation-free reads of Linux's process auxiliary vector.
 pub mod param;
+/// Stateless byte-oriented filename pattern matching shared by both facades.
+pub mod pattern;
 /// Pure byte-string algorithms shared by native text operations.
 pub mod text;
 /// Linux/AArch64 vDSO discovery and typed time dispatch.
@@ -467,8 +467,7 @@ pub mod runtime {
             error: *mut TextV1,
         ) -> c_int,
         /// Releases one DSO handle reference.
-        pub loader_close:
-            unsafe extern "C" fn(handle: *mut c_void, error: *mut TextV1) -> c_int,
+        pub loader_close: unsafe extern "C" fn(handle: *mut c_void, error: *mut TextV1) -> c_int,
         /// Copies loader-owned address metadata into caller-owned storage.
         pub loader_address: unsafe extern "C" fn(
             address: *const c_void,
@@ -485,10 +484,8 @@ pub mod runtime {
         ) -> c_int,
         /// Joins a libc-owned pthread and optionally receives its C callback
         /// result pointer.
-        pub thread_join: unsafe extern "C" fn(
-            handle: ThreadHandleV1,
-            result: *mut *mut c_void,
-        ) -> c_int,
+        pub thread_join:
+            unsafe extern "C" fn(handle: ThreadHandleV1, result: *mut *mut c_void) -> c_int,
         /// Detaches a libc-owned pthread handle.
         pub thread_detach: unsafe extern "C" fn(handle: ThreadHandleV1) -> c_int,
         /// Returns the current libc-owned pthread handle.
@@ -498,33 +495,23 @@ pub mod runtime {
         /// Rust destructor and lock invariants.
         pub thread_cancel: unsafe extern "C" fn(handle: ThreadHandleV1) -> c_int,
         /// Changes the current libc-owned pthread cancellation state.
-        pub thread_setcancelstate: unsafe extern "C" fn(
-            state: u32,
-            old_state: *mut u32,
-        ) -> c_int,
+        pub thread_setcancelstate: unsafe extern "C" fn(state: u32, old_state: *mut u32) -> c_int,
         /// Changes the current libc-owned pthread cancellation type.
-        pub thread_setcanceltype: unsafe extern "C" fn(
-            cancel_type: u32,
-            old_type: *mut u32,
-        ) -> c_int,
+        pub thread_setcanceltype:
+            unsafe extern "C" fn(cancel_type: u32, old_type: *mut u32) -> c_int,
         /// Tests the current libc-owned pthread cancellation request.
         pub thread_testcancel: unsafe extern "C" fn(),
         /// Creates a libc-owned thread-local key. The destructor executes in
         /// libc's thread-exit cleanup path and therefore has an unsafe Rust
         /// callback contract.
-        pub thread_key_create: unsafe extern "C" fn(
-            key: *mut u32,
-            destructor: Option<ThreadDestructorV1>,
-        ) -> c_int,
+        pub thread_key_create:
+            unsafe extern "C" fn(key: *mut u32, destructor: Option<ThreadDestructorV1>) -> c_int,
         /// Deletes a libc-owned thread-local key.
         pub thread_key_delete: unsafe extern "C" fn(key: u32) -> c_int,
         /// Reads the current thread's value for a libc-owned key.
         pub thread_getspecific: unsafe extern "C" fn(key: u32) -> *mut c_void,
         /// Writes the current thread's value for a libc-owned key.
-        pub thread_setspecific: unsafe extern "C" fn(
-            key: u32,
-            value: *const c_void,
-        ) -> c_int,
+        pub thread_setspecific: unsafe extern "C" fn(key: u32, value: *const c_void) -> c_int,
         /// Opens a libc-owned buffered view over a caller-borrowed byte
         /// buffer. `mode` is one of the private `CFILE_MODE_*` values; all
         /// failures are positive Linux errno values, never C sentinels/TLS
@@ -563,20 +550,11 @@ pub mod runtime {
             position: *mut u64,
         ) -> c_int,
         /// Returns the current absolute byte position.
-        pub cfile_tell: unsafe extern "C" fn(
-            handle: CFileHandleV1,
-            position: *mut u64,
-        ) -> c_int,
+        pub cfile_tell: unsafe extern "C" fn(handle: CFileHandleV1, position: *mut u64) -> c_int,
         /// Copies the end-of-file indicator as zero or one.
-        pub cfile_eof: unsafe extern "C" fn(
-            handle: CFileHandleV1,
-            eof: *mut u8,
-        ) -> c_int,
+        pub cfile_eof: unsafe extern "C" fn(handle: CFileHandleV1, eof: *mut u8) -> c_int,
         /// Copies the stream-error indicator as zero or one.
-        pub cfile_error: unsafe extern "C" fn(
-            handle: CFileHandleV1,
-            error: *mut u8,
-        ) -> c_int,
+        pub cfile_error: unsafe extern "C" fn(handle: CFileHandleV1, error: *mut u8) -> c_int,
         /// Rewinds one memory stream and clears its EOF/error indicators.
         pub cfile_reset: unsafe extern "C" fn(handle: CFileHandleV1) -> c_int,
         /// Closes one memory stream and releases all libc-owned allocations.
@@ -897,13 +875,7 @@ unsafe fn syscall3(number: usize, arg0: usize, arg1: usize, arg2: usize) -> isiz
 }
 
 #[inline(always)]
-unsafe fn syscall4(
-    number: usize,
-    arg0: usize,
-    arg1: usize,
-    arg2: usize,
-    arg3: usize,
-) -> isize {
+unsafe fn syscall4(number: usize, arg0: usize, arg1: usize, arg2: usize, arg3: usize) -> isize {
     let result: isize;
     // SAFETY: See `syscall1`; x1 through x3 carry the remaining arguments.
     unsafe {
@@ -1004,10 +976,10 @@ fn decode_i64(result: isize) -> Result<i64> {
 /// Direct descriptor I/O operations.
 pub mod io {
     use super::{
-        decode, decode_i32, syscall1, syscall3, syscall4, syscall5, syscall6, RawFd, Result, SYS_CLOSE,
-        SYS_DUP, SYS_DUP3, SYS_FCNTL, SYS_IOCTL, SYS_PREAD64, SYS_PREADV, SYS_PWRITE64,
-        SYS_SENDFILE, SYS_SYNC_FILE_RANGE,
-        SYS_PREADV2, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV,
+        decode, decode_i32, syscall1, syscall3, syscall4, syscall5, syscall6, RawFd, Result,
+        SYS_CLOSE, SYS_DUP, SYS_DUP3, SYS_FCNTL, SYS_IOCTL, SYS_PREAD64, SYS_PREADV, SYS_PREADV2,
+        SYS_PWRITE64, SYS_PWRITEV, SYS_PWRITEV2, SYS_READ, SYS_READV, SYS_SENDFILE,
+        SYS_SYNC_FILE_RANGE, SYS_WRITE, SYS_WRITEV,
     };
 
     /// One Linux `struct iovec` record for direct vectored I/O.
@@ -1064,15 +1036,8 @@ pub mod io {
     pub fn dup3(fd: RawFd, new_fd: RawFd, flags: u32) -> Result<()> {
         // SAFETY: The kernel validates both descriptors and the flags; this
         // syscall has no Rust memory arguments.
-        decode(unsafe {
-            syscall3(
-                SYS_DUP3,
-                fd as usize,
-                new_fd as usize,
-                flags as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_DUP3, fd as usize, new_fd as usize, flags as usize) })
+            .map(|_| ())
     }
 
     /// Performs Rustix/POSIX `dup2` semantics on AArch64.
@@ -1154,13 +1119,7 @@ pub mod io {
     pub fn fcntl_dupfd_cloexec(fd: RawFd, minimum: RawFd) -> Result<RawFd> {
         // SAFETY: F_DUPFD_CLOEXEC takes an immediate integer in the third
         // syscall argument; `fcntl_raw` encodes that integer directly.
-        unsafe {
-            fcntl_raw(
-                fd,
-                F_DUPFD_CLOEXEC,
-                minimum as u32 as usize as *mut u8,
-            )
-        }
+        unsafe { fcntl_raw(fd, F_DUPFD_CLOEXEC, minimum as u32 as usize as *mut u8) }
     }
 
     /// Synchronizes a byte range through AArch64's Linux `sync_file_range`
@@ -1218,16 +1177,10 @@ pub mod io {
     /// pairwise disjoint. Empty ranges may use any pointer. The descriptor's
     /// I/O safety is the caller's responsibility.
     #[inline]
-    pub unsafe fn readv_raw(
-        fd: RawFd,
-        iovecs: *const Iovec,
-        count: usize,
-    ) -> Result<usize> {
+    pub unsafe fn readv_raw(fd: RawFd, iovecs: *const Iovec, count: usize) -> Result<usize> {
         // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
         // validity contracts; the kernel validates the descriptor and count.
-        decode(unsafe {
-            syscall3(SYS_READV, fd as usize, iovecs as usize, count)
-        })
+        decode(unsafe { syscall3(SYS_READV, fd as usize, iovecs as usize, count) })
     }
 
     /// Reads from `offset` without changing the descriptor's file position.
@@ -1422,16 +1375,10 @@ pub mod io {
     /// immutable access for its `iov_len` bytes. The descriptor's I/O safety is
     /// the caller's responsibility.
     #[inline]
-    pub unsafe fn writev_raw(
-        fd: RawFd,
-        iovecs: *const Iovec,
-        count: usize,
-    ) -> Result<usize> {
+    pub unsafe fn writev_raw(fd: RawFd, iovecs: *const Iovec, count: usize) -> Result<usize> {
         // SAFETY: The caller supplies the iovec-array and pointed-to-buffer
         // validity contracts; the kernel validates the descriptor and count.
-        decode(unsafe {
-            syscall3(SYS_WRITEV, fd as usize, iovecs as usize, count)
-        })
+        decode(unsafe { syscall3(SYS_WRITEV, fd as usize, iovecs as usize, count) })
     }
 
     /// Writes at `offset` without changing the descriptor's file position.
@@ -1555,9 +1502,7 @@ pub mod io {
     pub unsafe fn ioctl_raw(fd: RawFd, request: u32, argument: *mut u8) -> Result<i32> {
         // SAFETY: The caller supplies the request-specific argument contract;
         // the kernel validates the descriptor and request.
-        decode_i32(unsafe {
-            syscall3(SYS_IOCTL, fd as usize, request as usize, argument as usize)
-        })
+        decode_i32(unsafe { syscall3(SYS_IOCTL, fd as usize, request as usize, argument as usize) })
     }
 
     /// Performs Linux `fcntl` without using libc or TLS `errno`.
@@ -1570,9 +1515,7 @@ pub mod io {
     #[inline]
     pub unsafe fn fcntl_raw(fd: RawFd, command: i32, argument: *mut u8) -> Result<i32> {
         // SAFETY: The caller supplies the command-specific argument contract.
-        decode_i32(unsafe {
-            syscall3(SYS_FCNTL, fd as usize, command as usize, argument as usize)
-        })
+        decode_i32(unsafe { syscall3(SYS_FCNTL, fd as usize, command as usize, argument as usize) })
     }
 
     /// Closes a raw descriptor without using libc or TLS `errno`.
@@ -1587,17 +1530,16 @@ pub mod io {
 /// Direct stateless filesystem operations.
 pub mod fs {
     use super::{
-        decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6,
-        CStr, RawFd,
-        Result, SYS_FACCESSAT, SYS_FACCESSAT2, SYS_FCHMOD, SYS_FCHMODAT, SYS_FCHOWN, SYS_FCHOWNAT, SYS_FDATASYNC, SYS_FLOCK, SYS_FSTAT, SYS_FSTATFS,
-        SYS_FSYNC, SYS_TRUNCATE, SYS_FTRUNCATE, SYS_FALLOCATE, SYS_FADVISE64, SYS_GETDENTS64, SYS_LINKAT, SYS_FGETXATTR,
-        SYS_FLISTXATTR, SYS_FREMOVEXATTR, SYS_FSETXATTR, SYS_GETXATTR, SYS_LGETXATTR,
-        SYS_LLISTXATTR, SYS_LREMOVEXATTR, SYS_LSEEK, SYS_LSETXATTR, SYS_LISTXATTR,
-        SYS_MEMFD_CREATE, SYS_MKDIRAT, SYS_NEWFSTATAT, SYS_OPENAT, SYS_OPENAT2, SYS_READAHEAD,
-        SYS_READLINKAT, SYS_STATFS, SYS_COPY_FILE_RANGE,
-        SYS_REMOVEXATTR, SYS_RENAMEAT2, SYS_SETXATTR, SYS_SYMLINKAT, SYS_UNLINKAT,
-        SYS_SYNC, SYS_SYNCFS, SYS_UTIMENSAT,
-        SYS_MKNODAT, SYS_STATX,
+        decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5,
+        syscall6, CStr, RawFd, Result, SYS_COPY_FILE_RANGE, SYS_FACCESSAT, SYS_FACCESSAT2,
+        SYS_FADVISE64, SYS_FALLOCATE, SYS_FCHMOD, SYS_FCHMODAT, SYS_FCHOWN, SYS_FCHOWNAT,
+        SYS_FDATASYNC, SYS_FGETXATTR, SYS_FLISTXATTR, SYS_FLOCK, SYS_FREMOVEXATTR, SYS_FSETXATTR,
+        SYS_FSTAT, SYS_FSTATFS, SYS_FSYNC, SYS_FTRUNCATE, SYS_GETDENTS64, SYS_GETXATTR,
+        SYS_LGETXATTR, SYS_LINKAT, SYS_LISTXATTR, SYS_LLISTXATTR, SYS_LREMOVEXATTR, SYS_LSEEK,
+        SYS_LSETXATTR, SYS_MEMFD_CREATE, SYS_MKDIRAT, SYS_MKNODAT, SYS_NEWFSTATAT, SYS_OPENAT,
+        SYS_OPENAT2, SYS_READAHEAD, SYS_READLINKAT, SYS_REMOVEXATTR, SYS_RENAMEAT2, SYS_SETXATTR,
+        SYS_STATFS, SYS_STATX, SYS_SYMLINKAT, SYS_SYNC, SYS_SYNCFS, SYS_TRUNCATE, SYS_UNLINKAT,
+        SYS_UTIMENSAT,
     };
 
     // This is the private Linux/AArch64 wire layout for `struct statx`.
@@ -1670,14 +1612,7 @@ pub mod fs {
     #[inline]
     pub fn lseek(fd: RawFd, offset: i64, whence: u32) -> Result<i64> {
         // SAFETY: The kernel validates the descriptor, offset, and whence.
-        decode_i64(unsafe {
-            syscall3(
-                SYS_LSEEK,
-                fd as usize,
-                offset as usize,
-                whence as usize,
-            )
-        })
+        decode_i64(unsafe { syscall3(SYS_LSEEK, fd as usize, offset as usize, whence as usize) })
     }
 
     /// Flushes file data and metadata for an open descriptor without using
@@ -1747,15 +1682,7 @@ pub mod fs {
     pub fn readahead(fd: RawFd, offset: i64, count: usize) -> Result<()> {
         // SAFETY: The kernel validates the descriptor and file type. The
         // scalar arguments are the Linux/AArch64 readahead ABI.
-        decode(unsafe {
-            syscall3(
-                SYS_READAHEAD,
-                fd as usize,
-                offset as usize,
-                count,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_READAHEAD, fd as usize, offset as usize, count) }).map(|_| ())
     }
 
     /// Copies up to `len` bytes between two descriptors through Linux's
@@ -1816,10 +1743,8 @@ pub mod fs {
     pub fn truncate(path: &CStr, length: i64) -> Result<()> {
         // SAFETY: `CStr` supplies a readable NUL-terminated pathname, and the
         // kernel validates the signed file length and pathname permissions.
-        decode(unsafe {
-            syscall2(SYS_TRUNCATE, path.as_ptr() as usize, length as usize)
-        })
-        .map(|_| ())
+        decode(unsafe { syscall2(SYS_TRUNCATE, path.as_ptr() as usize, length as usize) })
+            .map(|_| ())
     }
 
     /// Sets the length of an open file without using libc or TLS `errno`.
@@ -2021,13 +1946,7 @@ pub mod fs {
     pub fn memfd_create(name: &CStr, flags: u32) -> Result<RawFd> {
         // SAFETY: `CStr` supplies the name pointer and Linux validates the
         // name length and MFD flag word.
-        decode_i32(unsafe {
-            syscall2(
-                SYS_MEMFD_CREATE,
-                name.as_ptr() as usize,
-                flags as usize,
-            )
-        })
+        decode_i32(unsafe { syscall2(SYS_MEMFD_CREATE, name.as_ptr() as usize, flags as usize) })
     }
 
     /// Queries the Linux/AArch64 `struct statx` representation for a C path.
@@ -2160,12 +2079,7 @@ pub mod fs {
     /// `buffer` must designate writable storage for the complete target
     /// Linux/AArch64 `struct stat` layout.
     #[inline]
-    pub unsafe fn statat(
-        dirfd: RawFd,
-        path: &CStr,
-        buffer: *mut u8,
-        flags: u32,
-    ) -> Result<()> {
+    pub unsafe fn statat(dirfd: RawFd, path: &CStr, buffer: *mut u8, flags: u32) -> Result<()> {
         // SAFETY: `CStr` establishes the pathname contract; the caller
         // supplies the output-layout contract.
         unsafe { statat_raw(dirfd, path.as_ptr().cast(), buffer, flags) }
@@ -2356,15 +2270,8 @@ pub mod fs {
     #[inline]
     pub fn fchown(fd: RawFd, owner: u32, group: u32) -> Result<()> {
         // SAFETY: The kernel validates the descriptor, IDs, and credentials.
-        decode(unsafe {
-            syscall3(
-                SYS_FCHOWN,
-                fd as usize,
-                owner as usize,
-                group as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_FCHOWN, fd as usize, owner as usize, group as usize) })
+            .map(|_| ())
     }
 
     /// Changes pathname-selected ownership through Linux/AArch64's
@@ -2374,13 +2281,7 @@ pub mod fs {
     /// ownership-specific flag type; this core seam remains a direct scalar
     /// syscall boundary and does not broaden that safe contract.
     #[inline]
-    pub fn fchownat(
-        dirfd: RawFd,
-        path: &CStr,
-        owner: u32,
-        group: u32,
-        flags: u32,
-    ) -> Result<()> {
+    pub fn fchownat(dirfd: RawFd, path: &CStr, owner: u32, group: u32, flags: u32) -> Result<()> {
         // SAFETY: `CStr` supplies the pathname; the kernel validates the
         // descriptor, IDs, flags, and credentials.
         decode(unsafe {
@@ -2433,11 +2334,7 @@ pub mod fs {
     /// call. On success the returned prefix contains kernel `linux_dirent64`
     /// records, which still require record-by-record validation by a facade.
     #[inline]
-    pub unsafe fn getdents64_raw(
-        fd: RawFd,
-        buffer: *mut u8,
-        length: usize,
-    ) -> Result<usize> {
+    pub unsafe fn getdents64_raw(fd: RawFd, buffer: *mut u8, length: usize) -> Result<usize> {
         // SAFETY: The caller supplies writable output storage for exactly
         // `length` bytes; the kernel validates the directory descriptor.
         decode(unsafe { syscall3(SYS_GETDENTS64, fd as usize, buffer as usize, length) })
@@ -2624,11 +2521,7 @@ pub mod fs {
     /// `path` must point to a readable NUL-terminated string. `list` must be
     /// writable for `length` bytes unless `length` is zero.
     #[inline]
-    pub unsafe fn listxattr_raw(
-        path: *const u8,
-        list: *mut u8,
-        length: usize,
-    ) -> Result<usize> {
+    pub unsafe fn listxattr_raw(path: *const u8, list: *mut u8, length: usize) -> Result<usize> {
         // SAFETY: The caller supplies the pathname/output memory contracts.
         decode(unsafe { syscall3(SYS_LISTXATTR, path as usize, list as usize, length) })
     }
@@ -2640,11 +2533,7 @@ pub mod fs {
     ///
     /// Same memory requirements as [`listxattr_raw`].
     #[inline]
-    pub unsafe fn llistxattr_raw(
-        path: *const u8,
-        list: *mut u8,
-        length: usize,
-    ) -> Result<usize> {
+    pub unsafe fn llistxattr_raw(path: *const u8, list: *mut u8, length: usize) -> Result<usize> {
         // SAFETY: The caller supplies the pathname/output memory contracts.
         decode(unsafe { syscall3(SYS_LLISTXATTR, path as usize, list as usize, length) })
     }
@@ -2656,11 +2545,7 @@ pub mod fs {
     ///
     /// `list` must be writable for `length` bytes unless `length` is zero.
     #[inline]
-    pub unsafe fn flistxattr_raw(
-        fd: RawFd,
-        list: *mut u8,
-        length: usize,
-    ) -> Result<usize> {
+    pub unsafe fn flistxattr_raw(fd: RawFd, list: *mut u8, length: usize) -> Result<usize> {
         // SAFETY: The caller supplies the output memory contract; Linux
         // validates descriptor and filesystem support.
         decode(unsafe { syscall3(SYS_FLISTXATTR, fd as usize, list as usize, length) })
@@ -2754,9 +2639,7 @@ pub mod pipe {
         // SAFETY: F_GETPIPE_SZ has no pointer argument; the null third
         // argument is the canonical immediate representation for this
         // direct fcntl syscall.
-        let size = unsafe {
-            super::io::fcntl_raw(fd, F_GETPIPE_SZ, core::ptr::null_mut())?
-        };
+        let size = unsafe { super::io::fcntl_raw(fd, F_GETPIPE_SZ, core::ptr::null_mut())? };
         if size < 0 {
             return Err(super::Errno::RANGE);
         }
@@ -2770,12 +2653,7 @@ pub mod pipe {
     /// Flags retain Linux's `SPLICE_F_*` representation and kernel errors are
     /// returned unchanged.
     #[inline]
-    pub fn tee_raw(
-        fd_in: RawFd,
-        fd_out: RawFd,
-        length: usize,
-        flags: u32,
-    ) -> Result<usize> {
+    pub fn tee_raw(fd_in: RawFd, fd_out: RawFd, length: usize, flags: u32) -> Result<usize> {
         // SAFETY: Both descriptors and the scalar length/flags are immediate
         // Linux syscall arguments; the kernel validates pipe direction and
         // capacity requirements.
@@ -2876,10 +2754,9 @@ pub mod rand {
 pub mod time {
     use super::{
         decode, decode_i32, syscall1, syscall2, syscall3, syscall4, MaybeUninit, RawFd, Result,
-        SYS_CLOCK_GETRES, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME,
-        SYS_GETITIMER, SYS_GETTIMEOFDAY,
-        SYS_NANOSLEEP, SYS_SETITIMER, SYS_TIMER_CREATE, SYS_TIMER_DELETE, SYS_TIMERFD_CREATE,
-        SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME, SYS_TIMER_GETOVERRUN, SYS_TIMER_GETTIME,
+        SYS_CLOCK_GETRES, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_GETITIMER, SYS_GETTIMEOFDAY,
+        SYS_NANOSLEEP, SYS_SETITIMER, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+        SYS_TIMER_CREATE, SYS_TIMER_DELETE, SYS_TIMER_GETOVERRUN, SYS_TIMER_GETTIME,
         SYS_TIMER_SETTIME,
     };
 
@@ -3134,8 +3011,7 @@ pub mod time {
     pub unsafe fn nanosleep_raw(request: *const u8, remaining: *mut u8) -> Result<()> {
         // SAFETY: The caller owns both timespec pointer contracts; Linux
         // validates the requested range and writes `remaining` only on EINTR.
-        decode(unsafe { syscall2(SYS_NANOSLEEP, request as usize, remaining as usize) })
-            .map(|_| ())
+        decode(unsafe { syscall2(SYS_NANOSLEEP, request as usize, remaining as usize) }).map(|_| ())
     }
 
     /// Performs Linux/AArch64 `clock_nanosleep` with its native four-argument
@@ -3283,10 +3159,8 @@ pub mod time {
     pub unsafe fn timerfd_gettime_raw(fd: RawFd, current_value: *mut u8) -> Result<()> {
         // SAFETY: The caller owns the output-memory contract; Linux validates
         // the descriptor.
-        decode(unsafe {
-            super::syscall2(SYS_TIMERFD_GETTIME, fd as usize, current_value as usize)
-        })
-        .map(|_| ())
+        decode(unsafe { super::syscall2(SYS_TIMERFD_GETTIME, fd as usize, current_value as usize) })
+            .map(|_| ())
     }
 }
 
@@ -3294,8 +3168,8 @@ pub mod time {
 pub mod event {
     use super::{
         decode, decode_i32, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, Errno,
-        RawFd, Result, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2,
-        SYS_PPOLL, SYS_PSELECT6, SYS_READ, SYS_WRITE,
+        RawFd, Result, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EVENTFD2, SYS_PPOLL,
+        SYS_PSELECT6, SYS_READ, SYS_WRITE,
     };
 
     /// Creates a Linux event descriptor without using libc or TLS `errno`.
@@ -3364,8 +3238,7 @@ pub mod event {
     pub fn epoll_create1(flags: u32) -> Result<RawFd> {
         // SAFETY: Linux validates the epoll flags; no user memory is accessed
         // by this operation.
-        decode(unsafe { syscall1(SYS_EPOLL_CREATE1, flags as usize) })
-            .map(|fd| fd as RawFd)
+        decode(unsafe { syscall1(SYS_EPOLL_CREATE1, flags as usize) }).map(|fd| fd as RawFd)
     }
 
     /// Adds, modifies, or removes a descriptor from an epoll interest list.
@@ -3544,10 +3417,9 @@ pub mod event {
 pub mod net {
     use super::{
         decode, decode_i32, syscall2, syscall3, syscall4, syscall5, syscall6, MaybeUninit, RawFd,
-        Result,
-        SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CONNECT, SYS_GETPEERNAME, SYS_GETSOCKNAME,
-        SYS_GETSOCKOPT, SYS_LISTEN, SYS_RECVFROM, SYS_SENDTO, SYS_SETSOCKOPT, SYS_SHUTDOWN,
-        SYS_SOCKET, SYS_SOCKETPAIR, SYS_RECVMMSG, SYS_SENDMMSG,
+        Result, SYS_ACCEPT, SYS_ACCEPT4, SYS_BIND, SYS_CONNECT, SYS_GETPEERNAME, SYS_GETSOCKNAME,
+        SYS_GETSOCKOPT, SYS_LISTEN, SYS_RECVFROM, SYS_RECVMMSG, SYS_SENDMMSG, SYS_SENDTO,
+        SYS_SETSOCKOPT, SYS_SHUTDOWN, SYS_SOCKET, SYS_SOCKETPAIR,
     };
 
     use super::io::Iovec;
@@ -4009,11 +3881,7 @@ pub mod net {
     /// `address` must point to a readable Linux socket address of
     /// `address_length` bytes for the duration of the syscall.
     #[inline]
-    pub unsafe fn bind_raw(
-        socket: RawFd,
-        address: *const u8,
-        address_length: u32,
-    ) -> Result<()> {
+    pub unsafe fn bind_raw(socket: RawFd, address: *const u8, address_length: u32) -> Result<()> {
         // SAFETY: The caller owns the address pointer and length contract.
         decode(unsafe {
             syscall3(
@@ -4113,15 +3981,18 @@ pub mod net {
 
     /// Creates a socket pair without using libc or TLS `errno`.
     #[inline]
-    pub fn socketpair(
-        domain: i32,
-        type_and_flags: u32,
-        protocol: i32,
-    ) -> Result<(RawFd, RawFd)> {
+    pub fn socketpair(domain: i32, type_and_flags: u32, protocol: i32) -> Result<(RawFd, RawFd)> {
         let mut sockets = MaybeUninit::<[RawFd; 2]>::uninit();
         // SAFETY: `sockets` supplies output storage for exactly two Linux
         // descriptors and a successful syscall initializes both values.
-        unsafe { socketpair_raw(domain, type_and_flags, protocol, sockets.as_mut_ptr().cast())? };
+        unsafe {
+            socketpair_raw(
+                domain,
+                type_and_flags,
+                protocol,
+                sockets.as_mut_ptr().cast(),
+            )?
+        };
         // SAFETY: The successful syscall above initialized both descriptors.
         let [first, second] = unsafe { sockets.assume_init() };
         Ok((first, second))
@@ -4408,13 +4279,23 @@ pub mod resolver {
             bytes[1] = address[1];
             bytes[2] = address[2];
             bytes[3] = address[3];
-            Self { family: AF_INET, address: bytes, port: 53, scope_id: 0 }
+            Self {
+                family: AF_INET,
+                address: bytes,
+                port: 53,
+                scope_id: 0,
+            }
         }
 
         /// Builds an IPv6 nameserver using DNS port 53.
         #[inline]
         pub const fn ipv6(address: [u8; 16], scope_id: u32) -> Self {
-            Self { family: AF_INET6, address, port: 53, scope_id }
+            Self {
+                family: AF_INET6,
+                address,
+                port: 53,
+                scope_id,
+            }
         }
     }
 
@@ -4546,7 +4427,12 @@ pub mod resolver {
     }
 
     /// Encodes one recursive DNS A/AAAA/PTR query into caller storage.
-    pub fn encode_query(name: &[u8], record_type: u16, query_id: u16, output: &mut [u8]) -> Result<usize> {
+    pub fn encode_query(
+        name: &[u8],
+        record_type: u16,
+        query_id: u16,
+        output: &mut [u8],
+    ) -> Result<usize> {
         if output.len() < 12 {
             return Err(super::Errno::MSGSIZE);
         }
@@ -4606,8 +4492,10 @@ pub mod resolver {
             if question_end + 4 > packet.len()
                 || question_end - 12 != expected_length
                 || packet[12..question_end] != expected_name[..expected_length]
-                || u16::from_be_bytes([packet[question_end], packet[question_end + 1]]) != record_type
-                || u16::from_be_bytes([packet[question_end + 2], packet[question_end + 3]]) != CLASS_IN
+                || u16::from_be_bytes([packet[question_end], packet[question_end + 1]])
+                    != record_type
+                || u16::from_be_bytes([packet[question_end + 2], packet[question_end + 3]])
+                    != CLASS_IN
             {
                 return Err(malformed());
             }
@@ -4622,11 +4510,15 @@ pub mod resolver {
 
         /// Returns the DNS response code from the validated header.
         #[inline]
-        pub const fn response_code(&self) -> u8 { self.response_code }
+        pub const fn response_code(&self) -> u8 {
+            self.response_code
+        }
 
         /// Returns whether the server marked this UDP response truncated.
         #[inline]
-        pub const fn truncated(&self) -> bool { self.truncated }
+        pub const fn truncated(&self) -> bool {
+            self.truncated
+        }
 
         /// Copies the selected answer's raw RDATA or expanded DNS name.
         pub fn rdata_at(
@@ -4644,10 +4536,17 @@ pub mod resolver {
                     return Err(malformed());
                 }
                 let kind = u16::from_be_bytes([self.packet[name_end], self.packet[name_end + 1]]);
-                let class = u16::from_be_bytes([self.packet[name_end + 2], self.packet[name_end + 3]]);
-                let length = u16::from_be_bytes([self.packet[name_end + 8], self.packet[name_end + 9]]) as usize;
+                let class =
+                    u16::from_be_bytes([self.packet[name_end + 2], self.packet[name_end + 3]]);
+                let length =
+                    u16::from_be_bytes([self.packet[name_end + 8], self.packet[name_end + 9]])
+                        as usize;
                 let data = name_end + 10;
-                if data.checked_add(length).filter(|end| *end <= self.packet.len()).is_none() {
+                if data
+                    .checked_add(length)
+                    .filter(|end| *end <= self.packet.len())
+                    .is_none()
+                {
                     return Err(malformed());
                 }
                 if kind == record_type && class == CLASS_IN {
@@ -4738,7 +4637,9 @@ pub mod resolver {
             offset += 1;
             if length == 0 {
                 if written == 0 {
-                    if output.is_empty() { return Err(super::Errno::MSGSIZE); }
+                    if output.is_empty() {
+                        return Err(super::Errno::MSGSIZE);
+                    }
                     output[0] = b'.';
                     return Ok(1);
                 }
@@ -4750,7 +4651,9 @@ pub mod resolver {
                 return Err(malformed());
             }
             if written != 0 {
-                if written + 1 >= output.len() { return Err(super::Errno::MSGSIZE); }
+                if written + 1 >= output.len() {
+                    return Err(super::Errno::MSGSIZE);
+                }
                 output[written] = b'.';
                 written += 1;
             }
@@ -4778,7 +4681,10 @@ pub mod resolver {
                     family: AF_INET,
                     port: (if server.port == 0 { 53 } else { server.port }).to_be(),
                     address: u32::from_ne_bytes([
-                        server.address[0], server.address[1], server.address[2], server.address[3],
+                        server.address[0],
+                        server.address[1],
+                        server.address[2],
+                        server.address[3],
                     ]),
                     zero: [0; 8],
                 };
@@ -4818,7 +4724,10 @@ pub mod resolver {
     }
 
     fn monotonic_millis() -> Result<i64> {
-        let mut value = Timespec { seconds: 0, nanoseconds: 0 };
+        let mut value = Timespec {
+            seconds: 0,
+            nanoseconds: 0,
+        };
         // SAFETY: `value` is the exact two-word Linux/AArch64 timespec output
         // record and remains live for the direct syscall.
         unsafe {
@@ -4848,7 +4757,11 @@ pub mod resolver {
             if remaining == 0 {
                 return Ok(false);
             }
-            let mut poll = PollFd { fd, events, revents: 0 };
+            let mut poll = PollFd {
+                fd,
+                events,
+                revents: 0,
+            };
             let timeout = Timespec {
                 seconds: (remaining / 1_000) as i64,
                 nanoseconds: ((remaining % 1_000) as i64) * 1_000_000,
@@ -4958,14 +4871,25 @@ pub mod resolver {
             match received {
                 Ok(0) => return Err(super::Errno::CONNRESET),
                 Ok(length) => offset += length,
-                Err(error) if error == super::Errno::INTR || error == super::Errno::AGAIN || error == super::Errno::WOULDBLOCK => continue,
+                Err(error)
+                    if error == super::Errno::INTR
+                        || error == super::Errno::AGAIN
+                        || error == super::Errno::WOULDBLOCK =>
+                {
+                    continue
+                }
                 Err(error) => return Err(error),
             }
         }
         Ok(())
     }
 
-    fn udp_exchange(fd: i32, query_id: u16, answer: &mut [u8], deadline: i64) -> Result<UdpResponse> {
+    fn udp_exchange(
+        fd: i32,
+        query_id: u16,
+        answer: &mut [u8],
+        deadline: i64,
+    ) -> Result<UdpResponse> {
         loop {
             if !poll_until(fd, POLLIN, deadline)? {
                 return Err(super::Errno::TIMEDOUT);
@@ -4982,7 +4906,13 @@ pub mod resolver {
             };
             let length = match received {
                 Ok(length) => length,
-                Err(error) if error == super::Errno::INTR || error == super::Errno::AGAIN || error == super::Errno::WOULDBLOCK => continue,
+                Err(error)
+                    if error == super::Errno::INTR
+                        || error == super::Errno::AGAIN
+                        || error == super::Errno::WOULDBLOCK =>
+                {
+                    continue
+                }
                 Err(error) => return Err(error),
             };
             // Ignore short, non-response, wrong-transaction, and empty-
@@ -5019,7 +4949,9 @@ pub mod resolver {
             let connected = unsafe { net::connect_raw(fd, target.storage.as_ptr(), target.length) };
             match connected {
                 Ok(()) => {}
-                Err(error) if error == super::Errno::INPROGRESS || error == super::Errno::ALREADY => {
+                Err(error)
+                    if error == super::Errno::INPROGRESS || error == super::Errno::ALREADY =>
+                {
                     if !poll_until(fd, POLLOUT, deadline)? {
                         return Err(super::Errno::TIMEDOUT);
                     }
@@ -5064,7 +4996,12 @@ pub mod resolver {
     /// length-prefixed TCP, with partial I/O and connect progress charged to
     /// the same deadline. Failed servers advance in configured order and the
     /// configured attempt count repeats that order.
-    pub fn exchange(config: &ExchangeConfig, query: &[u8], query_id: u16, answer: &mut [u8]) -> Result<usize> {
+    pub fn exchange(
+        config: &ExchangeConfig,
+        query: &[u8],
+        query_id: u16,
+        answer: &mut [u8],
+    ) -> Result<usize> {
         if config.nameserver_count == 0
             || config.nameserver_count > MAX_NAMESERVERS
             || config.timeout_ms == 0
@@ -5081,19 +5018,33 @@ pub mod resolver {
                 let server = config.nameservers[index];
                 let target = match server_address(server) {
                     Ok(value) => value,
-                    Err(_) => { index += 1; continue; }
+                    Err(_) => {
+                        index += 1;
+                        continue;
+                    }
                 };
                 let deadline = match deadline_after(config.timeout_ms) {
                     Ok(value) => value,
-                    Err(_) => { index += 1; continue; }
+                    Err(_) => {
+                        index += 1;
+                        continue;
+                    }
                 };
-                let fd = match net::socket(server.family as i32, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0) {
+                let fd = match net::socket(
+                    server.family as i32,
+                    SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK,
+                    0,
+                ) {
                     Ok(fd) => fd,
-                    Err(_) => { index += 1; continue; }
+                    Err(_) => {
+                        index += 1;
+                        continue;
+                    }
                 };
                 // SAFETY: `target.storage` contains the exact initialized
                 // Linux sockaddr record and remains live across the syscall.
-                if unsafe { net::connect_raw(fd, target.storage.as_ptr(), target.length) }.is_err() {
+                if unsafe { net::connect_raw(fd, target.storage.as_ptr(), target.length) }.is_err()
+                {
                     let _ = super::io::close(fd);
                     index += 1;
                     continue;
@@ -5110,7 +5061,8 @@ pub mod resolver {
                     }
                     Ok(UdpResponse::Truncated) => {
                         let _ = super::io::close(fd);
-                        if let Ok(length) = tcp_exchange(&target, query, query_id, answer, deadline) {
+                        if let Ok(length) = tcp_exchange(&target, query, query_id, answer, deadline)
+                        {
                             return Ok(length);
                         }
                     }
@@ -5130,8 +5082,8 @@ pub mod resolver {
 pub mod mm {
     use super::{
         decode, syscall2, syscall3, syscall4, syscall5, syscall6, RawFd, Result, SYS_MADVISE,
-        SYS_MMAP, SYS_MINCORE, SYS_MLOCK, SYS_MLOCK2, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC,
-        SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES,
+        SYS_MINCORE, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MPROTECT, SYS_MREMAP,
+        SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES,
     };
 
     const MREMAP_FIXED: u32 = 0x2;
@@ -5353,8 +5305,7 @@ pub mod mm {
     pub unsafe fn msync_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
         // SAFETY: The caller owns the mapped-range and provenance contracts;
         // Linux validates the synchronization flags and mapping.
-        decode(unsafe { syscall3(SYS_MSYNC, address as usize, length, flags as usize) })
-            .map(|_| ())
+        decode(unsafe { syscall3(SYS_MSYNC, address as usize, length, flags as usize) }).map(|_| ())
     }
 
     /// Advises Linux about access to a mapped range.
@@ -5388,11 +5339,7 @@ pub mod mm {
     /// `address..address+length` must satisfy the Linux advisory syscall's
     /// mapped-range and pointer-validity requirements.
     #[inline]
-    pub unsafe fn posix_madvise_raw(
-        address: *mut u8,
-        length: usize,
-        advice: u32,
-    ) -> Result<()> {
+    pub unsafe fn posix_madvise_raw(address: *mut u8, length: usize, advice: u32) -> Result<()> {
         // musl's POSIX_MADV_DONTNEED is intentionally a no-op on Linux:
         // issuing Linux MADV_DONTNEED here would discard private anonymous
         // contents and would silently change the POSIX contract.
@@ -5476,11 +5423,7 @@ pub mod mm {
     /// storage disjoint from the mapping being queried. A null `vector` is
     /// permitted only when the kernel page count is zero.
     #[inline]
-    pub unsafe fn mincore_raw(
-        address: *mut u8,
-        length: usize,
-        vector: *mut u8,
-    ) -> Result<()> {
+    pub unsafe fn mincore_raw(address: *mut u8, length: usize, vector: *mut u8) -> Result<()> {
         // SAFETY: The caller supplies the mapped-range and output-vector
         // validity contracts; Linux validates the address and range.
         decode(unsafe { syscall3(SYS_MINCORE, address as usize, length, vector as usize) })
@@ -5496,10 +5439,9 @@ pub mod mm {
 /// distinct ABI boundary in `libc`.
 pub mod signal {
     use super::{
-        decode, decode_i32, syscall2, syscall3, syscall4, Result,
-        SYS_RT_SIGACTION, SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK,
-        SYS_RT_SIGQUEUEINFO, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
-        SYS_SIGALTSTACK, SYS_SIGNALFD4,
+        decode, decode_i32, syscall2, syscall3, syscall4, Result, SYS_RT_SIGACTION,
+        SYS_RT_SIGPENDING, SYS_RT_SIGPROCMASK, SYS_RT_SIGQUEUEINFO, SYS_RT_SIGSUSPEND,
+        SYS_RT_SIGTIMEDWAIT, SYS_SIGALTSTACK, SYS_SIGNALFD4,
     };
 
     /// The Linux/AArch64 signal-set width passed to every `rt_*` syscall.
@@ -5552,7 +5494,12 @@ pub mod signal {
         /// padding initialized to zero.
         #[inline]
         pub const fn new(sp: *mut u8, flags: i32, size: usize) -> Self {
-            Self { sp, flags, _padding: 0, size }
+            Self {
+                sp,
+                flags,
+                _padding: 0,
+                size,
+            }
         }
     }
 
@@ -5590,11 +5537,7 @@ pub mod signal {
     /// `set` and `old_set` must be null or point to one readable/writable
     /// kernel-sized signal-set word, respectively.
     #[inline]
-    pub unsafe fn rt_sigprocmask_raw(
-        how: i32,
-        set: *const u64,
-        old_set: *mut u64,
-    ) -> Result<()> {
+    pub unsafe fn rt_sigprocmask_raw(how: i32, set: *const u64, old_set: *mut u64) -> Result<()> {
         // SAFETY: The caller owns the kernel signal-set pointer contracts.
         decode(unsafe {
             syscall4(
@@ -5617,8 +5560,7 @@ pub mod signal {
     #[inline]
     pub unsafe fn rt_sigpending_raw(set: *mut u64) -> Result<()> {
         // SAFETY: The caller owns the kernel signal-set output storage.
-        decode(unsafe { syscall2(SYS_RT_SIGPENDING, set as usize, KERNEL_SIGSET_SIZE) })
-            .map(|_| ())
+        decode(unsafe { syscall2(SYS_RT_SIGPENDING, set as usize, KERNEL_SIGSET_SIZE) }).map(|_| ())
     }
 
     /// Atomically swaps in `set` while waiting for an unblocked signal.
@@ -5633,8 +5575,7 @@ pub mod signal {
     #[inline]
     pub unsafe fn rt_sigsuspend_raw(set: *const u64) -> Result<()> {
         // SAFETY: The caller owns the kernel signal-set input storage.
-        decode(unsafe { syscall2(SYS_RT_SIGSUSPEND, set as usize, KERNEL_SIGSET_SIZE) })
-            .map(|_| ())
+        decode(unsafe { syscall2(SYS_RT_SIGSUSPEND, set as usize, KERNEL_SIGSET_SIZE) }).map(|_| ())
     }
 
     /// Waits for one signal in `set` and returns its signal number.
@@ -5670,11 +5611,7 @@ pub mod signal {
     /// `info` must point to a fully initialized Linux signal-information
     /// record whose fields satisfy `rt_sigqueueinfo`'s ABI contract.
     #[inline]
-    pub unsafe fn rt_sigqueueinfo_raw(
-        pid: i32,
-        signal: i32,
-        info: *const SigInfo,
-    ) -> Result<()> {
+    pub unsafe fn rt_sigqueueinfo_raw(pid: i32, signal: i32, info: *const SigInfo) -> Result<()> {
         // SAFETY: The caller owns the signal-info input record contract.
         decode(unsafe {
             syscall3(
@@ -5700,8 +5637,7 @@ pub mod signal {
         old_stack: *mut SignalStack,
     ) -> Result<()> {
         // SAFETY: The caller owns both `stack_t` pointer contracts.
-        decode(unsafe { syscall2(SYS_SIGALTSTACK, stack as usize, old_stack as usize) })
-            .map(|_| ())
+        decode(unsafe { syscall2(SYS_SIGALTSTACK, stack as usize, old_stack as usize) }).map(|_| ())
     }
 
     /// Creates or updates a Linux `signalfd4` descriptor.
@@ -5712,11 +5648,7 @@ pub mod signal {
     /// When `fd` is non-negative it must designate an existing signalfd
     /// descriptor. `flags` uses Linux's `SFD_*` bit representation.
     #[inline]
-    pub unsafe fn signalfd4_raw(
-        fd: i32,
-        mask: *const u64,
-        flags: u32,
-    ) -> Result<i32> {
+    pub unsafe fn signalfd4_raw(fd: i32, mask: *const u64, flags: u32) -> Result<i32> {
         // SAFETY: The caller owns the mask pointer and descriptor contracts.
         decode_i32(unsafe {
             syscall4(
@@ -5734,18 +5666,13 @@ pub mod signal {
 pub mod process {
     use super::{
         decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5,
-        CStr, MaybeUninit, RawFd,
-        Result,
-        SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID,
-        SYS_GETRESGID, SYS_GETRESUID, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETSID,
-        SYS_GETPRIORITY, SYS_SETPRIORITY, SYS_GETRUSAGE, SYS_GETUID, SYS_GETCWD, SYS_CHDIR, SYS_FCHDIR,
-        SYS_CHROOT,
-        SYS_SETFSUID, SYS_SETFSGID,
-        SYS_UMASK,
-        SYS_KILL, SYS_PIDFD_OPEN, SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN,
-        SYS_TIMES,
-        SYS_SETPGID, SYS_SETSID, SYS_TGKILL, SYS_WAIT4, SYS_WAITID,
-        SYS_BRK,
+        CStr, MaybeUninit, RawFd, Result, SYS_BRK, SYS_CHDIR, SYS_CHROOT, SYS_CLONE, SYS_EXECVE,
+        SYS_EXIT_GROUP, SYS_FCHDIR, SYS_GETCWD, SYS_GETEGID, SYS_GETEUID, SYS_GETGID,
+        SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETPRIORITY, SYS_GETRESGID,
+        SYS_GETRESUID, SYS_GETRUSAGE, SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_PIDFD_OPEN,
+        SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN, SYS_SETFSGID,
+        SYS_SETFSUID, SYS_SETPGID, SYS_SETPRIORITY, SYS_SETSID, SYS_TGKILL, SYS_TIMES, SYS_UMASK,
+        SYS_WAIT4, SYS_WAITID,
     };
 
     /// Queries or requests Linux's current program break.
@@ -5932,13 +5859,7 @@ pub mod process {
         // SAFETY: `result` is writable storage for exactly the initialized
         // Linux/AArch64 getrusage record, and Linux writes all fields on a
         // successful call. `who` is an immediate selector value.
-        decode(unsafe {
-            syscall2(
-                SYS_GETRUSAGE,
-                who as usize,
-                result.as_mut_ptr() as usize,
-            )
-        })?;
+        decode(unsafe { syscall2(SYS_GETRUSAGE, who as usize, result.as_mut_ptr() as usize) })?;
         // SAFETY: Successful getrusage initialized every field in the
         // kernel-sized record above; no reserved musl tail is read.
         Ok(unsafe { result.assume_init() })
@@ -5991,9 +5912,8 @@ pub mod process {
         let mut process = MaybeUninit::<KernelProcessTimes>::uninit();
         // SAFETY: `process` is writable storage for Linux/AArch64's exact
         // four-word `struct tms`; the kernel initializes all words on success.
-        let elapsed_ticks = decode_i64(unsafe {
-            syscall1(SYS_TIMES, process.as_mut_ptr() as usize)
-        })?;
+        let elapsed_ticks =
+            decode_i64(unsafe { syscall1(SYS_TIMES, process.as_mut_ptr() as usize) })?;
         // SAFETY: A successful times syscall initializes all four words.
         let process = unsafe { process.assume_init() };
         if process.user_ticks < 0
@@ -6035,12 +5955,8 @@ pub mod process {
     /// returned ordering. The two calls are read-only scalar observations.
     #[inline]
     pub fn scheduler_priority_bounds_raw(policy: i32) -> Result<(i32, i32)> {
-        let maximum = decode_i32(unsafe {
-            syscall1(SYS_SCHED_GET_PRIORITY_MAX, policy as usize)
-        })?;
-        let minimum = decode_i32(unsafe {
-            syscall1(SYS_SCHED_GET_PRIORITY_MIN, policy as usize)
-        })?;
+        let maximum = decode_i32(unsafe { syscall1(SYS_SCHED_GET_PRIORITY_MAX, policy as usize) })?;
+        let minimum = decode_i32(unsafe { syscall1(SYS_SCHED_GET_PRIORITY_MIN, policy as usize) })?;
         Ok((minimum, maximum))
     }
 
@@ -6330,15 +6246,8 @@ pub mod process {
     #[inline]
     pub fn tgkill(tgid: i32, tid: i32, signal: i32) -> Result<()> {
         // SAFETY: All arguments are immediate Linux scalar values.
-        decode(unsafe {
-            syscall3(
-                SYS_TGKILL,
-                tgid as usize,
-                tid as usize,
-                signal as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_TGKILL, tgid as usize, tid as usize, signal as usize) })
+            .map(|_| ())
     }
 
     /// Creates a child process using the raw Linux fork-equivalent clone.
@@ -6372,15 +6281,8 @@ pub mod process {
         envp: *const *const u8,
     ) -> Result<()> {
         // SAFETY: The caller owns every pointer/array/string contract.
-        decode(unsafe {
-            syscall3(
-                SYS_EXECVE,
-                path as usize,
-                argv as usize,
-                envp as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_EXECVE, path as usize, argv as usize, envp as usize) })
+            .map(|_| ())
     }
 
     /// Waits for a child process state change through Linux `wait4`.
@@ -6492,15 +6394,14 @@ pub mod process {
         // SAFETY: `setsid` has no user-memory arguments.
         decode_i32(unsafe { syscall0(SYS_SETSID) })
     }
-
 }
 
 /// Direct thread-associated Linux operations.
 pub mod thread {
     use super::{
-        decode, syscall0, syscall2, syscall3, syscall6, Result, SYS_FUTEX, SYS_GETCPU,
-        SYS_GETTID, SYS_SCHED_GETAFFINITY, SYS_SCHED_RR_GET_INTERVAL, SYS_SCHED_SETAFFINITY,
-        SYS_SCHED_YIELD, SYS_SETRESGID, SYS_SETRESUID,
+        decode, syscall0, syscall2, syscall3, syscall6, Result, SYS_FUTEX, SYS_GETCPU, SYS_GETTID,
+        SYS_SCHED_GETAFFINITY, SYS_SCHED_RR_GET_INTERVAL, SYS_SCHED_SETAFFINITY, SYS_SCHED_YIELD,
+        SYS_SETRESGID, SYS_SETRESUID,
     };
     use core::mem::MaybeUninit;
 
@@ -6581,14 +6482,19 @@ pub mod thread {
     /// `address` must be a valid, four-byte-aligned futex word readable for
     /// the duration of the syscall.
     #[inline]
-    pub unsafe fn futex_wake(
-        address: *const u32,
-        count: u32,
-        private: bool,
-    ) -> Result<usize> {
+    pub unsafe fn futex_wake(address: *const u32, count: u32, private: bool) -> Result<usize> {
         let operation = FUTEX_WAKE | if private { FUTEX_PRIVATE_FLAG } else { 0 };
         // SAFETY: The caller supplied the futex-word contract.
-        unsafe { futex_raw(address, operation, count, core::ptr::null(), core::ptr::null(), 0) }
+        unsafe {
+            futex_raw(
+                address,
+                operation,
+                count,
+                core::ptr::null(),
+                core::ptr::null(),
+                0,
+            )
+        }
     }
 
     /// Returns the caller's Linux thread ID.
@@ -6609,15 +6515,8 @@ pub mod thread {
     pub fn setresuid_raw(ruid: u32, euid: u32, suid: u32) -> Result<()> {
         // SAFETY: All arguments are immediate Linux uid_t words. Linux
         // applies the credential change to the calling kernel task only.
-        decode(unsafe {
-            syscall3(
-                SYS_SETRESUID,
-                ruid as usize,
-                euid as usize,
-                suid as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_SETRESUID, ruid as usize, euid as usize, suid as usize) })
+            .map(|_| ())
     }
 
     /// Sets the calling task's real, effective, and saved group IDs through
@@ -6631,15 +6530,8 @@ pub mod thread {
     pub fn setresgid_raw(rgid: u32, egid: u32, sgid: u32) -> Result<()> {
         // SAFETY: All arguments are immediate Linux gid_t words. Linux
         // applies the credential change to the calling kernel task only.
-        decode(unsafe {
-            syscall3(
-                SYS_SETRESGID,
-                rgid as usize,
-                egid as usize,
-                sgid as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_SETRESGID, rgid as usize, egid as usize, sgid as usize) })
+            .map(|_| ())
     }
 
     /// Returns the Linux CPU on which the calling thread is currently running.
@@ -6689,14 +6581,8 @@ pub mod thread {
     pub unsafe fn sched_rr_get_interval_raw(pid: i32, interval: *mut u8) -> Result<()> {
         // SAFETY: The caller supplies writable timespec storage; `pid` and
         // the pointer are immediate Linux syscall arguments.
-        decode(unsafe {
-            syscall2(
-                SYS_SCHED_RR_GET_INTERVAL,
-                pid as usize,
-                interval as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall2(SYS_SCHED_RR_GET_INTERVAL, pid as usize, interval as usize) })
+            .map(|_| ())
     }
 
     /// Reads a Linux task's CPU-affinity mask.
@@ -6711,21 +6597,10 @@ pub mod thread {
     /// `mask` must point to writable storage for `size` bytes for the duration
     /// of the syscall. Linux PID zero selects the calling task.
     #[inline]
-    pub unsafe fn sched_getaffinity_raw(
-        pid: i32,
-        mask: *mut u8,
-        size: usize,
-    ) -> Result<usize> {
+    pub unsafe fn sched_getaffinity_raw(pid: i32, mask: *mut u8, size: usize) -> Result<usize> {
         // SAFETY: The caller supplies writable mask storage for `size` bytes;
         // all three values are immediate Linux syscall arguments.
-        decode(unsafe {
-            syscall3(
-                SYS_SCHED_GETAFFINITY,
-                pid as usize,
-                size,
-                mask as usize,
-            )
-        })
+        decode(unsafe { syscall3(SYS_SCHED_GETAFFINITY, pid as usize, size, mask as usize) })
     }
 
     /// Sets a Linux task's CPU-affinity mask.
@@ -6740,22 +6615,11 @@ pub mod thread {
     /// `mask` must point to readable storage for `size` bytes for the
     /// duration of the syscall. Linux PID zero selects the calling task.
     #[inline]
-    pub unsafe fn sched_setaffinity_raw(
-        pid: i32,
-        mask: *const u8,
-        size: usize,
-    ) -> Result<()> {
+    pub unsafe fn sched_setaffinity_raw(pid: i32, mask: *const u8, size: usize) -> Result<()> {
         // SAFETY: The caller supplies readable mask storage for `size` bytes;
         // all three values are immediate Linux syscall arguments.
-        decode(unsafe {
-            syscall3(
-                SYS_SCHED_SETAFFINITY,
-                pid as usize,
-                size,
-                mask as usize,
-            )
-        })
-        .map(|_| ())
+        decode(unsafe { syscall3(SYS_SCHED_SETAFFINITY, pid as usize, size, mask as usize) })
+            .map(|_| ())
     }
 
     /// Yields the processor to the Linux scheduler.
@@ -6894,12 +6758,7 @@ pub mod ipc {
     /// slash; the higher-level facade validates and performs that translation.
     /// `attr` is supplied only for creation and remains borrowed for the call.
     #[inline]
-    pub fn open(
-        name: &CStr,
-        flags: i32,
-        mode: u32,
-        attr: Option<&KernelMqAttr>,
-    ) -> Result<RawFd> {
+    pub fn open(name: &CStr, flags: i32, mode: u32, attr: Option<&KernelMqAttr>) -> Result<RawFd> {
         // SAFETY: `name` and the optional attribute remain live for the
         // fixed-arity syscall; all other arguments are scalar Linux values.
         decode_i32(unsafe {
@@ -6992,8 +6851,10 @@ pub mod ipc {
 
 /// Direct Linux inotify operations.
 pub mod inotify {
-    use super::{decode, syscall1, syscall2, syscall3, CStr, RawFd, Result,
-        SYS_INOTIFY_ADD_WATCH, SYS_INOTIFY_INIT1, SYS_INOTIFY_RM_WATCH};
+    use super::{
+        decode, syscall1, syscall2, syscall3, CStr, RawFd, Result, SYS_INOTIFY_ADD_WATCH,
+        SYS_INOTIFY_INIT1, SYS_INOTIFY_RM_WATCH,
+    };
 
     /// Creates one Linux inotify descriptor without using libc or TLS
     /// `errno`.

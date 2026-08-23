@@ -120,9 +120,8 @@ fn next_token(pattern: &[u8], index: usize, flags: u32) -> Token {
 
 fn class_matches(class: &[u8], candidate: u8, folded: u8) -> bool {
     let equal = |byte| candidate == byte || folded == byte;
-    let in_range = |low, high| {
-        (candidate >= low && candidate <= high) || (folded >= low && folded <= high)
-    };
+    let in_range =
+        |low, high| (candidate >= low && candidate <= high) || (folded >= low && folded <= high);
     match class {
         b"alnum" => in_range(b'0', b'9') || in_range(b'A', b'Z') || in_range(b'a', b'z'),
         b"alpha" => in_range(b'A', b'Z') || in_range(b'a', b'z'),
@@ -147,9 +146,7 @@ fn class_matches(class: &[u8], candidate: u8, folded: u8) -> bool {
                 || equal(0x0b)
         }
         b"upper" => in_range(b'A', b'Z'),
-        b"xdigit" => {
-            in_range(b'0', b'9') || in_range(b'A', b'F') || in_range(b'a', b'f')
-        }
+        b"xdigit" => in_range(b'0', b'9') || in_range(b'A', b'F') || in_range(b'a', b'f'),
         _ => false,
     }
 }
@@ -190,10 +187,7 @@ fn bracket_matches(
                 low = ascii_casefold(low);
                 high = ascii_casefold(high);
             }
-            if low <= high
-                && folded >= low
-                && folded <= high
-            {
+            if low <= high && folded >= low && folded <= high {
                 return !inverted;
             }
             cursor += 2;
@@ -207,9 +201,7 @@ fn bracket_matches(
             let delimiter = pattern[cursor + 1];
             let class_start = cursor + 2;
             let mut close = class_start;
-            while close + 1 < end
-                && !(pattern[close] == delimiter && pattern[close + 1] == b']')
-            {
+            while close + 1 < end && !(pattern[close] == delimiter && pattern[close + 1] == b']') {
                 close += 1;
             }
             if close + 1 < end {
@@ -259,9 +251,7 @@ fn token_matches(
 
 /// Matches a pattern against one component (a slice containing no `/`).
 fn component_matches(pattern: &[u8], candidate: &[u8], flags: u32) -> bool {
-    if flags & FNM_PERIOD != 0
-        && candidate.first() == Some(&b'.')
-        && pattern.first() != Some(&b'.')
+    if flags & FNM_PERIOD != 0 && candidate.first() == Some(&b'.') && pattern.first() != Some(&b'.')
     {
         return false;
     }
@@ -314,8 +304,7 @@ fn component_matches(pattern: &[u8], candidate: &[u8], flags: u32) -> bool {
         // same bounded, allocation-free strategy used by musl's matcher; the
         // pathname check keeps a star from consuming `/`.
         if let Some(next_pattern) = star_pattern {
-            if star_candidate < candidate.len()
-                && (!pathname || candidate[star_candidate] != b'/')
+            if star_candidate < candidate.len() && (!pathname || candidate[star_candidate] != b'/')
             {
                 star_candidate += 1;
                 candidate_index = star_candidate;

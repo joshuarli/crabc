@@ -100,7 +100,11 @@ fn pause_blocks_in_an_isolated_child_until_handler_delivery_and_cleans_up() {
                 .expect("timed-out pause child status")
                 .1
         });
-    assert_eq!(status.exit_status(), Some(0), "pause child status: {status:?}");
+    assert_eq!(
+        status.exit_status(),
+        Some(0),
+        "pause child status: {status:?}"
+    );
 
     let mut completion = [0_u8; 1];
     assert_eq!(

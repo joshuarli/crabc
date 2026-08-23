@@ -100,7 +100,10 @@ fn caller_owned_system_snapshots_parse_and_hosts_precede_dns() {
             },
         )
         .expect("hosts entry must resolve without DNS");
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"192.0.2.17").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"192.0.2.17").unwrap()
+    );
 }
 
 #[test]
@@ -118,7 +121,9 @@ fn resolver_search_candidates_follow_ndots_order() {
         let mut request = [0u8; 512];
         let (length, peer) = server.recv_from(&mut request).unwrap();
         assert_eq!(question_name(&request[..length]), "service.example.test");
-        server.send_to(&dns_a_answer(&request[..length], [192, 0, 2, 44]), peer).unwrap();
+        server
+            .send_to(&dns_a_answer(&request[..length], [192, 0, 2, 44]), peer)
+            .unwrap();
     });
 
     let mut config = query_config(port);
@@ -138,7 +143,10 @@ fn resolver_search_candidates_follow_ndots_order() {
         .unwrap();
     worker.join().unwrap();
     assert_eq!(result.canonical_name(), Some("service.example.test"));
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"192.0.2.44").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"192.0.2.44").unwrap()
+    );
 }
 
 #[test]
@@ -150,11 +158,16 @@ fn resolver_completes_cname_chain_and_keeps_target_canonical_name() {
         let (length, peer) = server.recv_from(&mut request).unwrap();
         assert_eq!(question_name(&request[..length]), "alias.example.test");
         server
-            .send_to(&dns_cname_answer(&request[..length], "target.example.test"), peer)
+            .send_to(
+                &dns_cname_answer(&request[..length], "target.example.test"),
+                peer,
+            )
             .unwrap();
         let (length, peer) = server.recv_from(&mut request).unwrap();
         assert_eq!(question_name(&request[..length]), "target.example.test");
-        server.send_to(&dns_a_answer(&request[..length], [192, 0, 2, 45]), peer).unwrap();
+        server
+            .send_to(&dns_a_answer(&request[..length], [192, 0, 2, 45]), peer)
+            .unwrap();
     });
 
     let result = Resolver::new(query_config(port))
@@ -171,7 +184,10 @@ fn resolver_completes_cname_chain_and_keeps_target_canonical_name() {
         .unwrap();
     worker.join().unwrap();
     assert_eq!(result.canonical_name(), Some("target.example.test"));
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"192.0.2.45").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"192.0.2.45").unwrap()
+    );
 }
 
 #[test]
@@ -183,9 +199,13 @@ fn resolver_completes_aaaa_answers_for_inet6() {
         let (length, peer) = server.recv_from(&mut request).unwrap();
         assert_eq!(&request[length - 4..length - 2], &[0, 28]);
         server
-            .send_to(&dns_aaaa_answer(&request[..length], [
-                0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7,
-            ]), peer)
+            .send_to(
+                &dns_aaaa_answer(
+                    &request[..length],
+                    [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7],
+                ),
+                peer,
+            )
             .unwrap();
     });
 
@@ -202,7 +222,10 @@ fn resolver_completes_aaaa_answers_for_inet6() {
         )
         .unwrap();
     worker.join().unwrap();
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"2001:db8::7").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"2001:db8::7").unwrap()
+    );
 }
 
 #[test]

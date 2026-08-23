@@ -15,22 +15,34 @@ impl Uname {
 
     /// Operating-system name.
     #[inline]
-    pub fn sysname(&self) -> &CStr { Self::field(&self.0.sysname) }
+    pub fn sysname(&self) -> &CStr {
+        Self::field(&self.0.sysname)
+    }
     /// Network node name.
     #[inline]
-    pub fn nodename(&self) -> &CStr { Self::field(&self.0.nodename) }
+    pub fn nodename(&self) -> &CStr {
+        Self::field(&self.0.nodename)
+    }
     /// Kernel release.
     #[inline]
-    pub fn release(&self) -> &CStr { Self::field(&self.0.release) }
+    pub fn release(&self) -> &CStr {
+        Self::field(&self.0.release)
+    }
     /// Kernel version.
     #[inline]
-    pub fn version(&self) -> &CStr { Self::field(&self.0.version) }
+    pub fn version(&self) -> &CStr {
+        Self::field(&self.0.version)
+    }
     /// Kernel machine name.
     #[inline]
-    pub fn machine(&self) -> &CStr { Self::field(&self.0.machine) }
+    pub fn machine(&self) -> &CStr {
+        Self::field(&self.0.machine)
+    }
     /// Linux NIS domain name.
     #[inline]
-    pub fn domainname(&self) -> &CStr { Self::field(&self.0.domainname) }
+    pub fn domainname(&self) -> &CStr {
+        Self::field(&self.0.domainname)
+    }
 }
 
 impl core::fmt::Debug for Uname {
@@ -231,7 +243,9 @@ pub mod inotify {
             let fd = crabc_core::inotify::init1(flags.bits())?;
             // SAFETY: a successful `inotify_init1` returns one fresh,
             // non-negative descriptor whose ownership transfers here.
-            Ok(Self { fd: unsafe { OwnedFd::from_raw_fd(fd) } })
+            Ok(Self {
+                fd: unsafe { OwnedFd::from_raw_fd(fd) },
+            })
         }
 
         /// Adds a watch for a byte-oriented pathname.
@@ -265,7 +279,11 @@ pub mod inotify {
         #[inline]
         pub fn read_events<'buffer>(&self, buffer: &'buffer mut [u8]) -> Result<Events<'buffer>> {
             let length = crabc_core::io::read(self.fd.as_raw_fd(), buffer)?;
-            Ok(Events { bytes: &buffer[..length], offset: 0, malformed: false })
+            Ok(Events {
+                bytes: &buffer[..length],
+                offset: 0,
+                malformed: false,
+            })
         }
 
         /// Transfers the descriptor owner without removing its watches.
@@ -411,7 +429,11 @@ pub mod inotify {
             bytes[8..12].copy_from_slice(&23_u32.to_ne_bytes());
             bytes[12..16].copy_from_slice(&4_u32.to_ne_bytes());
             bytes[16..20].copy_from_slice(b"x\0\0\0");
-            let mut events = Events { bytes: &bytes, offset: 0, malformed: false };
+            let mut events = Events {
+                bytes: &bytes,
+                offset: 0,
+                malformed: false,
+            };
 
             let event = events.next().expect("one event").expect("valid event");
             assert_eq!(event.watch(), Some(WatchDescriptor(7)));
@@ -423,7 +445,11 @@ pub mod inotify {
 
         #[test]
         fn event_batch_rejects_a_truncated_record() {
-            let mut events = Events { bytes: &[0; EVENT_HEADER_SIZE - 1], offset: 0, malformed: false };
+            let mut events = Events {
+                bytes: &[0; EVENT_HEADER_SIZE - 1],
+                offset: 0,
+                malformed: false,
+            };
 
             assert_eq!(events.next(), Some(Err(crate::Errno::INVAL)));
             assert!(events.next().is_none());
@@ -434,7 +460,11 @@ pub mod inotify {
             let mut bytes = [0u8; EVENT_HEADER_SIZE + 1];
             bytes[12..16].copy_from_slice(&1_u32.to_ne_bytes());
             bytes[16] = b'x';
-            let mut events = Events { bytes: &bytes, offset: 0, malformed: false };
+            let mut events = Events {
+                bytes: &bytes,
+                offset: 0,
+                malformed: false,
+            };
 
             assert_eq!(events.next(), Some(Err(crate::Errno::INVAL)));
             assert!(events.next().is_none());

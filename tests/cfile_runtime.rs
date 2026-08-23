@@ -27,7 +27,10 @@ fn native_cfile_uses_libc_owned_memory_stream_state() {
         ])
         .status()
         .expect("failed to build the native CFile probe archive");
-    assert!(probe_build.success(), "native CFile probe archive did not build");
+    assert!(
+        probe_build.success(),
+        "native CFile probe archive did not build"
+    );
     assert!(debug.join("libldso.so").is_file(), "libldso.so not found");
     assert!(debug.join("libc.so").is_file(), "libc.so not found");
     assert!(archive.is_file(), "native CFile probe archive not found");
@@ -51,7 +54,10 @@ fn native_cfile_uses_libc_owned_memory_stream_state() {
         ])
         .status()
         .expect("failed to compile native CFile runtime fixture");
-    assert!(status.success(), "native CFile runtime fixture did not compile");
+    assert!(
+        status.success(),
+        "native CFile runtime fixture did not compile"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &debug)
@@ -64,5 +70,8 @@ fn native_cfile_uses_libc_owned_memory_stream_state() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "compat cfile runtime ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "compat cfile runtime ok\n"
+    );
 }

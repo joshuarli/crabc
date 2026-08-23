@@ -29,7 +29,10 @@ fn c11_time_extension_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for time_extensions_test");
-    assert!(status.success(), "musl-gcc time_extensions_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc time_extensions_test compilation failed"
+    );
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)
         .output()
@@ -42,5 +45,8 @@ fn c11_time_extension_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi time extensions ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi time extensions ok\n"
+    );
 }

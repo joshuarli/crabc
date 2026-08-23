@@ -9,7 +9,9 @@ use core::ffi::CStr;
 /// hard-coding a page size would be wrong for valid 16 KiB and 64 KiB kernels.
 #[inline]
 #[must_use]
-pub const fn clock_ticks_per_second() -> u64 { 100 }
+pub const fn clock_ticks_per_second() -> u64 {
+    100
+}
 
 const EMPTY_CSTR: &CStr = unsafe { CStr::from_bytes_with_nul_unchecked(b"\0") };
 
@@ -51,8 +53,8 @@ pub fn linux_minsigstksz() -> usize {
 #[inline]
 #[must_use]
 pub fn linux_execfn() -> &'static CStr {
-    let pointer = crabc_core::param::auxv_value(crabc_core::param::AT_EXECFN)
-        .unwrap_or(0) as *const core::ffi::c_char;
+    let pointer = crabc_core::param::auxv_value(crabc_core::param::AT_EXECFN).unwrap_or(0)
+        as *const core::ffi::c_char;
     if pointer.is_null() {
         return EMPTY_CSTR;
     }

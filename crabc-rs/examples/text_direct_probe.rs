@@ -48,17 +48,21 @@ pub extern "C" fn crabc_rs_text_direct_probe() -> i32 {
     for &(encoding, expected) in scalar_cases {
         let mut scalar_encoded = [0u8; 16];
         let mut scalar_encoder = TextConverter::new(TextEncoding::Utf8, encoding);
-        let scalar_result = match scalar_encoder.convert(b"A\xe2\x82\xac\xf0\x9f\x98\x80", &mut scalar_encoded) {
-            Ok(value) if value.consumed == 8 && value.produced == expected.len() => value,
-            _ => return 4,
-        };
+        let scalar_result =
+            match scalar_encoder.convert(b"A\xe2\x82\xac\xf0\x9f\x98\x80", &mut scalar_encoded) {
+                Ok(value) if value.consumed == 8 && value.produced == expected.len() => value,
+                _ => return 4,
+            };
         if &scalar_encoded[..scalar_result.produced] != expected {
             return 5;
         }
 
         let mut scalar_decoded = [0u8; 16];
         let mut scalar_decoder = TextConverter::new(encoding, TextEncoding::Utf8);
-        match scalar_decoder.convert(&scalar_encoded[..scalar_result.produced], &mut scalar_decoded) {
+        match scalar_decoder.convert(
+            &scalar_encoded[..scalar_result.produced],
+            &mut scalar_decoded,
+        ) {
             Ok(value)
                 if value.consumed == expected.len()
                     && &scalar_decoded[..value.produced] == b"A\xe2\x82\xac\xf0\x9f\x98\x80" => {}
@@ -69,7 +73,8 @@ pub extern "C" fn crabc_rs_text_direct_probe() -> i32 {
     let mut iso2_decoder = TextConverter::new(TextEncoding::Iso8859_2, TextEncoding::Utf8);
     let mut iso2_utf8 = [0u8; 4];
     match iso2_decoder.convert(&[0xa1], &mut iso2_utf8) {
-        Ok(value) if value.consumed == 1 && value.produced == 2 && &iso2_utf8[..2] == b"\xc4\x84" => {}
+        Ok(value)
+            if value.consumed == 1 && value.produced == 2 && &iso2_utf8[..2] == b"\xc4\x84" => {}
         _ => return 7,
     }
 

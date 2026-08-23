@@ -36,7 +36,10 @@ fn canonicalize_lexically_normalizes_and_physically_resolves_relative_links() {
 
     let path = root.join("alias/to-real/./child/../child/file");
     let expected = root.join("real/child/file");
-    assert_eq!(canonical(path.as_os_str().as_bytes()), expected.as_os_str().as_bytes());
+    assert_eq!(
+        canonical(path.as_os_str().as_bytes()),
+        expected.as_os_str().as_bytes()
+    );
     assert_eq!(
         canonical(root.join("real/child/../").as_os_str().as_bytes()),
         root.join("real").as_os_str().as_bytes()
@@ -54,7 +57,10 @@ fn canonicalize_relative_paths_are_anchored_to_the_physical_current_directory() 
     assert_eq!(canonical(b"."), cwd.as_os_str().as_bytes());
     assert_eq!(
         canonical(b".."),
-        cwd.parent().expect("test directory has a parent").as_os_str().as_bytes()
+        cwd.parent()
+            .expect("test directory has a parent")
+            .as_os_str()
+            .as_bytes()
     );
 }
 
@@ -79,8 +85,7 @@ fn canonicalize_reports_missing_dangling_and_cyclic_paths() {
         native_fs::canonicalize(root.join("missing").as_os_str().as_bytes()),
         Err(Errno::NOENT)
     );
-    std::os::unix::fs::symlink("missing", root.join("dangling"))
-        .expect("create dangling symlink");
+    std::os::unix::fs::symlink("missing", root.join("dangling")).expect("create dangling symlink");
     assert_eq!(
         native_fs::canonicalize(root.join("dangling").as_os_str().as_bytes()),
         Err(Errno::NOENT)

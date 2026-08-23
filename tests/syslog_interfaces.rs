@@ -30,7 +30,10 @@ fn syslog_interfaces_under_libc_so() {
         ])
         .status()
         .expect("failed to compile syslog_interfaces_test");
-    assert!(status.success(), "syslog_interfaces_test compilation failed");
+    assert!(
+        status.success(),
+        "syslog_interfaces_test compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)
@@ -45,10 +48,7 @@ fn syslog_interfaces_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "c-abi syslog ok\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi syslog ok\n");
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         "cabi_sys: hello world 7\ncabi_sys: notice ok\n"

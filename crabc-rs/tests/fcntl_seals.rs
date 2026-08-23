@@ -42,7 +42,10 @@ fn fcntl_add_seals_adds_and_observes_flags_on_an_allow_sealing_memfd() {
 
     let seals = fs::SealFlags::GROW | fs::SealFlags::SHRINK;
     fs::fcntl_add_seals(&file, seals).expect("add memfd seals");
-    assert_eq!(fs::fcntl_get_seals(&file).expect("read added memfd seals"), seals);
+    assert_eq!(
+        fs::fcntl_get_seals(&file).expect("read added memfd seals"),
+        seals
+    );
 }
 
 #[test]

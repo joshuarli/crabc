@@ -77,14 +77,8 @@ fn ownership_operations_accept_the_callers_existing_ids() {
 
     // `None` is the only no-change spelling. This still exercises the kernel
     // sentinel while leaving the unprivileged fixture owned by its creator.
-    fs::chownat(
-        fs::CWD,
-        fixture.path(),
-        None,
-        None,
-        ChownFlags::empty(),
-    )
-    .expect("chownat no-change ownership");
+    fs::chownat(fs::CWD, fixture.path(), None, None, ChownFlags::empty())
+        .expect("chownat no-change ownership");
     let after_no_change = stdfs::metadata(fixture.path()).expect("read no-change metadata");
     assert_eq!(after_no_change.uid(), owner.as_raw());
     assert_eq!(after_no_change.gid(), group.as_raw());
@@ -122,12 +116,20 @@ fn ownership_ids_and_flags_reject_ambiguous_or_unrelated_raw_bits() {
     let invalid_group = process::Gid::from_raw(u32::MAX);
 
     assert_eq!(
-        fs::chown("/crabc-rs-native-ownership-no-such-entry", Some(invalid_owner), None),
+        fs::chown(
+            "/crabc-rs-native-ownership-no-such-entry",
+            Some(invalid_owner),
+            None
+        ),
         Err(Errno::INVAL),
         "a raw all-ones UID must not silently become the no-change sentinel",
     );
     assert_eq!(
-        fs::chown("/crabc-rs-native-ownership-no-such-entry", None, Some(invalid_group)),
+        fs::chown(
+            "/crabc-rs-native-ownership-no-such-entry",
+            None,
+            Some(invalid_group)
+        ),
         Err(Errno::INVAL),
         "a raw all-ones GID must not silently become the no-change sentinel",
     );

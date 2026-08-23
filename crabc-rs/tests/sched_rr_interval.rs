@@ -6,8 +6,8 @@ use crabc_rs::Errno;
 
 #[test]
 fn sched_rr_get_interval_returns_a_stable_canonical_duration() {
-    let first = thread::sched_rr_get_interval(None)
-        .expect("read the calling task's scheduler interval");
+    let first =
+        thread::sched_rr_get_interval(None).expect("read the calling task's scheduler interval");
     let second = thread::sched_rr_get_interval(None)
         .expect("read the calling task's scheduler interval again");
 

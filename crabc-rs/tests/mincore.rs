@@ -26,7 +26,10 @@ fn native_mincore_reports_faulted_pages_and_preserves_extra_output() {
         .expect("query residency through the direct mincore syscall");
 
     assert_eq!(residency[0] & 1, 1, "the written page must be resident");
-    assert_eq!(residency[2], 0xa5, "bytes beyond the required vector stay untouched");
+    assert_eq!(
+        residency[2], 0xa5,
+        "bytes beyond the required vector stay untouched"
+    );
 
     unsafe { mm::munmap(mapping, MAPPING_LEN) }.expect("unmap queried pages");
 }
@@ -80,7 +83,11 @@ fn native_mincore_rounds_a_partial_final_page_to_one_output_byte() {
     let mut residency = [0_u8; 2];
     unsafe { mm::mincore(mapping, PAGE_SIZE + 1, &mut residency) }
         .expect("query the page containing a one-byte partial tail");
-    assert_eq!(residency[1] & 1, 1, "the partial final page must be reported");
+    assert_eq!(
+        residency[1] & 1,
+        1,
+        "the partial final page must be reported"
+    );
 
     unsafe { mm::munmap(mapping, MAPPING_LEN) }.expect("unmap partial-range fixture");
 }

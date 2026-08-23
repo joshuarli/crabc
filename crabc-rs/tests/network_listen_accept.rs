@@ -2,8 +2,8 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::os::unix::net::{UnixListener, UnixStream};
 
-use crabc_rs::{io, net, Errno};
 use crabc_rs::resolver::{IpAddress, SocketAddress};
+use crabc_rs::{io, net, Errno};
 
 fn native_listener() -> (crabc_rs::OwnedFd, SocketAddress) {
     let listener = net::socket(
@@ -93,11 +93,9 @@ fn acceptfrom_with_decodes_the_peer_and_preserves_accept4_flags() {
     .expect("accept4 and decode peer address");
 
     assert_eq!(peer.ip(), IpAddress::V4([127, 0, 0, 1]));
-    assert!(
-        io::fcntl_getfd(&accepted)
-            .expect("read accepted descriptor flags")
-            .contains(io::FdFlags::CLOEXEC),
-    );
+    assert!(io::fcntl_getfd(&accepted)
+        .expect("read accepted descriptor flags")
+        .contains(io::FdFlags::CLOEXEC),);
 }
 
 #[test]
@@ -127,5 +125,7 @@ fn accept_with_uses_the_typed_accept_flags() {
         .expect("connect standard-library client to native listener");
     let accepted = net::accept_with(&listener, net::SocketFlags::CLOEXEC)
         .expect("accept4 pending native connection through accept_with");
-    assert!(io::fcntl_getfd(&accepted).unwrap().contains(io::FdFlags::CLOEXEC));
+    assert!(io::fcntl_getfd(&accepted)
+        .unwrap()
+        .contains(io::FdFlags::CLOEXEC));
 }

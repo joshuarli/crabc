@@ -22,11 +22,7 @@ pub extern "C" fn crabc_rs_fnmatch_direct_probe() -> i32 {
     if !fnmatch(cstr(b"*.rs\0"), cstr(b"lib.rs\0"), FnmatchFlags::empty()) {
         return 1;
     }
-    if fnmatch(
-        cstr(b"*\0"),
-        cstr(b"usr/lib\0"),
-        FnmatchFlags::PATHNAME,
-    ) {
+    if fnmatch(cstr(b"*\0"), cstr(b"usr/lib\0"), FnmatchFlags::PATHNAME) {
         return 2;
     }
     if !fnmatch(

@@ -36,7 +36,10 @@ fn stdio_unlocked_and_isoc99_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for stdio_exports_test");
-    assert!(status.success(), "musl-gcc stdio_exports_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc stdio_exports_test compilation failed"
+    );
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", &target)

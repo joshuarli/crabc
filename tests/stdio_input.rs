@@ -30,13 +30,16 @@ fn stdio_input_functions_under_libc_so() {
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
-                        "-lc",
+            "-lc",
             "-o",
             bin.to_str().unwrap(),
         ])
         .status()
         .expect("failed to run musl-gcc for stdio_input_test");
-    assert!(status.success(), "musl-gcc stdio_input_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc stdio_input_test compilation failed"
+    );
 
     let input_path = test_support::TempArtifact::new("stdio_input_test.txt");
     {
@@ -45,7 +48,10 @@ fn stdio_input_functions_under_libc_so() {
     }
 
     let output = Command::new(&bin)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .stdin(File::open(&input_path).expect("open input"))
         .output()
         .expect("failed to run stdio_input_test");
@@ -56,8 +62,5 @@ fn stdio_input_functions_under_libc_so() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "stdio input ok\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "stdio input ok\n");
 }

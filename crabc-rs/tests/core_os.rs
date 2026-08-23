@@ -33,10 +33,16 @@ fn pipe_random_and_monotonic_clock_use_direct_kernel_contracts() {
 fn eventfd_and_poll_report_direct_kernel_readiness() {
     let counter = event::eventfd(0, event::EventfdFlags::CLOEXEC)
         .expect("create an event counter through the direct kernel seam");
-    assert_eq!(io::write(&counter, &1_u64.to_ne_bytes()).expect("increment counter"), 8);
+    assert_eq!(
+        io::write(&counter, &1_u64.to_ne_bytes()).expect("increment counter"),
+        8
+    );
 
     let mut fds = [event::PollFd::new(&counter, event::PollFlags::IN)];
-    assert_eq!(event::poll(&mut fds, Some(&time::Timespec::default())).expect("poll counter"), 1);
+    assert_eq!(
+        event::poll(&mut fds, Some(&time::Timespec::default())).expect("poll counter"),
+        1
+    );
     assert!(fds[0].revents().contains(event::PollFlags::IN));
 
     let mut value = [0_u8; 8];
@@ -53,14 +59,13 @@ fn socketpair_and_mapping_use_direct_kernel_contracts() {
         None,
     )
     .expect("create a close-on-exec Unix socket pair through the direct kernel seam");
-    assert_eq!(net::send(&sender, b"os", net::SendFlags::empty()).expect("send payload"), 2);
+    assert_eq!(
+        net::send(&sender, b"os", net::SendFlags::empty()).expect("send payload"),
+        2
+    );
     let mut received = [MaybeUninit::uninit(); 4];
-    let ((received, remainder), received_length) = net::recv(
-        &receiver,
-        &mut received,
-        net::RecvFlags::empty(),
-    )
-    .expect("receive payload");
+    let ((received, remainder), received_length) =
+        net::recv(&receiver, &mut received, net::RecvFlags::empty()).expect("receive payload");
     assert_eq!(received_length, 2);
     assert_eq!(received, b"os");
     assert_eq!(remainder.len(), 2);
@@ -80,7 +85,13 @@ fn socketpair_and_mapping_use_direct_kernel_contracts() {
     unsafe { mm::mprotect(mapping, length, mm::MprotectFlags::READ) }
         .expect("make mapped page read-only");
     assert_eq!(unsafe { byte.read() }, 0x5a);
-    unsafe { mm::mprotect(mapping, length, mm::MprotectFlags::READ | mm::MprotectFlags::WRITE) }
-        .expect("restore mapped page write permission");
+    unsafe {
+        mm::mprotect(
+            mapping,
+            length,
+            mm::MprotectFlags::READ | mm::MprotectFlags::WRITE,
+        )
+    }
+    .expect("restore mapped page write permission");
     unsafe { mm::munmap(mapping, length) }.expect("unmap anonymous page");
 }

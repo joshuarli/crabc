@@ -66,5 +66,8 @@ fn static_pthread_tls_lifecycle_links_against_libc_a() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "static pthread tls ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "static pthread tls ok\n"
+    );
 }

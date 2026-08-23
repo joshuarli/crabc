@@ -42,6 +42,7 @@ fn socket_flags_reject_unknown_bits_and_shutdown_uses_a_typed_mode() {
 
 #[test]
 fn protocol_preserves_the_linux_raw_word_contract() {
-    let protocol = net::Protocol::from_raw(NonZeroU32::new(u32::MAX).expect("all-one word is nonzero"));
+    let protocol =
+        net::Protocol::from_raw(NonZeroU32::new(u32::MAX).expect("all-one word is nonzero"));
     assert_eq!(protocol.as_raw().get(), u32::MAX);
 }

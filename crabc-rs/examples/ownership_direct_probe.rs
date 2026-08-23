@@ -28,13 +28,7 @@ pub extern "C" fn crabc_rs_ownership_direct_probe() -> i32 {
     // each call still crosses the direct AArch64 fchown/fchownat syscall seam.
     let chown = fs::chown(missing, Some(owner), Some(group));
     let lchown = fs::lchown(missing, Some(owner), Some(group));
-    let chownat = fs::chownat(
-        fs::CWD,
-        missing,
-        None,
-        None,
-        ChownFlags::empty(),
-    );
+    let chownat = fs::chownat(fs::CWD, missing, None, None, ChownFlags::empty());
     let fchown = fs::fchown(fs::CWD, None, None);
 
     // Keep all four calls observable to a static verifier without depending

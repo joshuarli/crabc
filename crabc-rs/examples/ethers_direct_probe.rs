@@ -16,9 +16,7 @@ pub extern "C" fn crabc_rs_ethers_direct_probe() -> i32 {
     let EthernetLine::Record(record) = parse_line(b"00:01:02:03:04:05 probe") else {
         return 1;
     };
-    if record.address().octets() != [0, 1, 2, 3, 4, 5]
-        || record.hostname() != b"probe".as_slice()
-    {
+    if record.address().octets() != [0, 1, 2, 3, 4, 5] || record.hostname() != b"probe".as_slice() {
         return 2;
     }
     if !matches!(parse_line(b"# comment"), EthernetLine::Comment)
@@ -27,8 +25,7 @@ pub extern "C" fn crabc_rs_ethers_direct_probe() -> i32 {
     {
         return 3;
     }
-    if Ipv6Constants::ANY != Ipv6Addr::UNSPECIFIED
-        || Ipv6Constants::LOOPBACK != Ipv6Addr::LOCALHOST
+    if Ipv6Constants::ANY != Ipv6Addr::UNSPECIFIED || Ipv6Constants::LOOPBACK != Ipv6Addr::LOCALHOST
     {
         return 4;
     }

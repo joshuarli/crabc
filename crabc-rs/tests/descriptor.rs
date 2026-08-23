@@ -4,29 +4,22 @@ use crabc_rs::{fs, io, pipe, process, Errno, OwnedFd};
 
 #[test]
 fn owned_close_consumes_and_releases_descriptor() {
-    let file = fs::memfd_create(
-        &b"crabc-native-posix-close"[..],
-        fs::MemfdFlags::CLOEXEC,
-    )
-    .expect("create close fixture");
+    let file = fs::memfd_create(&b"crabc-native-posix-close"[..], fs::MemfdFlags::CLOEXEC)
+        .expect("create close fixture");
     let raw = file.as_raw_fd();
 
     file.close().expect("close owned descriptor");
     // The raw value is intentionally used only as a direct kernel argument;
     // no borrowed descriptor is created after ownership has been consumed.
-    let closed = unsafe {
-        crabc_core::io::fcntl_raw(raw, crabc_core::io::F_GETFD, core::ptr::null_mut())
-    };
+    let closed =
+        unsafe { crabc_core::io::fcntl_raw(raw, crabc_core::io::F_GETFD, core::ptr::null_mut()) };
     assert_eq!(closed, Err(Errno::BADF));
 }
 
 #[test]
 fn splice_transfers_with_an_explicit_offset_without_moving_file_position() {
-    let file = fs::memfd_create(
-        &b"crabc-native-splice"[..],
-        fs::MemfdFlags::CLOEXEC,
-    )
-    .expect("create splice source");
+    let file = fs::memfd_create(&b"crabc-native-splice"[..], fs::MemfdFlags::CLOEXEC)
+        .expect("create splice source");
     io::write(&file, b"splice-payload").expect("write splice source");
     fs::seek(&file, fs::SeekFrom::Start(0)).expect("rewind splice source");
 
@@ -45,10 +38,16 @@ fn splice_transfers_with_an_explicit_offset_without_moving_file_position() {
         6,
     );
     assert_eq!(offset, 8);
-    assert_eq!(fs::tell(&file).expect("tell source after positioned splice"), 0);
+    assert_eq!(
+        fs::tell(&file).expect("tell source after positioned splice"),
+        0
+    );
 
     let mut received = [0_u8; 6];
-    assert_eq!(io::read(&reader, &mut received).expect("read spliced bytes"), 6);
+    assert_eq!(
+        io::read(&reader, &mut received).expect("read spliced bytes"),
+        6
+    );
     assert_eq!(&received, b"lice-p");
 
     let mut invalid_offset = i64::MAX as u64;
@@ -77,7 +76,10 @@ fn vmsplice_transfers_an_immutable_source_iovec() {
     );
 
     let mut received = [0_u8; 8];
-    assert_eq!(io::read(&reader, &mut received).expect("read vmspliced bytes"), 8);
+    assert_eq!(
+        io::read(&reader, &mut received).expect("read vmspliced bytes"),
+        8
+    );
     assert_eq!(&received, b"vmsplice");
 }
 
@@ -95,11 +97,8 @@ fn child_lockf_test(fd: &OwnedFd) -> ! {
 
 #[test]
 fn lockf_uses_current_offset_and_reports_conflicts() {
-    let file = fs::memfd_create(
-        &b"crabc-native-lockf"[..],
-        fs::MemfdFlags::CLOEXEC,
-    )
-    .expect("create lockf fixture");
+    let file = fs::memfd_create(&b"crabc-native-lockf"[..], fs::MemfdFlags::CLOEXEC)
+        .expect("create lockf fixture");
     io::write(&file, b"lockf-range").expect("write lockf fixture");
     fs::seek(&file, fs::SeekFrom::Start(3)).expect("position lockf fixture");
 

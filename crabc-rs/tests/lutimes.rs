@@ -80,14 +80,8 @@ fn lutimes_updates_the_link_without_touching_its_target() {
 
     fs::lutimes(LINK_PATH, None).expect("set symbolic-link timestamps to current time");
     let current = fs::lstat(LINK_PATH).expect("observe current link timestamps");
-    assert!(
-        current.st_atime > 32
-            || current.st_atime == 32 && current.st_atime_nsec > 444_444_000
-    );
-    assert!(
-        current.st_mtime > 32
-            || current.st_mtime == 32 && current.st_mtime_nsec > 444_444_000
-    );
+    assert!(current.st_atime > 32 || current.st_atime == 32 && current.st_atime_nsec > 444_444_000);
+    assert!(current.st_mtime > 32 || current.st_mtime == 32 && current.st_mtime_nsec > 444_444_000);
 
     drop(target);
     remove_stale(LINK_PATH);

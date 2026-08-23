@@ -13,14 +13,16 @@ fn openat_and_io_use_the_direct_typed_seam() {
     let sink = fs::openat(CWD, cstr(b"/dev/null\0"), OFlags::WRONLY, Mode::empty())
         .expect("open /dev/null through openat");
     let payload = b"crabc-rs io\n";
-    assert_eq!(
-        io::write(&sink, payload).expect("write directly"),
-        12,
-    );
+    assert_eq!(io::write(&sink, payload).expect("write directly"), 12,);
     drop(sink);
 
-    let source = fs::openat(CWD, cstr(b"/proc/self/cmdline\0"), OFlags::RDONLY, Mode::empty())
-        .expect("open a deterministic process-owned Linux file");
+    let source = fs::openat(
+        CWD,
+        cstr(b"/proc/self/cmdline\0"),
+        OFlags::RDONLY,
+        Mode::empty(),
+    )
+    .expect("open a deterministic process-owned Linux file");
     let mut buffer = [MaybeUninit::<u8>::uninit(); 128];
     let (bytes, _) = io::read(&source, &mut buffer).expect("read directly");
     assert!(!bytes.is_empty(), "the test process has a command line");

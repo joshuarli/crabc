@@ -62,9 +62,14 @@ fn dir_rewind_and_seek_discard_buffered_records() {
             break;
         }
     }
-    assert!(rewound_first, "rewind must discard EOF state and restart iteration");
+    assert!(
+        rewound_first,
+        "rewind must discard EOF state and restart iteration"
+    );
 
-    stream.seek(first_cookie).expect("seek to first entry cookie");
+    stream
+        .seek(first_cookie)
+        .expect("seek to first entry cookie");
     let mut sought_second = false;
     while let Some(entry) = stream.next() {
         let entry = entry.expect("read sought directory stream");
@@ -73,7 +78,10 @@ fn dir_rewind_and_seek_discard_buffered_records() {
             break;
         }
     }
-    assert!(sought_second, "seek cookie must resume after the first entry");
+    assert!(
+        sought_second,
+        "seek cookie must resume after the first entry"
+    );
 
     drop(stream);
     let directory = fs::openat(

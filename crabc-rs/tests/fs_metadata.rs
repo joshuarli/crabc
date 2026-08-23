@@ -3,12 +3,8 @@ use crabc_rs::fs::{self, Mode, OFlags};
 #[test]
 fn statfs_and_fstatfs_report_the_same_filesystem() {
     let by_path = fs::statfs("/tmp").expect("statfs direct path query");
-    let directory = fs::open(
-        "/tmp",
-        OFlags::RDONLY | OFlags::DIRECTORY,
-        Mode::empty(),
-    )
-    .expect("open /tmp for fstatfs");
+    let directory = fs::open("/tmp", OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
+        .expect("open /tmp for fstatfs");
     let by_fd = fs::fstatfs(&directory).expect("fstatfs direct descriptor query");
 
     assert_eq!(by_path.f_type, by_fd.f_type);
@@ -32,12 +28,8 @@ fn statvfs_maps_linux_statfs_without_process_state() {
 
 #[test]
 fn fstatvfs_uses_the_same_typed_mapping_as_statvfs() {
-    let directory = fs::open(
-        "/tmp",
-        OFlags::RDONLY | OFlags::DIRECTORY,
-        Mode::empty(),
-    )
-    .expect("open /tmp for fstatvfs");
+    let directory = fs::open("/tmp", OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
+        .expect("open /tmp for fstatvfs");
     let by_fd = fs::fstatvfs(&directory).expect("fstatvfs direct descriptor query");
     let by_path = fs::statvfs("/tmp").expect("statvfs direct path query");
 

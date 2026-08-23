@@ -33,8 +33,14 @@ fn sendmsg_and_recvmsg_preserve_vectored_boundaries_and_truncation() {
     assert!(received.flags().contains(net::RecvFlags::TRUNC));
 
     let mut initialized = received.initialized_segments();
-    assert_eq!(initialized.next().expect("first initialized segment"), b"net");
-    assert_eq!(initialized.next().expect("second initialized segment"), b"-m");
+    assert_eq!(
+        initialized.next().expect("first initialized segment"),
+        b"net"
+    );
+    assert_eq!(
+        initialized.next().expect("second initialized segment"),
+        b"-m"
+    );
     assert!(initialized.next().is_none());
 }
 
@@ -51,12 +57,7 @@ fn recvmsg_nonblocking_empty_queue_returns_again_without_initializing_storage() 
     let mut storage = [0xa5_u8; 4];
     let mut buffers = [net::MsgIoSliceMut::new(&mut storage)];
     assert_eq!(
-        net::recvmsg(
-            &receiver,
-            &mut buffers,
-            net::RecvFlags::DONTWAIT,
-        )
-        .map(|_| ()),
+        net::recvmsg(&receiver, &mut buffers, net::RecvFlags::DONTWAIT,).map(|_| ()),
         Err(Errno::AGAIN),
     );
     assert_eq!(storage, [0xa5_u8; 4]);

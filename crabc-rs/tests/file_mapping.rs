@@ -16,7 +16,10 @@ fn file_backed_mapping_uses_the_direct_kernel_boundary() {
         fs::Mode::RUSR | fs::Mode::WUSR,
     )
     .expect("create mapping backing file");
-    assert_eq!(io::write(&file, &[0x5a; LENGTH]).expect("write mapping contents"), LENGTH);
+    assert_eq!(
+        io::write(&file, &[0x5a; LENGTH]).expect("write mapping contents"),
+        LENGTH
+    );
 
     let mapping = unsafe {
         mm::mmap(

@@ -35,7 +35,10 @@ fn locale_aware_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for locale_exports_test");
-    assert!(status.success(), "musl-gcc locale_exports_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc locale_exports_test compilation failed"
+    );
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", target)
@@ -47,5 +50,8 @@ fn locale_aware_exports_under_libc_so() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi locale exports ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi locale exports ok\n"
+    );
 }

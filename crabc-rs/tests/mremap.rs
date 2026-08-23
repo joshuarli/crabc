@@ -52,7 +52,10 @@ fn native_mremap_maymove_preserves_contents_and_expands_the_owned_range() {
 
     assert_eq!(unsafe { mapping.ptr.cast::<u8>().read() }, 0x5a);
     unsafe { mapping.ptr.cast::<u8>().add(PAGE_SIZE).write(0xa5) };
-    assert_eq!(unsafe { mapping.ptr.cast::<u8>().add(PAGE_SIZE).read() }, 0xa5);
+    assert_eq!(
+        unsafe { mapping.ptr.cast::<u8>().add(PAGE_SIZE).read() },
+        0xa5
+    );
 }
 
 #[test]
@@ -66,7 +69,10 @@ fn native_mremap_without_maymove_can_shrink_in_place() {
 
     mapping.resize(PAGE_SIZE, mm::MremapFlags::empty());
 
-    assert_eq!(mapping.ptr, original, "a shrink without MAYMOVE stays in place");
+    assert_eq!(
+        mapping.ptr, original,
+        "a shrink without MAYMOVE stays in place"
+    );
     assert_eq!(unsafe { mapping.ptr.cast::<u8>().read() }, 0x11);
 }
 

@@ -26,8 +26,14 @@ fn process_group_and_session_observations_accept_current_and_explicit_self() {
 
     // Repeating the read observes the same process state; no mutating process
     // operation is needed to establish this contract.
-    assert_eq!(process::getpgid(None).expect("re-read the current process group"), current_group);
+    assert_eq!(
+        process::getpgid(None).expect("re-read the current process group"),
+        current_group
+    );
     assert_eq!(process::getpgrp(), shorthand_group);
-    assert_eq!(process::getsid(None).expect("re-read the current session"), current_session);
+    assert_eq!(
+        process::getsid(None).expect("re-read the current session"),
+        current_session
+    );
     assert_eq!(process::getpid(), pid);
 }

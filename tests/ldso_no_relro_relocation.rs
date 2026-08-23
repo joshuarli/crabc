@@ -38,20 +38,27 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
             "-Wl,--allow-shlib-undefined",
         ]);
     }
-    command
-        .arg(fixture)
-        .args(["-ldl", "-lc", "-o"])
-        .arg(binary);
+    command.arg(fixture).args(["-ldl", "-lc", "-o"]).arg(binary);
     let status = command
         .status()
         .expect("failed to compile no-RELRO relocation fixture");
-    assert!(status.success(), "no-RELRO relocation fixture compilation failed");
+    assert!(
+        status.success(),
+        "no-RELRO relocation fixture compilation failed"
+    );
 }
 
-fn run(binary: &std::path::Path, first: &std::path::Path, second: &std::path::Path, candidate: bool) -> Output {
+fn run(
+    binary: &std::path::Path,
+    first: &std::path::Path,
+    second: &std::path::Path,
+    candidate: bool,
+) -> Output {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut command = Command::new(binary);
-    command.args([first, second]).env("LD_LIBRARY_PATH", first.parent().unwrap());
+    command
+        .args([first, second])
+        .env("LD_LIBRARY_PATH", first.parent().unwrap());
     if candidate {
         command.env(
             "LD_LIBRARY_PATH",
@@ -83,7 +90,10 @@ fn late_load_does_not_repeat_no_relro_relocations() {
         .arg(&first)
         .output()
         .expect("failed to inspect no-RELRO DSO program headers");
-    assert!(program_headers.status.success(), "readelf failed for no-RELRO DSO");
+    assert!(
+        program_headers.status.success(),
+        "readelf failed for no-RELRO DSO"
+    );
     assert!(
         !String::from_utf8_lossy(&program_headers.stdout).contains("GNU_RELRO"),
         "fixture unexpectedly has a GNU_RELRO segment"
@@ -93,7 +103,10 @@ fn late_load_does_not_repeat_no_relro_relocations() {
         .arg(&first)
         .output()
         .expect("failed to inspect no-RELRO DSO relocations");
-    assert!(relocations.status.success(), "readelf failed for no-RELRO DSO relocations");
+    assert!(
+        relocations.status.success(),
+        "readelf failed for no-RELRO DSO relocations"
+    );
     assert!(
         String::from_utf8_lossy(&relocations.stdout).contains(".relr.dyn"),
         "fixture lacks the packed base-relative relocation this regression needs"

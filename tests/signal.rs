@@ -28,7 +28,7 @@ fn signal_functions_under_libc_so() {
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
-                        "-lc",
+            "-lc",
             "-o",
             bin.to_str().unwrap(),
         ])
@@ -37,7 +37,10 @@ fn signal_functions_under_libc_so() {
     assert!(status.success(), "musl-gcc signal_test compilation failed");
 
     let output = Command::new(&bin)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .output()
         .expect("failed to run signal_test");
 

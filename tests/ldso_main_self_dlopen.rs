@@ -25,7 +25,10 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
         .arg(binary)
         .status()
         .expect("failed to compile main self-dlopen fixture");
-    assert!(status.success(), "main self-dlopen fixture compilation failed");
+    assert!(
+        status.success(),
+        "main self-dlopen fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {

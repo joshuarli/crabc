@@ -459,9 +459,8 @@ mod tests {
     #[test]
     fn bytes_preserve_non_utf8_without_allocation() {
         let bytes = [b'/', 0xff, b'\0'];
-        let result = (&bytes[..bytes.len() - 1]).into_with_c_str(|path| {
-            Ok((path.to_bytes().len(), path.to_bytes()[1]))
-        });
+        let result = (&bytes[..bytes.len() - 1])
+            .into_with_c_str(|path| Ok((path.to_bytes().len(), path.to_bytes()[1])));
 
         assert_eq!(result.unwrap(), (2, 0xff));
     }

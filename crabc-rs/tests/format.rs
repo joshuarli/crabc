@@ -76,9 +76,15 @@ fn formatter_can_be_used_as_a_typed_fmt_write_sink() {
 fn a_partial_scalar_blocks_later_chunks_from_backfilling_the_prefix() {
     let mut output = [0xa5; 2];
     let mut formatter = BoundedFormatter::new(&mut output);
-    formatter.write_str("A").expect("bounded writes do not fail");
-    formatter.write_str("é").expect("bounded writes do not fail");
-    formatter.write_str("Z").expect("bounded writes do not fail");
+    formatter
+        .write_str("A")
+        .expect("bounded writes do not fail");
+    formatter
+        .write_str("é")
+        .expect("bounded writes do not fail");
+    formatter
+        .write_str("Z")
+        .expect("bounded writes do not fail");
 
     assert_eq!(
         formatter.finish(),

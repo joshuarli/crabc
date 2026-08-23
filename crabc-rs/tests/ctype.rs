@@ -33,7 +33,10 @@ fn native_ctype_uses_the_fixed_c_locale_byte_table() {
     assert!(classes.is_digit());
     assert!(classes.is_xdigit());
     assert!(classes.is_alnum());
-    assert_eq!(classes.bits(), (AsciiClass::DIGIT.bits() | AsciiClass::XDIGIT.bits()));
+    assert_eq!(
+        classes.bits(),
+        (AsciiClass::DIGIT.bits() | AsciiClass::XDIGIT.bits())
+    );
 }
 
 #[test]

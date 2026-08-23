@@ -55,35 +55,54 @@ fn dso_tls_works_in_main_and_pthread_threads() {
         .args(["-r", libtls_so.to_str().unwrap()])
         .output()
         .expect("failed to run readelf on libtls.so");
-    eprintln!("libtls.so relocations:\n{}", String::from_utf8_lossy(&readelf.stdout));
+    eprintln!(
+        "libtls.so relocations:\n{}",
+        String::from_utf8_lossy(&readelf.stdout)
+    );
 
     let objdump = Command::new("objdump")
         .args(["-d", libtls_so.to_str().unwrap()])
         .output()
         .expect("failed to run objdump on libtls.so");
-    eprintln!("libtls.so disassembly:\n{}", String::from_utf8_lossy(&objdump.stdout));
+    eprintln!(
+        "libtls.so disassembly:\n{}",
+        String::from_utf8_lossy(&objdump.stdout)
+    );
 
     let readelf = Command::new("readelf")
         .args(["-r", bin.to_str().unwrap()])
         .output()
         .expect("failed to run readelf");
-    eprintln!("dso_tls_test relocations:\n{}", String::from_utf8_lossy(&readelf.stdout));
+    eprintln!(
+        "dso_tls_test relocations:\n{}",
+        String::from_utf8_lossy(&readelf.stdout)
+    );
 
     let objdump = Command::new("objdump")
         .args(["-d", bin.to_str().unwrap()])
         .output()
         .expect("failed to run objdump");
-    eprintln!("dso_tls_test disassembly:\n{}", String::from_utf8_lossy(&objdump.stdout));
+    eprintln!(
+        "dso_tls_test disassembly:\n{}",
+        String::from_utf8_lossy(&objdump.stdout)
+    );
 
     let output = Command::new(&bin)
         .env(
             "LD_LIBRARY_PATH",
-            format!("{}:{}", temp_dir.display(), manifest_dir.join("target/debug").display()),
+            format!(
+                "{}:{}",
+                temp_dir.display(),
+                manifest_dir.join("target/debug").display()
+            ),
         )
         .output()
         .expect("failed to run dso_tls_test");
 
-    eprintln!("captured stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    eprintln!(
+        "captured stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     assert!(
         output.status.success(),

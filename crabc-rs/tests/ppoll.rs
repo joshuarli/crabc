@@ -28,12 +28,18 @@ fn child_ppoll_case(reader: &crabc_rs::OwnedFd, result: &crabc_rs::OwnedFd) -> !
     if event::ppoll(&mut fds, Some(&timeout), Some(&selected)) != Ok(0) {
         child_report(result, 4);
     }
-    if !signal::pending().map(|pending| pending.contains(process::Signal::USR1)).unwrap_or(false) {
+    if !signal::pending()
+        .map(|pending| pending.contains(process::Signal::USR1))
+        .unwrap_or(false)
+    {
         child_report(result, 5);
     }
 
     let empty = signal::SignalSet::EMPTY;
-    let timeout = time::Timespec { tv_sec: 1, tv_nsec: 0 };
+    let timeout = time::Timespec {
+        tv_sec: 1,
+        tv_nsec: 0,
+    };
     let interrupted = event::ppoll(&mut fds, Some(&timeout), Some(&empty));
     if interrupted != Err(crabc_rs::Errno::INTR) {
         child_report(result, 6);
@@ -72,8 +78,15 @@ fn ppoll_temporarily_installs_signal_mask_and_preserves_legacy_poll() {
     drop(result_writer);
 
     let mut status = [0_u8; 1];
-    assert_eq!(io::read(&result_reader, &mut status).expect("read ppoll child result"), 1);
-    assert_eq!(status[0], 0, "isolated ppoll case failed at step {}", status[0]);
+    assert_eq!(
+        io::read(&result_reader, &mut status).expect("read ppoll child result"),
+        1
+    );
+    assert_eq!(
+        status[0], 0,
+        "isolated ppoll case failed at step {}",
+        status[0]
+    );
     let (_, wait_status) = process::waitpid(Some(child), process::WaitOptions::empty())
         .expect("wait for isolated ppoll child")
         .expect("isolated ppoll child changed state");
@@ -85,7 +98,10 @@ fn poll_without_mask_keeps_existing_unmasked_contract() {
     let (reader, writer) = pipe::pipe().expect("create legacy poll fixture pipe");
     let timeout = time::Timespec::default();
     let mut fds = [event::PollFd::new(&reader, event::PollFlags::IN)];
-    assert_eq!(event::poll(&mut fds, Some(&timeout)).expect("legacy poll"), 0);
+    assert_eq!(
+        event::poll(&mut fds, Some(&timeout)).expect("legacy poll"),
+        0
+    );
     assert!(fds[0].revents().is_empty());
     drop(writer);
 }

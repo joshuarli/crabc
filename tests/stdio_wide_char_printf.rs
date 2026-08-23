@@ -27,7 +27,10 @@ fn stdio_printf_wide_character_conversion_under_libc_so() {
         ])
         .status()
         .expect("failed to compile stdio wide-character printf fixture");
-    assert!(status.success(), "stdio wide-character printf fixture compilation failed");
+    assert!(
+        status.success(),
+        "stdio wide-character printf fixture compilation failed"
+    );
 
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", root.join("target/debug"))

@@ -15,8 +15,8 @@ fn pair_owns_both_descriptors_and_supports_borrowed_and_owned_names() {
         .expect("resolve PTY name into caller storage");
     assert!(borrowed.to_bytes().starts_with(b"/dev/pts/"));
 
-    let owned = pty::ptsname(pair.master(), b"stale-name".to_vec())
-        .expect("resolve owned PTY name");
+    let owned =
+        pty::ptsname(pair.master(), b"stale-name".to_vec()).expect("resolve owned PTY name");
     assert_eq!(borrowed.to_bytes(), owned.as_bytes());
 
     let (master, slave) = pair.into_parts();
@@ -29,7 +29,10 @@ fn ptsname_into_rejects_short_caller_storage() {
     let pair = pty::PtyPair::open(flags()).expect("open owned PTY pair");
     let mut storage = [MaybeUninit::uninit(); 4];
 
-    assert_eq!(pty::ptsname_into(pair.master(), &mut storage), Err(Errno::RANGE));
+    assert_eq!(
+        pty::ptsname_into(pair.master(), &mut storage),
+        Err(Errno::RANGE)
+    );
 }
 
 fn controlling_terminal_child(pair: &pty::PtyPair) -> ! {
@@ -59,5 +62,9 @@ fn explicit_session_handoff_isolated_in_child() {
     let (_, status) = process::waitpid(Some(child), process::WaitOptions::empty())
         .expect("reap session child")
         .expect("session child status");
-    assert_eq!(status.exit_status(), Some(0), "session child status: {status:?}");
+    assert_eq!(
+        status.exit_status(),
+        Some(0),
+        "session child status: {status:?}"
+    );
 }

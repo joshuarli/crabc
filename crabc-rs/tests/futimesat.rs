@@ -5,8 +5,7 @@ const ROOT_PATH: &[u8] = b"/tmp/crabc-rs-native-futimesat";
 #[test]
 fn futimesat_resolves_relative_paths_and_updates_the_target() {
     let _ = fs::rmdir(ROOT_PATH);
-    fs::mkdir(ROOT_PATH, Mode::RUSR | Mode::WUSR | Mode::XUSR)
-        .expect("create futimesat directory");
+    fs::mkdir(ROOT_PATH, Mode::RUSR | Mode::WUSR | Mode::XUSR).expect("create futimesat directory");
     let directory = fs::open(
         ROOT_PATH,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
@@ -62,14 +61,8 @@ fn futimesat_resolves_relative_paths_and_updates_the_target() {
 
     fs::futimesat(&directory, "link", None).expect("set target timestamps to current time");
     let current = fs::fstat(&target).expect("observe current target timestamps");
-    assert!(
-        current.st_atime > 12
-            || current.st_atime == 12 && current.st_atime_nsec > 222_222_000
-    );
-    assert!(
-        current.st_mtime > 12
-            || current.st_mtime == 12 && current.st_mtime_nsec > 222_222_000
-    );
+    assert!(current.st_atime > 12 || current.st_atime == 12 && current.st_atime_nsec > 222_222_000);
+    assert!(current.st_mtime > 12 || current.st_mtime == 12 && current.st_mtime_nsec > 222_222_000);
 
     drop(target);
     fs::unlinkat(&directory, "link", fs::AtFlags::empty()).expect("remove futimesat link");

@@ -35,14 +35,8 @@ fn utime_follows_a_final_symlink_at_second_precision() {
 
     fs::utime(LINK_PATH, None).expect("set target timestamps to current time");
     let current = fs::fstat(&target).expect("observe current target timestamps");
-    assert!(
-        current.st_atime > 41
-            || current.st_atime == 41 && current.st_atime_nsec > 0
-    );
-    assert!(
-        current.st_mtime > 42
-            || current.st_mtime == 42 && current.st_mtime_nsec > 0
-    );
+    assert!(current.st_atime > 41 || current.st_atime == 41 && current.st_atime_nsec > 0);
+    assert!(current.st_mtime > 42 || current.st_mtime == 42 && current.st_mtime_nsec > 0);
 
     drop(target);
     remove_stale(LINK_PATH);

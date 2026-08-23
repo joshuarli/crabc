@@ -6,8 +6,13 @@ use crabc_rs::{
 fn instant(year: i64, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> UnixTime {
     let calendar = CalendarTime::from_ymdhms(year, month, day, hour, minute, second)
         .expect("test civil time is valid");
-    UnixTime::from_parts(calendar.unix_seconds().expect("test civil time is representable"), 0)
-        .expect("whole seconds are normalized")
+    UnixTime::from_parts(
+        calendar
+            .unix_seconds()
+            .expect("test civil time is representable"),
+        0,
+    )
+    .expect("whole seconds are normalized")
 }
 
 fn push_header(bytes: &mut Vec<u8>, version: u8, counts: [i32; 6]) {
@@ -83,15 +88,22 @@ fn posix_rules_reverse_offsets_and_change_at_utc_boundaries() {
 
 #[test]
 fn posix_julian_day_of_year_and_transition_times_are_distinct() {
-    let julian = TimeZone::from_posix_tz(b"STD0DST,J60/0,J300/0")
-        .expect("Julian transition rules");
-    assert!(!julian.offset_at(instant(2024, 2, 29, 23, 59, 59)).is_daylight_saving());
-    assert!(julian.offset_at(instant(2024, 3, 1, 0, 0, 0)).is_daylight_saving());
+    let julian = TimeZone::from_posix_tz(b"STD0DST,J60/0,J300/0").expect("Julian transition rules");
+    assert!(!julian
+        .offset_at(instant(2024, 2, 29, 23, 59, 59))
+        .is_daylight_saving());
+    assert!(julian
+        .offset_at(instant(2024, 3, 1, 0, 0, 0))
+        .is_daylight_saving());
 
     let day_of_year = TimeZone::from_posix_tz(b"STD0DST,59/0,300/0")
         .expect("zero-based day-of-year transition rules");
-    assert!(!day_of_year.offset_at(instant(2024, 2, 28, 23, 59, 59)).is_daylight_saving());
-    assert!(day_of_year.offset_at(instant(2024, 2, 29, 0, 0, 0)).is_daylight_saving());
+    assert!(!day_of_year
+        .offset_at(instant(2024, 2, 28, 23, 59, 59))
+        .is_daylight_saving());
+    assert!(day_of_year
+        .offset_at(instant(2024, 2, 29, 0, 0, 0))
+        .is_daylight_saving());
 
     assert_eq!(
         TimeZone::from_posix_tz(b"EST5EDT,M3.2.0"),
@@ -148,15 +160,7 @@ fn tzif_v1_allows_an_all_daylight_file_with_type_zero_as_fallback() {
     let abbreviations = b"DST\0";
     let mut bytes = Vec::new();
     push_header(&mut bytes, 0, [0, 0, 0, 0, 1, abbreviations.len() as i32]);
-    push_block(
-        &mut bytes,
-        false,
-        &[],
-        &[],
-        &types,
-        abbreviations,
-        &[],
-    );
+    push_block(&mut bytes, false, &[], &[], &types, abbreviations, &[]);
 
     let zone = TimeZone::from_tzif(&bytes).expect("all-DST TZif has type-zero fallback");
     let info = zone.offset_at(UnixTime::UNIX_EPOCH);
@@ -171,9 +175,17 @@ fn tzif_v2_selects_its_64_bit_block_and_trailing_posix_rule() {
     let abbreviations = b"DST\0STD\0";
     let final_transition = instant(2024, 3, 10, 7, 0, 0).seconds();
     let mut bytes = Vec::new();
-    push_header(&mut bytes, b'2', [0, 0, 0, 1, 2, abbreviations.len() as i32]);
+    push_header(
+        &mut bytes,
+        b'2',
+        [0, 0, 0, 1, 2, abbreviations.len() as i32],
+    );
     push_block(&mut bytes, false, &[10], &[0], &types, abbreviations, &[]);
-    push_header(&mut bytes, b'2', [0, 0, 0, 1, 2, abbreviations.len() as i32]);
+    push_header(
+        &mut bytes,
+        b'2',
+        [0, 0, 0, 1, 2, abbreviations.len() as i32],
+    );
     push_block(
         &mut bytes,
         true,
@@ -188,8 +200,12 @@ fn tzif_v2_selects_its_64_bit_block_and_trailing_posix_rule() {
     let zone = TimeZone::from_tzif(&bytes).expect("well-formed TZif v2");
     // The v1 block has already entered DST by this instant, while the v2
     // block has not. The 64-bit v2 data is authoritative.
-    assert!(!zone.offset_at(UnixTime::from_parts(50, 0).unwrap()).is_daylight_saving());
-    assert!(zone.offset_at(instant(2024, 3, 10, 7, 0, 0)).is_daylight_saving());
+    assert!(!zone
+        .offset_at(UnixTime::from_parts(50, 0).unwrap())
+        .is_daylight_saving());
+    assert!(zone
+        .offset_at(instant(2024, 3, 10, 7, 0, 0))
+        .is_daylight_saving());
     assert_eq!(
         zone.offset_at(instant(2024, 11, 3, 6, 0, 0))
             .offset()
@@ -202,7 +218,10 @@ fn tzif_v2_selects_its_64_bit_block_and_trailing_posix_rule() {
     // The first TZif v1 block is 25 bytes after its 44-byte header; the
     // second header's version byte follows its four-byte `TZif` magic.
     v3[73] = b'3';
-    assert!(TimeZone::from_tzif(&v3).is_ok(), "TZif v3 follows the v2 layout");
+    assert!(
+        TimeZone::from_tzif(&v3).is_ok(),
+        "TZif v3 follows the v2 layout"
+    );
 }
 
 #[test]
@@ -211,20 +230,47 @@ fn tzif_rejects_truncated_indexes_abbreviations_and_leap_tables() {
     let abbreviations = b"STD\0";
 
     let mut invalid_index = Vec::new();
-    push_header(&mut invalid_index, 0, [0, 0, 0, 1, 1, abbreviations.len() as i32]);
-    push_block(&mut invalid_index, false, &[0], &[1], &types, abbreviations, &[]);
-    assert_eq!(TimeZone::from_tzif(&invalid_index), Err(TimeZoneError::InvalidTzif));
+    push_header(
+        &mut invalid_index,
+        0,
+        [0, 0, 0, 1, 1, abbreviations.len() as i32],
+    );
+    push_block(
+        &mut invalid_index,
+        false,
+        &[0],
+        &[1],
+        &types,
+        abbreviations,
+        &[],
+    );
+    assert_eq!(
+        TimeZone::from_tzif(&invalid_index),
+        Err(TimeZoneError::InvalidTzif)
+    );
 
     let mut invalid_abbreviation = Vec::new();
     push_header(&mut invalid_abbreviation, 0, [0, 0, 0, 0, 1, 3]);
-    push_block(&mut invalid_abbreviation, false, &[], &[], &types, b"STD", &[]);
+    push_block(
+        &mut invalid_abbreviation,
+        false,
+        &[],
+        &[],
+        &types,
+        b"STD",
+        &[],
+    );
     assert_eq!(
         TimeZone::from_tzif(&invalid_abbreviation),
         Err(TimeZoneError::InvalidTzif),
     );
 
     let mut invalid_leaps = Vec::new();
-    push_header(&mut invalid_leaps, 0, [0, 0, 2, 0, 1, abbreviations.len() as i32]);
+    push_header(
+        &mut invalid_leaps,
+        0,
+        [0, 0, 2, 0, 1, abbreviations.len() as i32],
+    );
     push_block(
         &mut invalid_leaps,
         false,
@@ -234,7 +280,13 @@ fn tzif_rejects_truncated_indexes_abbreviations_and_leap_tables() {
         abbreviations,
         &[(10, 1), (2_419_209, 3)],
     );
-    assert_eq!(TimeZone::from_tzif(&invalid_leaps), Err(TimeZoneError::InvalidTzif));
+    assert_eq!(
+        TimeZone::from_tzif(&invalid_leaps),
+        Err(TimeZoneError::InvalidTzif)
+    );
 
-    assert_eq!(TimeZone::from_tzif(b"TZif"), Err(TimeZoneError::InvalidTzif));
+    assert_eq!(
+        TimeZone::from_tzif(b"TZif"),
+        Err(TimeZoneError::InvalidTzif)
+    );
 }

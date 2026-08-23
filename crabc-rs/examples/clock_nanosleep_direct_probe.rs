@@ -8,8 +8,7 @@
 use core::time::Duration;
 
 use crabc_rs::time::{
-    clock_nanosleep_absolute, clock_nanosleep_relative, ClockId, SleepError, SleepOutcome,
-    Timespec,
+    clock_nanosleep_absolute, clock_nanosleep_relative, ClockId, SleepError, SleepOutcome, Timespec,
 };
 
 #[panic_handler]

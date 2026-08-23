@@ -307,7 +307,11 @@ impl SigAction {
                 SigActionFlags::from_bits_retain(flags.bits() & !SA_SIGINFO)
             }
         };
-        Self { handler, mask, flags }
+        Self {
+            handler,
+            mask,
+            flags,
+        }
     }
 
     /// Returns this action's configured handler.
@@ -445,7 +449,11 @@ impl SigInfo {
         let mut info = crabc_core::signal::SigInfo::zeroed();
         write_i32(&mut info.bytes, SIGINFO_SIGNO_OFFSET, signal.as_raw());
         write_i32(&mut info.bytes, SIGINFO_CODE_OFFSET, SI_QUEUE);
-        write_i32(&mut info.bytes, SIGINFO_PID_OFFSET, process::getpid().as_raw_pid());
+        write_i32(
+            &mut info.bytes,
+            SIGINFO_PID_OFFSET,
+            process::getpid().as_raw_pid(),
+        );
         write_i32(
             &mut info.bytes,
             SIGINFO_UID_OFFSET,
@@ -502,14 +510,22 @@ impl Stack {
     #[inline]
     #[must_use]
     pub const fn new(sp: *mut u8, size: usize) -> Self {
-        Self { sp, size, flags: StackFlags::empty() }
+        Self {
+            sp,
+            size,
+            flags: StackFlags::empty(),
+        }
     }
 
     /// Builds the disabled-stack representation.
     #[inline]
     #[must_use]
     pub const fn disabled() -> Self {
-        Self { sp: ptr::null_mut(), size: 0, flags: StackFlags::DISABLE }
+        Self {
+            sp: ptr::null_mut(),
+            size: 0,
+            flags: StackFlags::DISABLE,
+        }
     }
 
     /// Returns the stack base pointer.
@@ -557,7 +573,9 @@ pub fn sigprocmask(how: SigmaskHow, set: Option<&SignalSet>) -> Result<SignalSet
     // writable output storage which Linux initializes on a successful call.
     unsafe {
         crabc_core::signal::rt_sigprocmask_raw(how as i32, set, old.as_mut_ptr())?;
-        Ok(SignalSet(old.assume_init() & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33)))
+        Ok(SignalSet(
+            old.assume_init() & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33),
+        ))
     }
 }
 
@@ -592,7 +610,9 @@ pub fn pending() -> Result<SignalSet> {
     // SAFETY: `set` is writable storage for the one kernel signal-set word.
     unsafe {
         crabc_core::signal::rt_sigpending_raw(set.as_mut_ptr())?;
-        Ok(SignalSet(set.assume_init() & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33)))
+        Ok(SignalSet(
+            set.assume_init() & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33),
+        ))
     }
 }
 
@@ -622,9 +642,8 @@ pub fn timed_wait(set: &SignalSet, timeout: Option<&Timespec>) -> Result<(Signal
     let timeout = timeout.map_or(ptr::null(), |timeout| (timeout as *const Timespec).cast());
     // SAFETY: `set`, `info`, and optional `Timespec` each use the exact
     // Linux/AArch64 kernel ABI layout expected by `rt_sigtimedwait`.
-    let raw = unsafe {
-        crabc_core::signal::rt_sigtimedwait_raw(&set.0, info.as_mut_ptr(), timeout)?
-    };
+    let raw =
+        unsafe { crabc_core::signal::rt_sigtimedwait_raw(&set.0, info.as_mut_ptr(), timeout)? };
     let signal = Signal::from_named_raw(raw).ok_or(Errno::INVAL)?;
     // SAFETY: Linux initialized `info` because the syscall returned a signal.
     Ok((signal, SigInfo(unsafe { info.assume_init() })))
@@ -636,15 +655,17 @@ pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
     let info = SigInfo::queue(signal, value);
     // SAFETY: `SigInfo::queue` initialized the exact Linux queued-signal
     // layout, including the sender identity and `SI_QUEUE` discriminator.
-    unsafe {
-        crabc_core::signal::rt_sigqueueinfo_raw(pid.as_raw_pid(), signal.as_raw(), &info.0)
-    }
+    unsafe { crabc_core::signal::rt_sigqueueinfo_raw(pid.as_raw_pid(), signal.as_raw(), &info.0) }
 }
 
 /// Sends `signal` to a known thread in the current process.
 #[inline]
 pub fn kill_thread(tid: Pid, signal: Signal) -> Result<()> {
-    crabc_core::process::tgkill(process::getpid().as_raw_pid(), tid.as_raw_pid(), signal.as_raw())
+    crabc_core::process::tgkill(
+        process::getpid().as_raw_pid(),
+        tid.as_raw_pid(),
+        signal.as_raw(),
+    )
 }
 
 /// Sends `signal` to the current thread.

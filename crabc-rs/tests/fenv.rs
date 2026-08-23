@@ -14,7 +14,10 @@ fn captures_rounding_and_exception_state_without_c_abi_translation() {
 
     fenv::set_environment(Environment::default());
     assert_eq!(fenv::get_rounding(), RoundingMode::Nearest);
-    assert_eq!(fenv::test_exceptions(ExceptionFlags::ALL), ExceptionFlags::EMPTY);
+    assert_eq!(
+        fenv::test_exceptions(ExceptionFlags::ALL),
+        ExceptionFlags::EMPTY
+    );
 
     fenv::set_rounding(RoundingMode::TowardZero);
     assert_eq!(fenv::get_rounding(), RoundingMode::TowardZero);
@@ -23,7 +26,10 @@ fn captures_rounding_and_exception_state_without_c_abi_translation() {
     fenv::raise_exceptions(raised);
     assert_eq!(fenv::test_exceptions(ExceptionFlags::ALL), raised);
     fenv::clear_exceptions(ExceptionFlags::INVALID);
-    assert_eq!(fenv::test_exceptions(ExceptionFlags::ALL), ExceptionFlags::INEXACT);
+    assert_eq!(
+        fenv::test_exceptions(ExceptionFlags::ALL),
+        ExceptionFlags::INEXACT
+    );
 
     drop(restore);
 }
@@ -35,8 +41,14 @@ fn hold_and_update_preserve_pending_exception_flags() {
     fenv::set_environment(Environment::default());
     fenv::raise_exceptions(ExceptionFlags::INVALID | ExceptionFlags::INEXACT);
     let held = fenv::hold_exceptions();
-    assert_eq!(held.exceptions(), ExceptionFlags::INVALID | ExceptionFlags::INEXACT);
-    assert_eq!(fenv::test_exceptions(ExceptionFlags::ALL), ExceptionFlags::EMPTY);
+    assert_eq!(
+        held.exceptions(),
+        ExceptionFlags::INVALID | ExceptionFlags::INEXACT
+    );
+    assert_eq!(
+        fenv::test_exceptions(ExceptionFlags::ALL),
+        ExceptionFlags::EMPTY
+    );
 
     fenv::raise_exceptions(ExceptionFlags::OVERFLOW);
     fenv::update_environment(held);

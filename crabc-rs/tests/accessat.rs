@@ -5,8 +5,7 @@ const ROOT_PATH: &[u8] = b"/tmp/crabc-rs-native-accessat";
 #[test]
 fn accessat_resolves_relative_paths_and_supports_final_symlink_no_follow() {
     let _ = fs::rmdir(ROOT_PATH);
-    fs::mkdir(ROOT_PATH, Mode::RUSR | Mode::WUSR | Mode::XUSR)
-        .expect("create accessat directory");
+    fs::mkdir(ROOT_PATH, Mode::RUSR | Mode::WUSR | Mode::XUSR).expect("create accessat directory");
     let directory = fs::open(
         ROOT_PATH,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
@@ -27,12 +26,7 @@ fn accessat_resolves_relative_paths_and_supports_final_symlink_no_follow() {
     fs::accessat(&directory, "target", Access::EXISTS, AtFlags::empty())
         .expect("empty flags use directory-relative faccessat");
     assert_eq!(
-        fs::accessat(
-            &directory,
-            "missing",
-            Access::EXISTS,
-            AtFlags::empty(),
-        ),
+        fs::accessat(&directory, "missing", Access::EXISTS, AtFlags::empty(),),
         Err(crabc_rs::Errno::NOENT)
     );
 
@@ -47,20 +41,10 @@ fn accessat_resolves_relative_paths_and_supports_final_symlink_no_follow() {
         fs::accessat(&directory, "dangling", Access::EXISTS, AtFlags::empty()),
         Err(crabc_rs::Errno::NOENT)
     );
-    fs::accessat(
-        &directory,
-        "target",
-        Access::EXISTS,
-        AtFlags::EACCESS,
-    )
-    .expect("faccessat2 accepts effective-credential checks");
-    fs::accessat(
-        &directory,
-        "target",
-        Access::EXISTS,
-        AtFlags::REMOVEDIR,
-    )
-    .expect("the shared REMOVEDIR/EACCESS bit is interpreted as EACCESS");
+    fs::accessat(&directory, "target", Access::EXISTS, AtFlags::EACCESS)
+        .expect("faccessat2 accepts effective-credential checks");
+    fs::accessat(&directory, "target", Access::EXISTS, AtFlags::REMOVEDIR)
+        .expect("the shared REMOVEDIR/EACCESS bit is interpreted as EACCESS");
 
     assert_eq!(
         fs::accessat(

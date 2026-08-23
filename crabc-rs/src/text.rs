@@ -561,11 +561,7 @@ impl TextConverter {
     /// no partial scalar is consumed. An incomplete final scalar, malformed
     /// input, output exhaustion, or an unrepresentable destination scalar is
     /// represented by the typed error rather than a C sentinel or `errno`.
-    pub fn convert(
-        &mut self,
-        input: &[u8],
-        output: &mut [u8],
-    ) -> Result<Conversion, ConvertError> {
+    pub fn convert(&mut self, input: &[u8], output: &mut [u8]) -> Result<Conversion, ConvertError> {
         self.inner.convert(input, output)
     }
 
@@ -682,12 +678,7 @@ impl NumberParser {
         }
     }
 
-    fn parse_digits(
-        self,
-        input: &[u8],
-        start: usize,
-        limit: u64,
-    ) -> Result<u64, NumberParseError> {
+    fn parse_digits(self, input: &[u8], start: usize, limit: u64) -> Result<u64, NumberParseError> {
         if start == input.len() {
             return if start == 0 {
                 Err(NumberParseError::Empty)
@@ -1028,10 +1019,9 @@ pub const fn is_xdigit(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_alnum, is_alpha, is_ascii, is_blank, is_cntrl, is_digit, is_graph, is_lower,
-        is_print, is_punct, is_space, is_upper, is_xdigit, to_ascii, to_lower, to_upper,
-        AsciiClass, ConvertError, NumberParseError, NumberParser, TextConverter, TextEncoding,
-        Unrepresentable,
+        is_alnum, is_alpha, is_ascii, is_blank, is_cntrl, is_digit, is_graph, is_lower, is_print,
+        is_punct, is_space, is_upper, is_xdigit, to_ascii, to_lower, to_upper, AsciiClass,
+        ConvertError, NumberParseError, NumberParser, TextConverter, TextEncoding, Unrepresentable,
     };
 
     #[test]
@@ -1042,10 +1032,28 @@ mod tests {
         assert_eq!(decimal.parse_i64(b"+9223372036854775807"), Ok(i64::MAX));
         assert_eq!(decimal.parse_i64(b"-9223372036854775808"), Ok(i64::MIN));
 
-        assert_eq!(decimal.parse_u64(b"12tail"), Err(NumberParseError::InvalidDigit { index: 2, byte: b't' }));
-        assert_eq!(decimal.parse_u64(b" 12"), Err(NumberParseError::InvalidDigit { index: 0, byte: b' ' }));
-        assert_eq!(decimal.parse_u64(b"+12"), Err(NumberParseError::UnexpectedSign { byte: b'+' }));
-        assert_eq!(decimal.parse_i64(b"-"), Err(NumberParseError::SignWithoutDigits));
+        assert_eq!(
+            decimal.parse_u64(b"12tail"),
+            Err(NumberParseError::InvalidDigit {
+                index: 2,
+                byte: b't'
+            })
+        );
+        assert_eq!(
+            decimal.parse_u64(b" 12"),
+            Err(NumberParseError::InvalidDigit {
+                index: 0,
+                byte: b' '
+            })
+        );
+        assert_eq!(
+            decimal.parse_u64(b"+12"),
+            Err(NumberParseError::UnexpectedSign { byte: b'+' })
+        );
+        assert_eq!(
+            decimal.parse_i64(b"-"),
+            Err(NumberParseError::SignWithoutDigits)
+        );
         assert_eq!(decimal.parse_i64(b""), Err(NumberParseError::Empty));
     }
 
@@ -1073,11 +1081,23 @@ mod tests {
 
         let binary = NumberParser::new(2).expect("binary radix");
         assert_eq!(binary.parse_u64(b"101101"), Ok(45));
-        assert_eq!(binary.parse_u64(b"102"), Err(NumberParseError::InvalidDigit { index: 4, byte: b'2' }));
+        assert_eq!(
+            binary.parse_u64(b"102"),
+            Err(NumberParseError::InvalidDigit {
+                index: 4,
+                byte: b'2'
+            })
+        );
 
         let hexadecimal = NumberParser::new(16).expect("hexadecimal radix");
         assert_eq!(hexadecimal.parse_u64(b"deadBEEF"), Ok(0xdead_beef));
-        assert_eq!(hexadecimal.parse_u64(b"0x2a"), Err(NumberParseError::InvalidDigit { index: 1, byte: b'x' }));
+        assert_eq!(
+            hexadecimal.parse_u64(b"0x2a"),
+            Err(NumberParseError::InvalidDigit {
+                index: 1,
+                byte: b'x'
+            })
+        );
 
         let base_36 = NumberParser::new(36).expect("base-36 radix");
         assert_eq!(base_36.parse_i64(b"-Z"), Ok(-35));
@@ -1086,7 +1106,10 @@ mod tests {
     #[test]
     fn names_are_bounded_to_the_native_strict_subset() {
         assert_eq!(TextEncoding::from_name(b"UTF-8"), Some(TextEncoding::Utf8));
-        assert_eq!(TextEncoding::from_name(b"us_ascii"), Some(TextEncoding::Ascii));
+        assert_eq!(
+            TextEncoding::from_name(b"us_ascii"),
+            Some(TextEncoding::Ascii)
+        );
         assert_eq!(
             TextEncoding::from_name(b"UTF-16LE"),
             Some(TextEncoding::Utf16Le)
@@ -1117,7 +1140,9 @@ mod tests {
         let input = "A€😀".as_bytes();
         let mut encoded = [0u8; 32];
         let mut to_utf32 = TextConverter::new(TextEncoding::Utf8, TextEncoding::Utf32Le);
-        let conversion = to_utf32.convert(input, &mut encoded).expect("UTF-32 conversion");
+        let conversion = to_utf32
+            .convert(input, &mut encoded)
+            .expect("UTF-32 conversion");
         assert_eq!(conversion.consumed, input.len());
         assert_eq!(conversion.produced, 12);
         assert_eq!(to_utf32.from(), TextEncoding::Utf8);
@@ -1146,7 +1171,11 @@ mod tests {
         let mut ascii = TextConverter::new(TextEncoding::Utf8, TextEncoding::Ascii);
         let mut replacement = [0u8; 2];
         let conversion = ascii
-            .convert_with("é".as_bytes(), &mut replacement, Unrepresentable::Byte(b'*'))
+            .convert_with(
+                "é".as_bytes(),
+                &mut replacement,
+                Unrepresentable::Byte(b'*'),
+            )
             .expect("replacement conversion");
         assert_eq!(conversion.consumed, 2);
         assert_eq!(conversion.produced, 1);

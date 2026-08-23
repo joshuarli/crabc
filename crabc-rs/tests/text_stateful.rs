@@ -73,10 +73,7 @@ fn split_and_token_cursors_have_independent_state() {
 fn owned_duplicate_preserves_non_utf8_bytes() {
     let source = core::ffi::CStr::from_bytes_with_nul(b"\xffx\0").unwrap();
     assert_eq!(crabc_rs::text::duplicate(source).as_bytes(), b"\xffx");
-    assert_eq!(
-        crabc_rs::text::duplicate_n(source, 1).as_bytes(),
-        b"\xff"
-    );
+    assert_eq!(crabc_rs::text::duplicate_n(source, 1).as_bytes(), b"\xff");
 }
 
 #[test]

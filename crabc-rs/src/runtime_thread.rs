@@ -18,8 +18,7 @@ use core::num::NonZeroU64;
 use core::ptr::NonNull;
 
 use crabc_core::runtime::{
-    RuntimeV1, ThreadDestructorV1, ThreadHandleV1, ThreadStartV1, V1_ABI_VERSION,
-    V1_LEGACY_SIZE,
+    RuntimeV1, ThreadDestructorV1, ThreadHandleV1, ThreadStartV1, V1_ABI_VERSION, V1_LEGACY_SIZE,
 };
 
 use crate::{Errno, Result};
@@ -75,7 +74,10 @@ impl ThreadId {
 
 impl fmt::Debug for ThreadId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.debug_tuple("ThreadId").field(&self.as_raw()).finish()
+        formatter
+            .debug_tuple("ThreadId")
+            .field(&self.as_raw())
+            .finish()
     }
 }
 
@@ -230,7 +232,9 @@ impl<T> JoinHandle<T> {
     pub fn id(&self) -> ThreadId {
         // A typed handle only loses its raw identity during consuming join or
         // detach, so an ordinary borrow always observes an active thread.
-        self.raw.id().expect("active JoinHandle must retain its thread id")
+        self.raw
+            .id()
+            .expect("active JoinHandle must retain its thread id")
     }
 
     /// Joins the thread and returns the value produced by its closure.

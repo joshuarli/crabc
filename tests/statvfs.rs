@@ -11,7 +11,10 @@ fn statvfs_under_libc_so() {
 
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
     assert!(ldso_path.exists(), "libldso.so not found");
-    assert!(manifest_dir.join("target/debug/libc.so").exists(), "libc.so not found");
+    assert!(
+        manifest_dir.join("target/debug/libc.so").exists(),
+        "libc.so not found"
+    );
 
     let src = fixtures.join("statvfs_test.c");
     let bin = test_support::TempArtifact::new("statvfs_test");
@@ -49,8 +52,5 @@ fn statvfs_under_libc_so() {
         output.status.code(),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "statvfs ok\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "statvfs ok\n");
 }

@@ -131,14 +131,13 @@ fn positioned_vectored_io_preserves_file_position_and_segment_order() {
     };
     assert_eq!(invalid_read_error.raw(), 22, "EINVAL");
 
-    let invalid_write_error = io::pwritev(
-        &file,
-        &[io::IoSlice::new(b"x")],
-        u64::MAX,
-    )
-    .expect_err("negative off_t must be rejected");
+    let invalid_write_error = io::pwritev(&file, &[io::IoSlice::new(b"x")], u64::MAX)
+        .expect_err("negative off_t must be rejected");
     assert_eq!(invalid_write_error.raw(), 22, "EINVAL");
-    assert_eq!(fs::tell(&file).expect("position after invalid positional I/O"), 2);
+    assert_eq!(
+        fs::tell(&file).expect("position after invalid positional I/O"),
+        2
+    );
 
     drop(file);
     fs::unlink(&path).expect("remove positioned-vectored fixture");

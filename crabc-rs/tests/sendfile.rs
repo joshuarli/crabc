@@ -36,8 +36,7 @@ fn sendfile_preserves_or_advances_the_input_position_as_requested() {
 
     let mut offset = 2;
     assert_eq!(
-        fs::sendfile(&output, &input, Some(&mut offset), 4)
-            .expect("positioned sendfile transfer"),
+        fs::sendfile(&output, &input, Some(&mut offset), 4).expect("positioned sendfile transfer"),
         4,
     );
     assert_eq!(offset, 6, "sendfile advances its explicit offset");
@@ -46,7 +45,10 @@ fn sendfile_preserves_or_advances_the_input_position_as_requested() {
         8,
         "an explicit sendfile offset must not move the input descriptor",
     );
-    assert_eq!(fs::tell(&output).expect("output position after sendfile"), 4);
+    assert_eq!(
+        fs::tell(&output).expect("output position after sendfile"),
+        4
+    );
 
     fs::seek(&output, SeekFrom::Start(0)).expect("rewind positioned output");
     let mut positioned = [0_u8; 4];
@@ -60,8 +62,14 @@ fn sendfile_preserves_or_advances_the_input_position_as_requested() {
         fs::sendfile(&output, &input, None, 2).expect("current-position sendfile transfer"),
         2,
     );
-    assert_eq!(fs::tell(&input).expect("input position after null offset"), 10);
-    assert_eq!(fs::tell(&output).expect("output position after second transfer"), 6);
+    assert_eq!(
+        fs::tell(&input).expect("input position after null offset"),
+        10
+    );
+    assert_eq!(
+        fs::tell(&output).expect("output position after second transfer"),
+        6
+    );
 
     fs::seek(&output, SeekFrom::Start(0)).expect("rewind complete output");
     let mut complete = [0_u8; 6];
@@ -87,12 +95,8 @@ fn sendfile_rejects_offsets_outside_linux_off_t_without_mutating_them() {
         Mode::RUSR | Mode::WUSR,
     )
     .expect("create invalid-offset sendfile fixture");
-    let output = fs::open(
-        INVALID_PATH,
-        OFlags::RDWR | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .expect("open second descriptor for invalid-offset sendfile");
+    let output = fs::open(INVALID_PATH, OFlags::RDWR | OFlags::CLOEXEC, Mode::empty())
+        .expect("open second descriptor for invalid-offset sendfile");
     let mut offset = i64::MAX as u64 + 1;
 
     assert_eq!(

@@ -25,7 +25,8 @@ pub extern "C" fn crabc_rs_loader_runtime_probe() -> i32 {
         Ok(library) => library,
         Err(_) => return 1,
     };
-    let symbol = match unsafe { library.symbol::<unsafe extern "C" fn(*const u8) -> usize>(strlen) } {
+    let symbol = match unsafe { library.symbol::<unsafe extern "C" fn(*const u8) -> usize>(strlen) }
+    {
         Ok(symbol) => symbol,
         Err(_) => return 2,
     };

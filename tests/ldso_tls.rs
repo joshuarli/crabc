@@ -11,7 +11,11 @@ fn ldso_sets_up_tls() {
     let tlstest_bin = test_support::TempArtifact::new("tlstest");
 
     let ldso_path = manifest_dir.join("target/debug/libldso.so");
-    assert!(ldso_path.exists(), "libldso.so not found at {}", ldso_path.display());
+    assert!(
+        ldso_path.exists(),
+        "libldso.so not found at {}",
+        ldso_path.display()
+    );
 
     let status = Command::new("musl-gcc")
         .args([

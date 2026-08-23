@@ -24,7 +24,13 @@ fn query_and_fill_match_linux_supplementary_group_snapshot() {
     let mut groups = vec![Gid::ROOT; count];
     let filled = process::getgroups(&mut groups).expect("fill caller-owned group storage");
     assert_eq!(filled, count);
-    assert_eq!(groups.iter().map(|group| group.as_raw()).collect::<Vec<_>>(), expected);
+    assert_eq!(
+        groups
+            .iter()
+            .map(|group| group.as_raw())
+            .collect::<Vec<_>>(),
+        expected
+    );
 }
 
 #[test]
@@ -50,5 +56,8 @@ fn undersized_fill_reports_einval_without_changing_credentials() {
 
     let mut groups = vec![Gid::ROOT; count - 1];
     assert_eq!(process::getgroups(&mut groups), Err(crabc_rs::Errno::INVAL));
-    assert_eq!(process::getgroups_count().expect("re-query group count"), count);
+    assert_eq!(
+        process::getgroups_count().expect("re-query group count"),
+        count
+    );
 }

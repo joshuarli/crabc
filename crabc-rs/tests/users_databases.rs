@@ -25,7 +25,11 @@ empty:x:201:\n";
     let staff = groups.by_name("staff").expect("first group wins");
     assert_eq!(staff.gid(), Gid::from_raw(100));
     assert_eq!(staff.members(), ["first", "second"]);
-    assert!(groups.by_gid(Gid::from_raw(201)).unwrap().members().is_empty());
+    assert!(groups
+        .by_gid(Gid::from_raw(201))
+        .unwrap()
+        .members()
+        .is_empty());
 }
 
 #[test]

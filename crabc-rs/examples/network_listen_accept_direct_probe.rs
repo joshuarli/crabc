@@ -48,7 +48,10 @@ pub extern "C" fn crabc_rs_network_listen_accept_direct_probe() -> i32 {
         Err(error) => return -error.raw(),
         Ok(_) => return 1,
     }
-    match net::accept4(&listener, net::SocketFlags::CLOEXEC | net::SocketFlags::NONBLOCK) {
+    match net::accept4(
+        &listener,
+        net::SocketFlags::CLOEXEC | net::SocketFlags::NONBLOCK,
+    ) {
         Err(error) if expected_again(error) => {}
         Err(error) => return -error.raw(),
         Ok(_) => return 2,

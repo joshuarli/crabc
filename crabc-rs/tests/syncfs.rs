@@ -1,5 +1,5 @@
-use crabc_rs::{fs, io};
 use crabc_rs::fs::{Mode, OFlags};
+use crabc_rs::{fs, io};
 
 #[test]
 fn native_syncfs_flushes_the_filesystem_for_a_disposable_file() {

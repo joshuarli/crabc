@@ -43,7 +43,10 @@ pub extern "C" fn crabc_rs_positioned_vectored_direct_probe() -> i32 {
     let mut first = [0_u8; 2];
     let mut second = [0xa5_u8; 3];
     let read = {
-        let mut reads = [io::IoSliceMut::new(&mut first), io::IoSliceMut::new(&mut second)];
+        let mut reads = [
+            io::IoSliceMut::new(&mut first),
+            io::IoSliceMut::new(&mut second),
+        ];
         match io::preadv(&file, &mut reads, 2) {
             Ok(read) => read,
             Err(error) => return -error.raw(),

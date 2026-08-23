@@ -26,7 +26,10 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let status = command
         .status()
         .expect("failed to compile the memmem regression fixture");
-    assert!(status.success(), "memmem regression fixture compilation failed");
+    assert!(
+        status.success(),
+        "memmem regression fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {
@@ -35,7 +38,9 @@ fn run(binary: &std::path::Path, candidate: bool) -> Output {
     if candidate {
         command.env("LD_LIBRARY_PATH", root.join("target/debug"));
     }
-    command.output().expect("failed to run the memmem regression fixture")
+    command
+        .output()
+        .expect("failed to run the memmem regression fixture")
 }
 
 #[test]
@@ -55,7 +60,8 @@ fn memmem_matches_pinned_musl_for_binary_overlap_and_page_edges() {
     );
     assert_eq!(reference_output.stdout, b"memmem oracle ok\n");
     assert_eq!(
-        candidate_output.status, reference_output.status,
+        candidate_output.status,
+        reference_output.status,
         "crabc exit status differs; stderr: {}",
         String::from_utf8_lossy(&candidate_output.stderr),
     );

@@ -46,5 +46,8 @@ fn errno_is_thread_local_and_fd_wrappers_translate_failures() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "errno syscall ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "errno syscall ok\n"
+    );
 }

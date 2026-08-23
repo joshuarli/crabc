@@ -56,9 +56,7 @@ fn condvar_timeout_is_reported_after_relock() {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    let (guard, result) = condvar
-        .wait_timeout(guard, &timeout)
-        .expect("timed wait");
+    let (guard, result) = condvar.wait_timeout(guard, &timeout).expect("timed wait");
     assert!(result.timed_out());
     drop(guard);
     condvar.notify_all().expect("notify with no waiters");
@@ -177,13 +175,21 @@ fn barrier_releases_all_participants_and_reuses_generations() {
         let leaders = Arc::clone(&leaders);
         workers.push(std::thread::spawn(move || {
             arrived.fetch_add(1, Ordering::AcqRel);
-            if barrier.wait().expect("first barrier generation").is_leader() {
+            if barrier
+                .wait()
+                .expect("first barrier generation")
+                .is_leader()
+            {
                 leaders.fetch_add(1, Ordering::AcqRel);
             }
             assert!(arrived.load(Ordering::Acquire) >= PARTICIPANTS);
 
             arrived.fetch_add(1, Ordering::AcqRel);
-            if barrier.wait().expect("reused barrier generation").is_leader() {
+            if barrier
+                .wait()
+                .expect("reused barrier generation")
+                .is_leader()
+            {
                 leaders.fetch_add(1, Ordering::AcqRel);
             }
         }));

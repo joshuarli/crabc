@@ -19,7 +19,8 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 #[no_mangle]
 pub extern "C" fn crabc_rs_create_direct_probe() -> i32 {
     // SAFETY: The byte string is static, non-null, and NUL-terminated.
-    let path = unsafe { CStr::from_bytes_with_nul_unchecked(b"/tmp/crabc-rs-native-create-probe\0") };
+    let path =
+        unsafe { CStr::from_bytes_with_nul_unchecked(b"/tmp/crabc-rs-native-create-probe\0") };
     let _ = fs::unlink(path);
     let result = match fs::create(path, Mode::RUSR | Mode::WUSR) {
         Ok(file) => {

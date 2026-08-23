@@ -1,6 +1,6 @@
 use crabc_rs::net::{
-    ipv4_local_number, ipv4_network_number, make_ipv4_address,
-    parse_ipv4_legacy, parse_ipv4_network_number, Ipv4Addr,
+    ipv4_local_number, ipv4_network_number, make_ipv4_address, parse_ipv4_legacy,
+    parse_ipv4_network_number, Ipv4Addr,
 };
 
 #[test]
@@ -85,14 +85,8 @@ fn legacy_ipv4_rejects_component_overflow_and_too_many_parts() {
 
 #[test]
 fn legacy_ipv4_network_number_distinguishes_invalid_from_all_ones() {
-    assert_eq!(
-        parse_ipv4_network_number(b"127.0.0.1"),
-        Some(0x7f00_0001),
-    );
-    assert_eq!(
-        parse_ipv4_network_number(b"0xffffffff"),
-        Some(u32::MAX),
-    );
+    assert_eq!(parse_ipv4_network_number(b"127.0.0.1"), Some(0x7f00_0001),);
+    assert_eq!(parse_ipv4_network_number(b"0xffffffff"), Some(u32::MAX),);
     assert_eq!(parse_ipv4_network_number(b"256.0.0.1"), None);
 }
 
@@ -117,26 +111,11 @@ fn classful_helpers_follow_logical_network_word_boundaries() {
 
 #[test]
 fn classful_make_address_adds_missing_class_markers() {
-    assert_eq!(
-        make_ipv4_address(0x7f, 1),
-        Ipv4Addr::new(127, 0, 0, 1),
-    );
-    assert_eq!(
-        make_ipv4_address(0x8001, 2),
-        Ipv4Addr::new(128, 1, 0, 2),
-    );
-    assert_eq!(
-        make_ipv4_address(0xc00102, 3),
-        Ipv4Addr::new(192, 1, 2, 3),
-    );
-    assert_eq!(
-        make_ipv4_address(128, 1),
-        Ipv4Addr::new(128, 128, 0, 1),
-    );
-    assert_eq!(
-        make_ipv4_address(0x400000, 1),
-        Ipv4Addr::new(192, 0, 0, 1),
-    );
+    assert_eq!(make_ipv4_address(0x7f, 1), Ipv4Addr::new(127, 0, 0, 1),);
+    assert_eq!(make_ipv4_address(0x8001, 2), Ipv4Addr::new(128, 1, 0, 2),);
+    assert_eq!(make_ipv4_address(0xc00102, 3), Ipv4Addr::new(192, 1, 2, 3),);
+    assert_eq!(make_ipv4_address(128, 1), Ipv4Addr::new(128, 128, 0, 1),);
+    assert_eq!(make_ipv4_address(0x400000, 1), Ipv4Addr::new(192, 0, 0, 1),);
     assert_eq!(
         make_ipv4_address(0xe0000001, 0),
         Ipv4Addr::new(224, 0, 0, 1),

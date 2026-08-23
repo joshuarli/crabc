@@ -15,10 +15,9 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use crabc_core::runtime::{
-    CFileHandleV1, RuntimeV1, CFILE_MODE_APPEND, CFILE_MODE_APPEND_UPDATE,
-    CFILE_MODE_READ, CFILE_MODE_READ_UPDATE, CFILE_MODE_WRITE,
-    CFILE_MODE_WRITE_UPDATE, CFILE_SEEK_CURRENT, CFILE_SEEK_END,
-    CFILE_SEEK_START, V1_ABI_VERSION, V1_LEGACY_SIZE,
+    CFileHandleV1, RuntimeV1, CFILE_MODE_APPEND, CFILE_MODE_APPEND_UPDATE, CFILE_MODE_READ,
+    CFILE_MODE_READ_UPDATE, CFILE_MODE_WRITE, CFILE_MODE_WRITE_UPDATE, CFILE_SEEK_CURRENT,
+    CFILE_SEEK_END, CFILE_SEEK_START, V1_ABI_VERSION, V1_LEGACY_SIZE,
 };
 
 use crate::{Errno, Result};
@@ -88,11 +87,17 @@ impl FileMode {
     }
 
     const fn readable(self) -> bool {
-        matches!(self, Self::Read | Self::ReadUpdate | Self::WriteUpdate | Self::AppendUpdate)
+        matches!(
+            self,
+            Self::Read | Self::ReadUpdate | Self::WriteUpdate | Self::AppendUpdate
+        )
     }
 
     const fn writable(self) -> bool {
-        matches!(self, Self::Write | Self::Append | Self::ReadUpdate | Self::WriteUpdate | Self::AppendUpdate)
+        matches!(
+            self,
+            Self::Write | Self::Append | Self::ReadUpdate | Self::WriteUpdate | Self::AppendUpdate
+        )
     }
 }
 
@@ -135,7 +140,12 @@ impl<'buffer> CFile<'buffer> {
         // out-pointer is a writable stack value and the private call retains
         // neither it nor the FileMode value.
         status(unsafe {
-            (runtime()?.cfile_open_memory)(buffer.as_mut_ptr(), buffer.len(), mode.wire(), &mut handle)
+            (runtime()?.cfile_open_memory)(
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                mode.wire(),
+                &mut handle,
+            )
         })?;
         let handle = NonNull::new(handle).ok_or(Errno::INVAL)?;
         Ok(Self {
@@ -147,9 +157,7 @@ impl<'buffer> CFile<'buffer> {
     }
 
     fn handle(&self) -> Result<CFileHandleV1> {
-        self.handle
-            .map(NonNull::as_ptr)
-            .ok_or(Errno::INVAL)
+        self.handle.map(NonNull::as_ptr).ok_or(Errno::INVAL)
     }
 
     fn close_inner(&mut self) -> Result<()> {
@@ -171,7 +179,12 @@ impl<'buffer> CFile<'buffer> {
         // SAFETY: The handle is live and uniquely borrowed through `&mut
         // self`; `destination` remains writable for the synchronous call.
         status(unsafe {
-            (runtime()?.cfile_read)(self.handle()?, destination.as_mut_ptr(), destination.len(), &mut read)
+            (runtime()?.cfile_read)(
+                self.handle()?,
+                destination.as_mut_ptr(),
+                destination.len(),
+                &mut read,
+            )
         })?;
         Ok(read)
     }
@@ -214,9 +227,7 @@ impl<'buffer> CFile<'buffer> {
         let mut position = 0;
         // SAFETY: The handle is live and the output pointer is a writable
         // stack value that the private call does not retain.
-        status(unsafe {
-            (runtime()?.cfile_seek)(self.handle()?, offset, origin, &mut position)
-        })?;
+        status(unsafe { (runtime()?.cfile_seek)(self.handle()?, offset, origin, &mut position) })?;
         Ok(position)
     }
 

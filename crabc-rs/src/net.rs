@@ -86,10 +86,7 @@ pub fn parse_ipv4_legacy(value: &[u8]) -> Option<Ipv4Addr> {
             ))
         }
         3 => {
-            if parts[0] > u8::MAX as u64
-                || parts[1] > u8::MAX as u64
-                || parts[2] > 0x0000_ffff
-            {
+            if parts[0] > u8::MAX as u64 || parts[1] > u8::MAX as u64 || parts[2] > 0x0000_ffff {
                 return None;
             }
             Some(Ipv4Addr::new(
@@ -377,7 +374,9 @@ impl IpAddress {
     /// Parses a presentation-format IPv4 or IPv6 address without libc.
     #[must_use]
     pub fn parse(value: &[u8]) -> Option<Self> {
-        parse_ipv4(value).map(Self::V4).or_else(|| parse_ipv6(value).map(Self::V6))
+        parse_ipv4(value)
+            .map(Self::V4)
+            .or_else(|| parse_ipv6(value).map(Self::V6))
     }
 
     /// Returns the corresponding Linux address family.
@@ -393,7 +392,9 @@ impl IpAddress {
     #[must_use]
     pub const fn octets(self) -> [u8; 16] {
         match self {
-            Self::V4(value) => [value[0], value[1], value[2], value[3], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            Self::V4(value) => [
+                value[0], value[1], value[2], value[3], 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
             Self::V6(value) => value,
         }
     }
@@ -402,7 +403,11 @@ impl IpAddress {
 impl fmt::Display for IpAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::V4(bytes) => write!(formatter, "{}.{}.{}.{}", bytes[0], bytes[1], bytes[2], bytes[3]),
+            Self::V4(bytes) => write!(
+                formatter,
+                "{}.{}.{}.{}",
+                bytes[0], bytes[1], bytes[2], bytes[3]
+            ),
             Self::V6(bytes) => fmt_ipv6(formatter, bytes),
         }
     }
@@ -420,7 +425,11 @@ impl SocketAddress {
     /// Creates an endpoint with a host-order port.
     #[must_use]
     pub const fn new(address: IpAddress, port: u16) -> Self {
-        Self { address, port, scope_id: 0 }
+        Self {
+            address,
+            port,
+            scope_id: 0,
+        }
     }
 
     /// Creates an IPv6 endpoint with an interface scope identifier.
@@ -430,28 +439,44 @@ impl SocketAddress {
     /// it.
     #[must_use]
     pub const fn new_scoped(address: IpAddress, port: u16, scope_id: u32) -> Self {
-        Self { address, port, scope_id }
+        Self {
+            address,
+            port,
+            scope_id,
+        }
     }
 
     /// Returns the endpoint's IP address.
     #[must_use]
-    pub const fn ip(self) -> IpAddress { self.address }
+    pub const fn ip(self) -> IpAddress {
+        self.address
+    }
 
     /// Returns the endpoint's host-order port.
     #[must_use]
-    pub const fn port(self) -> u16 { self.port }
+    pub const fn port(self) -> u16 {
+        self.port
+    }
 
     /// Returns the IPv6 scope identifier, or zero for IPv4.
     #[must_use]
-    pub const fn scope_id(self) -> u32 { self.scope_id }
+    pub const fn scope_id(self) -> u32 {
+        self.scope_id
+    }
 }
 
 impl fmt::Display for SocketAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.address {
             IpAddress::V4(_) => write!(formatter, "{}:{}", self.address, self.port),
-            IpAddress::V6(_) if self.scope_id == 0 => write!(formatter, "[{}]:{}", self.address, self.port),
-            IpAddress::V6(_) => write!(formatter, "[{}%{}]:{}", self.address, self.scope_id, self.port),
+            IpAddress::V6(_) if self.scope_id == 0 => {
+                write!(formatter, "[{}]:{}", self.address, self.port)
+            }
+            IpAddress::V6(_) => write!(
+                formatter,
+                "[{}%{}]:{}",
+                self.address, self.scope_id, self.port
+            ),
         }
     }
 }
@@ -1114,11 +1139,8 @@ pub fn socketpair(
 ) -> Result<(OwnedFd, OwnedFd)> {
     let protocol = protocol.map_or(0, |value| value.as_raw().get() as i32);
     let flags = checked_socket_flags(flags)?;
-    let (first, second) = crabc_core::net::socketpair(
-        domain.as_raw() as i32,
-        type_.as_raw() | flags,
-        protocol,
-    )?;
+    let (first, second) =
+        crabc_core::net::socketpair(domain.as_raw() as i32, type_.as_raw() | flags, protocol)?;
     // SAFETY: successful Linux `socketpair` returns two fresh, non-negative,
     // uniquely-owned descriptors.
     unsafe { Ok((OwnedFd::from_raw_fd(first), OwnedFd::from_raw_fd(second))) }
@@ -1140,11 +1162,7 @@ pub fn socket(
 ) -> Result<OwnedFd> {
     let protocol = protocol.map_or(0, |value| value.as_raw().get() as i32);
     let flags = checked_socket_flags(flags)?;
-    let fd = crabc_core::net::socket(
-        domain.as_raw() as i32,
-        type_.as_raw() | flags,
-        protocol,
-    )?;
+    let fd = crabc_core::net::socket(domain.as_raw() as i32, type_.as_raw() | flags, protocol)?;
     // SAFETY: successful Linux `socket` returns one fresh, non-negative,
     // uniquely-owned descriptor.
     unsafe { Ok(OwnedFd::from_raw_fd(fd)) }
@@ -1171,7 +1189,7 @@ pub fn socket_reuseaddr<Fd: AsFd>(fd: Fd) -> Result<bool> {
     crabc_core::net::socket_reuseaddr(fd.as_fd().as_raw_fd())
 }
 
-    /// Enables listening for incoming connections on a stream socket.
+/// Enables listening for incoming connections on a stream socket.
 ///
 /// `backlog` is the signed Linux `listen(2)` backlog value. Linux applies its
 /// own queue-size rules; this facade does not reinterpret or clamp it before
@@ -1408,10 +1426,7 @@ pub fn acceptfrom_with<Fd: AsFd>(fd: Fd, flags: SocketFlags) -> Result<(OwnedFd,
     acceptfrom_with_raw(fd, Some(flags))
 }
 
-fn acceptfrom_with_raw<Fd: AsFd>(
-    fd: Fd,
-    flags: Option<u32>,
-) -> Result<(OwnedFd, SocketAddress)> {
+fn acceptfrom_with_raw<Fd: AsFd>(fd: Fd, flags: Option<u32>) -> Result<(OwnedFd, SocketAddress)> {
     let mut storage = SockaddrStorage { bytes: [0; 128] };
     let mut length = size_of::<SockaddrStorage>() as u32;
     let accepted = match flags {
@@ -1458,11 +1473,7 @@ pub fn getsockname<Fd: AsFd>(fd: Fd) -> Result<SocketAddress> {
     // SAFETY: `storage` provides aligned writable space for the Linux
     // sockaddr_storage capacity, and `length` is writable socklen_t storage.
     unsafe {
-        crabc_core::net::getsockname_raw(
-            fd.as_raw_fd(),
-            storage.bytes.as_mut_ptr(),
-            &mut length,
-        )?
+        crabc_core::net::getsockname_raw(fd.as_raw_fd(), storage.bytes.as_mut_ptr(), &mut length)?
     };
     decode_socket_address(&storage, length)
 }
@@ -1482,11 +1493,7 @@ pub fn getpeername<Fd: AsFd>(fd: Fd) -> Result<SocketAddress> {
     // SAFETY: `storage` provides aligned writable space for the Linux
     // sockaddr_storage capacity, and `length` is writable socklen_t storage.
     unsafe {
-        crabc_core::net::getpeername_raw(
-            fd.as_raw_fd(),
-            storage.bytes.as_mut_ptr(),
-            &mut length,
-        )?
+        crabc_core::net::getpeername_raw(fd.as_raw_fd(), storage.bytes.as_mut_ptr(), &mut length)?
     };
     decode_socket_address(&storage, length)
 }
@@ -1523,11 +1530,7 @@ pub fn send<Fd: AsFd>(fd: Fd, buffer: &[u8], flags: SendFlags) -> Result<usize> 
 /// addressed datagram. The descriptor and every source segment remain valid
 /// for the direct syscall, and Linux's short-send result is returned unchanged.
 #[inline]
-pub fn sendmsg<Fd: AsFd>(
-    fd: Fd,
-    buffers: &[IoSlice<'_>],
-    flags: SendFlags,
-) -> Result<usize> {
+pub fn sendmsg<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>], flags: SendFlags) -> Result<usize> {
     let fd = fd.as_fd();
     let iovecs = if buffers.is_empty() {
         core::ptr::null()
@@ -1537,9 +1540,7 @@ pub fn sendmsg<Fd: AsFd>(
     // SAFETY: `IoSlice` is `repr(transparent)` over a Linux iovec and each
     // value retains its borrowed immutable source slice for this call. An
     // empty vector uses the explicitly permitted null iovec pointer.
-    unsafe {
-        crabc_core::net::sendmsg_raw(fd.as_raw_fd(), iovecs, buffers.len(), flags.bits())
-    }
+    unsafe { crabc_core::net::sendmsg_raw(fd.as_raw_fd(), iovecs, buffers.len(), flags.bits()) }
 }
 
 /// Sends several ordinary connected messages through Linux `sendmmsg`.
@@ -1550,11 +1551,7 @@ pub fn sendmsg<Fd: AsFd>(
 /// available through [`MMsgHdr::bytes`]. Thus a short count is a successful
 /// partial batch and is never retried or converted through C `errno`.
 #[inline]
-pub fn sendmmsg<Fd: AsFd>(
-    fd: Fd,
-    messages: &mut [MMsgHdr<'_>],
-    flags: SendFlags,
-) -> Result<usize> {
+pub fn sendmmsg<Fd: AsFd>(fd: Fd, messages: &mut [MMsgHdr<'_>], flags: SendFlags) -> Result<usize> {
     let count = u32::try_from(messages.len()).map_err(|_| crate::Errno::OVERFLOW)?;
     let records = if messages.is_empty() {
         core::ptr::null_mut()
@@ -1564,14 +1561,7 @@ pub fn sendmmsg<Fd: AsFd>(
     // SAFETY: Every record was built by `MMsgHdr::new_send`, so its nested
     // iovec and source-byte borrows remain valid for this direct syscall. The
     // wrappers are transparent over the exact private Linux record.
-    unsafe {
-        crabc_core::net::sendmmsg_raw(
-            fd.as_fd().as_raw_fd(),
-            records,
-            count,
-            flags.bits(),
-        )
-    }
+    unsafe { crabc_core::net::sendmmsg_raw(fd.as_fd().as_raw_fd(), records, count, flags.bits()) }
 }
 
 /// Sends one datagram to an IPv4 or IPv6 endpoint.
@@ -1786,7 +1776,9 @@ fn parse_ipv4(value: &[u8]) -> Option<[u8; 4]> {
     for &byte in value.iter().chain(core::iter::once(&b'.')) {
         if byte.is_ascii_digit() {
             number = number.checked_mul(10)?.checked_add((byte - b'0') as u16)?;
-            if number > 255 { return None; }
+            if number > 255 {
+                return None;
+            }
             digits += 1;
         } else if byte == b'.' && digits != 0 && part < 4 {
             result[part] = number as u8;
@@ -1801,19 +1793,26 @@ fn parse_ipv4(value: &[u8]) -> Option<[u8; 4]> {
 }
 
 fn parse_ipv6(value: &[u8]) -> Option<[u8; 16]> {
-    if !value.contains(&b':') { return None; }
+    if !value.contains(&b':') {
+        return None;
+    }
     let mut groups = [0u16; 8];
     if let Some(compression) = value.windows(2).position(|window| window == b"::") {
         // A second `::` is ambiguous and therefore rejected. The two sides
         // are parsed independently, then the omitted groups are inserted in
         // the middle (including the legal leading/trailing `::` forms).
-        if value[compression + 2..].windows(2).any(|window| window == b"::") {
+        if value[compression + 2..]
+            .windows(2)
+            .any(|window| window == b"::")
+        {
             return None;
         }
         let left = parse_ipv6_side(&value[..compression], &mut groups, 0)?;
         let mut right_groups = [0u16; 8];
         let right = parse_ipv6_side(&value[compression + 2..], &mut right_groups, 0)?;
-        if left + right >= 8 { return None; }
+        if left + right >= 8 {
+            return None;
+        }
         for index in (0..right).rev() {
             groups[8 - right + index] = right_groups[index];
         }
@@ -1828,18 +1827,28 @@ fn parse_ipv6(value: &[u8]) -> Option<[u8; 16]> {
 }
 
 fn parse_ipv6_side(value: &[u8], groups: &mut [u16; 8], mut count: usize) -> Option<usize> {
-    if value.is_empty() { return Some(count); }
+    if value.is_empty() {
+        return Some(count);
+    }
     for (index, token) in value.split(|&byte| byte == b':').enumerate() {
-        if token.is_empty() { return None; }
+        if token.is_empty() {
+            return None;
+        }
         if token.contains(&b'.') {
-            if index + 1 != value.split(|&byte| byte == b':').count() { return None; }
+            if index + 1 != value.split(|&byte| byte == b':').count() {
+                return None;
+            }
             let ipv4 = parse_ipv4(token)?;
-            if count + 2 > 8 { return None; }
+            if count + 2 > 8 {
+                return None;
+            }
             groups[count] = u16::from_be_bytes([ipv4[0], ipv4[1]]);
             groups[count + 1] = u16::from_be_bytes([ipv4[2], ipv4[3]]);
             count += 2;
         } else {
-            if count >= 8 { return None; }
+            if count >= 8 {
+                return None;
+            }
             groups[count] = parse_hex(token)?;
             count += 1;
         }
@@ -1848,7 +1857,9 @@ fn parse_ipv6_side(value: &[u8], groups: &mut [u16; 8], mut count: usize) -> Opt
 }
 
 fn parse_hex(value: &[u8]) -> Option<u16> {
-    if value.is_empty() || value.len() > 4 { return None; }
+    if value.is_empty() || value.len() > 4 {
+        return None;
+    }
     let mut result = 0u16;
     for &byte in value {
         let digit = match byte {
@@ -1873,7 +1884,9 @@ fn fmt_ipv6(formatter: &mut fmt::Formatter<'_>, bytes: [u8; 16]) -> fmt::Result 
     while index < 8 {
         if groups[index] == 0 {
             let start = index;
-            while index < 8 && groups[index] == 0 { index += 1; }
+            while index < 8 && groups[index] == 0 {
+                index += 1;
+            }
             if index - start > best_len {
                 best_start = start;
                 best_len = index - start;
@@ -1882,7 +1895,9 @@ fn fmt_ipv6(formatter: &mut fmt::Formatter<'_>, bytes: [u8; 16]) -> fmt::Result 
             index += 1;
         }
     }
-    if best_len < 2 { best_start = 8; }
+    if best_len < 2 {
+        best_start = 8;
+    }
     let mut index = 0usize;
     let mut separator_before_group = false;
     while index < 8 {
@@ -1893,9 +1908,13 @@ fn fmt_ipv6(formatter: &mut fmt::Formatter<'_>, bytes: [u8; 16]) -> fmt::Result 
             formatter.write_str("::")?;
             index += best_len;
             separator_before_group = false;
-            if index == 8 { break; }
+            if index == 8 {
+                break;
+            }
         } else {
-            if separator_before_group { formatter.write_str(":")?; }
+            if separator_before_group {
+                formatter.write_str(":")?;
+            }
             write!(formatter, "{:x}", groups[index])?;
             separator_before_group = true;
             index += 1;

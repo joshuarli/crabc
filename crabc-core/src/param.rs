@@ -34,15 +34,8 @@ pub const AT_MINSIGSTKSZ: usize = 51;
 pub fn auxv_value(tag: usize) -> Option<usize> {
     // SAFETY: `PROC_SELF_AUXV` is a static, NUL-terminated path and the
     // direct open seam does not retain the pointer after returning.
-    let fd = unsafe {
-        super::fs::openat_raw(
-            super::AT_FDCWD,
-            PROC_SELF_AUXV.as_ptr(),
-            0,
-            0,
-        )
-    }
-    .ok()?;
+    let fd =
+        unsafe { super::fs::openat_raw(super::AT_FDCWD, PROC_SELF_AUXV.as_ptr(), 0, 0) }.ok()?;
 
     let value = read_auxv_value(fd, tag);
     // The descriptor is private to this query. Linux releases it even when
@@ -67,12 +60,11 @@ fn read_auxv_value(fd: super::RawFd, requested_tag: usize) -> Option<usize> {
         }
 
         let tag = u64::from_ne_bytes([
-            record[0], record[1], record[2], record[3],
-            record[4], record[5], record[6], record[7],
+            record[0], record[1], record[2], record[3], record[4], record[5], record[6], record[7],
         ]) as usize;
         let value = u64::from_ne_bytes([
-            record[8], record[9], record[10], record[11],
-            record[12], record[13], record[14], record[15],
+            record[8], record[9], record[10], record[11], record[12], record[13], record[14],
+            record[15],
         ]) as usize;
         if tag == requested_tag {
             return Some(value);

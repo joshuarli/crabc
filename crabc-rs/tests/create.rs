@@ -44,7 +44,10 @@ fn create_matches_creat_with_write_only_truncate_and_umask_safe_mode() {
         "creat does not imply O_CLOEXEC",
     );
     let metadata = fs::fstat(&file).expect("stat newly created file");
-    assert_eq!(FileType::from_raw_mode(metadata.st_mode), FileType::RegularFile);
+    assert_eq!(
+        FileType::from_raw_mode(metadata.st_mode),
+        FileType::RegularFile
+    );
     assert_eq!(metadata.st_size, 0, "creat starts a new file empty");
     let observed_mode = Mode::from_raw_mode(metadata.st_mode);
     assert_eq!(
@@ -53,7 +56,10 @@ fn create_matches_creat_with_write_only_truncate_and_umask_safe_mode() {
         "the process umask may clear requested bits but cannot add mode bits",
     );
 
-    assert_eq!(io::write(&file, b"seed").expect("write through creat descriptor"), 4);
+    assert_eq!(
+        io::write(&file, b"seed").expect("write through creat descriptor"),
+        4
+    );
     assert_eq!(
         io::read(&file, &mut [0_u8; 4]).unwrap_err(),
         Errno::BADF,

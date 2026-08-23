@@ -8,7 +8,11 @@ fn assert_weak_function_export(library: &std::path::Path, name: &str) {
         .args(["--wide", "--dyn-syms", library.to_str().unwrap()])
         .output()
         .expect("failed to inspect libc dynamic symbols");
-    assert!(output.status.success(), "readelf failed for {}", library.display());
+    assert!(
+        output.status.success(),
+        "readelf failed for {}",
+        library.display()
+    );
     let found = String::from_utf8_lossy(&output.stdout).lines().any(|line| {
         let fields: Vec<_> = line.split_whitespace().collect();
         fields.len() >= 8
@@ -17,7 +21,12 @@ fn assert_weak_function_export(library: &std::path::Path, name: &str) {
             && fields[5] == "DEFAULT"
             && fields[7].split('@').next() == Some(name)
     });
-    assert!(found, "{} is not a weak default-visible function in {}", name, library.display());
+    assert!(
+        found,
+        "{} is not a weak default-visible function in {}",
+        name,
+        library.display()
+    );
 }
 
 #[test]

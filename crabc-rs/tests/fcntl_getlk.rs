@@ -19,11 +19,8 @@ fn child_observes_parent_lock(fd: &OwnedFd, parent: process::Pid) -> ! {
 
 #[test]
 fn fcntl_getlk_reports_unlocked_and_parent_process_lock() {
-    let file = fs::memfd_create(
-        &b"crabc-native-fcntl-getlk"[..],
-        fs::MemfdFlags::CLOEXEC,
-    )
-    .expect("create fcntl_getlk memfd");
+    let file = fs::memfd_create(&b"crabc-native-fcntl-getlk"[..], fs::MemfdFlags::CLOEXEC)
+        .expect("create fcntl_getlk memfd");
     let query = process::Flock::from(process::FlockType::WriteLock);
 
     assert_eq!(
@@ -43,7 +40,10 @@ fn fcntl_getlk_reports_unlocked_and_parent_process_lock() {
         .expect("lock observer changed state");
     assert_eq!(status.exit_status(), Some(0));
     fs::fcntl_lock(&file, fs::FlockOperation::Unlock).expect("release parent lock");
-    assert_eq!(process::fcntl_getlk(&file, &query).expect("query unlocked memfd"), None);
+    assert_eq!(
+        process::fcntl_getlk(&file, &query).expect("query unlocked memfd"),
+        None
+    );
 }
 
 #[test]

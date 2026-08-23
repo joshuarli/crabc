@@ -4,7 +4,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crabc_rs::net::{AddressFamily, SocketType};
-use crabc_rs::resolver::{IpAddress, LookupFlags, LookupOptions, ResolveError, Resolver, ResolverConfig};
+use crabc_rs::resolver::{
+    IpAddress, LookupFlags, LookupOptions, ResolveError, Resolver, ResolverConfig,
+};
 
 fn dns_answer(request: &[u8], identifier: u16, flags: u16, address: [u8; 4]) -> Vec<u8> {
     let mut response = Vec::with_capacity(request.len() + 16);
@@ -63,19 +65,30 @@ fn udp_ignores_short_and_wrong_transaction_packets_before_valid_answer() {
         server.send_to(&[0, 1, 0], peer).unwrap();
         server
             .send_to(
-                &dns_answer(request, identifier.wrapping_add(1), 0x8180, [198, 51, 100, 10]),
+                &dns_answer(
+                    request,
+                    identifier.wrapping_add(1),
+                    0x8180,
+                    [198, 51, 100, 10],
+                ),
                 peer,
             )
             .unwrap();
         server
-            .send_to(&dns_answer(request, identifier, 0x8180, [198, 51, 100, 42]), peer)
+            .send_to(
+                &dns_answer(request, identifier, 0x8180, [198, 51, 100, 42]),
+                peer,
+            )
             .unwrap();
     });
 
     let result = lookup_a(query_config(port), "malformed.example.test");
     worker.join().unwrap();
     assert_eq!(result.canonical_name(), Some("malformed.example.test"));
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"198.51.100.42").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"198.51.100.42").unwrap()
+    );
 }
 
 #[test]
@@ -88,7 +101,8 @@ fn udp_truncation_retries_same_query_over_length_prefixed_tcp() {
         let (length, peer) = udp.recv_from(&mut request).unwrap();
         let request = request[..length].to_vec();
         let identifier = u16::from_be_bytes([request[0], request[1]]);
-        udp.send_to(&dns_truncated(&request, identifier), peer).unwrap();
+        udp.send_to(&dns_truncated(&request, identifier), peer)
+            .unwrap();
 
         let (mut stream, _) = listener.accept().unwrap();
         let mut frame_length = [0u8; 2];
@@ -110,7 +124,10 @@ fn udp_truncation_retries_same_query_over_length_prefixed_tcp() {
 
     let result = lookup_a(query_config(port), "truncated.example.test");
     worker.join().unwrap();
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"198.51.100.43").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"198.51.100.43").unwrap()
+    );
 }
 
 #[test]
@@ -129,7 +146,10 @@ fn failed_first_nameserver_advances_to_the_next_configured_server() {
         let request = &request[..length];
         let identifier = u16::from_be_bytes([request[0], request[1]]);
         answering
-            .send_to(&dns_answer(request, identifier, 0x8180, [198, 51, 100, 44]), peer)
+            .send_to(
+                &dns_answer(request, identifier, 0x8180, [198, 51, 100, 44]),
+                peer,
+            )
             .unwrap();
     });
 
@@ -146,7 +166,10 @@ fn failed_first_nameserver_advances_to_the_next_configured_server() {
     let result = lookup_a(config, "fallback.example.test");
     drop_worker.join().unwrap();
     answer_worker.join().unwrap();
-    assert_eq!(result.as_slice()[0].address().ip(), IpAddress::parse(b"198.51.100.44").unwrap());
+    assert_eq!(
+        result.as_slice()[0].address().ip(),
+        IpAddress::parse(b"198.51.100.44").unwrap()
+    );
 }
 
 #[test]
@@ -164,11 +187,17 @@ fn all_nameserver_failures_are_bounded_and_report_temporary_failure() {
     let result = Resolver::new(config).lookup(
         Some("timeout.example.test"),
         None,
-        LookupOptions { family: AddressFamily::INET, ..LookupOptions::default() },
+        LookupOptions {
+            family: AddressFamily::INET,
+            ..LookupOptions::default()
+        },
     );
     let elapsed = started.elapsed();
     worker.join().unwrap();
 
     assert_eq!(result, Err(ResolveError::Temporary));
-    assert!(elapsed < Duration::from_secs(1), "resolver exceeded bounded failure budget: {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "resolver exceeded bounded failure budget: {elapsed:?}"
+    );
 }

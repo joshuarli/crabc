@@ -13,7 +13,11 @@ fn setpriority_current_process_is_isolated() {
     }
 
     let output = Command::new(std::env::current_exe().expect("locate test binary"))
-        .args(["--exact", "setpriority_current_process_is_isolated", "--nocapture"])
+        .args([
+            "--exact",
+            "setpriority_current_process_is_isolated",
+            "--nocapture",
+        ])
         .env(ISOLATED_CASE, "1")
         .output()
         .expect("run isolated setpriority child");

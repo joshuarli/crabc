@@ -62,5 +62,8 @@ fn filesystem_credentials_are_typed_and_changed_only_in_a_child() {
         .env(CHILD_PROBE, "1")
         .status()
         .expect("run the filesystem-credential probe in a child process");
-    assert!(status.success(), "child filesystem-credential probe exited with {status}");
+    assert!(
+        status.success(),
+        "child filesystem-credential probe exited with {status}"
+    );
 }

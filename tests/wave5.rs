@@ -5,8 +5,7 @@ fn parse_count(stdout: &str, label: &str) -> i32 {
         .lines()
         .find(|l| l.trim_start().starts_with(label))
         .and_then(|l| {
-            l.splitn(2, label)
-                .nth(1)
+            l.split_once(label).map(|x| x.1)
                 .map(|v| v.trim().parse::<i32>().unwrap_or(0))
         })
         .unwrap_or(0)
@@ -14,7 +13,8 @@ fn parse_count(stdout: &str, label: &str) -> i32 {
 
 #[test]
 fn wave5_libc_test_functional_networking_and_fcntl() {
-    let libc_test_dir = std::env::var("LIBC_TEST_DIR").unwrap_or_else(|_| "/home/root/libc-test".into());
+    let libc_test_dir =
+        std::env::var("LIBC_TEST_DIR").unwrap_or_else(|_| "/home/root/libc-test".into());
     if !std::path::Path::new(&libc_test_dir).join("src").is_dir() {
         eprintln!(
             "skipping wave5_libc_test_functional_networking_and_fcntl: libc-test source not found at {}",
@@ -41,7 +41,11 @@ fn wave5_libc_test_functional_networking_and_fcntl() {
         stderr
     );
 
-    for test in ["functional/inet_pton", "functional/fcntl", "functional/socket"] {
+    for test in [
+        "functional/inet_pton",
+        "functional/fcntl",
+        "functional/socket",
+    ] {
         assert!(
             stdout.contains(&format!("  {}\n", test)),
             "expected {} to PASS:\n{}",
@@ -53,7 +57,15 @@ fn wave5_libc_test_functional_networking_and_fcntl() {
     let pass = parse_count(&stdout, "PASS:");
     let fail = parse_count(&stdout, "FAIL:");
     let builderror = parse_count(&stdout, "BUILDERROR:");
-    assert!(pass >= 73, "expected PASS count of at least 73, got {}", pass);
+    assert!(
+        pass >= 73,
+        "expected PASS count of at least 73, got {}",
+        pass
+    );
     assert!(fail == 0, "expected FAIL count of 0, got {}", fail);
-    assert!(builderror == 0, "expected BUILDERROR count of 0, got {}", builderror);
+    assert!(
+        builderror == 0,
+        "expected BUILDERROR count of 0, got {}",
+        builderror
+    );
 }

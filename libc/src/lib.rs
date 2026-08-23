@@ -5,7 +5,10 @@
 #![feature(thread_local)]
 #![allow(dead_code, non_camel_case_types)]
 
-use core::ffi::{c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, CStr, VaArgSafe, VaList};
+use core::ffi::{
+    c_char, c_int, c_long, c_longlong, c_uint, c_ulong, c_ulonglong, c_void, CStr, VaArgSafe,
+    VaList,
+};
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
@@ -436,8 +439,6 @@ type Arch = X86_64;
 type Arch = Aarch64;
 #[cfg(target_arch = "riscv64")]
 type Arch = Riscv64;
-
-
 
 // Architecture-specific syscall numbers
 #[cfg(target_arch = "x86_64")]
@@ -1030,7 +1031,9 @@ pub unsafe extern "C" fn memset(s: *mut c_void, c: c_int, n: usize) -> *mut c_vo
     // SAFETY: the public C contract requires `destination` to designate `n`
     // writable bytes. The scalar helper performs no reads and keeps every
     // typed store inside that precise byte range.
-    unsafe { memset_scalar(destination, c as u8, n) };
+    unsafe {
+        memset_scalar(destination, c as u8, n)
+    };
     #[cfg(not(target_arch = "aarch64"))]
     for offset in 0..n {
         // SAFETY: the public C contract makes every byte in `0..n` writable.
@@ -1189,7 +1192,9 @@ pub unsafe extern "C" fn strlcpy(dst: *mut u8, src: *const u8, n: usize) -> usiz
 pub unsafe extern "C" fn strlcat(dst: *mut u8, src: *const u8, n: usize) -> usize {
     let dl = strlen(dst as *const c_char);
     let sl = strlen(src as *const c_char);
-    if dl >= n { return n + sl; }
+    if dl >= n {
+        return n + sl;
+    }
     let c = if sl < n - dl { sl } else { n - dl - 1 };
     core::ptr::copy_nonoverlapping(src, dst.add(dl), c);
     *dst.add(dl + c) = 0;
@@ -1437,8 +1442,8 @@ unsafe fn find_byte_in_c_string(mut cursor: *const u8, target: u8) -> *const u8 
             let next = unsafe { cursor.add(WORD_BYTES) };
             let next_word = unsafe { core::ptr::read_unaligned(next.cast::<u64>()) };
             let next_candidates = next_word & (next_word ^ target_word);
-            let next_has_candidate = next_candidates.wrapping_sub(ONES)
-                & !next_candidates & HIGHS != 0;
+            let next_has_candidate =
+                next_candidates.wrapping_sub(ONES) & !next_candidates & HIGHS != 0;
             if !next_has_candidate {
                 cursor = unsafe { next.add(WORD_BYTES) };
                 continue;
@@ -1483,7 +1488,9 @@ unsafe fn two_byte_strstr(haystack: *const u8, needle: *const u8) -> *const u8 {
 
 unsafe fn three_byte_strstr(haystack: *const u8, needle: *const u8) -> *const u8 {
     let target = unsafe {
-        (needle.read() as u32) << 16 | (needle.add(1).read() as u32) << 8 | needle.add(2).read() as u32
+        (needle.read() as u32) << 16
+            | (needle.add(1).read() as u32) << 8
+            | needle.add(2).read() as u32
     };
     let mut window = unsafe {
         (haystack.read() as u32) << 16
@@ -1592,8 +1599,10 @@ unsafe fn two_way_strstr(mut haystack: *const u8, needle: *const u8) -> *const u
         needle_len = next_len;
     }
 
-    let (forward_suffix, forward_period) = unsafe { maximal_suffix_c_string(needle, needle_len, false) };
-    let (reverse_suffix, reverse_period) = unsafe { maximal_suffix_c_string(needle, needle_len, true) };
+    let (forward_suffix, forward_period) =
+        unsafe { maximal_suffix_c_string(needle, needle_len, false) };
+    let (reverse_suffix, reverse_period) =
+        unsafe { maximal_suffix_c_string(needle, needle_len, true) };
     let (suffix, mut period) = if reverse_suffix > forward_suffix {
         (reverse_suffix, reverse_period)
     } else {
@@ -1708,7 +1717,11 @@ unsafe fn maximal_suffix_c_string(
             } else {
                 offset += 1;
             }
-        } else if if reverse_order { left < right } else { left > right } {
+        } else if if reverse_order {
+            left < right
+        } else {
+            left > right
+        } {
             candidate += offset;
             offset = 1;
             period = if suffix < 0 {
@@ -1796,9 +1809,8 @@ fn memchr_index(bytes: &[u8], target: u8) -> Option<usize> {
         // SAFETY: `bytes.len() - index >= WORD_BYTES` proves the aligned or
         // unaligned u64 lies completely inside this readable slice. The load
         // does not create a reference to possibly unaligned C storage.
-        let word = unsafe {
-            core::ptr::read_unaligned(bytes.as_ptr().wrapping_add(index).cast::<u64>())
-        };
+        let word =
+            unsafe { core::ptr::read_unaligned(bytes.as_ptr().wrapping_add(index).cast::<u64>()) };
         let difference = word ^ target_word;
         if difference.wrapping_sub(ONES) & !difference & HIGHS == 0 {
             let next_index = index + WORD_BYTES;
@@ -1856,8 +1868,10 @@ pub unsafe extern "C" fn memrchr(s: *const u8, c: c_int, n: usize) -> *mut u8 {
 /// least `haystacklen` readable bytes. The two ranges may overlap. A null
 /// pointer is permitted only with its corresponding zero length.
 pub unsafe extern "C" fn memmem(
-    haystack: *const c_void, haystacklen: usize,
-    needle: *const c_void, needlelen: usize,
+    haystack: *const c_void,
+    haystacklen: usize,
+    needle: *const c_void,
+    needlelen: usize,
 ) -> *mut c_void {
     if needlelen == 0 {
         return haystack.cast_mut();
@@ -1986,7 +2000,11 @@ fn maximal_suffix(needle: &[u8], reverse_order: bool) -> (isize, usize) {
             } else {
                 offset += 1;
             }
-        } else if if reverse_order { left < right } else { left > right } {
+        } else if if reverse_order {
+            left < right
+        } else {
+            left > right
+        } {
             candidate += offset;
             offset = 1;
             period = if suffix < 0 {
@@ -2020,9 +2038,8 @@ fn two_way_memmem_index(haystack: &[u8], needle: &[u8], first: usize) -> Option<
     };
     let critical = if suffix < 0 { 0 } else { suffix as usize + 1 };
     let periodic_end = period.checked_add(critical);
-    let periodic = periodic_end.is_some_and(|end| {
-        end <= needle.len() && needle[..critical] == needle[period..end]
-    });
+    let periodic = periodic_end
+        .is_some_and(|end| end <= needle.len() && needle[..critical] == needle[period..end]);
     let memory_after_match = if periodic {
         needle.len() - period
     } else {
@@ -2330,7 +2347,9 @@ pub extern "C" fn toupper(c: c_int) -> c_int {
 // ============================================================
 
 unsafe fn parse_digit(c: u8, base: c_int) -> Option<u8> {
-    if c == 0 { return None; }
+    if c == 0 {
+        return None;
+    }
     let d = if c >= b'0' && c <= b'9' {
         c - b'0'
     } else if c >= b'a' && c <= b'z' {
@@ -2361,7 +2380,10 @@ unsafe fn parse_prefix(s: *const u8, base: *mut c_int) -> *const u8 {
             *base = 10;
         }
     } else if *base == 16 {
-        if *p == b'0' && (*p.add(1) == b'x' || *p.add(1) == b'X') && parse_digit(*p.add(2), 16).is_some() {
+        if *p == b'0'
+            && (*p.add(1) == b'x' || *p.add(1) == b'X')
+            && parse_digit(*p.add(2), 16).is_some()
+        {
             p = p.add(2);
         }
     }
@@ -2391,7 +2413,10 @@ unsafe fn strtox(
 
     let mut neg = false;
     match *p {
-        b'-' => { neg = true; p = p.add(1); }
+        b'-' => {
+            neg = true;
+            p = p.add(1);
+        }
         b'+' => p = p.add(1),
         _ => {}
     }
@@ -2404,8 +2429,12 @@ unsafe fn strtox(
     while let Some(d) = parse_digit(*p, base) {
         any = true;
         if val > (limit - d as u64) / base as u64 {
-            while parse_digit(*p, base).is_some() { p = p.add(1); }
-            if !endptr.is_null() { *endptr = p as *mut c_char; }
+            while parse_digit(*p, base).is_some() {
+                p = p.add(1);
+            }
+            if !endptr.is_null() {
+                *endptr = p as *mut c_char;
+            }
             ERRNO = ERANGE_VAL;
             return (limit, true, neg);
         }
@@ -2414,7 +2443,11 @@ unsafe fn strtox(
     }
 
     if !endptr.is_null() {
-        *endptr = if any { p as *mut c_char } else { s as *mut c_char };
+        *endptr = if any {
+            p as *mut c_char
+        } else {
+            s as *mut c_char
+        };
     }
     (val, false, neg)
 }
@@ -2427,38 +2460,70 @@ pub unsafe extern "C" fn strtol(s: *const c_char, endptr: *mut *mut c_char, base
     if overflow {
         return if neg { c_long::MIN } else { c_long::MAX };
     }
-    if neg { val.wrapping_neg() as c_long } else { val as c_long }
+    if neg {
+        val.wrapping_neg() as c_long
+    } else {
+        val as c_long
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn strtoul(s: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_ulong {
+pub unsafe extern "C" fn strtoul(
+    s: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_ulong {
     let limit = c_ulong::MAX as u64;
     let (val, overflow, neg) = strtox(s, endptr, base, limit, limit);
     if overflow {
         return c_ulong::MAX;
     }
-    if neg { val.wrapping_neg() as c_ulong } else { val as c_ulong }
+    if neg {
+        val.wrapping_neg() as c_ulong
+    } else {
+        val as c_ulong
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn strtoll(s: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_longlong {
+pub unsafe extern "C" fn strtoll(
+    s: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_longlong {
     let pos_limit = c_longlong::MAX as u64;
     let neg_limit = pos_limit.wrapping_add(1);
     let (val, overflow, neg) = strtox(s, endptr, base, pos_limit, neg_limit);
     if overflow {
-        return if neg { c_longlong::MIN } else { c_longlong::MAX };
+        return if neg {
+            c_longlong::MIN
+        } else {
+            c_longlong::MAX
+        };
     }
-    if neg { val.wrapping_neg() as c_longlong } else { val as c_longlong }
+    if neg {
+        val.wrapping_neg() as c_longlong
+    } else {
+        val as c_longlong
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn strtoull(s: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_ulonglong {
+pub unsafe extern "C" fn strtoull(
+    s: *const c_char,
+    endptr: *mut *mut c_char,
+    base: c_int,
+) -> c_ulonglong {
     let limit = c_ulonglong::MAX as u64;
     let (val, overflow, neg) = strtox(s, endptr, base, limit, limit);
     if overflow {
         return c_ulonglong::MAX;
     }
-    if neg { val.wrapping_neg() as c_ulonglong } else { val as c_ulonglong }
+    if neg {
+        val.wrapping_neg() as c_ulonglong
+    } else {
+        val as c_ulonglong
+    }
 }
 
 #[no_mangle]
@@ -2525,25 +2590,43 @@ pub extern "C" fn rand() -> c_int {
 // ============================================================
 
 #[repr(C)]
-pub struct div_t { pub quot: c_int, pub rem: c_int }
+pub struct div_t {
+    pub quot: c_int,
+    pub rem: c_int,
+}
 #[repr(C)]
-pub struct ldiv_t { pub quot: c_long, pub rem: c_long }
+pub struct ldiv_t {
+    pub quot: c_long,
+    pub rem: c_long,
+}
 #[repr(C)]
-pub struct lldiv_t { pub quot: c_longlong, pub rem: c_longlong }
+pub struct lldiv_t {
+    pub quot: c_longlong,
+    pub rem: c_longlong,
+}
 
 #[no_mangle]
 pub extern "C" fn div(num: c_int, den: c_int) -> div_t {
-    div_t { quot: num / den, rem: num % den }
+    div_t {
+        quot: num / den,
+        rem: num % den,
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn ldiv(num: c_long, den: c_long) -> ldiv_t {
-    ldiv_t { quot: num / den, rem: num % den }
+    ldiv_t {
+        quot: num / den,
+        rem: num % den,
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn lldiv(num: c_longlong, den: c_longlong) -> lldiv_t {
-    lldiv_t { quot: num / den, rem: num % den }
+    lldiv_t {
+        quot: num / den,
+        rem: num % den,
+    }
 }
 
 // ============================================================
@@ -2729,26 +2812,26 @@ extern "C" {
 }
 
 #[inline]
-unsafe fn sys_rt_sigaction(sig: c_int,
+unsafe fn sys_rt_sigaction(
+    sig: c_int,
     act: *const KernelSigAction,
     oldact: *mut KernelSigAction,
-    _sigsetsize: usize,) -> i64 {
-    match unsafe {
-        crabc_core::signal::rt_sigaction_raw(sig, act.cast(), oldact.cast())
-    } {
+    _sigsetsize: usize,
+) -> i64 {
+    match unsafe { crabc_core::signal::rt_sigaction_raw(sig, act.cast(), oldact.cast()) } {
         Ok(()) => 0,
         Err(errno) => -(errno.raw() as i64),
     }
 }
 
 #[inline]
-unsafe fn sys_rt_sigprocmask(how: c_int,
+unsafe fn sys_rt_sigprocmask(
+    how: c_int,
     set: *const SigSetT,
     oldset: *mut SigSetT,
-    _sigsetsize: usize,) -> i64 {
-    match unsafe {
-        crabc_core::signal::rt_sigprocmask_raw(how, set.cast(), oldset.cast())
-    } {
+    _sigsetsize: usize,
+) -> i64 {
+    match unsafe { crabc_core::signal::rt_sigprocmask_raw(how, set.cast(), oldset.cast()) } {
         Ok(()) => 0,
         Err(errno) => -(errno.raw() as i64),
     }
@@ -2771,10 +2854,12 @@ unsafe fn sys_rt_sigsuspend(mask: *const SigSetT, _sigsetsize: usize) -> i64 {
 }
 
 #[inline]
-unsafe fn sys_rt_sigtimedwait(set: *const SigSetT,
+unsafe fn sys_rt_sigtimedwait(
+    set: *const SigSetT,
     info: *mut siginfo_t,
     timeout: *const timespec,
-    _sigsetsize: usize,) -> i64 {
+    _sigsetsize: usize,
+) -> i64 {
     match unsafe {
         crabc_core::signal::rt_sigtimedwait_raw(set.cast(), info.cast(), timeout.cast())
     } {
@@ -2861,7 +2946,9 @@ pub unsafe extern "C" fn sigprocmask(
     if r < 0 {
         ERRNO = (-r) as c_int;
         -1
-    } else { 0 }
+    } else {
+        0
+    }
 }
 
 #[inline]
@@ -2952,7 +3039,11 @@ pub unsafe extern "C" fn kill(pid: c_int, sig: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn tgkill(tgid: c_int, tid: c_int, sig: c_int) -> c_int {
-    if syscall_result(sys_tgkill(tgid, tid, sig)) < 0 { -1 } else { 0 }
+    if syscall_result(sys_tgkill(tgid, tid, sig)) < 0 {
+        -1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -2962,7 +3053,12 @@ pub unsafe extern "C" fn getpid() -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn raise(sig: c_int) -> c_int {
-    if syscall_result(sys_tgkill(sys_getpid() as c_int, sys_gettid() as c_int, sig)) < 0 {
+    if syscall_result(sys_tgkill(
+        sys_getpid() as c_int,
+        sys_gettid() as c_int,
+        sig,
+    )) < 0
+    {
         -1
     } else {
         0
@@ -3017,7 +3113,9 @@ pub unsafe extern "C" fn sigdelset(set: *mut SigSetT, signum: c_int) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn sigismember(set: *const SigSetT, signum: c_int) -> c_int {
     let s = (signum as c_uint).wrapping_sub(1);
-    if s as usize >= 64 { return 0; }
+    if s as usize >= 64 {
+        return 0;
+    }
     ((*set & (1u64 << s)) != 0) as c_int
 }
 
@@ -3060,18 +3158,12 @@ pub unsafe extern "C" fn sigtimedwait(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sigwaitinfo(
-    mask: *const SigSetT,
-    info: *mut siginfo_t,
-) -> c_int {
+pub unsafe extern "C" fn sigwaitinfo(mask: *const SigSetT, info: *mut siginfo_t) -> c_int {
     sigtimedwait(mask, info, core::ptr::null())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sigwait(
-    mask: *const SigSetT,
-    sig: *mut c_int,
-) -> c_int {
+pub unsafe extern "C" fn sigwait(mask: *const SigSetT, sig: *mut c_int) -> c_int {
     let mut info: siginfo_t = core::mem::zeroed();
     if sigtimedwait(mask, &mut info, core::ptr::null()) < 0 {
         return ERRNO;
@@ -3388,7 +3480,11 @@ pub unsafe extern "C" fn siglongjmp(env: *const c_ulong, val: c_int) -> ! {
 pub unsafe extern "C" fn __sigsetjmp_tail(env: *mut c_ulong, ret: c_int) -> c_int {
     const SIG_SETMASK: c_int = 2;
     let ss = env.add(24) as *mut SigSetT;
-    let set = if ret != 0 { ss as *const SigSetT } else { core::ptr::null() };
+    let set = if ret != 0 {
+        ss as *const SigSetT
+    } else {
+        core::ptr::null()
+    };
     let old = if ret != 0 { core::ptr::null_mut() } else { ss };
     let _ = sys_rt_sigprocmask(SIG_SETMASK, set, old, core::mem::size_of::<SigSetT>());
     ret
@@ -3442,7 +3538,11 @@ pub unsafe extern "C" fn siglongjmp(env: *const c_ulong, val: c_int) -> ! {
 pub unsafe extern "C" fn __sigsetjmp_tail(env: *mut c_ulong, ret: c_int) -> c_int {
     const SIG_SETMASK: c_int = 2;
     let ss = env.add(27) as *mut SigSetT;
-    let set = if ret != 0 { ss as *const SigSetT } else { core::ptr::null() };
+    let set = if ret != 0 {
+        ss as *const SigSetT
+    } else {
+        core::ptr::null()
+    };
     let old = if ret != 0 { core::ptr::null_mut() } else { ss };
     let _ = sys_rt_sigprocmask(SIG_SETMASK, set, old, core::mem::size_of::<SigSetT>());
     ret
@@ -3560,7 +3660,11 @@ unsafe fn sys_fork() -> i64 {
 }
 
 #[inline]
-unsafe fn sys_execve(path: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> i64 {
+unsafe fn sys_execve(
+    path: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> i64 {
     match unsafe { crabc_core::process::execve_raw(path.cast(), argv.cast(), envp.cast()) } {
         Ok(()) => 0,
         Err(errno) => -(errno.raw() as i64),
@@ -3623,9 +3727,7 @@ pub unsafe extern "C" fn fork() -> c_int {
     // expectation that fork fails with EAGAIN when the limit is zero.
     let mut rlim: Rlimit = core::mem::zeroed();
     let nproc_limit = sys_getrlimit(RLIMIT_NPROC, &mut rlim as *mut _ as *mut u8);
-    let nproc_limited = nproc_limit == 0
-        && rlim.rlim_cur != RLIM_INFINITY
-        && rlim.rlim_cur == 0;
+    let nproc_limited = nproc_limit == 0 && rlim.rlim_cur != RLIM_INFINITY && rlim.rlim_cur == 0;
     let ret = if nproc_limited {
         -EAGAIN as i64
     } else {
@@ -3709,8 +3811,12 @@ pub unsafe extern "C" fn execl(path: *const c_char, arg: *const c_char, mut args
     let mut n: usize = 1;
     loop {
         let a: *const c_char = args.next_arg();
-        if a.is_null() { break; }
-        if n >= 255 { return -1; }
+        if a.is_null() {
+            break;
+        }
+        if n >= 255 {
+            return -1;
+        }
         argv[n] = a;
         n += 1;
     }
@@ -3747,20 +3853,31 @@ pub struct posix_spawnattr_t {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_init(fa: *mut posix_spawn_file_actions_t) -> c_int {
+pub unsafe extern "C" fn posix_spawn_file_actions_init(
+    fa: *mut posix_spawn_file_actions_t,
+) -> c_int {
     core::ptr::write_bytes(fa, 0, 1);
     0
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_destroy(fa: *mut posix_spawn_file_actions_t) -> c_int {
+pub unsafe extern "C" fn posix_spawn_file_actions_destroy(
+    fa: *mut posix_spawn_file_actions_t,
+) -> c_int {
     cabi_spawn_destroy_linked_actions(fa);
     0
 }
 
-unsafe fn spawn_fa_add(fa: *mut posix_spawn_file_actions_t, action_type: c_int, fd: c_int, newfd: c_int) -> c_int {
+unsafe fn spawn_fa_add(
+    fa: *mut posix_spawn_file_actions_t,
+    action_type: c_int,
+    fd: c_int,
+    newfd: c_int,
+) -> c_int {
     let count = (*fa).__pad0[0] as usize;
-    if count >= SPAWN_FA_MAX { return ENOMEM; }
+    if count >= SPAWN_FA_MAX {
+        return ENOMEM;
+    }
     let base = count * 3;
     (*fa).__pad[base] = action_type;
     (*fa).__pad[base + 1] = fd;
@@ -3770,23 +3887,36 @@ unsafe fn spawn_fa_add(fa: *mut posix_spawn_file_actions_t, action_type: c_int, 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_addclose(fa: *mut posix_spawn_file_actions_t, fd: c_int) -> c_int {
+pub unsafe extern "C" fn posix_spawn_file_actions_addclose(
+    fa: *mut posix_spawn_file_actions_t,
+    fd: c_int,
+) -> c_int {
     spawn_fa_add(fa, 0, fd, 0)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(fa: *mut posix_spawn_file_actions_t, oldfd: c_int, newfd: c_int) -> c_int {
+pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(
+    fa: *mut posix_spawn_file_actions_t,
+    oldfd: c_int,
+    newfd: c_int,
+) -> c_int {
     spawn_fa_add(fa, 1, oldfd, newfd)
 }
 
 unsafe fn spawn_apply_actions(fa: *const posix_spawn_file_actions_t) -> c_int {
-    if fa.is_null() { return 0; }
+    if fa.is_null() {
+        return 0;
+    }
     let count = (*fa).__pad0[0] as usize;
     for i in 0..count {
         let base = i * 3;
         match (*fa).__pad[base] {
-            0 => { sys_close((*fa).__pad[base + 1] as i64); }
-            1 => { sys_dup2((*fa).__pad[base + 1], (*fa).__pad[base + 2]); }
+            0 => {
+                sys_close((*fa).__pad[base + 1] as i64);
+            }
+            1 => {
+                sys_dup2((*fa).__pad[base + 1], (*fa).__pad[base + 2]);
+            }
             _ => {}
         }
     }
@@ -3794,12 +3924,19 @@ unsafe fn spawn_apply_actions(fa: *const posix_spawn_file_actions_t) -> c_int {
 }
 
 // ponytail: PATH search using stack buffer, O(n) scan per entry
-unsafe fn spawn_execvp(file: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> ! {
+unsafe fn spawn_execvp(
+    file: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> ! {
     let flen = strlen(file as *const c_char);
     let f = file as *const u8;
     let mut has_slash = false;
     for i in 0..flen {
-        if *f.add(i) == b'/' { has_slash = true; break; }
+        if *f.add(i) == b'/' {
+            has_slash = true;
+            break;
+        }
     }
     if has_slash {
         sys_execve(file, argv, envp);
@@ -3807,13 +3944,19 @@ unsafe fn spawn_execvp(file: *const c_char, argv: *const *const c_char, envp: *c
     }
     let path = getenv(b"PATH\0".as_ptr() as *const c_char);
     let default_path = b"/usr/local/bin:/usr/bin:/bin\0";
-    let p = if path.is_null() { default_path.as_ptr() } else { path as *const u8 };
+    let p = if path.is_null() {
+        default_path.as_ptr()
+    } else {
+        path as *const u8
+    };
     let plen = strlen(p as *const c_char);
     let mut buf: [u8; 4096] = [0; 4096];
     let mut i: usize = 0;
     while i <= plen {
         let start = i;
-        while i < plen && *p.add(i) != b':' { i += 1; }
+        while i < plen && *p.add(i) != b':' {
+            i += 1;
+        }
         let dlen = i - start;
         if dlen > 0 && dlen + 1 + flen < 4096 {
             core::ptr::copy_nonoverlapping(p.add(start), buf.as_mut_ptr(), dlen);
@@ -3846,7 +3989,11 @@ pub unsafe extern "C" fn posix_spawnp(
         if spawn_apply_actions(fa) != 0 {
             _exit(127);
         }
-        let actual_envp = if envp.is_null() { __environ as *const *const c_char } else { envp };
+        let actual_envp = if envp.is_null() {
+            __environ as *const *const c_char
+        } else {
+            envp
+        };
         spawn_execvp(file, argv, actual_envp);
         // unreachable: spawn_execvp always calls _exit
     }
@@ -3939,7 +4086,10 @@ pub const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 #[no_mangle]
 pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut Stat) -> c_int {
     let r = sys_newfstatat(AT_FDCWD, path, buf as *mut u8, 0);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     if *path == b'/' as c_char && strcmp(path as *const u8, b"/dev/null\0".as_ptr()) == 0 {
         (*buf).st_mode = ((*buf).st_mode & !0o170000) | 0o020000;
     }
@@ -3950,13 +4100,23 @@ pub unsafe extern "C" fn stat(path: *const c_char, buf: *mut Stat) -> c_int {
 #[linkage = "weak"]
 pub unsafe extern "C" fn fstat(fd: c_int, buf: *mut Stat) -> c_int {
     let r = sys_fstat(fd, buf as *mut u8);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn lstat(path: *const c_char, buf: *mut Stat) -> c_int {
     let r = sys_newfstatat(AT_FDCWD, path, buf as *mut u8, AT_SYMLINK_NOFOLLOW);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -3968,7 +4128,12 @@ pub unsafe extern "C" fn fstatat(
     flags: c_int,
 ) -> c_int {
     let r = sys_newfstatat(dirfd, path, buf as *mut u8, flags);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============================================================
@@ -4002,13 +4167,23 @@ pub const RLIM_INFINITY: u64 = !0u64;
 #[no_mangle]
 pub unsafe extern "C" fn getrlimit(resource: c_int, rlim: *mut Rlimit) -> c_int {
     let r = sys_getrlimit(resource, rlim as *mut u8);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const Rlimit) -> c_int {
     let r = sys_setrlimit(resource, rlim as *const u8);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============================================================
@@ -4016,15 +4191,30 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, rlim: *const Rlimit) -> c_in
 // ============================================================
 
 #[no_mangle]
-pub unsafe extern "C" fn utimensat(dirfd: c_int, path: *const c_char, times: *const timespec, flags: c_int) -> c_int {
+pub unsafe extern "C" fn utimensat(
+    dirfd: c_int,
+    path: *const c_char,
+    times: *const timespec,
+    flags: c_int,
+) -> c_int {
     let r = sys_utimensat(dirfd, path, times as *const u8, flags);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn futimens(fd: c_int, times: *const timespec) -> c_int {
     let r = sys_utimensat(fd, core::ptr::null(), times as *const u8, 0);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { 0 }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        0
+    }
 }
 
 // ============================================================
@@ -4085,12 +4275,14 @@ unsafe fn sys_connect(fd: c_int, addr: *const sockaddr, len: c_uint) -> i64 {
 }
 
 #[inline]
-unsafe fn sys_sendto(fd: c_int,
+unsafe fn sys_sendto(
+    fd: c_int,
     buf: *const c_void,
     len: usize,
     flags: c_int,
     addr: *const sockaddr,
-    addrlen: c_uint,) -> i64 {
+    addrlen: c_uint,
+) -> i64 {
     match unsafe {
         crabc_core::net::sendto_raw(fd, buf.cast(), len, flags as u32, addr.cast(), addrlen)
     } {
@@ -4100,12 +4292,14 @@ unsafe fn sys_sendto(fd: c_int,
 }
 
 #[inline]
-unsafe fn sys_recvfrom(fd: c_int,
+unsafe fn sys_recvfrom(
+    fd: c_int,
     buf: *mut c_void,
     len: usize,
     flags: c_int,
     addr: *mut sockaddr,
-    addrlen: *mut c_uint,) -> i64 {
+    addrlen: *mut c_uint,
+) -> i64 {
     match unsafe {
         crabc_core::net::recvfrom_raw(fd, buf.cast(), len, flags as u32, addr.cast(), addrlen)
     } {
@@ -4120,12 +4314,21 @@ unsafe fn sys_shutdown(fd: c_int, how: c_int) -> i64 {
 }
 
 #[inline]
-unsafe fn sys_setsockopt(fd: c_int,
+unsafe fn sys_setsockopt(
+    fd: c_int,
     level: c_int,
     optname: c_int,
     optval: *const c_void,
-    optlen: c_uint,) -> i64 {
-    <Arch as Syscalls>::syscall5(SYS_SETSOCKOPT, fd as i64, level as i64, optname as i64, optval as i64, optlen as i64)
+    optlen: c_uint,
+) -> i64 {
+    <Arch as Syscalls>::syscall5(
+        SYS_SETSOCKOPT,
+        fd as i64,
+        level as i64,
+        optname as i64,
+        optval as i64,
+        optlen as i64,
+    )
 }
 
 #[inline]
@@ -4136,56 +4339,92 @@ unsafe fn sys_getsockname(fd: c_int, addr: *mut sockaddr, len: *mut c_uint) -> i
 #[no_mangle]
 pub unsafe extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
     let r = sys_socket(domain, ty, protocol);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn socketpair(domain: c_int, ty: c_int, protocol: c_int, sv: *mut c_int) -> c_int {
+pub unsafe extern "C" fn socketpair(
+    domain: c_int,
+    ty: c_int,
+    protocol: c_int,
+    sv: *mut c_int,
+) -> c_int {
     let r = sys_socketpair(domain, ty, protocol, sv);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn bind(fd: c_int, addr: *const sockaddr, len: c_uint) -> c_int {
     let r = sys_bind(fd, addr, len);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn listen(fd: c_int, backlog: c_int) -> c_int {
     let r = sys_listen(fd, backlog);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn accept(fd: c_int, addr: *mut sockaddr, len: *mut c_uint) -> c_int {
     let r = sys_accept(fd, addr, len);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn connect(fd: c_int, addr: *const sockaddr, len: c_uint) -> c_int {
     let r = sys_connect(fd, addr, len);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn send(fd: c_int, buf: *const c_void, len: usize, flags: c_int) -> isize {
     let r = sys_sendto(fd, buf, len, flags, core::ptr::null(), 0);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as isize
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn recv(fd: c_int, buf: *mut c_void, len: usize, flags: c_int) -> isize {
-    let r = sys_recvfrom(fd, buf, len, flags, core::ptr::null_mut(), core::ptr::null_mut());
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    let r = sys_recvfrom(
+        fd,
+        buf,
+        len,
+        flags,
+        core::ptr::null_mut(),
+        core::ptr::null_mut(),
+    );
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as isize
 }
 
@@ -4199,7 +4438,10 @@ pub unsafe extern "C" fn sendto(
     addrlen: c_uint,
 ) -> isize {
     let r = sys_sendto(fd, buf, len, flags, addr, addrlen);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as isize
 }
 
@@ -4213,7 +4455,10 @@ pub unsafe extern "C" fn recvfrom(
     addrlen: *mut c_uint,
 ) -> isize {
     let r = sys_recvfrom(fd, buf, len, flags, addr, addrlen);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as isize
 }
 
@@ -4602,7 +4847,11 @@ static mut STATIC_TLS_IMAGE_OFFSET: usize = 0;
 
 #[inline]
 const fn static_align_up(value: usize, align: usize) -> usize {
-    if align <= 1 { value } else { (value + align - 1) & !(align - 1) }
+    if align <= 1 {
+        value
+    } else {
+        (value + align - 1) & !(align - 1)
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -4611,7 +4860,11 @@ unsafe fn static_read_tp() -> usize {
     // safe in both the static CRT path and after ldso has installed a TCB.
     let mut tp = 0usize;
     let result = <Arch as Syscalls>::syscall2(SYS_ARCH_PRCTL, 0x1003, &mut tp as *mut usize as i64);
-    if result < 0 { 0 } else { tp }
+    if result < 0 {
+        0
+    } else {
+        tp
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -4662,7 +4915,9 @@ unsafe fn static_tls_startup(argv: *const *const c_char) {
     let argv = stack.add(1);
     let envp = argv.add(argc + 1);
     let mut auxv = envp;
-    while *auxv != 0 { auxv = auxv.add(1); }
+    while *auxv != 0 {
+        auxv = auxv.add(1);
+    }
     auxv = auxv.add(1);
     __auxv = auxv;
 
@@ -4672,7 +4927,9 @@ unsafe fn static_tls_startup(argv: *const *const c_char) {
     let mut p = auxv;
     loop {
         let tag = *p;
-        if tag == 0 { break; }
+        if tag == 0 {
+            break;
+        }
         match tag {
             3 => phdr_addr = *p.add(1),
             4 => phent = *p.add(1),
@@ -4681,7 +4938,9 @@ unsafe fn static_tls_startup(argv: *const *const c_char) {
         }
         p = p.add(2);
     }
-    if phdr_addr == 0 || phnum == 0 || phent < 56 { return; }
+    if phdr_addr == 0 || phnum == 0 || phent < 56 {
+        return;
+    }
 
     let mut load_bias = 0usize;
     let mut tls_vaddr = 0usize;
@@ -4692,9 +4951,11 @@ unsafe fn static_tls_startup(argv: *const *const c_char) {
         let ph = (phdr_addr as *const u8).add(i * phent);
         let kind = core::ptr::read_unaligned(ph as *const u32);
         let vaddr = core::ptr::read_unaligned(ph.add(16) as *const usize);
-        if kind == 6 { // PT_PHDR
+        if kind == 6 {
+            // PT_PHDR
             load_bias = phdr_addr.wrapping_sub(vaddr);
-        } else if kind == 7 { // PT_TLS
+        } else if kind == 7 {
+            // PT_TLS
             tls_vaddr = vaddr;
             tls_filesz = core::ptr::read_unaligned(ph.add(32) as *const usize);
             tls_memsz = core::ptr::read_unaligned(ph.add(40) as *const usize);
@@ -4739,7 +5000,9 @@ unsafe fn static_tls_startup(argv: *const *const c_char) {
         -1,
         0,
     );
-    if block == MMAP_FAILED { return; }
+    if block == MMAP_FAILED {
+        return;
+    }
     static_tls_init_block(block);
     let tp = block.add(STATIC_TLS_TP_OFFSET);
     if !static_write_tp(tp as usize) {
@@ -4768,11 +5031,16 @@ unsafe fn static_tls_init_block(block: *mut u8) {
     // The existing stack-guard initialization remains responsible for its
     // own randomness; this TLS bootstrap does not invent a second guard
     // source.
-    core::ptr::write_unaligned(block.add(STATIC_TLS_TP_OFFSET) as *mut usize, block.add(STATIC_TLS_TP_OFFSET) as usize);
+    core::ptr::write_unaligned(
+        block.add(STATIC_TLS_TP_OFFSET) as *mut usize,
+        block.add(STATIC_TLS_TP_OFFSET) as usize,
+    );
 }
 
 unsafe fn static_tls_create_block() -> *mut u8 {
-    if STATIC_TLS_BLOCK_SIZE == 0 { return core::ptr::null_mut(); }
+    if STATIC_TLS_BLOCK_SIZE == 0 {
+        return core::ptr::null_mut();
+    }
     let block = sys_mmap(
         core::ptr::null_mut(),
         STATIC_TLS_BLOCK_SIZE,
@@ -4781,7 +5049,9 @@ unsafe fn static_tls_create_block() -> *mut u8 {
         -1,
         0,
     );
-    if block == MMAP_FAILED { return core::ptr::null_mut(); }
+    if block == MMAP_FAILED {
+        return core::ptr::null_mut();
+    }
     static_tls_init_block(block);
     block.add(STATIC_TLS_TP_OFFSET)
 }
@@ -4792,13 +5062,23 @@ unsafe fn sys_gettid() -> i64 {
 }
 
 #[inline]
-unsafe fn sys_futex(uaddr: *mut c_int,
+unsafe fn sys_futex(
+    uaddr: *mut c_int,
     futex_op: c_int,
     val: c_int,
     timeout: *mut c_void,
     uaddr2: *mut c_int,
-    val3: c_int,) -> i64 {
-    <Arch as Syscalls>::syscall6(SYS_FUTEX, uaddr as i64, futex_op as i64, val as i64, timeout as i64, uaddr2 as i64, val3 as i64)
+    val3: c_int,
+) -> i64 {
+    <Arch as Syscalls>::syscall6(
+        SYS_FUTEX,
+        uaddr as i64,
+        futex_op as i64,
+        val as i64,
+        timeout as i64,
+        uaddr2 as i64,
+        val3 as i64,
+    )
 }
 
 const MAX_THREADS: usize = 64;
@@ -4857,7 +5137,9 @@ static mut THREADS: [Thread; MAX_THREADS] = [Thread {
     tsd_nonnull: [0; PTHREAD_TSD_WORDS],
     cancelbuf: core::ptr::null_mut(),
     robust_list: robust_list_head {
-        list: robust_list { next: core::ptr::null_mut() },
+        list: robust_list {
+            next: core::ptr::null_mut(),
+        },
         futex_offset: 0,
         pending: core::ptr::null_mut(),
     },
@@ -4879,7 +5161,8 @@ static NEXT_SLOT: AtomicUsize = AtomicUsize::new(0);
 // Allocation is independent from destruction: `None` is the valid destructor
 // for a live POSIX key, not an available-key sentinel.
 static mut KEY_IN_USE: [bool; PTHREAD_KEY_SLOTS] = [false; PTHREAD_KEY_SLOTS];
-static mut KEY_DTORS: [Option<unsafe extern "C" fn(*mut c_void)>; PTHREAD_KEY_SLOTS] = [None; PTHREAD_KEY_SLOTS];
+static mut KEY_DTORS: [Option<unsafe extern "C" fn(*mut c_void)>; PTHREAD_KEY_SLOTS] =
+    [None; PTHREAD_KEY_SLOTS];
 static NEXT_KEY: AtomicUsize = AtomicUsize::new(0);
 
 /// Reset the fixed thread-slot registry in a post-fork child.
@@ -4929,7 +5212,16 @@ unsafe fn reset_thread_registry_after_fork(parent_tid: c_int) {
 // ponytail: futex helpers
 unsafe fn futex_wait(addr: *mut c_int, expected: c_int) -> c_int {
     let r = sys_futex(addr, FUTEX_WAIT, expected, null_mut(), null_mut(), 0);
-    if r < 0 { let e = (-r) as c_int; if e == EAGAIN { 0 } else { e } } else { 0 }
+    if r < 0 {
+        let e = (-r) as c_int;
+        if e == EAGAIN {
+            0
+        } else {
+            e
+        }
+    } else {
+        0
+    }
 }
 
 unsafe fn futex_wake(addr: *mut c_int, count: c_int) {
@@ -4938,14 +5230,26 @@ unsafe fn futex_wake(addr: *mut c_int, count: c_int) {
 }
 
 unsafe fn futex_lock_pi(addr: *mut c_int, abs_timeout: *const timespec) -> c_int {
-    let timeout_ptr = if abs_timeout.is_null() { null_mut() } else { abs_timeout as *mut c_void };
+    let timeout_ptr = if abs_timeout.is_null() {
+        null_mut()
+    } else {
+        abs_timeout as *mut c_void
+    };
     let r = sys_futex(addr, FUTEX_LOCK_PI, 0, timeout_ptr, null_mut(), 0);
-    if r < 0 { (-r) as c_int } else { 0 }
+    if r < 0 {
+        (-r) as c_int
+    } else {
+        0
+    }
 }
 
 unsafe fn futex_unlock_pi(addr: *mut c_int) -> c_int {
     let r = sys_futex(addr, FUTEX_UNLOCK_PI, 0, null_mut(), null_mut(), 0);
-    if r < 0 { (-r) as c_int } else { 0 }
+    if r < 0 {
+        (-r) as c_int
+    } else {
+        0
+    }
 }
 
 #[inline]
@@ -4953,17 +5257,46 @@ unsafe fn sys_set_robust_list(head: *mut robust_list_head, len: usize) -> i64 {
     <Arch as Syscalls>::syscall2(SYS_SET_ROBUST_LIST, head as i64, len as i64)
 }
 
-unsafe fn futex_timedwait(addr: *mut c_int, expected: c_int, abs_timeout: *const timespec) -> c_int {
-    if abs_timeout.is_null() { return futex_wait(addr, expected); }
+unsafe fn futex_timedwait(
+    addr: *mut c_int,
+    expected: c_int,
+    abs_timeout: *const timespec,
+) -> c_int {
+    if abs_timeout.is_null() {
+        return futex_wait(addr, expected);
+    }
     let mut now: timespec = core::mem::zeroed();
-    if sys_clock_gettime(CLOCK_REALTIME, &mut now) < 0 { return EINVAL; }
+    if sys_clock_gettime(CLOCK_REALTIME, &mut now) < 0 {
+        return EINVAL;
+    }
     let mut rel: timespec = core::mem::zeroed();
     rel.tv_sec = (*abs_timeout).tv_sec - now.tv_sec;
     rel.tv_nsec = (*abs_timeout).tv_nsec - now.tv_nsec;
-    if rel.tv_nsec < 0 { rel.tv_sec -= 1; rel.tv_nsec += 1_000_000_000; }
-    if rel.tv_sec < 0 { return ETIMEDOUT; }
-    let r = sys_futex(addr, FUTEX_WAIT, expected, &mut rel as *mut timespec as *mut c_void, null_mut(), 0);
-    if r < 0 { let e = (-r) as c_int; if e == EAGAIN { 0 } else { e } } else { 0 }
+    if rel.tv_nsec < 0 {
+        rel.tv_sec -= 1;
+        rel.tv_nsec += 1_000_000_000;
+    }
+    if rel.tv_sec < 0 {
+        return ETIMEDOUT;
+    }
+    let r = sys_futex(
+        addr,
+        FUTEX_WAIT,
+        expected,
+        &mut rel as *mut timespec as *mut c_void,
+        null_mut(),
+        0,
+    );
+    if r < 0 {
+        let e = (-r) as c_int;
+        if e == EAGAIN {
+            0
+        } else {
+            e
+        }
+    } else {
+        0
+    }
 }
 
 // Atomic helpers retain the pthread state-machine's acquire/release contract.
@@ -5020,8 +5353,13 @@ unsafe fn a_fetch_sub(addr: *mut c_int, val: c_int) -> c_int {
 unsafe fn spinlock_lock(lock: *mut c_int, waiters: *mut c_int) {
     while a_swap(lock, 1) != 0 {
         let mut spins = 100;
-        while spins > 0 && a_load(lock) != 0 { core::hint::spin_loop(); spins -= 1; }
-        if a_load(lock) == 0 { continue; }
+        while spins > 0 && a_load(lock) != 0 {
+            core::hint::spin_loop();
+            spins -= 1;
+        }
+        if a_load(lock) == 0 {
+            continue;
+        }
         a_fetch_add(waiters, 1);
         futex_wait(lock, 1);
         a_fetch_sub(waiters, 1);
@@ -5030,7 +5368,9 @@ unsafe fn spinlock_lock(lock: *mut c_int, waiters: *mut c_int) {
 
 unsafe fn spinlock_unlock(lock: *mut c_int, waiters: *mut c_int) {
     a_store(lock, 0);
-    if a_load(waiters) > 0 { futex_wake(lock, 1); }
+    if a_load(waiters) > 0 {
+        futex_wake(lock, 1);
+    }
 }
 
 /// Clear exactly the non-null thread-specific values before slot reuse.
@@ -5069,7 +5409,9 @@ unsafe fn initialize_thread_slot(slot: &mut Thread) {
     clear_thread_tsd(slot);
     slot.cancelbuf = core::ptr::null_mut();
     slot.robust_list = robust_list_head {
-        list: robust_list { next: core::ptr::null_mut() },
+        list: robust_list {
+            next: core::ptr::null_mut(),
+        },
         futex_offset: 0,
         pending: core::ptr::null_mut(),
     };
@@ -5099,16 +5441,24 @@ unsafe fn release_thread_slot(slot: &mut Thread) {
         // every pthread exit route refresh `fs_base` before publication, so
         // reclaim that replacement separately while releasing the old stack
         // mapping as one range.
-        if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
+        if !stack.is_null() && stack_size > 0 {
+            sys_munmap(stack, stack_size);
+        }
         if let Some((current_block, block_size)) = current_tls {
             if current_block != slot.tls_initial_block {
-                if block_size > 0 { sys_munmap(current_block, block_size); }
+                if block_size > 0 {
+                    sys_munmap(current_block, block_size);
+                }
             }
         }
     } else {
-        if !stack.is_null() && stack_size > 0 { sys_munmap(stack, stack_size); }
+        if !stack.is_null() && stack_size > 0 {
+            sys_munmap(stack, stack_size);
+        }
         if let Some((current_block, block_size)) = current_tls {
-            if block_size > 0 { sys_munmap(current_block, block_size); }
+            if block_size > 0 {
+                sys_munmap(current_block, block_size);
+            }
         }
     }
     // `tid == -1` is the sole free-slot publication state. The next creator
@@ -5133,9 +5483,15 @@ unsafe fn reclaim_exited_threads() {
     for i in 0..MAX_THREADS {
         let slot = &mut *base.add(i);
         let state = a_load(&raw const slot.detach_state);
-        if state != DT_DETACHED { continue; }
-        if a_load(&raw const slot.tid) != 0 { continue; }
-        if a_cas(&raw mut slot.detach_state, state, DT_EXITING) != state { continue; }
+        if state != DT_DETACHED {
+            continue;
+        }
+        if a_load(&raw const slot.tid) != 0 {
+            continue;
+        }
+        if a_cas(&raw mut slot.detach_state, state, DT_EXITING) != state {
+            continue;
+        }
         // Once the state claim succeeds, tid==0 means the kernel has finished
         // the child-cleartid operation and this context is safe to unmap.
         if a_load(&raw const slot.tid) == 0 {
@@ -5228,7 +5584,9 @@ unsafe fn run_key_dtors(slot: &mut Thread) {
     // A zero count proves every TSD value either is null or belongs to a key
     // without a destructor. Skipping the scan preserves POSIX behavior while
     // removing the fixed 128-slot walk from ordinary worker exit.
-    if slot.tsd_destructor_values == 0 { return; }
+    if slot.tsd_destructor_values == 0 {
+        return;
+    }
     for _ in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
         let mut any = false;
         for i in 0..PTHREAD_KEY_SLOTS {
@@ -5245,7 +5603,9 @@ unsafe fn run_key_dtors(slot: &mut Thread) {
                 }
             }
         }
-        if !any { break; }
+        if !any {
+            break;
+        }
     }
 }
 
@@ -5349,8 +5709,12 @@ pub unsafe extern "C" fn pthread_create(
     start_routine: usize,
     arg: *mut c_void,
 ) -> c_int {
-    if start_routine == 0 || thread.is_null() { return EINVAL; }
-    let Some(slot_ref) = alloc_thread_slot() else { return EAGAIN; };
+    if start_routine == 0 || thread.is_null() {
+        return EINVAL;
+    }
+    let Some(slot_ref) = alloc_thread_slot() else {
+        return EAGAIN;
+    };
     let slot = slot_ref as *mut Thread;
     let detach_state = if !attr.is_null() && (*attr).__i[6] == PTHREAD_CREATE_DETACHED {
         DT_DETACHED
@@ -5359,7 +5723,11 @@ pub unsafe extern "C" fn pthread_create(
     };
     let stack_size = if !attr.is_null() {
         let s = *((*attr).__i.as_ptr() as *const usize);
-        if s > 0 { s } else { STACK_SIZE }
+        if s > 0 {
+            s
+        } else {
+            STACK_SIZE
+        }
     } else {
         // Nonportable default attributes are process state: an omitted attr
         // must consume the same selected stack size as pthread_attr_init.
@@ -5383,7 +5751,14 @@ pub unsafe extern "C" fn pthread_create(
             return EAGAIN;
         }
     };
-    let stack = sys_mmap(null_mut(), mapping_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    let stack = sys_mmap(
+        null_mut(),
+        mapping_size,
+        PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS,
+        -1,
+        0,
+    );
     if stack == MMAP_FAILED {
         release_thread_slot(&mut *slot);
         return EAGAIN;
@@ -5413,8 +5788,15 @@ pub unsafe extern "C" fn pthread_create(
     (*slot).combined_stack_tls_mapping = true;
     let stack_top = stack.add(stack_mapping_size);
     let tid_ptr = &raw mut (*slot).tid;
-    let flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD
-        | CLONE_SYSVSEM | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID | CLONE_SETTLS;
+    let flags = CLONE_VM
+        | CLONE_FS
+        | CLONE_FILES
+        | CLONE_SIGHAND
+        | CLONE_THREAD
+        | CLONE_SYSVSEM
+        | CLONE_PARENT_SETTID
+        | CLONE_CHILD_CLEARTID
+        | CLONE_SETTLS;
     // `clone` may make the child runnable before it returns. Publish the
     // loader's one-way single-thread-to-locked transition exactly once before
     // the first clone, so a child can never observe mutable loader state while
@@ -5427,7 +5809,15 @@ pub unsafe extern "C" fn pthread_create(
             mark_multithreaded();
         }
     }
-    let tid = __rc_clone(thread_entry as *const () as usize, stack_top, flags, slot as *mut c_void, tid_ptr, fs_base as c_ulong, tid_ptr);
+    let tid = __rc_clone(
+        thread_entry as *const () as usize,
+        stack_top,
+        flags,
+        slot as *mut c_void,
+        tid_ptr,
+        fs_base as c_ulong,
+        tid_ptr,
+    );
     if tid < 0 {
         release_thread_slot(&mut *slot);
         return EAGAIN;
@@ -5440,14 +5830,22 @@ pub unsafe extern "C" fn pthread_create(
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void) -> c_int {
     let slot = thread as *mut Thread;
-    if slot.is_null() { return EINVAL; }
-    if detach_state_kind(a_load(&raw const (*slot).detach_state)) == DT_DETACHED { return EINVAL; }
+    if slot.is_null() {
+        return EINVAL;
+    }
+    if detach_state_kind(a_load(&raw const (*slot).detach_state)) == DT_DETACHED {
+        return EINVAL;
+    }
     let tid_ptr = &raw mut (*slot).tid;
     loop {
         pthread_testcancel();
         let tid = core::ptr::read_volatile(tid_ptr);
-        if tid == 0 { break; }
-        if tid < 0 { return EINVAL; }
+        if tid == 0 {
+            break;
+        }
+        if tid < 0 {
+            return EINVAL;
+        }
         sys_futex(tid_ptr, FUTEX_WAIT, tid, null_mut(), null_mut(), 0);
         // The next iteration starts at this cancellation point. Keeping a
         // second call here only repeats the same check after every wake.
@@ -5455,7 +5853,9 @@ pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void
     if a_cas(&raw mut (*slot).detach_state, DT_EXITED, DT_EXITING) != DT_EXITED {
         return EINVAL;
     }
-    if !retval.is_null() { *retval = (*slot).result; }
+    if !retval.is_null() {
+        *retval = (*slot).result;
+    }
     release_thread_slot(&mut *slot);
     0
 }
@@ -5464,7 +5864,9 @@ pub unsafe extern "C" fn pthread_join(thread: PthreadT, retval: *mut *mut c_void
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_detach(thread: PthreadT) -> c_int {
     let slot = thread as *mut Thread;
-    if slot.is_null() { return EINVAL; }
+    if slot.is_null() {
+        return EINVAL;
+    }
     loop {
         let state = a_load(&raw const (*slot).detach_state);
         match detach_state_kind(state) {
@@ -5479,7 +5881,8 @@ pub unsafe extern "C" fn pthread_detach(thread: PthreadT) -> c_int {
                         release_thread_slot(&mut *slot);
                         return 0;
                     }
-                } else if a_cas(&raw mut (*slot).detach_state, DT_EXITED, DT_DETACHED) == DT_EXITED {
+                } else if a_cas(&raw mut (*slot).detach_state, DT_EXITED, DT_DETACHED) == DT_EXITED
+                {
                     return 0;
                 }
             }
@@ -5523,113 +5926,206 @@ pub unsafe extern "C" fn pthread_attr_init(attr: *mut pthread_attr_t) -> c_int {
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_destroy(_attr: *mut pthread_attr_t) -> c_int { 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut pthread_attr_t, s: c_int) -> c_int {
-    if s != PTHREAD_CREATE_JOINABLE && s != PTHREAD_CREATE_DETACHED { return EINVAL; }
-    (*attr).__i[6] = s; 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const pthread_attr_t, s: *mut c_int) -> c_int {
-    *s = (*attr).__i[6]; 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut pthread_attr_t, sz: usize) -> c_int {
-    if sz < 16384 { return EINVAL; }
-    *((*attr).__i.as_mut_ptr() as *mut usize) = sz; 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const pthread_attr_t, sz: *mut usize) -> c_int {
-    *sz = *((*attr).__i.as_ptr() as *const usize); 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setstack(attr: *mut pthread_attr_t, addr: *mut c_void, sz: usize) -> c_int {
-    if sz < 16384 { return EINVAL; }
-    *((*attr).__i.as_mut_ptr() as *mut usize) = sz;
-    *((*attr).__i.as_mut_ptr().add(4) as *mut *mut c_void) = addr; 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getstack(attr: *const pthread_attr_t, addr: *mut *mut c_void, sz: *mut usize) -> c_int {
-    *sz = *((*attr).__i.as_ptr() as *const usize);
-    *addr = *((*attr).__i.as_ptr().add(4) as *const *mut c_void); 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut pthread_attr_t, sz: usize) -> c_int {
-    *((*attr).__i.as_mut_ptr().add(2) as *mut usize) = sz; 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getguardsize(attr: *const pthread_attr_t, sz: *mut usize) -> c_int {
-    *sz = *((*attr).__i.as_ptr().add(2) as *const usize); 0
-}
-#[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setscope(_attr: *mut pthread_attr_t, scope: c_int) -> c_int {
-    if scope != PTHREAD_SCOPE_SYSTEM { return EINVAL; }
+pub unsafe extern "C" fn pthread_attr_destroy(_attr: *mut pthread_attr_t) -> c_int {
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getscope(_attr: *const pthread_attr_t, scope: *mut c_int) -> c_int {
-    *scope = PTHREAD_SCOPE_SYSTEM; 0
+pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut pthread_attr_t, s: c_int) -> c_int {
+    if s != PTHREAD_CREATE_JOINABLE && s != PTHREAD_CREATE_DETACHED {
+        return EINVAL;
+    }
+    (*attr).__i[6] = s;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setinheritsched(attr: *mut pthread_attr_t, inh: c_int) -> c_int {
-    if inh != PTHREAD_INHERIT_SCHED && inh != PTHREAD_EXPLICIT_SCHED { return EINVAL; }
-    (*attr).__i[7] = inh; 0
+pub unsafe extern "C" fn pthread_attr_getdetachstate(
+    attr: *const pthread_attr_t,
+    s: *mut c_int,
+) -> c_int {
+    *s = (*attr).__i[6];
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getinheritsched(attr: *const pthread_attr_t, inh: *mut c_int) -> c_int {
-    *inh = (*attr).__i[7]; 0
+pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut pthread_attr_t, sz: usize) -> c_int {
+    if sz < 16384 {
+        return EINVAL;
+    }
+    *((*attr).__i.as_mut_ptr() as *mut usize) = sz;
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_getstacksize(
+    attr: *const pthread_attr_t,
+    sz: *mut usize,
+) -> c_int {
+    *sz = *((*attr).__i.as_ptr() as *const usize);
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_setstack(
+    attr: *mut pthread_attr_t,
+    addr: *mut c_void,
+    sz: usize,
+) -> c_int {
+    if sz < 16384 {
+        return EINVAL;
+    }
+    *((*attr).__i.as_mut_ptr() as *mut usize) = sz;
+    *((*attr).__i.as_mut_ptr().add(4) as *mut *mut c_void) = addr;
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_getstack(
+    attr: *const pthread_attr_t,
+    addr: *mut *mut c_void,
+    sz: *mut usize,
+) -> c_int {
+    *sz = *((*attr).__i.as_ptr() as *const usize);
+    *addr = *((*attr).__i.as_ptr().add(4) as *const *mut c_void);
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut pthread_attr_t, sz: usize) -> c_int {
+    *((*attr).__i.as_mut_ptr().add(2) as *mut usize) = sz;
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_getguardsize(
+    attr: *const pthread_attr_t,
+    sz: *mut usize,
+) -> c_int {
+    *sz = *((*attr).__i.as_ptr().add(2) as *const usize);
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_setscope(_attr: *mut pthread_attr_t, scope: c_int) -> c_int {
+    if scope != PTHREAD_SCOPE_SYSTEM {
+        return EINVAL;
+    }
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_getscope(
+    _attr: *const pthread_attr_t,
+    scope: *mut c_int,
+) -> c_int {
+    *scope = PTHREAD_SCOPE_SYSTEM;
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_setinheritsched(
+    attr: *mut pthread_attr_t,
+    inh: c_int,
+) -> c_int {
+    if inh != PTHREAD_INHERIT_SCHED && inh != PTHREAD_EXPLICIT_SCHED {
+        return EINVAL;
+    }
+    (*attr).__i[7] = inh;
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_getinheritsched(
+    attr: *const pthread_attr_t,
+    inh: *mut c_int,
+) -> c_int {
+    *inh = (*attr).__i[7];
+    0
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_setschedpolicy(attr: *mut pthread_attr_t, p: c_int) -> c_int {
-    (*attr).__i[8] = p; 0
+    (*attr).__i[8] = p;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getschedpolicy(attr: *const pthread_attr_t, p: *mut c_int) -> c_int {
-    *p = (*attr).__i[8]; 0
+pub unsafe extern "C" fn pthread_attr_getschedpolicy(
+    attr: *const pthread_attr_t,
+    p: *mut c_int,
+) -> c_int {
+    *p = (*attr).__i[8];
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_setschedparam(attr: *mut pthread_attr_t, param: *const sched_param) -> c_int {
-    (*attr).__i[9] = (*param).sched_priority; 0
+pub unsafe extern "C" fn pthread_attr_setschedparam(
+    attr: *mut pthread_attr_t,
+    param: *const sched_param,
+) -> c_int {
+    (*attr).__i[9] = (*param).sched_priority;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_attr_getschedparam(attr: *const pthread_attr_t, param: *mut sched_param) -> c_int {
-    (*param).sched_priority = (*attr).__i[9]; 0
+pub unsafe extern "C" fn pthread_attr_getschedparam(
+    attr: *const pthread_attr_t,
+    param: *mut sched_param,
+) -> c_int {
+    (*param).sched_priority = (*attr).__i[9];
+    0
 }
 
 // --- pthread_mutexattr_* ---
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutexattr_init(attr: *mut pthread_mutexattr_t) -> c_int {
-    (*attr).__attr = 0; 0
+    (*attr).__attr = 0;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_destroy(_attr: *mut pthread_mutexattr_t) -> c_int { 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_settype(attr: *mut pthread_mutexattr_t, t: c_int) -> c_int {
-    if (t as c_uint) > 2 { return EINVAL; }
-    (*attr).__attr = ((*attr).__attr & !3) | t as c_uint; 0
+pub unsafe extern "C" fn pthread_mutexattr_destroy(_attr: *mut pthread_mutexattr_t) -> c_int {
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_gettype(attr: *const pthread_mutexattr_t, t: *mut c_int) -> c_int {
-    *t = ((*attr).__attr & 3) as c_int; 0
+pub unsafe extern "C" fn pthread_mutexattr_settype(
+    attr: *mut pthread_mutexattr_t,
+    t: c_int,
+) -> c_int {
+    if (t as c_uint) > 2 {
+        return EINVAL;
+    }
+    (*attr).__attr = ((*attr).__attr & !3) | t as c_uint;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_setpshared(attr: *mut pthread_mutexattr_t, p: c_int) -> c_int {
-    if (p as c_uint) > 1 { return EINVAL; }
-    (*attr).__attr = ((*attr).__attr & !128) | ((p as c_uint) << 7); 0
+pub unsafe extern "C" fn pthread_mutexattr_gettype(
+    attr: *const pthread_mutexattr_t,
+    t: *mut c_int,
+) -> c_int {
+    *t = ((*attr).__attr & 3) as c_int;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_getpshared(attr: *const pthread_mutexattr_t, p: *mut c_int) -> c_int {
-    *p = (((*attr).__attr >> 7) & 1) as c_int; 0
+pub unsafe extern "C" fn pthread_mutexattr_setpshared(
+    attr: *mut pthread_mutexattr_t,
+    p: c_int,
+) -> c_int {
+    if (p as c_uint) > 1 {
+        return EINVAL;
+    }
+    (*attr).__attr = ((*attr).__attr & !128) | ((p as c_uint) << 7);
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_mutexattr_getpshared(
+    attr: *const pthread_mutexattr_t,
+    p: *mut c_int,
+) -> c_int {
+    *p = (((*attr).__attr >> 7) & 1) as c_int;
+    0
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_setprotocol(attr: *mut pthread_mutexattr_t, protocol: c_int) -> c_int {
+pub unsafe extern "C" fn pthread_mutexattr_setprotocol(
+    attr: *mut pthread_mutexattr_t,
+    protocol: c_int,
+) -> c_int {
     match protocol {
-        0 => { (*attr).__attr &= !(MUTEX_PI as c_uint); 0 }
+        0 => {
+            (*attr).__attr &= !(MUTEX_PI as c_uint);
+            0
+        }
         1 => {
             let mut lk: c_int = 0;
             let r = sys_futex(&raw mut lk, FUTEX_LOCK_PI, 0, null_mut(), null_mut(), 0);
-            if r < 0 { return (-r) as c_int; }
+            if r < 0 {
+                return (-r) as c_int;
+            }
             sys_futex(&raw mut lk, FUTEX_UNLOCK_PI, 0, null_mut(), null_mut(), 0);
             (*attr).__attr |= MUTEX_PI as c_uint;
             0
@@ -5639,15 +6135,24 @@ pub unsafe extern "C" fn pthread_mutexattr_setprotocol(attr: *mut pthread_mutexa
     }
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_getprotocol(attr: *const pthread_mutexattr_t, protocol: *mut c_int) -> c_int {
-    *protocol = (((*attr).__attr >> 3) & 3) as c_int; 0
+pub unsafe extern "C" fn pthread_mutexattr_getprotocol(
+    attr: *const pthread_mutexattr_t,
+    protocol: *mut c_int,
+) -> c_int {
+    *protocol = (((*attr).__attr >> 3) & 3) as c_int;
+    0
 }
 
 const ENOTSUP: c_int = 95;
 
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_setrobust(attr: *mut pthread_mutexattr_t, robust: c_int) -> c_int {
-    if (robust as c_uint) > 1 { return EINVAL; }
+pub unsafe extern "C" fn pthread_mutexattr_setrobust(
+    attr: *mut pthread_mutexattr_t,
+    robust: c_int,
+) -> c_int {
+    if (robust as c_uint) > 1 {
+        return EINVAL;
+    }
     if robust != 0 {
         (*attr).__attr |= MUTEX_ROBUST as c_uint;
     } else {
@@ -5656,8 +6161,12 @@ pub unsafe extern "C" fn pthread_mutexattr_setrobust(attr: *mut pthread_mutexatt
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutexattr_getrobust(attr: *const pthread_mutexattr_t, robust: *mut c_int) -> c_int {
-    *robust = (((*attr).__attr >> 2) & 1) as c_int; 0
+pub unsafe extern "C" fn pthread_mutexattr_getrobust(
+    attr: *const pthread_mutexattr_t,
+    robust: *mut c_int,
+) -> c_int {
+    *robust = (((*attr).__attr >> 2) & 1) as c_int;
+    0
 }
 
 #[no_mangle]
@@ -5668,7 +6177,9 @@ pub unsafe extern "C" fn pthread_mutex_consistent(m: *mut pthread_mutex_t) -> c_
         return EINVAL;
     }
     let self_tid = sys_gettid() as c_int;
-    if own != self_tid { return EPERM; }
+    if own != self_tid {
+        return EPERM;
+    }
     a_and(&raw mut (*m).__i[1], !(0x40000000i32));
     0
 }
@@ -5708,18 +6219,28 @@ unsafe fn mutex_trylock(m: *mut pthread_mutex_t) -> c_int {
             return 0;
         }
         if base_type == PTHREAD_MUTEX_RECURSIVE {
-            if (*m).__i[5] >= c_int::MAX { return EAGAIN; }
+            if (*m).__i[5] >= c_int::MAX {
+                return EAGAIN;
+            }
             (*m).__i[5] += 1;
             return 0;
         }
-        if base_type == PTHREAD_MUTEX_ERRORCHECK { return EDEADLK; }
+        if base_type == PTHREAD_MUTEX_ERRORCHECK {
+            return EDEADLK;
+        }
         return EBUSY;
     }
-    if own == 0x3fffffff { return ENOTRECOVERABLE; }
-    if own != 0 || (old != 0 && (type_ & MUTEX_ROBUST) == 0) { return EBUSY; }
+    if own == 0x3fffffff {
+        return ENOTRECOVERABLE;
+    }
+    if own != 0 || (old != 0 && (type_ & MUTEX_ROBUST) == 0) {
+        return EBUSY;
+    }
     let mut newtid = self_tid;
     if (type_ & MUTEX_ROBUST) != 0 {
-        if (*m).__i[2] != 0 { newtid |= 1i32 << 31; }
+        if (*m).__i[2] != 0 {
+            newtid |= 1i32 << 31;
+        }
         newtid |= old & 0x40000000;
     }
     if a_cas(&raw mut (*m).__i[1], old, newtid) == old {
@@ -5733,9 +6254,13 @@ unsafe fn mutex_trylock(m: *mut pthread_mutex_t) -> c_int {
                 head.next = m_next;
             }
         }
-        if old != 0 { return EOWNERDEAD; }
+        if old != 0 {
+            return EOWNERDEAD;
+        }
         0
-    } else { EBUSY }
+    } else {
+        EBUSY
+    }
 }
 
 unsafe fn mutex_lock_internal(m: *mut pthread_mutex_t, abs_timeout: *const timespec) -> c_int {
@@ -5744,32 +6269,48 @@ unsafe fn mutex_lock_internal(m: *mut pthread_mutex_t, abs_timeout: *const times
         return 0;
     }
     let r = mutex_trylock(m);
-    if r != EBUSY { return r; }
+    if r != EBUSY {
+        return r;
+    }
     if (type_ & MUTEX_PI) != 0 {
-        let timeout_ptr = if abs_timeout.is_null() { core::ptr::null() } else { abs_timeout };
+        let timeout_ptr = if abs_timeout.is_null() {
+            core::ptr::null()
+        } else {
+            abs_timeout
+        };
         loop {
             let e = futex_lock_pi(&raw mut (*m).__i[1], timeout_ptr);
             match e {
                 0 => {
-                    if (type_ & MUTEX_ROBUST) != 0 && (((*m).__i[1] & 0x40000000) != 0 || (*m).__i[2] != 0) {
+                    if (type_ & MUTEX_ROBUST) != 0
+                        && (((*m).__i[1] & 0x40000000) != 0 || (*m).__i[2] != 0)
+                    {
                         (*m).__i[5] = -1;
                         let _ = mutex_trylock(m);
                         return EOWNERDEAD;
                     }
-                    if (type_ & MUTEX_ROBUST) == 0 && (((*m).__i[1] & 0x40000000) != 0 || (*m).__i[2] != 0) {
+                    if (type_ & MUTEX_ROBUST) == 0
+                        && (((*m).__i[1] & 0x40000000) != 0 || (*m).__i[2] != 0)
+                    {
                         (*m).__i[2] = -1;
                         futex_unlock_pi(&raw mut (*m).__i[1]);
                         return EBUSY;
                     }
                     (*m).__i[5] = -1;
                     let r2 = mutex_trylock(m);
-                    if r2 == 0 { return 0; }
+                    if r2 == 0 {
+                        return 0;
+                    }
                     return r2;
                 }
                 EINTR => continue,
                 EDEADLK => {
-                    if (type_ & MUTEX_TYPE_MASK) == PTHREAD_MUTEX_ERRORCHECK { return e; }
-                    loop { pause(); }
+                    if (type_ & MUTEX_TYPE_MASK) == PTHREAD_MUTEX_ERRORCHECK {
+                        return e;
+                    }
+                    loop {
+                        pause();
+                    }
                 }
                 EOWNERDEAD => {
                     (*m).__i[5] = -1;
@@ -5786,10 +6327,14 @@ unsafe fn mutex_lock_internal(m: *mut pthread_mutex_t, abs_timeout: *const times
     // contended wakeup; a release racing this setup is explicitly retried.
     loop {
         let r = mutex_trylock(m);
-        if r != EBUSY { return r; }
+        if r != EBUSY {
+            return r;
+        }
         if (type_ & MUTEX_TYPE_MASK) == PTHREAD_MUTEX_ERRORCHECK {
             let self_tid = sys_gettid() as c_int;
-            if (a_load(&raw const (*m).__i[1]) & 0x3fffffff) == self_tid { return EDEADLK; }
+            if (a_load(&raw const (*m).__i[1]) & 0x3fffffff) == self_tid {
+                return EDEADLK;
+            }
         }
         a_fetch_add(&raw mut (*m).__i[2], 1);
         let val = a_load(&raw const (*m).__i[1]);
@@ -5803,18 +6348,27 @@ unsafe fn mutex_lock_internal(m: *mut pthread_mutex_t, abs_timeout: *const times
         }
         let e = futex_timedwait(&raw mut (*m).__i[1], val | (1i32 << 31), abs_timeout);
         a_fetch_sub(&raw mut (*m).__i[2], 1);
-        if e != 0 && e != EINTR { return e; }
+        if e != 0 && e != EINTR {
+            return e;
+        }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutex_init(mutex: *mut pthread_mutex_t, attr: *const pthread_mutexattr_t) -> c_int {
+pub unsafe extern "C" fn pthread_mutex_init(
+    mutex: *mut pthread_mutex_t,
+    attr: *const pthread_mutexattr_t,
+) -> c_int {
     core::ptr::write_bytes(mutex, 0, 1);
-    if !attr.is_null() { (*mutex).__i[0] = (*attr).__attr as c_int; }
+    if !attr.is_null() {
+        (*mutex).__i[0] = (*attr).__attr as c_int;
+    }
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_mutex_destroy(_mutex: *mut pthread_mutex_t) -> c_int { 0 }
+pub unsafe extern "C" fn pthread_mutex_destroy(_mutex: *mut pthread_mutex_t) -> c_int {
+    0
+}
 
 /// Execute the public mutex-lock state machine without an interposable call.
 ///
@@ -5847,7 +6401,10 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut pthread_mutex_t) -> c
 }
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_mutex_timedlock(mutex: *mut pthread_mutex_t, abs_timeout: *const timespec) -> c_int {
+pub unsafe extern "C" fn pthread_mutex_timedlock(
+    mutex: *mut pthread_mutex_t,
+    abs_timeout: *const timespec,
+) -> c_int {
     mutex_lock_internal(mutex, abs_timeout)
 }
 
@@ -5892,7 +6449,9 @@ unsafe fn mutex_unlock_internal(mutex: *mut pthread_mutex_t) -> c_int {
     let old = a_load(&raw const (*mutex).__i[1]);
     if base_type != PTHREAD_MUTEX_NORMAL {
         let self_tid = sys_gettid() as c_int;
-        if (old & 0x3fffffff) != self_tid { return EPERM; }
+        if (old & 0x3fffffff) != self_tid {
+            return EPERM;
+        }
         if base_type == PTHREAD_MUTEX_RECURSIVE && (*mutex).__i[5] > 0 {
             (*mutex).__i[5] -= 1;
             return 0;
@@ -5904,7 +6463,9 @@ unsafe fn mutex_unlock_internal(mutex: *mut pthread_mutex_t) -> c_int {
     }
     if (type_ & MUTEX_PI) != 0 {
         if old < 0 || a_cas(&raw mut (*mutex).__i[1], old, new) != old {
-            if new != 0 { a_store(&raw mut (*mutex).__i[2], -1); }
+            if new != 0 {
+                a_store(&raw mut (*mutex).__i[2], -1);
+            }
             return futex_unlock_pi(&raw mut (*mutex).__i[1]);
         }
         return 0;
@@ -5919,32 +6480,58 @@ unsafe fn mutex_unlock_internal(mutex: *mut pthread_mutex_t) -> c_int {
 // --- pthread_condattr_* ---
 #[no_mangle]
 pub unsafe extern "C" fn pthread_condattr_init(attr: *mut pthread_condattr_t) -> c_int {
-    (*attr).__attr = 0; 0
+    (*attr).__attr = 0;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_destroy(_attr: *mut pthread_condattr_t) -> c_int { 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_setclock(attr: *mut pthread_condattr_t, clk: c_int) -> c_int {
-    if clk != CLOCK_REALTIME && clk != CLOCK_MONOTONIC { return EINVAL; }
-    (*attr).__attr = ((*attr).__attr & 0x80000000) | clk as c_uint; 0
+pub unsafe extern "C" fn pthread_condattr_destroy(_attr: *mut pthread_condattr_t) -> c_int {
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_getclock(attr: *const pthread_condattr_t, clk: *mut c_int) -> c_int {
-    *clk = ((*attr).__attr & 0x7fffffff) as c_int; 0
+pub unsafe extern "C" fn pthread_condattr_setclock(
+    attr: *mut pthread_condattr_t,
+    clk: c_int,
+) -> c_int {
+    if clk != CLOCK_REALTIME && clk != CLOCK_MONOTONIC {
+        return EINVAL;
+    }
+    (*attr).__attr = ((*attr).__attr & 0x80000000) | clk as c_uint;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_setpshared(attr: *mut pthread_condattr_t, p: c_int) -> c_int {
-    if (p as c_uint) > 1 { return EINVAL; }
-    (*attr).__attr = ((*attr).__attr & 0x7fffffff) | ((p as c_uint) << 31); 0
+pub unsafe extern "C" fn pthread_condattr_getclock(
+    attr: *const pthread_condattr_t,
+    clk: *mut c_int,
+) -> c_int {
+    *clk = ((*attr).__attr & 0x7fffffff) as c_int;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_condattr_getpshared(attr: *const pthread_condattr_t, p: *mut c_int) -> c_int {
-    *p = ((*attr).__attr >> 31) as c_int; 0
+pub unsafe extern "C" fn pthread_condattr_setpshared(
+    attr: *mut pthread_condattr_t,
+    p: c_int,
+) -> c_int {
+    if (p as c_uint) > 1 {
+        return EINVAL;
+    }
+    (*attr).__attr = ((*attr).__attr & 0x7fffffff) | ((p as c_uint) << 31);
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_condattr_getpshared(
+    attr: *const pthread_condattr_t,
+    p: *mut c_int,
+) -> c_int {
+    *p = ((*attr).__attr >> 31) as c_int;
+    0
 }
 
 // --- pthread_cond_* ---
 #[no_mangle]
-pub unsafe extern "C" fn pthread_cond_init(cond: *mut pthread_cond_t, attr: *const pthread_condattr_t) -> c_int {
+pub unsafe extern "C" fn pthread_cond_init(
+    cond: *mut pthread_cond_t,
+    attr: *const pthread_condattr_t,
+) -> c_int {
     core::ptr::write_bytes(cond, 0, 1);
     if !attr.is_null() {
         (*cond).__i[4] = ((*attr).__attr & 0x7fffffff) as c_int;
@@ -5952,9 +6539,14 @@ pub unsafe extern "C" fn pthread_cond_init(cond: *mut pthread_cond_t, attr: *con
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_cond_destroy(_cond: *mut pthread_cond_t) -> c_int { 0 }
+pub unsafe extern "C" fn pthread_cond_destroy(_cond: *mut pthread_cond_t) -> c_int {
+    0
+}
 #[no_mangle]
-pub unsafe extern "C" fn pthread_cond_wait(cond: *mut pthread_cond_t, mutex: *mut pthread_mutex_t) -> c_int {
+pub unsafe extern "C" fn pthread_cond_wait(
+    cond: *mut pthread_cond_t,
+    mutex: *mut pthread_mutex_t,
+) -> c_int {
     unsafe { pthread_cond_timedwait_impl(cond, mutex, core::ptr::null()) }
 }
 
@@ -5979,11 +6571,15 @@ unsafe fn pthread_cond_timedwait_impl(
     let e = futex_timedwait(seq_ptr, seq, abs_timeout);
     a_fetch_sub(waiters_ptr, 1);
     let r = pthread_mutex_lock_impl(mutex);
-    if r != 0 { return r; }
+    if r != 0 {
+        return r;
+    }
     if e == EINTR {
         pthread_testcancel();
     }
-    if e != 0 && e != EINTR { return e; }
+    if e != 0 && e != EINTR {
+        return e;
+    }
     0
 }
 
@@ -6001,14 +6597,18 @@ pub unsafe extern "C" fn pthread_cond_signal(cond: *mut pthread_cond_t) -> c_int
     // `_c_waiters` is an advisory wake hint, just as in musl 1.2.6's
     // `pthread_cond_signal`: mutex release/acquire and the sequence futex,
     // not this count, carry the condition-variable synchronization edge.
-    if a_load_relaxed(&raw const (*cond).__i[3]) == 0 { return 0; }
+    if a_load_relaxed(&raw const (*cond).__i[3]) == 0 {
+        return 0;
+    }
     a_fetch_add(&raw mut (*cond).__i[2], 1);
     futex_wake(&raw mut (*cond).__i[2], 1);
     0
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut pthread_cond_t) -> c_int {
-    if a_load_relaxed(&raw const (*cond).__i[3]) == 0 { return 0; }
+    if a_load_relaxed(&raw const (*cond).__i[3]) == 0 {
+        return 0;
+    }
     a_fetch_add(&raw mut (*cond).__i[2], 1);
     futex_wake(&raw mut (*cond).__i[2], -1);
     0
@@ -6017,18 +6617,31 @@ pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut pthread_cond_t) -> c_
 // --- pthread_rwlockattr_* ---
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlockattr_init(attr: *mut pthread_rwlockattr_t) -> c_int {
-    (*attr).__attr = [0; 2]; 0
+    (*attr).__attr = [0; 2];
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_rwlockattr_destroy(_attr: *mut pthread_rwlockattr_t) -> c_int { 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_rwlockattr_setpshared(attr: *mut pthread_rwlockattr_t, p: c_int) -> c_int {
-    if (p as c_uint) > 1 { return EINVAL; }
-    (*attr).__attr[0] = ((*attr).__attr[0] & !128) | ((p as c_uint) << 7); 0
+pub unsafe extern "C" fn pthread_rwlockattr_destroy(_attr: *mut pthread_rwlockattr_t) -> c_int {
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_rwlockattr_getpshared(attr: *const pthread_rwlockattr_t, p: *mut c_int) -> c_int {
-    *p = (((*attr).__attr[0] >> 7) & 1) as c_int; 0
+pub unsafe extern "C" fn pthread_rwlockattr_setpshared(
+    attr: *mut pthread_rwlockattr_t,
+    p: c_int,
+) -> c_int {
+    if (p as c_uint) > 1 {
+        return EINVAL;
+    }
+    (*attr).__attr[0] = ((*attr).__attr[0] & !128) | ((p as c_uint) << 7);
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_rwlockattr_getpshared(
+    attr: *const pthread_rwlockattr_t,
+    p: *mut c_int,
+) -> c_int {
+    *p = (((*attr).__attr[0] >> 7) & 1) as c_int;
+    0
 }
 
 // --- pthread_rwlock_* ---
@@ -6036,82 +6649,151 @@ unsafe fn rwlock_tryrdlock(rw: *mut pthread_rwlock_t) -> c_int {
     loop {
         let val = a_load(&raw const (*rw).__i[0]);
         let cnt = val & 0x7fffffff;
-        if cnt == 0x7fffffff { return EBUSY; }
-        if cnt == 0x7ffffffe { return EAGAIN; }
-        if a_cas(&raw mut (*rw).__i[0], val, val + 1) == val { return 0; }
+        if cnt == 0x7fffffff {
+            return EBUSY;
+        }
+        if cnt == 0x7ffffffe {
+            return EAGAIN;
+        }
+        if a_cas(&raw mut (*rw).__i[0], val, val + 1) == val {
+            return 0;
+        }
     }
 }
 unsafe fn rwlock_trywrlock(rw: *mut pthread_rwlock_t) -> c_int {
-    if a_cas(&raw mut (*rw).__i[0], 0, 0x7fffffff) == 0 { 0 } else { EBUSY }
+    if a_cas(&raw mut (*rw).__i[0], 0, 0x7fffffff) == 0 {
+        0
+    } else {
+        EBUSY
+    }
 }
 unsafe fn rwlock_timedrdlock(rw: *mut pthread_rwlock_t, abs_timeout: *const timespec) -> c_int {
     let r = rwlock_tryrdlock(rw);
-    if r != EBUSY { return r; }
+    if r != EBUSY {
+        return r;
+    }
     let mut spins = 100;
-    while spins > 0 { let r = rwlock_tryrdlock(rw); if r != EBUSY { return r; } core::hint::spin_loop(); spins -= 1; }
+    while spins > 0 {
+        let r = rwlock_tryrdlock(rw);
+        if r != EBUSY {
+            return r;
+        }
+        core::hint::spin_loop();
+        spins -= 1;
+    }
     loop {
         let r = rwlock_tryrdlock(rw);
-        if r != EBUSY { return r; }
+        if r != EBUSY {
+            return r;
+        }
         let val = a_load(&raw const (*rw).__i[0]);
-        if val & 0x7fffffff != 0x7fffffff { continue; }
+        if val & 0x7fffffff != 0x7fffffff {
+            continue;
+        }
         a_fetch_add(&raw mut (*rw).__i[1], 1);
         a_cas(&raw mut (*rw).__i[0], val, val | (1i32 << 31));
         let e = futex_timedwait(&raw mut (*rw).__i[0], val | (1i32 << 31), abs_timeout);
         a_fetch_sub(&raw mut (*rw).__i[1], 1);
-        if e != 0 && e != EINTR { return e; }
+        if e != 0 && e != EINTR {
+            return e;
+        }
     }
 }
 unsafe fn rwlock_timedwrlock(rw: *mut pthread_rwlock_t, abs_timeout: *const timespec) -> c_int {
     let r = rwlock_trywrlock(rw);
-    if r != EBUSY { return r; }
+    if r != EBUSY {
+        return r;
+    }
     let mut spins = 100;
-    while spins > 0 { let r = rwlock_trywrlock(rw); if r != EBUSY { return r; } core::hint::spin_loop(); spins -= 1; }
+    while spins > 0 {
+        let r = rwlock_trywrlock(rw);
+        if r != EBUSY {
+            return r;
+        }
+        core::hint::spin_loop();
+        spins -= 1;
+    }
     loop {
         let r = rwlock_trywrlock(rw);
-        if r != EBUSY { return r; }
+        if r != EBUSY {
+            return r;
+        }
         let val = a_load(&raw const (*rw).__i[0]);
-        if val == 0 { continue; }
+        if val == 0 {
+            continue;
+        }
         a_fetch_add(&raw mut (*rw).__i[1], 1);
         a_cas(&raw mut (*rw).__i[0], val, val | (1i32 << 31));
         let e = futex_timedwait(&raw mut (*rw).__i[0], val | (1i32 << 31), abs_timeout);
         a_fetch_sub(&raw mut (*rw).__i[1], 1);
-        if e != 0 && e != EINTR { return e; }
+        if e != 0 && e != EINTR {
+            return e;
+        }
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pthread_rwlock_init(rw: *mut pthread_rwlock_t, attr: *const pthread_rwlockattr_t) -> c_int {
+pub unsafe extern "C" fn pthread_rwlock_init(
+    rw: *mut pthread_rwlock_t,
+    attr: *const pthread_rwlockattr_t,
+) -> c_int {
     core::ptr::write_bytes(rw, 0, 1);
-    if !attr.is_null() { (*rw).__i[2] = (*attr).__attr[0] as c_int & 128; }
+    if !attr.is_null() {
+        (*rw).__i[2] = (*attr).__attr[0] as c_int & 128;
+    }
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_rwlock_destroy(_rw: *mut pthread_rwlock_t) -> c_int { 0 }
+pub unsafe extern "C" fn pthread_rwlock_destroy(_rw: *mut pthread_rwlock_t) -> c_int {
+    0
+}
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_rwlock_rdlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_timedrdlock(rw, core::ptr::null()) }
+pub unsafe extern "C" fn pthread_rwlock_rdlock(rw: *mut pthread_rwlock_t) -> c_int {
+    rwlock_timedrdlock(rw, core::ptr::null())
+}
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_rwlock_tryrdlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_tryrdlock(rw) }
+pub unsafe extern "C" fn pthread_rwlock_tryrdlock(rw: *mut pthread_rwlock_t) -> c_int {
+    rwlock_tryrdlock(rw)
+}
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_rwlock_timedrdlock(rw: *mut pthread_rwlock_t, t: *const timespec) -> c_int { rwlock_timedrdlock(rw, t) }
+pub unsafe extern "C" fn pthread_rwlock_timedrdlock(
+    rw: *mut pthread_rwlock_t,
+    t: *const timespec,
+) -> c_int {
+    rwlock_timedrdlock(rw, t)
+}
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_rwlock_wrlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_timedwrlock(rw, core::ptr::null()) }
+pub unsafe extern "C" fn pthread_rwlock_wrlock(rw: *mut pthread_rwlock_t) -> c_int {
+    rwlock_timedwrlock(rw, core::ptr::null())
+}
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_rwlock_trywrlock(rw: *mut pthread_rwlock_t) -> c_int { rwlock_trywrlock(rw) }
+pub unsafe extern "C" fn pthread_rwlock_trywrlock(rw: *mut pthread_rwlock_t) -> c_int {
+    rwlock_trywrlock(rw)
+}
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_rwlock_timedwrlock(rw: *mut pthread_rwlock_t, t: *const timespec) -> c_int { rwlock_timedwrlock(rw, t) }
+pub unsafe extern "C" fn pthread_rwlock_timedwrlock(
+    rw: *mut pthread_rwlock_t,
+    t: *const timespec,
+) -> c_int {
+    rwlock_timedwrlock(rw, t)
+}
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_rwlock_unlock(rw: *mut pthread_rwlock_t) -> c_int {
     loop {
         let val = a_load(&raw const (*rw).__i[0]);
         let cnt = val & 0x7fffffff;
-        let new_val = if cnt == 0x7fffffff || cnt == 1 { 0 } else { val - 1 };
+        let new_val = if cnt == 0x7fffffff || cnt == 1 {
+            0
+        } else {
+            val - 1
+        };
         if a_cas(&raw mut (*rw).__i[0], val, new_val) == val {
             if new_val == 0 && (a_load(&raw const (*rw).__i[1]) > 0 || val < 0) {
                 futex_wake(&raw mut (*rw).__i[0], cnt);
@@ -6123,33 +6805,58 @@ pub unsafe extern "C" fn pthread_rwlock_unlock(rw: *mut pthread_rwlock_t) -> c_i
 
 // --- pthread_barrierattr_* ---
 #[no_mangle]
-pub unsafe extern "C" fn pthread_barrierattr_init(attr: *mut pthread_barrierattr_t) -> c_int { (*attr).__attr = 0; 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_barrierattr_destroy(_attr: *mut pthread_barrierattr_t) -> c_int { 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_barrierattr_setpshared(attr: *mut pthread_barrierattr_t, p: c_int) -> c_int {
-    if (p as c_uint) > 1 { return EINVAL; }
-    (*attr).__attr = p as c_uint; 0
+pub unsafe extern "C" fn pthread_barrierattr_init(attr: *mut pthread_barrierattr_t) -> c_int {
+    (*attr).__attr = 0;
+    0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_barrierattr_getpshared(attr: *const pthread_barrierattr_t, p: *mut c_int) -> c_int {
-    *p = (*attr).__attr as c_int; 0
+pub unsafe extern "C" fn pthread_barrierattr_destroy(_attr: *mut pthread_barrierattr_t) -> c_int {
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_barrierattr_setpshared(
+    attr: *mut pthread_barrierattr_t,
+    p: c_int,
+) -> c_int {
+    if (p as c_uint) > 1 {
+        return EINVAL;
+    }
+    (*attr).__attr = p as c_uint;
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_barrierattr_getpshared(
+    attr: *const pthread_barrierattr_t,
+    p: *mut c_int,
+) -> c_int {
+    *p = (*attr).__attr as c_int;
+    0
 }
 
 // --- pthread_barrier_* ---
 #[no_mangle]
-pub unsafe extern "C" fn pthread_barrier_init(b: *mut pthread_barrier_t, _attr: *const pthread_barrierattr_t, count: c_uint) -> c_int {
-    if count == 0 { return EINVAL; }
+pub unsafe extern "C" fn pthread_barrier_init(
+    b: *mut pthread_barrier_t,
+    _attr: *const pthread_barrierattr_t,
+    count: c_uint,
+) -> c_int {
+    if count == 0 {
+        return EINVAL;
+    }
     core::ptr::write_bytes(b, 0, 1);
     (*b).__i[2] = count as c_int - 1;
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_barrier_destroy(_b: *mut pthread_barrier_t) -> c_int { 0 }
+pub unsafe extern "C" fn pthread_barrier_destroy(_b: *mut pthread_barrier_t) -> c_int {
+    0
+}
 #[no_mangle]
 pub unsafe extern "C" fn pthread_barrier_wait(b: *mut pthread_barrier_t) -> c_int {
     let limit = (*b).__i[2];
-    if limit == 0 { return PTHREAD_BARRIER_SERIAL_THREAD; }
+    if limit == 0 {
+        return PTHREAD_BARRIER_SERIAL_THREAD;
+    }
     spinlock_lock(&raw mut (*b).__i[0], &raw mut (*b).__i[1]);
     let arrived = a_load(&raw const (*b).__i[3]) + 1;
     a_store(&raw mut (*b).__i[3], arrived);
@@ -6171,54 +6878,91 @@ pub unsafe extern "C" fn pthread_barrier_wait(b: *mut pthread_barrier_t) -> c_in
 
 // --- pthread_spin_* ---
 #[no_mangle]
-pub unsafe extern "C" fn pthread_spin_init(s: *mut pthread_spinlock_t, _pshared: c_int) -> c_int { a_store(s, 0); 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_spin_destroy(_s: *mut pthread_spinlock_t) -> c_int { 0 }
-#[no_mangle]
-pub unsafe extern "C" fn pthread_spin_lock(s: *mut pthread_spinlock_t) -> c_int {
-    while a_load(s) != 0 || a_cas(s, 0, EBUSY) != 0 { core::hint::spin_loop(); }
+pub unsafe extern "C" fn pthread_spin_init(s: *mut pthread_spinlock_t, _pshared: c_int) -> c_int {
+    a_store(s, 0);
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn pthread_spin_trylock(s: *mut pthread_spinlock_t) -> c_int { a_cas(s, 0, EBUSY) }
+pub unsafe extern "C" fn pthread_spin_destroy(_s: *mut pthread_spinlock_t) -> c_int {
+    0
+}
 #[no_mangle]
-pub unsafe extern "C" fn pthread_spin_unlock(s: *mut pthread_spinlock_t) -> c_int { a_store(s, 0); 0 }
+pub unsafe extern "C" fn pthread_spin_lock(s: *mut pthread_spinlock_t) -> c_int {
+    while a_load(s) != 0 || a_cas(s, 0, EBUSY) != 0 {
+        core::hint::spin_loop();
+    }
+    0
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_spin_trylock(s: *mut pthread_spinlock_t) -> c_int {
+    a_cas(s, 0, EBUSY)
+}
+#[no_mangle]
+pub unsafe extern "C" fn pthread_spin_unlock(s: *mut pthread_spinlock_t) -> c_int {
+    a_store(s, 0);
+    0
+}
 
 // --- sem_* ---
 #[no_mangle]
 pub unsafe extern "C" fn sem_init(sem: *mut sem_t, pshared: c_int, value: c_uint) -> c_int {
-    if value > SEM_VALUE_MAX as c_uint { return EINVAL; }
+    if value > SEM_VALUE_MAX as c_uint {
+        return EINVAL;
+    }
     (*sem).__val[0] = value as c_int;
     (*sem).__val[1] = 0;
     (*sem).__val[2] = if pshared != 0 { 0 } else { 128 };
     0
 }
 #[no_mangle]
-pub unsafe extern "C" fn sem_destroy(_sem: *mut sem_t) -> c_int { 0 }
+pub unsafe extern "C" fn sem_destroy(_sem: *mut sem_t) -> c_int {
+    0
+}
 
 unsafe fn sem_trywait_internal(sem: *mut sem_t) -> c_int {
     loop {
         let val = a_load(&raw const (*sem).__val[0]);
-        if val & SEM_VALUE_MAX == 0 { return EAGAIN; }
-        if a_cas(&raw mut (*sem).__val[0], val, val - 1) == val { return 0; }
+        if val & SEM_VALUE_MAX == 0 {
+            return EAGAIN;
+        }
+        if a_cas(&raw mut (*sem).__val[0], val, val - 1) == val {
+            return 0;
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sem_trywait(sem: *mut sem_t) -> c_int {
-    if sem_trywait_internal(sem) == 0 { 0 } else { ERRNO = EAGAIN; -1 }
+    if sem_trywait_internal(sem) == 0 {
+        0
+    } else {
+        ERRNO = EAGAIN;
+        -1
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn sem_wait(sem: *mut sem_t) -> c_int {
     pthread_testcancel();
-    if sem_trywait_internal(sem) == 0 { return 0; }
+    if sem_trywait_internal(sem) == 0 {
+        return 0;
+    }
     let mut spins = 100;
-    while spins > 0 { if sem_trywait_internal(sem) == 0 { return 0; } core::hint::spin_loop(); spins -= 1; }
+    while spins > 0 {
+        if sem_trywait_internal(sem) == 0 {
+            return 0;
+        }
+        core::hint::spin_loop();
+        spins -= 1;
+    }
     loop {
         pthread_testcancel();
-        if sem_trywait_internal(sem) == 0 { return 0; }
+        if sem_trywait_internal(sem) == 0 {
+            return 0;
+        }
         let val = a_load(&raw const (*sem).__val[0]);
-        if val & SEM_VALUE_MAX != 0 { continue; }
+        if val & SEM_VALUE_MAX != 0 {
+            continue;
+        }
         a_cas(&raw mut (*sem).__val[0], val, val | (1i32 << 31));
         a_fetch_add(&raw mut (*sem).__val[1], 1);
         futex_wait(&raw mut (*sem).__val[0], 1i32 << 31);
@@ -6228,29 +6972,49 @@ pub unsafe extern "C" fn sem_wait(sem: *mut sem_t) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn sem_timedwait(sem: *mut sem_t, abs_timeout: *const timespec) -> c_int {
     pthread_testcancel();
-    if sem_trywait_internal(sem) == 0 { return 0; }
+    if sem_trywait_internal(sem) == 0 {
+        return 0;
+    }
     let mut spins = 100;
-    while spins > 0 { if sem_trywait_internal(sem) == 0 { return 0; } core::hint::spin_loop(); spins -= 1; }
+    while spins > 0 {
+        if sem_trywait_internal(sem) == 0 {
+            return 0;
+        }
+        core::hint::spin_loop();
+        spins -= 1;
+    }
     loop {
         pthread_testcancel();
-        if sem_trywait_internal(sem) == 0 { return 0; }
+        if sem_trywait_internal(sem) == 0 {
+            return 0;
+        }
         let val = a_load(&raw const (*sem).__val[0]);
-        if val & SEM_VALUE_MAX != 0 { continue; }
+        if val & SEM_VALUE_MAX != 0 {
+            continue;
+        }
         a_cas(&raw mut (*sem).__val[0], val, val | (1i32 << 31));
         a_fetch_add(&raw mut (*sem).__val[1], 1);
         let e = futex_timedwait(&raw mut (*sem).__val[0], 1i32 << 31, abs_timeout);
         a_fetch_sub(&raw mut (*sem).__val[1], 1);
-        if e != 0 && e != EINTR { ERRNO = e; return -1; }
+        if e != 0 && e != EINTR {
+            ERRNO = e;
+            return -1;
+        }
     }
 }
 #[no_mangle]
 pub unsafe extern "C" fn sem_post(sem: *mut sem_t) -> c_int {
     loop {
         let val = a_load(&raw const (*sem).__val[0]);
-        if (val & SEM_VALUE_MAX) == SEM_VALUE_MAX { ERRNO = EOVERFLOW; return -1; }
+        if (val & SEM_VALUE_MAX) == SEM_VALUE_MAX {
+            ERRNO = EOVERFLOW;
+            return -1;
+        }
         let mut new = val + 1;
         let waiters = a_load(&raw const (*sem).__val[1]);
-        if waiters <= 1 { new &= !(1i32 << 31); }
+        if waiters <= 1 {
+            new &= !(1i32 << 31);
+        }
         if a_cas(&raw mut (*sem).__val[0], val, new) == val {
             if val < 0 || waiters > 0 {
                 futex_wake(&raw mut (*sem).__val[0], if waiters > 1 { 1 } else { -1 });
@@ -6283,12 +7047,19 @@ struct SemEntry {
 
 // ponytail: zero-init is fine for static mut (all-zero = free slots)
 static mut SEMTAB: [SemEntry; SEM_NSEMS_MAX] = {
-    const ZERO: SemEntry = SemEntry { ino: 0, sem: core::ptr::null_mut(), refcnt: 0 };
+    const ZERO: SemEntry = SemEntry {
+        ino: 0,
+        sem: core::ptr::null_mut(),
+        refcnt: 0,
+    };
     [ZERO; SEM_NSEMS_MAX]
 };
 
 unsafe fn semtab_lock() {
-    while SEMTAB_LOCK.compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed).is_err() {
+    while SEMTAB_LOCK
+        .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
         core::hint::spin_loop();
     }
 }
@@ -6302,10 +7073,14 @@ unsafe fn semtab_unlock() {
 unsafe fn shm_mapname(name: *const c_char, buf: *mut u8) -> c_int {
     let mut p = name;
     // strip leading /
-    while *p == b'/' as c_char { p = p.add(1); }
+    while *p == b'/' as c_char {
+        p = p.add(1);
+    }
     let start = p;
     // find end of first component
-    while *p != 0 && *p != b'/' as c_char { p = p.add(1); }
+    while *p != 0 && *p != b'/' as c_char {
+        p = p.add(1);
+    }
     let len = p.offset_from(start) as usize;
     // no trailing /, not empty, not "." or ".."
     if len == 0 || *p != 0 {
@@ -6343,18 +7118,32 @@ unsafe fn shm_mapname(name: *const c_char, buf: *mut u8) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn shm_open(name: *const c_char, flags: c_int, mode: mode_t) -> c_int {
     let mut buf = [0u8; 16 + NAME_MAX + 1];
-    if shm_mapname(name, buf.as_mut_ptr()) < 0 { return -1; }
-    let fd = sys_open(buf.as_ptr(), (flags | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) as i64, mode as i64);
-    if fd < 0 { ERRNO = (-fd) as c_int; return -1; }
+    if shm_mapname(name, buf.as_mut_ptr()) < 0 {
+        return -1;
+    }
+    let fd = sys_open(
+        buf.as_ptr(),
+        (flags | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) as i64,
+        mode as i64,
+    );
+    if fd < 0 {
+        ERRNO = (-fd) as c_int;
+        return -1;
+    }
     fd as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
     let mut buf = [0u8; 16 + NAME_MAX + 1];
-    if shm_mapname(name, buf.as_mut_ptr()) < 0 { return -1; }
+    if shm_mapname(name, buf.as_mut_ptr()) < 0 {
+        return -1;
+    }
     let r = sys_unlink(buf.as_ptr());
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -6372,7 +7161,9 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut args: .
     // find a free slot
     let mut slot: c_int = -1;
     for i in 0..SEMTAB_LEN {
-        if SEMTAB[i].sem.is_null() && slot < 0 { slot = i as c_int; }
+        if SEMTAB[i].sem.is_null() && slot < 0 {
+            slot = i as c_int;
+        }
     }
     if slot < 0 {
         ERRNO = EMFILE;
@@ -6400,7 +7191,11 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut args: .
 
     // try opening existing first (unless O_CREAT|O_EXCL)
     if oflags != O_CREAT | O_EXCL {
-        let fd = sys_open(buf.as_ptr(), (O_RDWR | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) as i64, 0);
+        let fd = sys_open(
+            buf.as_ptr(),
+            (O_RDWR | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) as i64,
+            0,
+        );
         if fd >= 0 {
             let map = sys_mmap(
                 core::ptr::null_mut(),
@@ -6440,11 +7235,13 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut args: .
     loop {
         tmp[pos] = b'0' + (n % 10) as u8;
         n /= 10;
-        if n == 0 || pos == 0 { break; }
+        if n == 0 || pos == 0 {
+            break;
+        }
         pos -= 1;
     }
-        // shift to start of number part
-        let tmp_path = tmp.as_ptr();
+    // shift to start of number part
+    let tmp_path = tmp.as_ptr();
 
     let mut newsem: sem_t = core::mem::zeroed();
     newsem.__val[0] = value as c_int;
@@ -6452,15 +7249,25 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut args: .
     newsem.__val[2] = 128; // pshared=0 flag
 
     loop {
-        let fd = sys_open(tmp_path as *const u8, (O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NONBLOCK) as i64, mode as i64);
+        let fd = sys_open(
+            tmp_path as *const u8,
+            (O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NONBLOCK) as i64,
+            mode as i64,
+        );
         if fd < 0 {
-            if (-fd) as c_int == EEXIST { continue; }
+            if (-fd) as c_int == EEXIST {
+                continue;
+            }
             semtab_lock();
             SEMTAB[slot as usize].sem = core::ptr::null_mut();
             semtab_unlock();
             return core::ptr::null_mut();
         }
-        let written = sys_write(fd, &newsem as *const sem_t as *const u8, core::mem::size_of::<sem_t>());
+        let written = sys_write(
+            fd,
+            &newsem as *const sem_t as *const u8,
+            core::mem::size_of::<sem_t>(),
+        );
         if written != core::mem::size_of::<sem_t>() as i64 {
             sys_close(fd);
             sys_unlink(tmp_path);
@@ -6506,7 +7313,11 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut args: .
     }
 
     // fallthrough: try opening the existing file that won the race
-    let fd = sys_open(buf.as_ptr(), (O_RDWR | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) as i64, 0);
+    let fd = sys_open(
+        buf.as_ptr(),
+        (O_RDWR | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK) as i64,
+        0,
+    );
     if fd < 0 {
         semtab_lock();
         SEMTAB[slot as usize].sem = core::ptr::null_mut();
@@ -6534,7 +7345,13 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, flags: c_int, mut args: .
 
 unsafe fn get_ino(_fd_hint: c_int, path: *const u8) -> u64 {
     let mut st: Stat = core::mem::zeroed();
-    if sys_newfstatat(AT_FDCWD, path as *const c_char, &mut st as *mut Stat as *mut u8, 0) == 0 {
+    if sys_newfstatat(
+        AT_FDCWD,
+        path as *const c_char,
+        &mut st as *mut Stat as *mut u8,
+        0,
+    ) == 0
+    {
         st.st_ino
     } else {
         0
@@ -6545,7 +7362,10 @@ unsafe fn sem_register(map: *mut sem_t, ino: u64, slot_hint: c_int) -> *mut sem_
     semtab_lock();
     // check if already mapped (by inode)
     for i in 0..SEMTAB_LEN {
-        if SEMTAB[i].ino == ino && !SEMTAB[i].sem.is_null() && SEMTAB[i].sem != !0usize as *mut sem_t {
+        if SEMTAB[i].ino == ino
+            && !SEMTAB[i].sem.is_null()
+            && SEMTAB[i].sem != !0usize as *mut sem_t
+        {
             // already mapped: unmap new, use existing, release hint slot
             sys_munmap(map as *mut u8, core::mem::size_of::<sem_t>());
             SEMTAB[slot_hint as usize].sem = core::ptr::null_mut();
@@ -6594,18 +7414,33 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
 // --- pthread_once ---
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_once(control: *mut pthread_once_t, init_routine: Option<unsafe extern "C" fn()>) -> c_int {
-    if a_load(control) == 2 { return 0; }
+pub unsafe extern "C" fn pthread_once(
+    control: *mut pthread_once_t,
+    init_routine: Option<unsafe extern "C" fn()>,
+) -> c_int {
+    if a_load(control) == 2 {
+        return 0;
+    }
     loop {
         match a_cas(control, 0, 1) {
             0 => {
-                if let Some(f) = init_routine { f(); }
-                if a_swap(control, 2) == 3 { futex_wake(control, -1); }
+                if let Some(f) = init_routine {
+                    f();
+                }
+                if a_swap(control, 2) == 3 {
+                    futex_wake(control, -1);
+                }
                 return 0;
             }
-            1 => { a_cas(control, 1, 3); }
-            3 => { futex_wait(control, 3); }
-            _ => { return 0; }
+            1 => {
+                a_cas(control, 1, 3);
+            }
+            3 => {
+                futex_wait(control, 3);
+            }
+            _ => {
+                return 0;
+            }
         }
     }
 }
@@ -6613,7 +7448,10 @@ pub unsafe extern "C" fn pthread_once(control: *mut pthread_once_t, init_routine
 // --- pthread_key_* ---
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn pthread_key_create(key: *mut pthread_key_t, dtor: Option<unsafe extern "C" fn(*mut c_void)>) -> c_int {
+pub unsafe extern "C" fn pthread_key_create(
+    key: *mut pthread_key_t,
+    dtor: Option<unsafe extern "C" fn(*mut c_void)>,
+) -> c_int {
     let start = NEXT_KEY.load(Ordering::Relaxed);
     let mut j = start;
     loop {
@@ -6625,14 +7463,18 @@ pub unsafe extern "C" fn pthread_key_create(key: *mut pthread_key_t, dtor: Optio
             return 0;
         }
         j = (j + 1) % PTHREAD_KEY_SLOTS;
-        if j == start { return EAGAIN; }
+        if j == start {
+            return EAGAIN;
+        }
     }
 }
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_key_delete(key: pthread_key_t) -> c_int {
     let index = key as usize;
-    if index >= PTHREAD_KEY_SLOTS || !KEY_IN_USE[index] { return EINVAL; }
+    if index >= PTHREAD_KEY_SLOTS || !KEY_IN_USE[index] {
+        return EINVAL;
+    }
     let word = index / 64;
     let bit = 1_u64 << (index % 64);
     let has_destructor = KEY_DTORS[index].is_some();
@@ -6653,7 +7495,11 @@ pub unsafe extern "C" fn pthread_key_delete(key: pthread_key_t) -> c_int {
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_getspecific(key: pthread_key_t) -> *mut c_void {
-    if let Some(slot) = find_thread() { slot.tsd[key as usize] } else { core::ptr::null_mut() }
+    if let Some(slot) = find_thread() {
+        slot.tsd[key as usize]
+    } else {
+        core::ptr::null_mut()
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_setspecific(key: pthread_key_t, value: *const c_void) -> c_int {
@@ -6676,7 +7522,9 @@ pub unsafe extern "C" fn pthread_setspecific(key: pthread_key_t, value: *const c
             slot.tsd_nonnull[word] |= bit;
         }
         0
-    } else { EINVAL }
+    } else {
+        EINVAL
+    }
 }
 
 // --- pthread_cancel/state ---
@@ -6738,7 +7586,9 @@ unsafe fn ensure_cancel_handler() {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cancel(thread: PthreadT) -> c_int {
     let slot = thread as *mut Thread;
-    if slot.is_null() { return EINVAL; }
+    if slot.is_null() {
+        return EINVAL;
+    }
     ensure_cancel_handler();
     a_store(&raw mut (*slot).cancel, 1);
     let tid = (*slot).tid;
@@ -6750,21 +7600,33 @@ pub unsafe extern "C" fn pthread_cancel(thread: PthreadT) -> c_int {
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_int) -> c_int {
-    if state != PTHREAD_CANCEL_ENABLE && state != PTHREAD_CANCEL_DISABLE { return EINVAL; }
+    if state != PTHREAD_CANCEL_ENABLE && state != PTHREAD_CANCEL_DISABLE {
+        return EINVAL;
+    }
     if let Some(slot) = find_thread() {
-        if !oldstate.is_null() { *oldstate = slot.cancel_state; }
+        if !oldstate.is_null() {
+            *oldstate = slot.cancel_state;
+        }
         slot.cancel_state = state;
         0
-    } else { EINVAL }
+    } else {
+        EINVAL
+    }
 }
 #[no_mangle]
 pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, oldtype: *mut c_int) -> c_int {
-    if type_ != PTHREAD_CANCEL_DEFERRED && type_ != PTHREAD_CANCEL_ASYNCHRONOUS { return EINVAL; }
+    if type_ != PTHREAD_CANCEL_DEFERRED && type_ != PTHREAD_CANCEL_ASYNCHRONOUS {
+        return EINVAL;
+    }
     if let Some(slot) = find_thread() {
-        if !oldtype.is_null() { *oldtype = slot.cancel_type; }
+        if !oldtype.is_null() {
+            *oldtype = slot.cancel_type;
+        }
         slot.cancel_type = type_;
         0
-    } else { EINVAL }
+    } else {
+        EINVAL
+    }
 }
 #[no_mangle]
 #[linkage = "weak"]
@@ -6784,16 +7646,17 @@ unsafe fn pthread_testcancel_current() {
     // registry entry merely to observe that no request exists. pthread-created
     // threads publish CURRENT_THREAD before entering user code.
     let slot = CURRENT_THREAD;
-    if !slot.is_null()
-        && (*slot).cancel != 0
-        && (*slot).cancel_state == PTHREAD_CANCEL_ENABLE
-    {
+    if !slot.is_null() && (*slot).cancel != 0 && (*slot).cancel_state == PTHREAD_CANCEL_ENABLE {
         do_cancel();
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn _pthread_cleanup_push(cb: *mut __ptcb, f: Option<unsafe extern "C" fn(*mut c_void)>, x: *mut c_void) {
+pub unsafe extern "C" fn _pthread_cleanup_push(
+    cb: *mut __ptcb,
+    f: Option<unsafe extern "C" fn(*mut c_void)>,
+    x: *mut c_void,
+) {
     (*cb).__f = f;
     (*cb).__x = x;
     if let Some(slot) = find_thread() {
@@ -6819,18 +7682,33 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(cb: *mut __ptcb, run: c_int) {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_kill(thread: PthreadT, sig: c_int) -> c_int {
     let slot = thread as *mut Thread;
-    if slot.is_null() { return EINVAL; }
+    if slot.is_null() {
+        return EINVAL;
+    }
     let tid = (*slot).tid;
-    if tid <= 0 { return EINVAL; }
+    if tid <= 0 {
+        return EINVAL;
+    }
     let result = sys_tgkill(sys_getpid() as c_int, tid, sig);
-    if result < 0 { (-result) as c_int } else { 0 }
+    if result < 0 {
+        (-result) as c_int
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pthread_sigmask(how: c_int, set: *const SigSetT, oldset: *mut SigSetT) -> c_int {
-    if sigprocmask(how, set, oldset) == 0 { 0 } else { ERRNO }
+pub unsafe extern "C" fn pthread_sigmask(
+    how: c_int,
+    set: *const SigSetT,
+    oldset: *mut SigSetT,
+) -> c_int {
+    if sigprocmask(how, set, oldset) == 0 {
+        0
+    } else {
+        ERRNO
+    }
 }
-
 
 #[repr(C)]
 pub struct lconv {
@@ -6896,7 +7774,9 @@ static mut LCONV: lconv = lconv {
 unsafe fn cstr_contains_ci(s: *const u8, needle: &[u8]) -> bool {
     let len = strlen(s as *const c_char) as usize;
     let s_slice = core::slice::from_raw_parts(s, len);
-    if needle.len() > len { return false; }
+    if needle.len() > len {
+        return false;
+    }
     for i in 0..=len - needle.len() {
         if s_slice[i..i + needle.len()].eq_ignore_ascii_case(needle) {
             return true;
@@ -6951,9 +7831,7 @@ const LC_GLOBAL_LOCALE: locale_t = usize::MAX as locale_t;
 pub unsafe extern "C" fn newlocale(_mask: c_int, name: *const c_char, base: locale_t) -> locale_t {
     if !name.is_null() && *name != 0 {
         let n = name as *const u8;
-        if strcmp(n, b"C\0".as_ptr()) != 0
-            && strcmp(n, b"POSIX\0".as_ptr()) != 0
-        {
+        if strcmp(n, b"C\0".as_ptr()) != 0 && strcmp(n, b"POSIX\0".as_ptr()) != 0 {
             return core::ptr::null_mut();
         }
     }
@@ -7007,7 +7885,9 @@ const C_MESSAGES_STRINGS: &[u8] = b"^[yY]\0^[nN]\0";
 unsafe fn langinfo_str(table: *const u8, mut idx: c_int) -> *mut c_char {
     let mut p = table;
     while idx > 0 {
-        while *p != 0 { p = p.add(1); }
+        while *p != 0 {
+            p = p.add(1);
+        }
         p = p.add(1);
         idx -= 1;
     }
@@ -7028,15 +7908,21 @@ pub unsafe extern "C" fn nl_langinfo(item: c_int) -> *mut c_char {
     let idx = item & 0xFFFF;
     match cat {
         1 => {
-            if idx > 1 { return b"\0".as_ptr() as *mut c_char; }
+            if idx > 1 {
+                return b"\0".as_ptr() as *mut c_char;
+            }
             langinfo_str(C_NUMERIC_STRINGS.as_ptr(), idx)
         }
         2 => {
-            if idx > 49 { return b"\0".as_ptr() as *mut c_char; }
+            if idx > 49 {
+                return b"\0".as_ptr() as *mut c_char;
+            }
             langinfo_str(C_TIME_STRINGS.as_ptr(), idx)
         }
         5 => {
-            if idx > 1 { return b"\0".as_ptr() as *mut c_char; }
+            if idx > 1 {
+                return b"\0".as_ptr() as *mut c_char;
+            }
             langinfo_str(C_MESSAGES_STRINGS.as_ptr(), idx)
         }
         _ => b"\0".as_ptr() as *mut c_char,
@@ -7051,11 +7937,20 @@ pub unsafe extern "C" fn catopen(_name: *const c_char, _oflag: c_int) -> nl_catd
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn catclose(_catd: nl_catd) -> c_int { 0 }
+pub unsafe extern "C" fn catclose(_catd: nl_catd) -> c_int {
+    0
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn catgets(catd: nl_catd, _set_id: c_int, _msg_id: c_int, s: *const c_char) -> *mut c_char {
-    if catd == !0usize as nl_catd { return s as *mut c_char; }
+pub unsafe extern "C" fn catgets(
+    catd: nl_catd,
+    _set_id: c_int,
+    _msg_id: c_int,
+    s: *const c_char,
+) -> *mut c_char {
+    if catd == !0usize as nl_catd {
+        return s as *mut c_char;
+    }
     s as *mut c_char
 }
 
@@ -7107,48 +8002,131 @@ unsafe fn match_name(input: *const u8, target: &[u8]) -> bool {
     let mut j = 0;
     while *i != 0 && j < target.len() {
         let mut c = *i;
-        if !c.is_ascii_alphanumeric() { i = i.add(1); continue; }
+        if !c.is_ascii_alphanumeric() {
+            i = i.add(1);
+            continue;
+        }
         c = c.to_ascii_lowercase();
-        if c != target[j] { return false; }
+        if c != target[j] {
+            return false;
+        }
         i = i.add(1);
         j += 1;
     }
-    while *i != 0 && !(*i).is_ascii_alphanumeric() { i = i.add(1); }
+    while *i != 0 && !(*i).is_ascii_alphanumeric() {
+        i = i.add(1);
+    }
     *i == 0 && j == target.len()
 }
 
 unsafe fn find_encoding(name: *const u8) -> i32 {
-    if name.is_null() { return -1; }
-    if match_name(name, b"utf8") || match_name(name, b"utf-8") || match_name(name, b"char") { return ENC_UTF8; }
-    if match_name(name, b"utf16le") || match_name(name, b"utf-16le") { return ENC_UTF16LE; }
-    if match_name(name, b"utf16be") || match_name(name, b"utf-16be") { return ENC_UTF16BE; }
-    if match_name(name, b"utf32le") || match_name(name, b"utf-32le") || match_name(name, b"ucs4le") { return ENC_UTF32LE; }
-    if match_name(name, b"utf32be") || match_name(name, b"utf-32be") || match_name(name, b"ucs4be") { return ENC_UTF32BE; }
-    if match_name(name, b"wchart") || match_name(name, b"wchar-t") { return ENC_WCHAR_T; }
-    if match_name(name, b"ascii") || match_name(name, b"usascii") || match_name(name, b"iso646") { return ENC_ASCII; }
-    if match_name(name, b"iso88591") || match_name(name, b"iso-8859-1") || match_name(name, b"latin1") { return ENC_LATIN1; }
-    if match_name(name, b"iso88592") || match_name(name, b"iso-8859-2") { return ENC_ISO8859_2; }
-    if match_name(name, b"iso88593") || match_name(name, b"iso-8859-3") { return ENC_ISO8859_3; }
-    if match_name(name, b"iso88594") || match_name(name, b"iso-8859-4") { return ENC_ISO8859_4; }
-    if match_name(name, b"iso88595") || match_name(name, b"iso-8859-5") { return ENC_ISO8859_5; }
-    if match_name(name, b"iso88596") || match_name(name, b"iso-8859-6") { return ENC_ISO8859_6; }
-    if match_name(name, b"iso88597") || match_name(name, b"iso-8859-7") { return ENC_ISO8859_7; }
-    if match_name(name, b"iso88598") || match_name(name, b"iso-8859-8") { return ENC_ISO8859_8; }
-    if match_name(name, b"iso88599") || match_name(name, b"iso-8859-9") { return ENC_ISO8859_9; }
-    if match_name(name, b"iso885910") || match_name(name, b"iso-8859-10") { return ENC_ISO8859_10; }
-    if match_name(name, b"iso885911") || match_name(name, b"iso-8859-11") || match_name(name, b"tis620") { return ENC_ISO8859_11; }
-    if match_name(name, b"iso885913") || match_name(name, b"iso-8859-13") { return ENC_ISO8859_13; }
-    if match_name(name, b"iso885914") || match_name(name, b"iso-8859-14") { return ENC_ISO8859_14; }
-    if match_name(name, b"iso885915") || match_name(name, b"iso-8859-15") { return ENC_ISO8859_15; }
-    if match_name(name, b"iso885916") || match_name(name, b"iso-8859-16") { return ENC_ISO8859_16; }
-    if match_name(name, b"cp1252") || match_name(name, b"windows1252") || match_name(name, b"windows-1252") { return ENC_WIN1252; }
-    if match_name(name, b"cp1251") || match_name(name, b"windows1251") || match_name(name, b"windows-1251") { return ENC_WIN1251; }
-    if match_name(name, b"koi8r") || match_name(name, b"koi8-r") { return ENC_KOI8R; }
-    if match_name(name, b"gbk") || match_name(name, b"cp936") { return ENC_GBK; }
-    if match_name(name, b"gb2312") { return ENC_GB2312; }
-    if match_name(name, b"big5") || match_name(name, b"bigfive") || match_name(name, b"cp950") { return ENC_BIG5; }
-    if match_name(name, b"eucjp") || match_name(name, b"euc-jp") { return ENC_EUCJP; }
-    if match_name(name, b"shiftjis") || match_name(name, b"sjis") || match_name(name, b"cp932") { return ENC_SHIFTJIS; }
+    if name.is_null() {
+        return -1;
+    }
+    if match_name(name, b"utf8") || match_name(name, b"utf-8") || match_name(name, b"char") {
+        return ENC_UTF8;
+    }
+    if match_name(name, b"utf16le") || match_name(name, b"utf-16le") {
+        return ENC_UTF16LE;
+    }
+    if match_name(name, b"utf16be") || match_name(name, b"utf-16be") {
+        return ENC_UTF16BE;
+    }
+    if match_name(name, b"utf32le") || match_name(name, b"utf-32le") || match_name(name, b"ucs4le")
+    {
+        return ENC_UTF32LE;
+    }
+    if match_name(name, b"utf32be") || match_name(name, b"utf-32be") || match_name(name, b"ucs4be")
+    {
+        return ENC_UTF32BE;
+    }
+    if match_name(name, b"wchart") || match_name(name, b"wchar-t") {
+        return ENC_WCHAR_T;
+    }
+    if match_name(name, b"ascii") || match_name(name, b"usascii") || match_name(name, b"iso646") {
+        return ENC_ASCII;
+    }
+    if match_name(name, b"iso88591")
+        || match_name(name, b"iso-8859-1")
+        || match_name(name, b"latin1")
+    {
+        return ENC_LATIN1;
+    }
+    if match_name(name, b"iso88592") || match_name(name, b"iso-8859-2") {
+        return ENC_ISO8859_2;
+    }
+    if match_name(name, b"iso88593") || match_name(name, b"iso-8859-3") {
+        return ENC_ISO8859_3;
+    }
+    if match_name(name, b"iso88594") || match_name(name, b"iso-8859-4") {
+        return ENC_ISO8859_4;
+    }
+    if match_name(name, b"iso88595") || match_name(name, b"iso-8859-5") {
+        return ENC_ISO8859_5;
+    }
+    if match_name(name, b"iso88596") || match_name(name, b"iso-8859-6") {
+        return ENC_ISO8859_6;
+    }
+    if match_name(name, b"iso88597") || match_name(name, b"iso-8859-7") {
+        return ENC_ISO8859_7;
+    }
+    if match_name(name, b"iso88598") || match_name(name, b"iso-8859-8") {
+        return ENC_ISO8859_8;
+    }
+    if match_name(name, b"iso88599") || match_name(name, b"iso-8859-9") {
+        return ENC_ISO8859_9;
+    }
+    if match_name(name, b"iso885910") || match_name(name, b"iso-8859-10") {
+        return ENC_ISO8859_10;
+    }
+    if match_name(name, b"iso885911")
+        || match_name(name, b"iso-8859-11")
+        || match_name(name, b"tis620")
+    {
+        return ENC_ISO8859_11;
+    }
+    if match_name(name, b"iso885913") || match_name(name, b"iso-8859-13") {
+        return ENC_ISO8859_13;
+    }
+    if match_name(name, b"iso885914") || match_name(name, b"iso-8859-14") {
+        return ENC_ISO8859_14;
+    }
+    if match_name(name, b"iso885915") || match_name(name, b"iso-8859-15") {
+        return ENC_ISO8859_15;
+    }
+    if match_name(name, b"iso885916") || match_name(name, b"iso-8859-16") {
+        return ENC_ISO8859_16;
+    }
+    if match_name(name, b"cp1252")
+        || match_name(name, b"windows1252")
+        || match_name(name, b"windows-1252")
+    {
+        return ENC_WIN1252;
+    }
+    if match_name(name, b"cp1251")
+        || match_name(name, b"windows1251")
+        || match_name(name, b"windows-1251")
+    {
+        return ENC_WIN1251;
+    }
+    if match_name(name, b"koi8r") || match_name(name, b"koi8-r") {
+        return ENC_KOI8R;
+    }
+    if match_name(name, b"gbk") || match_name(name, b"cp936") {
+        return ENC_GBK;
+    }
+    if match_name(name, b"gb2312") {
+        return ENC_GB2312;
+    }
+    if match_name(name, b"big5") || match_name(name, b"bigfive") || match_name(name, b"cp950") {
+        return ENC_BIG5;
+    }
+    if match_name(name, b"eucjp") || match_name(name, b"euc-jp") {
+        return ENC_EUCJP;
+    }
+    if match_name(name, b"shiftjis") || match_name(name, b"sjis") || match_name(name, b"cp932") {
+        return ENC_SHIFTJIS;
+    }
     -1
 }
 
@@ -7161,87 +8139,170 @@ fn uni_to_jis(c: u32) -> u16 {
         let row = j / 256;
         let col = j % 256;
         let d = JIS0208[row * 94 + col] as u32;
-        if d == c { return (j as u16) + 0x2121; }
-        if nel == 1 { return 0; }
-        if c < d { nel /= 2; }
-        else { b += i; nel -= nel / 2; }
+        if d == c {
+            return (j as u16) + 0x2121;
+        }
+        if nel == 1 {
+            return 0;
+        }
+        if c < d {
+            nel /= 2;
+        } else {
+            b += i;
+            nel -= nel / 2;
+        }
     }
 }
 
 unsafe fn iconv_decode(enc: i32, src: *const u8, src_left: usize) -> (u32, usize, c_int) {
-    if src_left == 0 { return (0, 0, EINVAL); }
+    if src_left == 0 {
+        return (0, 0, EINVAL);
+    }
     match enc {
         ENC_UTF8 => {
             let c = *src;
-            if c < 128 { return (c as u32, 1, 0); }
-            if c < 0xC2 { return (0, 0, EILSEQ); }
+            if c < 128 {
+                return (c as u32, 1, 0);
+            }
+            if c < 0xC2 {
+                return (0, 0, EILSEQ);
+            }
             if c < 0xE0 {
-                if src_left < 2 { return (0, 0, EINVAL); }
-                if (*src.add(1) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
+                if src_left < 2 {
+                    return (0, 0, EINVAL);
+                }
+                if (*src.add(1) & 0xC0) != 0x80 {
+                    return (0, 0, EILSEQ);
+                }
                 return (((c as u32 & 0x1F) << 6) | (*src.add(1) as u32 & 0x3F), 2, 0);
             }
             if c < 0xF0 {
-                if src_left < 2 { return (0, 0, EINVAL); }
-                if (*src.add(1) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
-                if src_left < 3 { return (0, 0, EINVAL); }
-                if (*src.add(2) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
-                let cp = ((c as u32 & 0x0F) << 12) | ((*src.add(1) as u32 & 0x3F) << 6) | (*src.add(2) as u32 & 0x3F);
-                if cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF) { return (0, 0, EILSEQ); }
+                if src_left < 2 {
+                    return (0, 0, EINVAL);
+                }
+                if (*src.add(1) & 0xC0) != 0x80 {
+                    return (0, 0, EILSEQ);
+                }
+                if src_left < 3 {
+                    return (0, 0, EINVAL);
+                }
+                if (*src.add(2) & 0xC0) != 0x80 {
+                    return (0, 0, EILSEQ);
+                }
+                let cp = ((c as u32 & 0x0F) << 12)
+                    | ((*src.add(1) as u32 & 0x3F) << 6)
+                    | (*src.add(2) as u32 & 0x3F);
+                if cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF) {
+                    return (0, 0, EILSEQ);
+                }
                 return (cp, 3, 0);
             }
             if c < 0xF8 {
-                if src_left < 2 { return (0, 0, EINVAL); }
-                if (*src.add(1) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
-                if src_left < 3 { return (0, 0, EINVAL); }
-                if (*src.add(2) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
-                if src_left < 4 { return (0, 0, EINVAL); }
-                if (*src.add(3) & 0xC0) != 0x80 { return (0, 0, EILSEQ); }
-                let cp = ((c as u32 & 0x07) << 18) | ((*src.add(1) as u32 & 0x3F) << 12) | ((*src.add(2) as u32 & 0x3F) << 6) | (*src.add(3) as u32 & 0x3F);
-                if cp < 0x10000 || cp >= 0x110000 { return (0, 0, EILSEQ); }
+                if src_left < 2 {
+                    return (0, 0, EINVAL);
+                }
+                if (*src.add(1) & 0xC0) != 0x80 {
+                    return (0, 0, EILSEQ);
+                }
+                if src_left < 3 {
+                    return (0, 0, EINVAL);
+                }
+                if (*src.add(2) & 0xC0) != 0x80 {
+                    return (0, 0, EILSEQ);
+                }
+                if src_left < 4 {
+                    return (0, 0, EINVAL);
+                }
+                if (*src.add(3) & 0xC0) != 0x80 {
+                    return (0, 0, EILSEQ);
+                }
+                let cp = ((c as u32 & 0x07) << 18)
+                    | ((*src.add(1) as u32 & 0x3F) << 12)
+                    | ((*src.add(2) as u32 & 0x3F) << 6)
+                    | (*src.add(3) as u32 & 0x3F);
+                if cp < 0x10000 || cp >= 0x110000 {
+                    return (0, 0, EILSEQ);
+                }
                 return (cp, 4, 0);
             }
             (0, 0, EILSEQ)
         }
         ENC_UTF16LE => {
-            if src_left < 2 { return (0, 0, EINVAL); }
+            if src_left < 2 {
+                return (0, 0, EINVAL);
+            }
             let c = (*src as u32) | ((*src.add(1) as u32) << 8);
             if c >= 0xD800 && c <= 0xDBFF {
-                if src_left < 4 { return (0, 0, EINVAL); }
+                if src_left < 4 {
+                    return (0, 0, EINVAL);
+                }
                 let d = (*src.add(2) as u32) | ((*src.add(3) as u32) << 8);
-                if d < 0xDC00 || d > 0xDFFF { return (0, 0, EILSEQ); }
+                if d < 0xDC00 || d > 0xDFFF {
+                    return (0, 0, EILSEQ);
+                }
                 return (((c - 0xD800) << 10) + (d - 0xDC00) + 0x10000, 4, 0);
             }
-            if c >= 0xDC00 && c <= 0xDFFF { return (0, 0, EILSEQ); }
+            if c >= 0xDC00 && c <= 0xDFFF {
+                return (0, 0, EILSEQ);
+            }
             (c, 2, 0)
         }
         ENC_UTF16BE => {
-            if src_left < 2 { return (0, 0, EINVAL); }
+            if src_left < 2 {
+                return (0, 0, EINVAL);
+            }
             let c = ((*src as u32) << 8) | (*src.add(1) as u32);
             if c >= 0xD800 && c <= 0xDBFF {
-                if src_left < 4 { return (0, 0, EINVAL); }
+                if src_left < 4 {
+                    return (0, 0, EINVAL);
+                }
                 let d = ((*src.add(2) as u32) << 8) | (*src.add(3) as u32);
-                if d < 0xDC00 || d > 0xDFFF { return (0, 0, EILSEQ); }
+                if d < 0xDC00 || d > 0xDFFF {
+                    return (0, 0, EILSEQ);
+                }
                 return (((c - 0xD800) << 10) + (d - 0xDC00) + 0x10000, 4, 0);
             }
-            if c >= 0xDC00 && c <= 0xDFFF { return (0, 0, EILSEQ); }
+            if c >= 0xDC00 && c <= 0xDFFF {
+                return (0, 0, EILSEQ);
+            }
             (c, 2, 0)
         }
         ENC_UTF32LE => {
-            if src_left < 4 { return (0, 0, EINVAL); }
-            let c = (*src as u32) | ((*src.add(1) as u32) << 8) | ((*src.add(2) as u32) << 16) | ((*src.add(3) as u32) << 24);
-            if c >= 0xD800 && c < 0xE000 { return (0, 0, EILSEQ); }
-            if c >= 0x110000 { return (0, 0, EILSEQ); }
+            if src_left < 4 {
+                return (0, 0, EINVAL);
+            }
+            let c = (*src as u32)
+                | ((*src.add(1) as u32) << 8)
+                | ((*src.add(2) as u32) << 16)
+                | ((*src.add(3) as u32) << 24);
+            if c >= 0xD800 && c < 0xE000 {
+                return (0, 0, EILSEQ);
+            }
+            if c >= 0x110000 {
+                return (0, 0, EILSEQ);
+            }
             (c, 4, 0)
         }
         ENC_UTF32BE => {
-            if src_left < 4 { return (0, 0, EINVAL); }
-            let c = ((*src as u32) << 24) | ((*src.add(1) as u32) << 16) | ((*src.add(2) as u32) << 8) | (*src.add(3) as u32);
-            if c >= 0xD800 && c < 0xE000 { return (0, 0, EILSEQ); }
-            if c >= 0x110000 { return (0, 0, EILSEQ); }
+            if src_left < 4 {
+                return (0, 0, EINVAL);
+            }
+            let c = ((*src as u32) << 24)
+                | ((*src.add(1) as u32) << 16)
+                | ((*src.add(2) as u32) << 8)
+                | (*src.add(3) as u32);
+            if c >= 0xD800 && c < 0xE000 {
+                return (0, 0, EILSEQ);
+            }
+            if c >= 0x110000 {
+                return (0, 0, EILSEQ);
+            }
             (c, 4, 0)
         }
         ENC_WCHAR_T => {
-            if src_left < 4 { return (0, 0, EINVAL); }
+            if src_left < 4 {
+                return (0, 0, EINVAL);
+            }
             // Linux/AArch64 wchar_t is a little-endian 32-bit scalar. Read
             // individual bytes so an otherwise valid caller buffer never
             // requires u32 alignment at the C ABI boundary.
@@ -7249,13 +8310,19 @@ unsafe fn iconv_decode(enc: i32, src: *const u8, src_left: usize) -> (u32, usize
                 | ((*src.add(1) as u32) << 8)
                 | ((*src.add(2) as u32) << 16)
                 | ((*src.add(3) as u32) << 24);
-            if c >= 0xD800 && c < 0xE000 { return (0, 0, EILSEQ); }
-            if c >= 0x110000 { return (0, 0, EILSEQ); }
+            if c >= 0xD800 && c < 0xE000 {
+                return (0, 0, EILSEQ);
+            }
+            if c >= 0x110000 {
+                return (0, 0, EILSEQ);
+            }
             (c, 4, 0)
         }
         ENC_ASCII => {
             let c = *src as u32;
-            if c >= 128 { return (0, 0, EILSEQ); }
+            if c >= 128 {
+                return (0, 0, EILSEQ);
+            }
             (c, 1, 0)
         }
         ENC_LATIN1 => (*src as u32, 1, 0),
@@ -7275,93 +8342,159 @@ unsafe fn iconv_decode(enc: i32, src: *const u8, src_left: usize) -> (u32, usize
         ENC_ISO8859_16 => (crabc_core::iconv::Iso8859::Iso8859_16.decode(*src), 1, 0),
         ENC_WIN1252 => {
             let b = *src;
-            if b < 128 { return (b as u32, 1, 0); }
+            if b < 128 {
+                return (b as u32, 1, 0);
+            }
             (WIN1252_TO_U[b as usize - 128], 1, 0)
         }
         ENC_WIN1251 => {
             let b = *src;
-            if b < 128 { return (b as u32, 1, 0); }
+            if b < 128 {
+                return (b as u32, 1, 0);
+            }
             (WIN1251_TO_U[b as usize - 128], 1, 0)
         }
         ENC_KOI8R => {
             let b = *src;
-            if b < 128 { return (b as u32, 1, 0); }
+            if b < 128 {
+                return (b as u32, 1, 0);
+            }
             (KOI8R_TO_U[b as usize - 128], 1, 0)
         }
         ENC_GBK | ENC_GB2312 => {
             let c = *src;
-            if c < 128 { return (c as u32, 1, 0); }
-            if c == 128 { return (0x20AC, 1, 0); }
-            if src_left < 2 { return (0, 0, EINVAL); }
+            if c < 128 {
+                return (c as u32, 1, 0);
+            }
+            if c == 128 {
+                return (0x20AC, 1, 0);
+            }
+            if src_left < 2 {
+                return (0, 0, EINVAL);
+            }
             let d = *src.add(1);
-            if d < 0x40 || d == 0x7F || d > 0xFE { return (0, 0, EILSEQ); }
+            if d < 0x40 || d == 0x7F || d > 0xFE {
+                return (0, 0, EILSEQ);
+            }
             let row = (c as usize).wrapping_sub(0x81);
-            if row >= 126 { return (0, 0, EILSEQ); }
+            if row >= 126 {
+                return (0, 0, EILSEQ);
+            }
             let mut col = (d as usize) - 0x40;
-            if col > 63 { col -= 1; }
+            if col > 63 {
+                col -= 1;
+            }
             let cp = GB18030_TABLE[row * 190 + col] as u32;
-            if cp == 0 { return (0, 0, EILSEQ); }
+            if cp == 0 {
+                return (0, 0, EILSEQ);
+            }
             (cp, 2, 0)
         }
         ENC_BIG5 => {
             let c = *src;
-            if c < 128 { return (c as u32, 1, 0); }
-            if src_left < 2 { return (0, 0, EINVAL); }
+            if c < 128 {
+                return (c as u32, 1, 0);
+            }
+            if src_left < 2 {
+                return (0, 0, EINVAL);
+            }
             let d = *src.add(1);
-            if d < 0x40 || d == 0x7F || d > 0xFE { return (0, 0, EILSEQ); }
+            if d < 0x40 || d == 0x7F || d > 0xFE {
+                return (0, 0, EILSEQ);
+            }
             let mut col = (d as usize) - 0x40;
-            if col > 0x3E { col -= 0x22; }
+            if col > 0x3E {
+                col -= 0x22;
+            }
             if c >= 0xA1 && c < 0xFA {
                 let row = (c as usize) - 0xA1;
-                if row >= 89 { return (0, 0, EILSEQ); }
+                if row >= 89 {
+                    return (0, 0, EILSEQ);
+                }
                 let cp = BIG5_TABLE[row * 157 + col] as u32;
-                if cp == 0 { return (0, 0, EILSEQ); }
+                if cp == 0 {
+                    return (0, 0, EILSEQ);
+                }
                 return (cp, 2, 0);
             }
             (0, 0, EILSEQ)
         }
         ENC_EUCJP => {
             let c = *src;
-            if c < 128 { return (c as u32, 1, 0); }
+            if c < 128 {
+                return (c as u32, 1, 0);
+            }
             if c == 0x8E {
-                if src_left < 2 { return (0, 0, EINVAL); }
+                if src_left < 2 {
+                    return (0, 0, EINVAL);
+                }
                 let d = *src.add(1);
-                if d < 0xA1 || d > 0xDF { return (0, 0, EILSEQ); }
+                if d < 0xA1 || d > 0xDF {
+                    return (0, 0, EILSEQ);
+                }
                 return ((d as u32) + 0xFF61 - 0xA1, 2, 0);
             }
-            if c < 0xA1 { return (0, 0, EILSEQ); }
-            if src_left < 2 { return (0, 0, EINVAL); }
+            if c < 0xA1 {
+                return (0, 0, EILSEQ);
+            }
+            if src_left < 2 {
+                return (0, 0, EINVAL);
+            }
             let d = *src.add(1);
-            if d < 0xA1 || d > 0xFE { return (0, 0, EILSEQ); }
+            if d < 0xA1 || d > 0xFE {
+                return (0, 0, EILSEQ);
+            }
             let row = (c as usize) - 0xA1;
             let col = (d as usize) - 0xA1;
-            if row >= 84 || col >= 94 { return (0, 0, EILSEQ); }
+            if row >= 84 || col >= 94 {
+                return (0, 0, EILSEQ);
+            }
             let cp = JIS0208[row * 94 + col] as u32;
-            if cp == 0 { return (0, 0, EILSEQ); }
+            if cp == 0 {
+                return (0, 0, EILSEQ);
+            }
             (cp, 2, 0)
         }
         ENC_SHIFTJIS => {
             let c = *src;
-            if c < 128 { return (c as u32, 1, 0); }
-            if c >= 0xA1 && c <= 0xDF { return ((c as u32) + 0xFF61 - 0xA1, 1, 0); }
-            if src_left < 2 { return (0, 0, EINVAL); }
+            if c < 128 {
+                return (c as u32, 1, 0);
+            }
+            if c >= 0xA1 && c <= 0xDF {
+                return ((c as u32) + 0xFF61 - 0xA1, 1, 0);
+            }
+            if src_left < 2 {
+                return (0, 0, EINVAL);
+            }
             let d = *src.add(1);
-            if d < 0x40 || d == 0x7F || d > 0xFC { return (0, 0, EILSEQ); }
-            let row = if c >= 129 && c <= 159 { (c as usize) - 129 }
-                      else if c >= 224 && c <= 239 { (c as usize) - 193 }
-                      else { return (0, 0, EILSEQ); };
+            if d < 0x40 || d == 0x7F || d > 0xFC {
+                return (0, 0, EILSEQ);
+            }
+            let row = if c >= 129 && c <= 159 {
+                (c as usize) - 129
+            } else if c >= 224 && c <= 239 {
+                (c as usize) - 193
+            } else {
+                return (0, 0, EILSEQ);
+            };
             let (col, row_adj) = if d >= 64 && d <= 158 && d != 127 {
                 let mut dd = d as usize;
-                if dd > 127 { dd -= 1; }
+                if dd > 127 {
+                    dd -= 1;
+                }
                 (dd - 64, row * 2)
             } else if d >= 159 && d <= 252 {
                 ((d as usize) - 159, row * 2 + 1)
             } else {
                 return (0, 0, EILSEQ);
             };
-            if row_adj >= 84 { return (0, 0, EILSEQ); }
+            if row_adj >= 84 {
+                return (0, 0, EILSEQ);
+            }
             let cp = JIS0208[row_adj * 94 + col] as u32;
-            if cp == 0 { return (0, 0, EILSEQ); }
+            if cp == 0 {
+                return (0, 0, EILSEQ);
+            }
             (cp, 2, 0)
         }
         _ => (0, 0, EILSEQ),
@@ -7372,23 +8505,32 @@ unsafe fn iconv_encode(enc: i32, c: u32, dst: *mut u8, dst_left: usize) -> (usiz
     match enc {
         ENC_UTF8 => {
             if c < 0x80 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             if c < 0x800 {
-                if dst_left < 2 { return (0, E2BIG); }
+                if dst_left < 2 {
+                    return (0, E2BIG);
+                }
                 *dst = (0xC0 | (c >> 6)) as u8;
                 *dst.add(1) = (0x80 | (c & 0x3F)) as u8;
                 return (2, 0);
             }
             if c < 0x10000 {
-                if dst_left < 3 { return (0, E2BIG); }
+                if dst_left < 3 {
+                    return (0, E2BIG);
+                }
                 *dst = (0xE0 | (c >> 12)) as u8;
                 *dst.add(1) = (0x80 | ((c >> 6) & 0x3F)) as u8;
                 *dst.add(2) = (0x80 | (c & 0x3F)) as u8;
                 return (3, 0);
             }
-            if dst_left < 4 { return (0, E2BIG); }
+            if dst_left < 4 {
+                return (0, E2BIG);
+            }
             *dst = (0xF0 | (c >> 18)) as u8;
             *dst.add(1) = (0x80 | ((c >> 12) & 0x3F)) as u8;
             *dst.add(2) = (0x80 | ((c >> 6) & 0x3F)) as u8;
@@ -7397,48 +8539,70 @@ unsafe fn iconv_encode(enc: i32, c: u32, dst: *mut u8, dst_left: usize) -> (usiz
         }
         ENC_UTF16LE => {
             if c < 0x10000 {
-                if dst_left < 2 { return (0, E2BIG); }
+                if dst_left < 2 {
+                    return (0, E2BIG);
+                }
                 *dst = (c & 0xFF) as u8;
                 *dst.add(1) = (c >> 8) as u8;
                 return (2, 0);
             }
-            if dst_left < 4 { return (0, E2BIG); }
+            if dst_left < 4 {
+                return (0, E2BIG);
+            }
             let c = c - 0x10000;
             let hi = ((c >> 10) + 0xD800) as u16;
             let lo = ((c & 0x3FF) + 0xDC00) as u16;
-            *dst = (hi & 0xFF) as u8; *dst.add(1) = (hi >> 8) as u8;
-            *dst.add(2) = (lo & 0xFF) as u8; *dst.add(3) = (lo >> 8) as u8;
+            *dst = (hi & 0xFF) as u8;
+            *dst.add(1) = (hi >> 8) as u8;
+            *dst.add(2) = (lo & 0xFF) as u8;
+            *dst.add(3) = (lo >> 8) as u8;
             (4, 0)
         }
         ENC_UTF16BE => {
             if c < 0x10000 {
-                if dst_left < 2 { return (0, E2BIG); }
+                if dst_left < 2 {
+                    return (0, E2BIG);
+                }
                 *dst = (c >> 8) as u8;
                 *dst.add(1) = (c & 0xFF) as u8;
                 return (2, 0);
             }
-            if dst_left < 4 { return (0, E2BIG); }
+            if dst_left < 4 {
+                return (0, E2BIG);
+            }
             let c = c - 0x10000;
             let hi = ((c >> 10) + 0xD800) as u16;
             let lo = ((c & 0x3FF) + 0xDC00) as u16;
-            *dst = (hi >> 8) as u8; *dst.add(1) = (hi & 0xFF) as u8;
-            *dst.add(2) = (lo >> 8) as u8; *dst.add(3) = (lo & 0xFF) as u8;
+            *dst = (hi >> 8) as u8;
+            *dst.add(1) = (hi & 0xFF) as u8;
+            *dst.add(2) = (lo >> 8) as u8;
+            *dst.add(3) = (lo & 0xFF) as u8;
             (4, 0)
         }
         ENC_UTF32LE => {
-            if dst_left < 4 { return (0, E2BIG); }
-            *dst = (c & 0xFF) as u8; *dst.add(1) = ((c >> 8) & 0xFF) as u8;
-            *dst.add(2) = ((c >> 16) & 0xFF) as u8; *dst.add(3) = (c >> 24) as u8;
+            if dst_left < 4 {
+                return (0, E2BIG);
+            }
+            *dst = (c & 0xFF) as u8;
+            *dst.add(1) = ((c >> 8) & 0xFF) as u8;
+            *dst.add(2) = ((c >> 16) & 0xFF) as u8;
+            *dst.add(3) = (c >> 24) as u8;
             (4, 0)
         }
         ENC_UTF32BE => {
-            if dst_left < 4 { return (0, E2BIG); }
-            *dst = (c >> 24) as u8; *dst.add(1) = ((c >> 16) & 0xFF) as u8;
-            *dst.add(2) = ((c >> 8) & 0xFF) as u8; *dst.add(3) = (c & 0xFF) as u8;
+            if dst_left < 4 {
+                return (0, E2BIG);
+            }
+            *dst = (c >> 24) as u8;
+            *dst.add(1) = ((c >> 16) & 0xFF) as u8;
+            *dst.add(2) = ((c >> 8) & 0xFF) as u8;
+            *dst.add(3) = (c & 0xFF) as u8;
             (4, 0)
         }
         ENC_WCHAR_T => {
-            if dst_left < 4 { return (0, E2BIG); }
+            if dst_left < 4 {
+                return (0, E2BIG);
+            }
             // See the matching decoder: WChar is Linux/AArch64 LE, but C
             // callers are allowed byte-aligned output storage.
             *dst = (c & 0xff) as u8;
@@ -7449,174 +8613,255 @@ unsafe fn iconv_encode(enc: i32, c: u32, dst: *mut u8, dst_left: usize) -> (usiz
         }
         ENC_ASCII => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_LATIN1 => {
             if c < 256 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_2 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_2.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_3 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_3.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_4 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_4.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_5 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_5.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_6 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_6.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_7 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_7.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_8 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_8.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_9 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_9.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_10 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_10.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_11 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_11.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_13 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_13.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_14 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_14.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_15 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_15.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_ISO8859_16 => {
             if let Some(b) = crabc_core::iconv::Iso8859::Iso8859_16.encode(c) {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = b; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = b;
+                return (1, 0);
             }
             (0, EILSEQ)
         }
         ENC_WIN1252 => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             if c >= 0xA0 && c <= 0xFF && WIN1252_TO_U[c as usize - 128] == c {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             for i in 0..128usize {
                 if WIN1252_TO_U[i] == c {
-                    if dst_left < 1 { return (0, E2BIG); }
-                    *dst = (i + 128) as u8; return (1, 0);
+                    if dst_left < 1 {
+                        return (0, E2BIG);
+                    }
+                    *dst = (i + 128) as u8;
+                    return (1, 0);
                 }
             }
             (0, EILSEQ)
         }
         ENC_WIN1251 => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             for i in 0..128usize {
                 if WIN1251_TO_U[i] == c {
-                    if dst_left < 1 { return (0, E2BIG); }
-                    *dst = (i + 128) as u8; return (1, 0);
+                    if dst_left < 1 {
+                        return (0, E2BIG);
+                    }
+                    *dst = (i + 128) as u8;
+                    return (1, 0);
                 }
             }
             (0, EILSEQ)
         }
         ENC_KOI8R => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             for i in 0..128usize {
                 if KOI8R_TO_U[i] == c {
-                    if dst_left < 1 { return (0, E2BIG); }
-                    *dst = (i + 128) as u8; return (1, 0);
+                    if dst_left < 1 {
+                        return (0, E2BIG);
+                    }
+                    *dst = (i + 128) as u8;
+                    return (1, 0);
                 }
             }
             (0, EILSEQ)
         }
         ENC_GBK | ENC_GB2312 => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             if c == 0x20AC {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = 128; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = 128;
+                return (1, 0);
             }
             for row in 0..126usize {
                 for col in 0..190usize {
                     if GB18030_TABLE[row * 190 + col] as u32 == c {
-                        if dst_left < 2 { return (0, E2BIG); }
+                        if dst_left < 2 {
+                            return (0, E2BIG);
+                        }
                         *dst = (row + 0x81) as u8;
-                        *dst.add(1) = if col <= 62 { (col + 0x40) as u8 } else { (col + 0x41) as u8 };
+                        *dst.add(1) = if col <= 62 {
+                            (col + 0x40) as u8
+                        } else {
+                            (col + 0x41) as u8
+                        };
                         return (2, 0);
                     }
                 }
@@ -7625,15 +8870,24 @@ unsafe fn iconv_encode(enc: i32, c: u32, dst: *mut u8, dst_left: usize) -> (usiz
         }
         ENC_BIG5 => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             for row in 0..89usize {
                 for col in 0..157usize {
                     if BIG5_TABLE[row * 157 + col] as u32 == c {
-                        if dst_left < 2 { return (0, E2BIG); }
+                        if dst_left < 2 {
+                            return (0, E2BIG);
+                        }
                         *dst = (row + 0xA1) as u8;
-                        *dst.add(1) = if col <= 0x3E { (col + 0x40) as u8 } else { (col + 0x62) as u8 };
+                        *dst.add(1) = if col <= 0x3E {
+                            (col + 0x40) as u8
+                        } else {
+                            (col + 0x62) as u8
+                        };
                         return (2, 0);
                     }
                 }
@@ -7642,39 +8896,61 @@ unsafe fn iconv_encode(enc: i32, c: u32, dst: *mut u8, dst_left: usize) -> (usiz
         }
         ENC_EUCJP => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             if c >= 0xFF61 && c <= 0xFF9F {
-                if dst_left < 2 { return (0, E2BIG); }
+                if dst_left < 2 {
+                    return (0, E2BIG);
+                }
                 *dst = 0x8E;
                 *dst.add(1) = (c - 0xFF61 + 0xA1) as u8;
                 return (2, 0);
             }
             let jis = uni_to_jis(c);
-            if jis == 0 { return (0, EILSEQ); }
-            if dst_left < 2 { return (0, E2BIG); }
+            if jis == 0 {
+                return (0, EILSEQ);
+            }
+            if dst_left < 2 {
+                return (0, E2BIG);
+            }
             *dst = ((jis >> 8) as u8).wrapping_add(0x80);
             *dst.add(1) = ((jis & 0xFF) as u8).wrapping_add(0x80);
             (2, 0)
         }
         ENC_SHIFTJIS => {
             if c < 128 {
-                if dst_left < 1 { return (0, E2BIG); }
-                *dst = c as u8; return (1, 0);
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
+                *dst = c as u8;
+                return (1, 0);
             }
             if c >= 0xFF61 && c <= 0xFF9F {
-                if dst_left < 1 { return (0, E2BIG); }
+                if dst_left < 1 {
+                    return (0, E2BIG);
+                }
                 *dst = (c - 0xFF61 + 0xA1) as u8;
                 return (1, 0);
             }
             let jis = uni_to_jis(c);
-            if jis == 0 { return (0, EILSEQ); }
-            if dst_left < 2 { return (0, E2BIG); }
+            if jis == 0 {
+                return (0, EILSEQ);
+            }
+            if dst_left < 2 {
+                return (0, E2BIG);
+            }
             let r = (jis >> 8) as usize;
             let d = (jis & 0xFF) as usize;
             *dst = ((r + 1) / 2 + if r < 95 { 112 } else { 176 }) as u8;
-            *dst.add(1) = if r % 2 == 1 { (d + 31 + d / 96) as u8 } else { (d + 126) as u8 };
+            *dst.add(1) = if r % 2 == 1 {
+                (d + 31 + d / 96) as u8
+            } else {
+                (d + 126) as u8
+            };
             (2, 0)
         }
         _ => (0, EILSEQ),
@@ -7704,7 +8980,9 @@ pub unsafe extern "C" fn iconv(
         ERRNO = EINVAL;
         return !0usize;
     }
-    if inbuf.is_null() || outbuf.is_null() { return 0; }
+    if inbuf.is_null() || outbuf.is_null() {
+        return 0;
+    }
     let from = extract_from(cd);
     let to = extract_to(cd);
     let mut src = *inbuf as *const u8;
@@ -7763,7 +9041,9 @@ pub unsafe extern "C" fn iconv(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn iconv_close(_cd: IconvT) -> c_int { 0 }
+pub unsafe extern "C" fn iconv_close(_cd: IconvT) -> c_int {
+    0
+}
 
 // ============================================================
 // Syscall wrappers as public C ABI
@@ -7834,12 +9114,7 @@ pub unsafe extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn pread(
-    fd: c_int,
-    buf: *mut c_void,
-    count: SizeT,
-    offset: i64,
-) -> SSizeT {
+pub unsafe extern "C" fn pread(fd: c_int, buf: *mut c_void, count: SizeT, offset: i64) -> SSizeT {
     syscall_result(sys_pread64(fd, buf as *mut u8, count, offset)) as SSizeT
 }
 
@@ -7941,7 +9216,13 @@ unsafe fn sys_unlinkat(dirfd: i32, path: *const u8, flags: i32) -> i64 {
 }
 
 #[inline]
-unsafe fn sys_renameat2(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8, flags: u32) -> i64 {
+unsafe fn sys_renameat2(
+    olddirfd: i32,
+    oldpath: *const u8,
+    newdirfd: i32,
+    newpath: *const u8,
+    flags: u32,
+) -> i64 {
     // SAFETY: Public-C-ABI callers provide both NUL-terminated pathname
     // pointers for the duration of this internal syscall wrapper.
     let oldpath = unsafe { core::ffi::CStr::from_ptr(oldpath.cast()) };
@@ -8022,43 +9303,106 @@ static mut STDOUT_BUF: [u8; BUFSIZ] = [0; BUFSIZ];
 static mut STDERR_BUF: [u8; BUFSIZ] = [0; BUFSIZ];
 
 static mut STDIN_FILE: FILE = FILE {
-    flags: F_PERM, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
-    close: None, wend: core::ptr::null_mut(), wpos: core::ptr::null_mut(),
-    mustbezero_1: core::ptr::null_mut(), wbase: core::ptr::null_mut(),
-    read_fn: None, write_fn: None, seek_fn: None,
-    buf: core::ptr::null_mut(), buf_size: BUFSIZ,
-    prev: core::ptr::null_mut(), next: core::ptr::null_mut(),
-    fd: 0, pipe_pid: 0, lockcount: 0, mode: 0, lock: -1, lbf: -1,
-    cookie: core::ptr::null_mut(), off: 0,
-    getln_buf: core::ptr::null_mut(), mustbezero_2: core::ptr::null_mut(),
-    shend: core::ptr::null_mut(), shlim: 0, shcnt: 0,
-    ungotten: [0; UNGET], ungotten_count: 0, _eof: 0, _err: 0,
+    flags: F_PERM,
+    rpos: core::ptr::null_mut(),
+    rend: core::ptr::null_mut(),
+    close: None,
+    wend: core::ptr::null_mut(),
+    wpos: core::ptr::null_mut(),
+    mustbezero_1: core::ptr::null_mut(),
+    wbase: core::ptr::null_mut(),
+    read_fn: None,
+    write_fn: None,
+    seek_fn: None,
+    buf: core::ptr::null_mut(),
+    buf_size: BUFSIZ,
+    prev: core::ptr::null_mut(),
+    next: core::ptr::null_mut(),
+    fd: 0,
+    pipe_pid: 0,
+    lockcount: 0,
+    mode: 0,
+    lock: -1,
+    lbf: -1,
+    cookie: core::ptr::null_mut(),
+    off: 0,
+    getln_buf: core::ptr::null_mut(),
+    mustbezero_2: core::ptr::null_mut(),
+    shend: core::ptr::null_mut(),
+    shlim: 0,
+    shcnt: 0,
+    ungotten: [0; UNGET],
+    ungotten_count: 0,
+    _eof: 0,
+    _err: 0,
 };
 static mut STDOUT_FILE: FILE = FILE {
-    flags: F_PERM | F_NOWR | F_SVB, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
-    close: None, wend: core::ptr::null_mut(), wpos: core::ptr::null_mut(),
-    mustbezero_1: core::ptr::null_mut(), wbase: core::ptr::null_mut(),
-    read_fn: None, write_fn: None, seek_fn: None,
-    buf: core::ptr::null_mut(), buf_size: BUFSIZ,
-    prev: core::ptr::null_mut(), next: core::ptr::null_mut(),
-    fd: 1, pipe_pid: 0, lockcount: 0, mode: 0, lock: -1, lbf: -1,
-    cookie: core::ptr::null_mut(), off: 0,
-    getln_buf: core::ptr::null_mut(), mustbezero_2: core::ptr::null_mut(),
-    shend: core::ptr::null_mut(), shlim: 0, shcnt: 0,
-    ungotten: [0; UNGET], ungotten_count: 0, _eof: 0, _err: 0,
+    flags: F_PERM | F_NOWR | F_SVB,
+    rpos: core::ptr::null_mut(),
+    rend: core::ptr::null_mut(),
+    close: None,
+    wend: core::ptr::null_mut(),
+    wpos: core::ptr::null_mut(),
+    mustbezero_1: core::ptr::null_mut(),
+    wbase: core::ptr::null_mut(),
+    read_fn: None,
+    write_fn: None,
+    seek_fn: None,
+    buf: core::ptr::null_mut(),
+    buf_size: BUFSIZ,
+    prev: core::ptr::null_mut(),
+    next: core::ptr::null_mut(),
+    fd: 1,
+    pipe_pid: 0,
+    lockcount: 0,
+    mode: 0,
+    lock: -1,
+    lbf: -1,
+    cookie: core::ptr::null_mut(),
+    off: 0,
+    getln_buf: core::ptr::null_mut(),
+    mustbezero_2: core::ptr::null_mut(),
+    shend: core::ptr::null_mut(),
+    shlim: 0,
+    shcnt: 0,
+    ungotten: [0; UNGET],
+    ungotten_count: 0,
+    _eof: 0,
+    _err: 0,
 };
 static mut STDERR_FILE: FILE = FILE {
-    flags: F_PERM | F_NOWR, rpos: core::ptr::null_mut(), rend: core::ptr::null_mut(),
-    close: None, wend: core::ptr::null_mut(), wpos: core::ptr::null_mut(),
-    mustbezero_1: core::ptr::null_mut(), wbase: core::ptr::null_mut(),
-    read_fn: None, write_fn: None, seek_fn: None,
-    buf: core::ptr::null_mut(), buf_size: BUFSIZ,
-    prev: core::ptr::null_mut(), next: core::ptr::null_mut(),
-    fd: 2, pipe_pid: 0, lockcount: 0, mode: 0, lock: -1, lbf: -1,
-    cookie: core::ptr::null_mut(), off: 0,
-    getln_buf: core::ptr::null_mut(), mustbezero_2: core::ptr::null_mut(),
-    shend: core::ptr::null_mut(), shlim: 0, shcnt: 0,
-    ungotten: [0; UNGET], ungotten_count: 0, _eof: 0, _err: 0,
+    flags: F_PERM | F_NOWR,
+    rpos: core::ptr::null_mut(),
+    rend: core::ptr::null_mut(),
+    close: None,
+    wend: core::ptr::null_mut(),
+    wpos: core::ptr::null_mut(),
+    mustbezero_1: core::ptr::null_mut(),
+    wbase: core::ptr::null_mut(),
+    read_fn: None,
+    write_fn: None,
+    seek_fn: None,
+    buf: core::ptr::null_mut(),
+    buf_size: BUFSIZ,
+    prev: core::ptr::null_mut(),
+    next: core::ptr::null_mut(),
+    fd: 2,
+    pipe_pid: 0,
+    lockcount: 0,
+    mode: 0,
+    lock: -1,
+    lbf: -1,
+    cookie: core::ptr::null_mut(),
+    off: 0,
+    getln_buf: core::ptr::null_mut(),
+    mustbezero_2: core::ptr::null_mut(),
+    shend: core::ptr::null_mut(),
+    shlim: 0,
+    shcnt: 0,
+    ungotten: [0; UNGET],
+    ungotten_count: 0,
+    _eof: 0,
+    _err: 0,
 };
 
 #[no_mangle]
@@ -8114,16 +9458,21 @@ unsafe extern "C" fn __stdio_read(f: *mut FILE, buf: *mut u8, len: usize) -> usi
     let destination_end = destination_start.saturating_add(len);
     let file_buffer_start = (*f).buf as usize;
     let file_buffer_end = file_buffer_start.saturating_add((*f).buf_size);
-    let destination_overlaps_file_buffer = destination_start < file_buffer_end
-        && file_buffer_start < destination_end;
-    let has_file_buffer = !(*f).buf.is_null()
-        && (*f).buf_size != 0
-        && !destination_overlaps_file_buffer;
+    let destination_overlaps_file_buffer =
+        destination_start < file_buffer_end && file_buffer_start < destination_end;
+    let has_file_buffer =
+        !(*f).buf.is_null() && (*f).buf_size != 0 && !destination_overlaps_file_buffer;
     let direct_len = len - has_file_buffer as usize;
     let n = if has_file_buffer && direct_len != 0 {
         let iovecs = [
-            crabc_core::io::Iovec { iov_base: buf, iov_len: direct_len },
-            crabc_core::io::Iovec { iov_base: (*f).buf, iov_len: (*f).buf_size },
+            crabc_core::io::Iovec {
+                iov_base: buf,
+                iov_len: direct_len,
+            },
+            crabc_core::io::Iovec {
+                iov_base: (*f).buf,
+                iov_len: (*f).buf_size,
+            },
         ];
         match crabc_core::io::readv_raw((*f).fd, iovecs.as_ptr(), iovecs.len()) {
             Ok(value) => value as i64,
@@ -8135,7 +9484,12 @@ unsafe extern "C" fn __stdio_read(f: *mut FILE, buf: *mut u8, len: usize) -> usi
         sys_read((*f).fd as i64, buf, len)
     };
     if n <= 0 {
-        if n == 0 { (*f).flags |= F_EOF; } else { (*f).flags |= F_ERR; (*f)._err = 1; }
+        if n == 0 {
+            (*f).flags |= F_EOF;
+        } else {
+            (*f).flags |= F_ERR;
+            (*f)._err = 1;
+        }
         // Publish the FILE error/EOF state before acting on cancellation, so
         // cleanup can safely close a stream after an interrupted read.
         pthread_testcancel_current();
@@ -8161,11 +9515,10 @@ unsafe extern "C" fn __stdio_write(f: *mut FILE, buf: *const u8, len: usize) -> 
     // formatted input can use it as a fallback rewind origin.
     (*f).flags &= !F_POSITION_KNOWN;
     let l = (*f).wpos as usize - (*f).wbase as usize;
-    let mut iov = [
-        ((*f).wbase as *const u8, l),
-        (buf, len),
-    ];
-    if iov[0].1 == 0 { iov = [iov[1], (core::ptr::null(), 0)]; }
+    let mut iov = [((*f).wbase as *const u8, l), (buf, len)];
+    if iov[0].1 == 0 {
+        iov = [iov[1], (core::ptr::null(), 0)];
+    }
     if (*f).flags & F_APP != 0 {
         let _ = sys_lseek((*f).fd as i64, 0, SEEK_END as i64);
     }
@@ -8174,7 +9527,10 @@ unsafe extern "C" fn __stdio_write(f: *mut FILE, buf: *const u8, len: usize) -> 
     while rem > 0 {
         let ptr = iov[idx].0;
         let cnt = iov[idx].1;
-        if cnt == 0 { idx += 1; continue; }
+        if cnt == 0 {
+            idx += 1;
+            continue;
+        }
         let n = sys_write((*f).fd as i64, ptr, cnt);
         if n <= 0 {
             (*f).wpos = core::ptr::null_mut();
@@ -8186,7 +9542,9 @@ unsafe extern "C" fn __stdio_write(f: *mut FILE, buf: *const u8, len: usize) -> 
         rem -= n as usize;
         iov[idx].0 = iov[idx].0.add(n as usize);
         iov[idx].1 -= n as usize;
-        if iov[idx].1 == 0 { idx += 1; }
+        if iov[idx].1 == 0 {
+            idx += 1;
+        }
     }
     (*f).wend = (*f).buf.add((*f).buf_size);
     (*f).wbase = (*f).buf;
@@ -8240,11 +9598,21 @@ unsafe fn fmodeflags(mode: *const c_char) -> c_int {
     } else {
         flags = O_WRONLY;
     }
-    if !strchr(mode as *const u8, b'x' as c_int).is_null() { flags |= O_EXCL; }
-    if !strchr(mode as *const u8, b'e' as c_int).is_null() { flags |= O_CLOEXEC; }
-    if m != b'r' as c_char { flags |= O_CREAT; }
-    if m == b'w' as c_char { flags |= O_TRUNC; }
-    if m == b'a' as c_char { flags |= O_APPEND; }
+    if !strchr(mode as *const u8, b'x' as c_int).is_null() {
+        flags |= O_EXCL;
+    }
+    if !strchr(mode as *const u8, b'e' as c_int).is_null() {
+        flags |= O_CLOEXEC;
+    }
+    if m != b'r' as c_char {
+        flags |= O_CREAT;
+    }
+    if m == b'w' as c_char {
+        flags |= O_TRUNC;
+    }
+    if m == b'a' as c_char {
+        flags |= O_APPEND;
+    }
     flags
 }
 
@@ -8260,7 +9628,9 @@ unsafe fn flush_buf(f: *mut FILE) -> c_int {
     }
     if let Some(wfunc) = (*f).write_fn {
         let ret = wfunc(f, core::ptr::null(), 0);
-        if ret == 0 && (*f).wpos.is_null() { return -1; }
+        if ret == 0 && (*f).wpos.is_null() {
+            return -1;
+        }
         return 0;
     }
     (*f).flags |= F_ERR;
@@ -8273,35 +9643,53 @@ unsafe fn flush_buf(f: *mut FILE) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fopen(filename: *const c_char, mode: *const c_char) -> *mut FILE {
-    if filename.is_null() || mode.is_null() { ERRNO = EINVAL; return core::ptr::null_mut(); }
+    if filename.is_null() || mode.is_null() {
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
+    }
     let m = *mode;
     if m != b'r' as c_char && m != b'w' as c_char && m != b'a' as c_char {
-        ERRNO = EINVAL; return core::ptr::null_mut();
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
     }
     let flags = fmodeflags(mode);
     let fd = sys_open(filename as *const u8, flags as i64, 0o666);
-    if fd < 0 { ERRNO = (-fd) as c_int; return core::ptr::null_mut(); }
+    if fd < 0 {
+        ERRNO = (-fd) as c_int;
+        return core::ptr::null_mut();
+    }
     fdopen(fd as c_int, mode)
 }
 
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut FILE {
-    if fd < 0 || mode.is_null() { ERRNO = EINVAL; return core::ptr::null_mut(); }
+    if fd < 0 || mode.is_null() {
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
+    }
     let m = *mode;
     if m != b'r' as c_char && m != b'w' as c_char && m != b'a' as c_char {
-        ERRNO = EINVAL; return core::ptr::null_mut();
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
     }
     // `init_file` writes the complete FILE state before any stream operation
     // observes it. The trailing buffer is initialized only by a read or write
     // path before consumption, so zeroing all BUFSIZ bytes at every `fdopen`
     // only adds allocation work to the ordinary open/close lifecycle.
     let f = malloc(core::mem::size_of::<FILE>() + UNGET + BUFSIZ) as *mut FILE;
-    if f.is_null() { ERRNO = ENOMEM; return core::ptr::null_mut(); }
+    if f.is_null() {
+        ERRNO = ENOMEM;
+        return core::ptr::null_mut();
+    }
     let buf = buf_ptr(f);
     init_file(f, fd, mode, Some(__stdio_close), buf, BUFSIZ);
-    if !strchr(mode as *const u8, b'a' as c_int).is_null() { (*f).flags |= F_APP; }
-    if !strchr(mode as *const u8, b'e' as c_int).is_null() { sys_fcntl(fd, F_SETFD, FD_CLOEXEC as i64); }
+    if !strchr(mode as *const u8, b'a' as c_int).is_null() {
+        (*f).flags |= F_APP;
+    }
+    if !strchr(mode as *const u8, b'e' as c_int).is_null() {
+        sys_fcntl(fd, F_SETFD, FD_CLOEXEC as i64);
+    }
     if (*f).flags & F_NOWR == 0 {
         let mut ws: winsize = core::mem::zeroed();
         if sys_ioctl(fd, TIOCGWINSZ, &mut ws as *mut winsize as *mut u8) == 0 {
@@ -8313,16 +9701,26 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut FILE {
 
 #[no_mangle]
 pub unsafe extern "C" fn freopen(
-    filename: *const c_char, mode: *const c_char, f: *mut FILE,
+    filename: *const c_char,
+    mode: *const c_char,
+    f: *mut FILE,
 ) -> *mut FILE {
     fflush(f);
-    if (*f).pipe_pid > 0 { let _ = __stdio_close(f); }
+    if (*f).pipe_pid > 0 {
+        let _ = __stdio_close(f);
+    }
     if filename.is_null() {
         let flags = fmodeflags(mode);
-        if flags == 0 { return core::ptr::null_mut(); }
+        if flags == 0 {
+            return core::ptr::null_mut();
+        }
         let mut fl = flags & !(O_CREAT | O_EXCL | O_CLOEXEC);
-        if (*f).flags & F_APP != 0 { fl = (fl & !O_ACCMODE) | O_WRONLY | O_APPEND; }
-        if sys_fcntl((*f).fd, F_SETFL, fl as i64) < 0 { return core::ptr::null_mut(); }
+        if (*f).flags & F_APP != 0 {
+            fl = (fl & !O_ACCMODE) | O_WRONLY | O_APPEND;
+        }
+        if sys_fcntl((*f).fd, F_SETFL, fl as i64) < 0 {
+            return core::ptr::null_mut();
+        }
         let has_plus = !strchr(mode as *const u8, b'+' as c_int).is_null();
         if has_plus {
             (*f).flags &= !(F_NORD | F_NOWR);
@@ -8334,7 +9732,10 @@ pub unsafe extern "C" fn freopen(
         return f;
     }
     let new_f = fopen(filename, mode);
-    if new_f.is_null() { let _ = __stdio_close(f); return core::ptr::null_mut(); }
+    if new_f.is_null() {
+        let _ = __stdio_close(f);
+        return core::ptr::null_mut();
+    }
     // Memory and cookie streams deliberately have no backing descriptor. A
     // `freopen` replacement is allowed to return a different stream in that
     // case; trying to dup onto descriptor -1 would preserve stale callbacks
@@ -8374,7 +9775,9 @@ pub unsafe extern "C" fn freopen(
 
 #[no_mangle]
 pub unsafe extern "C" fn fclose(f: *mut FILE) -> c_int {
-    if f.is_null() { return -1; }
+    if f.is_null() {
+        return -1;
+    }
     let flush_status = fflush(f);
     let close_status = match (*f).close {
         Some(close_fn) => close_fn(f),
@@ -8392,7 +9795,11 @@ pub unsafe extern "C" fn fclose(f: *mut FILE) -> c_int {
     if (*f).flags & F_PERM == 0 {
         free(f as *mut c_void);
     }
-    if flush_status != 0 || close_status != 0 { -1 } else { 0 }
+    if flush_status != 0 || close_status != 0 {
+        -1
+    } else {
+        0
+    }
 }
 
 // ============================================================
@@ -8400,8 +9807,15 @@ pub unsafe extern "C" fn fclose(f: *mut FILE) -> c_int {
 // ============================================================
 
 #[no_mangle]
-pub unsafe extern "C" fn setvbuf(f: *mut FILE, buf: *mut c_char, mode: c_int, size: usize) -> c_int {
-    if mode != _IOFBF && mode != _IOLBF && mode != _IONBF { return -1; }
+pub unsafe extern "C" fn setvbuf(
+    f: *mut FILE,
+    buf: *mut c_char,
+    mode: c_int,
+    size: usize,
+) -> c_int {
+    if mode != _IOFBF && mode != _IOLBF && mode != _IONBF {
+        return -1;
+    }
     fflush(f);
     (*f).rpos = core::ptr::null_mut();
     (*f).rend = core::ptr::null_mut();
@@ -8420,14 +9834,20 @@ pub unsafe extern "C" fn setvbuf(f: *mut FILE, buf: *mut c_char, mode: c_int, si
 
 #[no_mangle]
 pub unsafe extern "C" fn setbuf(f: *mut FILE, buf: *mut c_char) {
-    if buf.is_null() { setvbuf(f, core::ptr::null_mut(), _IONBF, 0); }
-    else { setvbuf(f, buf, _IOFBF, BUFSIZ); }
+    if buf.is_null() {
+        setvbuf(f, core::ptr::null_mut(), _IONBF, 0);
+    } else {
+        setvbuf(f, buf, _IOFBF, BUFSIZ);
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn setbuffer(f: *mut FILE, buf: *mut c_char, size: usize) {
-    if buf.is_null() { setvbuf(f, core::ptr::null_mut(), _IONBF, 0); }
-    else { setvbuf(f, buf, _IOFBF, size); }
+    if buf.is_null() {
+        setvbuf(f, core::ptr::null_mut(), _IONBF, 0);
+    } else {
+        setvbuf(f, buf, _IOFBF, size);
+    }
 }
 
 #[no_mangle]
@@ -8435,10 +9855,14 @@ pub unsafe extern "C" fn fflush(f: *mut FILE) -> c_int {
     if f.is_null() {
         let mut r = 0;
         if !stdout.is_null() && !(*stdout).wpos.is_null() && (*stdout).wpos != (*stdout).wbase {
-            if flush_buf(stdout) != 0 { r = -1; }
+            if flush_buf(stdout) != 0 {
+                r = -1;
+            }
         }
         if !stderr.is_null() && !(*stderr).wpos.is_null() && (*stderr).wpos != (*stderr).wbase {
-            if flush_buf(stderr) != 0 { r = -1; }
+            if flush_buf(stderr) != 0 {
+                r = -1;
+            }
         }
         return r;
     }
@@ -8453,19 +9877,38 @@ pub unsafe extern "C" fn fflush(f: *mut FILE) -> c_int {
 // ============================================================
 
 #[no_mangle]
-pub unsafe extern "C" fn fwide(_f: *mut FILE, mode: c_int) -> c_int { mode }
+pub unsafe extern "C" fn fwide(_f: *mut FILE, mode: c_int) -> c_int {
+    mode
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn feof(f: *mut FILE) -> c_int { if (*f)._eof != 0 { 1 } else { 0 } }
+pub unsafe extern "C" fn feof(f: *mut FILE) -> c_int {
+    if (*f)._eof != 0 {
+        1
+    } else {
+        0
+    }
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn ferror(f: *mut FILE) -> c_int { if (*f)._err != 0 { 1 } else { 0 } }
+pub unsafe extern "C" fn ferror(f: *mut FILE) -> c_int {
+    if (*f)._err != 0 {
+        1
+    } else {
+        0
+    }
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn clearerr(f: *mut FILE) { (*f)._eof = 0; (*f)._err = 0; }
+pub unsafe extern "C" fn clearerr(f: *mut FILE) {
+    (*f)._eof = 0;
+    (*f)._err = 0;
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn fileno(f: *mut FILE) -> c_int { (*f).fd }
+pub unsafe extern "C" fn fileno(f: *mut FILE) -> c_int {
+    (*f).fd
+}
 
 // ============================================================
 // fseek / ftell / rewind / fseeko / ftello / fgetpos / fsetpos
@@ -8504,14 +9947,18 @@ pub unsafe extern "C" fn fseeko(stream: *mut FILE, offset: i64, whence: c_int) -
         adj_offset -= f.ungotten_count as i64;
     }
     if !f.wpos.is_null() && f.wpos != f.wbase {
-        if flush_buf(stream) != 0 { return -1; }
+        if flush_buf(stream) != 0 {
+            return -1;
+        }
     }
     f.wpos = core::ptr::null_mut();
     f.wbase = core::ptr::null_mut();
     f.wend = core::ptr::null_mut();
     if let Some(sfunc) = f.seek_fn {
         let r = sfunc(stream, adj_offset, whence);
-        if r < 0 { return -1; }
+        if r < 0 {
+            return -1;
+        }
         // `r` is the exact kernel position after the buffer state above was
         // discarded. A following formatted scan can use it for its rare
         // seek-back fallback without issuing a second SEEK_CUR probe.
@@ -8533,12 +9980,26 @@ pub unsafe extern "C" fn fseeko(stream: *mut FILE, offset: i64, whence: c_int) -
 pub unsafe extern "C" fn ftello(stream: *mut FILE) -> i64 {
     let f = &mut *stream;
     if f.flags & F_APP != 0 && !f.wpos.is_null() && f.wpos != f.wbase {
-        if fflush(stream) != 0 { return -1; }
+        if fflush(stream) != 0 {
+            return -1;
+        }
     }
-    let sfunc = match f.seek_fn { Some(s) => s, None => return -1 };
-    let pos = sfunc(stream, 0,
-        if (f.flags & F_APP) != 0 && !f.wpos.is_null() && f.wpos != f.wbase { SEEK_END } else { SEEK_CUR });
-    if pos < 0 { return -1; }
+    let sfunc = match f.seek_fn {
+        Some(s) => s,
+        None => return -1,
+    };
+    let pos = sfunc(
+        stream,
+        0,
+        if (f.flags & F_APP) != 0 && !f.wpos.is_null() && f.wpos != f.wbase {
+            SEEK_END
+        } else {
+            SEEK_CUR
+        },
+    );
+    if pos < 0 {
+        return -1;
+    }
     let mut pos = pos;
     if !f.rpos.is_null() {
         pos += f.rpos as i64 - f.rend as i64;
@@ -8551,7 +10012,9 @@ pub unsafe extern "C" fn ftello(stream: *mut FILE) -> i64 {
 #[no_mangle]
 pub unsafe extern "C" fn fgetpos(stream: *mut FILE, pos: *mut i64) -> c_int {
     let off = ftello(stream);
-    if off < 0 { return -1; }
+    if off < 0 {
+        return -1;
+    }
     *pos = off;
     0
 }
@@ -8577,12 +10040,18 @@ pub unsafe extern "C" fn fgetc(stream: *mut FILE) -> c_int {
         f.rpos = f.rpos.add(1);
         return c as c_int;
     }
-    if f._eof != 0 { return -1; }
+    if f._eof != 0 {
+        return -1;
+    }
     if let Some(rfunc) = f.read_fn {
         let mut buf = [0u8; 1];
         let n = rfunc(stream, buf.as_mut_ptr(), 1);
         if n == 0 {
-            if f.flags & F_ERR != 0 { f._err = 1; } else { f._eof = 1; }
+            if f.flags & F_ERR != 0 {
+                f._err = 1;
+            } else {
+                f._eof = 1;
+            }
             return -1;
         }
         buf[0] as c_int
@@ -8593,16 +10062,24 @@ pub unsafe extern "C" fn fgetc(stream: *mut FILE) -> c_int {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn getc(stream: *mut FILE) -> c_int { fgetc(stream) }
+pub unsafe extern "C" fn getc(stream: *mut FILE) -> c_int {
+    fgetc(stream)
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn getchar() -> c_int { fgetc(stdin) }
+pub unsafe extern "C" fn getchar() -> c_int {
+    fgetc(stdin)
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut FILE) -> c_int {
-    if c == -1 { return -1; }
+    if c == -1 {
+        return -1;
+    }
     let f = &mut *stream;
-    if f.ungotten_count >= UNGET as c_int { return -1; }
+    if f.ungotten_count >= UNGET as c_int {
+        return -1;
+    }
     f.ungotten[f.ungotten_count as usize] = c;
     f.ungotten_count += 1;
     f._eof = 0;
@@ -8615,15 +10092,24 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut FILE) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fgets(s: *mut c_char, n: c_int, stream: *mut FILE) -> *mut c_char {
-    if n <= 0 { return null_mut(); }
+    if n <= 0 {
+        return null_mut();
+    }
     let max = (n - 1) as usize;
     let mut i = 0usize;
     while i < max {
         let c = fgetc(stream);
-        if c == -1 { if i == 0 { return null_mut(); } break; }
+        if c == -1 {
+            if i == 0 {
+                return null_mut();
+            }
+            break;
+        }
         *s.add(i) = c as c_char;
         i += 1;
-        if c == b'\n' as c_int { break; }
+        if c == b'\n' as c_int {
+            break;
+        }
     }
     *s.add(i) = 0;
     s
@@ -8635,8 +10121,15 @@ pub unsafe extern "C" fn gets(s: *mut c_char) -> *mut c_char {
     let mut i = 0usize;
     loop {
         let c = fgetc(stdin);
-        if c == -1 { if i == 0 { return null_mut(); } break; }
-        if c == b'\n' as c_int { break; }
+        if c == -1 {
+            if i == 0 {
+                return null_mut();
+            }
+            break;
+        }
+        if c == b'\n' as c_int {
+            break;
+        }
         *s.add(i) = c as c_char;
         i += 1;
     }
@@ -8672,9 +10165,14 @@ pub unsafe extern "C" fn perror(msg: *const c_char) {
 
 #[no_mangle]
 pub unsafe extern "C" fn fread(
-    ptr: *mut c_void, size: SizeT, nmemb: SizeT, stream: *mut FILE,
+    ptr: *mut c_void,
+    size: SizeT,
+    nmemb: SizeT,
+    stream: *mut FILE,
 ) -> SizeT {
-    if size == 0 || nmemb == 0 { return 0; }
+    if size == 0 || nmemb == 0 {
+        return 0;
+    }
     let total = match size.checked_mul(nmemb) {
         Some(total) => total,
         None => {
@@ -8732,7 +10230,9 @@ unsafe fn write_str(fd: c_int, s: *const u8, len: usize) {
     let mut written = 0usize;
     while written < len {
         let n = sys_write(fd as i64, s.add(written), len - written);
-        if n <= 0 { break; }
+        if n <= 0 {
+            break;
+        }
         written += n as usize;
     }
 }
@@ -8744,18 +10244,24 @@ pub unsafe extern "C" fn __overflow(f: *mut FILE, c: c_int) -> c_int {
         (*f).wpos = (*f).buf;
         (*f).wend = (*f).buf.add((*f).buf_size);
     }
-    if flush_buf(f) == -1 { return -1; }
+    if flush_buf(f) == -1 {
+        return -1;
+    }
     if (*f).wpos >= (*f).wend {
         if let Some(wfunc) = (*f).write_fn {
             let byte = c as u8;
             let ret = wfunc(f, &byte as *const u8, 1);
-            if ret == 0 { return -1; }
+            if ret == 0 {
+                return -1;
+            }
         }
         return c;
     }
     *(*f).wpos = c as u8;
     (*f).wpos = (*f).wpos.add(1);
-    if c == (*f).lbf || (*f).wpos >= (*f).wend { let _ = flush_buf(f); }
+    if c == (*f).lbf || (*f).wpos >= (*f).wend {
+        let _ = flush_buf(f);
+    }
     c
 }
 
@@ -8769,7 +10275,9 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
     let _ = fwrite(s as *const c_void, 1, len, stdout);
     let _ = fwrite(b"\n".as_ptr() as *const c_void, 1, 1, stdout);
     let f = &mut *stdout;
-    if f.lbf >= 0 { let _ = flush_buf(stdout); }
+    if f.lbf >= 0 {
+        let _ = flush_buf(stdout);
+    }
     (len + 1) as c_int
 }
 
@@ -8783,26 +10291,39 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut FILE) -> c_int {
 pub unsafe extern "C" fn fputc(c: c_int, stream: *mut FILE) -> c_int {
     let f = &mut *stream;
     if f.wpos.is_null() || f.wpos >= f.wend {
-        if __overflow(f, c) == -1 { return -1; }
+        if __overflow(f, c) == -1 {
+            return -1;
+        }
         return c;
     }
     *f.wpos = c as u8;
     f.wpos = f.wpos.add(1);
-    if c == f.lbf || f.wpos >= f.wend { let _ = flush_buf(f); }
+    if c == f.lbf || f.wpos >= f.wend {
+        let _ = flush_buf(f);
+    }
     c
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn putc(c: c_int, stream: *mut FILE) -> c_int { fputc(c, stream) }
+pub unsafe extern "C" fn putc(c: c_int, stream: *mut FILE) -> c_int {
+    fputc(c, stream)
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn putchar(c: c_int) -> c_int { fputc(c, stdout) }
+pub unsafe extern "C" fn putchar(c: c_int) -> c_int {
+    fputc(c, stdout)
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn fwrite(
-    ptr: *const c_void, size: SizeT, nmemb: SizeT, stream: *mut FILE,
+    ptr: *const c_void,
+    size: SizeT,
+    nmemb: SizeT,
+    stream: *mut FILE,
 ) -> SizeT {
-    if size == 0 || nmemb == 0 { return 0; }
+    if size == 0 || nmemb == 0 {
+        return 0;
+    }
     let total = size * nmemb;
     let f = &mut *stream;
     if f.buf_size == 0 {
@@ -8822,7 +10343,9 @@ pub unsafe extern "C" fn fwrite(
     while remaining > 0 {
         let space = f.wend as usize - f.wpos as usize;
         if space == 0 {
-            if flush_buf(f as *mut FILE) == -1 { break; }
+            if flush_buf(f as *mut FILE) == -1 {
+                break;
+            }
             continue;
         }
         let n = if remaining < space { remaining } else { space };
@@ -8830,9 +10353,13 @@ pub unsafe extern "C" fn fwrite(
         f.wpos = f.wpos.add(n);
         src = src.add(n);
         remaining -= n;
-        if f.wpos >= f.wend { let _ = flush_buf(f as *mut FILE); }
+        if f.wpos >= f.wend {
+            let _ = flush_buf(f as *mut FILE);
+        }
     }
-    if f.lbf >= 0 { let _ = flush_buf(f as *mut FILE); }
+    if f.lbf >= 0 {
+        let _ = flush_buf(f as *mut FILE);
+    }
     (total - remaining) / size
 }
 
@@ -8862,7 +10389,12 @@ enum PrintfArgKind {
 // ABI passes binary128 varargs in the floating-point save area, so reading the
 // value as an integer argument selects the wrong register class. This mirrors
 // AAPCS64's 16-byte FP `va_arg` step on the Linux target used by crabc.
-#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
+#[cfg(all(
+    target_arch = "aarch64",
+    not(target_vendor = "apple"),
+    not(target_os = "uefi"),
+    not(windows)
+))]
 #[repr(C)]
 struct PrintfAarch64VaList {
     stack: *const c_void,
@@ -8872,7 +10404,12 @@ struct PrintfAarch64VaList {
     vr_offs: i32,
 }
 
-#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
+#[cfg(all(
+    target_arch = "aarch64",
+    not(target_vendor = "apple"),
+    not(target_os = "uefi"),
+    not(windows)
+))]
 unsafe fn printf_next_aarch64_f128(args: &mut VaList<'_>) -> f128 {
     let inner = &mut *(args as *mut VaList<'_> as *mut PrintfAarch64VaList);
     let address = if inner.vr_offs <= -16 {
@@ -8890,7 +10427,9 @@ unsafe fn printf_next_aarch64_f128(args: &mut VaList<'_>) -> f128 {
 }
 
 unsafe fn printf_set_arg_kind(
-    kinds: &mut [PrintfArgKind; 64], position: usize, kind: PrintfArgKind,
+    kinds: &mut [PrintfArgKind; 64],
+    position: usize,
+    kind: PrintfArgKind,
 ) {
     if position > 0 && position < kinds.len() {
         kinds[position] = kind;
@@ -8909,9 +10448,11 @@ unsafe fn printf_conversion_kind(len: u8, spec: u8) -> Option<PrintfArgKind> {
             b'j' => PrintfArgKind::ULongLong,
             _ => PrintfArgKind::UInt,
         }),
-        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => Some(
-            if len == b'L' { PrintfArgKind::LongDouble } else { PrintfArgKind::Double }
-        ),
+        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => Some(if len == b'L' {
+            PrintfArgKind::LongDouble
+        } else {
+            PrintfArgKind::Double
+        }),
         b'c' => Some(PrintfArgKind::Int),
         b's' | b'p' | b'n' => Some(PrintfArgKind::Pointer),
         _ => None,
@@ -8923,9 +10464,15 @@ unsafe fn printf_collect_arg_kinds(fmt: *const c_char) -> [PrintfArgKind; 64] {
     let mut i = 0usize;
     let mut next_position = 1usize;
     while *fmt.add(i) != 0 {
-        if *fmt.add(i) as u8 != b'%' { i += 1; continue; }
+        if *fmt.add(i) as u8 != b'%' {
+            i += 1;
+            continue;
+        }
         i += 1;
-        if *fmt.add(i) as u8 == b'%' { i += 1; continue; }
+        if *fmt.add(i) as u8 == b'%' {
+            i += 1;
+            continue;
+        }
 
         // A leading N$ selects the conversion argument.  If there is no '$',
         // leave the digits for the ordinary field-width parser below.
@@ -8933,7 +10480,9 @@ unsafe fn printf_collect_arg_kinds(fmt: *const c_char) -> [PrintfArgKind; 64] {
         let mut number = 0usize;
         let mut p = i;
         while (*fmt.add(p) as u8).is_ascii_digit() {
-            number = number.saturating_mul(10).saturating_add((*fmt.add(p) as u8 - b'0') as usize);
+            number = number
+                .saturating_mul(10)
+                .saturating_add((*fmt.add(p) as u8 - b'0') as usize);
             p += 1;
         }
         if number > 0 && *fmt.add(p) as u8 == b'$' {
@@ -8955,17 +10504,25 @@ unsafe fn printf_collect_arg_kinds(fmt: *const c_char) -> [PrintfArgKind; 64] {
             let mut n = 0usize;
             let mut q = i;
             while (*fmt.add(q) as u8).is_ascii_digit() {
-                n = n.saturating_mul(10).saturating_add((*fmt.add(q) as u8 - b'0') as usize);
+                n = n
+                    .saturating_mul(10)
+                    .saturating_add((*fmt.add(q) as u8 - b'0') as usize);
                 q += 1;
             }
             if n > 0 && *fmt.add(q) as u8 == b'$' {
                 width_position = Some(n);
                 i = q + 1;
             }
-            let position = width_position.unwrap_or_else(|| { let p = next_position; next_position += 1; p });
+            let position = width_position.unwrap_or_else(|| {
+                let p = next_position;
+                next_position += 1;
+                p
+            });
             printf_set_arg_kind(&mut kinds, position, PrintfArgKind::Int);
         } else {
-            while (*fmt.add(i) as u8).is_ascii_digit() { i += 1; }
+            while (*fmt.add(i) as u8).is_ascii_digit() {
+                i += 1;
+            }
         }
 
         if *fmt.add(i) as u8 == b'.' {
@@ -8976,17 +10533,25 @@ unsafe fn printf_collect_arg_kinds(fmt: *const c_char) -> [PrintfArgKind; 64] {
                 let mut n = 0usize;
                 let mut q = i;
                 while (*fmt.add(q) as u8).is_ascii_digit() {
-                    n = n.saturating_mul(10).saturating_add((*fmt.add(q) as u8 - b'0') as usize);
+                    n = n
+                        .saturating_mul(10)
+                        .saturating_add((*fmt.add(q) as u8 - b'0') as usize);
                     q += 1;
                 }
                 if n > 0 && *fmt.add(q) as u8 == b'$' {
                     precision_position = Some(n);
                     i = q + 1;
                 }
-                let position = precision_position.unwrap_or_else(|| { let p = next_position; next_position += 1; p });
+                let position = precision_position.unwrap_or_else(|| {
+                    let p = next_position;
+                    next_position += 1;
+                    p
+                });
                 printf_set_arg_kind(&mut kinds, position, PrintfArgKind::Int);
             } else {
-                while (*fmt.add(i) as u8).is_ascii_digit() { i += 1; }
+                while (*fmt.add(i) as u8).is_ascii_digit() {
+                    i += 1;
+                }
             }
         }
 
@@ -9005,10 +10570,16 @@ unsafe fn printf_collect_arg_kinds(fmt: *const c_char) -> [PrintfArgKind; 64] {
         }
         let spec = *fmt.add(i) as u8;
         if let Some(kind) = printf_conversion_kind(len, spec) {
-            let position = conversion_position.unwrap_or_else(|| { let p = next_position; next_position += 1; p });
+            let position = conversion_position.unwrap_or_else(|| {
+                let p = next_position;
+                next_position += 1;
+                p
+            });
             printf_set_arg_kind(&mut kinds, position, kind);
         }
-        if spec == 0 { break; }
+        if spec == 0 {
+            break;
+        }
         i += 1;
     }
     kinds
@@ -9023,29 +10594,65 @@ struct PrintfArgs<'a> {
 
 impl<'a> PrintfArgs<'a> {
     unsafe fn new(args: &VaList<'a>, fmt: *const c_char) -> Self {
-        Self { cursor: args.clone(), base: args.clone(), kinds: printf_collect_arg_kinds(fmt), selected: None }
+        Self {
+            cursor: args.clone(),
+            base: args.clone(),
+            kinds: printf_collect_arg_kinds(fmt),
+            selected: None,
+        }
     }
 
     unsafe fn skip_arg(kind: PrintfArgKind, args: &mut VaList<'a>) {
         match kind {
             PrintfArgKind::Unused => {}
-            PrintfArgKind::Int => { let _ = args.next_arg::<c_int>(); }
-            PrintfArgKind::UInt => { let _ = args.next_arg::<c_uint>(); }
-            PrintfArgKind::Long => { let _ = args.next_arg::<c_long>(); }
-            PrintfArgKind::ULong => { let _ = args.next_arg::<c_ulong>(); }
-            PrintfArgKind::LongLong => { let _ = args.next_arg::<c_longlong>(); }
-            PrintfArgKind::ULongLong => { let _ = args.next_arg::<c_ulonglong>(); }
-            PrintfArgKind::Pointer => { let _ = args.next_arg::<*mut c_void>(); }
-            PrintfArgKind::Double => { let _ = args.next_arg::<f64>(); }
+            PrintfArgKind::Int => {
+                let _ = args.next_arg::<c_int>();
+            }
+            PrintfArgKind::UInt => {
+                let _ = args.next_arg::<c_uint>();
+            }
+            PrintfArgKind::Long => {
+                let _ = args.next_arg::<c_long>();
+            }
+            PrintfArgKind::ULong => {
+                let _ = args.next_arg::<c_ulong>();
+            }
+            PrintfArgKind::LongLong => {
+                let _ = args.next_arg::<c_longlong>();
+            }
+            PrintfArgKind::ULongLong => {
+                let _ = args.next_arg::<c_ulonglong>();
+            }
+            PrintfArgKind::Pointer => {
+                let _ = args.next_arg::<*mut c_void>();
+            }
+            PrintfArgKind::Double => {
+                let _ = args.next_arg::<f64>();
+            }
             PrintfArgKind::LongDouble => {
-                #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
-                { let _ = printf_next_aarch64_f128(args); }
+                #[cfg(all(
+                    target_arch = "aarch64",
+                    not(target_vendor = "apple"),
+                    not(target_os = "uefi"),
+                    not(windows)
+                ))]
+                {
+                    let _ = printf_next_aarch64_f128(args);
+                }
                 #[cfg(target_arch = "riscv64")]
-                { let _ = args.next_arg::<u64>(); let _ = args.next_arg::<u64>(); }
+                {
+                    let _ = args.next_arg::<u64>();
+                    let _ = args.next_arg::<u64>();
+                }
                 #[cfg(all(target_arch = "aarch64", target_vendor = "apple"))]
-                { let _ = args.next_arg::<u64>(); let _ = args.next_arg::<u64>(); }
+                {
+                    let _ = args.next_arg::<u64>();
+                    let _ = args.next_arg::<u64>();
+                }
                 #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
-                { let _ = args.next_arg::<f64>(); }
+                {
+                    let _ = args.next_arg::<f64>();
+                }
             }
         }
     }
@@ -9053,7 +10660,9 @@ impl<'a> PrintfArgs<'a> {
     unsafe fn positioned(&self, position: usize) -> VaList<'a> {
         let mut args = self.base.clone();
         let end = position.min(self.kinds.len() - 1);
-        for index in 1..end { Self::skip_arg(self.kinds[index], &mut args); }
+        for index in 1..end {
+            Self::skip_arg(self.kinds[index], &mut args);
+        }
         args
     }
 
@@ -9081,7 +10690,12 @@ impl<'a> PrintfArgs<'a> {
             Some(position) => self.positioned(position),
             None => self.cursor.clone(),
         };
-        #[cfg(all(target_arch = "aarch64", not(target_vendor = "apple"), not(target_os = "uefi"), not(windows)))]
+        #[cfg(all(
+            target_arch = "aarch64",
+            not(target_vendor = "apple"),
+            not(target_os = "uefi"),
+            not(windows)
+        ))]
         let value = printf_next_aarch64_f128(&mut args) as f64;
         #[cfg(target_arch = "riscv64")]
         let value = {
@@ -9097,7 +10711,9 @@ impl<'a> PrintfArgs<'a> {
         };
         #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
         let value = args.next_arg::<f64>();
-        if position.is_none() { self.cursor = args; }
+        if position.is_none() {
+            self.cursor = args;
+        }
         value
     }
 }
@@ -9508,10 +11124,17 @@ macro_rules! impl_format {
 
 unsafe fn format_u64(mut val: u64) -> ([u8; 20], usize) {
     let mut buf = [0u8; 20];
-    if val == 0 { buf[0] = b'0'; return (buf, 1); }
+    if val == 0 {
+        buf[0] = b'0';
+        return (buf, 1);
+    }
     let mut tmp = [0u8; 20];
     let mut pos = 20;
-    while val > 0 { pos -= 1; tmp[pos] = b'0' + (val % 10) as u8; val /= 10; }
+    while val > 0 {
+        pos -= 1;
+        tmp[pos] = b'0' + (val % 10) as u8;
+        val /= 10;
+    }
     let len = 20 - pos;
     core::ptr::copy_nonoverlapping(tmp.as_ptr().add(pos), buf.as_mut_ptr(), len);
     (buf, len)
@@ -9532,12 +11155,23 @@ unsafe fn format_i64(val: i64) -> ([u8; 21], usize) {
 }
 
 unsafe fn format_hex(mut val: u64, uppercase: bool) -> ([u8; 16], usize) {
-    let digits = if uppercase { b"0123456789ABCDEF" } else { b"0123456789abcdef" };
+    let digits = if uppercase {
+        b"0123456789ABCDEF"
+    } else {
+        b"0123456789abcdef"
+    };
     let mut buf = [0u8; 16];
-    if val == 0 { buf[0] = b'0'; return (buf, 1); }
+    if val == 0 {
+        buf[0] = b'0';
+        return (buf, 1);
+    }
     let mut tmp = [0u8; 16];
     let mut pos = 16;
-    while val > 0 { pos -= 1; tmp[pos] = digits[(val & 0xf) as usize]; val >>= 4; }
+    while val > 0 {
+        pos -= 1;
+        tmp[pos] = digits[(val & 0xf) as usize];
+        val >>= 4;
+    }
     let len = 16 - pos;
     core::ptr::copy_nonoverlapping(tmp.as_ptr().add(pos), buf.as_mut_ptr(), len);
     (buf, len)
@@ -9584,7 +11218,11 @@ unsafe fn format_int(
         digits_len
     };
     let prec = precision as usize;
-    let zero_pad = if precision >= 0 && prec > num_digits { prec - num_digits } else { 0 };
+    let zero_pad = if precision >= 0 && prec > num_digits {
+        prec - num_digits
+    } else {
+        0
+    };
 
     let sign_len = sign.map_or(0, |_| 1);
     let prefix_len = prefix.map_or(0, |_| 2);
@@ -9592,9 +11230,20 @@ unsafe fn format_int(
 
     let mut buf = [0u8; 32];
     let mut pos = 0usize;
-    if let Some(c) = sign { buf[pos] = c; pos += 1; }
-    if let Some(c) = prefix { buf[pos] = b'0'; pos += 1; buf[pos] = c; pos += 1; }
-    for _ in 0..zero_pad { buf[pos] = b'0'; pos += 1; }
+    if let Some(c) = sign {
+        buf[pos] = c;
+        pos += 1;
+    }
+    if let Some(c) = prefix {
+        buf[pos] = b'0';
+        pos += 1;
+        buf[pos] = c;
+        pos += 1;
+    }
+    for _ in 0..zero_pad {
+        buf[pos] = b'0';
+        pos += 1;
+    }
     if num_digits > 0 {
         core::ptr::copy_nonoverlapping(digits, buf.as_mut_ptr().add(pos), num_digits);
     }
@@ -9606,16 +11255,22 @@ unsafe fn format_int(
     let pad = width - content_len;
     if flags & FLAG_MINUS != 0 {
         core::ptr::copy_nonoverlapping(buf.as_ptr(), dst, content_len);
-        for i in 0..pad { *dst.add(content_len + i) = b' '; }
+        for i in 0..pad {
+            *dst.add(content_len + i) = b' ';
+        }
     } else if flags & FLAG_ZERO != 0 && precision < 0 {
         let fixed = sign_len + prefix_len;
         core::ptr::copy_nonoverlapping(buf.as_ptr(), dst, fixed);
-        for i in fixed..width - num_digits { *dst.add(i) = b'0'; }
+        for i in fixed..width - num_digits {
+            *dst.add(i) = b'0';
+        }
         if num_digits > 0 {
             core::ptr::copy_nonoverlapping(digits, dst.add(width - num_digits), num_digits);
         }
     } else {
-        for i in 0..pad { *dst.add(i) = b' '; }
+        for i in 0..pad {
+            *dst.add(i) = b' ';
+        }
         core::ptr::copy_nonoverlapping(buf.as_ptr(), dst.add(pad), content_len);
     }
     width
@@ -9630,7 +11285,11 @@ unsafe fn format_f64(val: f64) -> ([u8; 64], usize) {
         core::ptr::copy_nonoverlapping(nan.as_ptr(), buf.as_mut_ptr(), 3);
         return (buf, 3);
     }
-    if v < 0.0 { buf[pos] = b'-'; pos += 1; v = -v; }
+    if v < 0.0 {
+        buf[pos] = b'-';
+        pos += 1;
+        v = -v;
+    }
     if v.is_infinite() {
         let inf = b"inf";
         core::ptr::copy_nonoverlapping(inf.as_ptr(), buf.as_mut_ptr().add(pos), 3);
@@ -9644,7 +11303,13 @@ unsafe fn format_f64(val: f64) -> ([u8; 64], usize) {
     buf[pos] = b'.';
     pos += 1;
     let mut f = frac;
-    for _ in 0..6 { f *= 10.0; let digit = f as u8; buf[pos] = b'0' + digit; pos += 1; f -= digit as f64; }
+    for _ in 0..6 {
+        f *= 10.0;
+        let digit = f as u8;
+        buf[pos] = b'0' + digit;
+        pos += 1;
+        f -= digit as f64;
+    }
     (buf, pos)
 }
 
@@ -9679,10 +11344,14 @@ unsafe fn bigint_to_decimal(buf: *mut u8, mant: u64, shift: u32) -> usize {
         let mut i = 1usize;
         loop {
             limbs[i + ws] = limbs[i];
-            if i == 0 { break; }
+            if i == 0 {
+                break;
+            }
             i -= 1;
         }
-        for j in 0..ws { limbs[j] = 0; }
+        for j in 0..ws {
+            limbs[j] = 0;
+        }
     }
     // Bit-level shift left
     if bs > 0 {
@@ -9697,16 +11366,28 @@ unsafe fn bigint_to_decimal(buf: *mut u8, mant: u64, shift: u32) -> usize {
 
     // Find highest non-zero limb
     let mut used = nlimbs;
-    while used > 0 && limbs[used - 1] == 0 { used -= 1; }
-    if used == 0 { *buf = b'0'; return 1; }
+    while used > 0 && limbs[used - 1] == 0 {
+        used -= 1;
+    }
+    if used == 0 {
+        *buf = b'0';
+        return 1;
+    }
 
     // Repeated division by 10 to extract decimal digits
     let mut digits = [0u8; 400];
     let mut nd = 0usize;
     loop {
         let mut all_zero = true;
-        for i in 0..used { if limbs[i] != 0 { all_zero = false; break; } }
-        if all_zero { break; }
+        for i in 0..used {
+            if limbs[i] != 0 {
+                all_zero = false;
+                break;
+            }
+        }
+        if all_zero {
+            break;
+        }
         let mut rem = 0u64;
         for i in (0..used).rev() {
             let val = (rem << 32) | limbs[i] as u64;
@@ -9717,7 +11398,9 @@ unsafe fn bigint_to_decimal(buf: *mut u8, mant: u64, shift: u32) -> usize {
         nd += 1;
     }
     // Write digits in big-endian order
-    for i in 0..nd { *buf.add(i) = b'0' + digits[nd - 1 - i]; }
+    for i in 0..nd {
+        *buf.add(i) = b'0' + digits[nd - 1 - i];
+    }
     nd
 }
 
@@ -9741,7 +11424,9 @@ unsafe fn frac_digits_bigint(buf: *mut u8, frac_bits: u64, shift: u32, count: us
     let nlimbs = ((shift + 31) / 32) as usize;
     let mut rem = [0u32; 36]; // enough for shift up to 1088
     rem[0] = frac_bits as u32;
-    if nlimbs > 1 { rem[1] = (frac_bits >> 32) as u32; }
+    if nlimbs > 1 {
+        rem[1] = (frac_bits >> 32) as u32;
+    }
     // Mask to exactly `shift` bits
     let hi_word = (shift / 32) as usize;
     let hi_bit = shift % 32;
@@ -9750,7 +11435,9 @@ unsafe fn frac_digits_bigint(buf: *mut u8, frac_bits: u64, shift: u32, count: us
     }
     // Zero upper limbs beyond shift
     let clear_from = if hi_bit > 0 { hi_word + 1 } else { hi_word };
-    for j in clear_from..nlimbs { rem[j] = 0; }
+    for j in clear_from..nlimbs {
+        rem[j] = 0;
+    }
 
     for i in 0..count {
         // Multiply remainder by 10
@@ -9763,9 +11450,17 @@ unsafe fn frac_digits_bigint(buf: *mut u8, frac_bits: u64, shift: u32, count: us
         // Extract digit from bit position `shift`
         let digit: u32;
         if hi_bit == 0 {
-            digit = if hi_word < nlimbs { rem[hi_word] } else { carry as u32 };
+            digit = if hi_word < nlimbs {
+                rem[hi_word]
+            } else {
+                carry as u32
+            };
         } else {
-            let mut d = if hi_word < nlimbs { rem[hi_word] >> hi_bit } else { 0 };
+            let mut d = if hi_word < nlimbs {
+                rem[hi_word] >> hi_bit
+            } else {
+                0
+            };
             if hi_word + 1 < nlimbs {
                 d |= rem[hi_word + 1] << (32 - hi_bit);
             } else if carry > 0 {
@@ -9776,16 +11471,24 @@ unsafe fn frac_digits_bigint(buf: *mut u8, frac_bits: u64, shift: u32, count: us
         *buf.add(i) = digit.min(9) as u8;
         // Clear bits from position `shift` upward (keep remainder < 2^shift)
         if hi_bit == 0 {
-            if hi_word < nlimbs { rem[hi_word] = 0; }
+            if hi_word < nlimbs {
+                rem[hi_word] = 0;
+            }
         } else {
             if hi_word < nlimbs {
                 rem[hi_word] &= (1u32 << hi_bit) - 1;
             }
-            for j in (hi_word + 1)..nlimbs { rem[j] = 0; }
+            for j in (hi_word + 1)..nlimbs {
+                rem[j] = 0;
+            }
         }
     }
     // Check if remainder is non-zero
-    for i in 0..nlimbs { if rem[i] != 0 { return true; } }
+    for i in 0..nlimbs {
+        if rem[i] != 0 {
+            return true;
+        }
+    }
     false
 }
 
@@ -9796,21 +11499,31 @@ unsafe fn increment_decimal(buf: *mut u8, len: &mut usize) {
         if j == 0 {
             // Shift right and prepend '1'
             let l = *len;
-            for i in (0..l).rev() { *buf.add(i + 1) = *buf.add(i); }
+            for i in (0..l).rev() {
+                *buf.add(i + 1) = *buf.add(i);
+            }
             *buf = b'1';
             *len = l + 1;
             return;
         }
         j -= 1;
         let d = *buf.add(j);
-        if d < b'9' { *buf.add(j) = d + 1; return; }
+        if d < b'9' {
+            *buf.add(j) = d + 1;
+            return;
+        }
         *buf.add(j) = b'0';
     }
 }
 
 // Write float to dst. Returns bytes written. Does NOT handle width/flags padding.
 unsafe fn format_f64_full(
-    dst: *mut u8, val: f64, fmt_type: u8, precision: i32, flags: u8, uppercase: bool,
+    dst: *mut u8,
+    val: f64,
+    fmt_type: u8,
+    precision: i32,
+    flags: u8,
+    uppercase: bool,
 ) -> usize {
     let mut pos = 0usize;
 
@@ -9825,18 +11538,32 @@ unsafe fn format_f64_full(
 
     // Inf
     if v.is_infinite() {
-        if neg { *dst.add(pos) = b'-'; pos += 1; }
-        else if flags & FLAG_PLUS != 0 { *dst.add(pos) = b'+'; pos += 1; }
-        else if flags & FLAG_SPACE != 0 { *dst.add(pos) = b' '; pos += 1; }
+        if neg {
+            *dst.add(pos) = b'-';
+            pos += 1;
+        } else if flags & FLAG_PLUS != 0 {
+            *dst.add(pos) = b'+';
+            pos += 1;
+        } else if flags & FLAG_SPACE != 0 {
+            *dst.add(pos) = b' ';
+            pos += 1;
+        }
         let inf_s: &[u8] = if uppercase { b"INF" } else { b"inf" };
         core::ptr::copy_nonoverlapping(inf_s.as_ptr(), dst.add(pos), 3);
         return pos + 3;
     }
 
     // Sign
-    if neg { *dst.add(pos) = b'-'; pos += 1; }
-    else if flags & FLAG_PLUS != 0 { *dst.add(pos) = b'+'; pos += 1; }
-    else if flags & FLAG_SPACE != 0 { *dst.add(pos) = b' '; pos += 1; }
+    if neg {
+        *dst.add(pos) = b'-';
+        pos += 1;
+    } else if flags & FLAG_PLUS != 0 {
+        *dst.add(pos) = b'+';
+        pos += 1;
+    } else if flags & FLAG_SPACE != 0 {
+        *dst.add(pos) = b' ';
+        pos += 1;
+    }
 
     // === Hex float ===
     if fmt_type == FMT_A {
@@ -9850,43 +11577,70 @@ unsafe fn format_f64_full(
 
     match fmt_type {
         FMT_G => {
-            let gp = if precision < 0 { 6usize } else if precision == 0 { 1usize } else { precision as usize };
+            let gp = if precision < 0 {
+                6usize
+            } else if precision == 0 {
+                1usize
+            } else {
+                precision as usize
+            };
             exp = if v > 0.0 { compute_exp10(v) } else { 0 };
             use_f = exp >= -4 && exp < gp as i32;
             if use_f {
-                p = if exp < 0 { gp + ((-exp) as usize - 1) }
-                    else if (exp as usize) < gp { gp - exp as usize - 1 }
-                    else { 0 };
+                p = if exp < 0 {
+                    gp + ((-exp) as usize - 1)
+                } else if (exp as usize) < gp {
+                    gp - exp as usize - 1
+                } else {
+                    0
+                };
             } else {
                 p = gp - 1;
             }
         }
         FMT_E => {
-            p = if precision < 0 { 6usize } else { precision as usize };
+            p = if precision < 0 {
+                6usize
+            } else {
+                precision as usize
+            };
             exp = if v > 0.0 { compute_exp10(v) } else { 0 };
             use_f = false;
         }
         _ => {
-            p = if precision < 0 { 6usize } else { precision as usize };
+            p = if precision < 0 {
+                6usize
+            } else {
+                precision as usize
+            };
             exp = 0;
             use_f = true;
         }
     }
 
     if v == 0.0 {
-        *dst.add(pos) = b'0'; pos += 1;
+        *dst.add(pos) = b'0';
+        pos += 1;
         if !(fmt_type == FMT_G && flags & FLAG_HASH == 0) {
             if p > 0 || flags & FLAG_HASH != 0 {
-                *dst.add(pos) = b'.'; pos += 1;
-                for _ in 0..p { *dst.add(pos) = b'0'; pos += 1; }
+                *dst.add(pos) = b'.';
+                pos += 1;
+                for _ in 0..p {
+                    *dst.add(pos) = b'0';
+                    pos += 1;
+                }
             }
         }
         if !use_f {
             let ec = if uppercase { b'E' } else { b'e' };
-            *dst.add(pos) = ec; pos += 1;
-            *dst.add(pos) = b'+'; pos += 1;
-            *dst.add(pos) = b'0'; pos += 1;
-            *dst.add(pos) = b'0'; pos += 1;
+            *dst.add(pos) = ec;
+            pos += 1;
+            *dst.add(pos) = b'+';
+            pos += 1;
+            *dst.add(pos) = b'0';
+            pos += 1;
+            *dst.add(pos) = b'0';
+            pos += 1;
         }
         return pos;
     }
@@ -9906,10 +11660,14 @@ unsafe fn format_f64_full(
         let mut ibuf = [0u8; 400];
         let mut ilen: usize;
         if bin_exp < 0 {
-            ibuf[0] = b'0'; ilen = 1;
+            ibuf[0] = b'0';
+            ilen = 1;
         } else if bin_exp <= 63 {
-            let int_val = if bin_exp <= 52 { mant_b >> (52 - bin_exp) }
-                          else { mant_b << (bin_exp - 52) };
+            let int_val = if bin_exp <= 52 {
+                mant_b >> (52 - bin_exp)
+            } else {
+                mant_b << (bin_exp - 52)
+            };
             let (buf2, len2) = format_u64(int_val);
             ibuf[..len2].copy_from_slice(&buf2[..len2]);
             ilen = len2;
@@ -9922,7 +11680,11 @@ unsafe fn format_f64_full(
         let mut has_rest = false;
         if p > 0 && bin_exp < 52 {
             let shift = (52 - bin_exp) as u32;
-            let frac_bits = if bin_exp >= 0 { mant_b & ((1u64 << shift) - 1) } else { mant_b };
+            let frac_bits = if bin_exp >= 0 {
+                mant_b & ((1u64 << shift) - 1)
+            } else {
+                mant_b
+            };
             if shift <= 124 {
                 has_rest = frac_digits_u128(fbuf.as_mut_ptr(), frac_bits, shift, p + 1);
             } else {
@@ -9937,12 +11699,19 @@ unsafe fn format_f64_full(
             if next_d > 5 || (next_d == 5 && (has_rest || last_d & 1 != 0)) {
                 let mut carry = true;
                 for j in (0..p).rev() {
-                    if !carry { break; }
+                    if !carry {
+                        break;
+                    }
                     fbuf[j] += 1;
-                    if fbuf[j] < 10 { carry = false; break; }
+                    if fbuf[j] < 10 {
+                        carry = false;
+                        break;
+                    }
                     fbuf[j] = 0;
                 }
-                if carry { increment_decimal(ibuf.as_mut_ptr(), &mut ilen); }
+                if carry {
+                    increment_decimal(ibuf.as_mut_ptr(), &mut ilen);
+                }
             }
         } else if p == 0 {
             // %.0f: round integer based on fractional part
@@ -9961,12 +11730,20 @@ unsafe fn format_f64_full(
         core::ptr::copy_nonoverlapping(ibuf.as_ptr(), dst.add(pos), ilen);
         pos += ilen;
         if p > 0 || flags & FLAG_HASH != 0 {
-            *dst.add(pos) = b'.'; pos += 1;
-            for i in 0..p { *dst.add(pos) = b'0' + fbuf[i]; pos += 1; }
+            *dst.add(pos) = b'.';
+            pos += 1;
+            for i in 0..p {
+                *dst.add(pos) = b'0' + fbuf[i];
+                pos += 1;
+            }
         }
         if fmt_type == FMT_G && flags & FLAG_HASH == 0 {
-            while pos > 0 && *dst.add(pos - 1) == b'0' { pos -= 1; }
-            if pos > 0 && *dst.add(pos - 1) == b'.' { pos -= 1; }
+            while pos > 0 && *dst.add(pos - 1) == b'0' {
+                pos -= 1;
+            }
+            if pos > 0 && *dst.add(pos - 1) == b'.' {
+                pos -= 1;
+            }
         }
         return pos;
     }
@@ -10001,7 +11778,10 @@ unsafe fn format_f64_full(
                     limbs[j] = val as u32;
                     carry = val >> 32;
                 }
-                if carry > 0 { limbs[nlimbs] = carry as u32; nlimbs += 1; }
+                if carry > 0 {
+                    limbs[nlimbs] = carry as u32;
+                    nlimbs += 1;
+                }
             }
         }
 
@@ -10010,7 +11790,13 @@ unsafe fn format_f64_full(
             let bit = bs as u32 % 32;
             if ws > 0 {
                 let mut i = nlimbs;
-                while i > 0 { i -= 1; if i + ws < 40 { limbs[i + ws] = limbs[i]; } limbs[i] = 0; }
+                while i > 0 {
+                    i -= 1;
+                    if i + ws < 40 {
+                        limbs[i + ws] = limbs[i];
+                    }
+                    limbs[i] = 0;
+                }
                 nlimbs += ws;
             }
             if bit > 0 {
@@ -10020,7 +11806,10 @@ unsafe fn format_f64_full(
                     carry = limbs[i] >> (32 - bit);
                     limbs[i] = new_val;
                 }
-                if carry > 0 && nlimbs < 40 { limbs[nlimbs] = carry; nlimbs += 1; }
+                if carry > 0 && nlimbs < 40 {
+                    limbs[nlimbs] = carry;
+                    nlimbs += 1;
+                }
             }
         }
 
@@ -10033,7 +11822,9 @@ unsafe fn format_f64_full(
                     limbs[i] = (val / 5) as u32;
                     rem = val % 5;
                 }
-                if rem != 0 { has_rest = true; }
+                if rem != 0 {
+                    has_rest = true;
+                }
             }
         }
 
@@ -10042,13 +11833,21 @@ unsafe fn format_f64_full(
             let ws = (rshift / 32) as usize;
             let bit = rshift % 32;
             if ws > 0 {
-                for j in 0..ws.min(nlimbs) { if limbs[j] != 0 { has_rest = true; } }
-                for i in ws..nlimbs { limbs[i - ws] = limbs[i]; }
+                for j in 0..ws.min(nlimbs) {
+                    if limbs[j] != 0 {
+                        has_rest = true;
+                    }
+                }
+                for i in ws..nlimbs {
+                    limbs[i - ws] = limbs[i];
+                }
                 nlimbs = nlimbs.saturating_sub(ws);
             }
             if bit > 0 && nlimbs > 0 {
                 let mask = (1u32 << bit) - 1;
-                if limbs[0] & mask != 0 { has_rest = true; }
+                if limbs[0] & mask != 0 {
+                    has_rest = true;
+                }
                 for i in 0..nlimbs - 1 {
                     limbs[i] = (limbs[i] >> bit) | (limbs[i + 1] << (32 - bit));
                 }
@@ -10056,7 +11855,9 @@ unsafe fn format_f64_full(
             }
         }
 
-        while nlimbs > 0 && limbs[nlimbs - 1] == 0 { nlimbs -= 1; }
+        while nlimbs > 0 && limbs[nlimbs - 1] == 0 {
+            nlimbs -= 1;
+        }
 
         let ndigits = p + 2;
         let mut all_digits = [0u8; 25];
@@ -10064,24 +11865,39 @@ unsafe fn format_f64_full(
         if nlimbs > 0 {
             loop {
                 let mut all_zero = true;
-                for i in 0..nlimbs { if limbs[i] != 0 { all_zero = false; break; } }
-                if all_zero { break; }
+                for i in 0..nlimbs {
+                    if limbs[i] != 0 {
+                        all_zero = false;
+                        break;
+                    }
+                }
+                if all_zero {
+                    break;
+                }
                 let mut rem64 = 0u64;
                 for i in (0..nlimbs).rev() {
                     let val = (rem64 << 32) | limbs[i] as u64;
                     limbs[i] = (val / 10) as u32;
                     rem64 = val % 10;
                 }
-                if nd < 25 { all_digits[nd] = rem64 as u8; }
+                if nd < 25 {
+                    all_digits[nd] = rem64 as u8;
+                }
                 nd += 1;
             }
         }
 
         if nd >= ndigits {
-            for i in 0..ndigits { fbuf[ndigits - 1 - i] = all_digits[i]; }
+            for i in 0..ndigits {
+                fbuf[ndigits - 1 - i] = all_digits[i];
+            }
         } else {
-            for i in 0..nd { fbuf[ndigits - 1 - i] = all_digits[i]; }
-            for i in nd..ndigits { fbuf[ndigits - 1 - i] = 0; }
+            for i in 0..nd {
+                fbuf[ndigits - 1 - i] = all_digits[i];
+            }
+            for i in nd..ndigits {
+                fbuf[ndigits - 1 - i] = 0;
+            }
         }
 
         int_part = fbuf[0] as u64;
@@ -10093,12 +11909,20 @@ unsafe fn format_f64_full(
             if next_d > 5 || (next_d == 5 && (has_rest || last_d & 1 != 0)) {
                 let mut carry = true;
                 for j in (1..=p).rev() {
-                    if !carry { break; }
+                    if !carry {
+                        break;
+                    }
                     let d = fbuf[j] + 1;
-                    if d < 10 { fbuf[j] = d; carry = false; break; }
+                    if d < 10 {
+                        fbuf[j] = d;
+                        carry = false;
+                        break;
+                    }
                     fbuf[j] = 0;
                 }
-                if carry { int_part += 1; }
+                if carry {
+                    int_part += 1;
+                }
             }
         } else {
             let next_d = fbuf[1];
@@ -10109,7 +11933,9 @@ unsafe fn format_f64_full(
 
         // fbuf[1..=p] are now the fractional digits for output
         // Shift them to fbuf[0..p] so output code can index fbuf[0..p]
-        for i in 0..p { fbuf[i] = fbuf[i + 1]; }
+        for i in 0..p {
+            fbuf[i] = fbuf[i + 1];
+        }
     }
 
     if !use_f && int_part >= 10 {
@@ -10124,29 +11950,51 @@ unsafe fn format_f64_full(
         core::ptr::copy_nonoverlapping(ibuf.as_ptr(), dst.add(pos), ilen);
         pos += ilen;
         if p > 0 || flags & FLAG_HASH != 0 {
-            *dst.add(pos) = b'.'; pos += 1;
-            for idx in 0..p { *dst.add(pos) = b'0' + fbuf[idx]; pos += 1; }
+            *dst.add(pos) = b'.';
+            pos += 1;
+            for idx in 0..p {
+                *dst.add(pos) = b'0' + fbuf[idx];
+                pos += 1;
+            }
         }
         if fmt_type == FMT_G && flags & FLAG_HASH == 0 {
-            while pos > 0 && *dst.add(pos - 1) == b'0' { pos -= 1; }
-            if pos > 0 && *dst.add(pos - 1) == b'.' { pos -= 1; }
+            while pos > 0 && *dst.add(pos - 1) == b'0' {
+                pos -= 1;
+            }
+            if pos > 0 && *dst.add(pos - 1) == b'.' {
+                pos -= 1;
+            }
         }
     } else {
         // %e style
-        *dst.add(pos) = b'0' + int_part as u8; pos += 1;
+        *dst.add(pos) = b'0' + int_part as u8;
+        pos += 1;
         if p > 0 || flags & FLAG_HASH != 0 {
-            *dst.add(pos) = b'.'; pos += 1;
-            for idx in 0..p { *dst.add(pos) = b'0' + fbuf[idx]; pos += 1; }
+            *dst.add(pos) = b'.';
+            pos += 1;
+            for idx in 0..p {
+                *dst.add(pos) = b'0' + fbuf[idx];
+                pos += 1;
+            }
         }
         if fmt_type == FMT_G && flags & FLAG_HASH == 0 {
-            while pos > 0 && *dst.add(pos - 1) == b'0' { pos -= 1; }
-            if pos > 0 && *dst.add(pos - 1) == b'.' { pos -= 1; }
+            while pos > 0 && *dst.add(pos - 1) == b'0' {
+                pos -= 1;
+            }
+            if pos > 0 && *dst.add(pos - 1) == b'.' {
+                pos -= 1;
+            }
         }
         let ec = if uppercase { b'E' } else { b'e' };
-        *dst.add(pos) = ec; pos += 1;
-        *dst.add(pos) = if exp < 0 { b'-' } else { b'+' }; pos += 1;
+        *dst.add(pos) = ec;
+        pos += 1;
+        *dst.add(pos) = if exp < 0 { b'-' } else { b'+' };
+        pos += 1;
         let eabs = if exp < 0 { (-exp) as u32 } else { exp as u32 };
-        if eabs < 10 { *dst.add(pos) = b'0'; pos += 1; }
+        if eabs < 10 {
+            *dst.add(pos) = b'0';
+            pos += 1;
+        }
         let (ebuf, elen) = format_u64(eabs as u64);
         core::ptr::copy_nonoverlapping(ebuf.as_ptr(), dst.add(pos), elen);
         pos += elen;
@@ -10159,46 +12007,80 @@ unsafe fn format_f64_full(
 unsafe fn compute_exp10(v: f64) -> i32 {
     let e = libm::floor(libm::log10(v)) as i32;
     let probe = v / libm::pow(10.0, e as f64);
-    if probe >= 10.0 { e + 1 }
-    else if probe < 1.0 { e - 1 }
-    else { e }
+    if probe >= 10.0 {
+        e + 1
+    } else if probe < 1.0 {
+        e - 1
+    } else {
+        e
+    }
 }
 
 // Write hex float to dst. Returns bytes written.
-unsafe fn fmt_hex_float(dst: *mut u8, val: f64, precision: i32, _flags: u8, uppercase: bool) -> usize {
+unsafe fn fmt_hex_float(
+    dst: *mut u8,
+    val: f64,
+    precision: i32,
+    _flags: u8,
+    uppercase: bool,
+) -> usize {
     // Handle zero (and negative zero) specially
     if val.to_bits() & 0x7FFFFFFFFFFFFFFF == 0 {
         let lc = !uppercase;
         let pfx: &[u8] = if lc { b"0x" } else { b"0X" };
-        let p = if precision < 0 { 0usize } else { precision as usize };
+        let p = if precision < 0 {
+            0usize
+        } else {
+            precision as usize
+        };
         let mut pos = 0usize;
-        core::ptr::copy_nonoverlapping(pfx.as_ptr(), dst.add(pos), 2); pos += 2;
-        *dst.add(pos) = b'0'; pos += 1;
+        core::ptr::copy_nonoverlapping(pfx.as_ptr(), dst.add(pos), 2);
+        pos += 2;
+        *dst.add(pos) = b'0';
+        pos += 1;
         if p > 0 {
-            *dst.add(pos) = b'.'; pos += 1;
-            for _ in 0..p { *dst.add(pos) = b'0'; pos += 1; }
+            *dst.add(pos) = b'.';
+            pos += 1;
+            for _ in 0..p {
+                *dst.add(pos) = b'0';
+                pos += 1;
+            }
         }
         let pc = if lc { b'p' } else { b'P' };
-        *dst.add(pos) = pc; pos += 1;
-        *dst.add(pos) = b'+'; pos += 1;
-        *dst.add(pos) = b'0'; pos += 1;
+        *dst.add(pos) = pc;
+        pos += 1;
+        *dst.add(pos) = b'+';
+        pos += 1;
+        *dst.add(pos) = b'0';
+        pos += 1;
         return pos;
     }
     let bits = val.to_bits();
     let exp_bits = ((bits >> 52) & 0x7FF) as i32;
     let mant_bits = bits & 0x000FFFFFFFFFFFFF;
-    let (e, m) = if exp_bits == 0 { (1 - 1023, mant_bits) } else { (exp_bits - 1023, mant_bits | (1u64 << 52)) };
-    let p = if precision < 0 { 13usize } else { precision as usize };
+    let (e, m) = if exp_bits == 0 {
+        (1 - 1023, mant_bits)
+    } else {
+        (exp_bits - 1023, mant_bits | (1u64 << 52))
+    };
+    let p = if precision < 0 {
+        13usize
+    } else {
+        precision as usize
+    };
     let mut pos = 0usize;
     let lc = !uppercase;
     let pfx: &[u8] = if lc { b"0x" } else { b"0X" };
-    core::ptr::copy_nonoverlapping(pfx.as_ptr(), dst.add(pos), 2); pos += 2;
+    core::ptr::copy_nonoverlapping(pfx.as_ptr(), dst.add(pos), 2);
+    pos += 2;
 
     // Leading digit from bit 52
     let lead = ((m >> 52) & 0xF) as u8;
-    *dst.add(pos) = hex_digit_char(lead, lc); pos += 1;
+    *dst.add(pos) = hex_digit_char(lead, lc);
+    pos += 1;
     if p > 0 {
-        *dst.add(pos) = b'.'; pos += 1;
+        *dst.add(pos) = b'.';
+        pos += 1;
     }
 
     // Extract p hex digits from mantissa bits
@@ -10210,7 +12092,8 @@ unsafe fn fmt_hex_float(dst: *mut u8, val: f64, precision: i32, _flags: u8, uppe
     let mut rm = m & 0x000FFFFFFFFFFFFF;
     for _ in 0..p {
         let nib = ((rm >> 48) & 0xF) as u8;
-        *dst.add(pos) = hex_digit_char(nib, lc); pos += 1;
+        *dst.add(pos) = hex_digit_char(nib, lc);
+        pos += 1;
         rm <<= 4;
     }
 
@@ -10221,19 +12104,25 @@ unsafe fn fmt_hex_float(dst: *mut u8, val: f64, precision: i32, _flags: u8, uppe
         let last_nib = if p > 0 {
             let c = *dst.add(pos - 1);
             hex_char_val(c)
-        } else { lead };
+        } else {
+            lead
+        };
         let should_round = round_nib > 8 || (round_nib == 8 && (rest != 0 || (last_nib & 1) != 0));
         if should_round {
             let mut j = pos - 1;
             loop {
-                if j < frac_start { break; }
+                if j < frac_start {
+                    break;
+                }
                 let v = hex_char_val(*dst.add(j));
                 if v < 15 {
                     *dst.add(j) = hex_digit_char(v + 1, lc);
                     break;
                 } else {
                     *dst.add(j) = b'0';
-                    if j == frac_start { break; }
+                    if j == frac_start {
+                        break;
+                    }
                     j -= 1;
                 }
             }
@@ -10242,8 +12131,10 @@ unsafe fn fmt_hex_float(dst: *mut u8, val: f64, precision: i32, _flags: u8, uppe
 
     // Exponent
     let pc = if lc { b'p' } else { b'P' };
-    *dst.add(pos) = pc; pos += 1;
-    *dst.add(pos) = if e < 0 { b'-' } else { b'+' }; pos += 1;
+    *dst.add(pos) = pc;
+    pos += 1;
+    *dst.add(pos) = if e < 0 { b'-' } else { b'+' };
+    pos += 1;
     let eabs = if e < 0 { (-e) as u32 } else { e as u32 };
     let (ebuf, elen) = format_u64(eabs as u64);
     core::ptr::copy_nonoverlapping(ebuf.as_ptr(), dst.add(pos), elen);
@@ -10253,23 +12144,36 @@ unsafe fn fmt_hex_float(dst: *mut u8, val: f64, precision: i32, _flags: u8, uppe
 
 #[inline]
 fn hex_digit_char(v: u8, lowercase: bool) -> u8 {
-    if v < 10 { b'0' + v }
-    else if lowercase { b'a' + v - 10 }
-    else { b'A' + v - 10 }
+    if v < 10 {
+        b'0' + v
+    } else if lowercase {
+        b'a' + v - 10
+    } else {
+        b'A' + v - 10
+    }
 }
 
 #[inline]
 fn hex_char_val(c: u8) -> u8 {
-    if c >= b'0' && c <= b'9' { c - b'0' }
-    else if c >= b'a' && c <= b'f' { c - b'a' + 10 }
-    else if c >= b'A' && c <= b'F' { c - b'A' + 10 }
-    else { 0 }
+    if c >= b'0' && c <= b'9' {
+        c - b'0'
+    } else if c >= b'a' && c <= b'f' {
+        c - b'a' + 10
+    } else if c >= b'A' && c <= b'F' {
+        c - b'A' + 10
+    } else {
+        0
+    }
 }
 
 // Apply width and flags padding to a formatted string in buf[0..len].
 // Writes the final result to dst. Returns total bytes written.
 unsafe fn apply_width_flags(
-    dst: *mut u8, buf: *const u8, len: usize, width: usize, flags: u8,
+    dst: *mut u8,
+    buf: *const u8,
+    len: usize,
+    width: usize,
+    flags: u8,
 ) -> usize {
     if len >= width {
         core::ptr::copy_nonoverlapping(buf, dst, len);
@@ -10280,19 +12184,33 @@ unsafe fn apply_width_flags(
     // also why sign-aware zero padding below must not turn `%09f` into
     // `000000inf`.
     let special = if len >= 3 {
-        let start = if *buf == b'+' || *buf == b'-' || *buf == b' ' { 1 } else { 0 };
+        let start = if *buf == b'+' || *buf == b'-' || *buf == b' ' {
+            1
+        } else {
+            0
+        };
         if len - start >= 3 {
             let a = *buf.add(start) | 0x20;
             let b = *buf.add(start + 1) | 0x20;
             let c = *buf.add(start + 2) | 0x20;
             (a == b'i' && b == b'n' && c == b'f') || (a == b'n' && b == b'a' && c == b'n')
-        } else { false }
-    } else { false };
-    let pad_char = if flags & FLAG_ZERO != 0 && flags & FLAG_MINUS == 0 && !special { b'0' } else { b' ' };
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    let pad_char = if flags & FLAG_ZERO != 0 && flags & FLAG_MINUS == 0 && !special {
+        b'0'
+    } else {
+        b' '
+    };
     if flags & FLAG_MINUS != 0 {
         // Left align
         core::ptr::copy_nonoverlapping(buf, dst, len);
-        for i in 0..pad { *dst.add(len + i) = pad_char; }
+        for i in 0..pad {
+            *dst.add(len + i) = pad_char;
+        }
     } else {
         // Right align
         // For zero-padded numbers, sign goes before zeros
@@ -10300,12 +12218,16 @@ unsafe fn apply_width_flags(
             let first = *buf;
             if first == b'-' || first == b'+' || first == b' ' {
                 *dst = first;
-                for i in 0..pad { *dst.add(1 + i) = pad_char; }
+                for i in 0..pad {
+                    *dst.add(1 + i) = pad_char;
+                }
                 core::ptr::copy_nonoverlapping(buf.add(1), dst.add(1 + pad), len - 1);
                 return width;
             }
         }
-        for i in 0..pad { *dst.add(i) = pad_char; }
+        for i in 0..pad {
+            *dst.add(i) = pad_char;
+        }
         core::ptr::copy_nonoverlapping(buf, dst.add(pad), len);
     }
     width
@@ -10313,49 +12235,89 @@ unsafe fn apply_width_flags(
 
 #[no_mangle]
 pub unsafe extern "C" fn vprintf(fmt: *const c_char, mut args: VaList) -> c_int {
-    impl_format!(fmt, args,
-        |c: u8| { let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stdout); },
-        |s: *const u8, len: usize| { let _ = fwrite(s as *const c_void, 1, len, stdout); }
+    impl_format!(
+        fmt,
+        args,
+        |c: u8| {
+            let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stdout);
+        },
+        |s: *const u8, len: usize| {
+            let _ = fwrite(s as *const c_void, 1, len, stdout);
+        }
     )
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vfprintf(stream: *mut FILE, fmt: *const c_char, mut args: VaList) -> c_int {
-    impl_format!(fmt, args,
-        |c: u8| { let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stream); },
-        |s: *const u8, len: usize| { let _ = fwrite(s as *const c_void, 1, len, stream); }
+pub unsafe extern "C" fn vfprintf(
+    stream: *mut FILE,
+    fmt: *const c_char,
+    mut args: VaList,
+) -> c_int {
+    impl_format!(
+        fmt,
+        args,
+        |c: u8| {
+            let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stream);
+        },
+        |s: *const u8, len: usize| {
+            let _ = fwrite(s as *const c_void, 1, len, stream);
+        }
     )
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn printf(fmt: *const c_char, mut args: ...) -> c_int {
-    impl_format!(fmt, args,
-        |c: u8| { let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stdout); },
-        |s: *const u8, len: usize| { let _ = fwrite(s as *const c_void, 1, len, stdout); }
+    impl_format!(
+        fmt,
+        args,
+        |c: u8| {
+            let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stdout);
+        },
+        |s: *const u8, len: usize| {
+            let _ = fwrite(s as *const c_void, 1, len, stdout);
+        }
     )
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn fprintf(stream: *mut FILE, fmt: *const c_char, mut args: ...) -> c_int {
-    impl_format!(fmt, args,
-        |c: u8| { let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stream); },
-        |s: *const u8, len: usize| { let _ = fwrite(s as *const c_void, 1, len, stream); }
+    impl_format!(
+        fmt,
+        args,
+        |c: u8| {
+            let _ = fwrite(&c as *const u8 as *const c_void, 1, 1, stream);
+        },
+        |s: *const u8, len: usize| {
+            let _ = fwrite(s as *const c_void, 1, len, stream);
+        }
     )
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn dprintf(fd: c_int, fmt: *const c_char, mut args: ...) -> c_int {
-    impl_format!(fmt, args,
-        |c: u8| { write_str(fd, &c as *const u8, 1); },
-        |s: *const u8, len: usize| { write_str(fd, s, len); }
+    impl_format!(
+        fmt,
+        args,
+        |c: u8| {
+            write_str(fd, &c as *const u8, 1);
+        },
+        |s: *const u8, len: usize| {
+            write_str(fd, s, len);
+        }
     )
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn vdprintf(fd: c_int, fmt: *const c_char, mut args: VaList) -> c_int {
-    impl_format!(fmt, args,
-        |c: u8| { write_str(fd, &c as *const u8, 1); },
-        |s: *const u8, len: usize| { write_str(fd, s, len); }
+    impl_format!(
+        fmt,
+        args,
+        |c: u8| {
+            write_str(fd, &c as *const u8, 1);
+        },
+        |s: *const u8, len: usize| {
+            write_str(fd, s, len);
+        }
     )
 }
 
@@ -10363,40 +12325,69 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, fmt: *const c_char, mut args: VaLis
 // sprintf / snprintf / vsprintf / vsnprintf
 // ============================================================
 
-unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut VaList<'_>) -> c_int {
+unsafe fn format_to_buf(
+    buf: *mut u8,
+    cap: usize,
+    fmt: *const c_char,
+    args: &mut VaList<'_>,
+) -> c_int {
     let va_args = &*args;
     let mut args = PrintfArgs::new(va_args, fmt);
     let mut pos = 0usize;
     let mut i = 0usize;
     let mut count = 0usize;
     macro_rules! wc {
-        ($c:expr) => { if pos < cap { *buf.add(pos) = $c; } pos += 1; count += 1; }
+        ($c:expr) => {
+            if pos < cap {
+                *buf.add(pos) = $c;
+            }
+            pos += 1;
+            count += 1;
+        };
     }
     macro_rules! ws {
         ($s:expr, $len:expr) => {{
             let __len = $len;
-            for k in 0..__len { if pos + k < cap { *buf.add(pos + k) = *$s.add(k); } }
-            pos += __len; count += __len;
-        }}
+            for k in 0..__len {
+                if pos + k < cap {
+                    *buf.add(pos + k) = *$s.add(k);
+                }
+            }
+            pos += __len;
+            count += __len;
+        }};
     }
     // Write formatted buffer respecting cap, at current pos
     macro_rules! ws_buf {
         ($src:expr, $len:expr) => {{
             let __len = $len;
-            for k in 0..__len { if pos + k < cap { *buf.add(pos + k) = *$src.add(k); } }
-            pos += __len; count += __len;
-        }}
+            for k in 0..__len {
+                if pos + k < cap {
+                    *buf.add(pos + k) = *$src.add(k);
+                }
+            }
+            pos += __len;
+            count += __len;
+        }};
     }
     loop {
         let c = *fmt.add(i) as u8;
-        if c == 0 { break; }
-        if c != b'%' { wc!(c); i += 1; continue; }
+        if c == 0 {
+            break;
+        }
+        if c != b'%' {
+            wc!(c);
+            i += 1;
+            continue;
+        }
         i += 1;
         let mut arg_position = None;
         let mut arg_number = 0usize;
         let mut arg_probe = i;
         while (*fmt.add(arg_probe) as u8) >= b'0' && (*fmt.add(arg_probe) as u8) <= b'9' {
-            arg_number = arg_number.saturating_mul(10).saturating_add((*fmt.add(arg_probe) as u8 - b'0') as usize);
+            arg_number = arg_number
+                .saturating_mul(10)
+                .saturating_add((*fmt.add(arg_probe) as u8 - b'0') as usize);
             arg_probe += 1;
         }
         if arg_number > 0 && *fmt.add(arg_probe) as u8 == b'$' {
@@ -10408,11 +12399,26 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
         loop {
             let fc = *fmt.add(i) as u8;
             match fc {
-                b'-' => { flags |= FLAG_MINUS; i += 1; }
-                b'+' => { flags |= FLAG_PLUS; i += 1; }
-                b' ' => { flags |= FLAG_SPACE; i += 1; }
-                b'0' => { flags |= FLAG_ZERO; i += 1; }
-                b'#' => { flags |= FLAG_HASH; i += 1; }
+                b'-' => {
+                    flags |= FLAG_MINUS;
+                    i += 1;
+                }
+                b'+' => {
+                    flags |= FLAG_PLUS;
+                    i += 1;
+                }
+                b' ' => {
+                    flags |= FLAG_SPACE;
+                    i += 1;
+                }
+                b'0' => {
+                    flags |= FLAG_ZERO;
+                    i += 1;
+                }
+                b'#' => {
+                    flags |= FLAG_HASH;
+                    i += 1;
+                }
                 _ => break,
             }
         }
@@ -10424,7 +12430,9 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
             let mut width_number = 0usize;
             let mut width_probe = i;
             while (*fmt.add(width_probe) as u8) >= b'0' && (*fmt.add(width_probe) as u8) <= b'9' {
-                width_number = width_number.saturating_mul(10).saturating_add((*fmt.add(width_probe) as u8 - b'0') as usize);
+                width_number = width_number
+                    .saturating_mul(10)
+                    .saturating_add((*fmt.add(width_probe) as u8 - b'0') as usize);
                 width_probe += 1;
             }
             if width_number > 0 && *fmt.add(width_probe) as u8 == b'$' {
@@ -10441,7 +12449,8 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
             }
         } else {
             while (*fmt.add(i) as u8) >= b'0' && (*fmt.add(i) as u8) <= b'9' {
-                width = width * 10 + ((*fmt.add(i) as u8) - b'0') as usize; i += 1;
+                width = width * 10 + ((*fmt.add(i) as u8) - b'0') as usize;
+                i += 1;
             }
         }
         // Parse precision
@@ -10453,8 +12462,12 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                 i += 1;
                 let mut precision_number = 0usize;
                 let mut precision_probe = i;
-                while (*fmt.add(precision_probe) as u8) >= b'0' && (*fmt.add(precision_probe) as u8) <= b'9' {
-                    precision_number = precision_number.saturating_mul(10).saturating_add((*fmt.add(precision_probe) as u8 - b'0') as usize);
+                while (*fmt.add(precision_probe) as u8) >= b'0'
+                    && (*fmt.add(precision_probe) as u8) <= b'9'
+                {
+                    precision_number = precision_number
+                        .saturating_mul(10)
+                        .saturating_add((*fmt.add(precision_probe) as u8 - b'0') as usize);
                     precision_probe += 1;
                 }
                 if precision_number > 0 && *fmt.add(precision_probe) as u8 == b'$' {
@@ -10466,7 +12479,8 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
             } else {
                 precision = 0;
                 while (*fmt.add(i) as u8) >= b'0' && (*fmt.add(i) as u8) <= b'9' {
-                    precision = precision * 10 + ((*fmt.add(i) as u8) - b'0') as i32; i += 1;
+                    precision = precision * 10 + ((*fmt.add(i) as u8) - b'0') as i32;
+                    i += 1;
                 }
             }
         }
@@ -10474,7 +12488,13 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
         // Parse length modifier
         let len_mod = *fmt.add(i) as u8;
         let spec: u8;
-        if len_mod == b'h' || len_mod == b'l' || len_mod == b'j' || len_mod == b'z' || len_mod == b't' || len_mod == b'L' {
+        if len_mod == b'h'
+            || len_mod == b'l'
+            || len_mod == b'j'
+            || len_mod == b'z'
+            || len_mod == b't'
+            || len_mod == b'L'
+        {
             i += 1;
             let len_mod2 = *fmt.add(i) as u8;
             if (len_mod == b'h' && len_mod2 == b'h') || (len_mod == b'l' && len_mod2 == b'l') {
@@ -10483,87 +12503,212 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                 match (len_mod, len_mod2, spec) {
                     (b'h', b'h', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
-                        if !p.is_null() { *(p as *mut u8) = count as u8; }
+                        if !p.is_null() {
+                            *(p as *mut u8) = count as u8;
+                        }
                     }
                     (b'h', b'h', b'd') | (b'h', b'h', b'i') => {
                         let raw = args.next_arg::<c_int>();
                         let val = raw as i8 as c_int;
                         let neg = val < 0;
-                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let abs = if neg {
+                            val.wrapping_neg() as u64
+                        } else {
+                            val as u64
+                        };
                         let b = format_u64(abs);
-                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let sign = if neg {
+                            Some(b'-')
+                        } else if flags & FLAG_PLUS != 0 {
+                            Some(b'+')
+                        } else if flags & FLAG_SPACE != 0 {
+                            Some(b' ')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            sign,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'l', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
-                        if !p.is_null() { *(p as *mut c_longlong) = count as c_longlong; }
+                        if !p.is_null() {
+                            *(p as *mut c_longlong) = count as c_longlong;
+                        }
                     }
                     (b'l', b'l', b'd') | (b'l', b'l', b'i') => {
                         let val = args.next_arg::<c_longlong>();
                         let neg = val < 0;
-                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let abs = if neg {
+                            val.wrapping_neg() as u64
+                        } else {
+                            val as u64
+                        };
                         let b = format_u64(abs);
-                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let sign = if neg {
+                            Some(b'-')
+                        } else if flags & FLAG_PLUS != 0 {
+                            Some(b'+')
+                        } else if flags & FLAG_SPACE != 0 {
+                            Some(b' ')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            sign,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'l', b'u') => {
                         let val = args.next_arg::<c_ulonglong>();
                         let b = format_u64(val as u64);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'l', b'o') => {
                         let val = args.next_arg::<c_ulonglong>();
                         let b = format_octal(val as u64, flags & FLAG_HASH != 0);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            flags & FLAG_HASH != 0,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
-                    _ => { wc!(b'%'); wc!(len_mod); wc!(len_mod2); wc!(spec); }
+                    _ => {
+                        wc!(b'%');
+                        wc!(len_mod);
+                        wc!(len_mod2);
+                        wc!(spec);
+                    }
                 }
             } else {
                 spec = len_mod2;
                 match (len_mod, spec) {
                     (b'h', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
-                        if !p.is_null() { *(p as *mut u16) = count as u16; }
+                        if !p.is_null() {
+                            *(p as *mut u16) = count as u16;
+                        }
                     }
                     (b'h', b'd') | (b'h', b'i') => {
                         let raw = args.next_arg::<c_int>();
                         let val = raw as i16 as c_int;
                         let neg = val < 0;
-                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let abs = if neg {
+                            val.wrapping_neg() as u64
+                        } else {
+                            val as u64
+                        };
                         let b = format_u64(abs);
-                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let sign = if neg {
+                            Some(b'-')
+                        } else if flags & FLAG_PLUS != 0 {
+                            Some(b'+')
+                        } else if flags & FLAG_SPACE != 0 {
+                            Some(b' ')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            sign,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
-                        if !p.is_null() { *(p as *mut c_long) = count as c_long; }
+                        if !p.is_null() {
+                            *(p as *mut c_long) = count as c_long;
+                        }
                     }
                     (b'z', b'n') | (b't', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
-                        if !p.is_null() { *(p as *mut usize) = count; }
+                        if !p.is_null() {
+                            *(p as *mut usize) = count;
+                        }
                     }
                     (b'j', b'n') => {
                         let p = args.next_arg::<*mut c_void>();
-                        if !p.is_null() { *(p as *mut c_ulonglong) = count as c_ulonglong; }
+                        if !p.is_null() {
+                            *(p as *mut c_ulonglong) = count as c_ulonglong;
+                        }
                     }
                     (b'l', b'd') | (b'l', b'i') => {
                         let val = args.next_arg::<c_long>();
                         let neg = val < 0;
-                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let abs = if neg {
+                            val.wrapping_neg() as u64
+                        } else {
+                            val as u64
+                        };
                         let b = format_u64(abs);
-                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let sign = if neg {
+                            Some(b'-')
+                        } else if flags & FLAG_PLUS != 0 {
+                            Some(b'+')
+                        } else if flags & FLAG_SPACE != 0 {
+                            Some(b' ')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            sign,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     // `%zd` is the signed size counterpart to `%zu`; os-test
@@ -10571,41 +12716,111 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                     (b'z', b'd') | (b'z', b'i') => {
                         let val = args.next_arg::<c_long>();
                         let neg = val < 0;
-                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let abs = if neg {
+                            val.wrapping_neg() as u64
+                        } else {
+                            val as u64
+                        };
                         let b = format_u64(abs);
-                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let sign = if neg {
+                            Some(b'-')
+                        } else if flags & FLAG_PLUS != 0 {
+                            Some(b'+')
+                        } else if flags & FLAG_SPACE != 0 {
+                            Some(b' ')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            sign,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'u') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_u64(val as u64);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'x') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_hex(val as u64, false);
-                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'x') } else { None };
+                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                            Some(b'x')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            prefix,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'X') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_hex(val as u64, true);
-                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'X') } else { None };
+                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                            Some(b'X')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            prefix,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     (b'l', b'o') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_octal(val as u64, flags & FLAG_HASH != 0);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            flags & FLAG_HASH != 0,
+                        );
                         ws_buf!(fbuf.as_ptr(), len);
                     }
                     // `%lc` is the narrow printf spelling for a wide
@@ -10613,40 +12828,82 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                     (b'l', b'c') => {
                         let ch = args.next_arg::<c_int>();
                         let mut mb = [0u8; 4];
-                        let len = wcrtomb(mb.as_mut_ptr() as *mut c_char, ch as wchar_t, core::ptr::null_mut());
-                        if len == !0usize { return -1; }
+                        let len = wcrtomb(
+                            mb.as_mut_ptr() as *mut c_char,
+                            ch as wchar_t,
+                            core::ptr::null_mut(),
+                        );
+                        if len == !0usize {
+                            return -1;
+                        }
                         let pad = width.saturating_sub(len);
                         if flags & FLAG_MINUS != 0 {
                             ws_buf!(mb.as_ptr(), len);
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                         } else {
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                             ws_buf!(mb.as_ptr(), len);
                         }
                     }
-                    (b'l', b'f') | (b'l', b'F') | (b'l', b'e') | (b'l', b'E')
-                    | (b'l', b'g') | (b'l', b'G') | (b'l', b'a') | (b'l', b'A') => {
+                    (b'l', b'f')
+                    | (b'l', b'F')
+                    | (b'l', b'e')
+                    | (b'l', b'E')
+                    | (b'l', b'g')
+                    | (b'l', b'G')
+                    | (b'l', b'a')
+                    | (b'l', b'A') => {
                         let val = args.next_arg::<f64>();
                         let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
-                        let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
+                        let ftype = match spec | 0x20 {
+                            b'f' => FMT_F,
+                            b'e' => FMT_E,
+                            b'g' => FMT_G,
+                            b'a' => FMT_A,
+                            _ => FMT_F,
+                        };
                         let mut fbuf = [0u8; 4224];
-                        let flen = format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
+                        let flen =
+                            format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
                         let mut wbuf = [0u8; 4224];
-                        let wlen = apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
+                        let wlen =
+                            apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
                         ws_buf!(wbuf.as_ptr(), wlen);
                     }
-                    (b'L', b'f') | (b'L', b'F') | (b'L', b'e') | (b'L', b'E')
-                    | (b'L', b'g') | (b'L', b'G') | (b'L', b'a') | (b'L', b'A') => {
+                    (b'L', b'f')
+                    | (b'L', b'F')
+                    | (b'L', b'e')
+                    | (b'L', b'E')
+                    | (b'L', b'g')
+                    | (b'L', b'G')
+                    | (b'L', b'a')
+                    | (b'L', b'A') => {
                         let val = args.long_double(arg_position);
                         let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
-                        let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
+                        let ftype = match spec | 0x20 {
+                            b'f' => FMT_F,
+                            b'e' => FMT_E,
+                            b'g' => FMT_G,
+                            b'a' => FMT_A,
+                            _ => FMT_F,
+                        };
                         let mut fbuf = [0u8; 4224];
-                        let flen = format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
+                        let flen =
+                            format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
                         let mut wbuf = [0u8; 4224];
-                        let wlen = apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
+                        let wlen =
+                            apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
                         ws_buf!(wbuf.as_ptr(), wlen);
                     }
-                    _ => { wc!(b'%'); wc!(len_mod); wc!(spec); }
+                    _ => {
+                        wc!(b'%');
+                        wc!(len_mod);
+                        wc!(spec);
+                    }
                 }
             }
         } else {
@@ -10655,26 +12912,42 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                 b's' => {
                     let s = args.next_arg::<*const c_char>();
                     if s.is_null() {
-                        let slen = if precision >= 0 { (precision as usize).min(6) } else { 6 };
+                        let slen = if precision >= 0 {
+                            (precision as usize).min(6)
+                        } else {
+                            6
+                        };
                         let padded_len = if width > slen { width } else { slen };
                         let pad = padded_len - slen;
                         if flags & FLAG_MINUS != 0 {
                             ws!(b"(null)".as_ptr(), slen);
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                         } else {
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                             ws!(b"(null)".as_ptr(), slen);
                         }
                     } else {
                         let full_len = strlen(s as *const c_char);
-                        let slen = if precision >= 0 { (precision as usize).min(full_len) } else { full_len };
+                        let slen = if precision >= 0 {
+                            (precision as usize).min(full_len)
+                        } else {
+                            full_len
+                        };
                         let padded_len = if width > slen { width } else { slen };
                         let pad = padded_len - slen;
                         if flags & FLAG_MINUS != 0 {
                             ws!(s as *const u8, slen);
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                         } else {
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                             ws!(s as *const u8, slen);
                         }
                     }
@@ -10682,41 +12955,111 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                 b'd' | b'i' => {
                     let d = args.next_arg::<c_int>();
                     let neg = d < 0;
-                    let abs = if neg { d.wrapping_neg() as u64 } else { d as u64 };
+                    let abs = if neg {
+                        d.wrapping_neg() as u64
+                    } else {
+                        d as u64
+                    };
                     let b = format_u64(abs);
-                    let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                    let sign = if neg {
+                        Some(b'-')
+                    } else if flags & FLAG_PLUS != 0 {
+                        Some(b'+')
+                    } else if flags & FLAG_SPACE != 0 {
+                        Some(b' ')
+                    } else {
+                        None
+                    };
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        sign,
+                        None,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
                     ws_buf!(fbuf.as_ptr(), len);
                 }
                 b'u' => {
                     let u = args.next_arg::<c_uint>();
                     let b = format_u64(u as u64);
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, false);
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        None,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
                     ws_buf!(fbuf.as_ptr(), len);
                 }
                 b'x' => {
                     let x = args.next_arg::<c_uint>();
                     let b = format_hex(x as u64, false);
-                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'x') } else { None };
+                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                        Some(b'x')
+                    } else {
+                        None
+                    };
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        prefix,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
                     ws_buf!(fbuf.as_ptr(), len);
                 }
                 b'X' => {
                     let x = args.next_arg::<c_uint>();
                     let b = format_hex(x as u64, true);
-                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'X') } else { None };
+                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                        Some(b'X')
+                    } else {
+                        None
+                    };
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        prefix,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
                     ws_buf!(fbuf.as_ptr(), len);
                 }
                 b'o' => {
                     let o = args.next_arg::<c_uint>();
                     let b = format_octal(o as u64, flags & FLAG_HASH != 0);
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        None,
+                        precision,
+                        width,
+                        flags,
+                        flags & FLAG_HASH != 0,
+                    );
                     ws_buf!(fbuf.as_ptr(), len);
                 }
                 b'c' => {
@@ -10725,9 +13068,13 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                         let pad = width - 1;
                         if flags & FLAG_MINUS != 0 {
                             wc!(ch as u8);
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                         } else {
-                            for _ in 0..pad { wc!(b' '); }
+                            for _ in 0..pad {
+                                wc!(b' ');
+                            }
                             wc!(ch as u8);
                         }
                     } else {
@@ -10735,7 +13082,8 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                     }
                 }
                 b'p' => {
-                    wc!(b'0'); wc!(b'x');
+                    wc!(b'0');
+                    wc!(b'x');
                     let p = args.next_arg::<*const c_void>();
                     let b = format_hex(p as u64, false);
                     ws!(b.0.as_ptr(), b.1);
@@ -10743,24 +13091,42 @@ unsafe fn format_to_buf(buf: *mut u8, cap: usize, fmt: *const c_char, args: &mut
                 b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
                     let val = args.next_arg::<f64>();
                     let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
-                    let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
+                    let ftype = match spec | 0x20 {
+                        b'f' => FMT_F,
+                        b'e' => FMT_E,
+                        b'g' => FMT_G,
+                        b'a' => FMT_A,
+                        _ => FMT_F,
+                    };
                     let mut fbuf = [0u8; 4224];
-                    let flen = format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
+                    let flen =
+                        format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
                     let mut wbuf = [0u8; 4224];
-                    let wlen = apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
+                    let wlen =
+                        apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
                     ws_buf!(wbuf.as_ptr(), wlen);
                 }
-                b'%' => { wc!(b'%'); }
+                b'%' => {
+                    wc!(b'%');
+                }
                 b'n' => {
                     let p = args.next_arg::<*mut c_void>();
-                    if !p.is_null() { *(p as *mut c_int) = count as c_int; }
+                    if !p.is_null() {
+                        *(p as *mut c_int) = count as c_int;
+                    }
                 }
-                _ => { wc!(b'%'); wc!(spec); }
+                _ => {
+                    wc!(b'%');
+                    wc!(spec);
+                }
             }
         }
         i += 1;
     }
-    if cap > 0 { let null_pos = if pos < cap { pos } else { cap - 1 }; *buf.add(null_pos) = 0; }
+    if cap > 0 {
+        let null_pos = if pos < cap { pos } else { cap - 1 };
+        *buf.add(null_pos) = 0;
+    }
     count as c_int
 }
 
@@ -10770,7 +13136,12 @@ pub unsafe extern "C" fn vsprintf(buf: *mut c_char, fmt: *const c_char, mut args
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vsnprintf(buf: *mut c_char, size: usize, fmt: *const c_char, mut args: VaList) -> c_int {
+pub unsafe extern "C" fn vsnprintf(
+    buf: *mut c_char,
+    size: usize,
+    fmt: *const c_char,
+    mut args: VaList,
+) -> c_int {
     format_to_buf(buf as *mut u8, size, fmt, &mut args)
 }
 
@@ -10780,7 +13151,12 @@ pub unsafe extern "C" fn sprintf(buf: *mut c_char, fmt: *const c_char, mut args:
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn snprintf(buf: *mut c_char, size: usize, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C" fn snprintf(
+    buf: *mut c_char,
+    size: usize,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     format_to_buf(buf as *mut u8, size, fmt, &mut args)
 }
 
@@ -10790,7 +13166,9 @@ pub unsafe extern "C" fn snprintf(buf: *mut c_char, size: usize, fmt: *const c_c
 
 unsafe fn skip_ws(p: *const u8) -> *const u8 {
     let mut q = p;
-    while *q == b' ' || *q == b'\t' || *q == b'\n' || *q == b'\r' { q = q.add(1); }
+    while *q == b' ' || *q == b'\t' || *q == b'\n' || *q == b'\r' {
+        q = q.add(1);
+    }
     q
 }
 
@@ -10802,14 +13180,31 @@ fn is_ws_byte(c: u8) -> bool {
 // Scan integer with position tracking. Returns (value, is_negative, success).
 // base: 0=auto, 8=octal, 10=decimal, 16=hex
 unsafe fn scan_int_val(
-    buf: *const u8, pos: &mut usize, buf_len: usize, base: u32, width: usize,
+    buf: *const u8,
+    pos: &mut usize,
+    buf_len: usize,
+    base: u32,
+    width: usize,
 ) -> (u64, bool, bool) {
     let start = *pos;
-    let max = if width > 0 { (start + width).min(buf_len) } else { buf_len };
-    let neg = if *pos < max && *buf.add(*pos) == b'-' { *pos += 1; true }
-    else if *pos < max && *buf.add(*pos) == b'+' { *pos += 1; false }
-    else { false };
-    if *pos >= max { *pos = start; return (0, false, false); }
+    let max = if width > 0 {
+        (start + width).min(buf_len)
+    } else {
+        buf_len
+    };
+    let neg = if *pos < max && *buf.add(*pos) == b'-' {
+        *pos += 1;
+        true
+    } else if *pos < max && *buf.add(*pos) == b'+' {
+        *pos += 1;
+        false
+    } else {
+        false
+    };
+    if *pos >= max {
+        *pos = start;
+        return (0, false, false);
+    }
     let mut base = base;
     let mut val: u64 = 0;
     // Auto-detect base / handle 0x prefix
@@ -10819,74 +13214,173 @@ unsafe fn scan_int_val(
             *pos += 1;
             if *pos < max {
                 if let Some(d) = hex_val(*buf.add(*pos)) {
-                    val = d as u64; *pos += 1;
-                    while *pos < max { if let Some(d) = hex_val(*buf.add(*pos)) { val = val.wrapping_mul(16).wrapping_add(d as u64); *pos += 1; } else { break; } }
+                    val = d as u64;
+                    *pos += 1;
+                    while *pos < max {
+                        if let Some(d) = hex_val(*buf.add(*pos)) {
+                            val = val.wrapping_mul(16).wrapping_add(d as u64);
+                            *pos += 1;
+                        } else {
+                            break;
+                        }
+                    }
                     return (val, neg, true);
                 }
             }
             return (0, neg, false);
         } else if base == 0 {
-            while *pos < max { let c = *buf.add(*pos); if c >= b'0' && c <= b'7' { val = val.wrapping_mul(8).wrapping_add((c - b'0') as u64); *pos += 1; } else { break; } }
+            while *pos < max {
+                let c = *buf.add(*pos);
+                if c >= b'0' && c <= b'7' {
+                    val = val.wrapping_mul(8).wrapping_add((c - b'0') as u64);
+                    *pos += 1;
+                } else {
+                    break;
+                }
+            }
             return (val, neg, true);
         } else {
             return (0, neg, true); // base=16, '0' not followed by 'x'
         }
     }
-    if base == 0 { base = 10; }
+    if base == 0 {
+        base = 10;
+    }
     let mut found = false;
     while *pos < max {
         let c = *buf.add(*pos);
         let d: Option<u64> = match base {
-            8 => if c >= b'0' && c <= b'7' { Some((c - b'0') as u64) } else { None },
-            10 => if c >= b'0' && c <= b'9' { Some((c - b'0') as u64) } else { None },
+            8 => {
+                if c >= b'0' && c <= b'7' {
+                    Some((c - b'0') as u64)
+                } else {
+                    None
+                }
+            }
+            10 => {
+                if c >= b'0' && c <= b'9' {
+                    Some((c - b'0') as u64)
+                } else {
+                    None
+                }
+            }
             16 => hex_val(c).map(|v| v as u64),
             _ => None,
         };
-        match d { Some(digit) => { val = val.wrapping_mul(base as u64).wrapping_add(digit); *pos += 1; found = true; } None => break }
+        match d {
+            Some(digit) => {
+                val = val.wrapping_mul(base as u64).wrapping_add(digit);
+                *pos += 1;
+                found = true;
+            }
+            None => break,
+        }
     }
-    if !found { *pos = start; return (0, false, false); }
+    if !found {
+        *pos = start;
+        return (0, false, false);
+    }
     (val, neg, true)
 }
 
 // Scan float with position tracking. Returns (value, success).
 unsafe fn scan_float_val(
-    buf: *const u8, pos: &mut usize, buf_len: usize, width: usize,
+    buf: *const u8,
+    pos: &mut usize,
+    buf_len: usize,
+    width: usize,
 ) -> (f64, bool) {
     let start = *pos;
-    let max = if width > 0 { (start + width).min(buf_len) } else { buf_len };
-    let neg = if *pos < max && *buf.add(*pos) == b'-' { *pos += 1; true }
-    else if *pos < max && *buf.add(*pos) == b'+' { *pos += 1; false }
-    else { false };
+    let max = if width > 0 {
+        (start + width).min(buf_len)
+    } else {
+        buf_len
+    };
+    let neg = if *pos < max && *buf.add(*pos) == b'-' {
+        *pos += 1;
+        true
+    } else if *pos < max && *buf.add(*pos) == b'+' {
+        *pos += 1;
+        false
+    } else {
+        false
+    };
     // inf/nan
     if *pos + 2 < max {
-        let (c0,c1,c2) = (*buf.add(*pos), *buf.add(*pos+1), *buf.add(*pos+2));
-        if (c0==b'i'||c0==b'I')&&(c1==b'n'||c1==b'N')&&(c2==b'f'||c2==b'F') { *pos+=3; return (if neg{f64::NEG_INFINITY}else{f64::INFINITY}, true); }
-        if (c0==b'n'||c0==b'N')&&(c1==b'a'||c1==b'A')&&(c2==b'n'||c2==b'N') { *pos+=3; return (if neg{-f64::NAN}else{f64::NAN}, true); }
+        let (c0, c1, c2) = (*buf.add(*pos), *buf.add(*pos + 1), *buf.add(*pos + 2));
+        if (c0 == b'i' || c0 == b'I') && (c1 == b'n' || c1 == b'N') && (c2 == b'f' || c2 == b'F') {
+            *pos += 3;
+            return (
+                if neg {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                },
+                true,
+            );
+        }
+        if (c0 == b'n' || c0 == b'N') && (c1 == b'a' || c1 == b'A') && (c2 == b'n' || c2 == b'N') {
+            *pos += 3;
+            return (if neg { -f64::NAN } else { f64::NAN }, true);
+        }
     }
     // hex float
-    if *pos+1 < max && *buf.add(*pos)==b'0' && (*buf.add(*pos+1)==b'x'||*buf.add(*pos+1)==b'X') {
+    if *pos + 1 < max
+        && *buf.add(*pos) == b'0'
+        && (*buf.add(*pos + 1) == b'x' || *buf.add(*pos + 1) == b'X')
+    {
         *pos += 2;
-        let mut val: f64 = 0.0; let mut found = false; let mut frac_scale = 1.0f64; let mut in_frac = false;
+        let mut val: f64 = 0.0;
+        let mut found = false;
+        let mut frac_scale = 1.0f64;
+        let mut in_frac = false;
         while *pos < max {
             if let Some(d) = hex_val(*buf.add(*pos)) {
-                if in_frac { frac_scale /= 16.0; val += d as f64 * frac_scale; } else { val = val * 16.0 + d as f64; }
-                *pos += 1; found = true;
-            } else if *buf.add(*pos)==b'.' && !in_frac { in_frac = true; *pos += 1; } else { break; }
+                if in_frac {
+                    frac_scale /= 16.0;
+                    val += d as f64 * frac_scale;
+                } else {
+                    val = val * 16.0 + d as f64;
+                }
+                *pos += 1;
+                found = true;
+            } else if *buf.add(*pos) == b'.' && !in_frac {
+                in_frac = true;
+                *pos += 1;
+            } else {
+                break;
+            }
         }
-        if !found { *pos = start; return (0.0, false); }
+        if !found {
+            *pos = start;
+            return (0.0, false);
+        }
         // p exponent
-        if *pos < max && (*buf.add(*pos)==b'p'||*buf.add(*pos)==b'P') {
+        if *pos < max && (*buf.add(*pos) == b'p' || *buf.add(*pos) == b'P') {
             *pos += 1;
             let mut eneg = false;
-            if *pos<max && *buf.add(*pos)==b'-' { eneg=true; *pos+=1; }
-            else if *pos<max && *buf.add(*pos)==b'+' { *pos+=1; }
-            let mut ev: i32 = 0; let mut ef = false;
-            while *pos<max && *buf.add(*pos)>=b'0' && *buf.add(*pos)<=b'9' { ev = ev*10+(*buf.add(*pos)-b'0') as i32; *pos+=1; ef=true; }
-            if !ef { return (0.0, false); }
-            if eneg { ev = -ev; }
+            if *pos < max && *buf.add(*pos) == b'-' {
+                eneg = true;
+                *pos += 1;
+            } else if *pos < max && *buf.add(*pos) == b'+' {
+                *pos += 1;
+            }
+            let mut ev: i32 = 0;
+            let mut ef = false;
+            while *pos < max && *buf.add(*pos) >= b'0' && *buf.add(*pos) <= b'9' {
+                ev = ev * 10 + (*buf.add(*pos) - b'0') as i32;
+                *pos += 1;
+                ef = true;
+            }
+            if !ef {
+                return (0.0, false);
+            }
+            if eneg {
+                ev = -ev;
+            }
             val *= libm::pow(2.0, ev as f64);
         }
-        return (if neg{-val}else{val}, true);
+        return (if neg { -val } else { val }, true);
     }
     let token_start = start;
     let mut i = start;
@@ -10897,31 +13391,56 @@ unsafe fn scan_float_val(
     while i < max {
         let c = *buf.add(i);
         if (c == b'+' || c == b'-') && first {
-            i += 1; first = false; continue;
+            i += 1;
+            first = false;
+            continue;
         }
         if c >= b'0' && c <= b'9' {
-            saw_digit = true; i += 1; first = false; continue;
+            saw_digit = true;
+            i += 1;
+            first = false;
+            continue;
         }
         if c == b'.' && !saw_dot && !saw_exp {
-            saw_dot = true; i += 1; first = false; continue;
+            saw_dot = true;
+            i += 1;
+            first = false;
+            continue;
         }
         if (c == b'e' || c == b'E') && !saw_exp && saw_digit {
-            saw_exp = true; i += 1; first = true; continue;
+            saw_exp = true;
+            i += 1;
+            first = true;
+            continue;
         }
         break;
     }
-    if !saw_digit { return (0.0, false); }
-    let s = core::str::from_utf8_unchecked(core::slice::from_raw_parts(buf.add(token_start), i - token_start));
+    if !saw_digit {
+        return (0.0, false);
+    }
+    let s = core::str::from_utf8_unchecked(core::slice::from_raw_parts(
+        buf.add(token_start),
+        i - token_start,
+    ));
     match <f64 as core::str::FromStr>::from_str(s) {
-        Ok(v) => { *pos = i; return (v, true); }
-        Err(_) => { return (0.0, false); }
+        Ok(v) => {
+            *pos = i;
+            return (v, true);
+        }
+        Err(_) => {
+            return (0.0, false);
+        }
     }
 }
 
 // Comprehensive scanf parser with position tracking.
 // consumed: if non-null, stores number of bytes consumed from buf.
 unsafe fn do_vsscanf(
-    buf: *const u8, buf_len: usize, fmt: *const c_char, args: &mut VaList<'_>, consumed: *mut usize,
+    buf: *const u8,
+    buf_len: usize,
+    fmt: *const c_char,
+    args: &mut VaList<'_>,
+    consumed: *mut usize,
 ) -> c_int {
     let mut p = 0usize;
     let mut fi = 0usize;
@@ -10929,167 +13448,428 @@ unsafe fn do_vsscanf(
     let mut input_eof = false;
     loop {
         let fc = *fmt.add(fi) as u8;
-        if fc == 0 { break; }
+        if fc == 0 {
+            break;
+        }
         if is_ws_byte(fc) {
-            while is_ws_byte(*fmt.add(fi) as u8) { fi += 1; }
-            while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
+            while is_ws_byte(*fmt.add(fi) as u8) {
+                fi += 1;
+            }
+            while p < buf_len && is_ws_byte(*buf.add(p)) {
+                p += 1;
+            }
             continue;
         }
         if fc != b'%' {
-            if p >= buf_len { input_eof = true; break; }
-            if *buf.add(p) != fc { break; }
-            p += 1; fi += 1; continue;
+            if p >= buf_len {
+                input_eof = true;
+                break;
+            }
+            if *buf.add(p) != fc {
+                break;
+            }
+            p += 1;
+            fi += 1;
+            continue;
         }
         fi += 1;
         // %%
         if *fmt.add(fi) as u8 == b'%' {
-            if p >= buf_len { input_eof = true; break; }
-            if *buf.add(p) != b'%' { break; }
-            p += 1; fi += 1; continue;
+            if p >= buf_len {
+                input_eof = true;
+                break;
+            }
+            if *buf.add(p) != b'%' {
+                break;
+            }
+            p += 1;
+            fi += 1;
+            continue;
         }
-        let suppress = if *fmt.add(fi) as u8 == b'*' { fi += 1; true } else { false };
+        let suppress = if *fmt.add(fi) as u8 == b'*' {
+            fi += 1;
+            true
+        } else {
+            false
+        };
         let mut width: usize = 0;
         while (*fmt.add(fi) as u8) >= b'0' && (*fmt.add(fi) as u8) <= b'9' {
-            width = width * 10 + ((*fmt.add(fi) as u8) - b'0') as usize; fi += 1;
+            width = width * 10 + ((*fmt.add(fi) as u8) - b'0') as usize;
+            fi += 1;
         }
-        if *fmt.add(fi) as u8 == b'm' { fi += 1; }
+        if *fmt.add(fi) as u8 == b'm' {
+            fi += 1;
+        }
         let mut len_mod = 0u8;
         match *fmt.add(fi) as u8 {
-            b'h' => { fi += 1; if *fmt.add(fi) as u8 == b'h' { fi += 1; len_mod = 2; } else { len_mod = 1; } }
-            b'l' => { fi += 1; if *fmt.add(fi) as u8 == b'l' { fi += 1; len_mod = 4; } else { len_mod = 3; } }
-            b'j' => { fi += 1; len_mod = 4; }
-            b'z' | b't' => { fi += 1; len_mod = 3; }
-            b'L' => { fi += 1; len_mod = 5; }
+            b'h' => {
+                fi += 1;
+                if *fmt.add(fi) as u8 == b'h' {
+                    fi += 1;
+                    len_mod = 2;
+                } else {
+                    len_mod = 1;
+                }
+            }
+            b'l' => {
+                fi += 1;
+                if *fmt.add(fi) as u8 == b'l' {
+                    fi += 1;
+                    len_mod = 4;
+                } else {
+                    len_mod = 3;
+                }
+            }
+            b'j' => {
+                fi += 1;
+                len_mod = 4;
+            }
+            b'z' | b't' => {
+                fi += 1;
+                len_mod = 3;
+            }
+            b'L' => {
+                fi += 1;
+                len_mod = 5;
+            }
             _ => {}
         }
         let spec = *fmt.add(fi) as u8;
-        let (real_spec, _real_len) = if spec==b'C' {(b'c',3u8)} else if spec==b'S' {(b's',3u8)} else {(spec,len_mod)};
+        let (real_spec, _real_len) = if spec == b'C' {
+            (b'c', 3u8)
+        } else if spec == b'S' {
+            (b's', 3u8)
+        } else {
+            (spec, len_mod)
+        };
         match real_spec {
             b'n' => {
-                if !suppress { let out = args.next_arg::<*mut c_int>(); if !out.is_null() { *out = p as c_int; } }
-            }
-            b'd' | b'u' => {
-                while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
-                if p >= buf_len { input_eof = true; break; }
-                let dest = if !suppress { Some(args.next_arg::<*mut c_int>()) } else { None };
-                let (val, neg, ok) = scan_int_val(buf, &mut p, buf_len, 10, width);
-                if !ok { break; }
-                if let Some(out) = dest { if !out.is_null() {
-                    *out = if real_spec==b'd' && neg { -(val as i64) as c_int } else { val as c_int };
-                }}
-                if !suppress { assigned += 1; }
-            }
-            b'i' => {
-                while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
-                if p >= buf_len { input_eof = true; break; }
-                let dest = if !suppress { Some(args.next_arg::<*mut c_int>()) } else { None };
-                let (val, neg, ok) = scan_int_val(buf, &mut p, buf_len, 0, width);
-                if !ok { break; }
-                if let Some(out) = dest { if !out.is_null() { *out = if neg { -(val as i64) as c_int } else { val as c_int }; } }
-                if !suppress { assigned += 1; }
-            }
-            b'o' => {
-                while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
-                if p >= buf_len { input_eof = true; break; }
-                let dest = if !suppress { Some(args.next_arg::<*mut c_int>()) } else { None };
-                let (val, _, ok) = scan_int_val(buf, &mut p, buf_len, 8, width);
-                if !ok { break; }
-                if let Some(out) = dest { if !out.is_null() { *out = val as c_int; } }
-                if !suppress { assigned += 1; }
-            }
-            b'x' | b'X' => {
-                while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
-                if p >= buf_len { input_eof = true; break; }
-                let dest = if !suppress { Some(args.next_arg::<*mut c_int>()) } else { None };
-                let (val, _, ok) = scan_int_val(buf, &mut p, buf_len, 16, width);
-                if !ok { break; }
-                if let Some(out) = dest { if !out.is_null() { *out = val as c_int; } }
-                if !suppress { assigned += 1; }
-            }
-            b'p' => {
-                while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
-                if p >= buf_len { input_eof = true; break; }
-                let dest = if !suppress { Some(args.next_arg::<*mut *mut c_void>()) } else { None };
-                let (val, _, ok) = scan_int_val(buf, &mut p, buf_len, 16, width);
-                if !ok { break; }
-                if let Some(out) = dest { if !out.is_null() { *out = val as usize as *mut c_void; } }
-                if !suppress { assigned += 1; }
-            }
-            b'a' | b'e' | b'f' | b'g' | b'A' | b'E' | b'F' | b'G' => {
-                while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
-                if p >= buf_len { input_eof = true; break; }
-                let (val, ok) = scan_float_val(buf, &mut p, buf_len, width);
-                if !ok { break; }
                 if !suppress {
-                    if _real_len == 3 {
-                        let out = args.next_arg::<*mut f64>(); if !out.is_null() { *out = val; }
-                    } else if _real_len == 5 {
-                        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-                        { let out = args.next_arg::<*mut f128>(); if !out.is_null() { *out = val as f128; } }
-                        #[cfg(target_arch = "x86_64")]
-                        { let out = args.next_arg::<*mut f64>(); if !out.is_null() { *out = val; } }
-                    } else {
-                        let out = args.next_arg::<*mut f32>(); if !out.is_null() { *out = val as f32; }
+                    let out = args.next_arg::<*mut c_int>();
+                    if !out.is_null() {
+                        *out = p as c_int;
                     }
                 }
-                if !suppress { assigned += 1; }
+            }
+            b'd' | b'u' => {
+                while p < buf_len && is_ws_byte(*buf.add(p)) {
+                    p += 1;
+                }
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest = if !suppress {
+                    Some(args.next_arg::<*mut c_int>())
+                } else {
+                    None
+                };
+                let (val, neg, ok) = scan_int_val(buf, &mut p, buf_len, 10, width);
+                if !ok {
+                    break;
+                }
+                if let Some(out) = dest {
+                    if !out.is_null() {
+                        *out = if real_spec == b'd' && neg {
+                            -(val as i64) as c_int
+                        } else {
+                            val as c_int
+                        };
+                    }
+                }
+                if !suppress {
+                    assigned += 1;
+                }
+            }
+            b'i' => {
+                while p < buf_len && is_ws_byte(*buf.add(p)) {
+                    p += 1;
+                }
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest = if !suppress {
+                    Some(args.next_arg::<*mut c_int>())
+                } else {
+                    None
+                };
+                let (val, neg, ok) = scan_int_val(buf, &mut p, buf_len, 0, width);
+                if !ok {
+                    break;
+                }
+                if let Some(out) = dest {
+                    if !out.is_null() {
+                        *out = if neg {
+                            -(val as i64) as c_int
+                        } else {
+                            val as c_int
+                        };
+                    }
+                }
+                if !suppress {
+                    assigned += 1;
+                }
+            }
+            b'o' => {
+                while p < buf_len && is_ws_byte(*buf.add(p)) {
+                    p += 1;
+                }
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest = if !suppress {
+                    Some(args.next_arg::<*mut c_int>())
+                } else {
+                    None
+                };
+                let (val, _, ok) = scan_int_val(buf, &mut p, buf_len, 8, width);
+                if !ok {
+                    break;
+                }
+                if let Some(out) = dest {
+                    if !out.is_null() {
+                        *out = val as c_int;
+                    }
+                }
+                if !suppress {
+                    assigned += 1;
+                }
+            }
+            b'x' | b'X' => {
+                while p < buf_len && is_ws_byte(*buf.add(p)) {
+                    p += 1;
+                }
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest = if !suppress {
+                    Some(args.next_arg::<*mut c_int>())
+                } else {
+                    None
+                };
+                let (val, _, ok) = scan_int_val(buf, &mut p, buf_len, 16, width);
+                if !ok {
+                    break;
+                }
+                if let Some(out) = dest {
+                    if !out.is_null() {
+                        *out = val as c_int;
+                    }
+                }
+                if !suppress {
+                    assigned += 1;
+                }
+            }
+            b'p' => {
+                while p < buf_len && is_ws_byte(*buf.add(p)) {
+                    p += 1;
+                }
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest = if !suppress {
+                    Some(args.next_arg::<*mut *mut c_void>())
+                } else {
+                    None
+                };
+                let (val, _, ok) = scan_int_val(buf, &mut p, buf_len, 16, width);
+                if !ok {
+                    break;
+                }
+                if let Some(out) = dest {
+                    if !out.is_null() {
+                        *out = val as usize as *mut c_void;
+                    }
+                }
+                if !suppress {
+                    assigned += 1;
+                }
+            }
+            b'a' | b'e' | b'f' | b'g' | b'A' | b'E' | b'F' | b'G' => {
+                while p < buf_len && is_ws_byte(*buf.add(p)) {
+                    p += 1;
+                }
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let (val, ok) = scan_float_val(buf, &mut p, buf_len, width);
+                if !ok {
+                    break;
+                }
+                if !suppress {
+                    if _real_len == 3 {
+                        let out = args.next_arg::<*mut f64>();
+                        if !out.is_null() {
+                            *out = val;
+                        }
+                    } else if _real_len == 5 {
+                        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+                        {
+                            let out = args.next_arg::<*mut f128>();
+                            if !out.is_null() {
+                                *out = val as f128;
+                            }
+                        }
+                        #[cfg(target_arch = "x86_64")]
+                        {
+                            let out = args.next_arg::<*mut f64>();
+                            if !out.is_null() {
+                                *out = val;
+                            }
+                        }
+                    } else {
+                        let out = args.next_arg::<*mut f32>();
+                        if !out.is_null() {
+                            *out = val as f32;
+                        }
+                    }
+                }
+                if !suppress {
+                    assigned += 1;
+                }
             }
             b'c' => {
                 let w = if width > 0 { width } else { 1 };
-                if p >= buf_len { input_eof = true; break; }
-                let dest_ptr: *mut c_char = if !suppress { args.next_arg::<*mut c_char>() } else { core::ptr::null_mut() };
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest_ptr: *mut c_char = if !suppress {
+                    args.next_arg::<*mut c_char>()
+                } else {
+                    core::ptr::null_mut()
+                };
                 let start_p = p;
                 let mut j = 0usize;
                 while j < w && p < buf_len {
-                    if !dest_ptr.is_null() { *dest_ptr.add(j) = *buf.add(p) as c_char; }
-                    p += 1; j += 1;
+                    if !dest_ptr.is_null() {
+                        *dest_ptr.add(j) = *buf.add(p) as c_char;
+                    }
+                    p += 1;
+                    j += 1;
                 }
-                if j != w { p = start_p; input_eof = true; break; }
-                if !suppress { assigned += 1; }
+                if j != w {
+                    p = start_p;
+                    input_eof = true;
+                    break;
+                }
+                if !suppress {
+                    assigned += 1;
+                }
             }
             b's' => {
-                while p < buf_len && is_ws_byte(*buf.add(p)) { p += 1; }
-                if p >= buf_len { input_eof = true; break; }
-                let dest_ptr: *mut c_char = if !suppress { args.next_arg::<*mut c_char>() } else { core::ptr::null_mut() };
+                while p < buf_len && is_ws_byte(*buf.add(p)) {
+                    p += 1;
+                }
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest_ptr: *mut c_char = if !suppress {
+                    args.next_arg::<*mut c_char>()
+                } else {
+                    core::ptr::null_mut()
+                };
                 let w = if width > 0 { width } else { usize::MAX };
                 let mut j = 0usize;
                 while p < buf_len && *buf.add(p) != 0 && !is_ws_byte(*buf.add(p)) && j < w {
-                    if !dest_ptr.is_null() { *dest_ptr.add(j) = *buf.add(p) as c_char; }
-                    p += 1; j += 1;
+                    if !dest_ptr.is_null() {
+                        *dest_ptr.add(j) = *buf.add(p) as c_char;
+                    }
+                    p += 1;
+                    j += 1;
                 }
-                if j == 0 { break; }
-                if !dest_ptr.is_null() { *dest_ptr.add(j) = 0; }
-                if !suppress { assigned += 1; }
+                if j == 0 {
+                    break;
+                }
+                if !dest_ptr.is_null() {
+                    *dest_ptr.add(j) = 0;
+                }
+                if !suppress {
+                    assigned += 1;
+                }
             }
             b'[' => {
                 fi += 1;
-                let negate = if *fmt.add(fi) as u8 == b'^' { fi += 1; true } else { false };
+                let negate = if *fmt.add(fi) as u8 == b'^' {
+                    fi += 1;
+                    true
+                } else {
+                    false
+                };
                 let mut charset = [0u8; 256];
-                if *fmt.add(fi) as u8 == b']' { charset[b']' as usize] = 1; fi += 1; }
-                loop { let c = *fmt.add(fi) as u8; if c == b']' || c == 0 { break; } charset[c as usize] = 1; fi += 1; }
-                if *fmt.add(fi) as u8 == b']' { fi += 1; }
+                if *fmt.add(fi) as u8 == b']' {
+                    charset[b']' as usize] = 1;
+                    fi += 1;
+                }
+                loop {
+                    let c = *fmt.add(fi) as u8;
+                    if c == b']' || c == 0 {
+                        break;
+                    }
+                    charset[c as usize] = 1;
+                    fi += 1;
+                }
+                if *fmt.add(fi) as u8 == b']' {
+                    fi += 1;
+                }
                 fi -= 1; // common fi += 1 will advance past the closing ]
-                if p >= buf_len { input_eof = true; break; }
-                let dest_ptr: *mut c_char = if !suppress { args.next_arg::<*mut c_char>() } else { core::ptr::null_mut() };
+                if p >= buf_len {
+                    input_eof = true;
+                    break;
+                }
+                let dest_ptr: *mut c_char = if !suppress {
+                    args.next_arg::<*mut c_char>()
+                } else {
+                    core::ptr::null_mut()
+                };
                 let w = if width > 0 { width } else { usize::MAX };
                 let mut j = 0usize;
                 while p < buf_len && *buf.add(p) != 0 && j < w {
                     let c = *buf.add(p);
                     let in_set = charset[c as usize] != 0;
-                    if negate { if in_set { break; } } else { if !in_set { break; } }
-                    if !dest_ptr.is_null() { *dest_ptr.add(j) = c as c_char; }
-                    p += 1; j += 1;
+                    if negate {
+                        if in_set {
+                            break;
+                        }
+                    } else {
+                        if !in_set {
+                            break;
+                        }
+                    }
+                    if !dest_ptr.is_null() {
+                        *dest_ptr.add(j) = c as c_char;
+                    }
+                    p += 1;
+                    j += 1;
                 }
-                if j == 0 { break; }
-                if !dest_ptr.is_null() { *dest_ptr.add(j) = 0; }
-                if !suppress { assigned += 1; }
+                if j == 0 {
+                    break;
+                }
+                if !dest_ptr.is_null() {
+                    *dest_ptr.add(j) = 0;
+                }
+                if !suppress {
+                    assigned += 1;
+                }
             }
             _ => break,
         }
         fi += 1;
     }
-    if !consumed.is_null() { *consumed = p; }
-    if assigned == 0 && input_eof { -1 } else { assigned }
+    if !consumed.is_null() {
+        *consumed = p;
+    }
+    if assigned == 0 && input_eof {
+        -1
+    } else {
+        assigned
+    }
 }
 
 unsafe fn vsscanf_inner(buf: *const u8, fmt: *const c_char, args: &mut VaList<'_>) -> c_int {
@@ -11098,7 +13878,11 @@ unsafe fn vsscanf_inner(buf: *const u8, fmt: *const c_char, args: &mut VaList<'_
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vsscanf(buf: *const c_char, fmt: *const c_char, mut args: VaList) -> c_int {
+pub unsafe extern "C" fn vsscanf(
+    buf: *const c_char,
+    fmt: *const c_char,
+    mut args: VaList,
+) -> c_int {
     vsscanf_inner(buf as *const u8, fmt, &mut args)
 }
 
@@ -11118,7 +13902,9 @@ unsafe fn vfscanf_fast_scalar_supported(fmt: *const c_char) -> bool {
     let mut last_was_space = false;
     loop {
         let fc = *fmt.add(fi) as u8;
-        if fc == 0 { return !last_was_space; }
+        if fc == 0 {
+            return !last_was_space;
+        }
         if is_ws_byte(fc) {
             last_was_space = true;
             fi += 1;
@@ -11134,8 +13920,12 @@ unsafe fn vfscanf_fast_scalar_supported(fmt: *const c_char) -> bool {
             fi += 1;
             continue;
         }
-        if *fmt.add(fi) as u8 == b'*' { fi += 1; }
-        while (*fmt.add(fi) as u8).is_ascii_digit() { fi += 1; }
+        if *fmt.add(fi) as u8 == b'*' {
+            fi += 1;
+        }
+        while (*fmt.add(fi) as u8).is_ascii_digit() {
+            fi += 1;
+        }
         match *fmt.add(fi) as u8 {
             b'd' | b'u' | b'i' | b'o' | b'x' | b'X' | b'p' | b's' => fi += 1,
             _ => return false,
@@ -11171,7 +13961,9 @@ impl VfscanfFastReader {
 
     #[inline]
     fn unread(&mut self, c: c_int) {
-        if c >= 0 { self.pending = c; }
+        if c >= 0 {
+            self.pending = c;
+        }
     }
 
     #[inline]
@@ -11186,7 +13978,9 @@ impl VfscanfFastReader {
 unsafe fn vfscanf_fast_skip_ws(reader: &mut VfscanfFastReader) -> bool {
     loop {
         let c = reader.get();
-        if c < 0 { return false; }
+        if c < 0 {
+            return false;
+        }
         if !is_ws_byte(c as u8) {
             reader.unread(c);
             return true;
@@ -11207,23 +14001,37 @@ unsafe fn vfscanf_fast_digit(c: u8, base: u32) -> Option<u64> {
 // Reads one conventional scanf integer token. `width` includes the optional
 // sign and base prefix, matching the existing `scan_int_val` contract.
 unsafe fn vfscanf_fast_int(
-    reader: &mut VfscanfFastReader, requested_base: u32, width: usize,
+    reader: &mut VfscanfFastReader,
+    requested_base: u32,
+    width: usize,
 ) -> FastScanToken<(u64, bool)> {
     let mut used = 0usize;
     let mut next = || -> Option<c_int> {
-        if width != 0 && used == width { return None; }
+        if width != 0 && used == width {
+            return None;
+        }
         let c = reader.get();
-        if c >= 0 { used += 1; }
+        if c >= 0 {
+            used += 1;
+        }
         Some(c)
     };
-    let Some(mut c) = next() else { return FastScanToken::MatchFail; };
-    if c < 0 { return FastScanToken::InputFail; }
+    let Some(mut c) = next() else {
+        return FastScanToken::MatchFail;
+    };
+    if c < 0 {
+        return FastScanToken::InputFail;
+    }
 
     let mut negative = false;
     if c == b'-' as c_int || c == b'+' as c_int {
         negative = c == b'-' as c_int;
-        let Some(after_sign) = next() else { return FastScanToken::MatchFail; };
-        if after_sign < 0 { return FastScanToken::InputFail; }
+        let Some(after_sign) = next() else {
+            return FastScanToken::MatchFail;
+        };
+        if after_sign < 0 {
+            return FastScanToken::InputFail;
+        }
         c = after_sign;
     }
 
@@ -11236,12 +14044,18 @@ unsafe fn vfscanf_fast_int(
         let Some(after_zero) = next() else {
             return FastScanToken::Value((value, negative));
         };
-        if after_zero < 0 { return FastScanToken::Value((value, negative)); }
+        if after_zero < 0 {
+            return FastScanToken::Value((value, negative));
+        }
         if after_zero == b'x' as c_int || after_zero == b'X' as c_int {
             base = 16;
             found = false;
-            let Some(after_prefix) = next() else { return FastScanToken::MatchFail; };
-            if after_prefix < 0 { return FastScanToken::InputFail; }
+            let Some(after_prefix) = next() else {
+                return FastScanToken::MatchFail;
+            };
+            if after_prefix < 0 {
+                return FastScanToken::InputFail;
+            }
             c = after_prefix;
         } else {
             base = if base == 0 { 8 } else { 16 };
@@ -11270,56 +14084,79 @@ unsafe fn vfscanf_fast_int(
         let Some(after_digit) = next() else {
             return FastScanToken::Value((value, negative));
         };
-        if after_digit < 0 { return FastScanToken::Value((value, negative)); }
+        if after_digit < 0 {
+            return FastScanToken::Value((value, negative));
+        }
         c = after_digit;
     }
 }
 
 unsafe fn vfscanf_fast_string(
-    reader: &mut VfscanfFastReader, width: usize, dest: *mut c_char,
+    reader: &mut VfscanfFastReader,
+    width: usize,
+    dest: *mut c_char,
 ) -> FastScanToken<()> {
     let mut written = 0usize;
     while width == 0 || written < width {
         let c = reader.get();
         if c < 0 {
-            if written == 0 { return FastScanToken::InputFail; }
-            if !dest.is_null() { *dest.add(written) = 0; }
+            if written == 0 {
+                return FastScanToken::InputFail;
+            }
+            if !dest.is_null() {
+                *dest.add(written) = 0;
+            }
             return FastScanToken::Value(());
         }
         if is_ws_byte(c as u8) {
             reader.unread(c);
             break;
         }
-        if !dest.is_null() { *dest.add(written) = c as c_char; }
+        if !dest.is_null() {
+            *dest.add(written) = c as c_char;
+        }
         written += 1;
     }
     if written == 0 {
         FastScanToken::MatchFail
     } else {
-        if !dest.is_null() { *dest.add(written) = 0; }
+        if !dest.is_null() {
+            *dest.add(written) = 0;
+        }
         FastScanToken::Value(())
     }
 }
 
 unsafe fn vfscanf_fast_scalar(
-    stream: *mut FILE, fmt: *const c_char, args: &mut VaList<'_>,
+    stream: *mut FILE,
+    fmt: *const c_char,
+    args: &mut VaList<'_>,
 ) -> c_int {
-    let mut reader = VfscanfFastReader { stream, pending: -1 };
+    let mut reader = VfscanfFastReader {
+        stream,
+        pending: -1,
+    };
     let result = vfscanf_fast_scalar_inner(&mut reader, fmt, args);
     reader.finish();
     result
 }
 
 unsafe fn vfscanf_fast_scalar_inner(
-    reader: &mut VfscanfFastReader, fmt: *const c_char, args: &mut VaList<'_>,
+    reader: &mut VfscanfFastReader,
+    fmt: *const c_char,
+    args: &mut VaList<'_>,
 ) -> c_int {
     let mut fi = 0usize;
     let mut assigned = 0i32;
     loop {
         let fc = *fmt.add(fi) as u8;
-        if fc == 0 { return assigned; }
+        if fc == 0 {
+            return assigned;
+        }
         if is_ws_byte(fc) {
-            while is_ws_byte(*fmt.add(fi) as u8) { fi += 1; }
+            while is_ws_byte(*fmt.add(fi) as u8) {
+                fi += 1;
+            }
             if !vfscanf_fast_skip_ws(reader) {
                 return if assigned == 0 { -1 } else { assigned };
             }
@@ -11327,7 +14164,9 @@ unsafe fn vfscanf_fast_scalar_inner(
         }
         if fc != b'%' {
             let c = reader.get();
-            if c < 0 { return if assigned == 0 { -1 } else { assigned }; }
+            if c < 0 {
+                return if assigned == 0 { -1 } else { assigned };
+            }
             if c as u8 != fc {
                 reader.unread(c);
                 return assigned;
@@ -11338,7 +14177,9 @@ unsafe fn vfscanf_fast_scalar_inner(
         fi += 1;
         if *fmt.add(fi) as u8 == b'%' {
             let c = reader.get();
-            if c < 0 { return if assigned == 0 { -1 } else { assigned }; }
+            if c < 0 {
+                return if assigned == 0 { -1 } else { assigned };
+            }
             if c != b'%' as c_int {
                 reader.unread(c);
                 return assigned;
@@ -11346,7 +14187,12 @@ unsafe fn vfscanf_fast_scalar_inner(
             fi += 1;
             continue;
         }
-        let suppress = if *fmt.add(fi) as u8 == b'*' { fi += 1; true } else { false };
+        let suppress = if *fmt.add(fi) as u8 == b'*' {
+            fi += 1;
+            true
+        } else {
+            false
+        };
         let mut width = 0usize;
         while (*fmt.add(fi) as u8).is_ascii_digit() {
             width = width * 10 + (*fmt.add(fi) as u8 - b'0') as usize;
@@ -11379,25 +14225,27 @@ unsafe fn vfscanf_fast_scalar_inner(
         }
 
         match spec {
-            b's' => {
-                match vfscanf_fast_string(reader, width, string_dest) {
-                    FastScanToken::Value(()) => if !suppress { assigned += 1; },
-                    FastScanToken::MatchFail => return assigned,
-                    FastScanToken::InputFail => return if assigned == 0 { -1 } else { assigned },
-                }
-            }
-            b'p' => {
-                match vfscanf_fast_int(reader, 16, width) {
-                    FastScanToken::Value((value, _)) => {
-                        if !suppress {
-                            if !pointer_dest.is_null() { *pointer_dest = value as usize as *mut c_void; }
-                            assigned += 1;
-                        }
+            b's' => match vfscanf_fast_string(reader, width, string_dest) {
+                FastScanToken::Value(()) => {
+                    if !suppress {
+                        assigned += 1;
                     }
-                    FastScanToken::MatchFail => return assigned,
-                    FastScanToken::InputFail => return if assigned == 0 { -1 } else { assigned },
                 }
-            }
+                FastScanToken::MatchFail => return assigned,
+                FastScanToken::InputFail => return if assigned == 0 { -1 } else { assigned },
+            },
+            b'p' => match vfscanf_fast_int(reader, 16, width) {
+                FastScanToken::Value((value, _)) => {
+                    if !suppress {
+                        if !pointer_dest.is_null() {
+                            *pointer_dest = value as usize as *mut c_void;
+                        }
+                        assigned += 1;
+                    }
+                }
+                FastScanToken::MatchFail => return assigned,
+                FastScanToken::InputFail => return if assigned == 0 { -1 } else { assigned },
+            },
             b'd' | b'u' | b'i' | b'o' | b'x' | b'X' => {
                 let base = match spec {
                     b'd' | b'u' => 10,
@@ -11432,9 +14280,7 @@ pub unsafe extern "C" fn vfscanf(stream: *mut FILE, fmt: *const c_char, mut args
     vfscanf_inner(stream, fmt, &mut args)
 }
 
-unsafe fn vfscanf_inner(
-    stream: *mut FILE, fmt: *const c_char, args: &mut VaList<'_>,
-) -> c_int {
+unsafe fn vfscanf_inner(stream: *mut FILE, fmt: *const c_char, args: &mut VaList<'_>) -> c_int {
     if vfscanf_fast_scalar_supported(fmt) {
         return vfscanf_fast_scalar(stream, fmt, args);
     }
@@ -11464,10 +14310,14 @@ unsafe fn vfscanf_inner(
         // Seekable: read via fgetc until \n or EOF (existing behavior)
         while pos < line.len() - 1 {
             let c = fgetc(stream);
-            if c == -1 { break; }
+            if c == -1 {
+                break;
+            }
             line[pos] = c as u8;
             pos += 1;
-            if c == b'\n' as c_int { break; }
+            if c == b'\n' as c_int {
+                break;
+            }
         }
     } else {
         // Non-seekable (pipe/socket): drain pushback, then read all available
@@ -11493,7 +14343,9 @@ unsafe fn vfscanf_inner(
         }
         while pos < line.len() - 1 {
             let n = sys_read(fd as i64, line.as_mut_ptr().add(pos), line.len() - 1 - pos);
-            if n <= 0 { break; }
+            if n <= 0 {
+                break;
+            }
             pos += n as usize;
         }
         if old_flags >= 0 {
@@ -11506,7 +14358,9 @@ unsafe fn vfscanf_inner(
     }
 
     line[pos] = 0;
-    if pos == 0 { return 0; }
+    if pos == 0 {
+        return 0;
+    }
 
     let mut consumed = 0usize;
     let assigned = do_vsscanf(line.as_ptr(), pos, fmt, args, &mut consumed);
@@ -11520,10 +14374,7 @@ unsafe fn vfscanf_inner(
         // the established seek-back path below.
         let line_file_start = core::cmp::min(start_ungotten_count, pos);
         let file_consumed = consumed.saturating_sub(start_ungotten_count);
-        let line_suffix_start = core::cmp::min(
-            pos,
-            line_file_start.saturating_add(file_consumed),
-        );
+        let line_suffix_start = core::cmp::min(pos, line_file_start.saturating_add(file_consumed));
         let line_file_suffix = pos - line_suffix_start;
         let buffered_unread = if !f.rpos.is_null() && !f.rend.is_null() {
             f.rend.offset_from(f.rpos) as usize
@@ -11531,8 +14382,8 @@ unsafe fn vfscanf_inner(
             0
         };
         let retained_bytes = line_file_suffix.checked_add(buffered_unread);
-        let can_retain = !f.buf.is_null()
-            && retained_bytes.is_some_and(|count| count <= f.buf_size);
+        let can_retain =
+            !f.buf.is_null() && retained_bytes.is_some_and(|count| count <= f.buf_size);
 
         if can_retain {
             if buffered_unread > 0 {
@@ -11562,7 +14413,9 @@ unsafe fn vfscanf_inner(
             f.rpos = core::ptr::null_mut();
             f.rend = core::ptr::null_mut();
         }
-        if consumed < pos { f._eof = 0; }
+        if consumed < pos {
+            f._eof = 0;
+        }
         let remaining = start_ungotten_count.saturating_sub(consumed);
         f.ungotten_count = remaining as c_int;
     } else {
@@ -11570,11 +14423,7 @@ unsafe fn vfscanf_inner(
         let unconsumed = pos.saturating_sub(consumed);
         if unconsumed > 0 && !f.buf.is_null() {
             let copy_count = core::cmp::min(unconsumed, f.buf_size);
-            core::ptr::copy(
-                line.as_ptr().add(consumed),
-                f.buf,
-                copy_count,
-            );
+            core::ptr::copy(line.as_ptr().add(consumed), f.buf, copy_count);
             f.rpos = f.buf;
             f.rend = f.buf.add(copy_count);
         }
@@ -11611,32 +14460,50 @@ pub unsafe extern "C" fn scanf(fmt: *const c_char, args: ...) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn getdelim(
-    lineptr: *mut *mut c_char, n: *mut usize, delim: c_int, stream: *mut FILE,
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    delim: c_int,
+    stream: *mut FILE,
 ) -> isize {
-    if lineptr.is_null() || n.is_null() { return -1; }
+    if lineptr.is_null() || n.is_null() {
+        return -1;
+    }
     let mut cap = *n;
     let mut buf = *lineptr;
     if buf.is_null() || cap == 0 {
         cap = 128;
         buf = realloc(buf as *mut c_void, cap) as *mut c_char;
-        if buf.is_null() { return -1; }
+        if buf.is_null() {
+            return -1;
+        }
         *lineptr = buf;
         *n = cap;
     }
     let mut len = 0usize;
     loop {
         let c = fgetc(stream);
-        if c == -1 { if len == 0 { return -1; } break; }
+        if c == -1 {
+            if len == 0 {
+                return -1;
+            }
+            break;
+        }
         if len + 1 >= cap {
             let new_cap = cap.wrapping_mul(2);
             let new_buf = realloc(buf as *mut c_void, new_cap) as *mut c_char;
-            if new_buf.is_null() { return -1; }
-            buf = new_buf; cap = new_cap;
-            *lineptr = buf; *n = cap;
+            if new_buf.is_null() {
+                return -1;
+            }
+            buf = new_buf;
+            cap = new_cap;
+            *lineptr = buf;
+            *n = cap;
         }
         *buf.add(len) = c as c_char;
         len += 1;
-        if c == delim { break; }
+        if c == delim {
+            break;
+        }
     }
     *buf.add(len) = 0;
     len as isize
@@ -11648,13 +14515,20 @@ pub unsafe extern "C" fn getdelim(
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn __getdelim(
-    lineptr: *mut *mut c_char, n: *mut usize, delim: c_int, stream: *mut FILE,
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    delim: c_int,
+    stream: *mut FILE,
 ) -> isize {
     getdelim(lineptr, n, delim, stream)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn getline(lineptr: *mut *mut c_char, n: *mut usize, stream: *mut FILE) -> isize {
+pub unsafe extern "C" fn getline(
+    lineptr: *mut *mut c_char,
+    n: *mut usize,
+    stream: *mut FILE,
+) -> isize {
     getdelim(lineptr, n, b'\n' as c_int, stream)
 }
 
@@ -11664,22 +14538,46 @@ pub unsafe extern "C" fn getline(lineptr: *mut *mut c_char, n: *mut usize, strea
 
 #[no_mangle]
 pub unsafe extern "C" fn popen(cmd: *const c_char, mode: *const c_char) -> *mut FILE {
-    if cmd.is_null() || mode.is_null() { ERRNO = EINVAL; return core::ptr::null_mut(); }
+    if cmd.is_null() || mode.is_null() {
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
+    }
     let m = *mode;
-    if m != b'r' as c_char && m != b'w' as c_char { ERRNO = EINVAL; return core::ptr::null_mut(); }
+    if m != b'r' as c_char && m != b'w' as c_char {
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
+    }
     let mut p: [c_int; 2] = [0; 2];
-    if sys_pipe2(p.as_mut_ptr(), O_CLOEXEC) < 0 { return core::ptr::null_mut(); }
+    if sys_pipe2(p.as_mut_ptr(), O_CLOEXEC) < 0 {
+        return core::ptr::null_mut();
+    }
     let op = if m == b'r' as c_char { 0 } else { 1 };
     let child_fd = p[1 - op];
     let f = fdopen(p[op], mode);
-    if f.is_null() { sys_close(p[0] as i64); sys_close(p[1] as i64); return core::ptr::null_mut(); }
+    if f.is_null() {
+        sys_close(p[0] as i64);
+        sys_close(p[1] as i64);
+        return core::ptr::null_mut();
+    }
     let pid = sys_fork();
-    if pid < 0 { fclose(f); sys_close(child_fd as i64); return core::ptr::null_mut(); }
+    if pid < 0 {
+        fclose(f);
+        sys_close(child_fd as i64);
+        return core::ptr::null_mut();
+    }
     if pid == 0 {
         sys_close(p[op] as i64);
-        if child_fd != (1 - op) as c_int { sys_dup3(child_fd, (1 - op) as c_int, 0); sys_close(child_fd as i64); }
+        if child_fd != (1 - op) as c_int {
+            sys_dup3(child_fd, (1 - op) as c_int, 0);
+            sys_close(child_fd as i64);
+        }
         let sh = b"/bin/sh\0".as_ptr() as *const c_char;
-        let argv = [b"sh\0".as_ptr() as *const c_char, b"-c\0".as_ptr() as *const c_char, cmd, core::ptr::null()];
+        let argv = [
+            b"sh\0".as_ptr() as *const c_char,
+            b"-c\0".as_ptr() as *const c_char,
+            cmd,
+            core::ptr::null(),
+        ];
         sys_execve(sh, argv.as_ptr(), __environ as *const *const c_char);
         _exit(127);
     }
@@ -11692,14 +14590,20 @@ pub unsafe extern "C" fn popen(cmd: *const c_char, mode: *const c_char) -> *mut 
 pub unsafe extern "C" fn pclose(f: *mut FILE) -> c_int {
     let pid = (*f).pipe_pid;
     let r = fclose(f);
-    if pid <= 0 { return -1; }
+    if pid <= 0 {
+        return -1;
+    }
     let mut status: c_int = 0;
     let mut w: c_int;
     loop {
         w = waitpid(pid, &mut status, 0);
-        if w >= 0 || w != -1 || ERRNO != EINTR { break; }
+        if w >= 0 || w != -1 || ERRNO != EINTR {
+            break;
+        }
     }
-    if w < 0 || r != 0 { return -1; }
+    if w < 0 || r != 0 {
+        return -1;
+    }
     status
 }
 
@@ -11713,9 +14617,15 @@ static mut TMPNAM_COUNTER: c_uint = 0;
 unsafe fn fill_tmpname(out: *mut c_char, seed: c_uint) {
     let prefix = b"/tmp/tmp\0";
     let mut k = 0;
-    while k < prefix.len() - 1 { *out.add(k) = prefix[k] as c_char; k += 1; }
+    while k < prefix.len() - 1 {
+        *out.add(k) = prefix[k] as c_char;
+        k += 1;
+    }
     let (buf, len) = format_hex(seed as u64, false);
-    for j in 0..len.min(L_TMPNAM - k - 1) { *out.add(k + j) = buf[j] as c_char; k += 1; }
+    for j in 0..len.min(L_TMPNAM - k - 1) {
+        *out.add(k + j) = buf[j] as c_char;
+        k += 1;
+    }
     *out.add(k) = 0;
 }
 
@@ -11733,17 +14643,25 @@ pub unsafe extern "C" fn tmpfile() -> *mut FILE {
         if fd >= 0 {
             sys_unlinkat(AT_FDCWD, name.as_ptr(), 0);
             let f = fdopen(fd as c_int, b"w+\0".as_ptr() as *const c_char);
-            if f.is_null() { sys_close(fd); }
+            if f.is_null() {
+                sys_close(fd);
+            }
             return f;
         }
-        if ctr > 100 { return core::ptr::null_mut(); }
+        if ctr > 100 {
+            return core::ptr::null_mut();
+        }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
     static mut BUF: [c_char; L_TMPNAM] = [0; L_TMPNAM];
-    let out = if s.is_null() { core::ptr::addr_of_mut!(BUF) as *mut c_char } else { s };
+    let out = if s.is_null() {
+        core::ptr::addr_of_mut!(BUF) as *mut c_char
+    } else {
+        s
+    };
     TMPNAM_COUNTER = TMPNAM_COUNTER.wrapping_add(1);
     let mut ts: timespec = core::mem::zeroed();
     let _ = sys_clock_gettime(CLOCK_REALTIME, &mut ts);
@@ -11754,21 +14672,37 @@ pub unsafe extern "C" fn tmpnam(s: *mut c_char) -> *mut c_char {
 
 #[no_mangle]
 pub unsafe extern "C" fn remove(path: *const c_char) -> c_int {
-    if path.is_null() { ERRNO = EINVAL; return -1; }
+    if path.is_null() {
+        ERRNO = EINVAL;
+        return -1;
+    }
     let mut r = sys_unlinkat(AT_FDCWD, path as *const u8, 0);
     // Match musl's `remove`: try unlink first so ordinary paths retain their
     // normal error, then retry an `EISDIR` result as a directory removal.
     if r == -(EISDIR_VAL as i64) {
         r = sys_unlinkat(AT_FDCWD, path as *const u8, 512); // AT_REMOVEDIR
     }
-    if r == 0 { 0 } else { ERRNO = (-r) as c_int; -1 }
+    if r == 0 {
+        0
+    } else {
+        ERRNO = (-r) as c_int;
+        -1
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rename(old: *const c_char, new_: *const c_char) -> c_int {
-    if old.is_null() || new_.is_null() { ERRNO = EINVAL; return -1; }
+    if old.is_null() || new_.is_null() {
+        ERRNO = EINVAL;
+        return -1;
+    }
     let r = sys_renameat2(AT_FDCWD, old as *const u8, AT_FDCWD, new_ as *const u8, 0);
-    if r == 0 { 0 } else { ERRNO = (-r) as c_int; -1 }
+    if r == 0 {
+        0
+    } else {
+        ERRNO = (-r) as c_int;
+        -1
+    }
 }
 
 // Allocator internals are deliberately delegated to mimalloc. The wrapper
@@ -11844,7 +14778,9 @@ unsafe fn qsort_pntz(p: &[usize; 2]) -> i32 {
 }
 
 unsafe fn qsort_cycle(width: usize, ar: &mut [*mut u8; AR_LEN], n: usize) {
-    if n < 2 { return; }
+    if n < 2 {
+        return;
+    }
     let mut tmp = [0u8; 256];
     ar[n] = tmp.as_mut_ptr();
     let mut w = width;
@@ -11865,7 +14801,9 @@ unsafe fn qsort_shl(p: &mut [usize; 2], n: i32) {
         p[1] = p[0];
         p[0] = 0;
         let n = n - bits;
-        if n == 0 { return; }
+        if n == 0 {
+            return;
+        }
     }
     p[1] = (p[1] << n) | (p[0] >> (bits - n));
     p[0] <<= n;
@@ -11877,16 +14815,21 @@ unsafe fn qsort_shr(p: &mut [usize; 2], n: i32) {
         p[0] = p[1];
         p[1] = 0;
         let n = n - bits;
-        if n == 0 { return; }
+        if n == 0 {
+            return;
+        }
     }
     p[0] = (p[0] >> n) | (p[1] << (bits - n));
     p[1] >>= n;
 }
 
 unsafe fn qsort_sift(
-    head: *mut u8, width: usize,
-    cmp: CmpRfn, arg: *mut c_void,
-    pshift: i32, lp: &[usize],
+    head: *mut u8,
+    width: usize,
+    cmp: CmpRfn,
+    arg: *mut c_void,
+    pshift: i32,
+    lp: &[usize],
 ) {
     let mut ar: [*mut u8; AR_LEN] = [core::ptr::null_mut(); AR_LEN];
     ar[0] = head;
@@ -11919,9 +14862,13 @@ unsafe fn qsort_sift(
 }
 
 unsafe fn qsort_trinkle(
-    head: *mut u8, width: usize,
-    cmp: CmpRfn, arg: *mut c_void,
-    pp: &[usize; 2], pshift: i32, trusty: i32,
+    head: *mut u8,
+    width: usize,
+    cmp: CmpRfn,
+    arg: *mut c_void,
+    pp: &[usize; 2],
+    pshift: i32,
+    trusty: i32,
     lp: &[usize],
 ) {
     let mut ar: [*mut u8; AR_LEN] = [core::ptr::null_mut(); AR_LEN];
@@ -11970,7 +14917,9 @@ pub unsafe extern "C" fn __qsort_r(
     arg: *mut c_void,
 ) {
     let size = width * nel;
-    if size == 0 { return; }
+    if size == 0 {
+        return;
+    }
 
     let mut lp = [0usize; 96];
     lp[0] = width;
@@ -12027,7 +14976,13 @@ pub unsafe extern "C" fn __qsort_r(
             qsort_shr(&mut p, 1);
             qsort_trinkle(
                 head.sub(lp[pshift as usize] + width),
-                width, cmp, arg, &p, pshift + 1, 1, &lp,
+                width,
+                cmp,
+                arg,
+                &p,
+                pshift + 1,
+                1,
+                &lp,
             );
             qsort_shl(&mut p, 1);
             p[0] |= 1;
@@ -12059,12 +15014,7 @@ unsafe extern "C" fn qsort_wrap_cmp(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn qsort(
-    base: *mut c_void,
-    nel: usize,
-    width: usize,
-    cmp: CmpFn,
-) {
+pub unsafe extern "C" fn qsort(base: *mut c_void, nel: usize, width: usize, cmp: CmpFn) {
     __qsort_r(base, nel, width, qsort_wrap_cmp, cmp as *mut c_void);
 }
 
@@ -12260,7 +15210,9 @@ unsafe fn putenv_internal(s: *mut c_char, l: usize, r: *mut c_char) -> c_int {
     }
     let newenv = malloc(core::mem::size_of::<*mut c_char>() * (i + 2)) as *mut *mut c_char;
     if newenv.is_null() {
-        if !r.is_null() { free(r as *mut c_void); }
+        if !r.is_null() {
+            free(r as *mut c_void);
+        }
         return -1;
     }
     if i > 0 && !__environ.is_null() {
@@ -12279,7 +15231,9 @@ unsafe fn putenv_internal(s: *mut c_char, l: usize, r: *mut c_char) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn putenv(s: *mut c_char) -> c_int {
-    if s.is_null() { return -1; }
+    if s.is_null() {
+        return -1;
+    }
     let l = strchrnul_impl(s as *const u8, b'=') as usize - s as *const u8 as usize;
     if l == 0 || *s.add(l) as u8 == 0 {
         return unsetenv(s);
@@ -12343,20 +15297,17 @@ pub unsafe extern "C" fn clearenv() -> c_int {
 // ============================================================
 
 static mut RANDOM_INIT: [u32; 32] = [
-    0x00000000,0x5851f42d,0xc0b18ccf,0xcbb5f646,
-    0xc7033129,0x30705b04,0x20fd5db4,0x9a8b7f78,
-    0x502959d8,0xab894868,0x6c0356a7,0x88cdb7ff,
-    0xb477d43f,0x70a3a52b,0xa8e4baf1,0xfd8341fc,
-    0x8ae16fd9,0x742d2f7a,0x0d1f0796,0x76035e09,
-    0x40f7702c,0x6fa72ca5,0xaaa84157,0x58a0df74,
-    0xc74a0364,0xae533cc4,0x04185faf,0x6de3b115,
-    0x0cab8628,0xf043bfa4,0x398150e9,0x37521657,
+    0x00000000, 0x5851f42d, 0xc0b18ccf, 0xcbb5f646, 0xc7033129, 0x30705b04, 0x20fd5db4, 0x9a8b7f78,
+    0x502959d8, 0xab894868, 0x6c0356a7, 0x88cdb7ff, 0xb477d43f, 0x70a3a52b, 0xa8e4baf1, 0xfd8341fc,
+    0x8ae16fd9, 0x742d2f7a, 0x0d1f0796, 0x76035e09, 0x40f7702c, 0x6fa72ca5, 0xaaa84157, 0x58a0df74,
+    0xc74a0364, 0xae533cc4, 0x04185faf, 0x6de3b115, 0x0cab8628, 0xf043bfa4, 0x398150e9, 0x37521657,
 ];
 
 static mut RANDOM_N: i32 = 31;
 static mut RANDOM_I: i32 = 3;
 static mut RANDOM_J: i32 = 0;
-static mut RANDOM_X: *mut u32 = unsafe { core::ptr::addr_of_mut!(RANDOM_INIT).cast::<u32>().add(1) };
+static mut RANDOM_X: *mut u32 =
+    unsafe { core::ptr::addr_of_mut!(RANDOM_INIT).cast::<u32>().add(1) };
 
 unsafe fn random_lcg31(x: u32) -> u32 {
     (1103515245u32.wrapping_mul(x).wrapping_add(12345)) & 0x7fffffff
@@ -12367,7 +15318,8 @@ unsafe fn random_lcg64(x: u64) -> u64 {
 }
 
 unsafe fn random_savestate() -> *mut u8 {
-    (*RANDOM_X.offset(-1)) = ((RANDOM_N as u32) << 16) | ((RANDOM_I as u32) << 8) | (RANDOM_J as u32);
+    (*RANDOM_X.offset(-1)) =
+        ((RANDOM_N as u32) << 16) | ((RANDOM_I as u32) << 8) | (RANDOM_J as u32);
     RANDOM_X.offset(-1) as *mut u8
 }
 
@@ -12384,7 +15336,11 @@ unsafe fn random_srandom_inner(seed: u32) {
         *RANDOM_X = s as u32;
         return;
     }
-    RANDOM_I = if RANDOM_N == 31 || RANDOM_N == 7 { 3 } else { 1 };
+    RANDOM_I = if RANDOM_N == 31 || RANDOM_N == 7 {
+        3
+    } else {
+        1
+    };
     RANDOM_J = 0;
     for k in 0..RANDOM_N as usize {
         s = random_lcg64(s);
@@ -12400,13 +15356,21 @@ pub unsafe extern "C" fn srandom(seed: c_uint) {
 
 #[no_mangle]
 pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize) -> *mut c_char {
-    if size < 8 { return core::ptr::null_mut(); }
+    if size < 8 {
+        return core::ptr::null_mut();
+    }
     let old = random_savestate();
-    RANDOM_N = if size < 32 { 0 }
-        else if size < 64 { 7 }
-        else if size < 128 { 15 }
-        else if size < 256 { 31 }
-        else { 63 };
+    RANDOM_N = if size < 32 {
+        0
+    } else if size < 64 {
+        7
+    } else if size < 128 {
+        15
+    } else if size < 256 {
+        31
+    } else {
+        63
+    };
     RANDOM_X = (state as *mut u32).add(1);
     random_srandom_inner(seed);
     random_savestate();
@@ -12427,12 +15391,17 @@ pub unsafe extern "C" fn random() -> c_long {
         *RANDOM_X = random_lcg31(*RANDOM_X);
         k = *RANDOM_X as c_long;
     } else {
-        *RANDOM_X.add(RANDOM_I as usize) = (*RANDOM_X.add(RANDOM_I as usize)).wrapping_add(*RANDOM_X.add(RANDOM_J as usize));
+        *RANDOM_X.add(RANDOM_I as usize) =
+            (*RANDOM_X.add(RANDOM_I as usize)).wrapping_add(*RANDOM_X.add(RANDOM_J as usize));
         k = (*RANDOM_X.add(RANDOM_I as usize) >> 1) as c_long;
         RANDOM_I += 1;
-        if RANDOM_I == RANDOM_N { RANDOM_I = 0; }
+        if RANDOM_I == RANDOM_N {
+            RANDOM_I = 0;
+        }
         RANDOM_J += 1;
-        if RANDOM_J == RANDOM_N { RANDOM_J = 0; }
+        if RANDOM_J == RANDOM_N {
+            RANDOM_J = 0;
+        }
     }
     k
 }
@@ -12445,15 +15414,57 @@ const SA: u8 = 0xC2;
 const SB: u8 = 0xF4;
 
 const BITTAB: [u32; 51] = [
-    0xC000_0002, 0xC000_0003, 0xC000_0004, 0xC000_0005, 0xC000_0006, 0xC000_0007,
-    0xC000_0008, 0xC000_0009, 0xC000_000A, 0xC000_000B, 0xC000_000C, 0xC000_000D,
-    0xC000_000E, 0xC000_000F, 0xC000_0010, 0xC000_0011, 0xC000_0012, 0xC000_0013,
-    0xC000_0014, 0xC000_0015, 0xC000_0016, 0xC000_0017, 0xC000_0018, 0xC000_0019,
-    0xC000_001A, 0xC000_001B, 0xC000_001C, 0xC000_001D, 0xC000_001E, 0xC000_001F,
-    0xB300_0000, 0xC300_0001, 0xC300_0002, 0xC300_0003, 0xC300_0004, 0xC300_0005,
-    0xC300_0006, 0xC300_0007, 0xC300_0008, 0xC300_0009, 0xC300_000A, 0xC300_000B,
-    0xC300_000C, 0xD300_000D, 0xC300_000E, 0xC300_000F, 0xBB0C_0000, 0xC30C_0001,
-    0xC30C_0002, 0xC30C_0003, 0xDB0C_0004,
+    0xC000_0002,
+    0xC000_0003,
+    0xC000_0004,
+    0xC000_0005,
+    0xC000_0006,
+    0xC000_0007,
+    0xC000_0008,
+    0xC000_0009,
+    0xC000_000A,
+    0xC000_000B,
+    0xC000_000C,
+    0xC000_000D,
+    0xC000_000E,
+    0xC000_000F,
+    0xC000_0010,
+    0xC000_0011,
+    0xC000_0012,
+    0xC000_0013,
+    0xC000_0014,
+    0xC000_0015,
+    0xC000_0016,
+    0xC000_0017,
+    0xC000_0018,
+    0xC000_0019,
+    0xC000_001A,
+    0xC000_001B,
+    0xC000_001C,
+    0xC000_001D,
+    0xC000_001E,
+    0xC000_001F,
+    0xB300_0000,
+    0xC300_0001,
+    0xC300_0002,
+    0xC300_0003,
+    0xC300_0004,
+    0xC300_0005,
+    0xC300_0006,
+    0xC300_0007,
+    0xC300_0008,
+    0xC300_0009,
+    0xC300_000A,
+    0xC300_000B,
+    0xC300_000C,
+    0xD300_000D,
+    0xC300_000E,
+    0xC300_000F,
+    0xBB0C_0000,
+    0xC30C_0001,
+    0xC30C_0002,
+    0xC30C_0003,
+    0xDB0C_0004,
 ];
 
 #[inline]
@@ -12469,7 +15480,13 @@ const MB_CUR_MAX_VAL_C: usize = 1;
 
 #[no_mangle]
 pub extern "C" fn __ctype_get_mb_cur_max() -> usize {
-    unsafe { if LOCALE_CTYPE_UTF8 { MB_CUR_MAX_VAL_UTF8 } else { MB_CUR_MAX_VAL_C } }
+    unsafe {
+        if LOCALE_CTYPE_UTF8 {
+            MB_CUR_MAX_VAL_UTF8
+        } else {
+            MB_CUR_MAX_VAL_C
+        }
+    }
 }
 
 #[no_mangle]
@@ -12483,18 +15500,28 @@ pub unsafe extern "C" fn mbrtowc(
     let n0 = n;
     let mut dummy: c_int = 0;
     let wc = if wc.is_null() { &mut dummy } else { &mut *wc };
-    let st: &mut c_uint = if st.is_null() { &mut *(&raw mut MB_STATE) } else { &mut *st };
+    let st: &mut c_uint = if st.is_null() {
+        &mut *(&raw mut MB_STATE)
+    } else {
+        &mut *st
+    };
 
     let mut c: u32 = *st;
     let mut s = s;
     let mut n = n;
 
     if s.is_null() {
-        if c != 0 { *st = 0; ERRNO = EILSEQ; return !0usize; }
+        if c != 0 {
+            *st = 0;
+            ERRNO = EILSEQ;
+            return !0usize;
+        }
         return 0;
     }
 
-    if n == 0 { return !1usize; }
+    if n == 0 {
+        return !1usize;
+    }
 
     if unsafe { !LOCALE_CTYPE_UTF8 } {
         let b = *s;
@@ -12509,7 +15536,9 @@ pub unsafe extern "C" fn mbrtowc(
             return r;
         }
         if (*s).wrapping_sub(SA) as u32 > (SB - SA) as u32 {
-            *st = 0; ERRNO = EILSEQ; return !0usize;
+            *st = 0;
+            ERRNO = EILSEQ;
+            return !0usize;
         }
         c = BITTAB[*s as usize - SA as usize];
         s = s.add(1);
@@ -12518,7 +15547,9 @@ pub unsafe extern "C" fn mbrtowc(
 
     if n > 0 {
         if mb_oob(c, *s) != 0 {
-            *st = 0; ERRNO = EILSEQ; return !0usize;
+            *st = 0;
+            ERRNO = EILSEQ;
+            return !0usize;
         }
         loop {
             c = (c << 6) | (*s as u32).wrapping_sub(0x80);
@@ -12529,9 +15560,13 @@ pub unsafe extern "C" fn mbrtowc(
                 *wc = c as c_int;
                 return n0 - n;
             }
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             if (*s).wrapping_sub(0x80) >= 0x40 {
-                *st = 0; ERRNO = EILSEQ; return !0usize;
+                *st = 0;
+                ERRNO = EILSEQ;
+                return !0usize;
             }
         }
     }
@@ -12541,12 +15576,10 @@ pub unsafe extern "C" fn mbrtowc(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wcrtomb(
-    s: *mut c_char,
-    wc: c_int,
-    _st: *mut c_uint,
-) -> usize {
-    if s.is_null() { return 1; }
+pub unsafe extern "C" fn wcrtomb(s: *mut c_char, wc: c_int, _st: *mut c_uint) -> usize {
+    if s.is_null() {
+        return 1;
+    }
     let wc_u = wc as u32;
     if unsafe { !LOCALE_CTYPE_UTF8 } {
         if wc_u > 0xFF {
@@ -12584,29 +15617,38 @@ pub unsafe extern "C" fn wcrtomb(
 
 #[no_mangle]
 pub unsafe extern "C" fn mblen(s: *const c_char, n: usize) -> c_int {
-    if s.is_null() { return 0; }
+    if s.is_null() {
+        return 0;
+    }
     mbtowc(core::ptr::null_mut(), s, n)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn mbtowc(
-    wc: *mut c_int,
-    src: *const c_char,
-    n: usize,
-) -> c_int {
-    if src.is_null() { return 0; }
-    if n == 0 { ERRNO = EILSEQ; return -1; }
+pub unsafe extern "C" fn mbtowc(wc: *mut c_int, src: *const c_char, n: usize) -> c_int {
+    if src.is_null() {
+        return 0;
+    }
+    if n == 0 {
+        ERRNO = EILSEQ;
+        return -1;
+    }
     let mut state: c_uint = 0;
     let mut w: c_int = 0;
     let r = mbrtowc(&mut w, src, n, &mut state);
-    if r == !0usize { return -1; }
-    if !wc.is_null() { *wc = w; }
+    if r == !0usize {
+        return -1;
+    }
+    if !wc.is_null() {
+        *wc = w;
+    }
     r as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn wctomb(s: *mut c_char, wc: c_int) -> c_int {
-    if s.is_null() { return 0; }
+    if s.is_null() {
+        return 0;
+    }
     wcrtomb(s, wc, core::ptr::null_mut()) as c_int
 }
 
@@ -12617,7 +15659,11 @@ pub unsafe extern "C" fn mbsrtowcs(
     wn: usize,
     st: *mut c_uint,
 ) -> usize {
-    let st: &mut c_uint = if st.is_null() { &mut *(&raw mut MB_STATE) } else { &mut *st };
+    let st: &mut c_uint = if st.is_null() {
+        &mut *(&raw mut MB_STATE)
+    } else {
+        &mut *st
+    };
     let mut s = *src as *const u8;
     let wn0 = wn;
     let mut wn = wn;
@@ -12631,8 +15677,12 @@ pub unsafe extern "C" fn mbsrtowcs(
             }
             let mut wc: c_int = 0;
             let r = mbrtowc(&mut wc, s as *const c_char, 4, st);
-            if r == !0usize { return !0usize; }
-            if r == !1usize { return wn0 - wn; }
+            if r == !0usize {
+                return !0usize;
+            }
+            if r == !1usize {
+                return wn0 - wn;
+            }
             s = s.add(r);
             wn = wn.wrapping_sub(1);
         }
@@ -12691,7 +15741,9 @@ pub unsafe extern "C" fn wcsrtombs(
             } else {
                 let mut buf = [0u8; 4];
                 let r = wcrtomb(buf.as_mut_ptr() as *mut c_char, *w, core::ptr::null_mut());
-                if r == !0usize { return !0usize; }
+                if r == !0usize {
+                    return !0usize;
+                }
                 count += r;
             }
             w = w.add(1);
@@ -12729,21 +15781,13 @@ pub unsafe extern "C" fn wcsrtombs(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn mbstowcs(
-    ws: *mut c_int,
-    src: *const c_char,
-    wn: usize,
-) -> usize {
+pub unsafe extern "C" fn mbstowcs(ws: *mut c_int, src: *const c_char, wn: usize) -> usize {
     let mut src_ptr = src;
     mbsrtowcs(ws, &mut src_ptr, wn, core::ptr::null_mut())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstombs(
-    s: *mut c_char,
-    ws: *const c_int,
-    n: usize,
-) -> usize {
+pub unsafe extern "C" fn wcstombs(s: *mut c_char, ws: *const c_int, n: usize) -> usize {
     let mut ws_ptr = ws;
     wcsrtombs(s, &mut ws_ptr, n, core::ptr::null_mut())
 }
@@ -12754,10 +15798,16 @@ pub unsafe extern "C" fn wcstombs(
 
 #[no_mangle]
 pub extern "C" fn btowc(c: c_int) -> wint_t {
-    if c == -1 { return WEOF; }
+    if c == -1 {
+        return WEOF;
+    }
     unsafe {
         if LOCALE_CTYPE_UTF8 {
-            if (c as u32) < 128 { c as wint_t } else { WEOF }
+            if (c as u32) < 128 {
+                c as wint_t
+            } else {
+                WEOF
+            }
         } else {
             (c as u8) as wint_t
         }
@@ -12768,16 +15818,28 @@ pub extern "C" fn btowc(c: c_int) -> wint_t {
 pub extern "C" fn wctob(c: wint_t) -> c_int {
     unsafe {
         if LOCALE_CTYPE_UTF8 {
-            if c < 128 { c as c_int } else { -1 }
+            if c < 128 {
+                c as c_int
+            } else {
+                -1
+            }
         } else {
-            if c <= 0xFF { c as c_int } else { -1 }
+            if c <= 0xFF {
+                c as c_int
+            } else {
+                -1
+            }
         }
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mbsinit(s: *const c_uint) -> c_int {
-    if s.is_null() || *s == 0 { 1 } else { 0 }
+    if s.is_null() || *s == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -12792,7 +15854,9 @@ pub unsafe extern "C" fn mbrlen(s: *const c_char, n: usize, ps: *mut c_uint) -> 
 #[no_mangle]
 pub unsafe extern "C" fn wcslen(s: *const wchar_t) -> usize {
     let mut len = 0;
-    while *s.add(len) != 0 { len += 1; }
+    while *s.add(len) != 0 {
+        len += 1;
+    }
     len
 }
 
@@ -12801,8 +15865,12 @@ pub unsafe extern "C" fn wcschr(s: *const wchar_t, c: wchar_t) -> *mut wchar_t {
     let mut i = 0;
     loop {
         let ch = *s.add(i);
-        if ch == c { return s.add(i) as *mut wchar_t; }
-        if ch == 0 { return null_mut(); }
+        if ch == c {
+            return s.add(i) as *mut wchar_t;
+        }
+        if ch == 0 {
+            return null_mut();
+        }
         i += 1;
     }
 }
@@ -12813,25 +15881,37 @@ pub unsafe extern "C" fn wcsrchr(s: *const wchar_t, c: wchar_t) -> *mut wchar_t 
     let mut last: *mut wchar_t = null_mut();
     loop {
         let ch = *s.add(i);
-        if ch == c { last = s.add(i) as *mut wchar_t; }
-        if ch == 0 { return last; }
+        if ch == c {
+            last = s.add(i) as *mut wchar_t;
+        }
+        if ch == 0 {
+            return last;
+        }
         i += 1;
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn wcsstr(haystack: *const wchar_t, needle: *const wchar_t) -> *mut wchar_t {
-    if *needle == 0 { return haystack as *mut wchar_t; }
+    if *needle == 0 {
+        return haystack as *mut wchar_t;
+    }
     let mut i = 0;
     loop {
         let h = *haystack.add(i);
-        if h == 0 { return null_mut(); }
+        if h == 0 {
+            return null_mut();
+        }
         if h == *needle {
             let mut j = 0;
             loop {
                 let n = *needle.add(j);
-                if n == 0 { return haystack.add(i) as *mut wchar_t; }
-                if *haystack.add(i + j) != n { break; }
+                if n == 0 {
+                    return haystack.add(i) as *mut wchar_t;
+                }
+                if *haystack.add(i + j) != n {
+                    break;
+                }
                 j += 1;
             }
         }
@@ -12845,8 +15925,12 @@ pub unsafe extern "C" fn wcscmp(s1: *const wchar_t, s2: *const wchar_t) -> c_int
     loop {
         let a = *s1.add(i);
         let b = *s2.add(i);
-        if a != b { return a - b; }
-        if a == 0 { return 0; }
+        if a != b {
+            return a - b;
+        }
+        if a == 0 {
+            return 0;
+        }
         i += 1;
     }
 }
@@ -12857,8 +15941,12 @@ pub unsafe extern "C" fn wcsncmp(s1: *const wchar_t, s2: *const wchar_t, n: usiz
     while i < n {
         let a = *s1.add(i);
         let b = *s2.add(i);
-        if a != b { return a - b; }
-        if a == 0 { return 0; }
+        if a != b {
+            return a - b;
+        }
+        if a == 0 {
+            return 0;
+        }
         i += 1;
     }
     0
@@ -12870,7 +15958,9 @@ pub unsafe extern "C" fn wcscpy(dst: *mut wchar_t, src: *const wchar_t) -> *mut 
     loop {
         let c = *src.add(i);
         *dst.add(i) = c;
-        if c == 0 { break; }
+        if c == 0 {
+            break;
+        }
         i += 1;
     }
     dst
@@ -12879,20 +15969,30 @@ pub unsafe extern "C" fn wcscpy(dst: *mut wchar_t, src: *const wchar_t) -> *mut 
 #[no_mangle]
 pub unsafe extern "C" fn wcsncpy(dst: *mut wchar_t, src: *const wchar_t, n: usize) -> *mut wchar_t {
     let mut i = 0;
-    while i < n && *src.add(i) != 0 { *dst.add(i) = *src.add(i); i += 1; }
-    while i < n { *dst.add(i) = 0; i += 1; }
+    while i < n && *src.add(i) != 0 {
+        *dst.add(i) = *src.add(i);
+        i += 1;
+    }
+    while i < n {
+        *dst.add(i) = 0;
+        i += 1;
+    }
     dst
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn wcscat(dst: *mut wchar_t, src: *const wchar_t) -> *mut wchar_t {
     let mut i = 0;
-    while *dst.add(i) != 0 { i += 1; }
+    while *dst.add(i) != 0 {
+        i += 1;
+    }
     let mut j = 0;
     loop {
         let c = *src.add(j);
         *dst.add(i + j) = c;
-        if c == 0 { break; }
+        if c == 0 {
+            break;
+        }
         j += 1;
     }
     dst
@@ -12901,9 +16001,14 @@ pub unsafe extern "C" fn wcscat(dst: *mut wchar_t, src: *const wchar_t) -> *mut 
 #[no_mangle]
 pub unsafe extern "C" fn wcsncat(dst: *mut wchar_t, src: *const wchar_t, n: usize) -> *mut wchar_t {
     let mut i = 0;
-    while *dst.add(i) != 0 { i += 1; }
+    while *dst.add(i) != 0 {
+        i += 1;
+    }
     let mut j = 0;
-    while j < n && *src.add(j) != 0 { *dst.add(i + j) = *src.add(j); j += 1; }
+    while j < n && *src.add(j) != 0 {
+        *dst.add(i + j) = *src.add(j);
+        j += 1;
+    }
     *dst.add(i + j) = 0;
     dst
 }
@@ -12912,7 +16017,9 @@ pub unsafe extern "C" fn wcsncat(dst: *mut wchar_t, src: *const wchar_t, n: usiz
 pub unsafe extern "C" fn wcsdup(s: *const wchar_t) -> *mut wchar_t {
     let len = wcslen(s);
     let p = malloc((len + 1) * core::mem::size_of::<wchar_t>()) as *mut wchar_t;
-    if p.is_null() { return null_mut(); }
+    if p.is_null() {
+        return null_mut();
+    }
     core::ptr::copy_nonoverlapping(s, p, len + 1);
     p
 }
@@ -12920,7 +16027,9 @@ pub unsafe extern "C" fn wcsdup(s: *const wchar_t) -> *mut wchar_t {
 #[no_mangle]
 pub unsafe extern "C" fn wcsnlen(s: *const wchar_t, maxlen: usize) -> usize {
     let mut i = 0;
-    while i < maxlen && *s.add(i) != 0 { i += 1; }
+    while i < maxlen && *s.add(i) != 0 {
+        i += 1;
+    }
     i
 }
 
@@ -12929,16 +16038,25 @@ pub unsafe extern "C" fn wcsspn(s: *const wchar_t, accept: *const wchar_t) -> us
     let mut i = 0;
     loop {
         let c = *s.add(i);
-        if c == 0 { return i; }
+        if c == 0 {
+            return i;
+        }
         let mut found = false;
         let mut j = 0;
         loop {
             let a = *accept.add(j);
-            if a == 0 { break; }
-            if c == a { found = true; break; }
+            if a == 0 {
+                break;
+            }
+            if c == a {
+                found = true;
+                break;
+            }
             j += 1;
         }
-        if !found { return i; }
+        if !found {
+            return i;
+        }
         i += 1;
     }
 }
@@ -12948,12 +16066,18 @@ pub unsafe extern "C" fn wcscspn(s: *const wchar_t, reject: *const wchar_t) -> u
     let mut i = 0;
     loop {
         let c = *s.add(i);
-        if c == 0 { return i; }
+        if c == 0 {
+            return i;
+        }
         let mut j = 0;
         loop {
             let r = *reject.add(j);
-            if r == 0 { break; }
-            if c == r { return i; }
+            if r == 0 {
+                break;
+            }
+            if c == r {
+                return i;
+            }
             j += 1;
         }
         i += 1;
@@ -12965,12 +16089,18 @@ pub unsafe extern "C" fn wcspbrk(s: *const wchar_t, accept: *const wchar_t) -> *
     let mut i = 0;
     loop {
         let c = *s.add(i);
-        if c == 0 { return null_mut(); }
+        if c == 0 {
+            return null_mut();
+        }
         let mut j = 0;
         loop {
             let a = *accept.add(j);
-            if a == 0 { break; }
-            if c == a { return s.add(i) as *mut wchar_t; }
+            if a == 0 {
+                break;
+            }
+            if c == a {
+                return s.add(i) as *mut wchar_t;
+            }
             j += 1;
         }
         i += 1;
@@ -12981,9 +16111,21 @@ pub unsafe extern "C" fn wcspbrk(s: *const wchar_t, accept: *const wchar_t) -> *
 pub unsafe extern "C" fn wcsxfrm(dst: *mut wchar_t, src: *const wchar_t, n: usize) -> usize {
     let len = wcslen(src);
     if !dst.is_null() {
-        let copy = if len < n { len } else { if n > 0 { n - 1 } else { 0 } };
-        for i in 0..copy { *dst.add(i) = *src.add(i); }
-        if n > 0 { *dst.add(copy) = 0; }
+        let copy = if len < n {
+            len
+        } else {
+            if n > 0 {
+                n - 1
+            } else {
+                0
+            }
+        };
+        for i in 0..copy {
+            *dst.add(i) = *src.add(i);
+        }
+        if n > 0 {
+            *dst.add(copy) = 0;
+        }
     }
     len
 }
@@ -12996,8 +16138,12 @@ unsafe fn wcs_to_bytes(ws: *const wchar_t, buf: *mut u8, bufsz: usize) -> usize 
     let mut i = 0;
     while i < bufsz - 1 {
         let c = *ws.add(i);
-        if c == 0 { break; }
-        if (c as u32) > 127 { break; }
+        if c == 0 {
+            break;
+        }
+        if (c as u32) > 127 {
+            break;
+        }
         *buf.add(i) = c as u8;
         i += 1;
     }
@@ -13006,7 +16152,11 @@ unsafe fn wcs_to_bytes(ws: *const wchar_t, buf: *mut u8, bufsz: usize) -> usize 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstol(s: *const wchar_t, endptr: *mut *mut wchar_t, base: c_int) -> c_long {
+pub unsafe extern "C" fn wcstol(
+    s: *const wchar_t,
+    endptr: *mut *mut wchar_t,
+    base: c_int,
+) -> c_long {
     let mut buf = [0u8; 256];
     wcs_to_bytes(s, buf.as_mut_ptr(), 256);
     let mut end: *mut c_char = core::ptr::null_mut();
@@ -13019,7 +16169,11 @@ pub unsafe extern "C" fn wcstol(s: *const wchar_t, endptr: *mut *mut wchar_t, ba
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstoul(s: *const wchar_t, endptr: *mut *mut wchar_t, base: c_int) -> c_ulong {
+pub unsafe extern "C" fn wcstoul(
+    s: *const wchar_t,
+    endptr: *mut *mut wchar_t,
+    base: c_int,
+) -> c_ulong {
     let mut buf = [0u8; 256];
     wcs_to_bytes(s, buf.as_mut_ptr(), 256);
     let mut end: *mut c_char = core::ptr::null_mut();
@@ -13032,7 +16186,11 @@ pub unsafe extern "C" fn wcstoul(s: *const wchar_t, endptr: *mut *mut wchar_t, b
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstoll(s: *const wchar_t, endptr: *mut *mut wchar_t, base: c_int) -> c_longlong {
+pub unsafe extern "C" fn wcstoll(
+    s: *const wchar_t,
+    endptr: *mut *mut wchar_t,
+    base: c_int,
+) -> c_longlong {
     let mut buf = [0u8; 256];
     wcs_to_bytes(s, buf.as_mut_ptr(), 256);
     let mut end: *mut c_char = core::ptr::null_mut();
@@ -13045,7 +16203,11 @@ pub unsafe extern "C" fn wcstoll(s: *const wchar_t, endptr: *mut *mut wchar_t, b
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstoull(s: *const wchar_t, endptr: *mut *mut wchar_t, base: c_int) -> c_ulonglong {
+pub unsafe extern "C" fn wcstoull(
+    s: *const wchar_t,
+    endptr: *mut *mut wchar_t,
+    base: c_int,
+) -> c_ulonglong {
     let mut buf = [0u8; 256];
     wcs_to_bytes(s, buf.as_mut_ptr(), 256);
     let mut end: *mut c_char = core::ptr::null_mut();
@@ -13071,25 +16233,45 @@ pub unsafe extern "C" fn wcstod(s: *const wchar_t, endptr: *mut *mut wchar_t) ->
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstof(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f32 { wcstod(s, endptr) as f32 }
+pub unsafe extern "C" fn wcstof(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f32 {
+    wcstod(s, endptr) as f32
+}
 
 #[no_mangle]
 #[cfg(target_arch = "x86_64")]
-pub unsafe extern "C" fn wcstold(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f64 { wcstod(s, endptr) }
+pub unsafe extern "C" fn wcstold(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f64 {
+    wcstod(s, endptr)
+}
 
 #[no_mangle]
 #[cfg(target_arch = "aarch64")]
-pub unsafe extern "C" fn wcstold(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f128 { wcstod(s, endptr) as f128 }
+pub unsafe extern "C" fn wcstold(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f128 {
+    wcstod(s, endptr) as f128
+}
 
 #[no_mangle]
 #[cfg(target_arch = "riscv64")]
-pub unsafe extern "C" fn wcstold(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f128 { wcstod(s, endptr) as f128 }
+pub unsafe extern "C" fn wcstold(s: *const wchar_t, endptr: *mut *mut wchar_t) -> f128 {
+    wcstod(s, endptr) as f128
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstoimax(s: *const wchar_t, endptr: *mut *mut wchar_t, base: c_int) -> c_longlong { wcstoll(s, endptr, base) }
+pub unsafe extern "C" fn wcstoimax(
+    s: *const wchar_t,
+    endptr: *mut *mut wchar_t,
+    base: c_int,
+) -> c_longlong {
+    wcstoll(s, endptr, base)
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn wcstoumax(s: *const wchar_t, endptr: *mut *mut wchar_t, base: c_int) -> c_ulonglong { wcstoull(s, endptr, base) }
+pub unsafe extern "C" fn wcstoumax(
+    s: *const wchar_t,
+    endptr: *mut *mut wchar_t,
+    base: c_int,
+) -> c_ulonglong {
+    wcstoull(s, endptr, base)
+}
 
 // ============================================================
 // wctype: classification functions
@@ -13112,48 +16294,90 @@ fn wc_flags(c: wint_t) -> c_int {
     if c < 128 {
         let f = CT_TABLE[c as usize];
         let mut r = 0;
-        if f & (CT_UPPER | CT_LOWER) != 0 { r |= WC_ALPHA; }
-        if f & CT_DIGIT != 0 { r |= WC_DIGIT; }
-        if f & CT_SPACE != 0 { r |= WC_SPACE; }
-        if f & CT_UPPER != 0 { r |= WC_UPPER; }
-        if f & CT_LOWER != 0 { r |= WC_LOWER; }
-        if f & CT_BLANK != 0 { r |= WC_BLANK; }
-        if f & CT_CNTRL != 0 { r |= WC_CNTRL; }
-        if f & CT_PUNCT != 0 { r |= WC_PUNCT; }
-        if f & CT_XDIGIT != 0 { r |= WC_XDIGIT; }
+        if f & (CT_UPPER | CT_LOWER) != 0 {
+            r |= WC_ALPHA;
+        }
+        if f & CT_DIGIT != 0 {
+            r |= WC_DIGIT;
+        }
+        if f & CT_SPACE != 0 {
+            r |= WC_SPACE;
+        }
+        if f & CT_UPPER != 0 {
+            r |= WC_UPPER;
+        }
+        if f & CT_LOWER != 0 {
+            r |= WC_LOWER;
+        }
+        if f & CT_BLANK != 0 {
+            r |= WC_BLANK;
+        }
+        if f & CT_CNTRL != 0 {
+            r |= WC_CNTRL;
+        }
+        if f & CT_PUNCT != 0 {
+            r |= WC_PUNCT;
+        }
+        if f & CT_XDIGIT != 0 {
+            r |= WC_XDIGIT;
+        }
         r
     } else {
-        if c < 0x100 { 0 }
-        else { WC_PRINT | WC_ALPHA }
+        if c < 0x100 {
+            0
+        } else {
+            WC_PRINT | WC_ALPHA
+        }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn iswalnum(c: wint_t) -> c_int { (wc_flags(c) & WC_ALNUM != 0) as c_int }
-#[no_mangle]
-pub extern "C" fn iswalpha(c: wint_t) -> c_int { (wc_flags(c) & WC_ALPHA != 0) as c_int }
-#[no_mangle]
-pub extern "C" fn iswblank(c: wint_t) -> c_int { (wc_flags(c) & WC_BLANK != 0) as c_int }
-#[no_mangle]
-pub extern "C" fn iswcntrl(c: wint_t) -> c_int { (wc_flags(c) & WC_CNTRL != 0) as c_int }
-#[no_mangle]
-pub extern "C" fn iswdigit(c: wint_t) -> c_int { ((c >= b'0' as wint_t) && (c <= b'9' as wint_t)) as c_int }
-#[no_mangle]
-pub extern "C" fn iswgraph(c: wint_t) -> c_int { (wc_flags(c) & WC_GRAPH != 0) as c_int }
-#[no_mangle]
-pub extern "C" fn iswlower(c: wint_t) -> c_int { (wc_flags(c) & WC_LOWER != 0) as c_int }
-#[no_mangle]
-pub extern "C" fn iswprint(c: wint_t) -> c_int {
-    if c < 128 { (wc_flags(c) & WC_PRINT != 0) as c_int }
-    else if c >= 0x100 && c < 0x110000 { 1 }
-    else { 0 }
+pub extern "C" fn iswalnum(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_ALNUM != 0) as c_int
 }
 #[no_mangle]
-pub extern "C" fn iswpunct(c: wint_t) -> c_int { (wc_flags(c) & WC_PUNCT != 0) as c_int }
+pub extern "C" fn iswalpha(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_ALPHA != 0) as c_int
+}
+#[no_mangle]
+pub extern "C" fn iswblank(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_BLANK != 0) as c_int
+}
+#[no_mangle]
+pub extern "C" fn iswcntrl(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_CNTRL != 0) as c_int
+}
+#[no_mangle]
+pub extern "C" fn iswdigit(c: wint_t) -> c_int {
+    ((c >= b'0' as wint_t) && (c <= b'9' as wint_t)) as c_int
+}
+#[no_mangle]
+pub extern "C" fn iswgraph(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_GRAPH != 0) as c_int
+}
+#[no_mangle]
+pub extern "C" fn iswlower(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_LOWER != 0) as c_int
+}
+#[no_mangle]
+pub extern "C" fn iswprint(c: wint_t) -> c_int {
+    if c < 128 {
+        (wc_flags(c) & WC_PRINT != 0) as c_int
+    } else if c >= 0x100 && c < 0x110000 {
+        1
+    } else {
+        0
+    }
+}
+#[no_mangle]
+pub extern "C" fn iswpunct(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_PUNCT != 0) as c_int
+}
 #[no_mangle]
 pub extern "C" fn iswspace(c: wint_t) -> c_int {
-    if c < 128 { (wc_flags(c) & WC_SPACE != 0) as c_int }
-    else {
+    if c < 128 {
+        (wc_flags(c) & WC_SPACE != 0) as c_int
+    } else {
         match c {
             0x1680 | 0x2000..=0x200A | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 => 1,
             _ => 0,
@@ -13161,9 +16385,13 @@ pub extern "C" fn iswspace(c: wint_t) -> c_int {
     }
 }
 #[no_mangle]
-pub extern "C" fn iswupper(c: wint_t) -> c_int { (wc_flags(c) & WC_UPPER != 0) as c_int }
+pub extern "C" fn iswupper(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_UPPER != 0) as c_int
+}
 #[no_mangle]
-pub extern "C" fn iswxdigit(c: wint_t) -> c_int { (wc_flags(c) & WC_XDIGIT != 0) as c_int }
+pub extern "C" fn iswxdigit(c: wint_t) -> c_int {
+    (wc_flags(c) & WC_XDIGIT != 0) as c_int
+}
 
 static WCTYPE_ALNUM: c_int = WC_ALNUM;
 static WCTYPE_ALPHA: c_int = WC_ALPHA;
@@ -13180,26 +16408,54 @@ static WCTYPE_XDIGIT: c_int = WC_XDIGIT;
 
 #[no_mangle]
 pub unsafe extern "C" fn wctype(name: *const c_char) -> wctype_t {
-    if name.is_null() { return core::ptr::null(); }
+    if name.is_null() {
+        return core::ptr::null();
+    }
     let n = name as *const u8;
-    if strcmp(n, b"alnum\0".as_ptr()) == 0 { return &WCTYPE_ALNUM; }
-    if strcmp(n, b"alpha\0".as_ptr()) == 0 { return &WCTYPE_ALPHA; }
-    if strcmp(n, b"blank\0".as_ptr()) == 0 { return &WCTYPE_BLANK; }
-    if strcmp(n, b"cntrl\0".as_ptr()) == 0 { return &WCTYPE_CNTRL; }
-    if strcmp(n, b"digit\0".as_ptr()) == 0 { return &WCTYPE_DIGIT; }
-    if strcmp(n, b"graph\0".as_ptr()) == 0 { return &WCTYPE_GRAPH; }
-    if strcmp(n, b"lower\0".as_ptr()) == 0 { return &WCTYPE_LOWER; }
-    if strcmp(n, b"print\0".as_ptr()) == 0 { return &WCTYPE_PRINT; }
-    if strcmp(n, b"punct\0".as_ptr()) == 0 { return &WCTYPE_PUNCT; }
-    if strcmp(n, b"space\0".as_ptr()) == 0 { return &WCTYPE_SPACE; }
-    if strcmp(n, b"upper\0".as_ptr()) == 0 { return &WCTYPE_UPPER; }
-    if strcmp(n, b"xdigit\0".as_ptr()) == 0 { return &WCTYPE_XDIGIT; }
+    if strcmp(n, b"alnum\0".as_ptr()) == 0 {
+        return &WCTYPE_ALNUM;
+    }
+    if strcmp(n, b"alpha\0".as_ptr()) == 0 {
+        return &WCTYPE_ALPHA;
+    }
+    if strcmp(n, b"blank\0".as_ptr()) == 0 {
+        return &WCTYPE_BLANK;
+    }
+    if strcmp(n, b"cntrl\0".as_ptr()) == 0 {
+        return &WCTYPE_CNTRL;
+    }
+    if strcmp(n, b"digit\0".as_ptr()) == 0 {
+        return &WCTYPE_DIGIT;
+    }
+    if strcmp(n, b"graph\0".as_ptr()) == 0 {
+        return &WCTYPE_GRAPH;
+    }
+    if strcmp(n, b"lower\0".as_ptr()) == 0 {
+        return &WCTYPE_LOWER;
+    }
+    if strcmp(n, b"print\0".as_ptr()) == 0 {
+        return &WCTYPE_PRINT;
+    }
+    if strcmp(n, b"punct\0".as_ptr()) == 0 {
+        return &WCTYPE_PUNCT;
+    }
+    if strcmp(n, b"space\0".as_ptr()) == 0 {
+        return &WCTYPE_SPACE;
+    }
+    if strcmp(n, b"upper\0".as_ptr()) == 0 {
+        return &WCTYPE_UPPER;
+    }
+    if strcmp(n, b"xdigit\0".as_ptr()) == 0 {
+        return &WCTYPE_XDIGIT;
+    }
     core::ptr::null()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn iswctype(c: wint_t, desc: wctype_t) -> c_int {
-    if desc.is_null() { return 0; }
+    if desc.is_null() {
+        return 0;
+    }
     (wc_flags(c) & *desc != 0) as c_int
 }
 
@@ -13208,26 +16464,42 @@ static WCTRANS_UPPER: c_int = 2;
 
 #[no_mangle]
 pub unsafe extern "C" fn towlower(c: wint_t) -> wint_t {
-    if c < 128 { tolower(c as c_int) as wint_t } else { c }
+    if c < 128 {
+        tolower(c as c_int) as wint_t
+    } else {
+        c
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn towupper(c: wint_t) -> wint_t {
-    if c < 128 { toupper(c as c_int) as wint_t } else { c }
+    if c < 128 {
+        toupper(c as c_int) as wint_t
+    } else {
+        c
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn wctrans(name: *const c_char) -> wctrans_t {
-    if name.is_null() { return core::ptr::null(); }
+    if name.is_null() {
+        return core::ptr::null();
+    }
     let n = name as *const u8;
-    if strcmp(n, b"tolower\0".as_ptr()) == 0 { return &WCTRANS_LOWER; }
-    if strcmp(n, b"toupper\0".as_ptr()) == 0 { return &WCTRANS_UPPER; }
+    if strcmp(n, b"tolower\0".as_ptr()) == 0 {
+        return &WCTRANS_LOWER;
+    }
+    if strcmp(n, b"toupper\0".as_ptr()) == 0 {
+        return &WCTRANS_UPPER;
+    }
     core::ptr::null()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn towctrans(c: wint_t, desc: wctrans_t) -> wint_t {
-    if desc.is_null() { return c; }
+    if desc.is_null() {
+        return c;
+    }
     match *desc {
         1 => towlower(c),
         2 => towupper(c),
@@ -13245,27 +16517,47 @@ pub unsafe extern "C" fn fgetwc(f: *mut FILE) -> wint_t {
     let mut wc: wchar_t = 0;
     let mut buf = [0u8; 4];
     let c = fgetc(f);
-    if c == -1 { return WEOF; }
+    if c == -1 {
+        return WEOF;
+    }
     buf[0] = c as u8;
-    if buf[0] < 0x80 { return buf[0] as wint_t; }
-    let len = if buf[0] < 0xE0 { 2 } else if buf[0] < 0xF0 { 3 } else { 4 };
+    if buf[0] < 0x80 {
+        return buf[0] as wint_t;
+    }
+    let len = if buf[0] < 0xE0 {
+        2
+    } else if buf[0] < 0xF0 {
+        3
+    } else {
+        4
+    };
     let mut n = 1usize;
     while n < len {
         let c2 = fgetc(f);
-        if c2 == -1 { return WEOF; }
+        if c2 == -1 {
+            return WEOF;
+        }
         buf[n] = c2 as u8;
         n += 1;
     }
     let r = mbrtowc(&mut wc, buf.as_ptr() as *const c_char, n, &mut state);
-    if r == !0usize || r == !1usize { WEOF } else { wc as wint_t }
+    if r == !0usize || r == !1usize {
+        WEOF
+    } else {
+        wc as wint_t
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn fputwc(c: wchar_t, f: *mut FILE) -> wint_t {
     let mut buf = [0u8; 4];
     let n = wcrtomb(buf.as_mut_ptr() as *mut c_char, c, core::ptr::null_mut());
-    if n == !0usize || n == 0 { return WEOF; }
-    if fwrite(buf.as_ptr() as *const c_void, 1, n, f) != n { return WEOF; }
+    if n == !0usize || n == 0 {
+        return WEOF;
+    }
+    if fwrite(buf.as_ptr() as *const c_void, 1, n, f) != n {
+        return WEOF;
+    }
     c as wint_t
 }
 
@@ -13273,7 +16565,9 @@ pub unsafe extern "C" fn fputwc(c: wchar_t, f: *mut FILE) -> wint_t {
 pub unsafe extern "C" fn fputws(s: *const wchar_t, f: *mut FILE) -> c_int {
     let mut i = 0;
     while *s.add(i) != 0 {
-        if fputwc(*s.add(i), f) == WEOF { return -1; }
+        if fputwc(*s.add(i), f) == WEOF {
+            return -1;
+        }
         i += 1;
     }
     0
@@ -13281,40 +16575,69 @@ pub unsafe extern "C" fn fputws(s: *const wchar_t, f: *mut FILE) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn ungetwc(c: wint_t, f: *mut FILE) -> wint_t {
-    if c == WEOF { return WEOF; }
+    if c == WEOF {
+        return WEOF;
+    }
     let mut buf = [0u8; 4];
-    let n = wcrtomb(buf.as_mut_ptr() as *mut c_char, c as wchar_t, core::ptr::null_mut());
-    if n == !0usize || n == 0 { return WEOF; }
+    let n = wcrtomb(
+        buf.as_mut_ptr() as *mut c_char,
+        c as wchar_t,
+        core::ptr::null_mut(),
+    );
+    if n == !0usize || n == 0 {
+        return WEOF;
+    }
     let mut i = n;
     while i > 0 {
         i -= 1;
-        if ungetc(buf[i] as c_int, f) == -1 { return WEOF; }
+        if ungetc(buf[i] as c_int, f) == -1 {
+            return WEOF;
+        }
     }
     c
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn getwchar() -> wint_t { fgetwc(stdin) }
+pub unsafe extern "C" fn getwchar() -> wint_t {
+    fgetwc(stdin)
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn putwchar(c: wchar_t) -> wint_t { fputwc(c, stdout) }
+pub unsafe extern "C" fn putwchar(c: wchar_t) -> wint_t {
+    fputwc(c, stdout)
+}
 
 // ============================================================
 // wchar: swprintf / vswprintf / fwprintf / vfwprintf
 // ============================================================
 
-unsafe fn wfmt_write_str(dst: *mut wchar_t, pos: usize, cap: usize, s: *const u8, len: usize) -> usize {
+unsafe fn wfmt_write_str(
+    dst: *mut wchar_t,
+    pos: usize,
+    cap: usize,
+    s: *const u8,
+    len: usize,
+) -> usize {
     let mut i = 0;
     while i < len {
-        if pos + i < cap { *dst.add(pos + i) = *s.add(i) as wchar_t; }
+        if pos + i < cap {
+            *dst.add(pos + i) = *s.add(i) as wchar_t;
+        }
         i += 1;
     }
     pos + len
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_t, mut args: VaList) -> c_int {
-    if n == 0 { return -1; }
+pub unsafe extern "C" fn vswprintf(
+    s: *mut wchar_t,
+    n: usize,
+    fmt: *const wchar_t,
+    mut args: VaList,
+) -> c_int {
+    if n == 0 {
+        return -1;
+    }
     let cap = n - 1;
     let mut pos = 0usize;
     // ponytail: format specifiers are ASCII; narrow buffer suffices for parsing
@@ -13322,39 +16645,73 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
     let mut flen = 0usize;
     loop {
         let ch = *fmt.add(flen) as u32;
-        if ch == 0 || flen >= 255 { break; }
+        if ch == 0 || flen >= 255 {
+            break;
+        }
         fmt_narrow[flen] = if ch < 128 { ch as u8 } else { b'?' };
         flen += 1;
     }
     fmt_narrow[flen] = 0;
     let mut fi = 0usize;
     macro_rules! wc {
-        ($c:expr) => { if pos < cap { *s.add(pos) = $c as wchar_t; } pos += 1; }
+        ($c:expr) => {
+            if pos < cap {
+                *s.add(pos) = $c as wchar_t;
+            }
+            pos += 1;
+        };
     }
     loop {
         let c = fmt_narrow[fi];
-        if c == 0 { break; }
-        if c != b'%' { wc!(c); fi += 1; continue; }
+        if c == 0 {
+            break;
+        }
+        if c != b'%' {
+            wc!(c);
+            fi += 1;
+            continue;
+        }
         fi += 1;
         let mut flags: u8 = 0;
         loop {
             match fmt_narrow[fi] {
-                b'-' => { flags |= FLAG_MINUS; fi += 1; }
-                b'+' => { flags |= FLAG_PLUS; fi += 1; }
-                b' ' => { flags |= FLAG_SPACE; fi += 1; }
-                b'0' => { flags |= FLAG_ZERO; fi += 1; }
-                b'#' => { flags |= FLAG_HASH; fi += 1; }
+                b'-' => {
+                    flags |= FLAG_MINUS;
+                    fi += 1;
+                }
+                b'+' => {
+                    flags |= FLAG_PLUS;
+                    fi += 1;
+                }
+                b' ' => {
+                    flags |= FLAG_SPACE;
+                    fi += 1;
+                }
+                b'0' => {
+                    flags |= FLAG_ZERO;
+                    fi += 1;
+                }
+                b'#' => {
+                    flags |= FLAG_HASH;
+                    fi += 1;
+                }
                 _ => break,
             }
         }
         let mut width: usize = 0;
         if fmt_narrow[fi] == b'*' {
             let w = args.next_arg::<c_int>();
-            if w < 0 { flags |= FLAG_MINUS; width = (-w) as usize; } else { width = w as usize; }
+            if w < 0 {
+                flags |= FLAG_MINUS;
+                width = (-w) as usize;
+            } else {
+                width = w as usize;
+            }
             fi += 1;
         } else {
             while fmt_narrow[fi] >= b'0' && fmt_narrow[fi] <= b'9' {
-                width = width * 10 + (fmt_narrow[fi] - b'0') as usize; fi += 1;
+                width = width * 10 + (fmt_narrow[fi] - b'0') as usize;
+                fi += 1;
             }
         }
         let mut precision: i32 = -1;
@@ -13362,111 +16719,314 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
             fi += 1;
             if fmt_narrow[fi] == b'*' {
                 let p = args.next_arg::<c_int>();
-                precision = if p < 0 { -1 } else { p }; fi += 1;
+                precision = if p < 0 { -1 } else { p };
+                fi += 1;
             } else {
                 precision = 0;
                 while fmt_narrow[fi] >= b'0' && fmt_narrow[fi] <= b'9' {
-                    precision = precision * 10 + (fmt_narrow[fi] - b'0') as i32; fi += 1;
+                    precision = precision * 10 + (fmt_narrow[fi] - b'0') as i32;
+                    fi += 1;
                 }
             }
         }
         let len_mod = fmt_narrow[fi];
-        if len_mod == b'h' || len_mod == b'l' || len_mod == b'j' || len_mod == b'z' || len_mod == b't' || len_mod == b'L' {
+        if len_mod == b'h'
+            || len_mod == b'l'
+            || len_mod == b'j'
+            || len_mod == b'z'
+            || len_mod == b't'
+            || len_mod == b'L'
+        {
             fi += 1;
             let spec = fmt_narrow[fi];
             if (len_mod == b'h' && spec == b'h') || (len_mod == b'l' && spec == b'l') {
                 fi += 1;
                 let spec2 = fmt_narrow[fi];
                 match (len_mod, spec, spec2) {
-                    (b'h', b'h', b'n') => { let p = args.next_arg::<*mut c_void>(); if !p.is_null() { *(p as *mut u8) = pos as u8; } }
-                    (b'l', b'l', b'n') => { let p = args.next_arg::<*mut c_void>(); if !p.is_null() { *(p as *mut c_longlong) = pos as c_longlong; } }
+                    (b'h', b'h', b'n') => {
+                        let p = args.next_arg::<*mut c_void>();
+                        if !p.is_null() {
+                            *(p as *mut u8) = pos as u8;
+                        }
+                    }
+                    (b'l', b'l', b'n') => {
+                        let p = args.next_arg::<*mut c_void>();
+                        if !p.is_null() {
+                            *(p as *mut c_longlong) = pos as c_longlong;
+                        }
+                    }
                     (b'l', b'l', b'd') | (b'l', b'l', b'i') => {
                         let val = args.next_arg::<c_longlong>();
                         let neg = val < 0;
-                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let abs = if neg {
+                            val.wrapping_neg() as u64
+                        } else {
+                            val as u64
+                        };
                         let b = format_u64(abs);
-                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let sign = if neg {
+                            Some(b'-')
+                        } else if flags & FLAG_PLUS != 0 {
+                            Some(b'+')
+                        } else if flags & FLAG_SPACE != 0 {
+                            Some(b' ')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            sign,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'l', b'u') => {
                         let val = args.next_arg::<c_ulonglong>();
                         let b = format_u64(val as u64);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'l', b'x') => {
                         let val = args.next_arg::<c_ulonglong>();
                         let b = format_hex(val as u64, false);
-                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'x') } else { None };
+                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                            Some(b'x')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            prefix,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'l', b'X') => {
                         let val = args.next_arg::<c_ulonglong>();
                         let b = format_hex(val as u64, true);
-                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'X') } else { None };
+                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                            Some(b'X')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            prefix,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'l', b'o') => {
                         let val = args.next_arg::<c_ulonglong>();
                         let b = format_octal(val as u64, flags & FLAG_HASH != 0);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            flags & FLAG_HASH != 0,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
-                    _ => { wc!(b'%'); wc!(len_mod); wc!(spec); wc!(spec2); }
+                    _ => {
+                        wc!(b'%');
+                        wc!(len_mod);
+                        wc!(spec);
+                        wc!(spec2);
+                    }
                 }
             } else {
                 match (len_mod, spec) {
-                    (b'h', b'n') => { let p = args.next_arg::<*mut c_void>(); if !p.is_null() { *(p as *mut u16) = pos as u16; } }
-                    (b'l', b'n') => { let p = args.next_arg::<*mut c_void>(); if !p.is_null() { *(p as *mut c_long) = pos as c_long; } }
-                    (b'z', b'n') | (b't', b'n') => { let p = args.next_arg::<*mut c_void>(); if !p.is_null() { *(p as *mut usize) = pos; } }
-                    (b'j', b'n') => { let p = args.next_arg::<*mut c_void>(); if !p.is_null() { *(p as *mut c_ulonglong) = pos as c_ulonglong; } }
+                    (b'h', b'n') => {
+                        let p = args.next_arg::<*mut c_void>();
+                        if !p.is_null() {
+                            *(p as *mut u16) = pos as u16;
+                        }
+                    }
+                    (b'l', b'n') => {
+                        let p = args.next_arg::<*mut c_void>();
+                        if !p.is_null() {
+                            *(p as *mut c_long) = pos as c_long;
+                        }
+                    }
+                    (b'z', b'n') | (b't', b'n') => {
+                        let p = args.next_arg::<*mut c_void>();
+                        if !p.is_null() {
+                            *(p as *mut usize) = pos;
+                        }
+                    }
+                    (b'j', b'n') => {
+                        let p = args.next_arg::<*mut c_void>();
+                        if !p.is_null() {
+                            *(p as *mut c_ulonglong) = pos as c_ulonglong;
+                        }
+                    }
                     (b'l', b'd') | (b'l', b'i') => {
                         let val = args.next_arg::<c_long>();
                         let neg = val < 0;
-                        let abs = if neg { val.wrapping_neg() as u64 } else { val as u64 };
+                        let abs = if neg {
+                            val.wrapping_neg() as u64
+                        } else {
+                            val as u64
+                        };
                         let b = format_u64(abs);
-                        let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                        let sign = if neg {
+                            Some(b'-')
+                        } else if flags & FLAG_PLUS != 0 {
+                            Some(b'+')
+                        } else if flags & FLAG_SPACE != 0 {
+                            Some(b' ')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            sign,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'u') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_u64(val as u64);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'x') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_hex(val as u64, false);
-                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'x') } else { None };
+                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                            Some(b'x')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            prefix,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'X') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_hex(val as u64, true);
-                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'X') } else { None };
+                        let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                            Some(b'X')
+                        } else {
+                            None
+                        };
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            prefix,
+                            precision,
+                            width,
+                            flags,
+                            false,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'o') => {
                         let val = args.next_arg::<c_ulong>();
                         let b = format_octal(val as u64, flags & FLAG_HASH != 0);
                         let mut fbuf = [0u8; 32];
-                        let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
-                        for k in 0..len { wc!(fbuf[k]); }
+                        let len = format_int(
+                            fbuf.as_mut_ptr(),
+                            b.0.as_ptr(),
+                            b.1,
+                            None,
+                            None,
+                            precision,
+                            width,
+                            flags,
+                            flags & FLAG_HASH != 0,
+                        );
+                        for k in 0..len {
+                            wc!(fbuf[k]);
+                        }
                     }
                     (b'l', b'c') => {
                         let ch = args.next_arg::<wint_t>();
@@ -13475,44 +17035,90 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
                     (b'l', b's') => {
                         let ws_arg = args.next_arg::<*const wchar_t>();
                         if ws_arg.is_null() {
-                            let slen = if precision >= 0 { (precision as usize).min(6) } else { 6 };
-                            if flags & FLAG_MINUS != 0 {
-                                for k in 0..slen { wc!(b"(null)"[k]); }
-                                for _ in 0..width.saturating_sub(slen) { wc!(b' '); }
+                            let slen = if precision >= 0 {
+                                (precision as usize).min(6)
                             } else {
-                                for _ in 0..width.saturating_sub(slen) { wc!(b' '); }
-                                for k in 0..slen { wc!(b"(null)"[k]); }
+                                6
+                            };
+                            if flags & FLAG_MINUS != 0 {
+                                for k in 0..slen {
+                                    wc!(b"(null)"[k]);
+                                }
+                                for _ in 0..width.saturating_sub(slen) {
+                                    wc!(b' ');
+                                }
+                            } else {
+                                for _ in 0..width.saturating_sub(slen) {
+                                    wc!(b' ');
+                                }
+                                for k in 0..slen {
+                                    wc!(b"(null)"[k]);
+                                }
                             }
                         } else {
                             let mut wlen = 0usize;
                             loop {
                                 let ch = *ws_arg.add(wlen);
-                                if ch == 0 { break; }
-                                if precision >= 0 && wlen >= precision as usize { break; }
+                                if ch == 0 {
+                                    break;
+                                }
+                                if precision >= 0 && wlen >= precision as usize {
+                                    break;
+                                }
                                 wlen += 1;
                             }
                             if flags & FLAG_MINUS != 0 {
-                                for k in 0..wlen { wc!(*ws_arg.add(k)); }
-                                for _ in 0..width.saturating_sub(wlen) { wc!(b' '); }
+                                for k in 0..wlen {
+                                    wc!(*ws_arg.add(k));
+                                }
+                                for _ in 0..width.saturating_sub(wlen) {
+                                    wc!(b' ');
+                                }
                             } else {
-                                for _ in 0..width.saturating_sub(wlen) { wc!(b' '); }
-                                for k in 0..wlen { wc!(*ws_arg.add(k)); }
+                                for _ in 0..width.saturating_sub(wlen) {
+                                    wc!(b' ');
+                                }
+                                for k in 0..wlen {
+                                    wc!(*ws_arg.add(k));
+                                }
                             }
                         }
                     }
-                    (b'l', b'f') | (b'l', b'F') | (b'l', b'e') | (b'l', b'E')
-                    | (b'l', b'g') | (b'l', b'G') | (b'l', b'a') | (b'l', b'A') => {
+                    (b'l', b'f')
+                    | (b'l', b'F')
+                    | (b'l', b'e')
+                    | (b'l', b'E')
+                    | (b'l', b'g')
+                    | (b'l', b'G')
+                    | (b'l', b'a')
+                    | (b'l', b'A') => {
                         let val = args.next_arg::<f64>();
                         let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
-                        let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
+                        let ftype = match spec | 0x20 {
+                            b'f' => FMT_F,
+                            b'e' => FMT_E,
+                            b'g' => FMT_G,
+                            b'a' => FMT_A,
+                            _ => FMT_F,
+                        };
                         let mut fbuf = [0u8; 4224];
-                        let flen = format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
+                        let flen =
+                            format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
                         let mut wbuf = [0u8; 4224];
-                        let wlen = apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
-                        for k in 0..wlen { wc!(wbuf[k]); }
+                        let wlen =
+                            apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
+                        for k in 0..wlen {
+                            wc!(wbuf[k]);
+                        }
                     }
-                    (b'L', b'f') | (b'L', b'F') | (b'L', b'e') | (b'L', b'E')
-                    | (b'L', b'g') | (b'L', b'G') | (b'L', b'a') | (b'L', b'A') => {
+                    (b'L', b'f')
+                    | (b'L', b'F')
+                    | (b'L', b'e')
+                    | (b'L', b'E')
+                    | (b'L', b'g')
+                    | (b'L', b'G')
+                    | (b'L', b'a')
+                    | (b'L', b'A') => {
                         #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
                         let val = {
                             let lo: u64 = args.next_arg::<u64>();
@@ -13523,14 +17129,28 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
                         #[cfg(target_arch = "x86_64")]
                         let val = args.next_arg::<f64>();
                         let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
-                        let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
+                        let ftype = match spec | 0x20 {
+                            b'f' => FMT_F,
+                            b'e' => FMT_E,
+                            b'g' => FMT_G,
+                            b'a' => FMT_A,
+                            _ => FMT_F,
+                        };
                         let mut fbuf = [0u8; 4224];
-                        let flen = format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
+                        let flen =
+                            format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
                         let mut wbuf = [0u8; 4224];
-                        let wlen = apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
-                        for k in 0..wlen { wc!(wbuf[k]); }
+                        let wlen =
+                            apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
+                        for k in 0..wlen {
+                            wc!(wbuf[k]);
+                        }
                     }
-                    _ => { wc!(b'%'); wc!(len_mod); wc!(spec); }
+                    _ => {
+                        wc!(b'%');
+                        wc!(len_mod);
+                        wc!(spec);
+                    }
                 }
             }
         } else {
@@ -13539,52 +17159,142 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
                 b'd' | b'i' => {
                     let d = args.next_arg::<c_int>();
                     let neg = d < 0;
-                    let abs = if neg { d.wrapping_neg() as u64 } else { d as u64 };
+                    let abs = if neg {
+                        d.wrapping_neg() as u64
+                    } else {
+                        d as u64
+                    };
                     let b = format_u64(abs);
-                    let sign = if neg { Some(b'-') } else if flags & FLAG_PLUS != 0 { Some(b'+') } else if flags & FLAG_SPACE != 0 { Some(b' ') } else { None };
+                    let sign = if neg {
+                        Some(b'-')
+                    } else if flags & FLAG_PLUS != 0 {
+                        Some(b'+')
+                    } else if flags & FLAG_SPACE != 0 {
+                        Some(b' ')
+                    } else {
+                        None
+                    };
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, sign, None, precision, width, flags, false);
-                    for k in 0..len { wc!(fbuf[k]); }
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        sign,
+                        None,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
+                    for k in 0..len {
+                        wc!(fbuf[k]);
+                    }
                 }
                 b'u' => {
                     let u = args.next_arg::<c_uint>();
                     let b = format_u64(u as u64);
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, false);
-                    for k in 0..len { wc!(fbuf[k]); }
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        None,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
+                    for k in 0..len {
+                        wc!(fbuf[k]);
+                    }
                 }
                 b'x' => {
                     let x = args.next_arg::<c_uint>();
                     let b = format_hex(x as u64, false);
-                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'x') } else { None };
+                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                        Some(b'x')
+                    } else {
+                        None
+                    };
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
-                    for k in 0..len { wc!(fbuf[k]); }
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        prefix,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
+                    for k in 0..len {
+                        wc!(fbuf[k]);
+                    }
                 }
                 b'X' => {
                     let x = args.next_arg::<c_uint>();
                     let b = format_hex(x as u64, true);
-                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') { Some(b'X') } else { None };
+                    let prefix = if flags & FLAG_HASH != 0 && !(b.1 == 1 && b.0[0] == b'0') {
+                        Some(b'X')
+                    } else {
+                        None
+                    };
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, prefix, precision, width, flags, false);
-                    for k in 0..len { wc!(fbuf[k]); }
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        prefix,
+                        precision,
+                        width,
+                        flags,
+                        false,
+                    );
+                    for k in 0..len {
+                        wc!(fbuf[k]);
+                    }
                 }
                 b'o' => {
                     let o = args.next_arg::<c_uint>();
                     let b = format_octal(o as u64, flags & FLAG_HASH != 0);
                     let mut fbuf = [0u8; 32];
-                    let len = format_int(fbuf.as_mut_ptr(), b.0.as_ptr(), b.1, None, None, precision, width, flags, flags & FLAG_HASH != 0);
-                    for k in 0..len { wc!(fbuf[k]); }
+                    let len = format_int(
+                        fbuf.as_mut_ptr(),
+                        b.0.as_ptr(),
+                        b.1,
+                        None,
+                        None,
+                        precision,
+                        width,
+                        flags,
+                        flags & FLAG_HASH != 0,
+                    );
+                    for k in 0..len {
+                        wc!(fbuf[k]);
+                    }
                 }
                 b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
                     let val = args.next_arg::<f64>();
                     let ucase = spec == b'F' || spec == b'E' || spec == b'G' || spec == b'A';
-                    let ftype = match spec | 0x20 { b'f' => FMT_F, b'e' => FMT_E, b'g' => FMT_G, b'a' => FMT_A, _ => FMT_F };
+                    let ftype = match spec | 0x20 {
+                        b'f' => FMT_F,
+                        b'e' => FMT_E,
+                        b'g' => FMT_G,
+                        b'a' => FMT_A,
+                        _ => FMT_F,
+                    };
                     let mut fbuf = [0u8; 4224];
-                    let flen = format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
+                    let flen =
+                        format_f64_full(fbuf.as_mut_ptr(), val, ftype, precision, flags, ucase);
                     let mut wbuf = [0u8; 4224];
-                    let wlen = apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
-                    for k in 0..wlen { wc!(wbuf[k]); }
+                    let wlen =
+                        apply_width_flags(wbuf.as_mut_ptr(), fbuf.as_ptr(), flen, width, flags);
+                    for k in 0..wlen {
+                        wc!(wbuf[k]);
+                    }
                 }
                 b'c' => {
                     let ch = args.next_arg::<c_int>();
@@ -13593,13 +17303,25 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
                 b's' => {
                     let p = args.next_arg::<*const c_char>();
                     if p.is_null() {
-                        let slen = if precision >= 0 { (precision as usize).min(6) } else { 6 };
-                        if flags & FLAG_MINUS != 0 {
-                            for k in 0..slen { wc!(b"(null)"[k]); }
-                            for _ in 0..width.saturating_sub(slen) { wc!(b' '); }
+                        let slen = if precision >= 0 {
+                            (precision as usize).min(6)
                         } else {
-                            for _ in 0..width.saturating_sub(slen) { wc!(b' '); }
-                            for k in 0..slen { wc!(b"(null)"[k]); }
+                            6
+                        };
+                        if flags & FLAG_MINUS != 0 {
+                            for k in 0..slen {
+                                wc!(b"(null)"[k]);
+                            }
+                            for _ in 0..width.saturating_sub(slen) {
+                                wc!(b' ');
+                            }
+                        } else {
+                            for _ in 0..width.saturating_sub(slen) {
+                                wc!(b' ');
+                            }
+                            for k in 0..slen {
+                                wc!(b"(null)"[k]);
+                            }
                         }
                     } else {
                         let mut wbuf_local = [0i32; 256];
@@ -13607,10 +17329,19 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
                         let mut byte_pos = 0usize;
                         let pbytes = p as *const u8;
                         loop {
-                            if precision >= 0 && wcount >= precision as usize { break; }
-                            if wcount >= 256 { break; }
+                            if precision >= 0 && wcount >= precision as usize {
+                                break;
+                            }
+                            if wcount >= 256 {
+                                break;
+                            }
                             let mut wc_val: c_int = 0;
-                            let consumed = mbrtowc(&mut wc_val as *mut c_int, p.add(byte_pos) as *const c_char, 256, core::ptr::null_mut());
+                            let consumed = mbrtowc(
+                                &mut wc_val as *mut c_int,
+                                p.add(byte_pos) as *const c_char,
+                                256,
+                                core::ptr::null_mut(),
+                            );
                             if consumed == !0usize || consumed == !1usize {
                                 wbuf_local[wcount] = *pbytes.add(byte_pos) as c_int;
                                 byte_pos += 1;
@@ -13624,37 +17355,64 @@ pub unsafe extern "C" fn vswprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_
                             }
                         }
                         if flags & FLAG_MINUS != 0 {
-                            for k in 0..wcount { wc!(wbuf_local[k]); }
-                            for _ in 0..width.saturating_sub(wcount) { wc!(b' '); }
+                            for k in 0..wcount {
+                                wc!(wbuf_local[k]);
+                            }
+                            for _ in 0..width.saturating_sub(wcount) {
+                                wc!(b' ');
+                            }
                         } else {
-                            for _ in 0..width.saturating_sub(wcount) { wc!(b' '); }
-                            for k in 0..wcount { wc!(wbuf_local[k]); }
+                            for _ in 0..width.saturating_sub(wcount) {
+                                wc!(b' ');
+                            }
+                            for k in 0..wcount {
+                                wc!(wbuf_local[k]);
+                            }
                         }
                     }
                 }
                 b'p' => {
-                    wc!(b'0'); wc!(b'x');
+                    wc!(b'0');
+                    wc!(b'x');
                     let p = args.next_arg::<*const c_void>();
                     let b = format_hex(p as u64, false);
-                    for k in 0..b.1 { wc!(b.0[k]); }
+                    for k in 0..b.1 {
+                        wc!(b.0[k]);
+                    }
                 }
                 b'n' => {
                     let p = args.next_arg::<*mut c_void>();
-                    if !p.is_null() { *(p as *mut c_int) = pos as c_int; }
+                    if !p.is_null() {
+                        *(p as *mut c_int) = pos as c_int;
+                    }
                 }
-                b'%' => { wc!(b'%'); }
-                _ => { wc!(b'%'); wc!(spec); }
+                b'%' => {
+                    wc!(b'%');
+                }
+                _ => {
+                    wc!(b'%');
+                    wc!(spec);
+                }
             }
         }
         fi += 1;
     }
     let null_pos = if pos < cap { pos } else { cap };
     *s.add(null_pos) = 0;
-    if pos > cap { -1 } else { pos as c_int }
+    if pos > cap {
+        -1
+    } else {
+        pos as c_int
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn swprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_t, args: ...) -> c_int {
+pub unsafe extern "C" fn swprintf(
+    s: *mut wchar_t,
+    n: usize,
+    fmt: *const wchar_t,
+    args: ...
+) -> c_int {
     vswprintf(s, n, fmt, args)
 }
 
@@ -13662,13 +17420,23 @@ pub unsafe extern "C" fn swprintf(s: *mut wchar_t, n: usize, fmt: *const wchar_t
 pub unsafe extern "C" fn vfwprintf(f: *mut FILE, fmt: *const wchar_t, args: VaList) -> c_int {
     let mut buf = [0i32; 4096];
     let r = vswprintf(buf.as_mut_ptr(), 4096, fmt, args);
-    if r < 0 { return r; }
+    if r < 0 {
+        return r;
+    }
     let mut i = 0;
     while i < r as usize {
         let mut mb = [0u8; 4];
-        let n = wcrtomb(mb.as_mut_ptr() as *mut c_char, buf[i], core::ptr::null_mut());
-        if n == !0usize { return -1; }
-        if fwrite(mb.as_ptr() as *const c_void, 1, n, f) != n { return -1; }
+        let n = wcrtomb(
+            mb.as_mut_ptr() as *mut c_char,
+            buf[i],
+            core::ptr::null_mut(),
+        );
+        if n == !0usize {
+            return -1;
+        }
+        if fwrite(mb.as_ptr() as *const c_void, 1, n, f) != n {
+            return -1;
+        }
         i += 1;
     }
     r
@@ -13688,7 +17456,9 @@ unsafe fn wcsfmt_to_mbs(dst: *mut u8, dst_len: usize, src: *const wchar_t) {
     let mut i = 0usize;
     loop {
         let ch = *src.add(i) as u32;
-        if ch == 0 || i >= dst_len - 1 { break; }
+        if ch == 0 || i >= dst_len - 1 {
+            break;
+        }
         *dst.add(i) = if ch < 128 { ch as u8 } else { b'?' };
         i += 1;
     }
@@ -13696,26 +17466,45 @@ unsafe fn wcsfmt_to_mbs(dst: *mut u8, dst_len: usize, src: *const wchar_t) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vswscanf(s: *const wchar_t, fmt: *const wchar_t, mut args: VaList) -> c_int {
+pub unsafe extern "C" fn vswscanf(
+    s: *const wchar_t,
+    fmt: *const wchar_t,
+    mut args: VaList,
+) -> c_int {
     let mut mbs_buf = [0u8; 4096];
     let mut i = 0usize;
     let mut mb_pos = 0usize;
     loop {
         let wc = *s.add(i) as c_int;
-        if wc == 0 { break; }
+        if wc == 0 {
+            break;
+        }
         let mut mb = [0u8; 4];
         let n = wcrtomb(mb.as_mut_ptr() as *mut c_char, wc, core::ptr::null_mut());
-        if n == !0usize || n == 0 { break; }
-        if mb_pos + n >= mbs_buf.len() { break; }
+        if n == !0usize || n == 0 {
+            break;
+        }
+        if mb_pos + n >= mbs_buf.len() {
+            break;
+        }
         let mut k = 0usize;
-        while k < n { mbs_buf[mb_pos + k] = mb[k]; k += 1; }
+        while k < n {
+            mbs_buf[mb_pos + k] = mb[k];
+            k += 1;
+        }
         mb_pos += n;
         i += 1;
     }
     mbs_buf[mb_pos] = 0;
     let mut mbs_fmt = [0u8; 4096];
     wcsfmt_to_mbs(mbs_fmt.as_mut_ptr(), mbs_fmt.len(), fmt);
-    do_vsscanf(mbs_buf.as_ptr(), mb_pos, mbs_fmt.as_ptr() as *const c_char, &mut args, core::ptr::null_mut())
+    do_vsscanf(
+        mbs_buf.as_ptr(),
+        mb_pos,
+        mbs_fmt.as_ptr() as *const c_char,
+        &mut args,
+        core::ptr::null_mut(),
+    )
 }
 
 #[no_mangle]
@@ -13726,13 +17515,19 @@ pub unsafe extern "C" fn swscanf(s: *const wchar_t, fmt: *const wchar_t, args: .
 #[no_mangle]
 pub unsafe extern "C" fn vfwscanf(f: *mut FILE, fmt: *const wchar_t, mut args: VaList) -> c_int {
     let start_pos = ftello(f);
-    if start_pos < 0 { return -1; }
+    if start_pos < 0 {
+        return -1;
+    }
     let mut buf = [0u8; 4096];
     let mut n = 0usize;
     loop {
-        if n >= buf.len() - 1 { break; }
+        if n >= buf.len() - 1 {
+            break;
+        }
         let c = fgetc(f);
-        if c == -1 { break; }
+        if c == -1 {
+            break;
+        }
         buf[n] = c as u8;
         n += 1;
     }
@@ -13741,7 +17536,13 @@ pub unsafe extern "C" fn vfwscanf(f: *mut FILE, fmt: *const wchar_t, mut args: V
     wcsfmt_to_mbs(mbs_fmt.as_mut_ptr(), mbs_fmt.len(), fmt);
     let mut consumed = 0usize;
     let hit_eof = (*f)._eof != 0;
-    let result = do_vsscanf(buf.as_ptr(), n, mbs_fmt.as_ptr() as *const c_char, &mut args, &mut consumed);
+    let result = do_vsscanf(
+        buf.as_ptr(),
+        n,
+        mbs_fmt.as_ptr() as *const c_char,
+        &mut args,
+        &mut consumed,
+    );
     let _ = fseeko(f, start_pos + consumed as i64, SEEK_SET);
     if hit_eof && consumed == n {
         (*f)._eof = 1;
@@ -13774,8 +17575,18 @@ const DAYS_PER_100Y: i64 = 365 * 100 + 24;
 const DAYS_PER_4Y: i64 = 365 * 4 + 1;
 
 const SECS_THROUGH_MONTH: [i32; 12] = [
-    0, 31*86400, 59*86400, 90*86400, 120*86400, 151*86400,
-    181*86400, 212*86400, 243*86400, 273*86400, 304*86400, 334*86400,
+    0,
+    31 * 86400,
+    59 * 86400,
+    90 * 86400,
+    120 * 86400,
+    151 * 86400,
+    181 * 86400,
+    212 * 86400,
+    243 * 86400,
+    273 * 86400,
+    304 * 86400,
+    334 * 86400,
 ];
 
 const DAYS_IN_MONTH: [i32; 12] = [31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29];
@@ -13784,21 +17595,52 @@ unsafe fn year_to_secs(year: i64, is_leap: &mut bool) -> i64 {
     if year - 2 <= 136 {
         let y = year as i32;
         let mut leaps = (y - 68) >> 2;
-        if (y - 68) & 3 == 0 { leaps -= 1; *is_leap = true; } else { *is_leap = false; }
+        if (y - 68) & 3 == 0 {
+            leaps -= 1;
+            *is_leap = true;
+        } else {
+            *is_leap = false;
+        }
         return 31536000 * (y as i64 - 70) + 86400 * leaps as i64;
     }
     let mut cycles = ((year - 100) / 400) as i32;
     let mut rem = ((year - 100) % 400) as i32;
-    if rem < 0 { cycles -= 1; rem += 400; }
+    if rem < 0 {
+        cycles -= 1;
+        rem += 400;
+    }
     let (centuries, leaps);
-    if rem == 0 { *is_leap = true; centuries = 0; leaps = 0; }
-    else {
+    if rem == 0 {
+        *is_leap = true;
+        centuries = 0;
+        leaps = 0;
+    } else {
         let c;
-        if rem >= 200 { if rem >= 300 { c = 3; rem -= 300; } else { c = 2; rem -= 200; } }
-        else { if rem >= 100 { c = 1; rem -= 100; } else { c = 0; } }
+        if rem >= 200 {
+            if rem >= 300 {
+                c = 3;
+                rem -= 300;
+            } else {
+                c = 2;
+                rem -= 200;
+            }
+        } else {
+            if rem >= 100 {
+                c = 1;
+                rem -= 100;
+            } else {
+                c = 0;
+            }
+        }
         centuries = c;
-        if rem == 0 { *is_leap = false; leaps = 0; }
-        else { leaps = rem / 4; rem %= 4; *is_leap = rem == 0; }
+        if rem == 0 {
+            *is_leap = false;
+            leaps = 0;
+        } else {
+            leaps = rem / 4;
+            rem %= 4;
+            *is_leap = rem == 0;
+        }
     }
     let total_leaps = leaps + 97 * cycles + 24 * centuries - (*is_leap as i32);
     (year - 100) * 31536000 + total_leaps as i64 * 86400 + 946684800 + 86400
@@ -13806,42 +17648,73 @@ unsafe fn year_to_secs(year: i64, is_leap: &mut bool) -> i64 {
 
 fn month_to_secs(month: i32, is_leap: bool) -> i32 {
     let mut t = SECS_THROUGH_MONTH[month as usize];
-    if is_leap && month >= 2 { t += 86400; }
+    if is_leap && month >= 2 {
+        t += 86400;
+    }
     t
 }
 
 unsafe fn secs_to_tm(t: i64, tm: &mut tm) -> bool {
-    if t < (i32::MIN as i64) * 31622400 || t > (i32::MAX as i64) * 31622400 { return false; }
+    if t < (i32::MIN as i64) * 31622400 || t > (i32::MAX as i64) * 31622400 {
+        return false;
+    }
     let secs = t - LEAPOCH;
     let mut days = secs / 86400;
     let mut remsecs = (secs % 86400) as i32;
-    if remsecs < 0 { remsecs += 86400; days -= 1; }
+    if remsecs < 0 {
+        remsecs += 86400;
+        days -= 1;
+    }
     let mut wday = ((3 + days) % 7) as i32;
-    if wday < 0 { wday += 7; }
+    if wday < 0 {
+        wday += 7;
+    }
     let mut qc_cycles = (days / DAYS_PER_400Y) as i32;
     let mut remdays = (days % DAYS_PER_400Y) as i32;
-    if remdays < 0 { remdays += DAYS_PER_400Y as i32; qc_cycles -= 1; }
+    if remdays < 0 {
+        remdays += DAYS_PER_400Y as i32;
+        qc_cycles -= 1;
+    }
     let mut c_cycles = remdays / DAYS_PER_100Y as i32;
-    if c_cycles == 4 { c_cycles -= 1; }
+    if c_cycles == 4 {
+        c_cycles -= 1;
+    }
     remdays -= c_cycles * DAYS_PER_100Y as i32;
     let mut q_cycles = remdays / DAYS_PER_4Y as i32;
-    if q_cycles == 25 { q_cycles -= 1; }
+    if q_cycles == 25 {
+        q_cycles -= 1;
+    }
     remdays -= q_cycles * DAYS_PER_4Y as i32;
     let mut remyears = remdays / 365;
-    if remyears == 4 { remyears -= 1; }
+    if remyears == 4 {
+        remyears -= 1;
+    }
     remdays -= remyears * 365;
     let leap = remyears == 0 && (q_cycles != 0 || c_cycles == 0);
     let mut yday = remdays + 31 + 28 + leap as i32;
-    if yday >= 365 + leap as i32 { yday -= 365 + leap as i32; }
-    let years = remyears as i64 + 4 * q_cycles as i64 + 100 * c_cycles as i64 + 400 * qc_cycles as i64;
+    if yday >= 365 + leap as i32 {
+        yday -= 365 + leap as i32;
+    }
+    let years =
+        remyears as i64 + 4 * q_cycles as i64 + 100 * c_cycles as i64 + 400 * qc_cycles as i64;
     let mut months = 0i32;
     let mut rd = remdays;
     for m in 0..12 {
-        if DAYS_IN_MONTH[m] <= rd { rd -= DAYS_IN_MONTH[m]; } else { months = m as i32; break; }
+        if DAYS_IN_MONTH[m] <= rd {
+            rd -= DAYS_IN_MONTH[m];
+        } else {
+            months = m as i32;
+            break;
+        }
     }
     let mut adj_years = years;
-    if months >= 10 { months -= 12; adj_years += 1; }
-    if adj_years + 100 > i32::MAX as i64 || adj_years + 100 < i32::MIN as i64 { return false; }
+    if months >= 10 {
+        months -= 12;
+        adj_years += 1;
+    }
+    if adj_years + 100 > i32::MAX as i64 || adj_years + 100 < i32::MIN as i64 {
+        return false;
+    }
     tm.tm_year = (adj_years + 100) as c_int;
     tm.tm_mon = months + 2;
     tm.tm_mday = rd + 1;
@@ -13859,7 +17732,9 @@ unsafe fn tm_to_secs(tm: *const tm) -> i64 {
     if month >= 12 || month < 0 {
         let adj = month / 12;
         month %= 12;
-        if month < 0 { month += 12; }
+        if month < 0 {
+            month += 12;
+        }
         year += adj as i64;
     }
     let mut is_leap = false;
@@ -13873,9 +17748,17 @@ unsafe fn tm_to_secs(tm: *const tm) -> i64 {
 }
 
 static mut TM_BUF: tm = tm {
-    tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 0, tm_mon: 0,
-    tm_year: 0, tm_wday: 0, tm_yday: 0, tm_isdst: 0,
-    tm_gmtoff: 0, tm_zone: core::ptr::null(),
+    tm_sec: 0,
+    tm_min: 0,
+    tm_hour: 0,
+    tm_mday: 0,
+    tm_mon: 0,
+    tm_year: 0,
+    tm_wday: 0,
+    tm_yday: 0,
+    tm_isdst: 0,
+    tm_gmtoff: 0,
+    tm_zone: core::ptr::null(),
 };
 
 static mut UTC_STR: [c_char; 4] = [b'U' as c_char, b'T' as c_char, b'C' as c_char, 0];
@@ -13890,7 +17773,9 @@ const CLOCK_PROCESS_CPUTIME_ID: c_int = 2;
 pub unsafe extern "C" fn time(t: *mut TimeT) -> TimeT {
     let mut ts: timespec = core::mem::zeroed();
     let _ = sys_clock_gettime(CLOCK_REALTIME, &mut ts);
-    if !t.is_null() { *t = ts.tv_sec; }
+    if !t.is_null() {
+        *t = ts.tv_sec;
+    }
     ts.tv_sec
 }
 
@@ -13914,7 +17799,10 @@ pub unsafe extern "C" fn gmtime(t: *const TimeT) -> *mut tm {
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn gmtime_r(t: *const TimeT, tm: *mut tm) -> *mut tm {
-    if !secs_to_tm(*t as i64, &mut *tm) { ERRNO = EOVERFLOW; return core::ptr::null_mut(); }
+    if !secs_to_tm(*t as i64, &mut *tm) {
+        ERRNO = EOVERFLOW;
+        return core::ptr::null_mut();
+    }
     (*tm).tm_isdst = 0;
     (*tm).tm_gmtoff = 0;
     (*tm).tm_zone = core::ptr::addr_of!(UTC_STR).cast::<c_char>();
@@ -13922,16 +17810,23 @@ pub unsafe extern "C" fn gmtime_r(t: *const TimeT, tm: *mut tm) -> *mut tm {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn localtime(t: *const TimeT) -> *mut tm { gmtime(t) }
+pub unsafe extern "C" fn localtime(t: *const TimeT) -> *mut tm {
+    gmtime(t)
+}
 
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn localtime_r(t: *const TimeT, tm: *mut tm) -> *mut tm { gmtime_r(t, tm) }
+pub unsafe extern "C" fn localtime_r(t: *const TimeT, tm: *mut tm) -> *mut tm {
+    gmtime_r(t, tm)
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn mktime(tm: *mut tm) -> TimeT {
     let t = tm_to_secs(tm as *const tm);
-    if !secs_to_tm(t, &mut *tm) { ERRNO = EOVERFLOW; return -1; }
+    if !secs_to_tm(t, &mut *tm) {
+        ERRNO = EOVERFLOW;
+        return -1;
+    }
     (*tm).tm_isdst = 0;
     (*tm).tm_gmtoff = 0;
     (*tm).tm_zone = core::ptr::addr_of!(UTC_STR).cast::<c_char>();
@@ -13941,7 +17836,10 @@ pub unsafe extern "C" fn mktime(tm: *mut tm) -> TimeT {
 #[no_mangle]
 pub unsafe extern "C" fn timegm(tm: *mut tm) -> TimeT {
     let t = tm_to_secs(tm as *const tm);
-    if !secs_to_tm(t, &mut *tm) { ERRNO = EOVERFLOW; return -1; }
+    if !secs_to_tm(t, &mut *tm) {
+        ERRNO = EOVERFLOW;
+        return -1;
+    }
     (*tm).tm_isdst = 0;
     (*tm).tm_gmtoff = 0;
     (*tm).tm_zone = core::ptr::addr_of!(UTC_STR).cast::<c_char>();
@@ -13950,8 +17848,13 @@ pub unsafe extern "C" fn timegm(tm: *mut tm) -> TimeT {
 
 static mut ASCTIME_BUF: [c_char; 26] = [0; 26];
 
-const DAY_NAMES: [&[u8]; 7] = [b"Sun\0", b"Mon\0", b"Tue\0", b"Wed\0", b"Thu\0", b"Fri\0", b"Sat\0"];
-const MON_NAMES: [&[u8]; 12] = [b"Jan\0", b"Feb\0", b"Mar\0", b"Apr\0", b"May\0", b"Jun\0", b"Jul\0", b"Aug\0", b"Sep\0", b"Oct\0", b"Nov\0", b"Dec\0"];
+const DAY_NAMES: [&[u8]; 7] = [
+    b"Sun\0", b"Mon\0", b"Tue\0", b"Wed\0", b"Thu\0", b"Fri\0", b"Sat\0",
+];
+const MON_NAMES: [&[u8]; 12] = [
+    b"Jan\0", b"Feb\0", b"Mar\0", b"Apr\0", b"May\0", b"Jun\0", b"Jul\0", b"Aug\0", b"Sep\0",
+    b"Oct\0", b"Nov\0", b"Dec\0",
+];
 
 #[no_mangle]
 pub unsafe extern "C" fn asctime(tm: *const tm) -> *mut c_char {
@@ -13961,43 +17864,80 @@ pub unsafe extern "C" fn asctime(tm: *const tm) -> *mut c_char {
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn asctime_r(tm: *const tm, buf: *mut c_char) -> *mut c_char {
-    let wday = if (*tm).tm_wday >= 0 && (*tm).tm_wday < 7 { (*tm).tm_wday as usize } else { 0 };
-    let mon = if (*tm).tm_mon >= 0 && (*tm).tm_mon < 12 { (*tm).tm_mon as usize } else { 0 };
+    let wday = if (*tm).tm_wday >= 0 && (*tm).tm_wday < 7 {
+        (*tm).tm_wday as usize
+    } else {
+        0
+    };
+    let mon = if (*tm).tm_mon >= 0 && (*tm).tm_mon < 12 {
+        (*tm).tm_mon as usize
+    } else {
+        0
+    };
     let dn = DAY_NAMES[wday];
     let mn = MON_NAMES[mon];
     let mut p = 0;
-    for k in 0..3 { *buf.add(p) = *dn.as_ptr().add(k) as c_char; p += 1; }
-    *buf.add(p) = b' ' as c_char; p += 1;
-    for k in 0..3 { *buf.add(p) = *mn.as_ptr().add(k) as c_char; p += 1; }
-    *buf.add(p) = b' ' as c_char; p += 1;
+    for k in 0..3 {
+        *buf.add(p) = *dn.as_ptr().add(k) as c_char;
+        p += 1;
+    }
+    *buf.add(p) = b' ' as c_char;
+    p += 1;
+    for k in 0..3 {
+        *buf.add(p) = *mn.as_ptr().add(k) as c_char;
+        p += 1;
+    }
+    *buf.add(p) = b' ' as c_char;
+    p += 1;
     let v = (*tm).tm_mday;
-    *buf.add(p) = (b'0' + (v / 10) as u8) as c_char; p += 1;
-    *buf.add(p) = (b'0' + (v % 10) as u8) as c_char; p += 1;
-    *buf.add(p) = b' ' as c_char; p += 1;
+    *buf.add(p) = (b'0' + (v / 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = (b'0' + (v % 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = b' ' as c_char;
+    p += 1;
     let hh = (*tm).tm_hour;
-    *buf.add(p) = (b'0' + (hh / 10) as u8) as c_char; p += 1;
-    *buf.add(p) = (b'0' + (hh % 10) as u8) as c_char; p += 1;
-    *buf.add(p) = b':' as c_char; p += 1;
+    *buf.add(p) = (b'0' + (hh / 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = (b'0' + (hh % 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = b':' as c_char;
+    p += 1;
     let mm = (*tm).tm_min;
-    *buf.add(p) = (b'0' + (mm / 10) as u8) as c_char; p += 1;
-    *buf.add(p) = (b'0' + (mm % 10) as u8) as c_char; p += 1;
-    *buf.add(p) = b':' as c_char; p += 1;
+    *buf.add(p) = (b'0' + (mm / 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = (b'0' + (mm % 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = b':' as c_char;
+    p += 1;
     let ss = (*tm).tm_sec;
-    *buf.add(p) = (b'0' + (ss / 10) as u8) as c_char; p += 1;
-    *buf.add(p) = (b'0' + (ss % 10) as u8) as c_char; p += 1;
-    *buf.add(p) = b' ' as c_char; p += 1;
+    *buf.add(p) = (b'0' + (ss / 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = (b'0' + (ss % 10) as u8) as c_char;
+    p += 1;
+    *buf.add(p) = b' ' as c_char;
+    p += 1;
     let yr = (*tm).tm_year + 1900;
     let mut tmp = [0u8; 4];
     let mut v2 = yr;
-    for k in (0..4).rev() { tmp[k] = b'0' + (v2 % 10) as u8; v2 /= 10; }
-    for k in 0..4 { *buf.add(p) = tmp[k] as c_char; p += 1; }
-    *buf.add(p) = b'\n' as c_char; p += 1;
+    for k in (0..4).rev() {
+        tmp[k] = b'0' + (v2 % 10) as u8;
+        v2 /= 10;
+    }
+    for k in 0..4 {
+        *buf.add(p) = tmp[k] as c_char;
+        p += 1;
+    }
+    *buf.add(p) = b'\n' as c_char;
+    p += 1;
     *buf.add(p) = 0;
     buf
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ctime(t: *const TimeT) -> *mut c_char { asctime(gmtime(t)) }
+pub unsafe extern "C" fn ctime(t: *const TimeT) -> *mut c_char {
+    asctime(gmtime(t))
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn ctime_r(t: *const TimeT, buf: *mut c_char) -> *mut c_char {
@@ -14021,21 +17961,53 @@ unsafe fn sys_clock_settime(clockid: c_int, ts: *const timespec) -> i64 {
     <Arch as Syscalls>::syscall2(SYS_CLOCK_SETTIME, clockid as i64, ts as i64)
 }
 
-unsafe fn sys_clock_nanosleep(clockid: c_int, flags: c_int, req: *const timespec, rem: *mut timespec) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_CLOCK_NANOSLEEP, clockid as i64, flags as i64, req as i64, rem as i64)
+unsafe fn sys_clock_nanosleep(
+    clockid: c_int,
+    flags: c_int,
+    req: *const timespec,
+    rem: *mut timespec,
+) -> i64 {
+    <Arch as Syscalls>::syscall4(
+        SYS_CLOCK_NANOSLEEP,
+        clockid as i64,
+        flags as i64,
+        req as i64,
+        rem as i64,
+    )
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn clock_getres(clockid: c_int, ts: *mut timespec) -> c_int { if sys_clock_getres(clockid, ts) < 0 { -1 } else { 0 } }
+pub unsafe extern "C" fn clock_getres(clockid: c_int, ts: *mut timespec) -> c_int {
+    if sys_clock_getres(clockid, ts) < 0 {
+        -1
+    } else {
+        0
+    }
+}
 
 #[no_mangle]
-pub unsafe extern "C" fn clock_settime(clockid: c_int, ts: *const timespec) -> c_int { if sys_clock_settime(clockid, ts) < 0 { -1 } else { 0 } }
+pub unsafe extern "C" fn clock_settime(clockid: c_int, ts: *const timespec) -> c_int {
+    if sys_clock_settime(clockid, ts) < 0 {
+        -1
+    } else {
+        0
+    }
+}
 
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn clock_nanosleep(clockid: c_int, flags: c_int, req: *const timespec, rem: *mut timespec) -> c_int {
+pub unsafe extern "C" fn clock_nanosleep(
+    clockid: c_int,
+    flags: c_int,
+    req: *const timespec,
+    rem: *mut timespec,
+) -> c_int {
     let r = sys_clock_nanosleep(clockid, flags, req, rem);
-    if r < 0 { (-r) as c_int } else { 0 }
+    if r < 0 {
+        (-r) as c_int
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -14047,10 +18019,15 @@ pub unsafe extern "C" fn clock_nanosleep(clockid: c_int, flags: c_int, req: *con
 /// The obsolete timezone pointer is accepted for C ABI compatibility but is
 /// not read or written.
 pub unsafe extern "C" fn gettimeofday(tv: *mut timeval, _tz: *mut c_void) -> c_int {
-    if tv.is_null() { return 0; }
+    if tv.is_null() {
+        return 0;
+    }
     // SAFETY: `tv` is writable by the public contract. Preserve the existing
     // C wrapper boundary by never requesting obsolete timezone output.
-    if syscall_result(crabc_core::time::gettimeofday_status_raw(tv.cast(), core::ptr::null_mut()) as i64) < 0 {
+    if syscall_result(
+        crabc_core::time::gettimeofday_status_raw(tv.cast(), core::ptr::null_mut()) as i64,
+    ) < 0
+    {
         return -1;
     }
     0
@@ -14061,20 +18038,30 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut timeval, _tz: *mut c_void) -> c_i
 // ============================================================
 
 fn is_leap_year(y: i32) -> bool {
-    let yr = if y > i32::MAX - 1900 { y - 2000 } else { y + 1900 };
+    let yr = if y > i32::MAX - 1900 {
+        y - 2000
+    } else {
+        y + 1900
+    };
     yr % 4 == 0 && (yr % 100 != 0 || yr % 400 == 0)
 }
 
 fn week_num(tm: &tm) -> i32 {
     let mut val = (tm.tm_yday + 7 - ((tm.tm_wday + 6) % 7)) / 7;
-    if (tm.tm_wday + 371 - tm.tm_yday - 2).rem_euclid(7) <= 2 { val += 1; }
+    if (tm.tm_wday + 371 - tm.tm_yday - 2).rem_euclid(7) <= 2 {
+        val += 1;
+    }
     if val == 0 {
         val = 52;
         let dec31 = (tm.tm_wday + 7 - tm.tm_yday - 1).rem_euclid(7);
-        if dec31 == 4 || (dec31 == 5 && is_leap_year(tm.tm_year % 400 - 1)) { val += 1; }
+        if dec31 == 4 || (dec31 == 5 && is_leap_year(tm.tm_year % 400 - 1)) {
+            val += 1;
+        }
     } else if val == 53 {
         let jan1 = (tm.tm_wday + 371 - tm.tm_yday).rem_euclid(7);
-        if jan1 != 4 && (jan1 != 3 || !is_leap_year(tm.tm_year)) { val = 1; }
+        if jan1 != 4 && (jan1 != 3 || !is_leap_year(tm.tm_year)) {
+            val = 1;
+        }
     }
     val
 }
@@ -14098,8 +18085,15 @@ unsafe fn num_fmt(buf: &mut [u8; 100], val: i64, pad: u8, width: usize) -> (*con
     let mut v = if negative { -val as u64 } else { val as u64 };
     let mut tmp = [0u8; 24];
     let mut pos = 24usize;
-    if v == 0 { pos -= 1; tmp[pos] = b'0'; }
-    while v > 0 { pos -= 1; tmp[pos] = b'0' + (v % 10) as u8; v /= 10; }
+    if v == 0 {
+        pos -= 1;
+        tmp[pos] = b'0';
+    }
+    while v > 0 {
+        pos -= 1;
+        tmp[pos] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
     let digits = 24 - pos;
     let sign_chars = if negative { 1 } else { 0 };
     let needed = sign_chars + digits;
@@ -14109,15 +18103,30 @@ unsafe fn num_fmt(buf: &mut [u8; 100], val: i64, pad: u8, width: usize) -> (*con
     match pad {
         b'-' => { /* no fill */ }
         b'_' => {
-            for _ in 0..fill { buf[p] = b' '; p += 1; }
-            if negative { buf[p] = b'-'; p += 1; }
+            for _ in 0..fill {
+                buf[p] = b' ';
+                p += 1;
+            }
+            if negative {
+                buf[p] = b'-';
+                p += 1;
+            }
         }
         _ => {
-            if negative { buf[p] = b'-'; p += 1; }
-            for _ in 0..fill { buf[p] = b'0'; p += 1; }
+            if negative {
+                buf[p] = b'-';
+                p += 1;
+            }
+            for _ in 0..fill {
+                buf[p] = b'0';
+                p += 1;
+            }
         }
     }
-    for i in 0..digits { buf[p] = tmp[pos + i]; p += 1; }
+    for i in 0..digits {
+        buf[p] = tmp[pos + i];
+        p += 1;
+    }
     (buf.as_ptr(), total)
 }
 
@@ -14133,7 +18142,12 @@ unsafe fn str_to_buf(buf: &mut [u8; 100], s: *const c_char) -> (*const u8, usize
 
 // Core format dispatcher. Returns (ptr, len) where ptr points into buf or a static string.
 // pad=0 means use default; returns (null, 0) for unknown specifiers.
-unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -> (*const u8, usize) {
+unsafe fn __strftime_fmt_1(
+    buf: &mut [u8; 100],
+    f: u8,
+    tm: *const tm,
+    pad: u8,
+) -> (*const u8, usize) {
     let mut val: i64;
     let mut width: usize = 2;
     let mut def_pad: u8 = b'0';
@@ -14141,22 +18155,30 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
 
     match f {
         b'a' => {
-            if (*tm).tm_wday as u32 > 6 { return (b"\0".as_ptr(), 0); }
+            if (*tm).tm_wday as u32 > 6 {
+                return (b"\0".as_ptr(), 0);
+            }
             let p = nl_langinfo(ABDAY_1 + (*tm).tm_wday);
             return str_to_buf(buf, p);
         }
         b'A' => {
-            if (*tm).tm_wday as u32 > 6 { return (b"\0".as_ptr(), 0); }
+            if (*tm).tm_wday as u32 > 6 {
+                return (b"\0".as_ptr(), 0);
+            }
             let p = nl_langinfo(DAY_1 + (*tm).tm_wday);
             return str_to_buf(buf, p);
         }
         b'h' | b'b' => {
-            if (*tm).tm_mon as u32 > 11 { return (b"\0".as_ptr(), 0); }
+            if (*tm).tm_mon as u32 > 11 {
+                return (b"\0".as_ptr(), 0);
+            }
             let p = nl_langinfo(ABMON_1 + (*tm).tm_mon);
             return str_to_buf(buf, p);
         }
         b'B' => {
-            if (*tm).tm_mon as u32 > 11 { return (b"\0".as_ptr(), 0); }
+            if (*tm).tm_mon as u32 > 11 {
+                return (b"\0".as_ptr(), 0);
+            }
             let p = nl_langinfo(MON_1 + (*tm).tm_mon);
             return str_to_buf(buf, p);
         }
@@ -14169,7 +18191,9 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
             val = (1900i64 + (*tm).tm_year as i64) / 100;
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
-        b'e' => { def_pad = b'_'; }
+        b'e' => {
+            def_pad = b'_';
+        }
         b'd' => {
             val = (*tm).tm_mday as i64;
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
@@ -14186,10 +18210,16 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
         }
         b'g' | b'G' => {
             val = (*tm).tm_year as i64 + 1900;
-            if (*tm).tm_yday < 3 && week_num(&*tm) != 1 { val -= 1; }
-            else if (*tm).tm_yday > 360 && week_num(&*tm) == 1 { val += 1; }
-            if f == b'g' { val %= 100; }
-            else { width = 4; }
+            if (*tm).tm_yday < 3 && week_num(&*tm) != 1 {
+                val -= 1;
+            } else if (*tm).tm_yday > 360 && week_num(&*tm) == 1 {
+                val += 1;
+            }
+            if f == b'g' {
+                val %= 100;
+            } else {
+                width = 4;
+            }
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
         b'H' => {
@@ -14198,8 +18228,11 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
         }
         b'I' => {
             val = (*tm).tm_hour as i64;
-            if val == 0 { val = 12; }
-            else if val > 12 { val -= 12; }
+            if val == 0 {
+                val = 12;
+            } else if val > 12 {
+                val -= 12;
+            }
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
         b'j' => {
@@ -14215,9 +18248,16 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
             val = (*tm).tm_min as i64;
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
-        b'n' => { buf[0] = b'\n'; return (buf.as_ptr(), 1); }
+        b'n' => {
+            buf[0] = b'\n';
+            return (buf.as_ptr(), 1);
+        }
         b'p' => {
-            let p = if (*tm).tm_hour >= 12 { nl_langinfo(PM_STR_LI) } else { nl_langinfo(AM_STR_LI) };
+            let p = if (*tm).tm_hour >= 12 {
+                nl_langinfo(PM_STR_LI)
+            } else {
+                nl_langinfo(AM_STR_LI)
+            };
             return str_to_buf(buf, p);
         }
         b'r' => {
@@ -14239,14 +18279,21 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
             val = (*tm).tm_sec as i64;
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
-        b't' => { buf[0] = b'\t'; return (buf.as_ptr(), 1); }
+        b't' => {
+            buf[0] = b'\t';
+            return (buf.as_ptr(), 1);
+        }
         b'T' => {
             fmt = b"%H:%M:%S\0".as_ptr() as *const c_char;
             let l = __strftime_l(buf.as_mut_ptr() as *mut c_char, 100, fmt, tm);
             return (buf.as_ptr(), l);
         }
         b'u' => {
-            val = if (*tm).tm_wday != 0 { (*tm).tm_wday as i64 } else { 7 };
+            val = if (*tm).tm_wday != 0 {
+                (*tm).tm_wday as i64
+            } else {
+                7
+            };
             width = 1;
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
@@ -14279,7 +18326,9 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
         }
         b'y' => {
             val = (1900i64 + (*tm).tm_year as i64) % 100;
-            if val < 0 { val = -val; }
+            if val < 0 {
+                val = -val;
+            }
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
         b'Y' => {
@@ -14288,14 +18337,18 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
                 let mut tmp = [0u8; 100];
                 let (_, k) = num_fmt(&mut tmp, val, b'-', 1);
                 buf[0] = b'+';
-                for i in 0..k { buf[1 + i] = tmp[i]; }
+                for i in 0..k {
+                    buf[1 + i] = tmp[i];
+                }
                 return (buf.as_ptr(), 1 + k);
             }
             width = 4;
             return num_fmt(buf, val, if pad != 0 { pad } else { def_pad }, width);
         }
         b'z' => {
-            if (*tm).tm_isdst < 0 { return (b"\0".as_ptr(), 0); }
+            if (*tm).tm_isdst < 0 {
+                return (b"\0".as_ptr(), 0);
+            }
             let gmtoff = (*tm).tm_gmtoff as i64;
             let sign = if gmtoff >= 0 { b'+' } else { b'-' };
             let off = if gmtoff < 0 { -gmtoff } else { gmtoff };
@@ -14309,11 +18362,18 @@ unsafe fn __strftime_fmt_1(buf: &mut [u8; 100], f: u8, tm: *const tm, pad: u8) -
             return (buf.as_ptr(), 5);
         }
         b'Z' => {
-            if (*tm).tm_isdst < 0 || (*tm).tm_zone.is_null() { return (b"\0".as_ptr(), 0); }
+            if (*tm).tm_isdst < 0 || (*tm).tm_zone.is_null() {
+                return (b"\0".as_ptr(), 0);
+            }
             return str_to_buf(buf, (*tm).tm_zone);
         }
-        b'%' => { buf[0] = b'%'; return (buf.as_ptr(), 1); }
-        _ => { return (core::ptr::null(), 0); }
+        b'%' => {
+            buf[0] = b'%';
+            return (buf.as_ptr(), 1);
+        }
+        _ => {
+            return (core::ptr::null(), 0);
+        }
     }
     // fallthrough for 'e' (def_pad='_', same logic as 'd')
     val = (*tm).tm_mday as i64;
@@ -14339,9 +18399,14 @@ unsafe fn __strftime_l(s: *mut c_char, n: usize, f: *const c_char, tm: *const tm
         // Parse flags
         let mut pad: u8 = 0;
         let fc = *f.add(fi) as u8;
-        if fc == b'-' || fc == b'_' || fc == b'0' { pad = fc; fi += 1; }
+        if fc == b'-' || fc == b'_' || fc == b'0' {
+            pad = fc;
+            fi += 1;
+        }
         let plus = *f.add(fi) as u8 == b'+';
-        if plus { fi += 1; }
+        if plus {
+            fi += 1;
+        }
         // Parse width
         let mut width: usize = 0;
         let mut p_idx = fi;
@@ -14349,7 +18414,10 @@ unsafe fn __strftime_l(s: *mut c_char, n: usize, f: *const c_char, tm: *const tm
             let fc2 = *f.add(fi) as u8;
             if fc2 >= b'0' && fc2 <= b'9' {
                 let mut w: usize = 0;
-                while { let c = *f.add(p_idx) as u8; c >= b'0' && c <= b'9' } {
+                while {
+                    let c = *f.add(p_idx) as u8;
+                    c >= b'0' && c <= b'9'
+                } {
                     w = w * 10 + (*f.add(p_idx) as usize - b'0' as usize);
                     p_idx += 1;
                 }
@@ -14358,36 +18426,54 @@ unsafe fn __strftime_l(s: *mut c_char, n: usize, f: *const c_char, tm: *const tm
         }
         let spec_ch = *f.add(p_idx) as u8;
         if spec_ch == b'C' || spec_ch == b'F' || spec_ch == b'G' || spec_ch == b'Y' {
-            if width == 0 && p_idx != fi { width = 1; }
+            if width == 0 && p_idx != fi {
+                width = 1;
+            }
         } else {
             width = 0;
         }
         fi = p_idx;
         // Skip E/O modifier
         let fc3 = *f.add(fi) as u8;
-        if fc3 == b'E' || fc3 == b'O' { fi += 1; }
+        if fc3 == b'E' || fc3 == b'O' {
+            fi += 1;
+        }
         let fch = *f.add(fi) as u8;
         // Call formatter
         let mut buf = [0u8; 100];
         let (t, k) = __strftime_fmt_1(&mut buf, fch, tm, pad);
-        if t.is_null() { break; }
+        if t.is_null() {
+            break;
+        }
         let mut k = k;
         let mut t = t;
         if width != 0 {
             // Strip sign and leading zeros, count remaining digits
-            if *t == b'+' || *t == b'-' { t = t.add(1); k -= 1; }
-            while k > 0 && *t == b'0' && k > 1 && *t.add(1) >= b'0' && *t.add(1) <= b'9' {
-                t = t.add(1); k -= 1;
+            if *t == b'+' || *t == b'-' {
+                t = t.add(1);
+                k -= 1;
             }
-            if width < k { width = k; }
+            while k > 0 && *t == b'0' && k > 1 && *t.add(1) >= b'0' && *t.add(1) <= b'9' {
+                t = t.add(1);
+                k -= 1;
+            }
+            if width < k {
+                width = k;
+            }
             let mut d: usize = 0;
-            while d < k && *t.add(d) >= b'0' && *t.add(d) <= b'9' { d += 1; }
+            while d < k && *t.add(d) >= b'0' && *t.add(d) <= b'9' {
+                d += 1;
+            }
             if (*tm).tm_year < -1900 {
-                if l < n { *s.add(l) = b'-' as c_char; }
+                if l < n {
+                    *s.add(l) = b'-' as c_char;
+                }
                 l += 1;
                 width -= 1;
             } else if plus && d + (width - k) >= (if spec_ch == b'C' { 3 } else { 5 }) {
-                if l < n { *s.add(l) = b'+' as c_char; }
+                if l < n {
+                    *s.add(l) = b'+' as c_char;
+                }
                 l += 1;
                 width -= 1;
             }
@@ -14403,14 +18489,21 @@ unsafe fn __strftime_l(s: *mut c_char, n: usize, f: *const c_char, tm: *const tm
         fi += 1;
     }
     if n > 0 {
-        if l == n { l = n - 1; }
+        if l == n {
+            l = n - 1;
+        }
         *s.add(l) = 0;
     }
     0
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn strftime(s: *mut c_char, maxsize: usize, fmt: *const c_char, tm: *const tm) -> usize {
+pub unsafe extern "C" fn strftime(
+    s: *mut c_char,
+    maxsize: usize,
+    fmt: *const c_char,
+    tm: *const tm,
+) -> usize {
     __strftime_l(s, maxsize, fmt, tm)
 }
 
@@ -14420,7 +18513,9 @@ pub unsafe extern "C" fn strftime(s: *mut c_char, maxsize: usize, fmt: *const c_
 
 unsafe fn match_prefix(s: *const u8, prefix: &[u8]) -> bool {
     for i in 0..prefix.len() {
-        if *s.add(i) == 0 || *s.add(i) != prefix[i] { return false; }
+        if *s.add(i) == 0 || *s.add(i) != prefix[i] {
+            return false;
+        }
     }
     true
 }
@@ -14428,8 +18523,12 @@ unsafe fn match_prefix(s: *const u8, prefix: &[u8]) -> bool {
 unsafe fn match_ci_prefix(s: *const u8, prefix: &[u8]) -> bool {
     for i in 0..prefix.len() {
         let c = *s.add(i);
-        if c == 0 { return false; }
-        if c.to_ascii_lowercase() != prefix[i].to_ascii_lowercase() { return false; }
+        if c == 0 {
+            return false;
+        }
+        if c.to_ascii_lowercase() != prefix[i].to_ascii_lowercase() {
+            return false;
+        }
     }
     true
 }
@@ -14443,12 +18542,20 @@ unsafe fn parse_int(p: *const u8, max_digits: usize) -> (i32, *const u8) {
         np = np.add(1);
         count += 1;
     }
-    if count == 0 { (0, p) } else { (val, np) }
+    if count == 0 {
+        (0, p)
+    } else {
+        (val, np)
+    }
 }
 
 unsafe fn parse_range(p: *const u8, min: i32, max: i32) -> (i32, *const u8) {
     let (val, np) = parse_int(p, 4);
-    if np == p || val < min || val > max { (0, p) } else { (val, np) }
+    if np == p || val < min || val > max {
+        (0, p)
+    } else {
+        (val, np)
+    }
 }
 
 fn is_ascii_space(c: u8) -> bool {
@@ -14456,7 +18563,11 @@ fn is_ascii_space(c: u8) -> bool {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn strptime(s: *const c_char, fmt: *const c_char, tm: *mut tm) -> *mut c_char {
+pub unsafe extern "C" fn strptime(
+    s: *const c_char,
+    fmt: *const c_char,
+    tm: *mut tm,
+) -> *mut c_char {
     let mut p = s as *const u8;
     let mut f = fmt as *const u8;
     let mut want_century = 0i32;
@@ -14465,176 +18576,313 @@ pub unsafe extern "C" fn strptime(s: *const c_char, fmt: *const c_char, tm: *mut
     while *f != 0 {
         if *f != b'%' {
             if is_ascii_space(*f) {
-                while *p != 0 && is_ascii_space(*p) { p = p.add(1); }
+                while *p != 0 && is_ascii_space(*p) {
+                    p = p.add(1);
+                }
             } else {
-                if *p != *f { return core::ptr::null_mut(); }
+                if *p != *f {
+                    return core::ptr::null_mut();
+                }
                 p = p.add(1);
             }
             f = f.add(1);
             continue;
         }
         f = f.add(1);
-        if *f == b'+' { f = f.add(1); }
-        while *f >= b'0' && *f <= b'9' { f = f.add(1); }
-        if *f == b'E' || *f == b'O' { f = f.add(1); }
+        if *f == b'+' {
+            f = f.add(1);
+        }
+        while *f >= b'0' && *f <= b'9' {
+            f = f.add(1);
+        }
+        if *f == b'E' || *f == b'O' {
+            f = f.add(1);
+        }
         match *f {
             b'a' | b'A' => {
                 let mut found = false;
                 for i in 0..7 {
-                    let names: [&[u8]; 7] = [b"Sunday", b"Monday", b"Tuesday", b"Wednesday", b"Thursday", b"Friday", b"Saturday"];
-                    let snames: [&[u8]; 7] = [b"Sun", b"Mon", b"Tue", b"Wed", b"Thu", b"Fri", b"Sat"];
-                    if match_prefix(p, names[i]) { (*tm).tm_wday = i as c_int; p = p.add(names[i].len()); found = true; break; }
-                    if match_prefix(p, snames[i]) { (*tm).tm_wday = i as c_int; p = p.add(snames[i].len()); found = true; break; }
+                    let names: [&[u8]; 7] = [
+                        b"Sunday",
+                        b"Monday",
+                        b"Tuesday",
+                        b"Wednesday",
+                        b"Thursday",
+                        b"Friday",
+                        b"Saturday",
+                    ];
+                    let snames: [&[u8]; 7] =
+                        [b"Sun", b"Mon", b"Tue", b"Wed", b"Thu", b"Fri", b"Sat"];
+                    if match_prefix(p, names[i]) {
+                        (*tm).tm_wday = i as c_int;
+                        p = p.add(names[i].len());
+                        found = true;
+                        break;
+                    }
+                    if match_prefix(p, snames[i]) {
+                        (*tm).tm_wday = i as c_int;
+                        p = p.add(snames[i].len());
+                        found = true;
+                        break;
+                    }
                 }
-                if !found { return core::ptr::null_mut(); }
+                if !found {
+                    return core::ptr::null_mut();
+                }
             }
             b'b' | b'B' | b'h' => {
                 let mut found = false;
                 for i in 0..12 {
-                    let names: [&[u8]; 12] = [b"January", b"February", b"March", b"April", b"May", b"June", b"July", b"August", b"September", b"October", b"November", b"December"];
-                    let snames: [&[u8]; 12] = [b"Jan", b"Feb", b"Mar", b"Apr", b"May", b"Jun", b"Jul", b"Aug", b"Sep", b"Oct", b"Nov", b"Dec"];
-                    if match_prefix(p, names[i]) { (*tm).tm_mon = i as c_int; p = p.add(names[i].len()); found = true; break; }
-                    if match_prefix(p, snames[i]) { (*tm).tm_mon = i as c_int; p = p.add(snames[i].len()); found = true; break; }
+                    let names: [&[u8]; 12] = [
+                        b"January",
+                        b"February",
+                        b"March",
+                        b"April",
+                        b"May",
+                        b"June",
+                        b"July",
+                        b"August",
+                        b"September",
+                        b"October",
+                        b"November",
+                        b"December",
+                    ];
+                    let snames: [&[u8]; 12] = [
+                        b"Jan", b"Feb", b"Mar", b"Apr", b"May", b"Jun", b"Jul", b"Aug", b"Sep",
+                        b"Oct", b"Nov", b"Dec",
+                    ];
+                    if match_prefix(p, names[i]) {
+                        (*tm).tm_mon = i as c_int;
+                        p = p.add(names[i].len());
+                        found = true;
+                        break;
+                    }
+                    if match_prefix(p, snames[i]) {
+                        (*tm).tm_mon = i as c_int;
+                        p = p.add(snames[i].len());
+                        found = true;
+                        break;
+                    }
                 }
-                if !found { return core::ptr::null_mut(); }
+                if !found {
+                    return core::ptr::null_mut();
+                }
             }
             b'C' => {
                 let (v, np) = parse_int(p, 2);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 century = v;
                 want_century |= 2;
                 p = np;
             }
             b'd' | b'e' => {
                 let (v, np) = parse_range(p, 1, 31);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_mday = v;
                 p = np;
             }
             b'D' => {
-                let r = strptime(p as *const c_char, b"%m/%d/%y\0".as_ptr() as *const c_char, tm);
-                if r.is_null() { return core::ptr::null_mut(); }
+                let r = strptime(
+                    p as *const c_char,
+                    b"%m/%d/%y\0".as_ptr() as *const c_char,
+                    tm,
+                );
+                if r.is_null() {
+                    return core::ptr::null_mut();
+                }
                 p = r as *const u8;
             }
             b'F' => {
                 let (yv, ynp) = parse_int(p, 4);
-                if ynp == p { return core::ptr::null_mut(); }
+                if ynp == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_year = yv - 1900;
                 p = ynp;
-                if *p != b'-' { return core::ptr::null_mut(); }
+                if *p != b'-' {
+                    return core::ptr::null_mut();
+                }
                 p = p.add(1);
                 let (mv, mnp) = parse_range(p, 1, 12);
-                if mnp == p { return core::ptr::null_mut(); }
+                if mnp == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_mon = mv - 1;
                 p = mnp;
-                if *p != b'-' { return core::ptr::null_mut(); }
+                if *p != b'-' {
+                    return core::ptr::null_mut();
+                }
                 p = p.add(1);
                 let (dv, dnp) = parse_range(p, 1, 31);
-                if dnp == p { return core::ptr::null_mut(); }
+                if dnp == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_mday = dv;
                 p = dnp;
             }
             b'H' | b'I' => {
                 let (v, np) = parse_range(p, 0, 23);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_hour = v;
                 p = np;
             }
             b'j' => {
                 let (v, np) = parse_range(p, 1, 366);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_yday = v - 1;
                 p = np;
             }
             b'm' => {
                 let (v, np) = parse_range(p, 1, 12);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_mon = v - 1;
                 p = np;
             }
             b'M' => {
                 let (v, np) = parse_range(p, 0, 59);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_min = v;
                 p = np;
             }
             b'n' | b't' => {
-                while *p != 0 && is_ascii_space(*p) { p = p.add(1); }
+                while *p != 0 && is_ascii_space(*p) {
+                    p = p.add(1);
+                }
             }
             b'p' => {
                 if match_ci_prefix(p, b"AM") {
-                    if (*tm).tm_hour == 12 { (*tm).tm_hour = 0; }
+                    if (*tm).tm_hour == 12 {
+                        (*tm).tm_hour = 0;
+                    }
                     p = p.add(2);
                 } else if match_ci_prefix(p, b"PM") {
-                    if (*tm).tm_hour < 12 { (*tm).tm_hour += 12; }
+                    if (*tm).tm_hour < 12 {
+                        (*tm).tm_hour += 12;
+                    }
                     p = p.add(2);
-                } else { return core::ptr::null_mut(); }
+                } else {
+                    return core::ptr::null_mut();
+                }
             }
             b'r' => {
-                let r = strptime(p as *const c_char, b"%I:%M:%S %p\0".as_ptr() as *const c_char, tm);
-                if r.is_null() { return core::ptr::null_mut(); }
+                let r = strptime(
+                    p as *const c_char,
+                    b"%I:%M:%S %p\0".as_ptr() as *const c_char,
+                    tm,
+                );
+                if r.is_null() {
+                    return core::ptr::null_mut();
+                }
                 p = r as *const u8;
             }
             b'R' => {
                 let r = strptime(p as *const c_char, b"%H:%M\0".as_ptr() as *const c_char, tm);
-                if r.is_null() { return core::ptr::null_mut(); }
+                if r.is_null() {
+                    return core::ptr::null_mut();
+                }
                 p = r as *const u8;
             }
             b's' => {
-                let neg = if *p == b'-' { p = p.add(1); true } else { false };
-                if *p < b'0' || *p > b'9' { return core::ptr::null_mut(); }
+                let neg = if *p == b'-' {
+                    p = p.add(1);
+                    true
+                } else {
+                    false
+                };
+                if *p < b'0' || *p > b'9' {
+                    return core::ptr::null_mut();
+                }
                 let mut val = 0i64;
                 while *p >= b'0' && *p <= b'9' {
                     val = val * 10 + (*p - b'0') as i64;
                     p = p.add(1);
                 }
-                if neg { val = -val; }
+                if neg {
+                    val = -val;
+                }
                 secs_to_tm(val, &mut *tm);
             }
             b'S' => {
                 let (v, np) = parse_range(p, 0, 60);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_sec = v;
                 p = np;
             }
             b'T' => {
-                let r = strptime(p as *const c_char, b"%H:%M:%S\0".as_ptr() as *const c_char, tm);
-                if r.is_null() { return core::ptr::null_mut(); }
+                let r = strptime(
+                    p as *const c_char,
+                    b"%H:%M:%S\0".as_ptr() as *const c_char,
+                    tm,
+                );
+                if r.is_null() {
+                    return core::ptr::null_mut();
+                }
                 p = r as *const u8;
             }
             b'U' | b'W' => {
                 let (_, np) = parse_range(p, 0, 53);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 p = np;
             }
             b'V' => {
                 let (_, np) = parse_range(p, 1, 53);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 p = np;
             }
             b'w' => {
                 let (v, np) = parse_range(p, 0, 6);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_wday = v;
                 p = np;
             }
             b'y' => {
                 let (v, np) = parse_int(p, 2);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 relyear = v;
                 want_century |= 1;
                 p = np;
             }
             b'Y' => {
-                let neg = if *p == b'-' { p = p.add(1); true } else { false };
+                let neg = if *p == b'-' {
+                    p = p.add(1);
+                    true
+                } else {
+                    false
+                };
                 let (v, np) = parse_int(p, 4);
-                if np == p { return core::ptr::null_mut(); }
+                if np == p {
+                    return core::ptr::null_mut();
+                }
                 (*tm).tm_year = if neg { -(v + 1900) } else { v - 1900 };
                 want_century = 0;
                 p = np;
             }
             b'z' => {
-                if *p != b'+' && *p != b'-' { return core::ptr::null_mut(); }
+                if *p != b'+' && *p != b'-' {
+                    return core::ptr::null_mut();
+                }
                 let neg = *p == b'-';
                 p = p.add(1);
                 let mut off = 0i64;
@@ -14644,22 +18892,35 @@ pub unsafe extern "C" fn strptime(s: *const c_char, fmt: *const c_char, tm: *mut
                     p = p.add(1);
                     digits += 1;
                 }
-                if digits == 0 { return core::ptr::null_mut(); }
-                let (hh, mm) = if digits <= 2 { (off, 0i64) } else { (off / 100, off % 100) };
+                if digits == 0 {
+                    return core::ptr::null_mut();
+                }
+                let (hh, mm) = if digits <= 2 {
+                    (off, 0i64)
+                } else {
+                    (off / 100, off % 100)
+                };
                 (*tm).tm_gmtoff = (hh * 3600 + mm * 60) * if neg { -1 } else { 1 };
             }
             b'%' => {
-                if *p != b'%' { return core::ptr::null_mut(); }
+                if *p != b'%' {
+                    return core::ptr::null_mut();
+                }
                 p = p.add(1);
             }
-            _ => { return core::ptr::null_mut(); }
+            _ => {
+                return core::ptr::null_mut();
+            }
         }
         f = f.add(1);
     }
     if want_century != 0 {
         (*tm).tm_year = relyear;
-        if want_century & 2 != 0 { (*tm).tm_year += century * 100 - 1900; }
-        else if (*tm).tm_year <= 68 { (*tm).tm_year += 100; }
+        if want_century & 2 != 0 {
+            (*tm).tm_year += century * 100 - 1900;
+        } else if (*tm).tm_year <= 68 {
+            (*tm).tm_year += 100;
+        }
     }
     p as *mut c_char
 }
@@ -14673,7 +18934,10 @@ pub static mut __daylight: c_int = 0;
 #[no_mangle]
 pub static mut __timezone: c_long = 0;
 #[no_mangle]
-pub static mut __tzname: [*mut c_char; 2] = [b"UTC\0".as_ptr() as *mut c_char, b"UTC\0".as_ptr() as *mut c_char];
+pub static mut __tzname: [*mut c_char; 2] = [
+    b"UTC\0".as_ptr() as *mut c_char,
+    b"UTC\0".as_ptr() as *mut c_char,
+];
 
 #[no_mangle]
 #[linkage = "weak"]
@@ -14683,7 +18947,10 @@ pub static mut daylight: c_int = 0;
 pub static mut timezone: c_long = 0;
 #[no_mangle]
 #[linkage = "weak"]
-pub static mut tzname: [*mut c_char; 2] = [b"UTC\0".as_ptr() as *mut c_char, b"UTC\0".as_ptr() as *mut c_char];
+pub static mut tzname: [*mut c_char; 2] = [
+    b"UTC\0".as_ptr() as *mut c_char,
+    b"UTC\0".as_ptr() as *mut c_char,
+];
 
 #[no_mangle]
 #[linkage = "weak"]
@@ -14708,16 +18975,27 @@ pub unsafe extern "C" fn system(cmd: *const c_char) -> c_int {
             let sh = b"/bin/sh\0".as_ptr() as *const c_char;
             let dash_c = b"-c\0".as_ptr() as *const c_char;
             let exit0 = b"exit 0\0".as_ptr() as *const c_char;
-            let argv = [b"sh\0".as_ptr() as *const c_char, dash_c, exit0, core::ptr::null()];
+            let argv = [
+                b"sh\0".as_ptr() as *const c_char,
+                dash_c,
+                exit0,
+                core::ptr::null(),
+            ];
             sys_execve(sh, argv.as_ptr(), __environ as *const *const c_char);
             _exit(127);
         }
-        if pid < 0 { return -1; }
+        if pid < 0 {
+            return -1;
+        }
         let mut status: c_int = 0;
         loop {
             let r = sys_wait4(pid as c_int, &mut status, 0, core::ptr::null_mut());
-            if r >= 0 { return status; }
-            if r != -4 { return -1; } // not EINTR
+            if r >= 0 {
+                return status;
+            }
+            if r != -4 {
+                return -1;
+            } // not EINTR
         }
     }
 
@@ -14760,8 +19038,12 @@ pub unsafe extern "C" fn system(cmd: *const c_char) -> c_int {
     if pid > 0 {
         loop {
             let r = sys_wait4(pid as c_int, &mut status, 0, core::ptr::null_mut());
-            if r >= 0 { break; }
-            if r != -4 { break; } // not EINTR
+            if r >= 0 {
+                break;
+            }
+            if r != -4 {
+                break;
+            } // not EINTR
         }
     }
 
@@ -14912,140 +19194,140 @@ const EHWPOISON_VAL: c_int = 133;
 
 // ponytail: static error string table indexed by errno
 static ERR_STRS: [&[u8]; 134] = [
-    b"Success\0",                     // 0
-    b"Operation not permitted\0",     // 1
-    b"No such file or directory\0",   // 2
-    b"No such process\0",             // 3
-    b"Interrupted system call\0",     // 4
-    b"Input/output error\0",          // 5
-    b"No such device or address\0",   // 6
-    b"Argument list too long\0",      // 7
-    b"Exec format error\0",           // 8
-    b"Bad file descriptor\0",         // 9
-    b"No child processes\0",          // 10
-    b"Resource temporarily unavailable\0", // 11
-    b"Cannot allocate memory\0",      // 12
-    b"Permission denied\0",           // 13
-    b"Bad address\0",                 // 14
-    b"Block device required\0",       // 15
-    b"Device or resource busy\0",     // 16
-    b"File exists\0",                 // 17
-    b"Invalid cross-device link\0",   // 18
-    b"No such device\0",              // 19
-    b"Not a directory\0",             // 20
-    b"Is a directory\0",              // 21
-    b"Invalid argument\0",            // 22
-    b"Too many open files in system\0", // 23
-    b"Too many open files\0",         // 24
-    b"Inappropriate ioctl for device\0", // 25
-    b"Text file busy\0",              // 26
-    b"File too large\0",              // 27
-    b"No space left on device\0",     // 28
-    b"Illegal seek\0",                // 29
-    b"Read-only file system\0",       // 30
-    b"Too many links\0",              // 31
-    b"Broken pipe\0",                 // 32
-    b"Numerical argument out of domain\0", // 33
-    b"Numerical result out of range\0", // 34
-    b"Resource deadlock avoided\0",   // 35
-    b"File name too long\0",          // 36
-    b"No locks available\0",          // 37
-    b"Function not implemented\0",    // 38
-    b"Directory not empty\0",         // 39
-    b"Too many levels of symbolic links\0", // 40
-    b"Unknown error 41\0",            // 41
-    b"No message of desired type\0",  // 42
-    b"Identifier removed\0",          // 43
-    b"Channel number out of range\0", // 44
-    b"Level 2 not synchronized\0",    // 45
-    b"Level 3 halted\0",              // 46
-    b"Level 3 reset\0",               // 47
-    b"Link number out of range\0",    // 48
-    b"Protocol driver not attached\0", // 49
-    b"No CSI structure available\0",  // 50
-    b"Level 2 halted\0",              // 51
-    b"Invalid exchange\0",            // 52
-    b"Invalid request descriptor\0",  // 53
-    b"Exchange full\0",               // 54
-    b"No anode\0",                    // 55
-    b"Invalid request code\0",        // 56
-    b"Invalid slot\0",                // 57
-    b"Unknown error 58\0",            // 58
-    b"Bad font file format\0",        // 59
-    b"Device not a stream\0",         // 60
-    b"No data available\0",           // 61
-    b"Timer expired\0",               // 62
-    b"Out of streams resources\0",    // 63
-    b"Machine is not on the network\0", // 64
-    b"Package not installed\0",       // 65
-    b"Object is remote\0",            // 66
-    b"Link has been severed\0",       // 67
-    b"Advertise error\0",             // 68
-    b"Srmount error\0",               // 69
-    b"Communication error on send\0", // 70
-    b"Protocol error\0",              // 71
-    b"Multihop attempted\0",          // 72
-    b"RFS specific error\0",          // 73
-    b"Bad message\0",                 // 74
-    b"Value too large for defined data type\0", // 75
-    b"Name not unique on network\0",  // 76
-    b"File descriptor in bad state\0", // 77
-    b"Remote address changed\0",      // 78
-    b"Can not access a needed shared library\0", // 79
-    b"Accessing a corrupted shared library\0", // 80
-    b".lib section in a.out corrupted\0", // 81
-    b"Attempting to link in too many shared libraries\0", // 82
-    b"Cannot exec a shared library directly\0", // 83
+    b"Success\0",                                           // 0
+    b"Operation not permitted\0",                           // 1
+    b"No such file or directory\0",                         // 2
+    b"No such process\0",                                   // 3
+    b"Interrupted system call\0",                           // 4
+    b"Input/output error\0",                                // 5
+    b"No such device or address\0",                         // 6
+    b"Argument list too long\0",                            // 7
+    b"Exec format error\0",                                 // 8
+    b"Bad file descriptor\0",                               // 9
+    b"No child processes\0",                                // 10
+    b"Resource temporarily unavailable\0",                  // 11
+    b"Cannot allocate memory\0",                            // 12
+    b"Permission denied\0",                                 // 13
+    b"Bad address\0",                                       // 14
+    b"Block device required\0",                             // 15
+    b"Device or resource busy\0",                           // 16
+    b"File exists\0",                                       // 17
+    b"Invalid cross-device link\0",                         // 18
+    b"No such device\0",                                    // 19
+    b"Not a directory\0",                                   // 20
+    b"Is a directory\0",                                    // 21
+    b"Invalid argument\0",                                  // 22
+    b"Too many open files in system\0",                     // 23
+    b"Too many open files\0",                               // 24
+    b"Inappropriate ioctl for device\0",                    // 25
+    b"Text file busy\0",                                    // 26
+    b"File too large\0",                                    // 27
+    b"No space left on device\0",                           // 28
+    b"Illegal seek\0",                                      // 29
+    b"Read-only file system\0",                             // 30
+    b"Too many links\0",                                    // 31
+    b"Broken pipe\0",                                       // 32
+    b"Numerical argument out of domain\0",                  // 33
+    b"Numerical result out of range\0",                     // 34
+    b"Resource deadlock avoided\0",                         // 35
+    b"File name too long\0",                                // 36
+    b"No locks available\0",                                // 37
+    b"Function not implemented\0",                          // 38
+    b"Directory not empty\0",                               // 39
+    b"Too many levels of symbolic links\0",                 // 40
+    b"Unknown error 41\0",                                  // 41
+    b"No message of desired type\0",                        // 42
+    b"Identifier removed\0",                                // 43
+    b"Channel number out of range\0",                       // 44
+    b"Level 2 not synchronized\0",                          // 45
+    b"Level 3 halted\0",                                    // 46
+    b"Level 3 reset\0",                                     // 47
+    b"Link number out of range\0",                          // 48
+    b"Protocol driver not attached\0",                      // 49
+    b"No CSI structure available\0",                        // 50
+    b"Level 2 halted\0",                                    // 51
+    b"Invalid exchange\0",                                  // 52
+    b"Invalid request descriptor\0",                        // 53
+    b"Exchange full\0",                                     // 54
+    b"No anode\0",                                          // 55
+    b"Invalid request code\0",                              // 56
+    b"Invalid slot\0",                                      // 57
+    b"Unknown error 58\0",                                  // 58
+    b"Bad font file format\0",                              // 59
+    b"Device not a stream\0",                               // 60
+    b"No data available\0",                                 // 61
+    b"Timer expired\0",                                     // 62
+    b"Out of streams resources\0",                          // 63
+    b"Machine is not on the network\0",                     // 64
+    b"Package not installed\0",                             // 65
+    b"Object is remote\0",                                  // 66
+    b"Link has been severed\0",                             // 67
+    b"Advertise error\0",                                   // 68
+    b"Srmount error\0",                                     // 69
+    b"Communication error on send\0",                       // 70
+    b"Protocol error\0",                                    // 71
+    b"Multihop attempted\0",                                // 72
+    b"RFS specific error\0",                                // 73
+    b"Bad message\0",                                       // 74
+    b"Value too large for defined data type\0",             // 75
+    b"Name not unique on network\0",                        // 76
+    b"File descriptor in bad state\0",                      // 77
+    b"Remote address changed\0",                            // 78
+    b"Can not access a needed shared library\0",            // 79
+    b"Accessing a corrupted shared library\0",              // 80
+    b".lib section in a.out corrupted\0",                   // 81
+    b"Attempting to link in too many shared libraries\0",   // 82
+    b"Cannot exec a shared library directly\0",             // 83
     b"Invalid or incomplete multibyte or wide character\0", // 84
-    b"Interrupted system call should be restarted\0", // 85
-    b"Streams pipe error\0",          // 86
-    b"Too many users\0",              // 87
-    b"Socket operation on non-socket\0", // 88
-    b"Destination address required\0", // 89
-    b"Message too long\0",            // 90
-    b"Protocol wrong type for socket\0", // 91
-    b"Protocol not available\0",      // 92
-    b"Protocol not supported\0",      // 93
-    b"Socket type not supported\0",   // 94
-    b"Operation not supported\0",     // 95
-    b"Protocol family not supported\0", // 96
-    b"Address family not supported by protocol\0", // 97
-    b"Address already in use\0",      // 98
-    b"Cannot assign requested address\0", // 99
-    b"Network is down\0",             // 100
-    b"Network is unreachable\0",      // 101
-    b"Network dropped connection on reset\0", // 102
-    b"Software caused connection abort\0", // 103
-    b"Connection reset by peer\0",    // 104
-    b"No buffer space available\0",   // 105
-    b"Transport endpoint is already connected\0", // 106
-    b"Transport endpoint is not connected\0", // 107
-    b"Cannot send after transport endpoint shutdown\0", // 108
-    b"Too many references: cannot splice\0", // 109
-    b"Connection timed out\0",        // 110
-    b"Connection refused\0",          // 111
-    b"Host is down\0",                // 112
-    b"No route to host\0",            // 113
-    b"Operation already in progress\0", // 114
-    b"Operation now in progress\0",   // 115
-    b"Stale file handle\0",           // 116
-    b"Structure needs cleaning\0",    // 117
-    b"Not a XENIX named type file\0", // 118
-    b"No XENIX semaphores available\0", // 119
-    b"Is a named type file\0",        // 120
-    b"Remote I/O error\0",            // 121
-    b"Quota exceeded\0",              // 122
-    b"No medium found\0",             // 123
-    b"Wrong medium type\0",           // 124
-    b"Operation canceled\0",          // 125
-    b"Required key not available\0",  // 126
-    b"Key has expired\0",             // 127
-    b"Key has been revoked\0",        // 128
-    b"Key was rejected by service\0", // 129
-    b"Owner died\0",                  // 130
-    b"State not recoverable\0",       // 131
-    b"Operation not possible due to RF-kill\0", // 132
-    b"Memory page has hardware error\0", // 133
+    b"Interrupted system call should be restarted\0",       // 85
+    b"Streams pipe error\0",                                // 86
+    b"Too many users\0",                                    // 87
+    b"Socket operation on non-socket\0",                    // 88
+    b"Destination address required\0",                      // 89
+    b"Message too long\0",                                  // 90
+    b"Protocol wrong type for socket\0",                    // 91
+    b"Protocol not available\0",                            // 92
+    b"Protocol not supported\0",                            // 93
+    b"Socket type not supported\0",                         // 94
+    b"Operation not supported\0",                           // 95
+    b"Protocol family not supported\0",                     // 96
+    b"Address family not supported by protocol\0",          // 97
+    b"Address already in use\0",                            // 98
+    b"Cannot assign requested address\0",                   // 99
+    b"Network is down\0",                                   // 100
+    b"Network is unreachable\0",                            // 101
+    b"Network dropped connection on reset\0",               // 102
+    b"Software caused connection abort\0",                  // 103
+    b"Connection reset by peer\0",                          // 104
+    b"No buffer space available\0",                         // 105
+    b"Transport endpoint is already connected\0",           // 106
+    b"Transport endpoint is not connected\0",               // 107
+    b"Cannot send after transport endpoint shutdown\0",     // 108
+    b"Too many references: cannot splice\0",                // 109
+    b"Connection timed out\0",                              // 110
+    b"Connection refused\0",                                // 111
+    b"Host is down\0",                                      // 112
+    b"No route to host\0",                                  // 113
+    b"Operation already in progress\0",                     // 114
+    b"Operation now in progress\0",                         // 115
+    b"Stale file handle\0",                                 // 116
+    b"Structure needs cleaning\0",                          // 117
+    b"Not a XENIX named type file\0",                       // 118
+    b"No XENIX semaphores available\0",                     // 119
+    b"Is a named type file\0",                              // 120
+    b"Remote I/O error\0",                                  // 121
+    b"Quota exceeded\0",                                    // 122
+    b"No medium found\0",                                   // 123
+    b"Wrong medium type\0",                                 // 124
+    b"Operation canceled\0",                                // 125
+    b"Required key not available\0",                        // 126
+    b"Key has expired\0",                                   // 127
+    b"Key has been revoked\0",                              // 128
+    b"Key was rejected by service\0",                       // 129
+    b"Owner died\0",                                        // 130
+    b"State not recoverable\0",                             // 131
+    b"Operation not possible due to RF-kill\0",             // 132
+    b"Memory page has hardware error\0",                    // 133
 ];
 
 #[no_mangle]
@@ -15116,7 +19398,8 @@ unsafe fn sys_dup(oldfd: i32) -> i64 {
     }
 }
 
-#[inline]unsafe fn sys_dup2(oldfd: i32, newfd: i32) -> i64 {
+#[inline]
+unsafe fn sys_dup2(oldfd: i32, newfd: i32) -> i64 {
     match crabc_core::io::dup2(oldfd, newfd) {
         Ok(()) => newfd as i64,
         Err(errno) => -(errno.raw() as i64),
@@ -15128,11 +19411,13 @@ unsafe fn sys_access(path: *const u8, mode: i32) -> i64 {
     <Arch as Syscalls>::syscall4(SYS_FACCESSAT, AT_FDCWD as i64, path as i64, mode as i64, 0)
 }
 
-#[inline]unsafe fn sys_unlink(path: *const u8) -> i64 {
+#[inline]
+unsafe fn sys_unlink(path: *const u8) -> i64 {
     sys_unlinkat(AT_FDCWD, path, 0)
 }
 
-#[inline]unsafe fn sys_rmdir(path: *const u8) -> i64 {
+#[inline]
+unsafe fn sys_rmdir(path: *const u8) -> i64 {
     sys_unlinkat(AT_FDCWD, path, 512) // AT_REMOVEDIR
 }
 
@@ -15168,9 +19453,19 @@ unsafe fn sys_gethostname(buf: *mut u8, len: usize) -> i64 {
         return result;
     }
     let nlen = strlen(uts.nodename.as_ptr() as *const c_char);
-    let copylen = if nlen < len { nlen } else { if len > 0 { len - 1 } else { 0 } };
+    let copylen = if nlen < len {
+        nlen
+    } else {
+        if len > 0 {
+            len - 1
+        } else {
+            0
+        }
+    };
     core::ptr::copy_nonoverlapping(uts.nodename.as_ptr(), buf, copylen);
-    if len > 0 { *buf.add(copylen) = 0; }
+    if len > 0 {
+        *buf.add(copylen) = 0;
+    }
     0
 }
 
@@ -15205,17 +19500,24 @@ unsafe fn sys_alarm(seconds: c_uint) -> i64 {
     }
     // POSIX alarm returns the remaining time rounded up to whole seconds;
     // preserve a positive fractional timeval instead of truncating it.
-    old.it_value.tv_sec
+    old.it_value
+        .tv_sec
         .saturating_add(i64::from(old.it_value.tv_usec > 0))
 }
 
 unsafe fn sys_pause() -> i64 {
     #[cfg(target_arch = "x86_64")]
-    { <Arch as Syscalls>::syscall0(SYS_PAUSE) }
+    {
+        <Arch as Syscalls>::syscall0(SYS_PAUSE)
+    }
     #[cfg(target_arch = "aarch64")]
-    { <Arch as Syscalls>::syscall4(SYS_PPOLL, 0, 0, 0, 0) }
+    {
+        <Arch as Syscalls>::syscall4(SYS_PPOLL, 0, 0, 0, 0)
+    }
     #[cfg(target_arch = "riscv64")]
-    { <Arch as Syscalls>::syscall4(SYS_PPOLL, 0, 0, 0, 0) }
+    {
+        <Arch as Syscalls>::syscall4(SYS_PPOLL, 0, 0, 0, 0)
+    }
 }
 
 unsafe fn sys_sync() {
@@ -15247,7 +19549,13 @@ unsafe fn sys_readlinkat(dirfd: i32, path: *const u8, buf: *mut u8, bufsiz: usiz
     }
 }
 
-unsafe fn sys_linkat(olddirfd: i32, oldpath: *const u8, newdirfd: i32, newpath: *const u8, flags: i32) -> i64 {
+unsafe fn sys_linkat(
+    olddirfd: i32,
+    oldpath: *const u8,
+    newdirfd: i32,
+    newpath: *const u8,
+    flags: i32,
+) -> i64 {
     // SAFETY: Public-C-ABI callers provide both NUL-terminated pathname
     // pointers for the duration of this internal syscall wrapper.
     let oldpath = unsafe { core::ffi::CStr::from_ptr(oldpath.cast()) };
@@ -15326,28 +19634,40 @@ unsafe fn sys_mkdirat(dirfd: i32, path: *const u8, mode: u32) -> i64 {
 #[no_mangle]
 pub unsafe extern "C" fn pipe(fds: *mut c_int) -> c_int {
     let r = sys_pipe2(fds, 0);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn pipe2(fds: *mut c_int, flags: c_int) -> c_int {
     let r = sys_pipe2(fds, flags);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn dup(oldfd: c_int) -> c_int {
     let r = sys_dup(oldfd);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
     let r = sys_dup2(oldfd, newfd);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
@@ -15355,7 +19675,10 @@ pub unsafe extern "C" fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
 #[linkage = "weak"]
 pub unsafe extern "C" fn dup3(oldfd: c_int, newfd: c_int, flags: c_int) -> c_int {
     let r = sys_dup3(oldfd, newfd, flags);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
@@ -15417,35 +19740,50 @@ unsafe extern "C" fn fcntl_slow(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
         }
         _ => sys_fcntl(fd, cmd, 0),
     };
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
     let r = sys_access(path as *const u8, mode);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
     let r = sys_unlink(path as *const u8);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
     let r = sys_rmdir(path as *const u8);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
     let r = sys_chdir(path as *const u8);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -15455,21 +19793,37 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
         // allocate
         let alloc_size = if size == 0 { 256 } else { size };
         let p = malloc(alloc_size) as *mut c_char;
-        if p.is_null() { ERRNO = ENOMEM; return core::ptr::null_mut(); }
+        if p.is_null() {
+            ERRNO = ENOMEM;
+            return core::ptr::null_mut();
+        }
         let r = sys_getcwd(p as *mut u8, alloc_size);
-        if r < 0 { free(p as *mut c_void); ERRNO = (-r) as c_int; return core::ptr::null_mut(); }
+        if r < 0 {
+            free(p as *mut c_void);
+            ERRNO = (-r) as c_int;
+            return core::ptr::null_mut();
+        }
         return p;
     }
-    if size == 0 { ERRNO = EINVAL; return core::ptr::null_mut(); }
+    if size == 0 {
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
+    }
     let r = sys_getcwd(buf as *mut u8, size);
-    if r < 0 { ERRNO = (-r) as c_int; return core::ptr::null_mut(); }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return core::ptr::null_mut();
+    }
     buf
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn gethostname(name: *mut c_char, len: usize) -> c_int {
     let r = sys_gethostname(name as *mut u8, len);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -15484,7 +19838,10 @@ pub extern "C" fn getpagesize() -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn truncate(path: *const c_char, length: i64) -> c_int {
     let r = sys_truncate(path as *const u8, length);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -15498,31 +19855,45 @@ pub unsafe extern "C" fn nanosleep(req: *const timespec, rem: *mut timespec) -> 
     pthread_testcancel();
     let r = sys_nanosleep(req, rem);
     pthread_testcancel();
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sleep(seconds: c_uint) -> c_uint {
-    let req = timespec { tv_sec: seconds as c_long, tv_nsec: 0 };
+    let req = timespec {
+        tv_sec: seconds as c_long,
+        tv_nsec: 0,
+    };
     let mut rem: timespec = core::mem::zeroed();
     pthread_testcancel();
     let r = sys_nanosleep(&req, &mut rem);
     pthread_testcancel();
     if r < 0 {
         let e = (-r) as c_int;
-        if e == EINTR { return rem.tv_sec as c_uint; }
+        if e == EINTR {
+            return rem.tv_sec as c_uint;
+        }
     }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn usleep(usec: c_uint) -> c_int {
-    let req = timespec { tv_sec: (usec / 1000000) as c_long, tv_nsec: ((usec % 1000000) * 1000) as c_long };
+    let req = timespec {
+        tv_sec: (usec / 1000000) as c_long,
+        tv_nsec: ((usec % 1000000) * 1000) as c_long,
+    };
     pthread_testcancel();
     let r = sys_nanosleep(&req, core::ptr::null_mut());
     pthread_testcancel();
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -15558,35 +19929,56 @@ pub unsafe extern "C" fn sync() {
 #[no_mangle]
 pub unsafe extern "C" fn symlink(target: *const c_char, linkpath: *const c_char) -> c_int {
     let r = sys_symlinkat(target as *const u8, AT_FDCWD, linkpath as *const u8);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn readlink(path: *const c_char, buf: *mut c_char, bufsiz: usize) -> isize {
     let r = sys_readlinkat(AT_FDCWD, path as *const u8, buf as *mut u8, bufsiz);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as isize
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn link(oldpath: *const c_char, newpath: *const c_char) -> c_int {
-    let r = sys_linkat(AT_FDCWD, oldpath as *const u8, AT_FDCWD, newpath as *const u8, 0);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    let r = sys_linkat(
+        AT_FDCWD,
+        oldpath as *const u8,
+        AT_FDCWD,
+        newpath as *const u8,
+        0,
+    );
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn chmod(path: *const c_char, mode: c_uint) -> c_int {
     let r = sys_fchmodat(AT_FDCWD, path as *const u8, mode, 0);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn fchmod(fd: c_int, mode: c_uint) -> c_int {
     let r = sys_fchmod(fd, mode);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -15638,11 +20030,7 @@ pub unsafe extern "C" fn ttyname_r(fd: c_int, name: *mut c_char, size: usize) ->
         index += 1;
     }
 
-    let length = readlink(
-        proc_name.as_ptr() as *const c_char,
-        name,
-        size,
-    );
+    let length = readlink(proc_name.as_ptr() as *const c_char, name, size);
     if length < 0 {
         return ERRNO;
     }
@@ -15696,28 +20084,40 @@ pub unsafe extern "C" fn getlogin_r(name: *mut c_char, size: usize) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn getgroups(size: c_int, list: *mut c_uint) -> c_int {
     let r = sys_getgroups(size, list);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn setgroups(size: usize, list: *const c_uint) -> c_int {
     let r = sys_setgroups(size, list);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn setuid(uid: c_uint) -> c_int {
     let r = sys_setuid(uid);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn setgid(gid: c_uint) -> c_int {
     let r = sys_setgid(gid);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -15760,28 +20160,40 @@ pub unsafe extern "C" fn setregid(rgid: c_uint, egid: c_uint) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn setsid() -> c_int {
     let r = sys_setsid();
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn setpgid(pid: c_int, pgid: c_int) -> c_int {
     let r = sys_setpgid(pid, pgid);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn getpgid(pid: c_int) -> c_int {
     let r = sys_getpgid(pid);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn getsid(pid: c_int) -> c_int {
     let r = sys_getsid(pid);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     r as c_int
 }
 
@@ -15797,13 +20209,22 @@ pub unsafe extern "C" fn setpgrp() -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn mkstemp(template: *mut c_char) -> c_int {
-    if template.is_null() { ERRNO = EINVAL; return -1; }
+    if template.is_null() {
+        ERRNO = EINVAL;
+        return -1;
+    }
     let len = strlen(template as *const c_char);
-    if len < 6 { ERRNO = EINVAL; return -1; }
+    if len < 6 {
+        ERRNO = EINVAL;
+        return -1;
+    }
     let x_start = len - 6;
     // check that last 6 chars are XXXXXX
     for i in x_start..len {
-        if *template.add(i) != b'X' as c_char { ERRNO = EINVAL; return -1; }
+        if *template.add(i) != b'X' as c_char {
+            ERRNO = EINVAL;
+            return -1;
+        }
     }
     let mut ts: timespec = core::mem::zeroed();
     let _ = sys_clock_gettime(CLOCK_REALTIME, &mut ts);
@@ -15818,10 +20239,19 @@ pub unsafe extern "C" fn mkstemp(template: *mut c_char) -> c_int {
             *template.add(i) = hex[(s & 0xf) as usize] as c_char;
             s >>= 4;
         }
-        let fd = sys_open(template as *const u8, (O_RDWR | O_CREAT | O_EXCL) as i64, 0o600);
-        if fd >= 0 { return fd as c_int; }
+        let fd = sys_open(
+            template as *const u8,
+            (O_RDWR | O_CREAT | O_EXCL) as i64,
+            0o600,
+        );
+        if fd >= 0 {
+            return fd as c_int;
+        }
         let e = (-fd) as c_int;
-        if e != EEXIST_VAL { ERRNO = e; return -1; }
+        if e != EEXIST_VAL {
+            ERRNO = e;
+            return -1;
+        }
     }
     ERRNO = EEXIST_VAL;
     -1
@@ -15830,7 +20260,10 @@ pub unsafe extern "C" fn mkstemp(template: *mut c_char) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn mkdir(path: *const c_char, mode: c_uint) -> c_int {
     let r = sys_mkdirat(AT_FDCWD, path as *const u8, mode);
-    if r < 0 { ERRNO = (-r) as c_int; return -1; }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        return -1;
+    }
     0
 }
 
@@ -15913,10 +20346,16 @@ unsafe fn inet_pton_v4(s: *const u8, a: *mut u8) -> c_int {
             p = p.add(1);
             j += 1;
         }
-        if j == 0 || (j > 1 && *oct_start == b'0') || v > 255 { return 0; }
+        if j == 0 || (j > 1 && *oct_start == b'0') || v > 255 {
+            return 0;
+        }
         *a.add(i) = v as u8;
-        if *p == 0 && i == 3 { return 1; }
-        if *p != b'.' { return 0; }
+        if *p == 0 && i == 3 {
+            return 1;
+        }
+        if *p != b'.' {
+            return 0;
+        }
         p = p.add(1);
         i += 1;
     }
@@ -15933,7 +20372,9 @@ unsafe fn inet_pton_v6(s: *const u8, a: *mut u8) -> c_int {
 
     if *p == b':' {
         p = p.add(1);
-        if *p != b':' { return 0; }
+        if *p != b':' {
+            return 0;
+        }
     }
 
     loop {
@@ -15941,8 +20382,12 @@ unsafe fn inet_pton_v6(s: *const u8, a: *mut u8) -> c_int {
             brk = i as isize;
             ip[i & 7] = 0;
             p = p.add(1);
-            if *p == 0 { break; }
-            if i == 7 { return 0; }
+            if *p == 0 {
+                break;
+            }
+            if i == 7 {
+                return 0;
+            }
             i += 1;
             continue;
         }
@@ -15951,17 +20396,27 @@ unsafe fn inet_pton_v6(s: *const u8, a: *mut u8) -> c_int {
         let mut j = 0;
         while j < 4 {
             let d = hex_digit(*p);
-            if d < 0 { break; }
+            if d < 0 {
+                break;
+            }
             v = v * 16 + d as u16;
             p = p.add(1);
             j += 1;
         }
-        if j == 0 { return 0; }
+        if j == 0 {
+            return 0;
+        }
         ip[i & 7] = v;
-        if *p == 0 && (brk >= 0 || i == 7) { break; }
-        if i == 7 { return 0; }
+        if *p == 0 && (brk >= 0 || i == 7) {
+            break;
+        }
+        if i == 7 {
+            return 0;
+        }
         if *p != b':' {
-            if *p != b'.' || (i < 6 && brk < 0) { return 0; }
+            if *p != b'.' || (i < 6 && brk < 0) {
+                return 0;
+            }
             need_v4 = true;
             i += 1;
             ip[i & 7] = 0;
@@ -15990,16 +20445,23 @@ unsafe fn inet_pton_v6(s: *const u8, a: *mut u8) -> c_int {
     }
 
     if need_v4 {
-        if inet_pton_v4(v4_start, a.add(12)) <= 0 { return 0; }
+        if inet_pton_v4(v4_start, a.add(12)) <= 0 {
+            return 0;
+        }
     }
     1
 }
 
 unsafe fn hex_digit(c: u8) -> i32 {
-    if c >= b'0' && c <= b'9' { (c - b'0') as i32 }
-    else if c >= b'a' && c <= b'f' { (c - b'a' + 10) as i32 }
-    else if c >= b'A' && c <= b'F' { (c - b'A' + 10) as i32 }
-    else { -1 }
+    if c >= b'0' && c <= b'9' {
+        (c - b'0') as i32
+    } else if c >= b'a' && c <= b'f' {
+        (c - b'a' + 10) as i32
+    } else if c >= b'A' && c <= b'F' {
+        (c - b'A' + 10) as i32
+    } else {
+        -1
+    }
 }
 
 #[no_mangle]
@@ -16015,44 +20477,75 @@ pub unsafe extern "C" fn inet_pton(af: c_int, s: *const c_char, a: *mut c_void) 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn inet_ntop(af: c_int, a: *const c_void, s: *mut c_char, size: u32) -> *mut c_char {
+pub unsafe extern "C" fn inet_ntop(
+    af: c_int,
+    a: *const c_void,
+    s: *mut c_char,
+    size: u32,
+) -> *mut c_char {
     if af == AF_INET_VAL {
         let b = a as *const u8;
         let needed = 16; // "255.255.255.255\0"
-        if size < needed as u32 { ERRNO = ENOSPC_VAL2; return core::ptr::null_mut(); }
+        if size < needed as u32 {
+            ERRNO = ENOSPC_VAL2;
+            return core::ptr::null_mut();
+        }
         let mut pos = 0;
         for i in 0..4 {
-            if i > 0 { *s.add(pos) = b'.' as c_char; pos += 1; }
+            if i > 0 {
+                *s.add(pos) = b'.' as c_char;
+                pos += 1;
+            }
             let (buf, len) = format_u64(*b.add(i) as u64);
-            for j in 0..len { *s.add(pos) = buf[j] as c_char; pos += 1; }
+            for j in 0..len {
+                *s.add(pos) = buf[j] as c_char;
+                pos += 1;
+            }
         }
         *s.add(pos) = 0;
         s
     } else if af == AF_INET6_VAL {
         let b = a as *const u8;
         let needed = 46; // max IPv6
-        if size < needed as u32 { ERRNO = ENOSPC_VAL2; return core::ptr::null_mut(); }
+        if size < needed as u32 {
+            ERRNO = ENOSPC_VAL2;
+            return core::ptr::null_mut();
+        }
         let mut words = [0u16; 8];
         for i in 0..8 {
             words[i] = ((*b.add(i * 2) as u16) << 8) | (*b.add(i * 2 + 1) as u16);
         }
         // IPv4-mapped: ::ffff:a.b.c.d
         let mut pos = 0usize;
-        if words[0] == 0 && words[1] == 0 && words[2] == 0 && words[3] == 0
-            && words[4] == 0 && words[5] == 0xffff
+        if words[0] == 0
+            && words[1] == 0
+            && words[2] == 0
+            && words[3] == 0
+            && words[4] == 0
+            && words[5] == 0xffff
         {
             let prefix = b"::ffff:";
-            for k in 0..prefix.len() { *s.add(pos) = prefix[k] as c_char; pos += 1; }
+            for k in 0..prefix.len() {
+                *s.add(pos) = prefix[k] as c_char;
+                pos += 1;
+            }
             for idx in 0..4 {
-                if idx > 0 { *s.add(pos) = b'.' as c_char; pos += 1; }
+                if idx > 0 {
+                    *s.add(pos) = b'.' as c_char;
+                    pos += 1;
+                }
                 let octet = *b.add(12 + idx);
                 if octet >= 100 {
-                    *s.add(pos) = (b'0' + octet / 100) as c_char; pos += 1;
-                    *s.add(pos) = (b'0' + (octet / 10) % 10) as c_char; pos += 1;
+                    *s.add(pos) = (b'0' + octet / 100) as c_char;
+                    pos += 1;
+                    *s.add(pos) = (b'0' + (octet / 10) % 10) as c_char;
+                    pos += 1;
                 } else if octet >= 10 {
-                    *s.add(pos) = (b'0' + octet / 10) as c_char; pos += 1;
+                    *s.add(pos) = (b'0' + octet / 10) as c_char;
+                    pos += 1;
                 }
-                *s.add(pos) = (b'0' + octet % 10) as c_char; pos += 1;
+                *s.add(pos) = (b'0' + octet % 10) as c_char;
+                pos += 1;
             }
             *s.add(pos) = 0;
             return s;
@@ -16064,9 +20557,14 @@ pub unsafe extern "C" fn inet_ntop(af: c_int, a: *const c_void, s: *mut c_char, 
         while j < 8 {
             if words[j] == 0 {
                 let mut k = j;
-                while k < 8 && words[k] == 0 { k += 1; }
+                while k < 8 && words[k] == 0 {
+                    k += 1;
+                }
                 let run = k - j;
-                if run > best_len { best_start = j as isize; best_len = run; }
+                if run > best_len {
+                    best_start = j as isize;
+                    best_len = run;
+                }
                 j = k;
             } else {
                 j += 1;
@@ -16075,21 +20573,28 @@ pub unsafe extern "C" fn inet_ntop(af: c_int, a: *const c_void, s: *mut c_char, 
         let mut i: usize = 0;
         let mut prev_in_run = false;
         while i < 8 {
-            let in_run = best_len >= 2 && i >= best_start as usize && i < best_start as usize + best_len;
+            let in_run =
+                best_len >= 2 && i >= best_start as usize && i < best_start as usize + best_len;
             if in_run {
                 if i == best_start as usize {
-                    *s.add(pos) = b':' as c_char; pos += 1;
-                    *s.add(pos) = b':' as c_char; pos += 1;
+                    *s.add(pos) = b':' as c_char;
+                    pos += 1;
+                    *s.add(pos) = b':' as c_char;
+                    pos += 1;
                 }
                 i += 1;
                 prev_in_run = true;
                 continue;
             }
             if i > 0 && !prev_in_run {
-                *s.add(pos) = b':' as c_char; pos += 1;
+                *s.add(pos) = b':' as c_char;
+                pos += 1;
             }
             let (buf, len) = format_hex(words[i] as u64, false);
-            for k in 0..len { *s.add(pos) = buf[k] as c_char; pos += 1; }
+            for k in 0..len {
+                *s.add(pos) = buf[k] as c_char;
+                pos += 1;
+            }
             i += 1;
             prev_in_run = false;
         }
@@ -16109,7 +20614,9 @@ pub unsafe extern "C" fn inet_aton(s: *const c_char, dest: *mut c_void) -> c_int
     let mut vals = [0u64; 4];
     let mut i = 0usize;
     while i < 4 {
-        if *p < b'0' || *p > b'9' { return 0; }
+        if *p < b'0' || *p > b'9' {
+            return 0;
+        }
         let mut base = 10u32;
         if *p == b'0' {
             let c = *p.add(1);
@@ -16118,7 +20625,8 @@ pub unsafe extern "C" fn inet_aton(s: *const c_char, dest: *mut c_void) -> c_int
                 p = p.add(2);
                 if !((*p >= b'0' && *p <= b'9')
                     || (*p >= b'a' && *p <= b'f')
-                    || (*p >= b'A' && *p <= b'F')) {
+                    || (*p >= b'A' && *p <= b'F'))
+                {
                     return 0;
                 }
             } else {
@@ -16141,21 +20649,38 @@ pub unsafe extern "C" fn inet_aton(s: *const c_char, dest: *mut c_void) -> c_int
             v = v * (base as u64) + d;
             p = p.add(1);
         }
-        if p == start { return 0; }
+        if p == start {
+            return 0;
+        }
         vals[i] = v;
         if *p == 0 {
             break;
         }
-        if *p != b'.' || i == 3 { return 0; }
+        if *p != b'.' || i == 3 {
+            return 0;
+        }
         p = p.add(1);
         i += 1;
     }
-    if i == 4 { return 0; }
-    if i < 1 { vals[1] = vals[0] & 0xffffff; vals[0] >>= 24; }
-    if i < 2 { vals[2] = vals[1] & 0xffff; vals[1] >>= 16; }
-    if i < 3 { vals[3] = vals[2] & 0xff; vals[2] >>= 8; }
+    if i == 4 {
+        return 0;
+    }
+    if i < 1 {
+        vals[1] = vals[0] & 0xffffff;
+        vals[0] >>= 24;
+    }
+    if i < 2 {
+        vals[2] = vals[1] & 0xffff;
+        vals[1] >>= 16;
+    }
+    if i < 3 {
+        vals[3] = vals[2] & 0xff;
+        vals[2] >>= 8;
+    }
     for j in 0..4 {
-        if vals[j] > 255 { return 0; }
+        if vals[j] > 255 {
+            return 0;
+        }
         *a.add(j) = vals[j] as u8;
     }
     1
@@ -16177,9 +20702,15 @@ pub unsafe extern "C" fn inet_ntoa(addr: u32) -> *mut c_char {
     let b = addr.to_ne_bytes();
     let mut pos = 0;
     for i in 0..4 {
-        if i > 0 { NTOA_BUF[pos] = b'.' as c_char; pos += 1; }
+        if i > 0 {
+            NTOA_BUF[pos] = b'.' as c_char;
+            pos += 1;
+        }
         let (buf, len) = format_u64(b[i] as u64);
-        for j in 0..len { NTOA_BUF[pos] = buf[j] as c_char; pos += 1; }
+        for j in 0..len {
+            NTOA_BUF[pos] = buf[j] as c_char;
+            pos += 1;
+        }
     }
     NTOA_BUF[pos] = 0;
     core::ptr::addr_of_mut!(NTOA_BUF).cast::<c_char>()
@@ -16209,17 +20740,25 @@ pub extern "C" fn inet_makeaddr(net: c_int, host: c_int) -> u32 {
 #[no_mangle]
 pub extern "C" fn inet_lnaof(addr: u32) -> c_int {
     let h = u32::from_be(addr);
-    if h < 0x80000000 { (h & 0x00ffffff) as c_int }
-    else if h < 0xc0000000 { (h & 0x0000ffff) as c_int }
-    else { (h & 0x000000ff) as c_int }
+    if h < 0x80000000 {
+        (h & 0x00ffffff) as c_int
+    } else if h < 0xc0000000 {
+        (h & 0x0000ffff) as c_int
+    } else {
+        (h & 0x000000ff) as c_int
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn inet_netof(addr: u32) -> c_int {
     let h = u32::from_be(addr);
-    if h < 0x80000000 { (h >> 24) as c_int }
-    else if h < 0xc0000000 { (h >> 16) as c_int }
-    else { (h >> 8) as c_int }
+    if h < 0x80000000 {
+        (h >> 24) as c_int
+    } else if h < 0xc0000000 {
+        (h >> 16) as c_int
+    } else {
+        (h >> 8) as c_int
+    }
 }
 
 // ============================================================
@@ -16233,40 +20772,49 @@ pub extern "C" fn inet_netof(addr: u32) -> c_int {
 unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
     let mut p = s;
     // skip whitespace
-    while *p == b' ' || *p == b'\t' || *p == b'\n' || *p == b'\r' { p = p.add(1); }
+    while *p == b' ' || *p == b'\t' || *p == b'\n' || *p == b'\r' {
+        p = p.add(1);
+    }
     let mut neg = false;
-    if *p == b'-' { neg = true; p = p.add(1); }
-    else if *p == b'+' { p = p.add(1); }
+    if *p == b'-' {
+        neg = true;
+        p = p.add(1);
+    } else if *p == b'+' {
+        p = p.add(1);
+    }
 
     // inf
-    if (*p | 0x20) == b'i'
-        && (*p.add(1) | 0x20) == b'n'
-        && (*p.add(2) | 0x20) == b'f'
-    {
+    if (*p | 0x20) == b'i' && (*p.add(1) | 0x20) == b'n' && (*p.add(2) | 0x20) == b'f' {
         p = p.add(3);
         // optionally consume "inity"
-        if (*p | 0x20) == b'i'
-            && (*p.add(1) | 0x20) == b't'
-            && (*p.add(2) | 0x20) == b'y'
-        {
+        if (*p | 0x20) == b'i' && (*p.add(1) | 0x20) == b't' && (*p.add(2) | 0x20) == b'y' {
             p = p.add(3);
         }
-        if !endptr.is_null() { *endptr = p as *mut u8; }
-        return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
+        if !endptr.is_null() {
+            *endptr = p as *mut u8;
+        }
+        return if neg {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
     }
     // nan
-    if (*p | 0x20) == b'n'
-        && (*p.add(1) | 0x20) == b'a'
-        && (*p.add(2) | 0x20) == b'n'
-    {
+    if (*p | 0x20) == b'n' && (*p.add(1) | 0x20) == b'a' && (*p.add(2) | 0x20) == b'n' {
         p = p.add(3);
         // optionally consume (n-char-sequence)
         if *p == b'(' {
             p = p.add(1);
-            while *p != 0 && *p != b')' { p = p.add(1); }
-            if *p == b')' { p = p.add(1); }
+            while *p != 0 && *p != b')' {
+                p = p.add(1);
+            }
+            if *p == b')' {
+                p = p.add(1);
+            }
         }
-        if !endptr.is_null() { *endptr = p as *mut u8; }
+        if !endptr.is_null() {
+            *endptr = p as *mut u8;
+        }
         return if neg { -f64::NAN } else { f64::NAN };
     }
 
@@ -16283,7 +20831,9 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
                 if mant <= u128::MAX / 16 {
                     mant = mant * 16 + d as u128;
                 }
-                if in_frac { frac_hex += 1; }
+                if in_frac {
+                    frac_hex += 1;
+                }
                 p = p.add(1);
                 found = true;
             } else if *p == b'.' && !in_frac {
@@ -16295,7 +20845,9 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
         }
 
         if !found {
-            if !endptr.is_null() { *endptr = s as *mut u8; }
+            if !endptr.is_null() {
+                *endptr = s as *mut u8;
+            }
             return 0.0;
         }
 
@@ -16304,19 +20856,29 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
         if *p == b'p' || *p == b'P' {
             p = p.add(1);
             let mut exp_neg = false;
-            if *p == b'-' { exp_neg = true; p = p.add(1); }
-            else if *p == b'+' { p = p.add(1); }
+            if *p == b'-' {
+                exp_neg = true;
+                p = p.add(1);
+            } else if *p == b'+' {
+                p = p.add(1);
+            }
             while *p >= b'0' && *p <= b'9' {
                 if bin_exp < 100000 {
                     bin_exp = bin_exp * 10 + (*p - b'0') as i32;
                 }
                 p = p.add(1);
             }
-            if exp_neg { bin_exp = -bin_exp; }
+            if exp_neg {
+                bin_exp = -bin_exp;
+            }
         }
 
-        if !endptr.is_null() { *endptr = p as *mut u8; }
-        if mant == 0 { return if neg { -0.0 } else { 0.0 }; }
+        if !endptr.is_null() {
+            *endptr = p as *mut u8;
+        }
+        if mant == 0 {
+            return if neg { -0.0 } else { 0.0 };
+        }
 
         let total_exp = bin_exp as i64 - 4 * frac_hex as i64;
         return hex_mant_to_f64(mant, total_exp, neg);
@@ -16328,49 +20890,92 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
     let mut found_digit = false;
 
     while *p >= b'0' && *p <= b'9' {
-        if n < 65535 { buf[n] = *p; n += 1; }
+        if n < 65535 {
+            buf[n] = *p;
+            n += 1;
+        }
         p = p.add(1);
         found_digit = true;
     }
     if *p == b'.' {
-        if n < 65535 { buf[n] = b'.'; n += 1; }
+        if n < 65535 {
+            buf[n] = b'.';
+            n += 1;
+        }
         p = p.add(1);
         while *p >= b'0' && *p <= b'9' {
-            if n < 65535 { buf[n] = *p; n += 1; }
+            if n < 65535 {
+                buf[n] = *p;
+                n += 1;
+            }
             p = p.add(1);
             found_digit = true;
         }
     }
     if !found_digit {
-        if !endptr.is_null() { *endptr = s as *mut u8; }
+        if !endptr.is_null() {
+            *endptr = s as *mut u8;
+        }
         return 0.0;
     }
     if *p == b'e' || *p == b'E' {
-        if n < 65535 { buf[n] = b'e'; n += 1; }
+        if n < 65535 {
+            buf[n] = b'e';
+            n += 1;
+        }
         p = p.add(1);
         if *p == b'-' || *p == b'+' {
-            if n < 65535 { buf[n] = *p; n += 1; }
+            if n < 65535 {
+                buf[n] = *p;
+                n += 1;
+            }
             p = p.add(1);
         }
         while *p >= b'0' && *p <= b'9' {
-            if n < 65535 { buf[n] = *p; n += 1; }
+            if n < 65535 {
+                buf[n] = *p;
+                n += 1;
+            }
             p = p.add(1);
         }
     }
 
-    if !endptr.is_null() { *endptr = p as *mut u8; }
-    let s_str = core::str::from_utf8_unchecked(
-        core::slice::from_raw_parts(buf.as_ptr(), n),
-    );
+    if !endptr.is_null() {
+        *endptr = p as *mut u8;
+    }
+    let s_str = core::str::from_utf8_unchecked(core::slice::from_raw_parts(buf.as_ptr(), n));
     if is_f32 {
         match <f32 as core::str::FromStr>::from_str(s_str) {
-            Ok(v) => { let r = v as f64; if neg { -r } else { r } }
-            Err(_) => { if !endptr.is_null() { *endptr = s as *mut u8; } 0.0 }
+            Ok(v) => {
+                let r = v as f64;
+                if neg {
+                    -r
+                } else {
+                    r
+                }
+            }
+            Err(_) => {
+                if !endptr.is_null() {
+                    *endptr = s as *mut u8;
+                }
+                0.0
+            }
         }
     } else {
         match <f64 as core::str::FromStr>::from_str(s_str) {
-            Ok(v) => if neg { -v } else { v },
-            Err(_) => { if !endptr.is_null() { *endptr = s as *mut u8; } 0.0 }
+            Ok(v) => {
+                if neg {
+                    -v
+                } else {
+                    v
+                }
+            }
+            Err(_) => {
+                if !endptr.is_null() {
+                    *endptr = s as *mut u8;
+                }
+                0.0
+            }
         }
     }
 }
@@ -16379,7 +20984,9 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
 // mant: integer from parsed hex digits. total_exp: bin_exp - 4 * frac_hex_digits.
 // Value = mant * 2^total_exp.
 fn hex_mant_to_f64(mant: u128, total_exp: i64, neg: bool) -> f64 {
-    if mant == 0 { return if neg { -0.0 } else { 0.0 }; }
+    if mant == 0 {
+        return if neg { -0.0 } else { 0.0 };
+    }
 
     let msb = (127 - mant.leading_zeros()) as i64;
     let unbiased_exp = msb + total_exp;
@@ -16387,7 +20994,11 @@ fn hex_mant_to_f64(mant: u128, total_exp: i64, neg: bool) -> f64 {
 
     // Overflow → infinity
     if biased_exp >= 2047 {
-        return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
+        return if neg {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        };
     }
 
     // Subnormal or underflow
@@ -16399,7 +21010,11 @@ fn hex_mant_to_f64(mant: u128, total_exp: i64, neg: bool) -> f64 {
             return if neg { -0.0 } else { 0.0 };
         }
         if shift > 128 {
-            return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
+            return if neg {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
         }
         let shifted = mant << (shift as u32);
         let mantissa52 = (shifted as u64) & 0x000FFFFFFFFFFFFF;
@@ -16410,10 +21025,18 @@ fn hex_mant_to_f64(mant: u128, total_exp: i64, neg: bool) -> f64 {
             result += 1;
             if result > 0x000FFFFFFFFFFFFF {
                 // carry → smallest normal
-                return if neg { -f64::from_bits(1u64 << 52) } else { f64::from_bits(1u64 << 52) };
+                return if neg {
+                    -f64::from_bits(1u64 << 52)
+                } else {
+                    f64::from_bits(1u64 << 52)
+                };
             }
         }
-        return if neg { -f64::from_bits(result) } else { f64::from_bits(result) };
+        return if neg {
+            -f64::from_bits(result)
+        } else {
+            f64::from_bits(result)
+        };
     }
 
     // Normal: biased_exp in [1, 2046]
@@ -16423,7 +21046,11 @@ fn hex_mant_to_f64(mant: u128, total_exp: i64, neg: bool) -> f64 {
         // fewer than 53 bits, no rounding needed
         let mantissa = ((mant as u64) & ((1u64 << msb as u32) - 1)) << ((-shift) as u32);
         let bits = ((biased_exp as u64) << 52) | mantissa;
-        return if neg { -f64::from_bits(bits) } else { f64::from_bits(bits) };
+        return if neg {
+            -f64::from_bits(bits)
+        } else {
+            f64::from_bits(bits)
+        };
     }
 
     // shift > 0: round to nearest even
@@ -16431,7 +21058,9 @@ fn hex_mant_to_f64(mant: u128, total_exp: i64, neg: bool) -> f64 {
     let guard = ((mant >> (shift as u32 - 1)) & 1) != 0;
     let sticky = if shift > 1 {
         (mant & ((1u128 << (shift as u32 - 1)) - 1)) != 0
-    } else { false };
+    } else {
+        false
+    };
 
     let mut result_mant = mantissa;
     let mut result_exp = biased_exp;
@@ -16441,20 +21070,33 @@ fn hex_mant_to_f64(mant: u128, total_exp: i64, neg: bool) -> f64 {
             result_mant = 0;
             result_exp += 1;
             if result_exp >= 2047 {
-                return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
+                return if neg {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                };
             }
         }
     }
 
     let bits = ((result_exp as u64) << 52) | result_mant;
-    if neg { -f64::from_bits(bits) } else { f64::from_bits(bits) }
+    if neg {
+        -f64::from_bits(bits)
+    } else {
+        f64::from_bits(bits)
+    }
 }
 
 unsafe fn hex_val(c: u8) -> Option<u8> {
-    if c >= b'0' && c <= b'9' { Some(c - b'0') }
-    else if c >= b'a' && c <= b'f' { Some(c - b'a' + 10) }
-    else if c >= b'A' && c <= b'F' { Some(c - b'A' + 10) }
-    else { None }
+    if c >= b'0' && c <= b'9' {
+        Some(c - b'0')
+    } else if c >= b'a' && c <= b'f' {
+        Some(c - b'a' + 10)
+    } else if c >= b'A' && c <= b'F' {
+        Some(c - b'A' + 10)
+    } else {
+        None
+    }
 }
 
 // AArch64 and riscv64 use IEEE-754 binary128 for long double.  Extending the
@@ -16469,37 +21111,42 @@ unsafe fn parse_float_f128(s: *const u8, endptr: *mut *mut u8) -> f128 {
     const F128_NAN_BITS: u128 = 0x7fff8000000000000000000000000000;
 
     let mut p = s;
-    while *p == b' ' || *p == b'\t' || *p == b'\n' || *p == b'\r' { p = p.add(1); }
+    while *p == b' ' || *p == b'\t' || *p == b'\n' || *p == b'\r' {
+        p = p.add(1);
+    }
     let mut neg = false;
-    if *p == b'-' { neg = true; p = p.add(1); }
-    else if *p == b'+' { p = p.add(1); }
+    if *p == b'-' {
+        neg = true;
+        p = p.add(1);
+    } else if *p == b'+' {
+        p = p.add(1);
+    }
 
-    if (*p | 0x20) == b'i'
-        && (*p.add(1) | 0x20) == b'n'
-        && (*p.add(2) | 0x20) == b'f'
-    {
+    if (*p | 0x20) == b'i' && (*p.add(1) | 0x20) == b'n' && (*p.add(2) | 0x20) == b'f' {
         p = p.add(3);
-        if (*p | 0x20) == b'i'
-            && (*p.add(1) | 0x20) == b't'
-            && (*p.add(2) | 0x20) == b'y'
-        {
+        if (*p | 0x20) == b'i' && (*p.add(1) | 0x20) == b't' && (*p.add(2) | 0x20) == b'y' {
             p = p.add(3);
         }
-        if !endptr.is_null() { *endptr = p as *mut u8; }
+        if !endptr.is_null() {
+            *endptr = p as *mut u8;
+        }
         let value = f128::from_bits(F128_INF_BITS);
         return if neg { -value } else { value };
     }
-    if (*p | 0x20) == b'n'
-        && (*p.add(1) | 0x20) == b'a'
-        && (*p.add(2) | 0x20) == b'n'
-    {
+    if (*p | 0x20) == b'n' && (*p.add(1) | 0x20) == b'a' && (*p.add(2) | 0x20) == b'n' {
         p = p.add(3);
         if *p == b'(' {
             p = p.add(1);
-            while *p != 0 && *p != b')' { p = p.add(1); }
-            if *p == b')' { p = p.add(1); }
+            while *p != 0 && *p != b')' {
+                p = p.add(1);
+            }
+            if *p == b')' {
+                p = p.add(1);
+            }
         }
-        if !endptr.is_null() { *endptr = p as *mut u8; }
+        if !endptr.is_null() {
+            *endptr = p as *mut u8;
+        }
         let value = f128::from_bits(F128_NAN_BITS);
         return if neg { -value } else { value };
     }
@@ -16514,9 +21161,15 @@ unsafe fn parse_float_f128(s: *const u8, endptr: *mut *mut u8) -> f128 {
         let mut truncated_nonzero = false;
         loop {
             if let Some(d) = hex_val(*p) {
-                if n < DIGIT_CAP { digits[n] = d; n += 1; }
-                else if d != 0 { truncated_nonzero = true; }
-                if in_frac { frac_hex = frac_hex.saturating_add(1); }
+                if n < DIGIT_CAP {
+                    digits[n] = d;
+                    n += 1;
+                } else if d != 0 {
+                    truncated_nonzero = true;
+                }
+                if in_frac {
+                    frac_hex = frac_hex.saturating_add(1);
+                }
                 p = p.add(1);
                 found = true;
             } else if *p == b'.' && !in_frac {
@@ -16527,7 +21180,9 @@ unsafe fn parse_float_f128(s: *const u8, endptr: *mut *mut u8) -> f128 {
             }
         }
         if !found {
-            if !endptr.is_null() { *endptr = s as *mut u8; }
+            if !endptr.is_null() {
+                *endptr = s as *mut u8;
+            }
             return f128::from_bits(if neg { 1u128 << 127 } else { 0 });
         }
 
@@ -16535,17 +21190,27 @@ unsafe fn parse_float_f128(s: *const u8, endptr: *mut *mut u8) -> f128 {
         if *p == b'p' || *p == b'P' {
             p = p.add(1);
             let mut exp_neg = false;
-            if *p == b'-' { exp_neg = true; p = p.add(1); }
-            else if *p == b'+' { p = p.add(1); }
+            if *p == b'-' {
+                exp_neg = true;
+                p = p.add(1);
+            } else if *p == b'+' {
+                p = p.add(1);
+            }
             while *p >= b'0' && *p <= b'9' {
                 if bin_exp < 1_000_000 {
-                    bin_exp = bin_exp.saturating_mul(10).saturating_add((*p - b'0') as i32);
+                    bin_exp = bin_exp
+                        .saturating_mul(10)
+                        .saturating_add((*p - b'0') as i32);
                 }
                 p = p.add(1);
             }
-            if exp_neg { bin_exp = -bin_exp; }
+            if exp_neg {
+                bin_exp = -bin_exp;
+            }
         }
-        if !endptr.is_null() { *endptr = p as *mut u8; }
+        if !endptr.is_null() {
+            *endptr = p as *mut u8;
+        }
         return hex_mant_to_f128(&digits[..n], frac_hex, bin_exp, neg, truncated_nonzero);
     }
 
@@ -16570,19 +21235,27 @@ unsafe fn parse_float_f128(s: *const u8, endptr: *mut *mut u8) -> f128 {
         }
     }
     if !found_digit {
-        if !endptr.is_null() { *endptr = s as *mut u8; }
+        if !endptr.is_null() {
+            *endptr = s as *mut u8;
+        }
         return f128::from_bits(if neg { 1u128 << 127 } else { 0 });
     }
     let mut exp10: i32 = -frac_digits;
     if *p == b'e' || *p == b'E' {
         p = p.add(1);
         let mut exp_neg = false;
-        if *p == b'-' { exp_neg = true; p = p.add(1); }
-        else if *p == b'+' { p = p.add(1); }
+        if *p == b'-' {
+            exp_neg = true;
+            p = p.add(1);
+        } else if *p == b'+' {
+            p = p.add(1);
+        }
         let mut parsed_exp: i32 = 0;
         while *p >= b'0' && *p <= b'9' {
             if parsed_exp < 1_000_000 {
-                parsed_exp = parsed_exp.saturating_mul(10).saturating_add((*p - b'0') as i32);
+                parsed_exp = parsed_exp
+                    .saturating_mul(10)
+                    .saturating_add((*p - b'0') as i32);
             }
             p = p.add(1);
         }
@@ -16592,13 +21265,23 @@ unsafe fn parse_float_f128(s: *const u8, endptr: *mut *mut u8) -> f128 {
             exp10.saturating_add(parsed_exp)
         };
     }
-    if !endptr.is_null() { *endptr = p as *mut u8; }
+    if !endptr.is_null() {
+        *endptr = p as *mut u8;
+    }
     if value == 0.0 {
         return f128::from_bits(if neg { 1u128 << 127 } else { 0 });
     }
     let scale = f128_pow10(exp10);
-    let value = if exp10 < 0 { value / scale } else { value * scale };
-    if neg { -value } else { value }
+    let value = if exp10 < 0 {
+        value / scale
+    } else {
+        value * scale
+    };
+    if neg {
+        -value
+    } else {
+        value
+    }
 }
 
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
@@ -16607,9 +21290,13 @@ fn f128_pow10(exp: i32) -> f128 {
     let mut base = 10.0f128;
     let mut result = 1.0f128;
     while n != 0 {
-        if n & 1 != 0 { result = result * base; }
+        if n & 1 != 0 {
+            result = result * base;
+        }
         n >>= 1;
-        if n != 0 { base = base * base; }
+        if n != 0 {
+            base = base * base;
+        }
     }
     result
 }
@@ -16624,7 +21311,9 @@ fn hex_mant_to_f128(
 ) -> f128 {
     let sign = if neg { 1u128 << 127 } else { 0 };
     let mut first = 0usize;
-    while first < digits.len() && digits[first] == 0 { first += 1; }
+    while first < digits.len() && digits[first] == 0 {
+        first += 1;
+    }
     if first == digits.len() {
         return f128::from_bits(sign);
     }
@@ -16655,9 +21344,13 @@ fn hex_mant_to_f128(
                 bit_index += 1;
             }
         }
-        if bit_index < 113 { significand <<= 113 - bit_index; }
+        if bit_index < 113 {
+            significand <<= 113 - bit_index;
+        }
         let mut exponent = unbiased;
-        if guard && (sticky || significand & 1 != 0) { significand += 1; }
+        if guard && (sticky || significand & 1 != 0) {
+            significand += 1;
+        }
         if significand == (1u128 << 113) {
             significand >>= 1;
             exponent += 1;
@@ -16691,7 +21384,9 @@ fn hex_mant_to_f128(
             bit_index += 1;
         }
     }
-    if guard && (sticky || fraction & 1 != 0) { fraction += 1; }
+    if guard && (sticky || fraction & 1 != 0) {
+        fraction += 1;
+    }
     if fraction >= (1u128 << 112) {
         return f128::from_bits(sign | (1u128 << 112));
     }
@@ -16702,7 +21397,9 @@ fn hex_mant_to_f128(
 pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> f64 {
     let mut end: *mut u8 = s as *mut u8;
     let r = parse_float(s as *const u8, &mut end, false);
-    if !endptr.is_null() { *endptr = end as *mut c_char; }
+    if !endptr.is_null() {
+        *endptr = end as *mut c_char;
+    }
     r
 }
 
@@ -16710,7 +21407,9 @@ pub unsafe extern "C" fn strtod(s: *const c_char, endptr: *mut *mut c_char) -> f
 pub unsafe extern "C" fn strtof(s: *const c_char, endptr: *mut *mut c_char) -> f32 {
     let mut end: *mut u8 = s as *mut u8;
     let r = parse_float(s as *const u8, &mut end, true);
-    if !endptr.is_null() { *endptr = end as *mut c_char; }
+    if !endptr.is_null() {
+        *endptr = end as *mut c_char;
+    }
     r as f32
 }
 
@@ -16725,7 +21424,9 @@ pub unsafe extern "C" fn strtold(s: *const c_char, endptr: *mut *mut c_char) -> 
 pub unsafe extern "C" fn strtold(s: *const c_char, endptr: *mut *mut c_char) -> f128 {
     let mut end: *mut u8 = s as *mut u8;
     let result = parse_float_f128(s as *const u8, &mut end);
-    if !endptr.is_null() { *endptr = end as *mut c_char; }
+    if !endptr.is_null() {
+        *endptr = end as *mut c_char;
+    }
     result
 }
 
@@ -16734,7 +21435,9 @@ pub unsafe extern "C" fn strtold(s: *const c_char, endptr: *mut *mut c_char) -> 
 pub unsafe extern "C" fn strtold(s: *const c_char, endptr: *mut *mut c_char) -> f128 {
     let mut end: *mut u8 = s as *mut u8;
     let result = parse_float_f128(s as *const u8, &mut end);
-    if !endptr.is_null() { *endptr = end as *mut c_char; }
+    if !endptr.is_null() {
+        *endptr = end as *mut c_char;
+    }
     result
 }
 
@@ -16768,14 +21471,23 @@ struct MfCookie {
 
 unsafe extern "C" fn ms_seek(f: *mut FILE, off: i64, whence: c_int) -> i64 {
     let c = (*f).cookie as *mut MsCookie;
-    if whence < 0 || whence > 2 { ERRNO = EINVAL; return -1; }
+    if whence < 0 || whence > 2 {
+        ERRNO = EINVAL;
+        return -1;
+    }
     let base: i64 = match whence {
         0 => 0,
         1 => (*c).pos as i64,
         2 => (*c).len as i64,
-        _ => { ERRNO = EINVAL; return -1; }
+        _ => {
+            ERRNO = EINVAL;
+            return -1;
+        }
     };
-    if off < -base || off > isize::MAX as i64 - base { ERRNO = EINVAL; return -1; }
+    if off < -base || off > isize::MAX as i64 - base {
+        ERRNO = EINVAL;
+        return -1;
+    }
     (*c).pos = (base + off) as usize;
     (*c).pos as i64
 }
@@ -16785,13 +21497,19 @@ unsafe extern "C" fn ms_write(f: *mut FILE, buf: *const u8, len: usize) -> usize
     let buffered = (*f).wpos as usize - (*f).wbase as usize;
     if buffered > 0 {
         (*f).wpos = (*f).wbase;
-        if ms_write(f, (*f).wbase, buffered) < buffered { return 0; }
+        if ms_write(f, (*f).wbase, buffered) < buffered {
+            return 0;
+        }
     }
-    if len == 0 { return 0; }
+    if len == 0 {
+        return 0;
+    }
     if (*c).pos + len >= (*c).space {
         let new_space = 2 * (*c).space + 1 | (*c).pos + len + 1;
         let newbuf = realloc((*c).buf as *mut c_void, new_space) as *mut u8;
-        if newbuf.is_null() { return 0; }
+        if newbuf.is_null() {
+            return 0;
+        }
         *(*c).bufp = newbuf as *mut c_char;
         core::ptr::write_bytes(newbuf.add((*c).space), 0, new_space - (*c).space);
         (*c).buf = newbuf;
@@ -16799,7 +21517,9 @@ unsafe extern "C" fn ms_write(f: *mut FILE, buf: *const u8, len: usize) -> usize
     }
     core::ptr::copy_nonoverlapping(buf, (*c).buf.add((*c).pos), len);
     (*c).pos += len;
-    if (*c).pos >= (*c).len { (*c).len = (*c).pos; }
+    if (*c).pos >= (*c).len {
+        (*c).len = (*c).pos;
+    }
     *(*c).sizep = (*c).pos;
     len
 }
@@ -16815,15 +21535,32 @@ unsafe extern "C" fn ms_close(f: *mut FILE) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn open_memstream(bufp: *mut *mut c_char, sizep: *mut usize) -> *mut FILE {
-    if bufp.is_null() || sizep.is_null() { ERRNO = EINVAL; return core::ptr::null_mut(); }
+    if bufp.is_null() || sizep.is_null() {
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
+    }
     let f = calloc(1, core::mem::size_of::<FILE>() + UNGET + BUFSIZ) as *mut FILE;
-    if f.is_null() { ERRNO = ENOMEM; return core::ptr::null_mut(); }
+    if f.is_null() {
+        ERRNO = ENOMEM;
+        return core::ptr::null_mut();
+    }
     let buf_area = buf_ptr(f);
-    init_file(f, -1, b"w\0".as_ptr() as *const c_char, Some(ms_close), buf_area, BUFSIZ);
+    init_file(
+        f,
+        -1,
+        b"w\0".as_ptr() as *const c_char,
+        Some(ms_close),
+        buf_area,
+        BUFSIZ,
+    );
     (*f).flags = F_NORD | F_SVB;
     (*f).lbf = -1;
     let c = calloc(1, core::mem::size_of::<MsCookie>()) as *mut MsCookie;
-    if c.is_null() { free(f as *mut c_void); ERRNO = ENOMEM; return core::ptr::null_mut(); }
+    if c.is_null() {
+        free(f as *mut c_void);
+        ERRNO = ENOMEM;
+        return core::ptr::null_mut();
+    }
     (*c).bufp = bufp;
     (*c).sizep = sizep;
     (*c).pos = 0;
@@ -16840,21 +21577,34 @@ pub unsafe extern "C" fn open_memstream(bufp: *mut *mut c_char, sizep: *mut usiz
 
 unsafe extern "C" fn mseek(f: *mut FILE, off: i64, whence: c_int) -> i64 {
     let c = (*f).cookie as *mut MfCookie;
-    if whence < 0 || whence > 2 { ERRNO = EINVAL; return -1; }
+    if whence < 0 || whence > 2 {
+        ERRNO = EINVAL;
+        return -1;
+    }
     let base: i64 = match whence {
         0 => 0,
         1 => (*c).pos as i64,
         2 => (*c).len as i64,
-        _ => { ERRNO = EINVAL; return -1; }
+        _ => {
+            ERRNO = EINVAL;
+            return -1;
+        }
     };
-    if off < -base || off > (*c).size as i64 - base { ERRNO = EINVAL; return -1; }
+    if off < -base || off > (*c).size as i64 - base {
+        ERRNO = EINVAL;
+        return -1;
+    }
     (*c).pos = (base + off) as usize;
     (*c).pos as i64
 }
 
 unsafe extern "C" fn mread(f: *mut FILE, buf: *mut u8, len: usize) -> usize {
     let c = (*f).cookie as *mut MfCookie;
-    let mut rem = if (*c).pos <= (*c).len { (*c).len - (*c).pos } else { 0 };
+    let mut rem = if (*c).pos <= (*c).len {
+        (*c).len - (*c).pos
+    } else {
+        0
+    };
     let mut l = len;
     if l > rem {
         l = rem;
@@ -16863,7 +21613,9 @@ unsafe extern "C" fn mread(f: *mut FILE, buf: *mut u8, len: usize) -> usize {
     core::ptr::copy_nonoverlapping((*c).buf.add((*c).pos), buf, l);
     (*c).pos += l;
     rem -= l;
-    if rem > (*f).buf_size { rem = (*f).buf_size; }
+    if rem > (*f).buf_size {
+        rem = (*f).buf_size;
+    }
     (*f).rpos = (*f).buf;
     (*f).rend = (*f).buf.add(rem);
     core::ptr::copy_nonoverlapping((*c).buf.add((*c).pos), (*f).rpos, rem);
@@ -16876,13 +21628,21 @@ unsafe extern "C" fn mwrite(f: *mut FILE, buf: *const u8, len: usize) -> usize {
     let buffered = (*f).wpos as usize - (*f).wbase as usize;
     if buffered > 0 {
         (*f).wpos = (*f).wbase;
-        if mwrite(f, (*f).wbase, buffered) < buffered { return 0; }
+        if mwrite(f, (*f).wbase, buffered) < buffered {
+            return 0;
+        }
     }
-    if len == 0 { return 0; }
-    if (*c).mode == b'a' as c_char { (*c).pos = (*c).len; }
+    if len == 0 {
+        return 0;
+    }
+    if (*c).mode == b'a' as c_char {
+        (*c).pos = (*c).len;
+    }
     let rem = (*c).size - (*c).pos;
     let mut l = len;
-    if l > rem { l = rem; }
+    if l > rem {
+        l = rem;
+    }
     core::ptr::copy_nonoverlapping(buf, (*c).buf.add((*c).pos), l);
     (*c).pos += l;
     if (*c).pos > (*c).len {
@@ -16907,16 +21667,24 @@ unsafe extern "C" fn mclose(f: *mut FILE) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fmemopen(buf: *mut c_void, size: usize, mode: *const c_char) -> *mut FILE {
-    if mode.is_null() { ERRNO = EINVAL; return core::ptr::null_mut(); }
+    if mode.is_null() {
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
+    }
     let m = *mode;
     if m != b'r' as c_char && m != b'w' as c_char && m != b'a' as c_char {
-        ERRNO = EINVAL; return core::ptr::null_mut();
+        ERRNO = EINVAL;
+        return core::ptr::null_mut();
     }
     let has_plus = !strchr(mode as *const u8, b'+' as c_int).is_null();
     let need_alloc = buf.is_null();
-    let alloc_size = core::mem::size_of::<FILE>() + UNGET + BUFSIZ + if need_alloc { size } else { 0 };
+    let alloc_size =
+        core::mem::size_of::<FILE>() + UNGET + BUFSIZ + if need_alloc { size } else { 0 };
     let f = calloc(1, alloc_size) as *mut FILE;
-    if f.is_null() { ERRNO = ENOMEM; return core::ptr::null_mut(); }
+    if f.is_null() {
+        ERRNO = ENOMEM;
+        return core::ptr::null_mut();
+    }
     let buf_area = buf_ptr(f);
     init_file(f, -1, mode, Some(mclose), buf_area, BUFSIZ);
     (*f).flags |= F_SVB;
@@ -16925,9 +21693,15 @@ pub unsafe extern "C" fn fmemopen(buf: *mut c_void, size: usize, mode: *const c_
     } else {
         buf as *mut u8
     };
-    if need_alloc { core::ptr::write_bytes(actual_buf, 0, size); }
+    if need_alloc {
+        core::ptr::write_bytes(actual_buf, 0, size);
+    }
     let c = calloc(1, core::mem::size_of::<MfCookie>()) as *mut MfCookie;
-    if c.is_null() { free(f as *mut c_void); ERRNO = ENOMEM; return core::ptr::null_mut(); }
+    if c.is_null() {
+        free(f as *mut c_void);
+        ERRNO = ENOMEM;
+        return core::ptr::null_mut();
+    }
     (*c).buf = actual_buf;
     (*c).size = size;
     (*c).mode = m;
@@ -16935,7 +21709,9 @@ pub unsafe extern "C" fn fmemopen(buf: *mut c_void, size: usize, mode: *const c_
     (*f).read_fn = Some(mread);
     (*f).write_fn = Some(mwrite);
     (*f).seek_fn = Some(mseek);
-    if !has_plus { (*f).flags = if m == b'r' as c_char { F_NOWR } else { F_NORD }; }
+    if !has_plus {
+        (*f).flags = if m == b'r' as c_char { F_NOWR } else { F_NORD };
+    }
     if m == b'r' as c_char {
         (*c).len = size;
     } else if m == b'a' as c_char {
@@ -16976,7 +21752,13 @@ struct kernel_stat64 {
 // sys_stat = 4 on x86_64
 #[inline]
 unsafe fn sys_stat(path: *const u8, statbuf: *mut kernel_stat64) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_NEWFSTATAT, AT_FDCWD as i64, path as i64, statbuf as i64, 0)
+    <Arch as Syscalls>::syscall4(
+        SYS_NEWFSTATAT,
+        AT_FDCWD as i64,
+        path as i64,
+        statbuf as i64,
+        0,
+    )
 }
 
 // ============================================================
@@ -17023,7 +21805,11 @@ unsafe fn keyhash(k: *const c_char) -> usize {
     h
 }
 
-unsafe fn htab_lookup(key: *const c_char, hash: usize, htab: *mut HSearchData) -> *mut HSearchEntry {
+unsafe fn htab_lookup(
+    key: *const c_char,
+    hash: usize,
+    htab: *mut HSearchData,
+) -> *mut HSearchEntry {
     let tab = (*htab).tab;
     let mask = (*tab).mask;
     let entries = (*tab).entries;
@@ -17112,7 +21898,12 @@ unsafe fn hdestroy_r_impl(htab: *mut HSearchData) {
     }
 }
 
-unsafe fn hsearch_r_impl(item: HSearchEntry, action: c_int, retval: *mut *mut HSearchEntry, htab: *mut HSearchData) -> c_int {
+unsafe fn hsearch_r_impl(
+    item: HSearchEntry,
+    action: c_int,
+    retval: *mut *mut HSearchEntry,
+    htab: *mut HSearchData,
+) -> c_int {
     let hash = keyhash(item.key);
     let e = htab_lookup(item.key, hash, htab);
 
@@ -17120,7 +21911,8 @@ unsafe fn hsearch_r_impl(item: HSearchEntry, action: c_int, retval: *mut *mut HS
         *retval = e;
         return 1;
     }
-    if action == 0 { // FIND
+    if action == 0 {
+        // FIND
         *retval = core::ptr::null_mut();
         return 0;
     }
@@ -17174,7 +21966,12 @@ pub unsafe extern "C" fn hdestroy_r(htab: *mut HSearchData) {
 
 #[no_mangle]
 #[linkage = "weak"]
-pub unsafe extern "C" fn hsearch_r(item: HSearchEntry, action: c_int, retval: *mut *mut HSearchEntry, htab: *mut HSearchData) -> c_int {
+pub unsafe extern "C" fn hsearch_r(
+    item: HSearchEntry,
+    action: c_int,
+    retval: *mut *mut HSearchEntry,
+    htab: *mut HSearchData,
+) -> c_int {
     hsearch_r_impl(item, action, retval, htab)
 }
 
@@ -17419,7 +22216,10 @@ pub unsafe extern "C" fn twalk(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tdestroy(root: *mut TreeNode, freekey: Option<unsafe extern "C" fn(*mut c_void)>) {
+pub unsafe extern "C" fn tdestroy(
+    root: *mut TreeNode,
+    freekey: Option<unsafe extern "C" fn(*mut c_void)>,
+) {
     if root.is_null() {
         return;
     }
@@ -17451,7 +22251,6 @@ pub unsafe extern "C" fn fnmatch(pat: *const c_char, str: *const c_char, flags: 
         FNM_NOMATCH
     }
 }
-
 
 // ============================================================
 // mntent: setmntent/endmntent/getmntent/getmntent_r/addmntent/hasmntopt
@@ -17531,16 +22330,17 @@ unsafe fn unescape_ent(beg: *mut c_char) -> *mut c_char {
     beg
 }
 
-unsafe fn parse_mntent_line(
-    linebuf: *mut c_char,
-    mnt: *mut MntEnt,
-) -> *mut MntEnt {
+unsafe fn parse_mntent_line(linebuf: *mut c_char, mnt: *mut MntEnt) -> *mut MntEnt {
     let _len = strlen(linebuf as *const c_char);
     // skip comments and empty lines
     // parse: fsname dir type opts freq passno
     let mut p = linebuf;
     // skip leading whitespace
-    while *p == b' ' as c_char || *p == b'\t' as c_char || *p == b'\n' as c_char || *p == b'\r' as c_char {
+    while *p == b' ' as c_char
+        || *p == b'\t' as c_char
+        || *p == b'\n' as c_char
+        || *p == b'\r' as c_char
+    {
         p = p.add(1);
     }
     if *p == 0 || *p == b'#' as c_char {
@@ -17552,30 +22352,42 @@ unsafe fn parse_mntent_line(
     while *p != 0 && *p != b' ' as c_char && *p != b'\t' as c_char && *p != b'\n' as c_char {
         p = p.add(1);
     }
-    if *p == 0 { return core::ptr::null_mut(); }
+    if *p == 0 {
+        return core::ptr::null_mut();
+    }
     *p = 0;
     p = p.add(1);
-    while *p == b' ' as c_char || *p == b'\t' as c_char { p = p.add(1); }
+    while *p == b' ' as c_char || *p == b'\t' as c_char {
+        p = p.add(1);
+    }
 
     // dir
     (*mnt).mnt_dir = p;
     while *p != 0 && *p != b' ' as c_char && *p != b'\t' as c_char && *p != b'\n' as c_char {
         p = p.add(1);
     }
-    if *p == 0 { return core::ptr::null_mut(); }
+    if *p == 0 {
+        return core::ptr::null_mut();
+    }
     *p = 0;
     p = p.add(1);
-    while *p == b' ' as c_char || *p == b'\t' as c_char { p = p.add(1); }
+    while *p == b' ' as c_char || *p == b'\t' as c_char {
+        p = p.add(1);
+    }
 
     // type
     (*mnt).mnt_type = p;
     while *p != 0 && *p != b' ' as c_char && *p != b'\t' as c_char && *p != b'\n' as c_char {
         p = p.add(1);
     }
-    if *p == 0 { return core::ptr::null_mut(); }
+    if *p == 0 {
+        return core::ptr::null_mut();
+    }
     *p = 0;
     p = p.add(1);
-    while *p == b' ' as c_char || *p == b'\t' as c_char { p = p.add(1); }
+    while *p == b' ' as c_char || *p == b'\t' as c_char {
+        p = p.add(1);
+    }
 
     // opts
     (*mnt).mnt_opts = p;
@@ -17594,7 +22406,9 @@ unsafe fn parse_mntent_line(
     (*mnt).mnt_freq = 0;
     (*mnt).mnt_passno = 0;
     // skip whitespace
-    while *p == b' ' as c_char || *p == b'\t' as c_char { p = p.add(1); }
+    while *p == b' ' as c_char || *p == b'\t' as c_char {
+        p = p.add(1);
+    }
     if *p >= b'0' as c_char && *p <= b'9' as c_char {
         (*mnt).mnt_freq = (*p - b'0' as c_char) as c_int;
         p = p.add(1);
@@ -17603,7 +22417,9 @@ unsafe fn parse_mntent_line(
             p = p.add(1);
         }
     }
-    while *p == b' ' as c_char || *p == b'\t' as c_char { p = p.add(1); }
+    while *p == b' ' as c_char || *p == b'\t' as c_char {
+        p = p.add(1);
+    }
     if *p >= b'0' as c_char && *p <= b'9' as c_char {
         (*mnt).mnt_passno = (*p - b'0' as c_char) as c_int;
         p = p.add(1);
@@ -17632,15 +22448,24 @@ unsafe fn mntent_fgetc(f: *mut FILE) -> c_int {
 }
 
 unsafe fn mntent_fgets(buf: *mut c_char, n: usize, f: *mut FILE) -> *mut c_char {
-    if n == 0 { return core::ptr::null_mut(); }
+    if n == 0 {
+        return core::ptr::null_mut();
+    }
     let max = n - 1;
     let mut i = 0usize;
     while i < max {
         let c = mntent_fgetc(f);
-        if c == -1 { if i == 0 { return core::ptr::null_mut(); } break; }
+        if c == -1 {
+            if i == 0 {
+                return core::ptr::null_mut();
+            }
+            break;
+        }
         *buf.add(i) = c as c_char;
         i += 1;
-        if c == b'\n' as c_int { break; }
+        if c == b'\n' as c_int {
+            break;
+        }
     }
     *buf.add(i) = 0;
     buf
@@ -17671,7 +22496,13 @@ pub unsafe extern "C" fn getmntent_r(
         }
         let mut has_newline = false;
         let mut p = linebuf;
-        while *p != 0 { if *p == b'\n' as c_char { has_newline = true; break; } p = p.add(1); }
+        while *p != 0 {
+            if *p == b'\n' as c_char {
+                has_newline = true;
+                break;
+            }
+            p = p.add(1);
+        }
         if !has_newline {
             ERRNO = 34;
             return core::ptr::null_mut();
@@ -17685,7 +22516,12 @@ pub unsafe extern "C" fn getmntent_r(
 
 #[no_mangle]
 pub unsafe extern "C" fn getmntent(f: *mut FILE) -> *mut MntEnt {
-    getmntent_r(f, core::ptr::addr_of_mut!(MNTENT_MNT), SENTINEL_PTR as *mut c_char, 0)
+    getmntent_r(
+        f,
+        core::ptr::addr_of_mut!(MNTENT_MNT),
+        SENTINEL_PTR as *mut c_char,
+        0,
+    )
 }
 
 #[no_mangle]
@@ -17701,7 +22537,11 @@ pub unsafe extern "C" fn addmntent(f: *mut FILE, mnt: *const MntEnt) -> c_int {
         (*mnt).mnt_freq,
         (*mnt).mnt_passno,
     );
-    if written < 0 { 1 } else { 0 }
+    if written < 0 {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -17742,12 +22582,31 @@ unsafe fn sys_msgget(key: c_int, msgflg: c_int) -> i64 {
 
 #[inline]
 unsafe fn sys_msgsnd(msqid: c_int, msgp: *const c_void, msgsz: usize, msgflg: c_int) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_MSGSND, msqid as i64, msgp as i64, msgsz as i64, msgflg as i64)
+    <Arch as Syscalls>::syscall4(
+        SYS_MSGSND,
+        msqid as i64,
+        msgp as i64,
+        msgsz as i64,
+        msgflg as i64,
+    )
 }
 
 #[inline]
-unsafe fn sys_msgrcv(msqid: c_int, msgp: *mut c_void, msgsz: usize, msgtyp: c_long, msgflg: c_int) -> i64 {
-    <Arch as Syscalls>::syscall5(SYS_MSGRCV, msqid as i64, msgp as i64, msgsz as i64, msgtyp as i64, msgflg as i64)
+unsafe fn sys_msgrcv(
+    msqid: c_int,
+    msgp: *mut c_void,
+    msgsz: usize,
+    msgtyp: c_long,
+    msgflg: c_int,
+) -> i64 {
+    <Arch as Syscalls>::syscall5(
+        SYS_MSGRCV,
+        msqid as i64,
+        msgp as i64,
+        msgsz as i64,
+        msgtyp as i64,
+        msgflg as i64,
+    )
 }
 
 #[inline]
@@ -17767,7 +22626,13 @@ unsafe fn sys_semop(semid: c_int, sops: *const c_void, nsops: usize) -> i64 {
 
 #[inline]
 unsafe fn sys_semctl(semid: c_int, semnum: c_int, cmd: c_int, arg: *mut c_void) -> i64 {
-    <Arch as Syscalls>::syscall4(SYS_SEMCTL, semid as i64, semnum as i64, cmd as i64, arg as i64)
+    <Arch as Syscalls>::syscall4(
+        SYS_SEMCTL,
+        semid as i64,
+        semnum as i64,
+        cmd as i64,
+        arg as i64,
+    )
 }
 
 #[inline]
@@ -17799,50 +22664,94 @@ pub unsafe extern "C" fn ftok(path: *const c_char, id: c_int) -> c_int {
         ERRNO = (-r) as c_int;
         return -1;
     }
-    ((st.st_ino & 0xffff) | ((st.st_dev & 0xff) << 16) | (((id as u32 & 0xff) << 24)) as u64) as c_int
+    ((st.st_ino & 0xffff) | ((st.st_dev & 0xff) << 16) | ((id as u32 & 0xff) << 24) as u64) as c_int
 }
 
 // msgget
 #[no_mangle]
 pub unsafe extern "C" fn msgget(key: c_int, msgflg: c_int) -> c_int {
     let r = sys_msgget(key, msgflg);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // msgsnd
 #[no_mangle]
-pub unsafe extern "C" fn msgsnd(msqid: c_int, msgp: *const c_void, msgsz: usize, msgflg: c_int) -> c_int {
+pub unsafe extern "C" fn msgsnd(
+    msqid: c_int,
+    msgp: *const c_void,
+    msgsz: usize,
+    msgflg: c_int,
+) -> c_int {
     let r = sys_msgsnd(msqid, msgp, msgsz, msgflg);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // msgrcv
 #[no_mangle]
-pub unsafe extern "C" fn msgrcv(msqid: c_int, msgp: *mut c_void, msgsz: usize, msgtyp: c_long, msgflg: c_int) -> isize {
+pub unsafe extern "C" fn msgrcv(
+    msqid: c_int,
+    msgp: *mut c_void,
+    msgsz: usize,
+    msgtyp: c_long,
+    msgflg: c_int,
+) -> isize {
     let r = sys_msgrcv(msqid, msgp, msgsz, msgtyp, msgflg);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as isize }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as isize
+    }
 }
 
 // msgctl
 #[no_mangle]
 pub unsafe extern "C" fn msgctl(msqid: c_int, cmd: c_int, buf: *mut c_void) -> c_int {
     let r = sys_msgctl(msqid, cmd, buf);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // semget
 #[no_mangle]
 pub unsafe extern "C" fn semget(key: c_int, nsems: c_int, semflg: c_int) -> c_int {
-    if nsems > 65535 { ERRNO = 22; return -1; }
+    if nsems > 65535 {
+        ERRNO = 22;
+        return -1;
+    }
     let r = sys_semget(key, nsems, semflg);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // semop
 #[no_mangle]
 pub unsafe extern "C" fn semop(semid: c_int, sops: *const c_void, nsops: usize) -> c_int {
     let r = sys_semop(semid, sops, nsops);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // semctl - C variadic
@@ -17857,14 +22766,24 @@ pub unsafe extern "C" fn semctl(semid: c_int, semnum: c_int, cmd: c_int, mut arg
         _ => {}
     }
     let r = sys_semctl(semid, semnum, cmd, arg);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // shmget
 #[no_mangle]
 pub unsafe extern "C" fn shmget(key: c_int, size: usize, shmflg: c_int) -> c_int {
     let r = sys_shmget(key, size, shmflg);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // shmat
@@ -17882,14 +22801,24 @@ pub unsafe extern "C" fn shmat(shmid: c_int, shmaddr: *const c_void, shmflg: c_i
 #[no_mangle]
 pub unsafe extern "C" fn shmdt(shmaddr: *const c_void) -> c_int {
     let r = sys_shmdt(shmaddr);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // shmctl
 #[no_mangle]
 pub unsafe extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> c_int {
     let r = sys_shmctl(shmid, cmd, buf);
-    if r < 0 { ERRNO = (-r) as c_int; -1 } else { r as c_int }
+    if r < 0 {
+        ERRNO = (-r) as c_int;
+        -1
+    } else {
+        r as c_int
+    }
 }
 
 // ============================================================
@@ -18072,10 +23001,7 @@ unsafe fn runtime_text_cstr(text: *mut crabc_core::runtime::TextV1, source: *con
     }
 }
 
-unsafe fn runtime_loader_failure(
-    error: *mut crabc_core::runtime::TextV1,
-    fallback: &[u8],
-) {
+unsafe fn runtime_loader_failure(error: *mut crabc_core::runtime::TextV1, fallback: &[u8]) {
     // dlerror consumes the current per-thread error once. Copy it before
     // returning so native Rust never receives a TLS-borrowed pointer.
     if let Some(error_callback) = unsafe { LDSO_DLERROR } {
@@ -18310,9 +23236,7 @@ unsafe extern "C" fn runtime_thread_join(
     pthread_join(handle as PthreadT, result)
 }
 
-unsafe extern "C" fn runtime_thread_detach(
-    handle: crabc_core::runtime::ThreadHandleV1,
-) -> c_int {
+unsafe extern "C" fn runtime_thread_detach(handle: crabc_core::runtime::ThreadHandleV1) -> c_int {
     if handle == 0 {
         return EINVAL;
     }
@@ -18333,19 +23257,14 @@ unsafe extern "C" fn runtime_thread_self(
     0
 }
 
-unsafe extern "C" fn runtime_thread_cancel(
-    handle: crabc_core::runtime::ThreadHandleV1,
-) -> c_int {
+unsafe extern "C" fn runtime_thread_cancel(handle: crabc_core::runtime::ThreadHandleV1) -> c_int {
     if handle == 0 {
         return EINVAL;
     }
     pthread_cancel(handle as PthreadT)
 }
 
-unsafe extern "C" fn runtime_thread_setcancelstate(
-    state: u32,
-    old_state: *mut u32,
-) -> c_int {
+unsafe extern "C" fn runtime_thread_setcancelstate(state: u32, old_state: *mut u32) -> c_int {
     let mut previous = 0;
     let result = pthread_setcancelstate(state as c_int, &mut previous);
     if result == 0 && !old_state.is_null() {
@@ -18354,10 +23273,7 @@ unsafe extern "C" fn runtime_thread_setcancelstate(
     result
 }
 
-unsafe extern "C" fn runtime_thread_setcanceltype(
-    cancel_type: u32,
-    old_type: *mut u32,
-) -> c_int {
+unsafe extern "C" fn runtime_thread_setcanceltype(cancel_type: u32, old_type: *mut u32) -> c_int {
     let mut previous = 0;
     let result = pthread_setcanceltype(cancel_type as c_int, &mut previous);
     if result == 0 && !old_type.is_null() {
@@ -18399,10 +23315,7 @@ unsafe extern "C" fn runtime_thread_getspecific(key: u32) -> *mut c_void {
     pthread_getspecific(key as pthread_key_t)
 }
 
-unsafe extern "C" fn runtime_thread_setspecific(
-    key: u32,
-    value: *const c_void,
-) -> c_int {
+unsafe extern "C" fn runtime_thread_setspecific(key: u32, value: *const c_void) -> c_int {
     if key >= crabc_core::runtime::THREAD_KEY_CAPACITY {
         return EINVAL;
     }
@@ -18415,14 +23328,22 @@ unsafe extern "C" fn runtime_thread_setspecific(
 // to Rust. No public stdio symbol or C errno TLS crosses that native boundary.
 #[inline]
 unsafe fn runtime_cfile_failure_status() -> c_int {
-    if ERRNO > 0 && ERRNO <= 4095 { ERRNO } else { EIO_VAL }
+    if ERRNO > 0 && ERRNO <= 4095 {
+        ERRNO
+    } else {
+        EIO_VAL
+    }
 }
 
 #[inline]
 unsafe fn runtime_cfile_file(
     handle: crabc_core::runtime::CFileHandleV1,
 ) -> core::result::Result<*mut FILE, c_int> {
-    if handle.is_null() { Err(EINVAL) } else { Ok(handle as *mut FILE) }
+    if handle.is_null() {
+        Err(EINVAL)
+    } else {
+        Ok(handle as *mut FILE)
+    }
 }
 
 unsafe extern "C" fn runtime_cfile_open_memory(
@@ -18496,15 +23417,17 @@ unsafe extern "C" fn runtime_cfile_write(
     0
 }
 
-unsafe extern "C" fn runtime_cfile_flush(
-    handle: crabc_core::runtime::CFileHandleV1,
-) -> c_int {
+unsafe extern "C" fn runtime_cfile_flush(handle: crabc_core::runtime::CFileHandleV1) -> c_int {
     let file = match runtime_cfile_file(handle) {
         Ok(file) => file,
         Err(status) => return status,
     };
     ERRNO = 0;
-    if fflush(file) == 0 { 0 } else { runtime_cfile_failure_status() }
+    if fflush(file) == 0 {
+        0
+    } else {
+        runtime_cfile_failure_status()
+    }
 }
 
 unsafe extern "C" fn runtime_cfile_seek(
@@ -18589,9 +23512,7 @@ unsafe extern "C" fn runtime_cfile_error(
     0
 }
 
-unsafe extern "C" fn runtime_cfile_reset(
-    handle: crabc_core::runtime::CFileHandleV1,
-) -> c_int {
+unsafe extern "C" fn runtime_cfile_reset(handle: crabc_core::runtime::CFileHandleV1) -> c_int {
     let file = match runtime_cfile_file(handle) {
         Ok(file) => file,
         Err(status) => return status,
@@ -18604,9 +23525,7 @@ unsafe extern "C" fn runtime_cfile_reset(
     0
 }
 
-unsafe extern "C" fn runtime_cfile_close(
-    handle: crabc_core::runtime::CFileHandleV1,
-) -> c_int {
+unsafe extern "C" fn runtime_cfile_close(handle: crabc_core::runtime::CFileHandleV1) -> c_int {
     let file = match runtime_cfile_file(handle) {
         Ok(file) => file,
         Err(status) => return status,
@@ -18614,7 +23533,11 @@ unsafe extern "C" fn runtime_cfile_close(
     // `fclose` releases both the FILE and its memory-stream cookie on every
     // result path. Do not dereference `file` after this call.
     ERRNO = 0;
-    if fclose(file) == 0 { 0 } else { runtime_cfile_failure_status() }
+    if fclose(file) == 0 {
+        0
+    } else {
+        runtime_cfile_failure_status()
+    }
 }
 
 static CRABC_RUNTIME_V1: crabc_core::runtime::RuntimeV1 = crabc_core::runtime::RuntimeV1 {

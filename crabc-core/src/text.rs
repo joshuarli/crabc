@@ -123,10 +123,15 @@ pub fn version_cmp(left: &[u8], right: &[u8]) -> Ordering {
     {
         let left_digit = left.get(index).copied().unwrap_or(b'0');
         let right_digit = right.get(index).copied().unwrap_or(b'0');
-        return left_digit.wrapping_sub(b'0').cmp(&right_digit.wrapping_sub(b'0'));
+        return left_digit
+            .wrapping_sub(b'0')
+            .cmp(&right_digit.wrapping_sub(b'0'));
     }
 
-    left.get(index).copied().unwrap_or(0).cmp(&right.get(index).copied().unwrap_or(0))
+    left.get(index)
+        .copied()
+        .unwrap_or(0)
+        .cmp(&right.get(index).copied().unwrap_or(0))
 }
 
 /// Compares two NUL-terminated strings with musl's `strverscmp` rule.

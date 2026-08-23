@@ -39,8 +39,13 @@ fn public_aarch64_layout_matches_pinned_musl() {
         "-o",
         custom_bin.to_str().unwrap(),
     ]);
-    let status = custom.status().expect("failed to run musl-gcc for crabc ABI probe");
-    assert!(status.success(), "crabc-header ABI probe compilation failed");
+    let status = custom
+        .status()
+        .expect("failed to run musl-gcc for crabc ABI probe");
+    assert!(
+        status.success(),
+        "crabc-header ABI probe compilation failed"
+    );
 
     let mut oracle = Command::new("musl-gcc");
     oracle.args([
@@ -54,7 +59,9 @@ fn public_aarch64_layout_matches_pinned_musl() {
         "-o",
         oracle_bin.to_str().unwrap(),
     ]);
-    let status = oracle.status().expect("failed to run musl-gcc for musl ABI probe");
+    let status = oracle
+        .status()
+        .expect("failed to run musl-gcc for musl ABI probe");
     assert!(status.success(), "musl-header ABI probe compilation failed");
 
     let custom_output = Command::new(&custom_bin)
@@ -75,7 +82,8 @@ fn public_aarch64_layout_matches_pinned_musl() {
     );
 
     assert_eq!(
-        custom_output.stdout, oracle_output.stdout,
+        custom_output.stdout,
+        oracle_output.stdout,
         "crabc public AArch64 layout diverges from pinned musl 1.2.6\ncrabc: {}musl: {}",
         String::from_utf8_lossy(&custom_output.stdout),
         String::from_utf8_lossy(&oracle_output.stdout)

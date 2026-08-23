@@ -1,7 +1,7 @@
 use core::num::NonZeroU64;
 
-use crabc_rs::{fs, io};
 use crabc_rs::fs::{Advice, Mode, OFlags};
+use crabc_rs::{fs, io};
 
 #[test]
 fn native_fadvise_policies_succeed_without_moving_position() {
@@ -39,7 +39,10 @@ fn native_fadvise_policies_succeed_without_moving_position() {
         fs::fadvise(&file, 0, length, advice).expect("apply direct fadvise policy");
     }
 
-    assert_eq!(fs::tell(&file).expect("read position after fadvise"), before);
+    assert_eq!(
+        fs::tell(&file).expect("read position after fadvise"),
+        before
+    );
     let oversized_offset = i64::MAX as u64 + 1;
     let range_error = fs::fadvise(&file, oversized_offset, None, Advice::Normal);
     drop(file);

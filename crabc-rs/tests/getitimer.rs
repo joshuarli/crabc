@@ -23,14 +23,15 @@ fn native_getitimer_reads_all_closed_kinds_without_mutating_timer_state() {
 
 #[test]
 fn interval_timer_selector_rejects_an_invalid_linux_kind() {
-    assert_eq!(IntervalTimerKind::try_from(3), Err(crabc_core::Errno::INVAL));
+    assert_eq!(
+        IntervalTimerKind::try_from(3),
+        Err(crabc_core::Errno::INVAL)
+    );
 
     // Exercise the raw seam as well: Linux rejects selector 3 with EINVAL,
     // while the valid output storage remains untouched by this failed query.
     let mut value = MaybeUninit::<crabc_core::time::KernelItimerval>::uninit();
-    let result = unsafe {
-        crabc_core::time::getitimer_raw(3, value.as_mut_ptr().cast())
-    };
+    let result = unsafe { crabc_core::time::getitimer_raw(3, value.as_mut_ptr().cast()) };
     assert_eq!(result, Err(crabc_core::Errno::INVAL));
 }
 

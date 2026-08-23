@@ -12,7 +12,10 @@ fn udp_connect_encodes_ipv4_loopback_endpoint() {
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set IPv4 fixture timeout");
-    let port = server.local_addr().expect("read IPv4 fixture address").port();
+    let port = server
+        .local_addr()
+        .expect("read IPv4 fixture address")
+        .port();
     let socket = net::socket(
         net::AddressFamily::INET,
         net::SocketType::DGRAM,
@@ -30,7 +33,9 @@ fn udp_connect_encodes_ipv4_loopback_endpoint() {
     );
 
     let mut received = [0u8; 32];
-    let (length, peer) = server.recv_from(&mut received).expect("receive IPv4 fixture datagram");
+    let (length, peer) = server
+        .recv_from(&mut received)
+        .expect("receive IPv4 fixture datagram");
     assert_eq!(&received[..length], payload);
     assert!(peer.ip().is_ipv4());
 }
@@ -43,16 +48,20 @@ fn udp_connect_encodes_ipv6_loopback_endpoint() {
             if matches!(
                 error.kind(),
                 ErrorKind::AddrNotAvailable | ErrorKind::Unsupported
-            ) => {
-                eprintln!("skipping IPv6 loopback fixture: {error}");
-                return;
-            }
+            ) =>
+        {
+            eprintln!("skipping IPv6 loopback fixture: {error}");
+            return;
+        }
         Err(error) => panic!("bind isolated IPv6 UDP fixture: {error}"),
     };
     server
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("set IPv6 fixture timeout");
-    let port = server.local_addr().expect("read IPv6 fixture address").port();
+    let port = server
+        .local_addr()
+        .expect("read IPv6 fixture address")
+        .port();
     let socket = net::socket(
         net::AddressFamily::INET6,
         net::SocketType::DGRAM,
@@ -60,7 +69,10 @@ fn udp_connect_encodes_ipv6_loopback_endpoint() {
         None,
     )
     .expect("create native IPv6 UDP socket");
-    let endpoint = SocketAddress::new(IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]), port);
+    let endpoint = SocketAddress::new(
+        IpAddress::V6([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+        port,
+    );
 
     net::connect(&socket, endpoint).expect("connect native IPv6 UDP socket");
     let payload = b"net-v6";
@@ -70,7 +82,9 @@ fn udp_connect_encodes_ipv6_loopback_endpoint() {
     );
 
     let mut received = [0u8; 32];
-    let (length, peer) = server.recv_from(&mut received).expect("receive IPv6 fixture datagram");
+    let (length, peer) = server
+        .recv_from(&mut received)
+        .expect("receive IPv6 fixture datagram");
     assert_eq!(&received[..length], payload);
     assert!(peer.ip().is_ipv6());
 }

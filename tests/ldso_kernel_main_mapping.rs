@@ -12,11 +12,20 @@ fn ldso_reuses_the_kernel_mapped_main_pie() {
     let candidate = test_support::TempArtifact::new("ldso-kernel-main-candidate");
 
     let status = Command::new("musl-gcc")
-        .args(["-fPIE", "-pie", "-fno-builtin", fixture.to_str().unwrap(), "-o"])
+        .args([
+            "-fPIE",
+            "-pie",
+            "-fno-builtin",
+            fixture.to_str().unwrap(),
+            "-o",
+        ])
         .arg(reference.to_str().unwrap())
         .status()
         .expect("failed to compile pinned-musl main-image fixture");
-    assert!(status.success(), "pinned-musl main-image fixture compilation failed");
+    assert!(
+        status.success(),
+        "pinned-musl main-image fixture compilation failed"
+    );
 
     let status = Command::new("musl-gcc")
         .args([
@@ -35,12 +44,18 @@ fn ldso_reuses_the_kernel_mapped_main_pie() {
         .arg(candidate.to_str().unwrap())
         .status()
         .expect("failed to compile crabc main-image fixture");
-    assert!(status.success(), "crabc main-image fixture compilation failed");
+    assert!(
+        status.success(),
+        "crabc main-image fixture compilation failed"
+    );
 
     let reference_output = Command::new(reference.to_str().unwrap())
         .output()
         .expect("failed to run pinned-musl main-image fixture");
-    assert!(reference_output.status.success(), "pinned musl failed: {reference_output:?}");
+    assert!(
+        reference_output.status.success(),
+        "pinned musl failed: {reference_output:?}"
+    );
     assert_eq!(reference_output.stdout, b"kernel-main-image=ok\n");
     assert!(reference_output.stderr.is_empty());
 

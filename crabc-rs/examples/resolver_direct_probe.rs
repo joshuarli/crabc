@@ -23,8 +23,14 @@ unsafe impl GlobalAlloc for ProbeAllocator {
         let current = NEXT.load(Ordering::Relaxed);
         let aligned = (base + current + layout.align() - 1) & !(layout.align() - 1);
         let offset = aligned.saturating_sub(base);
-        let Some(end) = offset.checked_add(layout.size()) else { return core::ptr::null_mut(); };
-        if end > 16 * 1024 || NEXT.compare_exchange(current, end, Ordering::Relaxed, Ordering::Relaxed).is_err() {
+        let Some(end) = offset.checked_add(layout.size()) else {
+            return core::ptr::null_mut();
+        };
+        if end > 16 * 1024
+            || NEXT
+                .compare_exchange(current, end, Ordering::Relaxed, Ordering::Relaxed)
+                .is_err()
+        {
             return core::ptr::null_mut();
         }
         aligned as *mut u8
@@ -44,7 +50,10 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 #[no_mangle]
 pub extern "C" fn crabc_rs_resolver_direct_probe() -> i32 {
     let resolver = Resolver::new(ResolverConfig::default());
-    if resolver.lookup(Some("127.0.0.1"), None, LookupOptions::default()).is_err() {
+    if resolver
+        .lookup(Some("127.0.0.1"), None, LookupOptions::default())
+        .is_err()
+    {
         return 1;
     }
     if HostDatabase::from_bytes(b"127.0.0.1 localhost").is_err()
@@ -53,12 +62,17 @@ pub extern "C" fn crabc_rs_resolver_direct_probe() -> i32 {
     {
         return 2;
     }
-    if IpAddress::parse(b"127.0.0.1").is_none() { return 3; }
+    if IpAddress::parse(b"127.0.0.1").is_none() {
+        return 3;
+    }
     let system = match ResolverConfig::from_system() {
         Ok(config) => config,
         Err(_) => return 4,
     };
-    if system.hosts().is_none() || system.search_domains().len() > 6 || system.nameserver_count() > 3 {
+    if system.hosts().is_none()
+        || system.search_domains().len() > 6
+        || system.nameserver_count() > 3
+    {
         return 5;
     }
     0

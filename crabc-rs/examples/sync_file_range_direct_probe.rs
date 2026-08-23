@@ -41,8 +41,12 @@ pub extern "C" fn crabc_rs_sync_file_range_direct_probe() -> i32 {
     ) {
         return -error.raw();
     }
-    if io::sync_file_range(file.as_fd(), i64::MAX as u64, 1, SyncFileRangeFlags::empty())
-        != Err(Errno::INVAL)
+    if io::sync_file_range(
+        file.as_fd(),
+        i64::MAX as u64,
+        1,
+        SyncFileRangeFlags::empty(),
+    ) != Err(Errno::INVAL)
     {
         return 2;
     }

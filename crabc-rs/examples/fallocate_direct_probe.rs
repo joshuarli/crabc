@@ -46,15 +46,12 @@ pub extern "C" fn crabc_rs_fallocate_direct_probe() -> i32 {
     if fs::seek(&file, SeekFrom::End(0)).ok() != Some(8192) {
         return 7;
     }
-    if fs::fallocate(&file, FallocateFlags::ALLOCATE, i64::MAX as u64, 1)
-        .err()
+    if fs::fallocate(&file, FallocateFlags::ALLOCATE, i64::MAX as u64, 1).err()
         != Some(crabc_rs::Errno::INVAL)
     {
         return 8;
     }
-    if fs::posix_fallocate(&file, i64::MAX as u64, 1).err()
-        != Some(crabc_rs::Errno::INVAL)
-    {
+    if fs::posix_fallocate(&file, i64::MAX as u64, 1).err() != Some(crabc_rs::Errno::INVAL) {
         return 9;
     }
     0

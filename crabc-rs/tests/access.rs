@@ -14,7 +14,10 @@ fn access_uses_the_current_directory_for_existing_and_missing_paths() {
         std::process::id(),
         SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed),
     );
-    assert_eq!(fs::access(&missing, Access::EXISTS).unwrap_err(), Errno::NOENT);
+    assert_eq!(
+        fs::access(&missing, Access::EXISTS).unwrap_err(),
+        Errno::NOENT
+    );
 }
 
 #[test]
@@ -27,5 +30,8 @@ fn access_mode_and_path_inputs_are_validated_before_the_kernel_boundary() {
         fs::access(".", Access::from_bits_retain(0x8)).unwrap_err(),
         Errno::INVAL,
     );
-    assert_eq!(fs::access(b"bad\0path".as_slice(), Access::EXISTS).unwrap_err(), Errno::INVAL);
+    assert_eq!(
+        fs::access(b"bad\0path".as_slice(), Access::EXISTS).unwrap_err(),
+        Errno::INVAL
+    );
 }

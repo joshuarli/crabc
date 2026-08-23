@@ -93,13 +93,18 @@ int main() {
     );
     let status = Command::new("musl-gcc")
         .args([
-            "-fPIE", "-pie", "-D_GNU_SOURCE",
-            "-I", manifest_dir.join("include").to_str().unwrap(),
-            "-L", manifest_dir.join("target/debug").to_str().unwrap(),
+            "-fPIE",
+            "-pie",
+            "-D_GNU_SOURCE",
+            "-I",
+            manifest_dir.join("include").to_str().unwrap(),
+            "-L",
+            manifest_dir.join("target/debug").to_str().unwrap(),
             src_path.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
             "-lc",
-            "-o", bin_path.to_str().unwrap(),
+            "-o",
+            bin_path.to_str().unwrap(),
         ])
         .arg(dynamic_linker)
         .status()
@@ -107,7 +112,10 @@ int main() {
     assert!(status.success(), "crypt test compilation failed");
 
     let output = Command::new(&bin_path)
-        .env("LD_LIBRARY_PATH", manifest_dir.join("target/debug").to_str().unwrap())
+        .env(
+            "LD_LIBRARY_PATH",
+            manifest_dir.join("target/debug").to_str().unwrap(),
+        )
         .output()
         .expect("failed to run crypt test");
 
@@ -117,8 +125,5 @@ int main() {
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "crypt ok\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "crypt ok\n");
 }

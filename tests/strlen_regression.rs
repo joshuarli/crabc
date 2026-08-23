@@ -26,7 +26,10 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let status = command
         .status()
         .expect("failed to compile the strlen regression fixture");
-    assert!(status.success(), "strlen regression fixture compilation failed");
+    assert!(
+        status.success(),
+        "strlen regression fixture compilation failed"
+    );
 }
 
 fn run(binary: &std::path::Path, candidate: bool) -> Output {
@@ -35,7 +38,9 @@ fn run(binary: &std::path::Path, candidate: bool) -> Output {
     if candidate {
         command.env("LD_LIBRARY_PATH", root.join("target/debug"));
     }
-    command.output().expect("failed to run the strlen regression fixture")
+    command
+        .output()
+        .expect("failed to run the strlen regression fixture")
 }
 
 #[test]
@@ -55,7 +60,8 @@ fn strlen_matches_pinned_musl_across_alignment_and_guard_pages() {
     );
     assert_eq!(reference_output.stdout, b"strlen oracle ok\n");
     assert_eq!(
-        candidate_output.status, reference_output.status,
+        candidate_output.status,
+        reference_output.status,
         "crabc exit status differs; stderr: {}",
         String::from_utf8_lossy(&candidate_output.stderr),
     );

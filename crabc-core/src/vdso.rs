@@ -119,11 +119,7 @@ pub(crate) unsafe fn gettimeofday_status(timeval: *mut u8, timezone: *mut u8) ->
 }
 
 #[inline(always)]
-unsafe fn dispatch_clock_gettime(
-    function: ClockGettime,
-    clock_id: i32,
-    timespec: *mut u8,
-) -> i32 {
+unsafe fn dispatch_clock_gettime(function: ClockGettime, clock_id: i32, timespec: *mut u8) -> i32 {
     // SAFETY: The typed function address comes from the validated vDSO and
     // the caller owns the Linux timespec output contract.
     unsafe { function(clock_id, timespec) }
@@ -195,13 +191,19 @@ unsafe fn published_gettimeofday_function(address: usize) -> Gettimeofday {
 
 unsafe extern "C" fn direct_clock_gettime(clock_id: i32, timespec: *mut u8) -> i32 {
     // SAFETY: The caller owns the writable Linux timespec output contract.
-    (unsafe { crate::syscall2(crate::SYS_CLOCK_GETTIME, clock_id as usize, timespec as usize) })
-        as i32
+    (unsafe {
+        crate::syscall2(
+            crate::SYS_CLOCK_GETTIME,
+            clock_id as usize,
+            timespec as usize,
+        )
+    }) as i32
 }
 
 unsafe extern "C" fn direct_gettimeofday(timeval: *mut u8, timezone: *mut u8) -> i32 {
     // SAFETY: the caller owns the kernel two-pointer output contract.
-    (unsafe { crate::syscall2(crate::SYS_GETTIMEOFDAY, timeval as usize, timezone as usize) }) as i32
+    (unsafe { crate::syscall2(crate::SYS_GETTIMEOFDAY, timeval as usize, timezone as usize) })
+        as i32
 }
 
 #[inline]
@@ -309,12 +311,7 @@ fn vdso_symbol_offset(image: &[u8], names: &[&[u8]]) -> Option<usize> {
         return None;
     }
 
-    let strings = file_range_at_virtual(
-        image,
-        table,
-        string_address?,
-        string_size?,
-    )?;
+    let strings = file_range_at_virtual(image, table, string_address?, string_size?)?;
     let hash_offset = virtual_range_to_file(image, table, hash_address?, 8)?;
     let bucket_count = read_u32(image, hash_offset)? as usize;
     let symbol_count = read_u32(image, hash_offset.checked_add(4)?)? as usize;
@@ -330,14 +327,7 @@ fn vdso_symbol_offset(image: &[u8], names: &[&[u8]]) -> Option<usize> {
     let symbols = file_range_at_virtual(image, table, symbol_address?, symbol_bytes)?;
 
     let symbol = names.iter().find_map(|name| {
-        lookup_sysv_symbol(
-            hash,
-            symbols,
-            strings,
-            name,
-            bucket_count,
-            symbol_count,
-        )
+        lookup_sysv_symbol(hash, symbols, strings, name, bucket_count, symbol_count)
     })?;
     executable_virtual_range_to_file(image, table, symbol, 4).map(|_| symbol)
 }
@@ -417,7 +407,9 @@ fn program_header<'a>(
     if index >= table.count {
         return None;
     }
-    let offset = table.offset.checked_add(table.entry_size.checked_mul(index)?)?;
+    let offset = table
+        .offset
+        .checked_add(table.entry_size.checked_mul(index)?)?;
     image.get(offset..offset.checked_add(table.entry_size)?)
 }
 
@@ -665,12 +657,16 @@ mod tests {
             nanoseconds: 0,
         };
         assert_eq!(
-            unsafe { dispatch_clock_gettime(vdso_success, 1, (&mut output as *mut Timespec).cast()) },
+            unsafe {
+                dispatch_clock_gettime(vdso_success, 1, (&mut output as *mut Timespec).cast())
+            },
             0,
         );
         assert_eq!((output.seconds, output.nanoseconds), (7, 9));
         assert_eq!(
-            unsafe { dispatch_clock_gettime(vdso_einval, 1, (&mut output as *mut Timespec).cast()) },
+            unsafe {
+                dispatch_clock_gettime(vdso_einval, 1, (&mut output as *mut Timespec).cast())
+            },
             -22,
         );
     }
@@ -705,12 +701,8 @@ mod tests {
             seconds: 0,
             microseconds: 0,
         };
-        let result = unsafe {
-            function(
-                (&mut output as *mut Timeval).cast(),
-                core::ptr::null_mut(),
-            )
-        };
+        let result =
+            unsafe { function((&mut output as *mut Timeval).cast(), core::ptr::null_mut()) };
         assert_eq!(result, 0);
         assert!(output.seconds > 0);
         assert!((0..1_000_000).contains(&output.microseconds));
@@ -735,7 +727,10 @@ mod tests {
     }
 
     fn synthetic_vdso_for_symbol(name: &[u8]) -> [u8; 512] {
-        assert!(name.len() <= 22, "synthetic string table is intentionally bounded");
+        assert!(
+            name.len() <= 22,
+            "synthetic string table is intentionally bounded"
+        );
         let mut image = [0u8; 512];
         image[..4].copy_from_slice(b"\x7fELF");
         image[4] = 2;

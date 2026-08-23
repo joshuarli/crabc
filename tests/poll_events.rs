@@ -36,7 +36,10 @@ fn poll_and_event_exports_under_libc_so() {
         ])
         .status()
         .expect("failed to run musl-gcc for poll_events_test");
-    assert!(status.success(), "musl-gcc poll_events_test compilation failed");
+    assert!(
+        status.success(),
+        "musl-gcc poll_events_test compilation failed"
+    );
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", &target)
@@ -49,8 +52,5 @@ fn poll_and_event_exports_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "poll events ok\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "poll events ok\n");
 }

@@ -3,10 +3,9 @@ use core::mem::MaybeUninit;
 use crabc_rs::{fs, pipe, pty, termios, Errno};
 
 fn pty_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
-    let master = pty::openpt(
-        pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC,
-    )
-    .expect("open PTY master");
+    let master =
+        pty::openpt(pty::OpenptFlags::RDWR | pty::OpenptFlags::NOCTTY | pty::OpenptFlags::CLOEXEC)
+            .expect("open PTY master");
     pty::grantpt(&master).expect("grant PTY");
     pty::unlockpt(&master).expect("unlock PTY");
     let slave = pty::ioctl_tiocgptpeer(

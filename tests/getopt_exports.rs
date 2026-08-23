@@ -12,11 +12,21 @@ fn getopt_state_and_program_names_under_libc_so() {
 
     let status = Command::new("musl-gcc")
         .args([
-            "-fPIE", "-pie", "-fno-builtin", "-D_GNU_SOURCE", "-I",
-            root.join("include").to_str().unwrap(), "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(), "-L",
-            target.to_str().unwrap(), source.to_str().unwrap(),
-            "-Wl,--allow-shlib-undefined", "-lc", "-o", binary.to_str().unwrap(),
+            "-fPIE",
+            "-pie",
+            "-fno-builtin",
+            "-D_GNU_SOURCE",
+            "-I",
+            root.join("include").to_str().unwrap(),
+            "-Wl,--dynamic-linker",
+            target.join("libldso.so").to_str().unwrap(),
+            "-L",
+            target.to_str().unwrap(),
+            source.to_str().unwrap(),
+            "-Wl,--allow-shlib-undefined",
+            "-lc",
+            "-o",
+            binary.to_str().unwrap(),
         ])
         .status()
         .expect("failed to run musl-gcc for getopt_exports_test");
@@ -34,5 +44,8 @@ fn getopt_state_and_program_names_under_libc_so() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "c-abi getopt exports ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "c-abi getopt exports ok\n"
+    );
 }

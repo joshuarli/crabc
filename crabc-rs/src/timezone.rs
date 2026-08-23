@@ -37,9 +37,7 @@ impl UtcOffset {
     /// UTC in either direction.
     #[must_use]
     pub const fn from_seconds(seconds_east_of_utc: i32) -> Option<Self> {
-        if seconds_east_of_utc >= -MAX_OFFSET_SECONDS
-            && seconds_east_of_utc <= MAX_OFFSET_SECONDS
-        {
+        if seconds_east_of_utc >= -MAX_OFFSET_SECONDS && seconds_east_of_utc <= MAX_OFFSET_SECONDS {
             Some(Self {
                 seconds_east_of_utc,
             })
@@ -137,7 +135,8 @@ impl TimeZone {
     /// offset lookup.
     pub fn from_tzif(bytes: &[u8]) -> Result<Self, TimeZoneError> {
         let (first_header, after_first_header) = Header::parse(bytes)?;
-        let (first_block, after_first_block) = parse_block(after_first_header, first_header, false)?;
+        let (first_block, after_first_block) =
+            parse_block(after_first_header, first_header, false)?;
 
         let zone = match first_header.version {
             0 => {
@@ -151,7 +150,8 @@ impl TimeZone {
                 if second_header.version != first_header.version {
                     return Err(TimeZoneError::InvalidTzif);
                 }
-                let (second_block, trailing) = parse_block(after_second_header, second_header, true)?;
+                let (second_block, trailing) =
+                    parse_block(after_second_header, second_header, true)?;
                 let continuation = parse_tzif_continuation(trailing)?;
                 TzifZone::from_block(second_block, continuation)?
             }
@@ -227,7 +227,10 @@ struct TzifZone {
 }
 
 impl TzifZone {
-    fn from_block(block: TzifBlock, continuation: Option<PosixZone>) -> Result<Self, TimeZoneError> {
+    fn from_block(
+        block: TzifBlock,
+        continuation: Option<PosixZone>,
+    ) -> Result<Self, TimeZoneError> {
         let pre_first_type = block
             .types
             .iter()
@@ -297,8 +300,14 @@ impl ZoneType {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TransitionRule {
-    JulianNoLeap { day: u16, time: TransitionTime },
-    DayOfYear { day: u16, time: TransitionTime },
+    JulianNoLeap {
+        day: u16,
+        time: TransitionTime,
+    },
+    DayOfYear {
+        day: u16,
+        time: TransitionTime,
+    },
     MonthWeekDay {
         month: u8,
         week: u8,
@@ -320,7 +329,11 @@ impl TransitionRule {
         match self {
             Self::JulianNoLeap { day, .. } => {
                 let day = day as i128 - 1;
-                let leap_day = if is_leap_year(year) && day >= 59 { 1 } else { 0 };
+                let leap_day = if is_leap_year(year) && day >= 59 {
+                    1
+                } else {
+                    0
+                };
                 (days_from_civil(year, 1, 1) + day + leap_day) * SECONDS_PER_DAY
             }
             Self::DayOfYear { day, .. } => {
@@ -550,7 +563,9 @@ impl<'a> PosixParser<'a> {
             .and_then(|value| value.checked_add(seconds))
             .ok_or(TimeZoneError::InvalidPosixTz)?;
         let magnitude = i32::try_from(magnitude).map_err(|_| TimeZoneError::InvalidPosixTz)?;
-        magnitude.checked_mul(sign).ok_or(TimeZoneError::InvalidPosixTz)
+        magnitude
+            .checked_mul(sign)
+            .ok_or(TimeZoneError::InvalidPosixTz)
     }
 
     fn parse_decimal(&mut self) -> Result<u32, TimeZoneError> {
@@ -588,10 +603,7 @@ impl<'a> PosixParser<'a> {
                 let week = self.parse_decimal()?;
                 self.expect(b'.')?;
                 let weekday = self.parse_decimal()?;
-                if !(1..=12).contains(&month)
-                    || !(1..=5).contains(&week)
-                    || weekday > 6
-                {
+                if !(1..=12).contains(&month) || !(1..=5).contains(&week) || weekday > 6 {
                     return Err(TimeZoneError::InvalidPosixTz);
                 }
                 TransitionRule::MonthWeekDay {
@@ -717,7 +729,11 @@ fn parse_block(
     let (standard_indicators, bytes) = split_at(bytes, header.ttisstdcnt)?;
     let (utc_indicators, bytes) = split_at(bytes, header.ttisutcnt)?;
 
-    if standard_indicators.iter().chain(utc_indicators).any(|&byte| byte > 1) {
+    if standard_indicators
+        .iter()
+        .chain(utc_indicators)
+        .any(|&byte| byte > 1)
+    {
         return Err(TimeZoneError::InvalidTzif);
     }
     if utc_indicators
@@ -763,7 +779,9 @@ fn parse_block(
     for index in 0..header.typecnt {
         let record_offset = index * 6;
         let utc_offset = i32::from_be_bytes(
-            type_bytes[record_offset..record_offset + 4].try_into().unwrap(),
+            type_bytes[record_offset..record_offset + 4]
+                .try_into()
+                .unwrap(),
         );
         let offset = UtcOffset::from_seconds(utc_offset).ok_or(TimeZoneError::InvalidTzif)?;
         let is_daylight_saving = match type_bytes[record_offset + 4] {
@@ -806,7 +824,11 @@ fn parse_block(
     ))
 }
 
-fn validate_leap_records(bytes: &[u8], wide_times: bool, count: usize) -> Result<(), TimeZoneError> {
+fn validate_leap_records(
+    bytes: &[u8],
+    wide_times: bool,
+    count: usize,
+) -> Result<(), TimeZoneError> {
     let time_size = if wide_times { 8 } else { 4 };
     let mut previous_transition = None;
     let mut previous_correction = None;
@@ -853,7 +875,9 @@ fn parse_tzif_continuation(bytes: &[u8]) -> Result<Option<PosixZone>, TimeZoneEr
     if rule.is_empty() {
         Ok(None)
     } else {
-        parse_posix_zone(rule).map(Some).map_err(|_| TimeZoneError::InvalidTzif)
+        parse_posix_zone(rule)
+            .map(Some)
+            .map_err(|_| TimeZoneError::InvalidTzif)
     }
 }
 
@@ -909,7 +933,8 @@ fn year_from_unix_seconds(seconds: i64) -> i64 {
     let shifted = days + 719_468;
     let era = shifted.div_euclid(146_097);
     let day_of_era = shifted - era * 146_097;
-    let year_of_era = (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_piece = (5 * day_of_year + 2) / 153;
     let year = year_of_era + era * 400 + if month_piece >= 10 { 1 } else { 0 };

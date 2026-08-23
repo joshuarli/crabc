@@ -32,7 +32,10 @@ fn ordinary_bytes_are_typed_slice_operations() {
 
     let haystack = b"abracadabra";
     assert_eq!(haystack.iter().position(|byte| *byte == b'c'), Some(4));
-    assert_eq!(haystack.windows(3).position(|window| window == b"dab"), Some(6));
+    assert_eq!(
+        haystack.windows(3).position(|window| window == b"dab"),
+        Some(6)
+    );
     assert_eq!(haystack.cmp(b"abracadabra"), std::cmp::Ordering::Equal);
 }
 
@@ -40,7 +43,10 @@ fn ordinary_bytes_are_typed_slice_operations() {
 fn byte_string_observations_keep_the_nul_boundary_explicit() {
     let value = CStr::from_bytes_with_nul(b"crabc-rs\0").expect("one trailing NUL");
     assert_eq!(value.to_bytes(), b"crabc-rs");
-    assert_eq!(value.to_bytes().iter().position(|byte| *byte == b'-'), Some(5));
+    assert_eq!(
+        value.to_bytes().iter().position(|byte| *byte == b'-'),
+        Some(5)
+    );
     assert_eq!(value.to_bytes().split(|byte| *byte == b'-').count(), 2);
 }
 
