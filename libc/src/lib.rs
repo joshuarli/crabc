@@ -1,5 +1,4 @@
 #![cfg_attr(not(test), no_std)]
-#![feature(c_variadic)]
 #![feature(linkage)]
 #![feature(f128)]
 #![feature(thread_local)]

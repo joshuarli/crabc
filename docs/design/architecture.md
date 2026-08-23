@@ -31,6 +31,23 @@ layouts, weak/linkage behavior, and TLS `errno` remain there. Typed native
 operations begin in `crabc-core` and are shaped by `crabc-rs`; direct native
 errors remain values rather than C `errno` side effects.
 
+Within `libc`, `libc/src/lib.rs` is only the crate's target and linkage
+composition root. `libc/src/c_abi.rs` owns the shared C layouts, TLS errno,
+stdio, pthread, locale, and process runtime state that cannot safely cross a
+C ABI boundary as typed native code. Leaf C ABI domains with independent
+state are ordinary private modules with explicit imports: syscall adapters,
+fenv, DNS expansion, random, select, timer helpers, small compatibility
+exports, and linkage-adjacent leaves are representative examples.
+
+Three deliberately lexical families remain inside `c_abi.rs`. The
+`math_family.rs` aggregation keeps musl-derived numerical ports beside their
+private bit and floating-environment helpers; `encoding_tables.rs` is literal
+iconv data shared by the conversion implementation; and
+`c_abi/aarch64/{atomic,memory}.rs` contains linkage-sensitive AArch64
+assembly. These are not generic portability layers or unexplained include
+chains. Every other extracted leaf must remain a normal private module with
+named imports rather than returning to the lexical include graph.
+
 [`COMPATIBILITY.md`](../../COMPATIBILITY.md) reports generated measurements.
 The exact native capability classification lives in
 [`compat/crabc-rs/coverage.toml`](../../compat/crabc-rs/coverage.toml), and

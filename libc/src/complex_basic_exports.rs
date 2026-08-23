@@ -2,8 +2,7 @@
 //
 // C represents `_Complex T` as two adjacent real values.  Keep that layout
 // explicit at the Rust ABI boundary: in particular, AArch64's `long double`
-// is IEEE binary128 (`f128`), not the 64-bit long-double ABI used by the
-// x86_64 test builds.
+// is IEEE binary128 (`f128`).
 
 #[repr(C)]
 pub struct ComplexDouble {

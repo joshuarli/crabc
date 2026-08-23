@@ -15,7 +15,7 @@ const CABI_PTHREAD_ERANGE: c_int = 34;
 const CABI_PTHREAD_ENAMETOOLONG: c_int = 36;
 const CABI_PTHREAD_ESRCH: c_int = 3;
 
-// The existing pthread_attr_t uses the x86_64 musl field positions.  Keep the
+// The existing pthread_attr_t uses the AArch64 musl field positions. Keep the
 // offsets named here so this extension does not depend on a C-only union
 // layout or accidentally turn an ABI field into a Rust implementation detail.
 const CABI_ATTR_STACK_SIZE: usize = 0;

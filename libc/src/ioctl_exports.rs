@@ -5,6 +5,8 @@
 // passed without interpretation: ioctl commands legitimately use both a
 // pointer and an immediate integer value.
 
+use super::{c_int, c_ulong, sys_ioctl, syscall_result};
+
 #[no_mangle]
 pub unsafe extern "C" fn ioctl(fd: c_int, request: c_ulong, mut args: ...) -> c_int {
     let argument = args.next_arg::<usize>();

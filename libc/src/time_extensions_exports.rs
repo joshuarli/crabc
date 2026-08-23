@@ -1,6 +1,10 @@
 // C11 time extension. `TIME_UTC` is the only standardized base; an
 // unsupported base is a query failure and must not modify the output object.
 
+use super::{
+    c_char, c_int, clock_gettime, locale_t, strftime, timespec, tm, CLOCK_REALTIME,
+};
+
 const CABI_TIME_UTC: c_int = 1;
 
 #[no_mangle]

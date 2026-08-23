@@ -4,6 +4,8 @@
 // Keeping the wrappers here means the shared integer parser remains the single
 // source of overflow, base, end-pointer, and errno behavior.
 
+use super::{c_char, c_int, c_long, c_uint, c_ulong, strtoll, strtoull};
+
 #[repr(C)]
 pub struct CabiImaxDiv {
     quot: c_long,

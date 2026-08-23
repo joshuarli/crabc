@@ -1,5 +1,8 @@
-// daemon() - ported from musl/src/legacy/daemon.c
-// Include in libc/src/lib.rs in the "unistd.h: process primitives" section.
+// daemon() - ported from musl/src/legacy/daemon.c.
+
+use super::{
+    _exit, c_int, sys_chdir, sys_close, sys_dup2, sys_fork, sys_open, sys_setsid, ERRNO, O_RDWR,
+};
 
 const ROOT_PATH: &[u8] = b"/\0";
 const DEV_NULL: &[u8] = b"/dev/null\0";

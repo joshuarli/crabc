@@ -21,11 +21,6 @@ fn existing_math_exports_have_musl_abi() {
         "-pie".to_string(),
         "-fno-builtin".to_string(),
     ];
-    // crabc uses the 64-bit long-double ABI on x86_64; other targets use
-    // their native binary128 long-double ABI.
-    if cfg!(target_arch = "x86_64") {
-        args.push("-mlong-double-64".to_string());
-    }
     args.extend_from_slice(&[
         "-I".to_string(),
         include.to_str().unwrap().to_string(),

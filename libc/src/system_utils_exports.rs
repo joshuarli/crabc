@@ -79,8 +79,8 @@ pub unsafe extern "C" fn __sysv_signal(signum: c_int, handler: usize) -> usize {
     signal(signum, handler)
 }
 
-// Linux uses the generic syscall numbers on AArch64/RISC-V and a distinct
-// ordering for getpriority/setpriority on x86_64.
+// Linux uses the AArch64 generic syscall numbers for getpriority and
+// setpriority.
 
 
 

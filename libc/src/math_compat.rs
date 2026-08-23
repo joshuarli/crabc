@@ -5,14 +5,13 @@
 // ported literally from musl.  Keep these exports in one place so the
 // boundary is explicit: a function moves to the dedicated math_*.rs port as
 // soon as its musl algorithm is brought in, at which point this adapter is
-// removed.  AArch64 and riscv64 use the C ABI's binary128 `long double`, so
-// every *l entry point below has a target-specific ABI-correct declaration.
+// removed. AArch64 uses the C ABI's binary128 `long double`, so every *l
+// entry point below has an ABI-correct declaration.
 // ============================================================
 
 // musl keeps __fpclassifyl as a real ABI entry point.  crabc follows the
-// target C ABI: x86_64 is configured with binary64 long double, while
-// AArch64 and riscv64 pass IEEE binary128 in registers/stack slots described
-// by Rust's f128.  Classify the representation directly so subnormals and
+// AArch64 C ABI passes IEEE binary128 in registers and stack slots described
+// by Rust's f128. Classify the representation directly so subnormals and
 // non-canonical NaNs do not get narrowed through f64.
 
 
@@ -385,10 +384,6 @@ pub unsafe extern "C" fn nearbyint(x: f64) -> f64 {
     }
 
     // rint uses ordinary arithmetic to honor the current rounding mode.  On
-    // x86 that arithmetic may set the x87 status word even after MXCSR is
-    // cleared, so save and restore the complete environment and then replay
-    // every newly raised exception except FE_INEXACT (nearbyint's contract).
-
 }
 #[no_mangle]
 pub unsafe extern "C" fn nearbyintf(x: f32) -> f32 {

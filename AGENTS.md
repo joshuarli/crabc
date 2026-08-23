@@ -23,11 +23,10 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 
 | Path | Contract |
 | --- | --- |
-| `libc/` | `crabc-libc`: `no_std` C ABI, producing `libc.so` and `libc.a`. `libc/src/lib.rs` is the target/linkage root; `libc/src/c_abi.rs` owns C ABI translation and libc runtime state. |
+| `libc/` | `crabc-libc`: `no_std` C ABI, producing `libc.so` and `libc.a`. `libc/src/lib.rs` is the target/linkage root; `libc/src/c_abi.rs` owns shared C ABI translation and libc runtime state, while independent ABI leaves are normal private modules. |
 | `ldso/` | `crabc-ldso`: AArch64 dynamic linker and private runtime-state owner. `ldso/src/lib.rs` is the target/linkage root; `ldso/src/loader.rs` owns loader algorithms and state. |
 | `crabc-core/` | Shared typed `no_std` Linux/AArch64 primitives used by the Rust facade. |
 | `crabc-rs/` | Public idiomatic Rust facade, direct probes, and native tests. |
-| `src/` | Root `loader` helper/ELF runner; distinct from `ldso`. |
 | `include/` | Installed public C headers. |
 | `tests/` | Root Rust integration tests and C fixtures. |
 | `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, performance, and capability-ledger evidence. |

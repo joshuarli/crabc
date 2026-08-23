@@ -3,8 +3,7 @@
 // The formulas and exceptional-value branches follow musl's src/complex
 // implementations.  Double and float use crabc's already-ported real
 // elementary functions.  AArch64's binary128 long-double entry points use the
-// native implementations in the math_f128_complex_* modules below; RISC-V
-// retains the f64 compatibility boundary used by the existing real exports.
+// native implementations in the math_f128_complex_* modules below.
 
 #[inline]
 fn cabi_cd(re: f64, im: f64) -> ComplexDouble {
@@ -624,9 +623,7 @@ cabi_export_complex_float!(
 
 
 
-// x86_64 uses the 64-bit long-double ABI, so these are aliases at the ABI
-// boundary.  AArch64 uses native binary128 implementations below.  RISC-V
-// retains the preexisting f64 compatibility boundary used by math_compat.rs.
+// AArch64 exports the native binary128 implementations below.
 
 
 

@@ -22,10 +22,6 @@ fn math_functions_under_libc_so() {
         "-fno-builtin".to_string(),
         "-frounding-math".to_string(),
     ];
-    // x86_64 uses 80-bit long double by default; crabc ABI is 64-bit
-    if cfg!(target_arch = "x86_64") {
-        args.push("-mlong-double-64".to_string());
-    }
     args.extend_from_slice(&[
         "-I".to_string(),
         include.to_str().unwrap().to_string(),

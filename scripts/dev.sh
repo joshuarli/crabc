@@ -204,6 +204,11 @@ case "$command" in
         # Integration tests execute target/debug/lib{c,ldso}.so directly, so
         # build their runtime artifacts before compiling the test harness.
         run_in_container cargo build --workspace
+        # The generic integration suite includes `static_hello`, whose C
+        # executable has no unwinder and therefore links the aborting release
+        # archive. Keep that same conventional archive contract as the
+        # dedicated static pthread/TLS gate.
+        run_in_container cargo build --workspace --release
         # crabc-rs examples are no_std static-library proofs with their own
         # panic handlers. Cargo's default test target set compiles them with
         # the package's default std feature; its manifest-driven crabc-rs gate

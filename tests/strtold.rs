@@ -21,9 +21,6 @@ fn strtold_preserves_long_double_precision() {
         "-pie".to_string(),
         "-fno-builtin".to_string(),
     ];
-    if cfg!(target_arch = "x86_64") {
-        args.push("-mlong-double-64".to_string());
-    }
     args.extend([
         "-I".to_string(),
         include.to_str().unwrap().to_string(),

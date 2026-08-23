@@ -2,6 +2,8 @@
 // timeout is relative, and the kernel both validates and leaves it unchanged.
 // Keep the wrapper direct so errno retains the syscall's IPC-specific error.
 
+use super::{aarch64, c_int, c_void, syscall_result, timespec, SYS_SEMTIMEDOP};
+
 #[inline]
 unsafe fn cabi_sys_semtimedop(
     semid: c_int,

@@ -4,6 +4,8 @@
 // contract. Keep the void symbols as inert compatibility machinery until a
 // focused RustCrypto-backed design is justified.
 
+use super::{c_char, c_int};
+
 #[no_mangle]
 pub unsafe extern "C" fn setkey(_key: *const c_char) {}
 

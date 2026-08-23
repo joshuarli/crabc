@@ -1,5 +1,6 @@
-// strverscmp() - ported from musl/src/string/strverscmp.c
-// Add to libc/src/lib.rs in the "String/memory functions" section.
+// strverscmp() - ported from musl/src/string/strverscmp.c.
+
+use super::{c_char, c_int, isdigit};
 
 #[no_mangle]
 pub unsafe extern "C" fn strverscmp(a: *const c_char, b: *const c_char) -> c_int {

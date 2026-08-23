@@ -16,13 +16,7 @@ fn static_pthread_tls_lifecycle_links_against_libc_a() {
     let libc_a = manifest_dir.join("target/debug/libc.a");
     assert!(libc_a.exists(), "libc.a not found at {}", libc_a.display());
 
-    let arch = if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else if cfg!(target_arch = "riscv64") {
-        "riscv64"
-    } else {
-        "x86_64"
-    };
+    let arch = "aarch64";
     let musl_lib = std::env::var("MUSL_REFERENCE_LIBDIR")
         .unwrap_or_else(|_| format!("/usr/lib/{}-linux-musl", arch));
     let source = fixtures.join("static_pthread_tls_test.c");

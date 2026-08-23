@@ -13,9 +13,6 @@ struct epoll_event {
     uint32_t events;
     uint64_t data;
 }
-#ifdef __x86_64__
-__attribute__((packed))
-#endif
 ;
 
 extern int ppoll(struct pollfd *, nfds_t, const struct timespec *, const sigset_t *);

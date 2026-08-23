@@ -7,7 +7,7 @@ use std::process::Command;
 fn stdio_printf_edge_cases_under_libc_so() {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let binary = test_support::TempArtifact::new("stdio_printf_edges_test");
-    let mut args = vec![
+    let args = vec![
         "-fPIE".to_string(),
         "-pie".to_string(),
         "-I".to_string(),
@@ -28,11 +28,6 @@ fn stdio_printf_edge_cases_under_libc_so() {
         "-o".to_string(),
         binary.to_str().unwrap().to_string(),
     ];
-    // crabc's x86_64 ABI uses binary64 long double, while musl-gcc defaults
-    // to the x87 80-bit ABI on that host.
-    if cfg!(target_arch = "x86_64") {
-        args.insert(2, "-mlong-double-64".to_string());
-    }
     let status = Command::new("musl-gcc")
         .args(args)
         .status()

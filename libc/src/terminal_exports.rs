@@ -1,7 +1,7 @@
 // Linux terminal and termios entry points.
 //
-// The public header's termios layout is the musl layout on x86_64, AArch64,
-// and RISC-V64: four u32 flag words, one cc_t line byte, 32 control bytes,
+// The public header's termios layout is the AArch64 musl layout: four u32
+// flag words, one cc_t line byte, 32 control bytes,
 // and two u32 speed words.  The ioctl operations below use the Linux tty
 // ABI directly and publish negative syscall errors through errno.
 

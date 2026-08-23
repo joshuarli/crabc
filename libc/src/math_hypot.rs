@@ -1,6 +1,6 @@
 // Translated from musl: hypot.c, hypotf.c
 // Uses only integer/bit ops and helper functions from math_helpers.rs.
-// SPLIT constant for double_t (FLT_EVAL_METHOD == 0, standard x86-64).
+// SPLIT constant for double_t (FLT_EVAL_METHOD == 0 on the AArch64 ABI).
 
 const HYPOT_SPLIT: f64 = asdouble(0x41A0000002000000); // 2^27 + 1
 

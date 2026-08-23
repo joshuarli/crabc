@@ -5,16 +5,8 @@
 extern "C" {
 #endif
 
-#ifdef __aarch64__
 typedef unsigned long jmp_buf[22];
 typedef unsigned long sigjmp_buf[40];
-#elif defined(__riscv)
-typedef unsigned long jmp_buf[26];
-typedef unsigned long sigjmp_buf[44];
-#else
-typedef unsigned long jmp_buf[8];
-typedef unsigned long sigjmp_buf[10];
-#endif
 
 #if defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 1))
 #define __setjmp_attr __attribute__((__returns_twice__))

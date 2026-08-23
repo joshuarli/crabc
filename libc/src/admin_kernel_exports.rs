@@ -4,11 +4,11 @@
 // ownership changes are not made to appear successful when the caller lacks
 // the kernel's permission (CAP_CHOWN); syscall_result preserves that errno
 // boundary for the C ABI.  The generic 64-bit targets use fchownat for the
-// path-only variants because their kernel ABI does not provide the legacy
-// chown/lchown syscall numbers used by x86_64.
+// path-only variants because the AArch64 kernel ABI does not provide legacy
+// chown/lchown syscall numbers.
 
 
-// AArch64 and RISC-V use the asm-generic syscall ABI.  chown and lchown are
+// AArch64 uses the asm-generic syscall ABI. chown and lchown are
 // represented by fchownat here so their follow/no-follow behavior remains
 // explicit at the syscall boundary.
 const CABI_SYS_FCHOWN: i64 = 55;

@@ -50,7 +50,7 @@ struct CabiCloneStartArgs {
 // signal mask; the child registers itself lazily on its first pthread call.
 unsafe fn cabi_clone_post_fork(ret: i64) {
     if ret == 0 {
-        reset_thread_registry_after_fork(-1);
+        reset_thread_registry_after_fork(core::ptr::null_mut(), -1);
     }
     cabi_clone_unlock_abort();
 }

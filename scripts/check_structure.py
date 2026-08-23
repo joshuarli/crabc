@@ -19,6 +19,31 @@ PRODUCTION_SOURCE = (
 HISTORICAL_OR_TASK_SOURCES = {Path("cleanup.md")}
 ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"(?:x86_64|riscv64)"')
 INLINE_CORE_MODULE = re.compile(r"(?m)^\s*(?:pub\s+)?mod\s+\w+\s*\{")
+REMOVED_ROOT_LOADER = re.compile(r"src/loader_core\.rs|root[- ]loader|loader helper", re.IGNORECASE)
+LIBC_C_ABI_MODULES = (
+    "break_exports",
+    "daemon",
+    "dn_expand",
+    "fanotify_exports",
+    "fenv",
+    "file_handle_exports",
+    "init_fini_exports",
+    "integer_numeric_exports",
+    "ioctl_exports",
+    "legacy_des_exports",
+    "lrand48",
+    "pthread_atfork",
+    "ptrace_exports",
+    "quick_exit_exports",
+    "random_exports",
+    "scalar_exports",
+    "select_exports",
+    "semtimedop_exports",
+    "statvfs",
+    "strverscmp",
+    "syscall",
+    "time_extensions_exports",
+)
 
 
 def text_files() -> list[Path]:
@@ -39,7 +64,11 @@ def report_matches(
     matcher = re.compile(pattern) if isinstance(pattern, str) else pattern
     for path in files:
         relative = path.relative_to(ROOT)
-        if relative.parts[:2] == ("docs", "history") or relative in HISTORICAL_OR_TASK_SOURCES:
+        if (
+            relative.parts[:2] == ("docs", "history")
+            or relative in HISTORICAL_OR_TASK_SOURCES
+            or relative == Path("scripts/check_structure.py")
+        ):
             continue
         for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
             if matcher.search(line):
@@ -65,6 +94,7 @@ def main() -> int:
 
     files = text_files()
     report_matches(errors, r"TODO\.md", files, "deleted TODO authority must not return")
+    report_matches(errors, REMOVED_ROOT_LOADER, files, "removed root loader reference")
     report_matches(
         errors,
         r"https://github\.com/mengzhuo/crabc",
@@ -105,6 +135,18 @@ def main() -> int:
         errors.append("libc/src/lib.rs: composition root exceeds 100 lines")
     if "include!(" in libc_text:
         errors.append("libc/src/lib.rs: root-level include chains are not allowed")
+
+    c_abi_root = ROOT / "libc" / "src" / "c_abi.rs"
+    c_abi_text = c_abi_root.read_text()
+    # These isolated domains no longer depend on c_abi's lexical include
+    # scope. Keep them as normal modules with named imports; a future change
+    # must not restore their old include edges just because it is convenient.
+    for module in LIBC_C_ABI_MODULES:
+        declaration = rf'(?m)^\s*#\[path = "{re.escape(module)}\.rs"\]\s*\n\s*mod {module};'
+        if re.search(declaration, c_abi_text) is None:
+            errors.append(f"libc/src/c_abi.rs: {module} must remain a normal private module")
+        if f'include!("{module}.rs")' in c_abi_text:
+            errors.append(f"libc/src/c_abi.rs: {module} must not return to the lexical include graph")
 
     ldso_root = ROOT / "ldso" / "src" / "lib.rs"
     if len(ldso_root.read_text().splitlines()) > 100:

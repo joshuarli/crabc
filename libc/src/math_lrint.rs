@@ -1,10 +1,11 @@
 // Port of musl lrint/llrint/lrintf/llrintf/lrintl/llrintl
 //
-// On x86_64: c_long = i64 (LONG_MAX >= 2^53), c_longlong = i64, long double = f64.
-// All six functions reduce to: round-to-integer-using-current-FP-mode, then cast.
+// On the AArch64 LP64 ABI, c_long and c_longlong are i64.
+// The binary32 and binary64 functions reduce to
+// round-to-integer-using-current-FP-mode, then cast.
 //
 // The rint/rintf helpers use musl's `x + toint - toint` trick which rounds via
-// the current FP rounding mode (MXCSR on x86_64), unlike Rust's `as` which
+// the current FP rounding mode, unlike Rust's `as` which
 // truncates toward zero.
 
 // musl rint: rounds f64 to integer using current FP rounding mode
@@ -61,7 +62,7 @@ pub extern "C" fn rintf(x: f32) -> f32 {
     }
 }
 
-// On x86_64 with c_long = i64 (LONG_MAX >= 2^53), the musl slow path
+// With c_long = i64 (LONG_MAX >= 2^53), the musl slow path
 // (lrint_slow with FE_INEXACT handling) is not needed. Simple cast suffices
 // because: (1) rint returns an exact integer as f64, (2) the largest integer
 // representable as f64 is 2^53 which fits in i64, (3) for |x| >= 2^52 rint
@@ -87,8 +88,8 @@ pub extern "C" fn llrintf(x: f32) -> c_longlong {
     rintf(x) as c_longlong
 }
 
-// On x86_64 with -mlong-double-64: long double = f64, delegate to lrint/llrint.
-// On aarch64: long double = f128 (IEEE quad), cast to f64 then round.
+// On AArch64, long double is f128 (IEEE quad); this compatibility adapter
+// narrows to f64 before applying the existing rounding implementation.
 
 
 

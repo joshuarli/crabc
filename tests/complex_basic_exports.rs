@@ -10,7 +10,7 @@ fn complex_basic_exports_under_libc_so() {
     let source = root.join("tests/fixtures/complex_basic_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-complex-basic");
 
-    let mut args = vec![
+    let args = vec![
         "-fPIE".to_string(),
         "-pie".to_string(),
         "-fno-builtin".to_string(),
@@ -26,12 +26,6 @@ fn complex_basic_exports_under_libc_so() {
         "-o".to_string(),
         binary.to_str().unwrap().to_string(),
     ];
-    // crabc follows musl's 64-bit long-double ABI for x86_64; AArch64 and
-    // riscv64 use the native IEEE binary128 long-double ABI.
-    if cfg!(target_arch = "x86_64") {
-        args.insert(3, "-mlong-double-64".to_string());
-    }
-
     let status = Command::new("musl-gcc")
         .args(&args)
         .status()

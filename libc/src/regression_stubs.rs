@@ -339,7 +339,9 @@ pub unsafe extern "C" fn execle(path: *const c_char, arg: *const c_char, mut arg
 #[no_mangle]
 pub unsafe extern "C" fn flockfile(f: *mut crate::FILE) {
     if !f.is_null() {
-        (*f).lockcount += 1;
+        if (*f).lockcount != c_long::MAX {
+            (*f).lockcount += 1;
+        }
     }
 }
 

@@ -1,10 +1,9 @@
 
 
+use super::c_int;
+
 pub type fexcept_t = u32;
 
-
-
-// x87 fnstenv/fldenv (28 bytes) + stmxcsr/ldmxcsr (4 bytes) = 32 bytes
 
 
 #[repr(C)]
@@ -22,7 +21,7 @@ const FE_DFL_ENV: *const fenv_t = -1isize as *const fenv_t;
 
 
 mod feconst {
-    use super::*;
+    use super::c_int;
     pub const FE_INVALID: c_int = 1;
     pub const FE_DIVBYZERO: c_int = 2;
     pub const FE_OVERFLOW: c_int = 4;
@@ -38,16 +37,16 @@ mod feconst {
 
 
 
-use feconst::*;
-
-// x86_64 implementation using x87/MXCSR
-
-
-
+use feconst::{
+    FE_ALL_EXCEPT, FE_DOWNWARD, FE_TONEAREST, FE_TOWARDZERO, FE_UPWARD,
+};
+pub(super) use feconst::{FE_INEXACT, FE_INVALID, FE_OVERFLOW, FE_UNDERFLOW};
 
 // aarch64 implementation using FPCR/FPSR
 mod aarch64_imp {
-    use super::*;
+    use super::{
+        c_int, fenv_t, FE_DFL_ENV, FE_DOWNWARD, FE_TONEAREST, FE_TOWARDZERO, FE_UPWARD,
+    };
     use crabc_core::fenv::{self, ExceptionFlags, RoundingMode};
 
     #[inline]
@@ -119,12 +118,9 @@ mod aarch64_imp {
     }
 }
 
-use aarch64_imp::*;
-
-// riscv64 implementation using fflags/frm/fcsr CSRs
-
-
-
+pub(super) use aarch64_imp::{
+    feclearexcept, fegetenv, fegetround, feraiseexcept, fesetenv, fetestexcept,
+};
 
 #[no_mangle]
 pub unsafe extern "C" fn fegetexceptflag(fp: *mut fexcept_t, mask: c_int) -> c_int {

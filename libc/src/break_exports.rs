@@ -5,6 +5,8 @@
 // contract: `brk` and every non-zero `sbrk` request fail with ENOMEM, while
 // `sbrk(0)` remains the one raw-kernel query.
 
+use super::{aarch64, c_int, c_void, ENOMEM, ERRNO};
+
 const CABI_SYS_BRK: i64 = 214;
 
 #[inline]

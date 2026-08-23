@@ -17,7 +17,6 @@ int main(void) {
     if (check_value("0x1.11111111111111111111111111111",
                     0x1.1111111111111111111111111111p0L)) return 4;
 
-#if defined(__aarch64__) || defined(__riscv)
     /* Detect the old f64 -> f128 implementation even if arithmetic changes. */
     unsigned long long expected[2] = {
         0x0a3d70a3d70a3d71ULL,
@@ -26,8 +25,6 @@ int main(void) {
     long double value = strtold("12.345", NULL);
     if (sizeof(value) != sizeof(expected) || memcmp(&value, expected, sizeof expected) != 0)
         return 5;
-#endif
-
     puts("strtold ok");
     return 0;
 }

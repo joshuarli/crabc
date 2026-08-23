@@ -8,20 +8,16 @@ fn static_hello_links_against_libc_a() {
     let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
 
-    let libc_a = manifest_dir.join("target/debug/libc.a");
+    // A static C program has no unwinder. The project therefore supports the
+    // aborting release archive, the same archive exercised by the dedicated
+    // pthread/TLS static-link gate.
+    let libc_a = manifest_dir.join("target/release/libc.a");
     assert!(libc_a.exists(), "libc.a not found at {}", libc_a.display());
 
     let hello_src = fixtures.join("hello.c");
     let hello_bin = test_support::TempArtifact::new("hello_static");
 
-    // CRT paths differ by architecture
-    let arch = if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else if cfg!(target_arch = "riscv64") {
-        "riscv64"
-    } else {
-        "x86_64"
-    };
+    let arch = "aarch64";
     // Docker development deliberately keeps the pinned musl oracle outside
     // Alpine's system libc. Direct-host CI retains the conventional fallback.
     let musl_lib = std::env::var("MUSL_REFERENCE_LIBDIR")

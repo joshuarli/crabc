@@ -1,4 +1,6 @@
 // kernel random-source entry points.
+
+use super::{c_int, c_uint, c_void, syscall_result, EINTR, EIO_VAL, ERRNO};
 //
 // `getentropy` has the BSD 256-byte atomic request limit. It may need more
 // than one kernel read, and EINTR is retried without exposing partial success.

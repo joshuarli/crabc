@@ -1,5 +1,10 @@
 // scalar math and bit-index compatibility exports.
 
+use super::{
+    c_int, c_long, c_longlong, frexp, frexpf, is_finite, is_finitef, is_inf, is_inff, is_nan,
+    is_nanf, scalbn, scalbnf,
+};
+
 #[no_mangle]
 pub extern "C" fn finite(x: f64) -> c_int {
     is_finite(x) as c_int

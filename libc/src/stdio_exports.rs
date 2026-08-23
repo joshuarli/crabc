@@ -17,11 +17,9 @@ pub unsafe extern "C" fn __uflow(stream: *mut FILE) -> c_int {
     fgetc(stream)
 }
 
-// The current FILE implementation is process-local and its existing
-// flockfile/funlockfile pair records recursive ownership in lockcount.  There
-// is no thread-id lock owner to distinguish in this libc yet, so a positive
-// lockcount represents a lock held by this process and remains recursively
-// acquirable, matching the observable success path of musl's ftrylockfile.
+// The FILE lock count supports recursive acquisition by the current process.
+// It is deliberately shared with flockfile/funlockfile so all three entry
+// points observe one coherent lock state.
 #[no_mangle]
 pub unsafe extern "C" fn ftrylockfile(stream: *mut FILE) -> c_int {
     if stream.is_null() {

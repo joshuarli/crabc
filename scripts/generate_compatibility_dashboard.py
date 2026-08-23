@@ -39,6 +39,7 @@ LTO_REPORT = ROOT_DIR / "compat/reports/lto/latest.json"
 NATIVE_FACADE_LTO_REPORT = ROOT_DIR / "compat/reports/lto/native-facade/latest.json"
 LUA_REPORT = ROOT_DIR / "compat/reports/lua/latest.json"
 ABI_PROBE_REPORT = ROOT_DIR / "compat/reports/abi/latest.json"
+ENVIRONMENT_REPORT = ROOT_DIR / "compat/reports/environment.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,6 +56,38 @@ def read_json(path: Path) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         raise RuntimeError(f"expected JSON object: {path}")
     return value
+
+
+def environment_state() -> dict[str, Any] | None:
+    """Return the source and artifact provenance shared by all evidence lanes."""
+
+    report = read_json(ENVIRONMENT_REPORT)
+    if report is None:
+        return None
+    if not isinstance(report.get("crabc_git_sha"), str):
+        raise RuntimeError(f"environment report lacks tested source: {ENVIRONMENT_REPORT}")
+    if not isinstance(report.get("crabc_git_dirty"), bool):
+        raise RuntimeError(f"environment report lacks tree cleanliness: {ENVIRONMENT_REPORT}")
+    artifacts = report.get("artifacts")
+    if not isinstance(artifacts, dict):
+        raise RuntimeError(f"environment report lacks artifact provenance: {ENVIRONMENT_REPORT}")
+    for key in ("libc_shared", "libc_static", "ldso_shared", "public_headers", "workspace_lock", "oracle_pins"):
+        record = artifacts.get(key)
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            raise RuntimeError(f"environment report lacks {key} provenance: {ENVIRONMENT_REPORT}")
+        if record.get("sha256") is not None and not isinstance(record.get("sha256"), str):
+            raise RuntimeError(f"environment report has invalid {key} hash: {ENVIRONMENT_REPORT}")
+    report["_path"] = str(ENVIRONMENT_REPORT.relative_to(ROOT_DIR))
+    return report
+
+
+def provenance_value(record: dict[str, Any]) -> str:
+    """Render a reported hash without claiming an artifact that was absent."""
+
+    digest = record.get("sha256")
+    if isinstance(digest, str):
+        return f"`{digest}`"
+    return "not built"
 
 
 def read_summary(path: Path) -> dict[str, int] | None:
@@ -292,6 +325,7 @@ def main() -> int:
     symbols = symbol_state()
     abi = abi_state()
     abi_probe = abi_probe_state()
+    environment = environment_state()
     ratchet = read_json(RATCHET_REPORT)
     libc_test = libc_test_states()
     differential = differential_state()
@@ -325,17 +359,50 @@ def main() -> int:
         "## Baseline",
         "",
     ]
-    lines.extend(
-        markdown_table(
-            ("field", "value"),
+    baseline_rows: list[tuple[object, object]] = [
+        ("architecture", "AArch64 (`aarch64-unknown-linux-musl`)"),
+        ("reference libc", f"musl {upstreams['musl']['version']}"),
+        ("Docker platform", upstreams["environment"]["platform"]),
+        ("Rust toolchain", upstreams["environment"]["rust_toolchain"]),
+    ]
+    if environment is None:
+        baseline_rows.append(("tested source", "unrecorded; run an evidence command"))
+    else:
+        baseline_rows.extend(
             [
-                ("architecture", "AArch64 (`aarch64-unknown-linux-musl`)"),
-                ("reference libc", f"musl {upstreams['musl']['version']}"),
-                ("Docker platform", upstreams["environment"]["platform"]),
-                ("Rust toolchain", upstreams["environment"]["rust_toolchain"]),
-            ],
+                ("tested source", f"`{environment['crabc_git_sha']}`"),
+                (
+                    "tested source tree",
+                    "clean" if environment["crabc_git_dirty"] is False else "DIRTY (not final evidence)",
+                ),
+                ("environment report", f"`{environment['_path']}`"),
+            ]
         )
-    )
+    lines.extend(markdown_table(("field", "value"), baseline_rows))
+
+    lines.extend(["", "## Evidence provenance", ""])
+    if environment is None:
+        lines.append("No source/artifact provenance report. Run an evidence command.")
+    else:
+        artifacts = environment["artifacts"]
+        assert isinstance(artifacts, dict)
+        artifact_rows = []
+        for label, key in (
+            ("`libc.so`", "libc_shared"),
+            ("`libc.a`", "libc_static"),
+            ("`libldso.so`", "ldso_shared"),
+            ("public headers", "public_headers"),
+            ("workspace lockfile", "workspace_lock"),
+            ("oracle pins", "oracle_pins"),
+        ):
+            record = artifacts[key]
+            assert isinstance(record, dict)
+            artifact_rows.append((label, f"`{record['path']}`", provenance_value(record)))
+        lines.extend(markdown_table(("input / artifact", "path", "SHA-256"), artifact_rows))
+        lines.append(
+            "The checked-in dashboard is an evidence-only child of the tested source commit above; "
+            "it does not hash itself."
+        )
 
     lines.extend(["", "## Public dynamic-symbol ABI", ""])
     if symbols is None:

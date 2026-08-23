@@ -1,5 +1,6 @@
 // pthread_atfork() handler registry and fork hook, musl-compatible.
-// Include in libc/src/lib.rs; fork() must call __fork_handler(-1/0/1).
+
+use super::{c_int, AtomicI32, AtomicUsize, Ordering, ENOMEM};
 
 const MAX_ATFORK: usize = 64;
 

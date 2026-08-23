@@ -3,7 +3,7 @@
 // The adjustment and clock-setting interfaces remain kernel-owned.  Keep
 // these wrappers on raw Linux syscalls so a caller without CAP_SYS_TIME gets
 // the kernel's EPERM (and never a fabricated success).  The timex layout is
-// the native 64-bit musl/Linux ABI used by both x86_64 and AArch64.
+// the native 64-bit AArch64 musl/Linux ABI.
 
 
 const CABI_SYS_CLOCK_ADJTIME: i64 = 266;
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn settimeofday(tv: *const timeval, tz: *const c_void) -> 
 #[no_mangle]
 pub unsafe extern "C" fn stime(seconds: *const TimeT) -> c_int {
 
-    // arm64 and riscv64 omit the legacy stime syscall.  Keep the musl
+    // AArch64 omits the legacy stime syscall. Keep the musl
     // contract by translating to settimeofday's native syscall instead.
         {
         if seconds.is_null() {

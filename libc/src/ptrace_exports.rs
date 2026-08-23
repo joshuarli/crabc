@@ -4,6 +4,8 @@
 // request-specific validation.
 
 
+use super::{aarch64, c_int, c_long, c_void, syscall_result};
+
 const CABI_SYS_PTRACE: i64 = 117;
 
 #[no_mangle]

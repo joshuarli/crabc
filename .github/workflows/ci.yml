@@ -37,5 +37,4 @@ jobs:
         run: ./scripts/dev.sh differential foundational
 
       - name: Capture upstream functional evidence
-        continue-on-error: true
         run: ./scripts/dev.sh libc-test functional

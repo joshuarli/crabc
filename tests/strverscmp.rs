@@ -5,7 +5,11 @@ fn isdigit(c: c_int) -> c_int {
     ((c >= '0' as c_int) && (c <= '9' as c_int)) as c_int
 }
 
-include!("../libc/src/strverscmp.rs");
+mod strverscmp_implementation {
+    include!("../libc/src/strverscmp.rs");
+}
+
+use strverscmp_implementation::strverscmp;
 
 fn cmp(a: &str, b: &str) -> c_int {
     let a = std::ffi::CString::new(a).unwrap();

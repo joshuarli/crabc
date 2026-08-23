@@ -3,6 +3,7 @@
 // notification class, but crabc never substitutes a synthetic descriptor or
 // mark result.
 
+use super::{aarch64, c_char, c_int, c_uint, ERRNO};
 
 
 const CABI_SYS_FANOTIFY_INIT: i64 = 262;

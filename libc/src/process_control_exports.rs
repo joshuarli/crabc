@@ -15,8 +15,8 @@ const CABI_CLOCK_THREAD_CPUTIME_ID: c_int = 6;
 
 
 // The calls operate on the kernel's task ID; pid 0 denotes the calling task,
-// as it does for the POSIX wrappers. x86_64 uses its legacy syscall table;
-// AArch64 and RISC-V use asm-generic's distinct scheduler range.
+// as it does for the POSIX wrappers. AArch64 uses the asm-generic scheduler
+// syscall range.
 
 
 

@@ -4,6 +4,8 @@
 
 
 
+use super::{aarch64, c_char, c_int, c_void, syscall_result};
+
 const CABI_SYS_NAME_TO_HANDLE_AT: i64 = 264;
 const CABI_SYS_OPEN_BY_HANDLE_AT: i64 = 265;
 

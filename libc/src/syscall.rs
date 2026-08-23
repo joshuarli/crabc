@@ -1,6 +1,6 @@
-// syscall() - variadic syscall forwarding, musl-compatible.
-// Add to libc/src/lib.rs in the "syscall wrappers" section.
-// Matches musl x86_64 convention: rax=num, rdi,rsi,rdx,r10,r8,r9; rcx,r11 clobbered.
+// syscall() - variadic forwarding through the concrete Linux/AArch64 boundary.
+
+use super::{aarch64, c_int, c_long, ERRNO};
 
 #[no_mangle]
 pub unsafe extern "C" fn syscall(num: c_long, mut args: ...) -> c_long {

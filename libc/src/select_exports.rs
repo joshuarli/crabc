@@ -6,6 +6,10 @@
 // temporary conversion instead.
 
 
+use super::{
+    aarch64, c_int, c_void, syscall_result, timespec, timeval, EINVAL, ERRNO,
+};
+
 const CABI_SYS_PSELECT6: i64 = 72;
 
 #[repr(C)]

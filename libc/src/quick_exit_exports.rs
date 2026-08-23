@@ -4,7 +4,9 @@
 // `quick_exit` runs them in reverse registration order and then terminates
 // without flushing stdio or invoking ordinary exit handlers.
 
-use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+use super::{c_int, c_void, free, malloc, EINVAL, ERRNO, _Exit};
 
 struct CabiQuickExitNode {
     next: *mut CabiQuickExitNode,

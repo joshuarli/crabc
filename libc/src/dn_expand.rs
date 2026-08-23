@@ -1,4 +1,6 @@
 // musl src/network/dn_expand.c
+
+use super::{c_char, c_int};
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn dn_expand(

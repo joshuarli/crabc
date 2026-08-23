@@ -10,7 +10,7 @@ fn ctype_assert_exports_under_libc_so() {
     let source = root.join("tests/fixtures/ctype_assert_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-ctype-assert");
 
-    let mut args = vec![
+    let args = vec![
         "-fPIE".to_string(),
         "-pie".to_string(),
         "-fno-builtin".to_string(),
@@ -27,12 +27,6 @@ fn ctype_assert_exports_under_libc_so() {
         "-o".to_string(),
         binary.to_str().unwrap().to_string(),
     ];
-    // crabc's x86_64 libc uses the binary64 long-double ABI.  AArch64 and
-    // riscv64 use IEEE binary128, which is the ABI represented by f128 above.
-    if cfg!(target_arch = "x86_64") {
-        args.insert(3, "-mlong-double-64".to_string());
-    }
-
     let status = Command::new("musl-gcc")
         .args(&args)
         .status()

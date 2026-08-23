@@ -44,7 +44,7 @@ pub const ST_NOATIME: c_ulong = 1024;
 pub const ST_NODIRATIME: c_ulong = 2048;
 pub const ST_RELATIME: c_ulong = 4096;
 
-// ponytail: SYS_statfs(137) vs SYS_statfs64(305) identical on x86_64
+// Linux/AArch64 uses the asm-generic statfs syscall ABI.
 #[inline]
 unsafe fn sys_statfs(path: *const c_char, buf: *mut kernel_statfs) -> i64 {
     aarch64::syscall::syscall2(SYS_STATFS, path as i64, buf as i64)
@@ -94,3 +94,4 @@ pub unsafe extern "C" fn fstatvfs(fd: c_int, buf: *mut statvfs) -> c_int {
     fixup(buf, &kbuf);
     0
 }
+use super::{aarch64, c_char, c_int, c_uint, c_ulong, ERRNO, SYS_FSTATFS, SYS_STATFS};

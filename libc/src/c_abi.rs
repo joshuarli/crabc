@@ -13,23 +13,89 @@ use core::ffi::{
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
+// Public allocation entry points remain ELF-preemptible. A `FILE` can be
+// allocated by an executable's interposed `malloc`, so its matching release
+// must make the same dynamic C call rather than handing foreign storage to
+// mimalloc.
+// LLVM resolves an in-crate Rust call to `free` directly. Keep this tiny
+// AArch64 PLT thunk at the ELF boundary so the normal dynamic-symbol lookup
+// can select an executable's `free` interposer when one supplied `malloc`.
+core::arch::global_asm!(
+    ".global __crabc_interposable_free",
+    ".hidden __crabc_interposable_free",
+    ".type __crabc_interposable_free,%function",
+    "__crabc_interposable_free:",
+    "b free@plt",
+);
+
+unsafe extern "C" {
+    #[link_name = "__crabc_interposable_free"]
+    fn cabi_interposable_free(ptr: *mut c_void);
+}
+
+#[inline]
+unsafe fn cabi_release_c_allocation(ptr: *mut c_void) {
+    cabi_interposable_free(ptr);
+}
+
+#[path = "dn_expand.rs"]
+mod dn_expand;
+#[path = "fenv.rs"]
+mod fenv;
+#[path = "lrand48.rs"]
+mod lrand48;
+#[path = "syscall.rs"]
+mod syscall;
+#[path = "strverscmp.rs"]
+mod strverscmp;
+#[path = "daemon.rs"]
+mod daemon;
+#[path = "pthread_atfork.rs"]
+mod pthread_atfork;
+#[path = "statvfs.rs"]
+mod statvfs;
+#[path = "legacy_des_exports.rs"]
+mod legacy_des_exports;
+#[path = "ioctl_exports.rs"]
+mod ioctl_exports;
+#[path = "ptrace_exports.rs"]
+mod ptrace_exports;
+#[path = "file_handle_exports.rs"]
+mod file_handle_exports;
+#[path = "scalar_exports.rs"]
+mod scalar_exports;
+#[path = "random_exports.rs"]
+mod random_exports;
+#[path = "select_exports.rs"]
+mod select_exports;
+#[path = "integer_numeric_exports.rs"]
+mod integer_numeric_exports;
+#[path = "time_extensions_exports.rs"]
+mod time_extensions_exports;
+#[path = "fanotify_exports.rs"]
+mod fanotify_exports;
+#[path = "quick_exit_exports.rs"]
+mod quick_exit_exports;
+#[path = "break_exports.rs"]
+mod break_exports;
+#[path = "semtimedop_exports.rs"]
+mod semtimedop_exports;
+#[path = "init_fini_exports.rs"]
+mod init_fini_exports;
+
+use dn_expand::dn_expand;
+use fenv::{feclearexcept, feraiseexcept, fetestexcept, FE_INEXACT, FE_INVALID, FE_OVERFLOW, FE_UNDERFLOW};
+use pthread_atfork::__fork_handler;
+pub(crate) use syscall::syscall;
+use strverscmp::strverscmp;
+
+// This literal Unicode conversion data is intentionally lexical because the
+// conversion routines below share its private table names.
 include!("encoding_tables.rs");
-include!("math_helpers.rs");
-include!("math_bitmanip.rs");
-include!("math_sqrtfmod.rs");
-include!("math_trig.rs");
-include!("math_exp.rs");
-include!("math_log.rs");
-include!("math_pow.rs");
-include!("math_hypot.rs");
-include!("math_hyperbolic.rs");
-include!("math_inverse_hyperbolic.rs");
-include!("math_invtrig.rs");
-include!("math_lrint.rs");
-include!("math_bessel.rs");
-include!("math_gamma.rs");
-include!("math_compat.rs");
-include!("math_f128.rs");
+// The numerical ports deliberately share private bit helpers and fenv state.
+// `math_family.rs` is their focused lexical aggregation; converting each
+// fragment to a child module would widen those internal implementation names.
+include!("math_family.rs");
 // These fragments define linkage-sensitive C ABI primitives in this lexical
 // scope; a normal child module would require broad visibility changes.
 include!("c_abi/aarch64/atomic.rs");
@@ -2709,17 +2775,18 @@ unsafe fn sys_fork() -> i64 {
     // A child must discard every other inherited slot before it can use a
     // cached current-thread pointer: those entries name threads that no
     // longer exist in the child process.
-    let parent_tid = if CURRENT_THREAD.is_null() {
+    let parent_slot = CURRENT_THREAD;
+    let parent_tid = if parent_slot.is_null() {
         -1
     } else {
-        a_load(&raw const (*CURRENT_THREAD).tid)
+        a_load(&raw const (*parent_slot).tid)
     };
     let result = match crabc_core::process::fork_raw() {
         Ok(pid) => pid as i64,
         Err(errno) => -(errno.raw() as i64),
     };
     if result == 0 {
-        reset_thread_registry_after_fork(parent_tid);
+        reset_thread_registry_after_fork(parent_slot, parent_tid);
     }
     result
 }
@@ -3551,13 +3618,13 @@ pub extern "C" fn ntohs(netshort: u16) -> u16 {
 
 pub type PthreadT = c_ulong;
 
-// pthread_attr_t: musl x86_64 layout (56 bytes = int[14])
+// pthread_attr_t: musl AArch64 layout (56 bytes = int[14])
 #[repr(C)]
 pub struct pthread_attr_t {
     __i: [c_int; 14],
 }
 
-// pthread_mutex_t: musl x86_64 layout (40 bytes = int[10])
+// pthread_mutex_t: musl AArch64 layout (40 bytes = int[10])
 // _m_type=__i[0], _m_lock=__i[1], _m_waiters=__i[2], _m_count=__i[5]
 #[repr(C)]
 pub struct pthread_mutex_t {
@@ -3569,7 +3636,7 @@ pub struct pthread_mutexattr_t {
     __attr: c_uint,
 }
 
-// pthread_cond_t: musl x86_64 layout (48 bytes = int[12])
+// pthread_cond_t: musl AArch64 layout (48 bytes = int[12])
 // _c_seq=__i[2], _c_waiters=__i[3], _c_clock=__i[4]
 #[repr(C)]
 pub struct pthread_cond_t {
@@ -3581,7 +3648,7 @@ pub struct pthread_condattr_t {
     __attr: c_uint,
 }
 
-// pthread_rwlock_t: musl x86_64 layout (56 bytes = int[14])
+// pthread_rwlock_t: musl AArch64 layout (56 bytes = int[14])
 // _rw_lock=__i[0], _rw_waiters=__i[1], _rw_shared=__i[2]
 #[repr(C)]
 pub struct pthread_rwlock_t {
@@ -3593,7 +3660,7 @@ pub struct pthread_rwlockattr_t {
     __attr: [c_uint; 2],
 }
 
-// pthread_barrier_t: musl x86_64 layout (32 bytes = int[8])
+// pthread_barrier_t: musl AArch64 layout (32 bytes = int[8])
 #[repr(C)]
 pub struct pthread_barrier_t {
     __i: [c_int; 8],
@@ -3608,7 +3675,7 @@ pub type pthread_spinlock_t = c_int;
 pub type pthread_once_t = c_int;
 pub type pthread_key_t = c_uint;
 
-// sem_t: musl x86_64 layout (32 bytes = int[8])
+// sem_t: musl AArch64 layout (32 bytes = int[8])
 #[repr(C)]
 pub struct sem_t {
     __val: [c_int; 8],
@@ -3706,9 +3773,6 @@ struct robust_list_head {
     futex_offset: c_long,
     pending: *mut robust_list,
 }
-
-// ponytail: adapted from musl x86_64 clone.s
-
 
 // ponytail: adapted from musl aarch64 clone.s
 #[no_mangle]
@@ -4104,16 +4168,32 @@ static NEXT_KEY: AtomicUsize = AtomicUsize::new(0);
 /// that runs atexit handlers. Discard every stale slot, but retain the copied
 /// caller slot when known: a pthread-created caller may still be returning
 /// through a signal frame on that stack/TLS allocation.
-unsafe fn reset_thread_registry_after_fork(parent_tid: c_int) {
+unsafe fn reset_thread_registry_after_fork(parent_slot: *mut Thread, parent_tid: c_int) {
     let base = core::ptr::addr_of_mut!(THREADS[0]);
     let child_tid = sys_gettid() as c_int;
-    let mut current = core::ptr::null_mut();
-    for i in 0..MAX_THREADS {
-        let slot = base.add(i);
-        if parent_tid > 0 && a_load(&raw const (*slot).tid) == parent_tid {
-            current = slot;
-            break;
+    let end = base.add(MAX_THREADS);
+    let mut current = if !parent_slot.is_null()
+        && (parent_slot as usize) >= (base as usize)
+        && (parent_slot as usize) < (end as usize)
+    {
+        parent_slot
+    } else {
+        core::ptr::null_mut()
+    };
+    if current.is_null() {
+        for i in 0..MAX_THREADS {
+            let slot = base.add(i);
+            if parent_tid > 0 && a_load(&raw const (*slot).tid) == parent_tid {
+                current = slot;
+                break;
+            }
         }
+    }
+    // A foreign caller has no registered slot. In that async post-fork
+    // window, preserving the copied registry is safer than clearing the
+    // pthread-created caller's start routine through a guessed slot.
+    if current.is_null() {
+        return;
     }
     for i in 0..MAX_THREADS {
         let slot = base.add(i);
@@ -8196,7 +8276,7 @@ const SEEK_SET: c_int = 0;
 const SEEK_CUR: c_int = 1;
 const SEEK_END: c_int = 2;
 
-// ponytail: buffered FILE, musl x86_64 layout subset
+// Buffered FILE state for this Linux/AArch64 compatibility ABI.
 #[repr(C)]
 pub struct FILE {
     flags: c_uint,
@@ -8694,7 +8774,7 @@ pub unsafe extern "C" fn freopen(
         }
     }
     if !(*f).getln_buf.is_null() {
-        free((*f).getln_buf as *mut c_void);
+        cabi_release_c_allocation((*f).getln_buf as *mut c_void);
     }
     // Reinitialize the existing stream storage rather than copying the
     // temporary FILE's buffer pointer. The permanent bit preserves static
@@ -8728,7 +8808,7 @@ pub unsafe extern "C" fn fclose(f: *mut FILE) -> c_int {
     // storage. Stream-specific close callbacks release separately allocated
     // cookies before this final FILE allocation is returned to mimalloc.
     if (*f).flags & F_PERM == 0 {
-        free(f as *mut c_void);
+        cabi_release_c_allocation(f as *mut c_void);
     }
     if flush_status != 0 || close_status != 0 {
         -1
@@ -19779,30 +19859,21 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
         return hex_mant_to_f64(mant, total_exp, neg);
     }
 
-    // decimal: collect into buffer, use from_str for correct rounding
-    let mut buf = [0u8; 65536];
-    let mut n = 0usize;
+    // Decimal conversion is delegated to core's correctly rounded parser.
+    // The old fixed stack buffer both exhausted libc-test's worker stack and
+    // silently changed values once an input exceeded its capacity. First
+    // locate the exact token, then borrow one C allocation for the parser so
+    // long inputs retain their complete significant tail.
+    let token_start = p;
     let mut found_digit = false;
 
     while *p >= b'0' && *p <= b'9' {
-        if n < 65535 {
-            buf[n] = *p;
-            n += 1;
-        }
         p = p.add(1);
         found_digit = true;
     }
     if *p == b'.' {
-        if n < 65535 {
-            buf[n] = b'.';
-            n += 1;
-        }
         p = p.add(1);
         while *p >= b'0' && *p <= b'9' {
-            if n < 65535 {
-                buf[n] = *p;
-                n += 1;
-            }
             p = p.add(1);
             found_digit = true;
         }
@@ -19814,23 +19885,11 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
         return 0.0;
     }
     if *p == b'e' || *p == b'E' {
-        if n < 65535 {
-            buf[n] = b'e';
-            n += 1;
-        }
         p = p.add(1);
         if *p == b'-' || *p == b'+' {
-            if n < 65535 {
-                buf[n] = *p;
-                n += 1;
-            }
             p = p.add(1);
         }
         while *p >= b'0' && *p <= b'9' {
-            if n < 65535 {
-                buf[n] = *p;
-                n += 1;
-            }
             p = p.add(1);
         }
     }
@@ -19838,8 +19897,16 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
     if !endptr.is_null() {
         *endptr = p as *mut u8;
     }
-    let s_str = core::str::from_utf8_unchecked(core::slice::from_raw_parts(buf.as_ptr(), n));
-    if is_f32 {
+    let token_len = p.offset_from(token_start) as usize;
+    let token = malloc(token_len + 1) as *mut u8;
+    if token.is_null() {
+        ERRNO = ENOMEM;
+        return 0.0;
+    }
+    core::ptr::copy_nonoverlapping(token_start, token, token_len);
+    *token.add(token_len) = 0;
+    let s_str = core::str::from_utf8_unchecked(core::slice::from_raw_parts(token, token_len));
+    let result = if is_f32 {
         match <f32 as core::str::FromStr>::from_str(s_str) {
             Ok(v) => {
                 let r = v as f64;
@@ -19872,7 +19939,9 @@ unsafe fn parse_float(s: *const u8, endptr: *mut *mut u8, is_f32: bool) -> f64 {
                 0.0
             }
         }
-    }
+    };
+    cabi_release_c_allocation(token as *mut c_void);
+    result
 }
 
 // Convert hex mantissa integer to f64 with correct rounding.
@@ -19994,7 +20063,7 @@ unsafe fn hex_val(c: u8) -> Option<u8> {
     }
 }
 
-// AArch64 and riscv64 use IEEE-754 binary128 for long double.  Extending the
+// AArch64 uses IEEE-754 binary128 for long double. Extending the
 // f64 result of strtod is ABI-correct but loses the low 60 bits of precision,
 // which is observable even for short decimal inputs such as 12.345.  Keep a
 // separate parser for this ABI: decimal input is evaluated as f128, while
@@ -20627,7 +20696,7 @@ struct kernel_stat64 {
     __unused: [i64; 3],
 }
 
-// sys_stat = 4 on x86_64
+// AArch64 implements this legacy interface through newfstatat.
 #[inline]
 unsafe fn sys_stat(path: *const u8, statbuf: *mut kernel_stat64) -> i64 {
     aarch64::syscall::syscall4(
@@ -21442,10 +21511,8 @@ pub unsafe extern "C" fn hasmntopt(mnt: *const MntEnt, opt: *const c_char) -> *m
 }
 
 // ============================================================
-// SysV IPC: ftok, msg*, sem*, shm*
-// x86_64 direct syscalls: msgget=68, msgsnd=69, msgrcv=70, msgctl=71
-//   semget=64, semop=65, semctl=66, semtimedop=220
-//   shmget=29, shmat=30, shmctl=31, shmdt=67
+// SysV IPC: ftok, msg*, sem*, shm*. The AArch64 syscall numbers are imported
+// from the single `aarch64::syscall` source of truth.
 // ============================================================
 
 const EEXIST: c_int = 17;
@@ -21770,9 +21837,8 @@ pub unsafe extern "C" fn __libc_start_main(
         init_fn();
     }
 
-    // aarch64/riscv64 GCC reads __stack_chk_guard as a global (GOT-based for PIE),
-    // so we must initialize it from AT_RANDOM before calling main.
-    // x86_64 uses %fs:0x28 which the kernel already set up.
+    // AArch64 GCC reads __stack_chk_guard as a global (GOT-based for PIE), so
+    // initialize it from AT_RANDOM before calling main.
         {
         let random_ptr = getauxval(25) as *const u8; // AT_RANDOM = 25
         if !random_ptr.is_null() {
@@ -22530,15 +22596,6 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
 }
 
 include!("crypt_impl.rs");
-include!("legacy_des_exports.rs");
-include!("statvfs.rs");
-include!("daemon.rs");
-include!("dn_expand.rs");
-include!("lrand48.rs");
-include!("strverscmp.rs");
-include!("syscall.rs");
-include!("pthread_atfork.rs");
-include!("fenv.rs");
 include!("locale_ctype.rs");
 include!("regression_stubs.rs");
 include!("wordexp.rs");
@@ -22549,25 +22606,17 @@ include!("decimal_conversions.rs");
 include!("cookie_stream_exports.rs");
 include!("string_exports.rs");
 include!("io_exports.rs");
-include!("ioctl_exports.rs");
-include!("scalar_exports.rs");
 include!("filesystem_paths_exports.rs");
-include!("file_handle_exports.rs");
-include!("ptrace_exports.rs");
 include!("c11_threads_exports.rs");
 include!("wchar_exports.rs");
 include!("compat_exports.rs");
 include!("memory_vm_exports.rs");
 include!("terminal_exports.rs");
 include!("poll_events_exports.rs");
-include!("integer_numeric_exports.rs");
-include!("select_exports.rs");
 include!("system_utils_exports.rs");
 include!("unicode_encoders_exports.rs");
-include!("random_exports.rs");
 include!("timer_signal_fds_exports.rs");
 include!("posix_timers_exports.rs");
-include!("time_extensions_exports.rs");
 include!("getdate_exports.rs");
 include!("legacy_formatting_exports.rs");
 include!("clock_administration_exports.rs");
@@ -22599,22 +22648,17 @@ include!("usershell_exports.rs");
 include!("utmp_databases.rs");
 include!("shadow_exports.rs");
 include!("identity_exports.rs");
-include!("fanotify_exports.rs");
-include!("quick_exit_exports.rs");
 include!("mqueue_exports.rs");
 include!("clone_exports.rs");
 include!("process_control_exports.rs");
 include!("complex_transcendentals_exports.rs");
 include!("complex_powers_exports.rs");
-include!("break_exports.rs");
 include!("wchar_stream_exports.rs");
 include!("wmemstream_exports.rs");
 include!("pthread_extensions.rs");
-include!("semtimedop_exports.rs");
 include!("posix_aio_exports.rs");
 include!("dynamic_loader_introspection_exports.rs");
 include!("loader_startup_exports.rs");
-include!("init_fini_exports.rs");
 include!("tls_get_addr.rs");
 
 // ============================================================
