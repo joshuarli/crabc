@@ -116,7 +116,7 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> c_long {
 // Keep this private layout local instead of depending on a public statfs
 // header: the kernel ABI is 64-bit on all targets supported by this crate.
 #[repr(C)]
-struct M4PathStatfs {
+struct CabiPathStatfs {
     f_type: c_ulong,
     f_bsize: c_ulong,
     f_blocks: u64,
@@ -131,35 +131,35 @@ struct M4PathStatfs {
     f_spare: [c_ulong; 4],
 }
 
-const M4_PC_LINK_MAX: c_int = 0;
-const M4_PC_MAX_CANON: c_int = 1;
-const M4_PC_MAX_INPUT: c_int = 2;
-const M4_PC_NAME_MAX: c_int = 3;
-const M4_PC_PATH_MAX: c_int = 4;
-const M4_PC_PIPE_BUF: c_int = 5;
-const M4_PC_CHOWN_RESTRICTED: c_int = 6;
-const M4_PC_NO_TRUNC: c_int = 7;
-const M4_PC_VDISABLE: c_int = 8;
-const M4_PC_SYNC_IO: c_int = 9;
-const M4_PC_ASYNC_IO: c_int = 10;
-const M4_PC_PRIO_IO: c_int = 11;
-const M4_PC_SOCK_MAXBUF: c_int = 12;
-const M4_PC_FILESIZEBITS: c_int = 13;
-const M4_PC_REC_INCR_XFER_SIZE: c_int = 14;
-const M4_PC_REC_MAX_XFER_SIZE: c_int = 15;
-const M4_PC_REC_MIN_XFER_SIZE: c_int = 16;
-const M4_PC_REC_XFER_ALIGN: c_int = 17;
-const M4_PC_ALLOC_SIZE_MIN: c_int = 18;
-const M4_PC_SYMLINK_MAX: c_int = 19;
-const M4_PC_2_SYMLINKS: c_int = 20;
+const CABI_PC_LINK_MAX: c_int = 0;
+const CABI_PC_MAX_CANON: c_int = 1;
+const CABI_PC_MAX_INPUT: c_int = 2;
+const CABI_PC_NAME_MAX: c_int = 3;
+const CABI_PC_PATH_MAX: c_int = 4;
+const CABI_PC_PIPE_BUF: c_int = 5;
+const CABI_PC_CHOWN_RESTRICTED: c_int = 6;
+const CABI_PC_NO_TRUNC: c_int = 7;
+const CABI_PC_VDISABLE: c_int = 8;
+const CABI_PC_SYNC_IO: c_int = 9;
+const CABI_PC_ASYNC_IO: c_int = 10;
+const CABI_PC_PRIO_IO: c_int = 11;
+const CABI_PC_SOCK_MAXBUF: c_int = 12;
+const CABI_PC_FILESIZEBITS: c_int = 13;
+const CABI_PC_REC_INCR_XFER_SIZE: c_int = 14;
+const CABI_PC_REC_MAX_XFER_SIZE: c_int = 15;
+const CABI_PC_REC_MIN_XFER_SIZE: c_int = 16;
+const CABI_PC_REC_XFER_ALIGN: c_int = 17;
+const CABI_PC_ALLOC_SIZE_MIN: c_int = 18;
+const CABI_PC_SYMLINK_MAX: c_int = 19;
+const CABI_PC_2_SYMLINKS: c_int = 20;
 
 #[inline]
-fn m4_pathconf_name_valid(name: c_int) -> bool {
-    name >= M4_PC_LINK_MAX && name <= M4_PC_2_SYMLINKS
+fn cabi_pathconf_name_valid(name: c_int) -> bool {
+    name >= CABI_PC_LINK_MAX && name <= CABI_PC_2_SYMLINKS
 }
 
 #[inline]
-unsafe fn m4_pathconf_statfs(path: *const c_char, buf: *mut M4PathStatfs) -> c_int {
+unsafe fn cabi_pathconf_statfs(path: *const c_char, buf: *mut CabiPathStatfs) -> c_int {
     let result = <Arch as Syscalls>::syscall2(SYS_STATFS, path as i64, buf as i64);
     if result < 0 {
         syscall_result(result) as c_int
@@ -169,7 +169,7 @@ unsafe fn m4_pathconf_statfs(path: *const c_char, buf: *mut M4PathStatfs) -> c_i
 }
 
 #[inline]
-unsafe fn m4_fpathconf_statfs(fd: c_int, buf: *mut M4PathStatfs) -> c_int {
+unsafe fn cabi_fpathconf_statfs(fd: c_int, buf: *mut CabiPathStatfs) -> c_int {
     let result = <Arch as Syscalls>::syscall2(SYS_FSTATFS, fd as i64, buf as i64);
     if result < 0 {
         syscall_result(result) as c_int
@@ -182,31 +182,31 @@ unsafe fn m4_fpathconf_statfs(fd: c_int, buf: *mut M4PathStatfs) -> c_int {
 // Linux filesystem.  A negative result denotes an indeterminate value; in
 // that case errno intentionally remains untouched, as required by POSIX.
 #[inline]
-unsafe fn m4_pathconf_value(name: c_int, fs: &M4PathStatfs) -> c_long {
+unsafe fn cabi_pathconf_value(name: c_int, fs: &CabiPathStatfs) -> c_long {
     match name {
-        M4_PC_LINK_MAX => 8,
-        M4_PC_MAX_CANON => 255,
-        M4_PC_MAX_INPUT => 255,
+        CABI_PC_LINK_MAX => 8,
+        CABI_PC_MAX_CANON => 255,
+        CABI_PC_MAX_INPUT => 255,
         // statfs.f_namelen is the filesystem's actual component limit.  This
         // is the key distinction from a universal NAME_MAX constant.
-        M4_PC_NAME_MAX => fs.f_namelen as c_long,
-        M4_PC_PATH_MAX => 4096,
-        M4_PC_PIPE_BUF => 4096,
-        M4_PC_CHOWN_RESTRICTED => 1,
-        M4_PC_NO_TRUNC => 1,
-        M4_PC_VDISABLE => 0,
-        M4_PC_SYNC_IO => 1,
-        M4_PC_ASYNC_IO => -1,
-        M4_PC_PRIO_IO => -1,
-        M4_PC_SOCK_MAXBUF => -1,
-        M4_PC_FILESIZEBITS => 64,
+        CABI_PC_NAME_MAX => fs.f_namelen as c_long,
+        CABI_PC_PATH_MAX => 4096,
+        CABI_PC_PIPE_BUF => 4096,
+        CABI_PC_CHOWN_RESTRICTED => 1,
+        CABI_PC_NO_TRUNC => 1,
+        CABI_PC_VDISABLE => 0,
+        CABI_PC_SYNC_IO => 1,
+        CABI_PC_ASYNC_IO => -1,
+        CABI_PC_PRIO_IO => -1,
+        CABI_PC_SOCK_MAXBUF => -1,
+        CABI_PC_FILESIZEBITS => 64,
         // Linux filesystems expose their preferred block size through statfs;
         // use it for transfer/allocation granularity where it is available.
-        M4_PC_REC_INCR_XFER_SIZE
-        | M4_PC_REC_MAX_XFER_SIZE
-        | M4_PC_REC_MIN_XFER_SIZE
-        | M4_PC_REC_XFER_ALIGN
-        | M4_PC_ALLOC_SIZE_MIN => {
+        CABI_PC_REC_INCR_XFER_SIZE
+        | CABI_PC_REC_MAX_XFER_SIZE
+        | CABI_PC_REC_MIN_XFER_SIZE
+        | CABI_PC_REC_XFER_ALIGN
+        | CABI_PC_ALLOC_SIZE_MIN => {
             if fs.f_bsize == 0 {
                 4096
             } else if fs.f_bsize > c_long::MAX as c_ulong {
@@ -215,8 +215,8 @@ unsafe fn m4_pathconf_value(name: c_int, fs: &M4PathStatfs) -> c_long {
                 fs.f_bsize as c_long
             }
         }
-        M4_PC_SYMLINK_MAX => -1,
-        M4_PC_2_SYMLINKS => 1,
+        CABI_PC_SYMLINK_MAX => -1,
+        CABI_PC_2_SYMLINKS => 1,
         _ => {
             // Callers validate the selector before reaching this helper.
             ERRNO = EINVAL;
@@ -253,34 +253,34 @@ pub unsafe extern "C" fn confstr(name: c_int, buf: *mut c_char, len: usize) -> u
 
 #[no_mangle]
 pub unsafe extern "C" fn fpathconf(fd: c_int, name: c_int) -> c_long {
-    if !m4_pathconf_name_valid(name) {
+    if !cabi_pathconf_name_valid(name) {
         ERRNO = EINVAL;
         return -1;
     }
 
-    let mut fs: M4PathStatfs = core::mem::zeroed();
-    if m4_fpathconf_statfs(fd, &mut fs) < 0 {
+    let mut fs: CabiPathStatfs = core::mem::zeroed();
+    if cabi_fpathconf_statfs(fd, &mut fs) < 0 {
         return -1;
     }
-    m4_pathconf_value(name, &fs)
+    cabi_pathconf_value(name, &fs)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn pathconf(path: *const c_char, name: c_int) -> c_long {
-    if !m4_pathconf_name_valid(name) {
+    if !cabi_pathconf_name_valid(name) {
         ERRNO = EINVAL;
         return -1;
     }
 
-    let mut fs: M4PathStatfs = core::mem::zeroed();
-    if m4_pathconf_statfs(path, &mut fs) < 0 {
+    let mut fs: CabiPathStatfs = core::mem::zeroed();
+    if cabi_pathconf_statfs(path, &mut fs) < 0 {
         return -1;
     }
-    m4_pathconf_value(name, &fs)
+    cabi_pathconf_value(name, &fs)
 }
 
-const M4_UL_GETFSIZE: c_int = 1;
-const M4_UL_SETFSIZE: c_int = 2;
+const CABI_UL_GETFSIZE: c_int = 1;
+const CABI_UL_SETFSIZE: c_int = 2;
 
 #[no_mangle]
 pub unsafe extern "C" fn ulimit(cmd: c_int, mut args: ...) -> c_long {
@@ -289,7 +289,7 @@ pub unsafe extern "C" fn ulimit(cmd: c_int, mut args: ...) -> c_long {
         return -1;
     }
 
-    if cmd == M4_UL_SETFSIZE {
+    if cmd == CABI_UL_SETFSIZE {
         let blocks: c_long = args.next_arg();
         // musl's historical ABI measures file size in 512-byte blocks.  The
         // cast before multiplication preserves the unsigned rlim_t behavior
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn ulimit(cmd: c_int, mut args: ...) -> c_long {
         if setrlimit(RLIMIT_FSIZE, &limit) != 0 {
             return -1;
         }
-    } else if cmd != M4_UL_GETFSIZE {
+    } else if cmd != CABI_UL_GETFSIZE {
         // musl treats unknown commands like UL_GETFSIZE and reports the
         // current limit; no errno is manufactured for this legacy interface.
     }

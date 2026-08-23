@@ -1,7 +1,8 @@
 # Lua source-build adapter-sysroot gate
 
-This harness implements the prior-to-performance source-build gate described
-in [`pregoal.md`](../../pregoal.md). It builds pinned Lua 5.4.8 from source as
+This harness implements the completed Lua source-build adapter-sysroot gate
+described in [`docs/evidence/lua-source-build.md`](../../docs/evidence/lua-source-build.md).
+It builds pinned Lua 5.4.8 from source as
 a real `liblua.so.5.4`, links `lua` dynamically to it, and loads separately
 compiled extension DSOs through normal Lua `require` behavior. `luac` cannot
 link against the shared library because its upstream implementation uses Lua

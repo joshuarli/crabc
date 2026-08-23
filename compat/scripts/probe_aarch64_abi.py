@@ -832,7 +832,7 @@ def static_archive_metadata(path: Path, nm: str) -> dict[str, Any]:
 
     Crabc's archive contains loader-facing objects that are not linkable with
     musl's CRT by themselves.  Inspecting the archive is therefore an honest
-    and useful M5 input check; the report explicitly keeps this separate from
+    and useful input check; the report explicitly keeps this separate from
     the header probe's pinned-musl execution evidence.
     """
 

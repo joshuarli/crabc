@@ -1,7 +1,7 @@
-# Stage 16 LTO measurement harness
+# Static/build-std LTO evidence matrix
 
 `run.py` is a bounded, dependency-free measurement prototype for the four
-configurations in Stage 16 of the [historical runtime plan](../../docs/history/runtime-plan.md):
+configurations documented in the [historical runtime plan](../../docs/history/runtime-plan.md):
 
 | ID | Configuration | Build contract |
 | --- | --- | --- |
@@ -94,21 +94,21 @@ Pure host tests do not require Rust, musl, LLVM, Docker, or glibc:
 python3 -m unittest discover -s compat/lto/tests -p 'test_*.py'
 ```
 
-## Milestone 12 native `crabc-rs` proof
+## Native `crabc-rs` LTO proof
 
-`m12_run.py` is a separate, bounded representative-application harness. It
-does not change the Stage 16 A/B/C/D matrix above. In the pinned native
+`native_facade_lto.py` is a separate, bounded representative-application harness. It
+does not change the static/build-std A/B/C/D matrix above. In the pinned native
 Linux/AArch64 Docker image, run:
 
 ```bash
-python3 compat/lto/m12_run.py
+python3 compat/lto/native_facade_lto.py
 ```
 
 The default application manifest is
-`compat/lto/m12-crabc-rs-fixture/Cargo.toml`; `--manifest` selects another
-M12 manifest without assuming a source filename. The stock-`std` comparison
+`compat/lto/native-facade-lto-fixture/Cargo.toml`; `--manifest` selects another
+native-facade manifest without assuming a source filename. The stock-`std` comparison
 uses `--stock-std-manifest`, defaulting to
-`compat/lto/m12-std-fixture/Cargo.toml`. Both manifests carry checked-in lock
+`compat/lto/native-std-lto-fixture/Cargo.toml`. Both manifests carry checked-in lock
 files and path-pin `crabc-rs`/`crabc-core` to this repository.
 
 The report records three lanes:

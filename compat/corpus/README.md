@@ -1,6 +1,6 @@
 # Real Alpine package corpus
 
-This is the M8 end-to-end compatibility boundary for crabc's supported modern
+This is the end-to-end Alpine-package compatibility boundary for crabc's supported modern
 runtime profile: Linux AArch64 on Linux kernel versions 5.10 and newer.
 `manifest.toml` names exact
 Alpine v3.24 AArch64 APK archives, package versions, SHA-256 digests, and the

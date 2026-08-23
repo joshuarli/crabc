@@ -1,9 +1,10 @@
-# M10 Rust-subsumption evidence
+# Rust-subsumption evidence
 
-This note records the narrow native Rust contracts behind the M10 ledger's
-`rust-subsumed` entries and the separately tracked allocator scope exception.
+This note records the narrow native Rust contracts behind the capability
+ledger's `rust-subsumed` entries and the separately tracked allocator scope
+exception.
 The companion test in
-`crabc-rs/tests/m10_subsumed.rs` exercises the observations without calling a
+`crabc-rs/tests/subsumed.rs` exercises the observations without calling a
 public crabc C symbol or reading C `errno`.
 
 The claims are intentionally smaller than the exported C groups:
@@ -22,7 +23,7 @@ The claims are intentionally smaller than the exported C groups:
   `snprintf`/`vsnprintf` semantics are not included: truncation, required-size
   reporting, and destination-buffer contracts remain deferred native work.
 
-The complete public malloc family is the sole M10 `scope-exception`, versioned
+The complete public malloc family is the sole `scope-exception`, versioned
 as `allocator-mimalloc-libc-boundary` v1 in
 `compat/crabc-rs/coverage.toml`. The project policy keeps `malloc`, `calloc`,
 `realloc`, `free`, all aligned variants, and `malloc_usable_size` at the libc
@@ -42,20 +43,20 @@ the all-zero and final-octet-one addresses. `core::net::Ipv6Addr::UNSPECIFIED`
 and `core::net::Ipv6Addr::LOCALHOST` carry those values without creating a C
 global-object or pointer-identity contract. `net::ethers::{IN6ADDR_ANY,
 IN6ADDR_LOOPBACK, Ipv6Constants}` gives the correspondence an explicit,
-searchable native spelling; `m10_ethers` checks the octets and the no-std
+searchable native spelling; `ethers` checks the octets and the no-std
 probe keeps the value path independent of C address helpers.
 
 ## Scope-reset interpretation
 
-These observations preserve completed M0–M10 evidence; they do not widen the
+These observations preserve completed capability-accounting evidence; they do not widen the
 future platform or API contract. `crabc` remains Linux/AArch64 with Linux
 kernel MSRV 5.10. An optional macOS/AArch64 backend belongs only to
 `crabc-rs`, through libSystem and a separate implementation boundary.
 
-M10 is complete when the ledger accounts for the profile rather than demanding
-a Rust wrapper around every C symbol. Its final inventory records 215 groups:
-171 verified native seams, no explicit post-M10 deferrals, and 52 documented
-scope boundaries. The allocator exception remains at the libc boundary;
+The evidence is complete when the ledger accounts for the profile rather than
+demanding a Rust wrapper around every C symbol. The current machine-readable
+ledger, rather than this prose note, owns the exact group counts and statuses.
+The allocator exception remains at the libc boundary;
 Rust-native callers use ordinary Rust allocation. Future work must keep the
 bounded C/POSIX/C.UTF-8 locale profile, UTF-8-first text model, conventional
 file-backed user/host/service/protocol lookup without NSS, small DNS resolver,

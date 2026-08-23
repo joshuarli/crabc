@@ -44,11 +44,11 @@ single direct syscalls are below a useful timer-resolution boundary.
 After a regular and fat-LTO native report exist, `--build-std` adds the pinned
 nightly `-Z build-std=std -Z build-std-features=` experiment to the same
 fixture. Rustybench uses Cargo's benchmark harness, which needs the default
-unwind-capable standard-library closure; the existing M12 application proof
+unwind-capable standard-library closure; the existing native-facade LTO proof
 retains its separately validated `std,panic_abort` route. The native fixture
 uses an explicit empty `CARGO_ENCODED_RUSTFLAGS` so the repository's
 symbol-accounting `link-dead-code` setting cannot alter its timed loops. The
-dependency-free M12 fixture remains the project’s separate clang/lld,
+dependency-free native-facade fixture remains the project’s separate clang/lld,
 `std,panic_abort`, bitcode, and fat-LTO Linux/AArch64 proof.
 
 ## What is measured

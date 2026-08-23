@@ -1,4 +1,4 @@
-//! Small, dependency-free workload for the Stage 16 build matrix.
+//! Small, dependency-free workload for the static/build-std LTO matrix.
 //!
 //! The `extern "C"` calls are intentional: they keep a visible application →
 //! libc wrapper boundary in the input while the Rust code supplies enough

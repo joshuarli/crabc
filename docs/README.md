@@ -1,56 +1,66 @@
 # Documentation router
 
-This directory contains durable cross-cutting design, evidence, and historical
-records. Keep executable-harness instructions beside the harness that owns
-them; do not duplicate their command contracts here.
+This directory owns durable cross-cutting design, evidence, roadmaps, and
+history. Keep executable runner instructions beside the harness that owns
+them; this router should explain ownership, not duplicate command contracts.
 
-## Current project contract
+## Governing project contract
 
-- [Project scope](../SCOPE.md) — governing Linux/AArch64 doctrine and
-  non-goals.
-- [Compatibility profile](../COMPATIBILITY-PROFILE.md) — public support and
-  limitation boundary.
-- [Active TODO](../TODO.md) — the only living backlog.
-- [Source-build pre-goal](../pregoal.md) — Lua adapter-sysroot and extension
-  gate before focused performance work and CPython.
-- [Performance completion goal](../goal.md) — measurable musl-outperformance
-  gates, scorecard, and optimization sequence.
-- [Software-corpus validation goal](../goal2.md) — the subsequent real
-  software and `crabc-rs` application performance corpus.
+- [Scope](../SCOPE.md) — Linux/AArch64 doctrine and non-goals.
+- [Compatibility profile](../COMPATIBILITY-PROFILE.md) — supported and
+  intentionally limited behavior.
+- [Active TODO](../TODO.md) — the sole living prioritized work list.
+- [Agent/project handoff](../AGENTS.md) — code map, source precedence, and
+  canonical development commands.
 - [Generated compatibility dashboard](../COMPATIBILITY.md) — current measured
-  status; never edit it by hand.
-- [Agent/project handoff](../AGENTS.md) — code map, development commands, and
-  document precedence.
+  status; generated only, never hand-edited.
 
-## Design and evidence
+## Current design
 
-- [Native `crabc-rs` design](design/crabc-rs.md) — current Rust-facade
-  architecture and boundary rules.
+- [Native `crabc-rs` design](design/crabc-rs.md) — typed facade architecture,
+  ownership, safety, and runtime-state boundary.
+- [Performance design](design/performance.md) — measurement methodology,
+  optimization doctrine, and current cost model.
+- [Source-build adapter-sysroot design](design/source-build.md) — completed Lua
+  gate and the permanent adapter boundary.
 - [Rust-subsumption evidence](evidence/crabc-rs-subsumption.md) — why selected
   C groups have no native Rust wrapper.
-- [`compat/crabc-rs/coverage.toml`](../compat/crabc-rs/coverage.toml) — exact,
+- [Lua source-build evidence](evidence/lua-source-build.md) — completed Lua
+  isolation proof and its toolchain boundary.
+- [`compat/crabc-rs/coverage.toml`](../compat/crabc-rs/coverage.toml) — exact
   machine-readable capability accounting.
 
-## Historical records
+## Detailed acceptance contracts
 
-- [Runtime delivery plan](history/runtime-plan.md) — M0–M12 chronology and
-  historical evidence.
-- [`crabc-rs` delivery plan](history/crabc-rs-delivery-plan.md) — facade
-  architecture/milestone history.
+- [Performance completion](roadmap/performance-completion.md) — active
+  scorecard and release proof; it does not replace `TODO.md` priority.
+- [Software-corpus validation](roadmap/software-corpus-validation.md) —
+  sequenced C0–C4 real-software and native-application program after the
+  focused scorecard passes.
+- [Source-build progression](roadmap/source-build.md) — future CPython
+  adapter-sysroot and later crabc-owned CRT/sysroot acceptance stages.
 
-Historical records preserve rationale but may say “next”, “remaining”, or
-“deferred” in their contemporaneous context. They never override `TODO.md`,
-the scope/profile, executable contracts, or generated evidence.
+## Historical rationale and naming provenance
+
+- [Runtime delivery record](history/runtime-plan.md) — concise delivery
+  provenance and the governing superseded-direction decisions.
+- [`crabc-rs` delivery record](history/crabc-rs-delivery-plan.md) — concise
+  facade architecture and capability-accounting provenance.
+- [Semantic migration record](history/semantic-migration.md) — original blob
+  IDs, loss-prevention ledger, and milestone-to-semantic rename map.
+
+Historical records never override root policy, `TODO.md`, machine-readable
+contracts, or generated evidence.
 
 ## Code-adjacent guides
 
 - C runtime and dynamic loader: [`libc/README.md`](../libc/README.md),
-  [`ldso/README.md`](../ldso/README.md), and [`compat/ldso/README.md`](../compat/ldso/README.md).
+  [`ldso/README.md`](../ldso/README.md), and
+  [`compat/ldso/README.md`](../compat/ldso/README.md).
 - ABI and loader inventory: [`compat/abi/README.md`](../compat/abi/README.md)
   and [`compat/loader/README.md`](../compat/loader/README.md).
 - Compatibility runners: [`libc-test-harness/README.md`](../libc-test-harness/README.md)
   and the nearest `compat/*/README.md`.
 - Rust `std`, Rustix, and LTO evidence: [`compat/rust-std/README.md`](../compat/rust-std/README.md),
   [`compat/rustix/`](../compat/rustix/), and [`compat/lto/README.md`](../compat/lto/README.md).
-- Performance method and active optimization frontier:
-  [`design/performance.md`](design/performance.md) and [`compat/perf/README.md`](../compat/perf/README.md).
+- Performance runner mechanics: [`compat/perf/README.md`](../compat/perf/README.md).

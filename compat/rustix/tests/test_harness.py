@@ -110,6 +110,19 @@ class CoverageLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(harness.HarnessError, "uses TLS errno"):
             harness.validate_coverage(ledger)
 
+    def test_deferred_native_contract_requires_a_semantic_workstream(self) -> None:
+        capability = {
+            "status": "deferred",
+            "planned_rust_api": ["fixture::Capability"],
+            "deferred_reason": "The fixture has no native contract yet.",
+            "target_workstream": "core-runtime",
+        }
+        harness.require_native_contract(capability, "fixture")
+
+        del capability["target_workstream"]
+        with self.assertRaisesRegex(harness.HarnessError, "target_workstream"):
+            harness.require_native_contract(capability, "fixture")
+
     def test_coverage_rejects_abi_only_without_review_rationale(self) -> None:
         ledger = self.ledger()
         self.capability(ledger, "stdio.fopen64-alias")["why_no_native_operation"] = ""
@@ -125,7 +138,7 @@ class CoverageLedgerTests(unittest.TestCase):
     def test_coverage_rejects_missing_rust_subsumption_evidence_file(self) -> None:
         ledger = self.ledger()
         self.capability(ledger, "memory.bytes-basic")["behavior_evidence"] = [
-            "crabc-rs/tests/m10_subsumed_missing.rs"
+            "crabc-rs/tests/subsumed_missing.rs"
         ]
         with self.assertRaisesRegex(harness.HarnessError, "does not exist"):
             harness.validate_coverage(ledger)
@@ -152,7 +165,7 @@ class CoverageLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(harness.HarnessError, "behavior_evidence must identify"):
             harness.validate_coverage(ledger)
 
-    def test_m10_keeps_long_double_math_and_bounded_formatting_deferred(self) -> None:
+    def test_native_keeps_long_double_math_and_bounded_formatting_deferred(self) -> None:
         ledger = self.ledger()
         elementary = self.capability(ledger, "math.elementary")
         long_double = self.capability(ledger, "math.elementary-long-double")
@@ -167,7 +180,7 @@ class CoverageLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(harness.HarnessError, "belongs to both"):
             harness.validate_coverage(ledger)
 
-    def test_m10_preserves_the_whole_malloc_family_policy_exclusion(self) -> None:
+    def test_native_preserves_the_whole_malloc_family_policy_exclusion(self) -> None:
         ledger = self.ledger()
         basic = self.capability(ledger, "memory.allocator-basic")
         observability = self.capability(ledger, "memory.allocator-observability")
@@ -270,24 +283,24 @@ class SourceFixtureTests(unittest.TestCase):
             [
                 "source-compare",
                 "--fixture",
-                "compat/rustix/source/m2_statat.rs",
+                "compat/rustix/source/statat.rs",
                 "--fixture",
-                "compat/rustix/source/m2_xattr.rs",
+                "compat/rustix/source/xattr.rs",
             ]
         )
         self.assertEqual(
             args.fixture,
             [
-                Path("compat/rustix/source/m2_statat.rs"),
-                Path("compat/rustix/source/m2_xattr.rs"),
+                Path("compat/rustix/source/statat.rs"),
+                Path("compat/rustix/source/xattr.rs"),
             ],
         )
 
-    def test_m6_process_fixture_is_available_to_source_compare(self) -> None:
+    def test_process_fixture_is_available_to_source_compare(self) -> None:
         args = harness.parse_args(
-            ["source-compare", "--fixture", "compat/rustix/source/m6_process.rs"]
+            ["source-compare", "--fixture", "compat/rustix/source/process.rs"]
         )
-        self.assertEqual(args.fixture, [Path("compat/rustix/source/m6_process.rs")])
+        self.assertEqual(args.fixture, [Path("compat/rustix/source/process.rs")])
         self.assertTrue((ROOT / args.fixture[0]).is_file())
 
     def test_source_dependency_uses_a_fixed_api_alias(self) -> None:
@@ -303,7 +316,7 @@ class SourceFixtureTests(unittest.TestCase):
         )
 
     def test_source_fixture_rejects_a_non_target_build(self) -> None:
-        fixture = ROOT / "compat/rustix/source/m1_foundation.rs"
+        fixture = ROOT / "compat/rustix/source/foundation.rs"
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(harness.HarnessError):
                 harness.compile_source_fixture(
@@ -316,7 +329,7 @@ class SourceFixtureTests(unittest.TestCase):
                 )
 
     def test_source_compare_rejects_an_unpinned_checkout(self) -> None:
-        fixture = ROOT / "compat/rustix/source/m1_foundation.rs"
+        fixture = ROOT / "compat/rustix/source/foundation.rs"
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(harness.HarnessError):
                 harness.compare_source_fixture(fixture, Path(directory), timeout=1.0)

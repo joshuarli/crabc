@@ -171,7 +171,7 @@ def run_backend(root: Path, args: argparse.Namespace, backend: str) -> dict[str,
     if args.build_std:
         # Cargo's benchmark harness requires an unwind-capable std. This is
         # the user-requested empty build-std feature experiment; the existing
-        # M12 application proof retains its separate `panic_abort` closure.
+        # application proof retains its separate `panic_abort` closure.
         command.extend(["-Z", "build-std=std", "-Z", "build-std-features="])
     command.extend([
         "bench", "--manifest-path", str(manifest), "--bench", "native", "--no-default-features",

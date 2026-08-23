@@ -1,6 +1,6 @@
 # Initial Linux/AArch64 Rustix correspondence inventory.
 #
-# This is intentionally a bounded M0 seed, not a parity claim.  Entries become
+# This is intentionally a bounded seed, not a parity claim.  Entries become
 # ``implemented`` and then ``verified`` only after a native Rust facade and an
 # isolated dual-backend test exist.  ``crabc`` names the intended public Rust
 # path, not a call through the C/POSIX ABI.
@@ -31,7 +31,7 @@ rustix = "io::Errno"
 crabc = "io::Errno"
 status = "verified"
 compatibility = "native-equivalent"
-tests = ["crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/foundation.rs", "compat/rustix/source/foundation.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "io.read"
@@ -40,7 +40,7 @@ rustix = "io::read"
 crabc = "io::read"
 status = "implemented"
 compatibility = "native-equivalent"
-tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/direct.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "io.write"
@@ -49,7 +49,7 @@ rustix = "io::write"
 crabc = "io::write"
 status = "implemented"
 compatibility = "native-equivalent"
-tests = ["crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/direct.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fd.as-fd"
@@ -76,7 +76,7 @@ rustix = "fs::openat"
 crabc = "fs::openat"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m0_direct.rs", "crabc-rs/tests/m1_foundation.rs", "crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/fs_openat.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/source/m2_openat2.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/direct.rs", "crabc-rs/tests/foundation.rs", "crabc-rs/tests/filesystem.rs", "compat/rustix/source/fs_openat.rs", "compat/rustix/source/foundation.rs", "compat/rustix/source/openat2.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.open"
@@ -85,7 +85,7 @@ rustix = "fs::open"
 crabc = "fs::open"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_openat2.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/openat2.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.openat2"
@@ -94,7 +94,7 @@ rustix = "fs::openat2"
 crabc = "fs::openat2"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_openat2.rs", "compat/crabc-rs/verify_m2.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/openat2.rs", "compat/crabc-rs/verify_filesystem.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.special-fds"
@@ -103,7 +103,7 @@ rustix = "fs::{CWD,ABS}"
 crabc = "fs::{CWD,ABS}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/foundation.rs", "compat/rustix/source/foundation.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "ffi.cstr"
@@ -121,7 +121,7 @@ rustix = "path::Arg"
 crabc = "path::Arg"
 status = "implemented"
 compatibility = "partial-source-compatible"
-tests = ["crabc-rs/src/path.rs", "crabc-rs/tests/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/src/path.rs", "crabc-rs/tests/foundation.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "buffer.buffer"
@@ -130,7 +130,7 @@ rustix = "buffer::Buffer"
 crabc = "buffer::Buffer"
 status = "implemented"
 compatibility = "partial-source-compatible"
-tests = ["crabc-rs/src/buffer.rs", "crabc-rs/tests/m0_direct.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/src/buffer.rs", "crabc-rs/tests/direct.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "io.close"
@@ -157,7 +157,7 @@ rustix = "ioctl::{ioctl,Ioctl,Opcode,Direction}"
 crabc = "ioctl::{ioctl,Ioctl,Opcode,Direction}"
 status = "implemented"
 compatibility = "partial-source-compatible"
-tests = ["crabc-rs/src/ioctl.rs", "crabc-rs/tests/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/src/ioctl.rs", "crabc-rs/tests/foundation.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "io.ioctl-fd"
@@ -166,7 +166,7 @@ rustix = "io::{ioctl_fioclex,ioctl_fionclex,ioctl_fionbio,ioctl_fionread}"
 crabc = "io::{ioctl_fioclex,ioctl_fionclex,ioctl_fionbio,ioctl_fionread}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m1_foundation.rs", "compat/rustix/source/m1_foundation.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/foundation.rs", "compat/rustix/source/foundation.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.statat"
@@ -175,7 +175,7 @@ rustix = "fs::statat"
 crabc = "fs::statat"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/statat.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.fstat"
@@ -184,7 +184,7 @@ rustix = "fs::fstat"
 crabc = "fs::fstat"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/statat.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.seek"
@@ -193,7 +193,7 @@ rustix = "fs::{SeekFrom,seek,tell}"
 crabc = "fs::{SeekFrom,seek,tell}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m5_fs_io.rs", "compat/rustix/source/m5_fs_io.rs", "compat/crabc-rs/verify_m5.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/fs_io.rs", "compat/rustix/source/fs_io.rs", "compat/crabc-rs/verify_descriptor_mapping.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.unlinkat"
@@ -202,7 +202,7 @@ rustix = "fs::unlinkat"
 crabc = "fs::unlinkat"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/statat.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.stat"
@@ -211,7 +211,7 @@ rustix = "fs::{stat,lstat}"
 crabc = "fs::{stat,lstat}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/statat.rs", "compat/rustix/source/links.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.mkdir-unlink"
@@ -220,7 +220,7 @@ rustix = "fs::{mkdir,mkdirat,unlink,rmdir}"
 crabc = "fs::{mkdir,mkdirat,unlink,rmdir}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_statat.rs", "compat/rustix/source/m2_locks.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/statat.rs", "compat/rustix/source/locks.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.links"
@@ -229,7 +229,7 @@ rustix = "fs::{link,linkat,symlink,symlinkat}"
 crabc = "fs::{link,linkat,symlink,symlinkat}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/links.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.rename"
@@ -238,7 +238,7 @@ rustix = "fs::{rename,renameat,renameat_with}"
 crabc = "fs::{rename,renameat,renameat_with}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/links.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.readlink"
@@ -247,7 +247,7 @@ rustix = "fs::{readlink,readlinkat,readlinkat_raw}"
 crabc = "fs::{readlink,readlinkat,readlinkat_raw}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_links.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/links.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.permissions"
@@ -256,7 +256,7 @@ rustix = "fs::{chmod,chmodat,fchmod}"
 crabc = "fs::{chmod,chmodat,fchmod}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_metadata.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/metadata.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.timestamps"
@@ -265,7 +265,7 @@ rustix = "fs::{utimensat,futimens,Timespec,Timestamps}"
 crabc = "fs::{utimensat,futimens,Timespec,Timestamps}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_metadata.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/metadata.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.raw-dir"
@@ -274,7 +274,7 @@ rustix = "fs::{RawDir,RawDirEntry}"
 crabc = "fs::{RawDir,RawDirEntry}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_raw_dir.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/raw_dir.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.xattr"
@@ -283,7 +283,7 @@ rustix = "fs::{XattrFlags,getxattr,lgetxattr,fgetxattr,setxattr,lsetxattr,fsetxa
 crabc = "fs::{XattrFlags,getxattr,lgetxattr,fgetxattr,setxattr,lsetxattr,fsetxattr,listxattr,llistxattr,flistxattr,removexattr,lremovexattr,fremovexattr}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_xattr.rs", "tests/m4_extended_attributes_exports.rs", "compat/crabc-rs/verify_m2.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/xattr.rs", "tests/extended_attributes_exports.rs", "compat/crabc-rs/verify_filesystem.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.advisory-locks"
@@ -292,7 +292,7 @@ rustix = "fs::{FlockOperation,flock,fcntl_lock}"
 crabc = "fs::{FlockOperation,flock,fcntl_lock}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m2_filesystem.rs", "compat/rustix/source/m2_locks.rs", "compat/crabc-rs/verify_m2.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/locks.rs", "compat/crabc-rs/verify_filesystem.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.fsync"
@@ -301,7 +301,7 @@ rustix = "fs::{fsync,fdatasync,ftruncate}"
 crabc = "fs::{fsync,fdatasync,ftruncate}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m5_fs_io.rs", "compat/rustix/source/m5_fs_io.rs", "compat/crabc-rs/verify_m5.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/fs_io.rs", "compat/rustix/source/fs_io.rs", "compat/crabc-rs/verify_descriptor_mapping.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "event.poll"
@@ -310,7 +310,7 @@ rustix = "event::poll"
 crabc = "event::poll"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_event.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/event.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "event.eventfd"
@@ -319,7 +319,7 @@ rustix = "event::{eventfd,EventfdFlags}"
 crabc = "event::{eventfd,EventfdFlags}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_event.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/event.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "event.epoll"
@@ -328,7 +328,7 @@ rustix = "event::epoll::{create,add,modify,delete,wait}"
 crabc = "event::epoll::{create,add,modify,delete,wait}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m5_event_time.rs", "compat/rustix/source/m5_event_time.rs", "compat/crabc-rs/verify_m5.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/event_time.rs", "compat/rustix/source/event_time.rs", "compat/crabc-rs/verify_descriptor_mapping.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "pipe.pipe"
@@ -337,7 +337,7 @@ rustix = "pipe::pipe"
 crabc = "pipe::pipe"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_time_pipe_random.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/time_pipe_random.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "pipe.splice"
@@ -346,7 +346,7 @@ rustix = "pipe::{IoSliceRaw,SpliceFlags,splice,vmsplice}"
 crabc = "pipe::{IoSliceRaw,SpliceFlags,splice,vmsplice}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_descriptor.rs", "compat/rustix/source/m10_pipe_splice.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/descriptor.rs", "compat/rustix/source/pipe_splice.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "pipe.tee"
@@ -355,7 +355,7 @@ rustix = "pipe::{SpliceFlags,tee}"
 crabc = "pipe::{SpliceFlags,tee}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_pipe_tee.rs", "compat/rustix/source/m10_pipe_tee.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/pipe_tee.rs", "compat/rustix/source/pipe_tee.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "pipe.capacity-observation"
@@ -364,7 +364,7 @@ rustix = "pipe::fcntl_getpipe_size"
 crabc = "pipe::fcntl_getpipe_size"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_pipe_size.rs", "compat/rustix/source/m10_pipe_size.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/pipe_size.rs", "compat/rustix/source/pipe_size.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "mm.mmap"
@@ -373,7 +373,7 @@ rustix = "mm::{mmap,mmap_anonymous,mprotect}"
 crabc = "mm::{mmap,mmap_anonymous,mprotect}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "crabc-rs/tests/m5_file_mapping.rs", "compat/rustix/source/m3_net_mm.rs", "compat/rustix/source/m5_file_mapping.rs", "compat/crabc-rs/verify_m3.py", "compat/crabc-rs/verify_m5.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "crabc-rs/tests/file_mapping.rs", "compat/rustix/source/net_mm.rs", "compat/rustix/source/file_mapping.rs", "compat/crabc-rs/verify_core_os.py", "compat/crabc-rs/verify_descriptor_mapping.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "mm.munmap"
@@ -382,7 +382,7 @@ rustix = "mm::munmap"
 crabc = "mm::munmap"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/net_mm.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.socket"
@@ -400,7 +400,7 @@ rustix = "net::socketpair"
 crabc = "net::socketpair"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/net_mm.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.connect"
@@ -418,7 +418,7 @@ rustix = "net::{send,recv}"
 crabc = "net::{send,recv}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_net_mm.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/net_mm.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "param.page-size"
@@ -427,7 +427,7 @@ rustix = "param::page_size"
 crabc = "param::page_size"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_param_auxv.rs", "compat/rustix/source/m10_param_auxv.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/param_auxv.rs", "compat/rustix/source/param_auxv.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "param.clock-ticks"
@@ -436,7 +436,7 @@ rustix = "param::clock_ticks_per_second"
 crabc = "param::clock_ticks_per_second"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "rand.getrandom"
@@ -445,7 +445,7 @@ rustix = "rand::getrandom"
 crabc = "rand::getrandom"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_time_pipe_random.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/time_pipe_random.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.clock-gettime"
@@ -454,7 +454,7 @@ rustix = "time::{ClockId,clock_gettime,clock_getres}"
 crabc = "time::{ClockId,clock_gettime,clock_getres}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m3_core_os.rs", "compat/rustix/source/m3_time_pipe_random.rs", "compat/crabc-rs/verify_m3.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/core_os.rs", "compat/rustix/source/time_pipe_random.rs", "compat/crabc-rs/verify_core_os.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.timerfd"
@@ -463,7 +463,7 @@ rustix = "time::{TimerfdClockId,TimerfdFlags,TimerfdTimerFlags,Itimerspec,timerf
 crabc = "time::{TimerfdClockId,TimerfdFlags,TimerfdTimerFlags,Itimerspec,timerfd_create,timerfd_settime,timerfd_gettime}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m5_event_time.rs", "compat/rustix/source/m5_event_time.rs", "compat/crabc-rs/verify_m5.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/event_time.rs", "compat/rustix/source/event_time.rs", "compat/crabc-rs/verify_descriptor_mapping.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.getpid"
@@ -472,7 +472,7 @@ rustix = "process::getpid"
 crabc = "process::getpid"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.kill"
@@ -481,7 +481,7 @@ rustix = "process::{kill_process,test_kill_process}"
 crabc = "process::{kill_process,test_kill_process}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.wait"
@@ -490,7 +490,7 @@ rustix = "process::wait"
 crabc = "process::wait"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m6_signal_process.rs", "compat/rustix/source/m6_process.rs", "compat/crabc-rs/verify_m6.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/signal_process.rs", "compat/rustix/source/process.rs", "compat/crabc-rs/verify_signal_process.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.waitid"
@@ -499,7 +499,7 @@ rustix = "process::waitid"
 crabc = "process::waitid"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m6_signal_process.rs", "compat/rustix/source/m6_process.rs", "compat/crabc-rs/verify_m6.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/signal_process.rs", "compat/rustix/source/process.rs", "compat/crabc-rs/verify_signal_process.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.gettid"
@@ -508,7 +508,7 @@ rustix = "thread::gettid"
 crabc = "thread::gettid"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.sched-yield"
@@ -517,7 +517,7 @@ rustix = "thread::sched_yield"
 crabc = "thread::sched_yield"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "stdio.dup2-stdout"
@@ -526,7 +526,7 @@ rustix = "stdio::{stdin,stdout,stderr,take_stdin,take_stdout,take_stderr,raw_std
 crabc = "stdio::{stdin,stdout,stderr,take_stdin,take_stdout,take_stderr,raw_stdin,raw_stdout,raw_stderr,dup2_stdin,dup2_stdout,dup2_stderr}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m5_descriptor_stdio.rs", "tests/m5_dup_exports.rs", "compat/rustix/source/m5_descriptor_stdio.rs", "compat/crabc-rs/verify_m5.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/descriptor_stdio.rs", "tests/dup_exports.rs", "compat/rustix/source/descriptor_stdio.rs", "compat/crabc-rs/verify_descriptor_mapping.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "termios.isatty"
@@ -535,7 +535,7 @@ rustix = "termios::isatty"
 crabc = "termios::isatty"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "termios.tcgetattr"
@@ -544,7 +544,7 @@ rustix = "termios::{tcgetattr,tcsetattr,tcgetwinsize,tcsetwinsize}"
 crabc = "termios::{tcgetattr,tcsetattr,tcgetwinsize,tcsetwinsize}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "system.uname"
@@ -553,7 +553,7 @@ rustix = "system::uname"
 crabc = "system::uname"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "system.sysinfo"
@@ -562,7 +562,7 @@ rustix = "system::sysinfo"
 crabc = "system::sysinfo"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "pty.openpt"
@@ -571,7 +571,7 @@ rustix = "pty::{openpt,ptsname,grantpt,unlockpt,ioctl_tiocgptpeer}"
 crabc = "pty::{openpt,ptsname,grantpt,unlockpt,ioctl_tiocgptpeer}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "shm.open"
@@ -580,7 +580,7 @@ rustix = "shm::{open,unlink}"
 crabc = "shm::{open,unlink}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "mount.mount"
@@ -589,9 +589,9 @@ rustix = "mount::{mount,unmount}"
 crabc = "mount::{mount,unmount}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m4_process_system.rs", "compat/rustix/source/m4_process_system.rs", "compat/crabc-rs/verify_m4.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_system.rs", "compat/rustix/source/process_system.rs", "compat/crabc-rs/verify_process_system.py", "compat/rustix/tests/test_harness.py"]
 
-# M5 completes the correspondence ledger for the fixed Rustix 1.1.4
+# completes the correspondence ledger for the fixed Rustix 1.1.4
 # Linux/AArch64-little-endian profile. These grouped records deliberately
 # distinguish direct verified overlap from later Linux work; a deferred record
 # is not counted as native parity.
@@ -648,7 +648,7 @@ rustix = "io::{FdFlags,DupFlags,dup,dup2,dup3,fcntl_getfd,fcntl_setfd,fcntl_dupf
 crabc = "io::{FdFlags,DupFlags,dup,dup2,dup3,fcntl_getfd,fcntl_setfd,fcntl_dupfd_cloexec}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m5_descriptor_stdio.rs", "tests/m5_dup_exports.rs", "compat/rustix/source/m5_descriptor_stdio.rs", "compat/crabc-rs/verify_m5.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/descriptor_stdio.rs", "tests/dup_exports.rs", "compat/rustix/source/descriptor_stdio.rs", "compat/crabc-rs/verify_descriptor_mapping.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "io.try-close"
@@ -659,7 +659,7 @@ status = "not-applicable"
 compatibility = "feature-gated-optional-api"
 reason = "Rustix try_close is an opt-in API whose retry semantics need a separate ownership contract; crabc exposes the Linux-safe non-retrying close boundary."
 tests = ["crabc-rs/src/io.rs", "compat/rustix/tests/test_harness.py"]
-documentation = ["docs/history/crabc-rs-delivery-plan.md#81-milestone-5--primary-rustix-parity"]
+documentation = ["docs/history/crabc-rs-delivery-plan.md#rustix-provenance"]
 
 [[api]]
 id = "fs.alloc-dir"
@@ -686,7 +686,7 @@ rustix = "fs::{accessat,Access,AtFlags}"
 crabc = "fs::{accessat,Access,AtFlags}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_accessat.rs", "compat/rustix/source/m10_accessat.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/accessat.rs", "compat/rustix/source/accessat.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.linux-extensions"
@@ -704,7 +704,7 @@ rustix = "fs::fallocate(fd, FallocateFlags::empty(), offset, length)"
 crabc = "fs::posix_fallocate(fd, offset, length)"
 status = "verified"
 compatibility = "native-extension"
-tests = ["crabc-rs/tests/m10_fallocate.rs", "compat/rustix/source/m10_posix_fallocate.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/fallocate.rs", "compat/rustix/source/posix_fallocate.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.special-ioctl"
@@ -722,7 +722,7 @@ rustix = "fs::{SealFlags,fcntl_add_seals}"
 crabc = "fs::{SealFlags,fcntl_add_seals}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_fcntl_seals.rs", "compat/rustix/source/m10_fcntl_add_seals.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/fcntl_seals.rs", "compat/rustix/source/fcntl_add_seals.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "fs.fcntl-get-seals"
@@ -731,7 +731,7 @@ rustix = "fs::{SealFlags,fcntl_get_seals}"
 crabc = "fs::{SealFlags,fcntl_get_seals}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_fcntl_seals.rs", "compat/rustix/source/m10_fcntl_seals.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/fcntl_seals.rs", "compat/rustix/source/fcntl_seals.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "event.select"
@@ -740,7 +740,7 @@ rustix = "event::{select,fd_set_*}"
 crabc = "event::{select,fd_set_*}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_readiness.rs", "compat/rustix/source/m10_readiness.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/readiness.rs", "compat/rustix/source/readiness.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "event.pselect"
@@ -749,7 +749,7 @@ rustix = "event::select (native extension: pselect signal-mask variant)"
 crabc = "event::pselect"
 status = "verified"
 compatibility = "native-extension"
-tests = ["crabc-rs/tests/m10_readiness.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/readiness.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "event.pause"
@@ -758,7 +758,7 @@ rustix = "event::pause"
 crabc = "event::pause"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_pause.rs", "compat/rustix/source/m10_pause.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/pause.rs", "compat/rustix/source/pause.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "mm.extended"
@@ -767,7 +767,7 @@ rustix = "mm::{mremap,mremap_fixed,madvise,msync,mlock,mlock_with,munlock,mlocka
 crabc = "mm::{mremap,mremap_fixed,madvise,msync,mlock,mlock_with,munlock,mlockall,munlockall}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_memory_vm.rs", "compat/rustix/source/m10_memory_vm.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/memory_vm.rs", "compat/rustix/source/memory_vm.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "mm.userfault"
@@ -787,7 +787,7 @@ status = "intentional-divergence"
 compatibility = "explicit-flag-composition"
 reason = "crabc keeps classic mount operations as one explicit mount or unmount flag boundary instead of exposing convenience helpers which hide process-wide mount-namespace changes."
 tests = ["crabc-rs/src/mount.rs", "compat/rustix/tests/test_harness.py"]
-documentation = ["docs/history/crabc-rs-delivery-plan.md#81-milestone-5--primary-rustix-parity"]
+documentation = ["docs/history/crabc-rs-delivery-plan.md#rustix-provenance"]
 
 [[api]]
 id = "mount.fsd"
@@ -832,7 +832,7 @@ rustix = "net::sockopt::socket_type"
 crabc = "net::sockopt::socket_type"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_socket_type.rs", "compat/rustix/source/m10_socket_type.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_socket_type.rs", "compat/rustix/source/socket_type.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.sockopt-protocol"
@@ -841,7 +841,7 @@ rustix = "net::sockopt::socket_protocol"
 crabc = "net::sockopt::socket_protocol"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_socket_protocol.rs", "compat/rustix/source/m10_socket_protocol.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_socket_protocol.rs", "compat/rustix/source/socket_protocol.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.sockopt-cookie"
@@ -850,7 +850,7 @@ rustix = "net::sockopt::socket_cookie"
 crabc = "net::sockopt::socket_cookie"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_socket_cookie.rs", "compat/rustix/source/m10_socket_cookie.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_socket_cookie.rs", "compat/rustix/source/socket_cookie.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.sockopt-domain"
@@ -859,7 +859,7 @@ rustix = "net::sockopt::socket_domain"
 crabc = "net::sockopt::socket_domain"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_socket_domain.rs", "compat/rustix/source/m10_socket_domain.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_socket_domain.rs", "compat/rustix/source/socket_domain.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.sockopt-acceptconn"
@@ -868,7 +868,7 @@ rustix = "net::sockopt::socket_acceptconn"
 crabc = "net::sockopt::socket_acceptconn"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_socket_acceptconn.rs", "compat/rustix/source/m10_socket_acceptconn.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_socket_acceptconn.rs", "compat/rustix/source/socket_acceptconn.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.sockopt-oobinline"
@@ -877,7 +877,7 @@ rustix = "net::sockopt::{set_socket_oobinline, socket_oobinline}"
 crabc = "net::sockopt::{set_socket_oobinline, socket_oobinline}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_socket_oobinline.rs", "compat/rustix/source/m10_socket_oobinline.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_socket_oobinline.rs", "compat/rustix/source/socket_oobinline.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.sockopt-broadcast"
@@ -886,7 +886,7 @@ rustix = "net::sockopt::{set_socket_broadcast, socket_broadcast}"
 crabc = "net::sockopt::{set_socket_broadcast, socket_broadcast}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_socket_broadcast.rs", "compat/rustix/source/m10_socket_broadcast.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_socket_broadcast.rs", "compat/rustix/source/socket_broadcast.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.netdevice"
@@ -895,7 +895,7 @@ rustix = "net::netdevice::name_to_index"
 crabc = "net::netdevice::name_to_index"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_interface_index.rs", "compat/rustix/source/m10_network_interface_index.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_interface_index.rs", "compat/rustix/source/network_interface_index.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.netdevice-index-name"
@@ -904,7 +904,7 @@ rustix = "net::netdevice::{index_to_name,index_to_name_inlined}"
 crabc = "net::netdevice::{index_to_name,index_to_name_inlined}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_interface_index_name.rs", "compat/rustix/source/m10_network_interface_index_name.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_interface_index_name.rs", "compat/rustix/source/network_interface_index_name.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.ip-address-types"
@@ -913,7 +913,7 @@ rustix = "net::{IpAddr,Ipv4Addr,Ipv6Addr}"
 crabc = "net::{IpAddr,Ipv4Addr,Ipv6Addr}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_network_ipaddr.rs", "compat/rustix/source/m10_network_ipaddr.rs", "compat/crabc-rs/verify_m10_network_address.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/network_ipaddr.rs", "compat/rustix/source/network_ipaddr.rs", "compat/crabc-rs/verify_network_address.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "net.ipv4-legacy-codec"
@@ -922,7 +922,7 @@ rustix = "native extension: musl legacy IPv4 byte parser (no Rustix equivalent)"
 crabc = "net::parse_ipv4_legacy"
 status = "verified"
 compatibility = "native-extension"
-tests = ["crabc-rs/tests/m10_ipv4_legacy.rs", "compat/crabc-rs/verify_m10_network_address.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/ipv4_legacy.rs", "compat/crabc-rs/verify_network_address.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "param.auxv"
@@ -931,7 +931,7 @@ rustix = "param::{page_size,linux_hwcap,linux_minsigstksz,linux_execfn}"
 crabc = "param::{page_size,linux_hwcap,linux_minsigstksz,linux_execfn}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_param_auxv.rs", "compat/rustix/source/m10_param_auxv.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/param_auxv.rs", "compat/rustix/source/param_auxv.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.dynamic"
@@ -940,7 +940,7 @@ rustix = "time::{clock_gettime_dynamic,DynamicClockId}"
 crabc = "time::{clock_gettime_dynamic,DynamicClockId}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_time_dynamic.rs", "compat/rustix/source/m10_time_dynamic.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/time_dynamic.rs", "compat/rustix/source/time_dynamic.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.clock-set"
@@ -949,7 +949,7 @@ rustix = "time::clock_settime"
 crabc = "time::clock_settime"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_time_settime.rs", "compat/rustix/source/m10_time_settime.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/time_settime.rs", "compat/rustix/source/time_settime.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.timespec-get"
@@ -958,7 +958,7 @@ rustix = "native extension: C11 UTC timespec query (no Rustix equivalent)"
 crabc = "time::timespec_get"
 status = "verified"
 compatibility = "native-extension"
-tests = ["crabc-rs/tests/m10_time_timespec_get.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/time_timespec_get.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "time.realtime-millis"
@@ -967,7 +967,7 @@ rustix = "native extension: musl ftime replacement (no Rustix equivalent)"
 crabc = "time::{RealtimeMillis, realtime_millis}"
 status = "verified"
 compatibility = "native-extension"
-tests = ["crabc-rs/tests/m10_time_realtime_millis.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/time_realtime_millis.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.cwd-identity"
@@ -985,7 +985,7 @@ rustix = "native extension: logical PWD current-directory name (no Rustix equiva
 crabc = "process::{get_current_dir_name,get_current_dir_name_alloc}"
 status = "verified"
 compatibility = "native-extension"
-tests = ["crabc-rs/tests/m10_current_dir_name.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/current_dir_name.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.controls"
@@ -1003,7 +1003,7 @@ rustix = "process::chroot"
 crabc = "process::chroot"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_process_chroot.rs", "compat/rustix/source/m10_process_chroot.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/process_chroot.rs", "compat/rustix/source/process_chroot.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.umask"
@@ -1012,7 +1012,7 @@ rustix = "process::umask"
 crabc = "process::umask"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_rlimit.rs", "compat/rustix/source/m10_process_umask.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/rlimit.rs", "compat/rustix/source/process_umask.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.setrlimit"
@@ -1021,7 +1021,7 @@ rustix = "process::setrlimit"
 crabc = "process::setrlimit"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_rlimit.rs", "compat/rustix/source/m10_process_setrlimit.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/rlimit.rs", "compat/rustix/source/process_setrlimit.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.fcntl-getlk"
@@ -1030,7 +1030,7 @@ rustix = "process::{Flock,FlockOffsetType,FlockType,fcntl_getlk}"
 crabc = "process::{Flock,FlockOffsetType,FlockType,fcntl_getlk}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_fcntl_getlk.rs", "compat/rustix/source/m10_fcntl_getlk.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/fcntl_getlk.rs", "compat/rustix/source/fcntl_getlk.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.pidfd-open"
@@ -1039,7 +1039,7 @@ rustix = "process::{PidfdFlags,pidfd_open}"
 crabc = "process::{PidfdFlags,pidfd_open}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_pidfd_open.rs", "compat/rustix/source/m10_pidfd_open.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/pidfd_open.rs", "compat/rustix/source/pidfd_open.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "process.fs-credentials"
@@ -1048,7 +1048,7 @@ rustix = "native extension (no Rustix equivalent)"
 crabc = "unsafe process::{set_fs_uid,set_fs_gid}"
 status = "verified"
 compatibility = "native-extension"
-tests = ["crabc-rs/tests/m10_fs_credentials.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/fs_credentials.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.advanced"
@@ -1066,7 +1066,7 @@ rustix = "thread::futex::{Flags,Nsecs,Secs,Timespec,wait,wake}"
 crabc = "thread::futex::{Flags,Nsecs,Secs,Timespec,wait,wake}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_futex.rs", "compat/rustix/source/m10_futex.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/futex.rs", "compat/rustix/source/futex.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.credentials-res"
@@ -1075,7 +1075,7 @@ rustix = "thread::{Uid,Gid,set_thread_res_uid,set_thread_res_gid}"
 crabc = "thread::{Uid,Gid,set_thread_res_uid,set_thread_res_gid}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_thread_credentials.rs", "compat/rustix/source/m10_thread_credentials.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/thread_credentials.rs", "compat/rustix/source/thread_credentials.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.cpu-affinity"
@@ -1084,7 +1084,7 @@ rustix = "thread::{CpuSet,sched_getaffinity}; core::default::Default"
 crabc = "thread::{CpuSet,sched_getaffinity}; core::default::Default"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_sched_getaffinity.rs", "compat/rustix/source/m10_sched_getaffinity.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/sched_getaffinity.rs", "compat/rustix/source/sched_getaffinity.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "thread.cpu-affinity-mutation"
@@ -1093,7 +1093,7 @@ rustix = "thread::sched_setaffinity"
 crabc = "thread::sched_setaffinity"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_sched_setaffinity.rs", "compat/rustix/source/m10_sched_getaffinity.rs", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/sched_setaffinity.rs", "compat/rustix/source/sched_getaffinity.rs", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "termios.extended"
@@ -1102,7 +1102,7 @@ rustix = "termios::{SpecialCodes,SpecialCodeIndex}"
 crabc = "termios::{SpecialCodes,SpecialCodeIndex}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_termios_special_codes.rs", "compat/rustix/source/m10_termios_special_codes.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/termios_special_codes.rs", "compat/rustix/source/termios_special_codes.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "termios.queue"
@@ -1111,7 +1111,7 @@ rustix = "termios::{tcdrain,tcflush,tcflow,tcsendbreak}"
 crabc = "termios::{tcdrain,tcflush,tcflow,tcsendbreak}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_termios_queue.rs", "compat/rustix/source/m10_termios_queue.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/termios_queue.rs", "compat/rustix/source/termios_queue.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "termios.exclusive"
@@ -1120,7 +1120,7 @@ rustix = "termios::{ioctl_tiocexcl,ioctl_tiocnxcl}"
 crabc = "termios::{ioctl_tiocexcl,ioctl_tiocnxcl}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_termios_exclusive.rs", "compat/rustix/source/m10_termios_exclusive.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/termios_exclusive.rs", "compat/rustix/source/termios_exclusive.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "termios.ttyname"
@@ -1129,7 +1129,7 @@ rustix = "termios::ttyname"
 crabc = "termios::{ttyname_into,ttyname}"
 status = "verified"
 compatibility = "source-compatible"
-tests = ["crabc-rs/tests/m10_ttyname.rs", "compat/rustix/source/m10_ttyname.rs", "compat/crabc-rs/verify_m10_kernel.py", "compat/rustix/tests/test_harness.py"]
+tests = ["crabc-rs/tests/ttyname.rs", "compat/rustix/source/ttyname.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/tests/test_harness.py"]
 
 [[api]]
 id = "system.admin"
@@ -1147,7 +1147,7 @@ rustix = "io_uring::*"
 crabc = ""
 status = "not-applicable"
 compatibility = "excluded-linux-extension"
-reason = "io_uring is an explicitly separate extended Linux surface, not M0 libc-native parity."
+reason = "io_uring is an explicitly separate extended Linux surface, not libc-native parity."
 tests = ["compat/rustix/tests/test_harness.py"]
 documentation = ["docs/history/crabc-rs-delivery-plan.md#14-treat-io_uring-separately"]
 
@@ -1158,6 +1158,6 @@ rustix = "runtime::*"
 crabc = ""
 status = "not-applicable"
 compatibility = "excluded-internal-api"
-reason = "Rustix runtime is undocumented and unstable; it is not an application-facing M0 API."
+reason = "Rustix runtime is undocumented and unstable; it is not an application-facing API."
 tests = ["compat/rustix/tests/test_harness.py"]
 documentation = ["docs/history/crabc-rs-delivery-plan.md#12-create-a-rustix-correspondence-manifest"]

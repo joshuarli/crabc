@@ -6,14 +6,14 @@ int main(void) {
     long l1 = lrand48();
     long l2 = lrand48();
     long l3 = lrand48();
-    long m1 = mrand48();
-    long m2 = mrand48();
+    long io = mrand48();
+    long fs = mrand48();
 
     if (l1 != 89400484) return 1;
     if (l2 != 976015093) return 2;
     if (l3 != 1792756325) return 3;
-    if (m1 != 1443049011) return 4;
-    if (m2 != -1866208802) return 5;
+    if (io != 1443049011) return 4;
+    if (fs != -1866208802) return 5;
 
     unsigned short def[3] = {0, 0, 0};
     long n1 = nrand48(def);

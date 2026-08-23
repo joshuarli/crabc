@@ -1,9 +1,9 @@
-//! Source-compatibility anchor for the M0 stateless `openat` slice.
+//! Source-compatibility anchor for the stateless `openat` slice.
 //!
 //! The dual-backend runner compiles this source once with `api` aliased to the
 //! pinned Rustix package and once with `api` aliased to `crabc-rs`. It uses the
 //! common `&CStr` path subset; broader Rustix `Arg` path compatibility belongs
-//! to the filesystem milestone.
+//! to the filesystem capability contract.
 
 use core::ffi::CStr;
 

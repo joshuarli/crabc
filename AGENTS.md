@@ -44,15 +44,16 @@ and [`TODO.md`](TODO.md) before selecting new work.
 | Governing scope and non-goals | [`SCOPE.md`](SCOPE.md) |
 | Public support/limitation boundary | [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) |
 | Exact active work | [`TODO.md`](TODO.md) |
-| Source-build gate before performance work | [`pregoal.md`](pregoal.md) |
-| Performance completion contract | [`goal.md`](goal.md) |
-| Follow-on software-corpus validation | [`goal2.md`](goal2.md) |
+| Completed Lua source-build gate | [`docs/design/source-build.md`](docs/design/source-build.md) and [`docs/evidence/lua-source-build.md`](docs/evidence/lua-source-build.md) |
+| Future CPython and crabc-owned sysroot contract | [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) |
+| Performance completion contract | [`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md) |
+| Follow-on software-corpus validation | [`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md) |
 | Current measured results | [`COMPATIBILITY.md`](COMPATIBILITY.md) and `compat/reports/**` |
 | Cross-cutting document index | [`docs/README.md`](docs/README.md) |
 | Current Rust-facade architecture | [`docs/design/crabc-rs.md`](docs/design/crabc-rs.md) |
 | Performance contract and active cost frontier | [`docs/design/performance.md`](docs/design/performance.md) and [`compat/perf/README.md`](compat/perf/README.md) |
 | Exact native capability classification | [`compat/crabc-rs/coverage.toml`](compat/crabc-rs/coverage.toml) |
-| Historical M0–M12 rationale | [`docs/history/`](docs/history/) — provenance only, never a live backlog |
+| Historical delivery rationale and rename provenance | [`docs/history/`](docs/history/) — provenance only, never a live backlog |
 | Harness mechanics | The nearest `compat/*/README.md` or package `README.md` |
 | Toolchain/oracle pins | `rust-toolchain.toml`, `compat/upstreams.toml`, `docker/Dockerfile` |
 
@@ -84,7 +85,7 @@ container.
 ./scripts/dev.sh libc-test functional|math|regression|api|all
 ./scripts/dev.sh os-test | pthread-stress | static-pthread-tls
 ./scripts/dev.sh signal-process | resolver-network | ldso | corpus
-./scripts/dev.sh rust-std | rust-std-dependent | lto | lto-m12
+./scripts/dev.sh rust-std | rust-std-dependent | lto | lto-native-facade
 ./scripts/dev.sh lua [--offline]
 ./scripts/dev.sh perf [--label NAME]
 ./scripts/dev.sh perf-native [--label NAME]

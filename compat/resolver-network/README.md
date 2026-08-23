@@ -1,6 +1,6 @@
 # Resolver/network differential harness
 
-This harness is the M6 deterministic resolver/network contract. It compiles
+This harness is the deterministic resolver/network contract. It compiles
 [`workload.c`](workload.c) exactly once using the headers in the pinned musl
 tree, links that object once to musl and once to crabc, and runs both binaries
 against the same local-only DNS server. The runner compares complete exit

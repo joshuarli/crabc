@@ -1,4 +1,4 @@
-# Pinned, test-only Lua source for the pregoal adapter-sysroot gate.
+# Pinned, test-only Lua source for the source-build adapter-sysroot gate.
 
 [lua]
 version = "5.4.8"

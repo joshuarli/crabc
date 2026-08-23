@@ -1,5 +1,5 @@
 --
--- Deterministic Lua 5.4 source/bytecode witness for the crabc pre-goal.
+-- Deterministic Lua 5.4 source/bytecode witness for the crabc source-build gate.
 --
 -- arg[1] is the directory containing crabc_probe.so and crabc_fail.so.  arg[2]
 -- is a disposable directory created by the harness.  The harness supplies the

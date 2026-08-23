@@ -641,7 +641,7 @@
       "test_targets": [
         {
           "exists": true,
-          "path": "tests/m4_dynamic_loader_introspection.rs"
+          "path": "tests/dynamic_loader_introspection.rs"
         },
         {
           "exists": true,
@@ -727,7 +727,7 @@
     {
       "description": "Process DT_RELR compressed relative relocations.",
       "name": "relr",
-      "note": "The M8 corpus requires DT_RELR in real Alpine coreutils package binaries before it compares pinned musl and crabc outcomes.",
+      "note": "The DT_RELR corpus requires real Alpine coreutils package binaries before it compares pinned musl and crabc outcomes.",
       "runtime_test_executed": false,
       "source_markers": [
         {

@@ -1,7 +1,7 @@
 # Pthread/TLS stress differential
 
 `run.py` runs the existing `tests/fixtures/pthread_stress_test.c` workload as
-an M6 differential. The source is compiled exactly once with the pinned musl
+a pinned-musl differential. The source is compiled exactly once with the pinned musl
 1.2.6 headers. That object is linked once to the pinned musl runtime and once
 to `target/debug/libc.so` with `target/debug/libldso.so` as the interpreter.
 Each requested iteration runs both binaries in fresh process groups. Exit

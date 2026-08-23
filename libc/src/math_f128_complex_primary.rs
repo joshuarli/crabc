@@ -7,7 +7,7 @@
 //   ccosl(z) =     ccoshl(i*z)
 //   ctanl(z) = -i * ctanhl(i*z)
 //
-// The legacy M4 long-complex aliases convert their pair of f128 values to
+// The legacy long-complex aliases convert their pair of f128 values to
 // f64 before evaluating those identities.  Keep this slice independent of
 // that compatibility boundary.  The reduction and kernels below are the
 // binary128 branches of musl's sinl/cosl/tanl and __sinl/__cosl/__tanl; the
@@ -15,19 +15,19 @@
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_complex(re: f128, im: f128) -> M4ComplexLong {
-    M4ComplexLong { re, im }
+fn f128_primary_complex(re: f128, im: f128) -> ComplexLong {
+    ComplexLong { re, im }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_copysign(x: f128, sign: f128) -> f128 {
+fn f128_primary_copysign(x: f128, sign: f128) -> f128 {
     f128::from_bits((x.to_bits() & !(1u128 << 127)) | (sign.to_bits() & (1u128 << 127)))
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_round_integer(x: f128) -> f128 {
+fn f128_primary_round_integer(x: f128) -> f128 {
     // Round-to-nearest, ties-to-even.  This is the same representation-level
     // operation used by musl's toint reduction, without calling nearbyintl.
     if !x.is_finite() {
@@ -77,8 +77,8 @@ fn m6_f128_primary_round_integer(x: f128) -> f128 {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_round_i32(x: f128) -> i32 {
-    let rounded = m6_f128_primary_round_integer(x);
+fn f128_primary_round_i32(x: f128) -> i32 {
+    let rounded = f128_primary_round_integer(x);
     if rounded >= 2147483647.0_f128 {
         return i32::MAX;
     }
@@ -107,7 +107,7 @@ fn m6_f128_primary_round_i32(x: f128) -> i32 {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_mod4(x: f128) -> u8 {
+fn f128_primary_mod4(x: f128) -> u8 {
     let bits = x.to_bits();
     let negative = bits & (1u128 << 127) != 0;
     let abs = bits & !(1u128 << 127);
@@ -133,30 +133,30 @@ fn m6_f128_primary_mod4(x: f128) -> u8 {
 
 // The split is the LDBL_MANT_DIG == 113 branch from musl's __rem_pio2l.c.
 #[cfg(target_arch = "aarch64")]
-const M6_F128_INVPIO2: f128 =
+const F128_INVPIO2: f128 =
     6.3661977236758134307553505349005747e-1_f128;
 #[cfg(target_arch = "aarch64")]
-const M6_F128_PIO2_1: f128 =
+const F128_PIO2_1: f128 =
     1.5707963267948966192292994253909555e+0_f128;
 #[cfg(target_arch = "aarch64")]
-const M6_F128_PIO2_1T: f128 =
+const F128_PIO2_1T: f128 =
     2.0222662487959507323996846200947577e-21_f128;
 #[cfg(target_arch = "aarch64")]
-const M6_F128_PIO2_2: f128 =
+const F128_PIO2_2: f128 =
     2.0222662487959507323994779168837751e-21_f128;
 #[cfg(target_arch = "aarch64")]
-const M6_F128_PIO2_2T: f128 =
+const F128_PIO2_2T: f128 =
     2.0670321098263988236496903051604844e-43_f128;
 #[cfg(target_arch = "aarch64")]
-const M6_F128_PIO2_3: f128 =
+const F128_PIO2_3: f128 =
     2.0670321098263988236499468110329591e-43_f128;
 #[cfg(target_arch = "aarch64")]
-const M6_F128_PIO2_3T: f128 =
+const F128_PIO2_3T: f128 =
     -2.5650587247459238361625433492959285e-65_f128;
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_rem_pio2(x: f128) -> (i32, f128, f128) {
+fn f128_primary_rem_pio2(x: f128) -> (i32, f128, f128) {
     // The four target probes use arguments in the small (__rem_pio2l) path.
     // Rejecting arguments beyond its exact binary128 integer range is safer
     // than fabricating a reduction from a narrowed f64 value.
@@ -166,10 +166,10 @@ fn m6_f128_primary_rem_pio2(x: f128) -> (i32, f128, f128) {
         return (0, f128::NAN, f128::NAN);
     }
 
-    let fn_value = m6_f128_primary_round_integer(x * M6_F128_INVPIO2);
-    let n = m6_f128_primary_round_i32(fn_value);
-    let mut r = x - fn_value * M6_F128_PIO2_1;
-    let mut w = fn_value * M6_F128_PIO2_1T;
+    let fn_value = f128_primary_round_integer(x * F128_INVPIO2);
+    let n = f128_primary_round_i32(fn_value);
+    let mut r = x - fn_value * F128_PIO2_1;
+    let mut w = fn_value * F128_PIO2_1T;
     let mut y0 = r - w;
 
     // ROUND1=51 and ROUND2=119 for the binary128 path in musl.
@@ -177,18 +177,18 @@ fn m6_f128_primary_rem_pio2(x: f128) -> (i32, f128, f128) {
     let yexp = ((ybits >> 112) & 0x7fff) as i32 - 0x3fff;
     if exponent - yexp > 51 {
         let t = r;
-        w = fn_value * M6_F128_PIO2_2;
+        w = fn_value * F128_PIO2_2;
         r = t - w;
-        w = fn_value * M6_F128_PIO2_2T - ((t - r) - w);
+        w = fn_value * F128_PIO2_2T - ((t - r) - w);
         y0 = r - w;
 
         let y2bits = y0.to_bits() & !(1u128 << 127);
         let y2exp = ((y2bits >> 112) & 0x7fff) as i32 - 0x3fff;
         if exponent - y2exp > 119 {
             let t = r;
-            w = fn_value * M6_F128_PIO2_3;
+            w = fn_value * F128_PIO2_3;
             r = t - w;
-            w = fn_value * M6_F128_PIO2_3T - ((t - r) - w);
+            w = fn_value * F128_PIO2_3T - ((t - r) - w);
             y0 = r - w;
         }
     }
@@ -198,7 +198,7 @@ fn m6_f128_primary_rem_pio2(x: f128) -> (i32, f128, f128) {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_sin_kernel(x: f128, y: f128, iy: i32) -> f128 {
+fn f128_primary_sin_kernel(x: f128, y: f128, iy: i32) -> f128 {
     // musl __sinl.c, LDBL_MANT_DIG == 113.
     const S1: f128 = -0.16666666666666666666666666666666666606732416116558_f128;
     const S2: f128 = 0.0083333333333333333333333333333331135404851288270047_f128;
@@ -234,7 +234,7 @@ fn m6_f128_primary_sin_kernel(x: f128, y: f128, iy: i32) -> f128 {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_cos_kernel(x: f128, y: f128) -> f128 {
+fn f128_primary_cos_kernel(x: f128, y: f128) -> f128 {
     // musl __cosl.c, LDBL_MANT_DIG == 113.
     const C1: f128 = 0.04166666666666666666666666666666658424671_f128;
     const C2: f128 = -0.001388888888888888888888888888863490893732_f128;
@@ -267,21 +267,21 @@ fn m6_f128_primary_cos_kernel(x: f128, y: f128) -> f128 {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_sincos(x: f128) -> (f128, f128) {
+fn f128_primary_sincos(x: f128) -> (f128, f128) {
     const PIO4: f128 = 0.785398163397448309615660845819875721_f128;
     if !x.is_finite() {
         return (x - x, x - x);
     }
     if x.abs() < PIO4 {
-        return (m6_f128_primary_sin_kernel(x, 0.0_f128, 0),
-            m6_f128_primary_cos_kernel(x, 0.0_f128));
+        return (f128_primary_sin_kernel(x, 0.0_f128, 0),
+            f128_primary_cos_kernel(x, 0.0_f128));
     }
-    let (n, hi, lo) = m6_f128_primary_rem_pio2(x);
+    let (n, hi, lo) = f128_primary_rem_pio2(x);
     if hi.is_nan() {
         return (f128::NAN, f128::NAN);
     }
-    let s = m6_f128_primary_sin_kernel(hi, lo, 1);
-    let c = m6_f128_primary_cos_kernel(hi, lo);
+    let s = f128_primary_sin_kernel(hi, lo, 1);
+    let c = f128_primary_cos_kernel(hi, lo);
     match (n & 3) as u8 {
         0 => (s, c),
         1 => (c, -s),
@@ -292,7 +292,7 @@ fn m6_f128_primary_sincos(x: f128) -> (f128, f128) {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_tan_kernel(mut x: f128, mut y: f128, odd: i32) -> f128 {
+fn f128_primary_tan_kernel(mut x: f128, mut y: f128, odd: i32) -> f128 {
     // musl __tanl.c, LDBL_MANT_DIG == 113.
     const T3: f128 = 3.333333333333333333333333333333332209874199107445752384012866825459064186107371874356886110035702586e-1_f128;
     const T5: f128 = 1.333333333333333333333333333334173985704642158556226825572122132566814226885265615152320606284774840e-1_f128;
@@ -388,22 +388,22 @@ fn m6_f128_primary_tan_kernel(mut x: f128, mut y: f128, odd: i32) -> f128 {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_tan(x: f128) -> f128 {
+fn f128_primary_tan(x: f128) -> f128 {
     if !x.is_finite() {
         return x - x;
     }
     const PIO4: f128 = 0.785398163397448309615660845819875721_f128;
     if x.abs() < PIO4 {
-        return m6_f128_primary_tan_kernel(x, 0.0_f128, 0);
+        return f128_primary_tan_kernel(x, 0.0_f128, 0);
     }
-    let (n, hi, lo) = m6_f128_primary_rem_pio2(x);
+    let (n, hi, lo) = f128_primary_rem_pio2(x);
     if hi.is_nan() { return f128::NAN; }
-    m6_f128_primary_tan_kernel(hi, lo, n & 1)
+    f128_primary_tan_kernel(hi, lo, n & 1)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_pow2(exp: i32) -> f128 {
+fn f128_primary_pow2(exp: i32) -> f128 {
     if exp > 16383 { return f128::INFINITY; }
     if exp < -16494 { return 0.0_f128; }
     if exp >= -16382 {
@@ -415,7 +415,7 @@ fn m6_f128_primary_pow2(exp: i32) -> f128 {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_exp(x: f128) -> f128 {
+fn f128_primary_exp(x: f128) -> f128 {
     // A binary128 Taylor kernel after musl's ln(2) reduction.  The first
     // 80 bits are kept separate from the residual so n*ln(2) does not lose
     // the low half of a binary128 argument.
@@ -425,7 +425,7 @@ fn m6_f128_primary_exp(x: f128) -> f128 {
     if x.is_infinite() { return if x.is_sign_negative() { 0.0_f128 } else { x }; }
     if x > 11357.0_f128 { return f128::INFINITY; }
     if x < -11434.0_f128 { return 0.0_f128; }
-    let n = m6_f128_primary_round_i32(x / (LN2_HI + LN2_LO));
+    let n = f128_primary_round_i32(x / (LN2_HI + LN2_LO));
     let nf = n as f128;
     let r = (x - nf * LN2_HI) - nf * LN2_LO;
     let mut term = 1.0_f128;
@@ -434,137 +434,137 @@ fn m6_f128_primary_exp(x: f128) -> f128 {
         term *= r / (i as f128);
         sum += term;
     }
-    sum * m6_f128_primary_pow2(n)
+    sum * f128_primary_pow2(n)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_sinh(x: f128) -> f128 {
+fn f128_primary_sinh(x: f128) -> f128 {
     if x.is_nan() { return x; }
     if x.is_infinite() { return x; }
     let ax = x.abs();
-    let e = m6_f128_primary_exp(ax);
-    let em = m6_f128_primary_exp(-ax);
-    m6_f128_primary_copysign((e - em) * 0.5_f128, x)
+    let e = f128_primary_exp(ax);
+    let em = f128_primary_exp(-ax);
+    f128_primary_copysign((e - em) * 0.5_f128, x)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_cosh(x: f128) -> f128 {
+fn f128_primary_cosh(x: f128) -> f128 {
     if x.is_nan() { return x; }
     if x.is_infinite() { return f128::INFINITY; }
     let ax = x.abs();
-    let e = m6_f128_primary_exp(ax);
-    let em = m6_f128_primary_exp(-ax);
+    let e = f128_primary_exp(ax);
+    let em = f128_primary_exp(-ax);
     (e + em) * 0.5_f128
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_csinh(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_primary_csinh(z: ComplexLong) -> ComplexLong {
     let x = z.re;
     let y = z.im;
     if x.is_finite() && y.is_finite() {
-        if y == 0.0_f128 { return m6_f128_primary_complex(m6_f128_primary_sinh(x), y); }
-        let (sy, cy) = m6_f128_primary_sincos(y);
-        return m6_f128_primary_complex(m6_f128_primary_sinh(x) * cy,
-            m6_f128_primary_cosh(x) * sy);
+        if y == 0.0_f128 { return f128_primary_complex(f128_primary_sinh(x), y); }
+        let (sy, cy) = f128_primary_sincos(y);
+        return f128_primary_complex(f128_primary_sinh(x) * cy,
+            f128_primary_cosh(x) * sy);
     }
     if x == 0.0_f128 && !y.is_finite() {
-        let z0 = m6_f128_primary_copysign(0.0_f128, x * (y - y));
-        return m6_f128_primary_complex(z0, y - y);
+        let z0 = f128_primary_copysign(0.0_f128, x * (y - y));
+        return f128_primary_complex(z0, y - y);
     }
     if y == 0.0_f128 && !x.is_finite() {
-        if x.is_infinite() { return m6_f128_primary_complex(x, y); }
-        return m6_f128_primary_complex(x, m6_f128_primary_copysign(0.0_f128, y));
+        if x.is_infinite() { return f128_primary_complex(x, y); }
+        return f128_primary_complex(x, f128_primary_copysign(0.0_f128, y));
     }
     if x.is_finite() && !y.is_finite() {
-        return m6_f128_primary_complex(y - y, x * (y - y));
+        return f128_primary_complex(y - y, x * (y - y));
     }
     if x.is_infinite() {
         if !y.is_finite() {
-            return m6_f128_primary_complex(x * x, x * (y - y));
+            return f128_primary_complex(x * x, x * (y - y));
         }
-        let (sy, cy) = m6_f128_primary_sincos(y);
-        return m6_f128_primary_complex(x * cy, f128::INFINITY * sy);
+        let (sy, cy) = f128_primary_sincos(y);
+        return f128_primary_complex(x * cy, f128::INFINITY * sy);
     }
-    m6_f128_primary_complex((x * x) * (y - y), (x + x) * (y - y))
+    f128_primary_complex((x * x) * (y - y), (x + x) * (y - y))
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_ccosh(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_primary_ccosh(z: ComplexLong) -> ComplexLong {
     let x = z.re;
     let y = z.im;
     if x.is_finite() && y.is_finite() {
-        if y == 0.0_f128 { return m6_f128_primary_complex(m6_f128_primary_cosh(x), x * y); }
-        let (sy, cy) = m6_f128_primary_sincos(y);
-        return m6_f128_primary_complex(m6_f128_primary_cosh(x) * cy,
-            m6_f128_primary_sinh(x) * sy);
+        if y == 0.0_f128 { return f128_primary_complex(f128_primary_cosh(x), x * y); }
+        let (sy, cy) = f128_primary_sincos(y);
+        return f128_primary_complex(f128_primary_cosh(x) * cy,
+            f128_primary_sinh(x) * sy);
     }
     if x == 0.0_f128 && !y.is_finite() {
-        return m6_f128_primary_complex(y - y,
-            m6_f128_primary_copysign(0.0_f128, x * (y - y)));
+        return f128_primary_complex(y - y,
+            f128_primary_copysign(0.0_f128, x * (y - y)));
     }
     if y == 0.0_f128 && !x.is_finite() {
-        if x.is_infinite() { return m6_f128_primary_complex(x * x, m6_f128_primary_copysign(0.0_f128, x) * y); }
-        return m6_f128_primary_complex(x,
-            m6_f128_primary_copysign(0.0_f128, (x + x) * y));
+        if x.is_infinite() { return f128_primary_complex(x * x, f128_primary_copysign(0.0_f128, x) * y); }
+        return f128_primary_complex(x,
+            f128_primary_copysign(0.0_f128, (x + x) * y));
     }
     if x.is_finite() && !y.is_finite() {
-        return m6_f128_primary_complex(y - y, x * (y - y));
+        return f128_primary_complex(y - y, x * (y - y));
     }
     if x.is_infinite() {
-        if !y.is_finite() { return m6_f128_primary_complex(x * x, x * (y - y)); }
-        let (sy, cy) = m6_f128_primary_sincos(y);
-        return m6_f128_primary_complex((x * x) * cy, x * sy);
+        if !y.is_finite() { return f128_primary_complex(x * x, x * (y - y)); }
+        let (sy, cy) = f128_primary_sincos(y);
+        return f128_primary_complex((x * x) * cy, x * sy);
     }
-    m6_f128_primary_complex((x * x) * (y - y), (x + x) * (y - y))
+    f128_primary_complex((x * x) * (y - y), (x + x) * (y - y))
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_ctanh(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_primary_ctanh(z: ComplexLong) -> ComplexLong {
     let x = z.re;
     let y = z.im;
     if x.is_nan() {
-        return m6_f128_primary_complex(x, if y == 0.0_f128 { y } else { x * y });
+        return f128_primary_complex(x, if y == 0.0_f128 { y } else { x * y });
     }
     if x.is_infinite() {
-        let (sy, cy) = if y.is_finite() { m6_f128_primary_sincos(y) } else { (y - y, y - y) };
-        return m6_f128_primary_complex(m6_f128_primary_copysign(1.0_f128, x),
-            m6_f128_primary_copysign(0.0_f128, if y.is_infinite() { y } else { sy * cy }));
+        let (sy, cy) = if y.is_finite() { f128_primary_sincos(y) } else { (y - y, y - y) };
+        return f128_primary_complex(f128_primary_copysign(1.0_f128, x),
+            f128_primary_copysign(0.0_f128, if y.is_infinite() { y } else { sy * cy }));
     }
     if !y.is_finite() {
-        return m6_f128_primary_complex(if x == 0.0_f128 { x } else { y - y }, y - y);
+        return f128_primary_complex(if x == 0.0_f128 { x } else { y - y }, y - y);
     }
     if x.abs() >= 22.0_f128 {
-        let e = m6_f128_primary_exp(-x.abs());
-        let (sy, cy) = m6_f128_primary_sincos(y);
-        return m6_f128_primary_complex(m6_f128_primary_copysign(1.0_f128, x),
+        let e = f128_primary_exp(-x.abs());
+        let (sy, cy) = f128_primary_sincos(y);
+        return f128_primary_complex(f128_primary_copysign(1.0_f128, x),
             4.0_f128 * sy * cy * e * e);
     }
-    let t = m6_f128_primary_tan(y);
+    let t = f128_primary_tan(y);
     let beta = 1.0_f128 + t * t;
-    let s = m6_f128_primary_sinh(x);
-    let rho = m6_f128_primary_cosh(x);
+    let s = f128_primary_sinh(x);
+    let rho = f128_primary_cosh(x);
     let denom = 1.0_f128 + beta * s * s;
-    m6_f128_primary_complex((beta * rho * s) / denom, t / denom)
+    f128_primary_complex((beta * rho * s) / denom, t / denom)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_primary_csqrt(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_primary_csqrt(z: ComplexLong) -> ComplexLong {
     let a = z.re;
     let b = z.im;
-    if a == 0.0_f128 && b == 0.0_f128 { return m6_f128_primary_complex(0.0_f128, b); }
-    if b.is_infinite() { return m6_f128_primary_complex(f128::INFINITY, b); }
-    if a.is_nan() { return m6_f128_primary_complex(a, (b - b) / (b - b)); }
+    if a == 0.0_f128 && b == 0.0_f128 { return f128_primary_complex(0.0_f128, b); }
+    if b.is_infinite() { return f128_primary_complex(f128::INFINITY, b); }
+    if a.is_nan() { return f128_primary_complex(a, (b - b) / (b - b)); }
     if a.is_infinite() {
         if a.is_sign_negative() {
-            return m6_f128_primary_complex((b - b).abs(), m6_f128_primary_copysign(a, b));
+            return f128_primary_complex((b - b).abs(), f128_primary_copysign(a, b));
         }
-        return m6_f128_primary_complex(a, m6_f128_primary_copysign(b - b, b));
+        return f128_primary_complex(a, f128_primary_copysign(b - b, b));
     }
     let threshold = f128::from_bits((0x7ffe_u128 << 112) | ((1u128 << 112) - 1))
         / (1.0_f128 + 1.41421356237309504880168872420969808_f128);
@@ -573,38 +573,38 @@ fn m6_f128_primary_csqrt(z: M4ComplexLong) -> M4ComplexLong {
     let h = hypotl(a, b);
     let result = if a >= 0.0_f128 {
         let t = f128_sqrt((a + h) * 0.5_f128);
-        m6_f128_primary_complex(t, b / (2.0_f128 * t))
+        f128_primary_complex(t, b / (2.0_f128 * t))
     } else {
         let t = f128_sqrt((-a + h) * 0.5_f128);
-        m6_f128_primary_complex(b.abs() / (2.0_f128 * t), m6_f128_primary_copysign(t, b))
+        f128_primary_complex(b.abs() / (2.0_f128 * t), f128_primary_copysign(t, b))
     };
-    if scale { m6_f128_primary_complex(result.re * 2.0_f128, result.im * 2.0_f128) } else { result }
+    if scale { f128_primary_complex(result.re * 2.0_f128, result.im * 2.0_f128) } else { result }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn csinl(z: M4ComplexLong) -> M4ComplexLong {
-    let w = m6_f128_primary_csinh(m6_f128_primary_complex(-z.im, z.re));
-    m6_f128_primary_complex(w.im, -w.re)
+pub extern "C" fn csinl(z: ComplexLong) -> ComplexLong {
+    let w = f128_primary_csinh(f128_primary_complex(-z.im, z.re));
+    f128_primary_complex(w.im, -w.re)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn ccosl(z: M4ComplexLong) -> M4ComplexLong {
-    m6_f128_primary_ccosh(m6_f128_primary_complex(-z.im, z.re))
+pub extern "C" fn ccosl(z: ComplexLong) -> ComplexLong {
+    f128_primary_ccosh(f128_primary_complex(-z.im, z.re))
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn ctanl(z: M4ComplexLong) -> M4ComplexLong {
-    let w = m6_f128_primary_ctanh(m6_f128_primary_complex(-z.im, z.re));
-    m6_f128_primary_complex(w.im, -w.re)
+pub extern "C" fn ctanl(z: ComplexLong) -> ComplexLong {
+    let w = f128_primary_ctanh(f128_primary_complex(-z.im, z.re));
+    f128_primary_complex(w.im, -w.re)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn csqrtl(z: M4ComplexLong) -> M4ComplexLong {
-    m6_f128_primary_csqrt(z)
+pub extern "C" fn csqrtl(z: ComplexLong) -> ComplexLong {
+    f128_primary_csqrt(z)
 }
 
 // Keep the hyperbolic long-complex entry points on the same native binary128
@@ -613,18 +613,18 @@ pub extern "C" fn csqrtl(z: M4ComplexLong) -> M4ComplexLong {
 // directly.
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn csinhl(z: M4ComplexLong) -> M4ComplexLong {
-    m6_f128_primary_csinh(z)
+pub extern "C" fn csinhl(z: ComplexLong) -> ComplexLong {
+    f128_primary_csinh(z)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn ccoshl(z: M4ComplexLong) -> M4ComplexLong {
-    m6_f128_primary_ccosh(z)
+pub extern "C" fn ccoshl(z: ComplexLong) -> ComplexLong {
+    f128_primary_ccosh(z)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn ctanhl(z: M4ComplexLong) -> M4ComplexLong {
-    m6_f128_primary_ctanh(z)
+pub extern "C" fn ctanhl(z: ComplexLong) -> ComplexLong {
+    f128_primary_ctanh(z)
 }

@@ -28,8 +28,8 @@ MUSL_VERSION = "1.2.6"
 OS_TEST_REVISION = "5e9456d510612f83b6ec8b1a0c06d6b1303a2512"
 DEFAULT_MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
 DEFAULT_OS_TEST_ROOT = Path("/opt/os-test")
-# These are the portable standards-facing suites from Stage 7. Resolver and
-# loopback behavior have dedicated M6 stress runners; deliberately excluding
+# These are the portable standards-facing suites. Resolver and
+# loopback behavior have dedicated stress runners; deliberately excluding
 # os-test's externally-routed UDP probes keeps this profile offline and avoids
 # turning public-network reachability into a pass.
 DEFAULT_SUITES = (
@@ -231,7 +231,7 @@ def parse_args() -> argparse.Namespace:
         "--suite",
         action="append",
         choices=DEFAULT_SUITES,
-        help="profile suite to run (repeatable; defaults to the whole M6 profile)",
+        help="profile suite to run (repeatable; defaults to the whole profile)",
     )
     parser.add_argument(
         "--os-test-root",

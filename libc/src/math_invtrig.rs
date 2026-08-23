@@ -252,7 +252,7 @@ pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
 
 #[cfg(not(target_arch = "aarch64"))]
 #[no_mangle]
-unsafe extern "C" fn m4_atan2_fallback(y: f64, x: f64) -> f64 {
+unsafe extern "C" fn cabi_atan2_fallback(y: f64, x: f64) -> f64 {
     if is_nan(x) || is_nan(y) {
         return x + y;
     }
@@ -540,7 +540,7 @@ pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
 
 #[cfg(not(target_arch = "aarch64"))]
 #[no_mangle]
-unsafe extern "C" fn m4_atan2f_fallback(y: f32, x: f32) -> f32 {
+unsafe extern "C" fn cabi_atan2f_fallback(y: f32, x: f32) -> f32 {
     if is_nanf(x) || is_nanf(y) {
         return x + y;
     }
@@ -614,11 +614,11 @@ unsafe extern "C" fn m4_atan2f_fallback(y: f32, x: f32) -> f32 {
 #[cfg(not(target_arch = "aarch64"))]
 #[no_mangle]
 pub unsafe extern "C" fn atan2(y: f64, x: f64) -> f64 {
-    m4_atan2_fallback(y, x)
+    cabi_atan2_fallback(y, x)
 }
 
 #[cfg(not(target_arch = "aarch64"))]
 #[no_mangle]
 pub unsafe extern "C" fn atan2f(y: f32, x: f32) -> f32 {
-    m4_atan2f_fallback(y, x)
+    cabi_atan2f_fallback(y, x)
 }

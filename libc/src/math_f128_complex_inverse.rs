@@ -11,13 +11,13 @@
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_complex(re: f128, im: f128) -> M4ComplexLong {
-    M4ComplexLong { re, im }
+fn f128_complex(re: f128, im: f128) -> ComplexLong {
+    ComplexLong { re, im }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_log(x: f128) -> f128 {
+fn f128_log(x: f128) -> f128 {
     // AArch64 uses IEEE binary128 for long double.  musl 1.2.6 still
     // carries a TODO f64 fallback for its logl binary128 branch; the complex
     // identities below need the operation natively, so use the same
@@ -87,34 +87,34 @@ fn m6_f128_log(x: f128) -> f128 {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_clog(re: f128, im: f128) -> M4ComplexLong {
+fn f128_clog(re: f128, im: f128) -> ComplexLong {
     // This is clogl(z) = log(hypotl(re, im)) + i atan2l(im, re).  Both real
     // operations remain binary128 (`hypotl` and `atan2l` are native helpers
     // in math_f128.rs).
-    m6_f128_complex(m6_f128_log(hypotl(re, im)), atan2l(im, re))
+    f128_complex(f128_log(hypotl(re, im)), atan2l(im, re))
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_csqrt(re: f128, im: f128) -> M4ComplexLong {
+fn f128_csqrt(re: f128, im: f128) -> ComplexLong {
     // Algorithm 312, matching musl's csqrtl identity.  Scale the largest
     // finite inputs before forming re + hypot(re, im), just as musl's
     // csqrt implementation does for the narrower formats; the addition can
     // otherwise overflow even though the final square root is representable.
     if re == 0.0_f128 && im == 0.0_f128 {
-        return m6_f128_complex(0.0_f128, im);
+        return f128_complex(0.0_f128, im);
     }
     if im.is_infinite() {
-        return m6_f128_complex(f128::INFINITY, im);
+        return f128_complex(f128::INFINITY, im);
     }
     if re.is_nan() {
-        return m6_f128_complex(re, (im - im) / (im - im));
+        return f128_complex(re, (im - im) / (im - im));
     }
     if re.is_infinite() {
         if re.is_sign_negative() {
-            return m6_f128_complex((im - im).abs(), m6_f128_copysign(re, im));
+            return f128_complex((im - im).abs(), f128_copysign(re, im));
         }
-        return m6_f128_complex(re, m6_f128_copysign(im - im, im));
+        return f128_complex(re, f128_copysign(im - im, im));
     }
 
     const F128_MAX: f128 = f128::from_bits(
@@ -130,13 +130,13 @@ fn m6_f128_csqrt(re: f128, im: f128) -> M4ComplexLong {
 
     let result = if re >= 0.0_f128 {
         let t = f128_sqrt((re + hypotl(re, im)) * 0.5_f128);
-        m6_f128_complex(t, im / (2.0_f128 * t))
+        f128_complex(t, im / (2.0_f128 * t))
     } else {
         let t = f128_sqrt((-re + hypotl(re, im)) * 0.5_f128);
-        m6_f128_complex(im.abs() / (2.0_f128 * t), m6_f128_copysign(t, im))
+        f128_complex(im.abs() / (2.0_f128 * t), f128_copysign(t, im))
     };
     if scale {
-        m6_f128_complex(result.re * 2.0_f128, result.im * 2.0_f128)
+        f128_complex(result.re * 2.0_f128, result.im * 2.0_f128)
     } else {
         result
     }
@@ -144,13 +144,13 @@ fn m6_f128_csqrt(re: f128, im: f128) -> M4ComplexLong {
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_copysign(x: f128, sign: f128) -> f128 {
+fn f128_copysign(x: f128, sign: f128) -> f128 {
     f128::from_bits((x.to_bits() & !(1u128 << 127)) | (sign.to_bits() & (1u128 << 127)))
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_casin(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_casin(z: ComplexLong) -> ComplexLong {
     // musl 1.2.6 src/complex/casinl.c (the non-64-bit-long-double branch):
     //   w = 1 - (x-y)(x+y) - 2ixy
     //   r = clogl(-y + ix + csqrtl(w))
@@ -166,62 +166,62 @@ fn m6_f128_casin(z: M4ComplexLong) -> M4ComplexLong {
     const PI_4: f128 =
         7.85398163397448309615660845819875721e-1_f128;
     if x == 0.0_f128 && y == 0.0_f128 {
-        return m6_f128_complex(x, y);
+        return f128_complex(x, y);
     }
     if x.is_infinite() {
         if y.is_infinite() {
-            return m6_f128_complex(
-                m6_f128_copysign(PI_4, x),
-                m6_f128_copysign(f128::INFINITY, y),
+            return f128_complex(
+                f128_copysign(PI_4, x),
+                f128_copysign(f128::INFINITY, y),
             );
         }
         if y.is_nan() {
-            return m6_f128_complex(f128::NAN, f128::INFINITY);
+            return f128_complex(f128::NAN, f128::INFINITY);
         }
-        return m6_f128_complex(
-            m6_f128_copysign(PI_2, x),
-            m6_f128_copysign(f128::INFINITY, y),
+        return f128_complex(
+            f128_copysign(PI_2, x),
+            f128_copysign(f128::INFINITY, y),
         );
     }
     if y.is_infinite() {
         if x.is_nan() {
-            return m6_f128_complex(f128::NAN, y);
+            return f128_complex(f128::NAN, y);
         }
-        return m6_f128_complex(m6_f128_copysign(0.0_f128, x), y);
+        return f128_complex(f128_copysign(0.0_f128, x), y);
     }
     if x.is_nan() {
         // musl's complex inverse family propagates a real NaN into both
         // components here, including NaN + i0. Keeping the zero would make
         // the cacosl/casinhl rotations lose their required NaN component.
-        return m6_f128_complex(x, x);
+        return f128_complex(x, x);
     }
     if y.is_nan() {
         if x == 0.0_f128 {
-            return m6_f128_complex(x, y);
+            return f128_complex(x, y);
         }
-        return m6_f128_complex(y, y);
+        return f128_complex(y, y);
     }
 
     let w_re = 1.0_f128 - (x - y) * (x + y);
     let w_im = -2.0_f128 * x * y;
-    let root = m6_f128_csqrt(w_re, w_im);
-    let r = m6_f128_clog(-y + root.re, x + root.im);
-    m6_f128_complex(r.im, -r.re)
+    let root = f128_csqrt(w_re, w_im);
+    let r = f128_clog(-y + root.re, x + root.im);
+    f128_complex(r.im, -r.re)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_cacos(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_cacos(z: ComplexLong) -> ComplexLong {
     // PI/2 is the high-precision binary128 literal used by musl's cacosl.c.
     const PI_2: f128 =
         1.57079632679489661923132169163975144_f128;
-    let w = m6_f128_casin(z);
-    m6_f128_complex(PI_2 - w.re, -w.im)
+    let w = f128_casin(z);
+    f128_complex(PI_2 - w.re, -w.im)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_catan(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_catan(z: ComplexLong) -> ComplexLong {
     // musl 1.2.6 src/complex/catanl.c, preserving its operation order.
     let x = z.re;
     let y = z.im;
@@ -234,31 +234,31 @@ fn m6_f128_catan(z: M4ComplexLong) -> M4ComplexLong {
     const PI_2: f128 =
         1.57079632679489661923132169163975144_f128;
     if x == 0.0_f128 && y == 0.0_f128 {
-        return m6_f128_complex(x, y);
+        return f128_complex(x, y);
     }
     if x.is_infinite() {
-        let real = m6_f128_copysign(PI_2, x);
+        let real = f128_copysign(PI_2, x);
         if y.is_nan() {
-            return m6_f128_complex(real, 0.0_f128);
+            return f128_complex(real, 0.0_f128);
         }
-        return m6_f128_complex(real, m6_f128_copysign(0.0_f128, y));
+        return f128_complex(real, f128_copysign(0.0_f128, y));
     }
     if y.is_infinite() {
         let real = if x.is_nan() {
             x
         } else {
-            m6_f128_copysign(PI_2, x)
+            f128_copysign(PI_2, x)
         };
-        return m6_f128_complex(real, m6_f128_copysign(0.0_f128, y));
+        return f128_complex(real, f128_copysign(0.0_f128, y));
     }
     if x.is_nan() {
         if y == 0.0_f128 {
-            return m6_f128_complex(x, y);
+            return f128_complex(x, y);
         }
-        return m6_f128_complex(x, x);
+        return f128_complex(x, x);
     }
     if y.is_nan() {
-        return m6_f128_complex(y, y);
+        return f128_complex(y, y);
     }
 
     let x2 = x * x;
@@ -270,31 +270,31 @@ fn m6_f128_catan(z: M4ComplexLong) -> M4ComplexLong {
     a = x2 + t * t;
     let t = y + 1.0_f128;
     a = (x2 + t * t) / a;
-    m6_f128_complex(real, 0.25_f128 * m6_f128_log(a))
+    f128_complex(real, 0.25_f128 * f128_log(a))
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_casinh(z: M4ComplexLong) -> M4ComplexLong {
-    let w = m6_f128_casin(m6_f128_complex(-z.im, z.re));
-    m6_f128_complex(w.im, -w.re)
+fn f128_casinh(z: ComplexLong) -> ComplexLong {
+    let w = f128_casin(f128_complex(-z.im, z.re));
+    f128_complex(w.im, -w.re)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_cacosh(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_cacosh(z: ComplexLong) -> ComplexLong {
     let im_negative = z.im.is_sign_negative();
-    let w = m6_f128_cacos(z);
+    let w = f128_cacos(z);
     if im_negative {
-        m6_f128_complex(w.im, -w.re)
+        f128_complex(w.im, -w.re)
     } else {
-        m6_f128_complex(-w.im, w.re)
+        f128_complex(-w.im, w.re)
     }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn m6_f128_catanh(z: M4ComplexLong) -> M4ComplexLong {
-    let w = m6_f128_catan(m6_f128_complex(-z.im, z.re));
-    m6_f128_complex(w.im, -w.re)
+fn f128_catanh(z: ComplexLong) -> ComplexLong {
+    let w = f128_catan(f128_complex(-z.im, z.re));
+    f128_complex(w.im, -w.re)
 }

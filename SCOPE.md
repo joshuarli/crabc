@@ -1247,7 +1247,7 @@ The goal is:
 
 # Completed scope-reset checklist
 
-> Completed on 2026-08-21. This records the reset that governed M10–M12; it
+> Completed on 2026-08-21. This records the reset that governed the native-capability and LTO delivery sequence; it
 > is not an open implementation checklist. The living Linux/AArch64 backlog
 > is [`TODO.md`](TODO.md).
 

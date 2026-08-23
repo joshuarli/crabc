@@ -46,7 +46,7 @@ python3 -m unittest discover -s compat/rust-std/tests -p 'test_*.py'
 
 ## Dependency-bearing application
 
-The M10.5 workload is the normal Cargo application in
+The dependency-bearing workload is the normal Cargo application in
 `dependent-fixture/`. Its pinned direct dependencies (`async-net`,
 `futures-lite`, and `smol`) provide an async local TCP round trip while the
 application also exercises filesystem state, a `Mutex`/`Condvar`, a captured

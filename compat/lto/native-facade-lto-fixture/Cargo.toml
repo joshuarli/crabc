@@ -1,0 +1,19 @@
+[package]
+name = "crabc-rs-native-facade-lto-fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.crabc-lto]
+entry-symbol = "crabc_rs_native_facade_getpid_witness"
+stdout = "native-facade:ok\n"
+
+[dependencies]
+crabc-rs = { path = "../../../crabc-rs", default-features = false }
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+panic = "abort"
+
+[workspace]

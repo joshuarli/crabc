@@ -32,6 +32,107 @@ runs with matching host provenance, fixture hash, sample contract, and runtime
 artifact hashes. The detailed harness contract lives in
 [`compat/perf/README.md`](../../compat/perf/README.md).
 
+## Release measurement rules
+
+The performance-completion roadmap uses this stable methodology; its
+workload-specific acceptance rows and changing status are kept in
+[`docs/roadmap/performance-completion.md`](../roadmap/performance-completion.md).
+
+### Isolation, equivalence, and statistical decision
+
+- Compile each C fixture exactly once. The lanes may differ only in staged
+  interpreter and runtime bytes, and record SHA-256, `PT_INTERP`, dynamic
+  dependencies, and build ID.
+- Pin the benchmark process to one available CPU. Record CPU model, kernel,
+  Docker image digest, governor/frequency information when readable,
+  toolchain versions, revision, command line, environment allowlist, fixture
+  inputs, and runtime artifact hashes.
+- Interleave reference and candidate sample order from a recorded seed. Use at
+  least 31 valid fresh-process C samples per lane after warm-up, retain every
+  rejected sample and reason, and never represent a warm run as cold unless a
+  controlled host actually evicted the relevant cache.
+- Keep `strace`, `perf`, allocation profilers, and memory polling outside
+  timed samples. They are diagnostics with `timing: false`; observable fixture
+  results remain validated independently of black-box/volatile anti-DCE sinks.
+- Publish raw samples plus median, p05, p95, maximum, and deterministic
+  bootstrap seed. The release decision is the 10,000-resample one-sided 95%
+  upper bound of the median CPU ratio, not a rounded table cell.
+- Run the full suite in at least three clean Docker invocations. Every run
+  must pass; variance is a failed gate, not permission to select a favorable
+  run. Machine-readable reports are versioned, atomically written, and reject
+  mismatched fixture, toolchain, host, or artifact provenance unless explicitly
+  diagnostic.
+
+### Syscall and memory accounting
+
+- A separate fresh `strace -f -qq` process records per-syscall calls and
+  errors. Whole-process totals remain useful for startup; marked steady-state
+  regions report both total and calls per completed operation. A reference
+  zero in a marked loop remains candidate zero.
+- Every nonzero syscall difference is classified as required kernel behavior,
+  required compatibility behavior, or removable work. Only the former two may
+  remain, with proof beside the workload contract.
+- High-water memory uses the ready/high-water/continue barrier, concurrent
+  PSS/RSS/private-page sampling, and a fresh delegated cgroup-v2
+  `memory.peak` leaf with a self-test showing a post-barrier allocation changes
+  the result. PSS-only evidence is diagnostic when cgroup collection is
+  unsupported; it is never silently promoted to a release memory result.
+- Preserve `ru_maxrss`, faults, context switches, runtime image sizes, and
+  virtual mappings as diagnostics. They do not substitute for the peak-memory
+  boundary.
+
+### Native measurements and build profile
+
+Rustybench is a reusable native benchmark component rather than an uncontrolled
+shell timer. Its reports retain `getrusage` CPU, faults, context switches,
+RSS/PSS, allocation metrics, and separate syscall diagnostics. Its remaining
+methodology work is deterministic raw-sample/provenance comparison, an explicit
+process/cgroup high-water adapter, marker-bounded syscall diagnostics, and
+optional unsupported-when-unavailable hardware counters. Counters guide work;
+they never replace CPU time or disappear silently.
+
+The C candidate uses the fixed root release profile:
+
+```toml
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+```
+
+Compare a proposed win with the immediately prior profile under identical
+source, fixture, toolchain, and measurement conditions. Fat LTO, one codegen
+unit, and stripping are build choices, not replacements for removing a syscall
+or fixing an algorithm. For standard-library-aware applications, record exact
+`-Z build-std=std -Z build-std-features=` invocations and artifacts. The
+dependency-free native-facade LTO proof is bounded evidence only; Rustybench's
+dependency-bearing `build-std` route remains explicitly unsupported until its
+duplicate-`core` failure is resolved.
+
+## Optimization doctrine
+
+For each failing row, first remove redundant syscalls, allocation, locking,
+conversion, scanning, mapping, indirection, and C-ABI round trips. Then choose
+and prove the best scalar representation and algorithm, including boundary,
+error, alignment, and guard-page evidence and AArch64 assembly inspection.
+Only a measured residual gap may justify a narrow SIMD path, which must earn
+its complexity across the full size, alignment, and page-boundary matrix.
+
+This makes vDSO dispatch and indexed loader lookup structural work rather than
+SIMD candidates. Crabc has one AArch64 baseline: it does not inherit an x86
+ifunc hierarchy. ASIMD is a later option; SVE needs separate capability,
+fallback, and dispatch-cost evidence. Any optimized NUL-string load must be
+proved not to cross an unmapped page, and guard-page regressions are mandatory.
+
+Math may use an established vector kernel earlier only when its numerical
+contract is fully proved; musl edge behavior, bits, rounding, exceptions,
+`errno`, and ABI remain acceptance criteria. Cryptography is never hand-rolled
+for performance. A supported crypto primitive uses an approved focused,
+audited dependency after the `SCOPE.md` review, never an improvised vector
+implementation.
+
 ## Current selected results
 
 The 2026-08-21 fat-LTO baseline used 15 fresh C processes per lane and
@@ -199,14 +300,16 @@ source-level fix can do that.
    allocator-owned, but even zero excess cannot fit the current universal
    0.90× PSS gate: the touched 32-MiB payload alone is larger than 90% of musl's
    whole-process PSS. Do not turn this into allocator research; obtain the
-   scope decision recorded in `goal.md` before changing the selected strategy.
+   scope decision recorded in
+   [`performance-completion.md`](../roadmap/performance-completion.md) before
+   changing the selected strategy.
 
 ## Standard-library optimization evidence
 
-The dependency-free M12 stock-`std` fixture successfully builds the current
+The dependency-free native-facade stock-`std` fixture successfully builds the current
 `std,panic_abort`, AArch64 fat-LTO lane with `opt-level=3`, one codegen unit,
 embedded bitcode, and dynamic crabc runtime; its musl/crabc raw-output runtime
-comparison passes. Run it with `./scripts/dev.sh lto-m12`.
+comparison passes. Run it with `./scripts/dev.sh lto-native-facade`.
 
 Rustybench’s proc-macro Cargo benchmark graph currently cannot combine with
 `-Z build-std` on this native musl host: Cargo produces duplicate `core` lang

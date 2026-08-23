@@ -81,7 +81,7 @@ an absolute name is queried as-is. DNS A and AAAA answers are owned typed
 addresses, and a bounded CNAME chain is followed with loop protection while
 retaining the terminal canonical name. Network exchange reuses the direct
 configured-order UDP transport, TCP truncation fallback, retry count, and
-nameserver failover already covered by M11 transport tests. The slice does
+nameserver failover already covered by resolver-transport tests. The slice does
 not add DNSSEC, DoH/DoT, mDNS, IDNA, resolver formatting/parsing APIs, or a
 global cache/configuration registry.
 
@@ -225,7 +225,7 @@ No cryptography is hand-written. The C `crypt(3)` compatibility slice uses
 RustCrypto `sha-crypt`; its limits and dependency review live in
 [`compat/crabc-rs/crypt-profile.md`](../../compat/crabc-rs/crypt-profile.md).
 
-M12 proves a bounded direct native getpid/write route in O3 and fat-LTO lanes.
+The native-facade LTO proof establishes a bounded direct native getpid/write route in O3 and fat-LTO lanes.
 It does not prove whole-program LTO or optimization inside dynamically loaded
 `libc.so`; see [`compat/lto/README.md`](../../compat/lto/README.md).
 

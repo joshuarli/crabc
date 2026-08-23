@@ -167,10 +167,10 @@ fn f128_exp_reduced(x: f128) -> (f128, i32) {
 #[cfg(target_arch = "aarch64")]
 #[inline]
 fn f128_exp_native(x: f128) -> f128 {
-    // The primary M6 helper carries musl's three-part ln(2) reduction and a
+    // The primary helper carries musl's three-part ln(2) reduction and a
     // longer binary128 Taylor kernel.  Keep this wrapper so the complex
     // exceptional-value code below remains easy to audit against cexp.c.
-    m6_f128_primary_exp(x)
+    f128_primary_exp(x)
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -223,12 +223,12 @@ fn f128_sincos_native(x: f128) -> (f128, f128) {
     // local reduction was adequate for ordinary values but lost enough low
     // bits at 13.37 to miss os-test's strict binary128 interval after the
     // large exp(90.01) scale was applied.
-    m6_f128_primary_sincos(x)
+    f128_primary_sincos(x)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn f128_complex_mul(a: M4ComplexLong, b: M4ComplexLong) -> M4ComplexLong {
+fn f128_complex_mul(a: ComplexLong, b: ComplexLong) -> ComplexLong {
     // This is the C99 complex-product recovery used by musl/compiler complex
     // lowering.  It prevents 0*Inf from destroying a recoverable infinite
     // result, while retaining NaNs in ordinary finite cases.
@@ -270,31 +270,31 @@ fn f128_complex_mul(a: M4ComplexLong, b: M4ComplexLong) -> M4ComplexLong {
             im = f128::INFINITY * (ar * bi + ai * br);
         }
     }
-    M4ComplexLong { re, im }
+    ComplexLong { re, im }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
-fn f128_cexp(z: M4ComplexLong) -> M4ComplexLong {
+fn f128_cexp(z: ComplexLong) -> ComplexLong {
     let x = z.re;
     let y = z.im;
 
     // These branches mirror musl 1.2.6's cexp.c before the real exp call.
     if y == 0.0_f128 {
-        return M4ComplexLong { re: f128_exp_native(x), im: y };
+        return ComplexLong { re: f128_exp_native(x), im: y };
     }
     if x == 0.0_f128 {
         let (s, c) = f128_sincos_native(y);
-        return M4ComplexLong { re: c, im: s };
+        return ComplexLong { re: c, im: s };
     }
     if !y.is_finite() {
         if x.is_infinite() && x.is_sign_negative() {
-            return M4ComplexLong { re: 0.0_f128, im: 0.0_f128 };
+            return ComplexLong { re: 0.0_f128, im: 0.0_f128 };
         }
         if x.is_infinite() && x.is_sign_positive() {
-            return M4ComplexLong { re: x, im: y - y };
+            return ComplexLong { re: x, im: y - y };
         }
-        return M4ComplexLong { re: y - y, im: y - y };
+        return ComplexLong { re: y - y, im: y - y };
     }
 
     let (s, c) = f128_sincos_native(y);
@@ -302,26 +302,26 @@ fn f128_cexp(z: M4ComplexLong) -> M4ComplexLong {
         // Equivalent to musl's __ldexp_cexp: scale the trigonometric factors
         // after multiplying by the bounded exp mantissa.
         let (mantissa, exponent) = f128_exp_reduced(x);
-        return M4ComplexLong {
+        return ComplexLong {
             re: f128_scalbn(c * mantissa, exponent),
             im: f128_scalbn(s * mantissa, exponent),
         };
     }
     let e = f128_exp_native(x);
-    M4ComplexLong { re: e * c, im: e * s }
+    ComplexLong { re: e * c, im: e * s }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn cexpl(z: M4ComplexLong) -> M4ComplexLong {
+pub extern "C" fn cexpl(z: ComplexLong) -> ComplexLong {
     f128_cexp(z)
 }
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn clogl(z: M4ComplexLong) -> M4ComplexLong {
+pub extern "C" fn clogl(z: ComplexLong) -> ComplexLong {
     // Exactly musl's long-double composition: logl(cabsl(z)) + i*cargl(z).
-    M4ComplexLong {
+    ComplexLong {
         re: f128_log_native(hypotl(z.re, z.im)),
         im: atan2l(z.im, z.re),
     }
@@ -329,7 +329,7 @@ pub extern "C" fn clogl(z: M4ComplexLong) -> M4ComplexLong {
 
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
-pub extern "C" fn cpowl(z: M4ComplexLong, c: M4ComplexLong) -> M4ComplexLong {
+pub extern "C" fn cpowl(z: ComplexLong, c: ComplexLong) -> ComplexLong {
     // Exactly musl 1.2.6's cpowl.c reduction, with both operations retaining
     // the native binary128 complex representation.
     f128_cexp(f128_complex_mul(c, clogl(z)))

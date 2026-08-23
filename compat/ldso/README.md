@@ -1,6 +1,6 @@
 # Synthetic AArch64 ldso differential suite
 
-This is the M7 runtime evidence suite. It compiles the C fixtures once with
+This is the runtime evidence suite. It compiles the C fixtures once with
 the pinned musl 1.2.6 compiler, links equivalent PIEs for the pinned musl
 interpreter and crabc's `libldso.so`/`libc.so`, then compares raw exit status,
 stdout, and stderr.

@@ -17,13 +17,15 @@ work. [`docs/README.md`](docs/README.md) routes design, evidence, historical
 records, and code-adjacent harness guides. Compatibility evidence does not
 promise a native Rust wrapper for every C symbol.
 
-[`goal.md`](goal.md) defines the measurable Linux/AArch64 performance bar for
-soundly outperforming musl on the supported scorecard.
-[`goal2.md`](goal2.md) defines the follow-on measured real-software and
-`crabc-rs` application corpus needed to validate those focused wins in
-composition.
-[`pregoal.md`](pregoal.md) defines the source-build Lua gate that precedes
-performance work and promotes a CPython source build safely.
+The active acceptance contracts are purpose-led rather than milestone-led:
+[`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md)
+defines the measurable Linux/AArch64 performance bar;
+[`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md)
+defines the sequenced real-software and `crabc-rs` application corpus; and
+[`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) retains the
+future CPython and crabc-owned-sysroot work. The completed Lua adapter-sysroot
+gate is current evidence in
+[`docs/design/source-build.md`](docs/design/source-build.md).
 
 The selected musl/Rustix performance evidence and current optimization frontier
 are documented in [`docs/design/performance.md`](docs/design/performance.md).
@@ -48,7 +50,7 @@ The image and compatibility oracles are pinned in
 ./scripts/dev.sh build
 ./scripts/dev.sh test
 ./scripts/dev.sh crabc-rs    # native Rust capability suite and proofs
-./scripts/dev.sh lto-m12     # native crabc-rs O3/fat-LTO evidence
+./scripts/dev.sh lto-native-facade # native crabc-rs O3/fat-LTO evidence
 ./scripts/dev.sh lua         # pinned Lua 5.4 source-build/extension-loading gate
 ./scripts/dev.sh perf --label baseline # controlled musl-vs-crabc performance evidence
 ./scripts/dev.sh perf-native --label baseline # crabc-rs vs Rustix direct facade evidence

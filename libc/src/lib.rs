@@ -3754,7 +3754,7 @@ pub unsafe extern "C" fn posix_spawn_file_actions_init(fa: *mut posix_spawn_file
 
 #[no_mangle]
 pub unsafe extern "C" fn posix_spawn_file_actions_destroy(fa: *mut posix_spawn_file_actions_t) -> c_int {
-    m4_spawn_destroy_linked_actions(fa);
+    cabi_spawn_destroy_linked_actions(fa);
     0
 }
 
@@ -3790,7 +3790,7 @@ unsafe fn spawn_apply_actions(fa: *const posix_spawn_file_actions_t) -> c_int {
             _ => {}
         }
     }
-    m4_spawn_apply_linked_actions(fa)
+    cabi_spawn_apply_linked_actions(fa)
 }
 
 // ponytail: PATH search using stack buffer, O(n) scan per entry
@@ -5363,7 +5363,7 @@ pub unsafe extern "C" fn pthread_create(
     } else {
         // Nonportable default attributes are process state: an omitted attr
         // must consume the same selected stack size as pthread_attr_init.
-        m4_pthread_default_stack_size()
+        cabi_pthread_default_stack_size()
     };
     // Keep the TLS allocation above the downward-growing stack in one mapping.
     // The page-rounded stack region preserves a hard boundary between normal
@@ -5516,8 +5516,8 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_init(attr: *mut pthread_attr_t) -> c_int {
     core::ptr::write_bytes(attr, 0, 1);
-    *((*attr).__i.as_mut_ptr() as *mut usize) = m4_pthread_default_stack_size();
-    *((*attr).__i.as_mut_ptr().add(2) as *mut usize) = m4_pthread_default_guard_size();
+    *((*attr).__i.as_mut_ptr() as *mut usize) = cabi_pthread_default_stack_size();
+    *((*attr).__i.as_mut_ptr().add(2) as *mut usize) = cabi_pthread_default_guard_size();
     (*attr).__i[6] = PTHREAD_CREATE_JOINABLE;
     (*attr).__i[7] = PTHREAD_INHERIT_SCHED;
     0
@@ -17950,7 +17950,7 @@ pub unsafe extern "C" fn __libc_start_main(
     sync_environ();
     __stdio_init();
     if argc > 0 && !argv.is_null() {
-        m4_set_program_names(*argv);
+        cabi_set_program_names(*argv);
     }
 
     // See `thread_entry`: public signal-set helpers intentionally cannot
@@ -18188,12 +18188,12 @@ unsafe extern "C" fn runtime_loader_address(
     }
     // SAFETY: The output pointer is non-null and belongs to this ABI call.
     unsafe { core::ptr::write(info, crabc_core::runtime::LoaderAddressV1::empty()) };
-    let Some(lookup) = (unsafe { m4_ldso_dladdr() }) else {
+    let Some(lookup) = (unsafe { cabi_ldso_dladdr() }) else {
         // SAFETY: Static fallback has no loader/TLS lifetime.
         unsafe { runtime_text_bytes(error, b"crabc dynamic loader runtime unavailable") };
         return -1;
     };
-    let mut raw = M4DladdrResult {
+    let mut raw = CabiDladdrResult {
         fname: core::ptr::null(),
         fbase: 0,
         sname: core::ptr::null(),
@@ -18227,17 +18227,17 @@ unsafe extern "C" fn runtime_loader_snapshot(
         unsafe { runtime_text_bytes(error, b"invalid loader snapshot output") };
         return -1;
     }
-    let Some(snapshot) = (unsafe { m4_ldso_loader_snapshot() }) else {
+    let Some(snapshot) = (unsafe { cabi_ldso_loader_snapshot() }) else {
         unsafe { runtime_text_bytes(error, b"crabc loader introspection unavailable") };
         return -1;
     };
     let status = unsafe {
         snapshot(
-            records.cast::<M4LoaderImageV1>(),
+            records.cast::<CabiLoaderImageV1>(),
             capacity,
             count,
             generation,
-            error.cast::<M4LoaderSnapshotText>(),
+            error.cast::<CabiLoaderSnapshotText>(),
         )
     };
     if status != 0 && !error.is_null() && unsafe { (*error).len } == 0 {
@@ -18257,15 +18257,15 @@ unsafe extern "C" fn runtime_loader_information(
         return -1;
     }
     unsafe { core::ptr::write(info, crabc_core::runtime::LoaderInformationV1::empty()) };
-    let Some(information) = (unsafe { m4_ldso_loader_information() }) else {
+    let Some(information) = (unsafe { cabi_ldso_loader_information() }) else {
         unsafe { runtime_text_bytes(error, b"crabc loader introspection unavailable") };
         return -1;
     };
     let status = unsafe {
         information(
             handle,
-            info.cast::<M4LoaderInformationV1>(),
-            error.cast::<M4LoaderSnapshotText>(),
+            info.cast::<CabiLoaderInformationV1>(),
+            error.cast::<CabiLoaderSnapshotText>(),
         )
     };
     if status != 0 && !error.is_null() && unsafe { (*error).len } == 0 {
@@ -18730,7 +18730,7 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
 }
 
 include!("crypt_impl.rs");
-include!("m4_legacy_des_exports.rs");
+include!("legacy_des_exports.rs");
 include!("statvfs.rs");
 include!("daemon.rs");
 include!("dn_expand.rs");
@@ -18742,80 +18742,80 @@ include!("fenv.rs");
 include!("locale_ctype.rs");
 include!("regression_stubs.rs");
 include!("wordexp.rs");
-include!("m4_locale_exports.rs");
-include!("m4_syscall_exports.rs");
-include!("m4_stdio_exports.rs");
-include!("m4_decimal_conversions.rs");
-include!("m4_cookie_stream_exports.rs");
-include!("m4_string_exports.rs");
-include!("m4_io_exports.rs");
-include!("m4_ioctl_exports.rs");
-include!("m4_scalar_exports.rs");
-include!("m4_filesystem_paths_exports.rs");
-include!("m4_file_handle_exports.rs");
-include!("m4_ptrace_exports.rs");
-include!("m4_c11_threads_exports.rs");
-include!("m4_wchar_exports.rs");
-include!("m4_compat_exports.rs");
-include!("m4_memory_vm_exports.rs");
-include!("m4_terminal_exports.rs");
-include!("m4_poll_events_exports.rs");
-include!("m4_integer_numeric_exports.rs");
-include!("m4_select_exports.rs");
-include!("m4_system_utils_exports.rs");
-include!("m4_unicode_encoders_exports.rs");
-include!("m4_random_exports.rs");
-include!("m4_timer_signal_fds_exports.rs");
-include!("m4_posix_timers_exports.rs");
-include!("m4_time_extensions_exports.rs");
-include!("m4_getdate_exports.rs");
-include!("m4_legacy_formatting_exports.rs");
-include!("m4_clock_administration_exports.rs");
-include!("m4_sched_affinity_exports.rs");
-include!("m4_extended_attributes_exports.rs");
-include!("m4_directory_streams_exports.rs");
-include!("m4_filesystem_traversal_exports.rs");
-include!("m4_posix_spawn_attrs_exports.rs");
-include!("m4_admin_syscalls_exports.rs");
-include!("m4_socket_messages_exports.rs");
-include!("m4_complex_basic_exports.rs");
+include!("locale_exports.rs");
+include!("syscall_exports.rs");
+include!("stdio_exports.rs");
+include!("decimal_conversions.rs");
+include!("cookie_stream_exports.rs");
+include!("string_exports.rs");
+include!("io_exports.rs");
+include!("ioctl_exports.rs");
+include!("scalar_exports.rs");
+include!("filesystem_paths_exports.rs");
+include!("file_handle_exports.rs");
+include!("ptrace_exports.rs");
+include!("c11_threads_exports.rs");
+include!("wchar_exports.rs");
+include!("compat_exports.rs");
+include!("memory_vm_exports.rs");
+include!("terminal_exports.rs");
+include!("poll_events_exports.rs");
+include!("integer_numeric_exports.rs");
+include!("select_exports.rs");
+include!("system_utils_exports.rs");
+include!("unicode_encoders_exports.rs");
+include!("random_exports.rs");
+include!("timer_signal_fds_exports.rs");
+include!("posix_timers_exports.rs");
+include!("time_extensions_exports.rs");
+include!("getdate_exports.rs");
+include!("legacy_formatting_exports.rs");
+include!("clock_administration_exports.rs");
+include!("sched_affinity_exports.rs");
+include!("extended_attributes_exports.rs");
+include!("directory_streams_exports.rs");
+include!("filesystem_traversal_exports.rs");
+include!("posix_spawn_attrs_exports.rs");
+include!("admin_syscalls_exports.rs");
+include!("socket_messages_exports.rs");
+include!("complex_basic_exports.rs");
 include!("math_f128_complex_exp_log.rs");
 include!("math_f128_complex_inverse.rs");
 include!("math_f128_complex_primary.rs");
-include!("m4_host_process_exports.rs");
-include!("m4_filesystem_stats_exports.rs");
-include!("m4_signal_helpers_exports.rs");
-include!("m4_program_utils_exports.rs");
-include!("m4_system_information_exports.rs");
-include!("m4_getopt_exports.rs");
-include!("m4_error_reporting_exports.rs");
-include!("m4_gettext_exports.rs");
-include!("m4_admin_kernel_exports.rs");
-include!("m4_network_globals_exports.rs");
-include!("m4_network_databases_exports.rs");
-include!("m4_legacy_resolver_exports.rs");
-include!("m4_ether_exports.rs");
-include!("m4_usershell_exports.rs");
-include!("m4_utmp_databases.rs");
-include!("m4_shadow_exports.rs");
-include!("m4_identity_exports.rs");
-include!("m4_fanotify_exports.rs");
-include!("m4_quick_exit_exports.rs");
-include!("m4_mqueue_exports.rs");
-include!("m4_clone_exports.rs");
-include!("m4_process_control_exports.rs");
-include!("m4_complex_transcendentals_exports.rs");
-include!("m4_complex_powers_exports.rs");
-include!("m4_break_exports.rs");
-include!("m4_wchar_stream_exports.rs");
-include!("m4_wmemstream_exports.rs");
-include!("m4_pthread_extensions.rs");
-include!("m4_semtimedop_exports.rs");
-include!("m4_posix_aio_exports.rs");
-include!("m4_dynamic_loader_introspection_exports.rs");
-include!("m4_loader_startup_exports.rs");
-include!("m4_init_fini_exports.rs");
-include!("m4_tls_get_addr.rs");
+include!("host_process_exports.rs");
+include!("filesystem_stats_exports.rs");
+include!("signal_helpers_exports.rs");
+include!("program_utils_exports.rs");
+include!("system_information_exports.rs");
+include!("getopt_exports.rs");
+include!("error_reporting_exports.rs");
+include!("gettext_exports.rs");
+include!("admin_kernel_exports.rs");
+include!("network_globals_exports.rs");
+include!("network_databases_exports.rs");
+include!("legacy_resolver_exports.rs");
+include!("ether_exports.rs");
+include!("usershell_exports.rs");
+include!("utmp_databases.rs");
+include!("shadow_exports.rs");
+include!("identity_exports.rs");
+include!("fanotify_exports.rs");
+include!("quick_exit_exports.rs");
+include!("mqueue_exports.rs");
+include!("clone_exports.rs");
+include!("process_control_exports.rs");
+include!("complex_transcendentals_exports.rs");
+include!("complex_powers_exports.rs");
+include!("break_exports.rs");
+include!("wchar_stream_exports.rs");
+include!("wmemstream_exports.rs");
+include!("pthread_extensions.rs");
+include!("semtimedop_exports.rs");
+include!("posix_aio_exports.rs");
+include!("dynamic_loader_introspection_exports.rs");
+include!("loader_startup_exports.rs");
+include!("init_fini_exports.rs");
+include!("tls_get_addr.rs");
 
 // ============================================================
 // regex.h

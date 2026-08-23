@@ -425,7 +425,7 @@ _FEATURES: tuple[dict[str, Any], ...] = (
         "name": "dladdr_dl_iterate_phdr",
         "description": "Provide loader introspection APIs for object and program-header enumeration.",
         "markers": ("__ldso_dl_iterate_phdr", "__ldso_dladdr"),
-        "tests": ("tests/m4_dynamic_loader_introspection.rs", "compat/ldso/run.py"),
+        "tests": ("tests/dynamic_loader_introspection.rs", "compat/ldso/run.py"),
     },
     {
         "name": "sysv_and_gnu_hash",
@@ -451,7 +451,7 @@ _FEATURES: tuple[dict[str, Any], ...] = (
         "markers": ("DT_RELR", "DT_RELRENT", "apply_relr_table"),
         "tests": ("compat/corpus/run.py",),
         "note": (
-            "The M8 corpus requires DT_RELR in real Alpine coreutils package "
+            "The corpus requires DT_RELR in real Alpine coreutils package "
             "binaries before it compares pinned musl and crabc outcomes."
         ),
     },

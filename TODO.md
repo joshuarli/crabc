@@ -14,7 +14,7 @@ at once.
 
 ## Current status
 
-M0–M12 are complete. Current ledger validation records 171 verified native
+The historical delivery sequence is complete. Current ledger validation records 171 verified native
 seams, no deferred native capability groups, and 52 documented non-native
 boundaries. The current generated dashboard records 1,647/1,647 required musl
 dynamic exports, no ABI metadata mismatch, 34/34 measured Alpine corpus cases,
@@ -33,7 +33,7 @@ made `AT_PAGESZ`-driven (including an 8 KiB synthetic-startup regression), and
 the AArch64 loader has a focused `AT_BASE` self-relocation runtime case. They
 are retained here as completed scope records, not active work.
 
-The M11 loader introspection row is now verified: `LoadedImageSnapshot` and
+The loader-introspection capability is now verified: `LoadedImageSnapshot` and
 `Library::information` copy bounded records through the append-only runtime
 bridge without exposing `link_map` or invoking callbacks while ldso is locked.
 
@@ -63,21 +63,25 @@ reports. Read [`docs/design/performance.md`](docs/design/performance.md) before
 changing one of these routes; it records the complete selected evidence,
 interpretation boundary, and harness contract.
 
-[`goal.md`](goal.md) is the performance completion contract: it defines the
+[`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md)
+is the performance completion contract: it defines the
 per-workload CPU, peak-memory, syscall, correctness, and evidence gates needed
 before crabc can claim to outperform musl on its supported scorecard. It does
 not supersede this living work list.
 
-[`goal2.md`](goal2.md) is deliberately subsequent: it expands the successful
+[`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md)
+is deliberately subsequent: it expands the successful
 focused scorecard into a measured corpus of real Alpine software and direct
 `crabc-rs` applications. Do not let it delay the current focused performance
 frontier.
 
-[`pregoal.md`](pregoal.md) is now a permanent completed gate: its isolated Lua
-5.4.8 source build, shared interpreter runtime, extension loading, bytecode,
-and candidate-loader mapping evidence pass through `./scripts/dev.sh lua`.
-It remains the evidence and failure taxonomy for promoting an adapter-sysroot
-CPython 3.14.3 source build; retain it while starting `goal.md` work.
+[`docs/design/source-build.md`](docs/design/source-build.md) is now the
+permanent completed Lua gate: its isolated 5.4.8 source build, shared
+interpreter runtime, extension loading, bytecode, and candidate-loader mapping
+evidence pass through `./scripts/dev.sh lua`. Its failure taxonomy and adapter
+boundary remain current evidence; the CPython 3.14.3 and crabc-owned-sysroot
+acceptance stages remain in
+[`docs/roadmap/source-build.md`](docs/roadmap/source-build.md).
 
 | Priority | Exact work still left | Evidence boundary |
 | --- | --- | --- |
@@ -87,8 +91,8 @@ CPython 3.14.3 source build; retain it while starting `goal.md` work.
 | P1 | Reduce verified local file-descriptor and buffered-I/O work without relaxing their C boundary checks. | `stdio-file-readv` adds staged deterministic 4-KiB inputs. `fd_file_4k` validates `O_CLOEXEC`, `F_GETFD`, `fstat`, `pwrite`, `pread`, and close. AArch64's `fcntl` entry handles the two no-argument commands before Rust must spill a variadic register-save area, then tail-branches every argument-bearing/unknown command to the existing typed decoder. Three fresh 31-sample `fcntl-noarg-entry-matrix-31` reports reduce the `fd_file_4k` CPU upper bound to 0.9205×–0.9365×, but it remains red; three `stdio-current-cancel-{31,repeat-31,repeat2-31}` reports place `stdio_file_4k` at a still-red 0.9865×–1.0168×. Its two actual reads check the already-published current pthread slot rather than invoking public lazy registration; a caller without a slot cannot have a crabc cancellation request. Public `pthread_testcancel` remains unchanged, and the ten-iteration pthread stress retains deferred/asynchronous stdio cancellation while the direct musl lifecycle fixture retains `fread`/seek/`ungetc`. The formatted-record contract still covers `fprintf`/flush/rewind/`fscanf`, bounded `snprintf`/`sscanf`, and the ordered unread tail. A successful `fseek` records its exact kernel position only until a read or write invalidates it. The no-length scalar scanner now reads directly from `FILE`, keeps just one local delimiter, and restores it through `ungetc`; other formats retain the staged route. Five `stdio-direct-local-lookahead-{matrix,repeat,repeat2,final,final2}-31` reports place `stdio_format_parse` at 1.0328×–1.0585× CPU and its marked row at 6.003 vs 6.211 calls/op. The direct fixture exercises one-byte scalar storage, separately forces staged `%n` seek-back, and proves an unbuffered read invalidates the cache before another scan. The marked syscall gate passes; inspect parser setup and remaining file lifecycle work for the red CPU row next. |
 | P1 | Reduce measured pthread/TLS and loader-TLS growth work without relaxing their lifecycle contracts. | `pthread-slot-publication-matrix-31` creates and joins one worker per operation. Its three 31-sample reports improve the CPU upper bound to 1.1089×–1.1364× while retaining 9.000 versus 11.977 musl marked calls/op. A normal creator claims a free slot before scanning for completed detached workers, and a released slot publishes only `tid == -1`: the next successful claimant alone resets private fields and the fixed TSD array. The shared direct-musl-differential contract proves the child static-TLS initializer, child pthread-key value, join result, and untouched parent static TLS across 513 lifetimes; broad pthread stress preserves detached-slot reclamation. Separate stack/TLS mappings and thread-start work remain the CPU frontier. `pthread-mutex-fast-lock-unlock-matrix-31` adds 2,000,000 normal-mutex protected increments per process: both marked regions make zero syscalls, and inline AArch64 `ldaxr`/`stlxr` compare-exchange and exchange primitives remove LLVM's per-operation outlined LSE probe. The direct Musl differential proves both acquisition and a busy `trylock`; broad pthread stress and the condition handoff regression preserve its failure/retry and wake semantics. The CPU upper bound falls from 1.3906× to a still-red 1.0095×. `pthread-cond-direct-mutex-{matrix,repeat,repeat2}-31` retains the verified AArch64 sequence/waiter loops and musl-matched relaxed advisory waiter hint. `pthread_cond_wait` first enters its private inline timed-wait body, then invokes private exact mutex lock/unlock helpers rather than the interposable public mutex PLT entries; the weak/default-visible C ABI remains unchanged, and its known null timeout still emits the direct futex wait. Three reports lower the still-red CPU upper bound to 1.0035×–1.0052× with 6.0007–6.0021 versus 6.0022–6.0052 musl marked calls/op. `loader-dynamic-tls-libc-shortname-matrix-31` loads eight optimized TLS DSOs after a worker already exists. Its direct musl differential proves all missing images are initialized exactly once; the adjacent optimized parent/child test proves one `dlopen` initializes every TLS module in its `DT_NEEDED` graph, and the 4-KiB-aligned TLS regression proves its AArch64 TLSDESC resolver refreshes a migrated TP while the assembly stub preserves the descriptor ABI's `x2` route. Reusing an allocation only when its recorded capacity and TP placement still fit removes repeated block replacement. Each TCB allocation now records the append-only module frontier that it has initialized, so a later generation mismatch copies only the absent suffix and leaves all prior thread-private TLS writes intact. Mirroring musl's initial `libc.so` short name for that exact `DT_NEEDED` edge removes redundant dependent-libc opens/stats without extending general runtime alias reuse. The lowest `PT_LOAD` maps the complete file span and later segments overlay it, removing the separate anonymous reservation from every small DSO: the dynamic-TLS trace falls from 25 candidate mappings to 17 versus 18 musl and 8.125 versus 13.125 marked calls/op. A no-RELRO packed-`DT_RELR` regression now proves a second `dlopen` cannot replay the first DSO's in-place relocation; relocation and RELRO process only the new dependency-graph suffix, independently of the optional protection segment. Three CPU-pinned `tls-module-frontier-*-31` reports range from 1.3184× to 1.3977×, still red; the matched 101-sample candidate/baseline pair improves the upper bound from 1.3412× to 1.3193×. Inspect remaining loader and close work rather than weakening the eight-image lifecycle. Direct and broad pthread stress evidence preserve the release/retry and wake semantics. |
 | P2 | Account for and reduce non-essential loader startup mappings/syscalls. | The kernel maps the main PIE before transferring control to `PT_INTERP`; `kernel-main-image-{matrix,repeat,repeat2}-31` now consumes the validated `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`/`AT_ENTRY` layout in place and uses `AT_EXECFN` for the bounded executable `$ORIGIN`. The direct pinned-musl regression proves one executable mapping, rather than retaining a remapped duplicate. The three reports reduce minimal startup to 30 candidate calls versus 10 musl (1.1908×–1.2958 CPU upper bounds), constructor/destructor startup to 29 versus 9 (1.1502×–1.1809), and the startup-linked five-DSO graph to 65 versus 50 (1.1687×–1.2205). The graph syscall gate still passes, but all CPU rows remain red. The main PIE's `argv[0]` remains available only for `dladdr`/`dl_iterate_phdr`: a direct executable pathname now follows musl by mapping a distinct `dlopen` object, rather than triggering a `/proc/self/exe` identity probe or generic-name reuse. The exact initial bare-name cache remains restricted to immutable initial `LD_LIBRARY_PATH` resolution, while parent RUNPATH/RPATH, direct paths, and runtime names retain identity matching. All schema-5 marker regions are complete, so remaining whole-process cost is loader lifecycle. Separate ldso/libc image loading and mimalloc's upstream eager process constructor remain the concrete suspects. |
-| Scope decision | Resolve the universal allocator-plateau memory gate without starting allocator research. | The bounded audit finds one direct mimalloc domain and no duplicate wrapper allocation state. `smaps` attributes about 47.3 MiB of crabc PSS to anonymous mappings versus 33.3 MiB for musl, but a fully touched 32-MiB payload alone exceeds 90% of musl's total PSS. The fresh-cgroup `memory.peak` collector is explicitly unsupported under Docker's read-only cgroup mount. A user must choose the allocator scope change in `goal.md`; no configuration can make this fixture meet the present universal PSS target. |
-| Tooling | Resolve Rustybench’s dependency-bearing `-Z build-std` duplicate-`core` limitation before using it for build-std timing. | The dependency-free M12 `std,panic_abort` fat-LTO application proof is green; the Rustybench route records explicit unsupported evidence rather than a false measurement. |
+| Scope decision | Resolve the universal allocator-plateau memory gate without starting allocator research. | The bounded audit finds one direct mimalloc domain and no duplicate wrapper allocation state. `smaps` attributes about 47.3 MiB of crabc PSS to anonymous mappings versus 33.3 MiB for musl, but a fully touched 32-MiB payload alone exceeds 90% of musl's total PSS. The fresh-cgroup `memory.peak` collector is explicitly unsupported under Docker's read-only cgroup mount. A user must choose the allocator scope change in the [performance completion roadmap](docs/roadmap/performance-completion.md); no configuration can make this fixture meet the present universal PSS target. |
+| Tooling | Resolve Rustybench’s dependency-bearing `-Z build-std` duplicate-`core` limitation before using it for build-std timing. | The dependency-free native-facade `std,panic_abort` fat-LTO application proof is green; the Rustybench route records explicit unsupported evidence rather than a false measurement. |
 
 The earlier `stdio-file-readv` 1.05× `stdio_file_4k` result is historical.
 Three current `fdopen-malloc-{matrix,repeat,repeat2}-31` reports establish a
@@ -160,7 +164,7 @@ selected scoped capability.
 - Use focused fuzzing/property/failure-path testing for high-value parsers and
   ownership state machines when changing them.
 - Expand the selected performance matrix only when a design or regression
-  requires a new route. Preserve M12’s bounded LTO/build-std proof; raw
+  requires a new route. Preserve the bounded native-facade LTO/build-std proof; raw
   one-shot LTO timings are not a benchmark substitute.
 - Extend POSIX, loader, or real-program evidence only in response to a defined
   contract. Existing selected suites are not claims of full standards or

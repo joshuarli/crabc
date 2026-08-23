@@ -132,7 +132,7 @@ regenerated after loader changes.
 
 ## Selected public-layout probes
 
-Stage 5's first ABI evidence runner is
+The focused ABI evidence runner is
 [`../scripts/probe_aarch64_abi.py`](../scripts/probe_aarch64_abi.py). It is a
 Python standard-library harness that compiles the same `stat`, `termios`,
 `socket`, `fenv`, `complex`, `pthread`, `signals-ucontext`, `tls`, and

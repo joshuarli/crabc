@@ -85,7 +85,7 @@ ALLOWED_COVERAGE_CLASSIFICATIONS = {
 }
 ALLOWED_COVERAGE_STATUSES = {"verified", "documented", "deferred"}
 ALLOWED_CAPABILITY_KINDS = {"semantic", "implementation"}
-COVERAGE_PHASE = "M11-core-runtime-slices"
+COVERAGE_PHASE = "core-runtime-slices"
 
 # The allocator is the one deliberate crabc-rs scope exception. Keep this
 # contract centralized: a scope exception must not become a second spelling of
@@ -413,7 +413,7 @@ def require_native_contract(capability: Mapping[str, Any], location: str) -> Non
     require(status == "deferred", f"{location} native capability must be verified or deferred")
     nonempty_strings(capability.get("planned_rust_api"), f"{location}.planned_rust_api")
     require(capability.get("deferred_reason"), f"{location} deferred native capability has no deferred_reason")
-    require(capability.get("target_milestone"), f"{location} deferred native capability has no target_milestone")
+    require(capability.get("target_workstream"), f"{location} deferred native capability has no target_workstream")
 
 
 def require_scope_exception_contract(
@@ -949,7 +949,7 @@ def write_report(path: Path, report: Mapping[str, Any]) -> None:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("check", "compare", "source-compare"), nargs="?", default="check")
-    parser.add_argument("--check", action="store_true", help="validate all M0 metadata (default)")
+    parser.add_argument("--check", action="store_true", help="validate all metadata (default)")
     parser.add_argument(
         "--fixture",
         type=Path,

@@ -1,5 +1,5 @@
 /*
- * Bounded M6 signal/process workload.
+ * Bounded signal/process workload.
  *
  * Each invocation runs exactly one subcase.  The Python runner invokes the
  * subcases in separate process groups, so a bad signal disposition, child, or

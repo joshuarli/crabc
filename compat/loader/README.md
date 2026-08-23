@@ -1,6 +1,6 @@
 # AArch64 loader inventory and evidence
 
-Milestone 0 keeps the reference loader ABI and the crabc loader feature
+This loader inventory keeps the reference loader ABI and the crabc loader feature
 surface explicit without treating either one as full loader parity.
 
 ## Reports

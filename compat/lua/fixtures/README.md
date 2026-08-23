@@ -1,4 +1,4 @@
-# Lua pre-goal fixtures
+# Lua source-build fixtures
 
 These files use the stock Lua 5.4 C API and have no third-party dependency.
 Build the two DSOs separately, for example:

@@ -12,759 +12,770 @@ name = "crabc_rs"
 path = "src/lib.rs"
 
 [[example]]
-name = "m0_direct_probe"
-path = "examples/m0_direct_probe.rs"
+name = "direct_io_probe"
+path = "examples/direct_io_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m2_direct_probe"
-path = "examples/m2_direct_probe.rs"
+name = "filesystem_probe"
+path = "examples/filesystem_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m3_direct_probe"
-path = "examples/m3_direct_probe.rs"
+name = "core_os_probe"
+path = "examples/core_os_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m4_direct_probe"
-path = "examples/m4_direct_probe.rs"
+name = "process_system_probe"
+path = "examples/process_system_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m5_direct_probe"
-path = "examples/m5_direct_probe.rs"
+name = "descriptor_mapping_probe"
+path = "examples/descriptor_mapping_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m6_direct_probe"
-path = "examples/m6_direct_probe.rs"
+name = "signal_process_probe"
+path = "examples/signal_process_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m7_sync_direct_probe"
-path = "examples/m7_sync_direct_probe.rs"
+name = "synchronization_probe"
+path = "examples/synchronization_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m7_resolver_direct_probe"
-path = "examples/m7_resolver_direct_probe.rs"
+name = "resolver_direct_probe"
+path = "examples/resolver_direct_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["alloc"]
 
 [[example]]
-name = "m7_loader_runtime_probe"
-path = "examples/m7_loader_runtime_probe.rs"
+name = "loader_runtime_probe"
+path = "examples/loader_runtime_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["runtime-loader"]
 
 [[example]]
-name = "m11_loader_dlfcn_basic_probe"
-path = "examples/m11_loader_dlfcn_basic_probe.rs"
+name = "loader_dlfcn_basic_probe"
+path = "examples/loader_dlfcn_basic_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["runtime-loader"]
 
 [[example]]
-name = "m11_loader_dlfcn_introspection_probe"
-path = "examples/m11_loader_dlfcn_introspection_probe.rs"
+name = "loader_dlfcn_introspection_probe"
+path = "examples/loader_dlfcn_introspection_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["runtime-loader"]
 
 [[example]]
-name = "m7_runtime_thread_probe"
-path = "examples/m7_runtime_thread_probe.rs"
+name = "runtime_thread_probe"
+path = "examples/runtime_thread_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["runtime-thread"]
 
 [[example]]
-name = "m8_fenv_direct_probe"
-path = "examples/m8_fenv_direct_probe.rs"
+name = "fenv_direct_probe"
+path = "examples/fenv_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m8_fnmatch_direct_probe"
-path = "examples/m8_fnmatch_direct_probe.rs"
+name = "fnmatch_direct_probe"
+path = "examples/fnmatch_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m8_glob_direct_probe"
-path = "examples/m8_glob_direct_probe.rs"
+name = "glob_direct_probe"
+path = "examples/glob_direct_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["alloc"]
 
 [[example]]
-name = "m8_cfile_direct_probe"
-path = "examples/m8_cfile_direct_probe.rs"
+name = "cfile_direct_probe"
+path = "examples/cfile_direct_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["runtime-stdio"]
 
 [[example]]
-name = "m10_text_direct_probe"
-path = "examples/m10_text_direct_probe.rs"
+name = "text_direct_probe"
+path = "examples/text_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_text_stateful_direct_probe"
-path = "examples/m10_text_stateful_direct_probe.rs"
+name = "text_stateful_direct_probe"
+path = "examples/text_stateful_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ctype_direct_probe"
-path = "examples/m10_ctype_direct_probe.rs"
+name = "ctype_direct_probe"
+path = "examples/ctype_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_address_direct_probe"
-path = "examples/m10_network_address_direct_probe.rs"
+name = "network_address_direct_probe"
+path = "examples/network_address_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ethernet_address_direct_probe"
-path = "examples/m10_ethernet_address_direct_probe.rs"
+name = "ethernet_address_direct_probe"
+path = "examples/ethernet_address_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ethers_direct_probe"
-path = "examples/m10_ethers_direct_probe.rs"
+name = "ethers_direct_probe"
+path = "examples/ethers_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_ipaddr_direct_probe"
-path = "examples/m10_network_ipaddr_direct_probe.rs"
+name = "network_ipaddr_direct_probe"
+path = "examples/network_ipaddr_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ipv4_legacy_direct_probe"
-path = "examples/m10_ipv4_legacy_direct_probe.rs"
+name = "ipv4_legacy_direct_probe"
+path = "examples/ipv4_legacy_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ipv4_classful_direct_probe"
-path = "examples/m10_ipv4_classful_direct_probe.rs"
+name = "ipv4_classful_direct_probe"
+path = "examples/ipv4_classful_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_interface_index_direct_probe"
-path = "examples/m10_network_interface_index_direct_probe.rs"
+name = "network_interface_index_direct_probe"
+path = "examples/network_interface_index_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_interface_index_name_direct_probe"
-path = "examples/m10_network_interface_index_name_direct_probe.rs"
+name = "network_interface_index_name_direct_probe"
+path = "examples/network_interface_index_name_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_interface_names_direct_probe"
-path = "examples/m10_interface_names_direct_probe.rs"
+name = "interface_names_direct_probe"
+path = "examples/interface_names_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_interface_names_alloc_direct_probe"
-path = "examples/m10_interface_names_alloc_direct_probe.rs"
+name = "interface_names_alloc_direct_probe"
+path = "examples/interface_names_alloc_direct_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["alloc"]
 
 [[example]]
-name = "m10_interface_addresses_direct_probe"
-path = "examples/m10_interface_addresses_direct_probe.rs"
+name = "interface_addresses_direct_probe"
+path = "examples/interface_addresses_direct_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["alloc"]
 
 [[example]]
-name = "m10_fs_metadata_direct_probe"
-path = "examples/m10_fs_metadata_direct_probe.rs"
+name = "fs_metadata_direct_probe"
+path = "examples/fs_metadata_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_statx_direct_probe"
-path = "examples/m10_statx_direct_probe.rs"
+name = "statx_direct_probe"
+path = "examples/statx_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_positioned_direct_probe"
-path = "examples/m10_positioned_direct_probe.rs"
+name = "positioned_direct_probe"
+path = "examples/positioned_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_format_direct_probe"
-path = "examples/m10_format_direct_probe.rs"
+name = "format_direct_probe"
+path = "examples/format_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_number_direct_probe"
-path = "examples/m10_number_direct_probe.rs"
+name = "number_direct_probe"
+path = "examples/number_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_random_direct_probe"
-path = "examples/m10_random_direct_probe.rs"
+name = "random_direct_probe"
+path = "examples/random_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_vectored_direct_probe"
-path = "examples/m10_vectored_direct_probe.rs"
+name = "vectored_direct_probe"
+path = "examples/vectored_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_time_direct_probe"
-path = "examples/m10_time_direct_probe.rs"
+name = "time_direct_probe"
+path = "examples/time_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_calendar_utc_direct_probe"
-path = "examples/m10_calendar_utc_direct_probe.rs"
+name = "calendar_utc_direct_probe"
+path = "examples/calendar_utc_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_calendar_local_direct_probe"
-path = "examples/m10_calendar_local_direct_probe.rs"
+name = "calendar_local_direct_probe"
+path = "examples/calendar_local_direct_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["alloc"]
 
 [[example]]
-name = "m10_time_dynamic_direct_probe"
-path = "examples/m10_time_dynamic_direct_probe.rs"
+name = "time_dynamic_direct_probe"
+path = "examples/time_dynamic_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_time_settime_direct_probe"
-path = "examples/m10_time_settime_direct_probe.rs"
+name = "time_settime_direct_probe"
+path = "examples/time_settime_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_time_timespec_get_direct_probe"
-path = "examples/m10_time_timespec_get_direct_probe.rs"
+name = "time_timespec_get_direct_probe"
+path = "examples/time_timespec_get_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_time_realtime_millis_direct_probe"
-path = "examples/m10_time_realtime_millis_direct_probe.rs"
+name = "time_realtime_millis_direct_probe"
+path = "examples/time_realtime_millis_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_param_auxv_direct_probe"
-path = "examples/m10_param_auxv_direct_probe.rs"
+name = "param_auxv_direct_probe"
+path = "examples/param_auxv_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sched_rr_interval_direct_probe"
-path = "examples/m10_sched_rr_interval_direct_probe.rs"
+name = "sched_rr_interval_direct_probe"
+path = "examples/sched_rr_interval_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sched_getaffinity_direct_probe"
-path = "examples/m10_sched_getaffinity_direct_probe.rs"
+name = "sched_getaffinity_direct_probe"
+path = "examples/sched_getaffinity_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sched_setaffinity_direct_probe"
-path = "examples/m10_sched_setaffinity_direct_probe.rs"
+name = "sched_setaffinity_direct_probe"
+path = "examples/sched_setaffinity_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_pidfd_open_direct_probe"
-path = "examples/m10_pidfd_open_direct_probe.rs"
+name = "pidfd_open_direct_probe"
+path = "examples/pidfd_open_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_process_cpu_time_direct_probe"
-path = "examples/m10_process_cpu_time_direct_probe.rs"
+name = "process_cpu_time_direct_probe"
+path = "examples/process_cpu_time_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_process_clock_id_direct_probe"
-path = "examples/m10_process_clock_id_direct_probe.rs"
+name = "process_clock_id_direct_probe"
+path = "examples/process_clock_id_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_direct_probe"
-path = "examples/m10_network_socket_direct_probe.rs"
+name = "network_socket_direct_probe"
+path = "examples/network_socket_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_type_direct_probe"
-path = "examples/m10_network_socket_type_direct_probe.rs"
+name = "network_socket_type_direct_probe"
+path = "examples/network_socket_type_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_protocol_direct_probe"
-path = "examples/m10_network_socket_protocol_direct_probe.rs"
+name = "network_socket_protocol_direct_probe"
+path = "examples/network_socket_protocol_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_cookie_direct_probe"
-path = "examples/m10_network_socket_cookie_direct_probe.rs"
+name = "network_socket_cookie_direct_probe"
+path = "examples/network_socket_cookie_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_domain_direct_probe"
-path = "examples/m10_network_socket_domain_direct_probe.rs"
+name = "network_socket_domain_direct_probe"
+path = "examples/network_socket_domain_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_acceptconn_direct_probe"
-path = "examples/m10_network_socket_acceptconn_direct_probe.rs"
+name = "network_socket_acceptconn_direct_probe"
+path = "examples/network_socket_acceptconn_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_oobinline_direct_probe"
-path = "examples/m10_network_socket_oobinline_direct_probe.rs"
+name = "network_socket_oobinline_direct_probe"
+path = "examples/network_socket_oobinline_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_broadcast_direct_probe"
-path = "examples/m10_network_socket_broadcast_direct_probe.rs"
+name = "network_socket_broadcast_direct_probe"
+path = "examples/network_socket_broadcast_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_positioned_vectored_direct_probe"
-path = "examples/m10_positioned_vectored_direct_probe.rs"
+name = "positioned_vectored_direct_probe"
+path = "examples/positioned_vectored_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_directory_direct_probe"
-path = "examples/m10_directory_direct_probe.rs"
+name = "directory_direct_probe"
+path = "examples/directory_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_directory_position_direct_probe"
-path = "examples/m10_directory_position_direct_probe.rs"
+name = "directory_position_direct_probe"
+path = "examples/directory_position_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_pipe_tee_direct_probe"
-path = "examples/m10_pipe_tee_direct_probe.rs"
+name = "pipe_tee_direct_probe"
+path = "examples/pipe_tee_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_descriptor_direct_probe"
-path = "examples/m10_descriptor_direct_probe.rs"
+name = "descriptor_direct_probe"
+path = "examples/descriptor_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_numeric_legacy_direct_probe"
-path = "examples/m10_numeric_legacy_direct_probe.rs"
+name = "numeric_legacy_direct_probe"
+path = "examples/numeric_legacy_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_readiness_direct_probe"
-path = "examples/m10_readiness_direct_probe.rs"
+name = "readiness_direct_probe"
+path = "examples/readiness_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_memory_special_direct_probe"
-path = "examples/m10_memory_special_direct_probe.rs"
+name = "memory_special_direct_probe"
+path = "examples/memory_special_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_memory_vm_direct_probe"
-path = "examples/m10_memory_vm_direct_probe.rs"
+name = "memory_vm_direct_probe"
+path = "examples/memory_vm_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_pipe_size_direct_probe"
-path = "examples/m10_pipe_size_direct_probe.rs"
+name = "pipe_size_direct_probe"
+path = "examples/pipe_size_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sleep_direct_probe"
-path = "examples/m10_sleep_direct_probe.rs"
+name = "sleep_direct_probe"
+path = "examples/sleep_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_memfd_direct_probe"
-path = "examples/m10_memfd_direct_probe.rs"
+name = "memfd_direct_probe"
+path = "examples/memfd_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fcntl_seals_direct_probe"
-path = "examples/m10_fcntl_seals_direct_probe.rs"
+name = "fcntl_seals_direct_probe"
+path = "examples/fcntl_seals_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fcntl_add_seals_direct_probe"
-path = "examples/m10_fcntl_add_seals_direct_probe.rs"
+name = "fcntl_add_seals_direct_probe"
+path = "examples/fcntl_add_seals_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fcntl_getlk_direct_probe"
-path = "examples/m10_fcntl_getlk_direct_probe.rs"
+name = "fcntl_getlk_direct_probe"
+path = "examples/fcntl_getlk_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ppoll_direct_probe"
-path = "examples/m10_ppoll_direct_probe.rs"
+name = "ppoll_direct_probe"
+path = "examples/ppoll_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_pause_direct_probe"
-path = "examples/m10_pause_direct_probe.rs"
+name = "pause_direct_probe"
+path = "examples/pause_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_clock_nanosleep_direct_probe"
-path = "examples/m10_clock_nanosleep_direct_probe.rs"
+name = "clock_nanosleep_direct_probe"
+path = "examples/clock_nanosleep_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_time_timers_direct_probe"
-path = "examples/m10_time_timers_direct_probe.rs"
+name = "time_timers_direct_probe"
+path = "examples/time_timers_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_madvise_direct_probe"
-path = "examples/m10_madvise_direct_probe.rs"
+name = "madvise_direct_probe"
+path = "examples/madvise_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_identity_direct_probe"
-path = "examples/m10_identity_direct_probe.rs"
+name = "identity_direct_probe"
+path = "examples/identity_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fallocate_direct_probe"
-path = "examples/m10_fallocate_direct_probe.rs"
+name = "fallocate_direct_probe"
+path = "examples/fallocate_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_syncfs_direct_probe"
-path = "examples/m10_syncfs_direct_probe.rs"
+name = "syncfs_direct_probe"
+path = "examples/syncfs_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_rlimit_direct_probe"
-path = "examples/m10_rlimit_direct_probe.rs"
+name = "rlimit_direct_probe"
+path = "examples/rlimit_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_rlimit_for_direct_probe"
-path = "examples/m10_rlimit_for_direct_probe.rs"
+name = "rlimit_for_direct_probe"
+path = "examples/rlimit_for_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_process_limits_umask_direct_probe"
-path = "examples/m10_process_limits_umask_direct_probe.rs"
+name = "process_limits_umask_direct_probe"
+path = "examples/process_limits_umask_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_connect_direct_probe"
-path = "examples/m10_network_connect_direct_probe.rs"
+name = "network_connect_direct_probe"
+path = "examples/network_connect_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_preadv2_direct_probe"
-path = "examples/m10_preadv2_direct_probe.rs"
+name = "preadv2_direct_probe"
+path = "examples/preadv2_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fadvise_direct_probe"
-path = "examples/m10_fadvise_direct_probe.rs"
+name = "fadvise_direct_probe"
+path = "examples/fadvise_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fcntl_flags_direct_probe"
-path = "examples/m10_fcntl_flags_direct_probe.rs"
+name = "fcntl_flags_direct_probe"
+path = "examples/fcntl_flags_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_futimes_direct_probe"
-path = "examples/m10_futimes_direct_probe.rs"
+name = "futimes_direct_probe"
+path = "examples/futimes_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_lutimes_direct_probe"
-path = "examples/m10_lutimes_direct_probe.rs"
+name = "lutimes_direct_probe"
+path = "examples/lutimes_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_futimesat_direct_probe"
-path = "examples/m10_futimesat_direct_probe.rs"
+name = "futimesat_direct_probe"
+path = "examples/futimesat_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_utimes_direct_probe"
-path = "examples/m10_utimes_direct_probe.rs"
+name = "utimes_direct_probe"
+path = "examples/utimes_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_utime_direct_probe"
-path = "examples/m10_utime_direct_probe.rs"
+name = "utime_direct_probe"
+path = "examples/utime_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_bind_getsockname_direct_probe"
-path = "examples/m10_network_bind_getsockname_direct_probe.rs"
+name = "network_bind_getsockname_direct_probe"
+path = "examples/network_bind_getsockname_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_msync_direct_probe"
-path = "examples/m10_msync_direct_probe.rs"
+name = "msync_direct_probe"
+path = "examples/msync_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sendfile_direct_probe"
-path = "examples/m10_sendfile_direct_probe.rs"
+name = "sendfile_direct_probe"
+path = "examples/sendfile_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_getpeername_direct_probe"
-path = "examples/m10_network_getpeername_direct_probe.rs"
+name = "network_getpeername_direct_probe"
+path = "examples/network_getpeername_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_mincore_direct_probe"
-path = "examples/m10_mincore_direct_probe.rs"
+name = "mincore_direct_probe"
+path = "examples/mincore_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_rusage_direct_probe"
-path = "examples/m10_rusage_direct_probe.rs"
+name = "rusage_direct_probe"
+path = "examples/rusage_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_getgroups_direct_probe"
-path = "examples/m10_getgroups_direct_probe.rs"
+name = "getgroups_direct_probe"
+path = "examples/getgroups_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_mlock_direct_probe"
-path = "examples/m10_mlock_direct_probe.rs"
+name = "mlock_direct_probe"
+path = "examples/mlock_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_listen_accept_direct_probe"
-path = "examples/m10_network_listen_accept_direct_probe.rs"
+name = "network_listen_accept_direct_probe"
+path = "examples/network_listen_accept_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_datagram_direct_probe"
-path = "examples/m10_network_datagram_direct_probe.rs"
+name = "network_datagram_direct_probe"
+path = "examples/network_datagram_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_priority_direct_probe"
-path = "examples/m10_priority_direct_probe.rs"
+name = "priority_direct_probe"
+path = "examples/priority_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_scheduler_priority_bounds_direct_probe"
-path = "examples/m10_scheduler_priority_bounds_direct_probe.rs"
+name = "scheduler_priority_bounds_direct_probe"
+path = "examples/scheduler_priority_bounds_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_setpriority_direct_probe"
-path = "examples/m10_setpriority_direct_probe.rs"
+name = "setpriority_direct_probe"
+path = "examples/setpriority_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_mremap_direct_probe"
-path = "examples/m10_mremap_direct_probe.rs"
+name = "mremap_direct_probe"
+path = "examples/mremap_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_socket_options_direct_probe"
-path = "examples/m10_network_socket_options_direct_probe.rs"
+name = "network_socket_options_direct_probe"
+path = "examples/network_socket_options_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_readahead_direct_probe"
-path = "examples/m10_readahead_direct_probe.rs"
+name = "readahead_direct_probe"
+path = "examples/readahead_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_getitimer_direct_probe"
-path = "examples/m10_getitimer_direct_probe.rs"
+name = "getitimer_direct_probe"
+path = "examples/getitimer_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_copy_file_range_direct_probe"
-path = "examples/m10_copy_file_range_direct_probe.rs"
+name = "copy_file_range_direct_probe"
+path = "examples/copy_file_range_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sync_file_range_direct_probe"
-path = "examples/m10_sync_file_range_direct_probe.rs"
+name = "sync_file_range_direct_probe"
+path = "examples/sync_file_range_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_messages_direct_probe"
-path = "examples/m10_network_messages_direct_probe.rs"
+name = "network_messages_direct_probe"
+path = "examples/network_messages_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_network_mmsg_direct_probe"
-path = "examples/m10_network_mmsg_direct_probe.rs"
+name = "network_mmsg_direct_probe"
+path = "examples/network_mmsg_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_getcwd_direct_probe"
-path = "examples/m10_getcwd_direct_probe.rs"
+name = "getcwd_direct_probe"
+path = "examples/getcwd_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_current_dir_name_direct_probe"
-path = "examples/m10_current_dir_name_direct_probe.rs"
+name = "current_dir_name_direct_probe"
+path = "examples/current_dir_name_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_eventfd_direct_probe"
-path = "examples/m10_eventfd_direct_probe.rs"
+name = "eventfd_direct_probe"
+path = "examples/eventfd_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_times_direct_probe"
-path = "examples/m10_times_direct_probe.rs"
+name = "times_direct_probe"
+path = "examples/times_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_session_observation_direct_probe"
-path = "examples/m10_session_observation_direct_probe.rs"
+name = "session_observation_direct_probe"
+path = "examples/session_observation_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_thread_identity_direct_probe"
-path = "examples/m10_thread_identity_direct_probe.rs"
+name = "thread_identity_direct_probe"
+path = "examples/thread_identity_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_access_direct_probe"
-path = "examples/m10_access_direct_probe.rs"
+name = "access_direct_probe"
+path = "examples/access_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_accessat_direct_probe"
-path = "examples/m10_accessat_direct_probe.rs"
+name = "accessat_direct_probe"
+path = "examples/accessat_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_truncate_direct_probe"
-path = "examples/m10_truncate_direct_probe.rs"
+name = "truncate_direct_probe"
+path = "examples/truncate_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_process_identity_direct_probe"
-path = "examples/m10_process_identity_direct_probe.rs"
+name = "process_identity_direct_probe"
+path = "examples/process_identity_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_process_cwd_direct_probe"
-path = "examples/m10_process_cwd_direct_probe.rs"
+name = "process_cwd_direct_probe"
+path = "examples/process_cwd_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_process_chroot_direct_probe"
-path = "examples/m10_process_chroot_direct_probe.rs"
+name = "process_chroot_direct_probe"
+path = "examples/process_chroot_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sync_direct_probe"
-path = "examples/m10_sync_direct_probe.rs"
+name = "filesystem_sync_probe"
+path = "examples/filesystem_sync_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_sched_cpu_direct_probe"
-path = "examples/m10_sched_cpu_direct_probe.rs"
+name = "sched_cpu_direct_probe"
+path = "examples/sched_cpu_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ownership_direct_probe"
-path = "examples/m10_ownership_direct_probe.rs"
+name = "ownership_direct_probe"
+path = "examples/ownership_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_special_nodes_direct_probe"
-path = "examples/m10_special_nodes_direct_probe.rs"
+name = "special_nodes_direct_probe"
+path = "examples/special_nodes_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_ttyname_direct_probe"
-path = "examples/m10_ttyname_direct_probe.rs"
+name = "ttyname_direct_probe"
+path = "examples/ttyname_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_termios_exclusive_direct_probe"
-path = "examples/m10_termios_exclusive_direct_probe.rs"
+name = "termios_exclusive_direct_probe"
+path = "examples/termios_exclusive_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_termios_special_codes_direct_probe"
-path = "examples/m10_termios_special_codes_direct_probe.rs"
+name = "termios_special_codes_direct_probe"
+path = "examples/termios_special_codes_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_futex_direct_probe"
-path = "examples/m10_futex_direct_probe.rs"
+name = "futex_direct_probe"
+path = "examples/futex_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_thread_credentials_direct_probe"
-path = "examples/m10_thread_credentials_direct_probe.rs"
+name = "thread_credentials_direct_probe"
+path = "examples/thread_credentials_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fs_credentials_direct_probe"
-path = "examples/m10_fs_credentials_direct_probe.rs"
+name = "fs_credentials_direct_probe"
+path = "examples/fs_credentials_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_termios_queue_direct_probe"
-path = "examples/m10_termios_queue_direct_probe.rs"
+name = "termios_queue_direct_probe"
+path = "examples/termios_queue_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_terminal_control_direct_probe"
-path = "examples/m10_terminal_control_direct_probe.rs"
+name = "terminal_control_direct_probe"
+path = "examples/terminal_control_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_pty_session_direct_probe"
-path = "examples/m10_pty_session_direct_probe.rs"
+name = "pty_session_direct_probe"
+path = "examples/pty_session_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_system_names_direct_probe"
-path = "examples/m10_system_names_direct_probe.rs"
+name = "system_names_direct_probe"
+path = "examples/system_names_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_load_average_direct_probe"
-path = "examples/m10_load_average_direct_probe.rs"
+name = "load_average_direct_probe"
+path = "examples/load_average_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_getentropy_direct_probe"
-path = "examples/m10_getentropy_direct_probe.rs"
+name = "getentropy_direct_probe"
+path = "examples/getentropy_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_create_direct_probe"
-path = "examples/m10_create_direct_probe.rs"
+name = "create_direct_probe"
+path = "examples/create_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fs_canonicalize_direct_probe"
-path = "examples/m10_fs_canonicalize_direct_probe.rs"
+name = "fs_canonicalize_direct_probe"
+path = "examples/fs_canonicalize_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fs_tempdir_direct_probe"
-path = "examples/m10_fs_tempdir_direct_probe.rs"
+name = "fs_tempdir_direct_probe"
+path = "examples/fs_tempdir_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fs_tempfile_direct_probe"
-path = "examples/m10_fs_tempfile_direct_probe.rs"
+name = "fs_tempfile_direct_probe"
+path = "examples/fs_tempfile_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m10_fs_named_tempfile_direct_probe"
-path = "examples/m10_fs_named_tempfile_direct_probe.rs"
+name = "fs_named_tempfile_direct_probe"
+path = "examples/fs_named_tempfile_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m13_inotify_direct_probe"
-path = "examples/m13_inotify_direct_probe.rs"
+name = "inotify_direct_probe"
+path = "examples/inotify_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m13_ipc_direct_probe"
-path = "examples/m13_ipc_direct_probe.rs"
+name = "ipc_direct_probe"
+path = "examples/ipc_direct_probe.rs"
 crate-type = ["staticlib"]
 
 [[example]]
-name = "m13_users_databases_direct_probe"
-path = "examples/m13_users_databases_direct_probe.rs"
+name = "users_databases_direct_probe"
+path = "examples/users_databases_direct_probe.rs"
 crate-type = ["staticlib"]
+required-features = ["alloc"]
 
 [features]
 default = ["std"]

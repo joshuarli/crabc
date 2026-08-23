@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure the bounded Stage 16 AArch64 Rust/LLVM build matrix.
+"""Measure the bounded AArch64 Rust/LLVM static/build-std matrix.
 
 This runner is deliberately an evidence collector, not a benchmark wrapper.
 Each configuration is built with an isolated temporary Cargo project, and its

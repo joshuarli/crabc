@@ -36,7 +36,7 @@ CORPUS_REPORT = ROOT_DIR / "compat/reports/corpus/latest.json"
 RUST_STD_REPORT = ROOT_DIR / "compat/reports/rust-std/latest.json"
 RUST_STD_DEPENDENT_REPORT = ROOT_DIR / "compat/reports/rust-std-dependent/latest.json"
 LTO_REPORT = ROOT_DIR / "compat/reports/lto/latest.json"
-M12_LTO_REPORT = ROOT_DIR / "compat/reports/lto/m12/latest.json"
+NATIVE_FACADE_LTO_REPORT = ROOT_DIR / "compat/reports/lto/native-facade/latest.json"
 LUA_REPORT = ROOT_DIR / "compat/reports/lua/latest.json"
 ABI_PROBE_REPORT = ROOT_DIR / "compat/reports/abi/latest.json"
 
@@ -148,15 +148,15 @@ def loader_feature_state() -> dict[str, Any] | None:
     return read_json(LOADER_FEATURE_REPORT)
 
 
-def m6_report_state(path: Path, expected_runner: str) -> dict[str, Any] | None:
-    """Return a named M6 report only when it is structurally identifiable."""
+def runner_report_state(path: Path, expected_runner: str) -> dict[str, Any] | None:
+    """Return a named report only when it is structurally identifiable."""
 
     report = read_json(path)
     if report is None:
         return None
     runner = report.get("runner", report.get("harness"))
     if runner != expected_runner:
-        raise RuntimeError(f"unexpected M6 report identity in {path}: {runner!r}")
+        raise RuntimeError(f"unexpected report identity in {path}: {runner!r}")
     report["_path"] = str(path.relative_to(ROOT_DIR))
     return report
 
@@ -173,32 +173,32 @@ def static_pthread_tls_state() -> dict[str, Any] | None:
     return report
 
 
-def m7_report_state() -> dict[str, Any] | None:
+def loader_report_state() -> dict[str, Any] | None:
     """Return the synthetic loader report only when it has its runner identity."""
 
     report = read_json(LDSO_REPORT)
     if report is None:
         return None
     if report.get("schema") != 1 or report.get("runner") != "compat/ldso/run.py":
-        raise RuntimeError(f"unexpected M7 report identity in {LDSO_REPORT}")
+        raise RuntimeError(f"unexpected report identity in {LDSO_REPORT}")
     cases = report.get("cases")
     if report.get("result") == "pass" and not isinstance(cases, dict):
-        raise RuntimeError(f"M7 pass report has invalid cases in {LDSO_REPORT}")
+        raise RuntimeError(f"pass report has invalid cases in {LDSO_REPORT}")
     report["_path"] = str(LDSO_REPORT.relative_to(ROOT_DIR))
     return report
 
 
-def m8_report_state() -> dict[str, Any] | None:
+def corpus_report_state() -> dict[str, Any] | None:
     """Return the real-package corpus report only with its strict identity."""
 
     report = read_json(CORPUS_REPORT)
     if report is None:
         return None
     if report.get("schema_version") != 1 or report.get("runner") != "compat/corpus/run.py":
-        raise RuntimeError(f"unexpected M8 report identity in {CORPUS_REPORT}")
+        raise RuntimeError(f"unexpected report identity in {CORPUS_REPORT}")
     cases = report.get("cases")
     if not isinstance(cases, dict):
-        raise RuntimeError(f"M8 report has invalid cases in {CORPUS_REPORT}")
+        raise RuntimeError(f"report has invalid cases in {CORPUS_REPORT}")
     report["_path"] = str(CORPUS_REPORT.relative_to(ROOT_DIR))
     return report
 
@@ -218,41 +218,41 @@ def rust_std_report_state(path: Path) -> dict[str, Any] | None:
     return report
 
 
-def m10_report_state() -> dict[str, Any] | None:
-    """Return Stage 16 evidence only when all four configured lanes are named."""
+def lto_report_state() -> dict[str, Any] | None:
+    """Return static/build-std LTO evidence only when all four lanes are named."""
 
     report = read_json(LTO_REPORT)
     if report is None:
         return None
     if report.get("schema_version") != 1 or report.get("runner") != "compat/lto/run.py":
-        raise RuntimeError(f"unexpected M10 report identity in {LTO_REPORT}")
+        raise RuntimeError(f"unexpected report identity in {LTO_REPORT}")
     configurations = report.get("configurations")
     if not isinstance(configurations, dict) or not set("ABCD").issubset(configurations):
-        raise RuntimeError(f"incomplete M10 configuration matrix in {LTO_REPORT}")
+        raise RuntimeError(f"incomplete configuration matrix in {LTO_REPORT}")
     for key in "ABCD":
         configuration = configurations[key]
         if not isinstance(configuration, dict) or not isinstance(configuration.get("status"), str):
-            raise RuntimeError(f"invalid M10 configuration {key} in {LTO_REPORT}")
+            raise RuntimeError(f"invalid configuration {key} in {LTO_REPORT}")
     report["_path"] = str(LTO_REPORT.relative_to(ROOT_DIR))
     return report
 
 
-def m12_report_state() -> dict[str, Any] | None:
+def native_facade_lto_report_state() -> dict[str, Any] | None:
     """Return bounded native-facade LTO evidence with its three named lanes."""
 
-    report = read_json(M12_LTO_REPORT)
+    report = read_json(NATIVE_FACADE_LTO_REPORT)
     if report is None:
         return None
-    if report.get("schema_version") != 1 or report.get("runner") != "compat/lto/m12_run.py":
-        raise RuntimeError(f"unexpected M12 report identity in {M12_LTO_REPORT}")
+    if report.get("schema_version") != 1 or report.get("runner") != "compat/lto/native_facade_lto.py":
+        raise RuntimeError(f"unexpected report identity in {NATIVE_FACADE_LTO_REPORT}")
     lanes = report.get("lanes")
     if not isinstance(lanes, dict) or not {"control-o3", "fat-lto", "stock-std-fat"}.issubset(lanes):
-        raise RuntimeError(f"incomplete M12 lane set in {M12_LTO_REPORT}")
+        raise RuntimeError(f"incomplete lane set in {NATIVE_FACADE_LTO_REPORT}")
     for name in ("control-o3", "fat-lto", "stock-std-fat"):
         lane = lanes[name]
         if not isinstance(lane, dict) or not isinstance(lane.get("status"), str):
-            raise RuntimeError(f"invalid M12 lane {name} in {M12_LTO_REPORT}")
-    report["_path"] = str(M12_LTO_REPORT.relative_to(ROOT_DIR))
+            raise RuntimeError(f"invalid lane {name} in {NATIVE_FACADE_LTO_REPORT}")
+    report["_path"] = str(NATIVE_FACADE_LTO_REPORT.relative_to(ROOT_DIR))
     return report
 
 
@@ -295,18 +295,18 @@ def main() -> int:
     ratchet = read_json(RATCHET_REPORT)
     libc_test = libc_test_states()
     differential = differential_state()
-    os_test = m6_report_state(OS_TEST_REPORT, "pinned-os-test")
-    pthread_stress = m6_report_state(PTHREAD_STRESS_REPORT, "crabc-pthread-stress")
+    os_test = runner_report_state(OS_TEST_REPORT, "pinned-os-test")
+    pthread_stress = runner_report_state(PTHREAD_STRESS_REPORT, "crabc-pthread-stress")
     static_pthread_tls = static_pthread_tls_state()
-    signal_process = m6_report_state(SIGNAL_PROCESS_REPORT, "crabc-signal-process")
-    resolver_network = m6_report_state(RESOLVER_NETWORK_REPORT, "compat/resolver-network")
+    signal_process = runner_report_state(SIGNAL_PROCESS_REPORT, "crabc-signal-process")
+    resolver_network = runner_report_state(RESOLVER_NETWORK_REPORT, "compat/resolver-network")
     loader_features = loader_feature_state()
-    ldso = m7_report_state()
-    corpus = m8_report_state()
+    ldso = loader_report_state()
+    corpus = corpus_report_state()
     rust_std = rust_std_report_state(RUST_STD_REPORT)
     rust_std_dependent = rust_std_report_state(RUST_STD_DEPENDENT_REPORT)
-    lto = m10_report_state()
-    m12_lto = m12_report_state()
+    lto = lto_report_state()
+    native_facade_lto = native_facade_lto_report_state()
     lua = lua_report_state()
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -462,13 +462,13 @@ def main() -> int:
             )
         )
 
-    lines.extend(["", "## M7 synthetic loader differential evidence", ""])
+    lines.extend(["", "## synthetic loader differential evidence", ""])
     if ldso is None:
         lines.append("No synthetic loader result. Run `./scripts/dev.sh ldso`.")
     else:
         cases = ldso.get("cases", {})
         if not isinstance(cases, dict):
-            raise RuntimeError(f"invalid M7 cases in {ldso['_path']}")
+            raise RuntimeError(f"invalid cases in {ldso['_path']}")
         passed = all(
             isinstance(case, dict) and case.get("result") == "pass"
             for case in cases.values()
@@ -492,7 +492,7 @@ def main() -> int:
                 )
             )
 
-    lines.extend(["", "## M8 real Alpine package corpus", ""])
+    lines.extend(["", "## real Alpine package corpus", ""])
     if corpus is None:
         lines.append("No real-package corpus result. Run `./scripts/dev.sh corpus`.")
     else:
@@ -538,7 +538,7 @@ def main() -> int:
                 )
             )
 
-    lines.extend(["", "## Pre-goal Lua source-build gate", ""])
+    lines.extend(["", "## Lua source-build adapter-sysroot gate", ""])
     if lua is None:
         lines.append("No Lua adapter-sysroot result. Run `./scripts/dev.sh lua`.")
     else:
@@ -596,16 +596,16 @@ def main() -> int:
             )
         )
 
-    lines.extend(["", "## M9 stock Rust std", ""])
+    lines.extend(["", "## stock Rust std", ""])
     if rust_std is None:
         lines.append("No stock Rust std result. Run `./scripts/dev.sh rust-std`.")
     else:
         comparison = rust_std.get("comparison")
         if not isinstance(comparison, dict):
-            raise RuntimeError(f"invalid M9 comparison in {rust_std['_path']}")
+            raise RuntimeError(f"invalid comparison in {rust_std['_path']}")
         build = rust_std.get("build")
         if not isinstance(build, dict):
-            raise RuntimeError(f"invalid M9 build record in {rust_std['_path']}")
+            raise RuntimeError(f"invalid build record in {rust_std['_path']}")
         passes = comparison.get("passed") is True
         lines.append(
             "Pinned stock Rust std (`-Z build-std`) musl-vs-crabc fixture: "
@@ -638,7 +638,7 @@ def main() -> int:
             )
         )
 
-    lines.extend(["", "## M10.5 dependency-bearing Rust workload", ""])
+    lines.extend(["", "## Dependency-bearing Rust workload", ""])
     if rust_std_dependent is None:
         lines.append(
             "No dependency-bearing Rust workload result. Run `./scripts/dev.sh rust-std-dependent`."
@@ -668,9 +668,9 @@ def main() -> int:
             )
         )
 
-    lines.extend(["", "## M10 LTO research", ""])
+    lines.extend(["", "## LTO research", ""])
     if lto is None:
-        lines.append("No Stage 16 LTO result. Run `./scripts/dev.sh lto`.")
+        lines.append("No static/build-std LTO result. Run `./scripts/dev.sh lto`.")
     else:
         configurations = lto["configurations"]
         built = sum(
@@ -679,7 +679,7 @@ def main() -> int:
             if isinstance(configuration, dict)
         )
         lines.append(
-            "Stage 16 static/build-std evidence matrix: "
+            "Static/build-std LTO evidence matrix: "
             f"**{lto.get('result', 'unknown')}** ({built}/4 built artifact/runtime lanes); "
             f"report `{lto['_path']}`."
         )
@@ -737,17 +737,17 @@ def main() -> int:
             )
         )
 
-    lines.extend(["", "## M12 native `crabc-rs` LTO proof", ""])
-    if m12_lto is None:
-        lines.append("No M12 native-facade result. Run `./scripts/dev.sh lto-m12`.")
+    lines.extend(["", "## native `crabc-rs` LTO proof", ""])
+    if native_facade_lto is None:
+        lines.append("No native-facade result. Run `./scripts/dev.sh lto-native-facade`.")
     else:
-        lanes = m12_lto["lanes"]
-        claims = m12_lto.get("claims")
+        lanes = native_facade_lto["lanes"]
+        claims = native_facade_lto.get("claims")
         claims = claims if isinstance(claims, dict) else {}
-        passed = m12_lto.get("result") == "complete" and m12_lto.get("status") == "built"
+        passed = native_facade_lto.get("result") == "complete" and native_facade_lto.get("status") == "built"
         lines.append(
             "Bounded native-facade O3/fat-LTO evidence: "
-            f"**{'pass' if passed else 'FAIL'}**; report `{m12_lto['_path']}`."
+            f"**{'pass' if passed else 'FAIL'}**; report `{native_facade_lto['_path']}`."
         )
         lines.append(
             "The named witness proves a direct Linux syscall route and raw musl/crabc runtime comparison; "
@@ -833,7 +833,7 @@ def main() -> int:
             )
         )
 
-    lines.extend(["", "## M6 standards and stress evidence", ""])
+    lines.extend(["", "## standards and stress evidence", ""])
     if os_test is None:
         lines.append("No pinned os-test profile result. Run `./scripts/dev.sh os-test`.")
     else:
@@ -984,7 +984,7 @@ def main() -> int:
             "The selected POSIX, signal/process, and resolver/network contracts above are not full "
             "standards conformance.",
             ", ".join(unmeasured_frontier) + " are not measured by this dashboard yet.",
-            "The M7 synthetic suite measures bounded loader contracts; it is not a claim that arbitrary "
+            "The synthetic suite measures bounded loader contracts; it is not a claim that arbitrary "
             "Alpine DSO graphs are supported.",
             "",
         ]

@@ -5,11 +5,11 @@ isolated temporary directories under both pinned musl 1.2.6 and crabc.  It
 uses os-test's own `make <suite>-test` targets, so its include, namespace,
 feature-macro, compile, and execution rules remain intact.
 
-The M6 profile is deliberately offline and deterministic: `include`,
+The selected profile is deliberately offline and deterministic: `include`,
 `namespace`, `basic`, `limits`, `io`, `malloc`, and `stdio`.  The upstream UDP
 suite contains documented public-network probes, so it is not used here.
 Resolver/network and signal/process behavior instead have dedicated local
-M6 runners that can control their own loopback fixtures.
+runners that can control their own loopback fixtures.
 
 The same source is tested twice. The musl run uses the pinned musl headers and
 runtime. The crabc run uses the project headers, the crabc dynamic linker, and
@@ -65,5 +65,5 @@ ignore.
 
 The profile includes `include`, `namespace`, `basic`, `io`, `limits`,
 `malloc`, `process`, `pty`, `signal`, and `stdio`. It excludes os-test's UDP
-suite because that target uses public routing; the M6 resolver/network runner
+suite because that target uses public routing; the local resolver/network runner
 instead uses only a deterministic loopback DNS and socket fixture.

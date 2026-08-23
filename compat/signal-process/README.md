@@ -1,4 +1,4 @@
-# M6 signal/process stress harness
+# Signal/process stress harness
 
 `run.py` compares a bounded set of Linux/AArch64 signal and process interactions
 against the pinned musl reference and crabc.  It compiles
