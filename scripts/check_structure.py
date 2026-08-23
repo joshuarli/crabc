@@ -54,6 +54,15 @@ def main() -> int:
     if (ROOT / "src").exists():
         errors.append("src/: obsolete root package source directory must not return")
 
+    dev_script = (ROOT / "scripts" / "dev.sh").read_text()
+    # Oracle checkouts are mounted for native evidence only.  They must stay
+    # outside the worktree so Git provenance observes the repository rather
+    # than Docker-injected untracked directories.
+    if ":/workspace/rustix:ro" in dev_script:
+        errors.append("scripts/dev.sh: Rustix oracle mount must remain outside /workspace")
+    if ":/workspace/rustybench:ro" in dev_script:
+        errors.append("scripts/dev.sh: Rustybench oracle mount must remain outside /workspace")
+
     files = text_files()
     report_matches(errors, r"TODO\.md", files, "deleted TODO authority must not return")
     report_matches(

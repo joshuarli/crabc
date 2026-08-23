@@ -82,21 +82,23 @@ run_in_container() {
     local -a rustybench_mount=()
     if [ -d "$rustix_source_host" ]; then
         # The comparison harness treats Rustix only as a pinned test oracle.
-        # Keep a user checkout read-only and expose its container path through
-        # an explicit variable; production Cargo manifests never name it.
+        # Keep a user checkout read-only, outside the worktree, and expose its
+        # container path through explicit variables.  Otherwise Git records a
+        # Docker-injected untracked directory as source-tree dirtiness.
+        # Production Cargo manifests never name this checkout.
         rustix_mount=(
             --env CRABC_RUSTIX_SOURCE=/opt/rustix
-            --env CRABC_NATIVE_RUSTIX_SOURCE=/workspace/rustix
+            --env CRABC_NATIVE_RUSTIX_SOURCE=/opt/rustix
             --volume "$rustix_source_host:/opt/rustix:ro"
-            --volume "$rustix_source_host:/workspace/rustix:ro"
         )
     fi
     if [ -d "$rustybench_source_host" ]; then
         # Rustybench is a local benchmark-tool checkout, never a crabc
-        # production dependency. Mount it only for explicit native evidence.
+        # production dependency. Mount it outside the worktree so it cannot
+        # affect evidence provenance.
         rustybench_mount=(
-            --env CRABC_RUSTYBENCH_SOURCE=/workspace/rustybench
-            --volume "$rustybench_source_host:/workspace/rustybench:ro"
+            --env CRABC_RUSTYBENCH_SOURCE=/opt/rustybench
+            --volume "$rustybench_source_host:/opt/rustybench:ro"
         )
     fi
     docker run --rm --init \
