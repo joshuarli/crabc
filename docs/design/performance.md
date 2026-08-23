@@ -175,7 +175,7 @@ bounds in the order 64-byte aligned/unaligned, 16-KiB aligned/unaligned, then
 | C `pthread_mutex_uncontended` ×2,000,000 | 0.6066×–0.6109× one-sided CPU upper bounds across three 31-sample `pthread-mutex-release-store-*-31` reports; zero marked calls in both lanes | inline AArch64 `ldaxr`/`stlxr` compare-exchange retains the acquisition contract. For an unordered zero waiter hint, normal unlock now uses one release `stlr`; an observed waiter retains the established exchange-and-wake path. The direct Musl differentials, condition handoff regression, and 10-iteration pthread stress preserve the retry/wake protocol. The CPU gate passes | no selected gap |
 | C `pthread_mutex_cond_ping_pong` ×10,000 | 1.0035×–1.0052× one-sided CPU upper bounds across three 31-sample `pthread-cond-direct-mutex-{matrix,repeat,repeat2}-31` reports; 6.0007–6.0021 crabc vs 6.0022–6.0052 musl marked calls/op | two protected increments and condition handoffs per round prove deterministic contention; the sequence and waiter increments use the inline AArch64 acquire/release fetch-add exclusive loop rather than LLVM's outlined LSE capability dispatcher. `pthread_cond_wait` uses private exact mutex lock/unlock helpers after its existing private timed-wait route, matching musl's internal binding and removing the two public mutex PLT calls per wait; the weak/default-visible C ABI, sequence futex, advisory waiter hint, and 10-iteration pthread stress remain unchanged. The result stays above the 0.90× gate | P1 |
 | `dlsym` against 1 / 128 / 1,025 symbols ×100,000 | 0.7413×–0.7569× / 0.7534×–0.7725× / 0.7166×–0.7680× CPU upper bounds; 49 crabc calls vs 18 musl | immutable GNU/SysV metadata and a bounded per-thread cache close all three CPU rows. It caches only a direct definition in the requested handle and verifies copied current C-string bytes, preserving mutable-name and global-interposition behavior. The whole-process syscall gate remains red | P1 |
-| Five-DSO `dlopen_graph` | 1.2334×–1.2695× CPU upper bounds across three 31-sample `main-self-identity-*-31` reports; 65 crabc vs 50 musl whole-process calls, 35 vs 40 marked calls | ordinary dynamic loads no longer probe the main image; the pinned-musl self-image differential proves an explicit executable path still maps a separate object, while `dlopen(NULL)` retains the global handle. Dependency-graph CPU still fails | P1 |
+| Five-DSO `dlopen_graph` | 1.1769×–1.2326× CPU upper bounds across three 31-sample `loader-path-pthread-followup-{,repeat,repeat2}` reports; prior lifecycle diagnostic: 65 crabc vs 50 musl whole-process calls, 35 vs 40 marked calls | the immutable initial `LD_LIBRARY_PATH` cache records up to 16 nonempty components and otherwise retains the bytewise scan; parent RUNPATH/RPATH, `$ORIGIN`, and direct names remain uncached. Ordinary dynamic loads do not probe the main image; the pinned-musl self-image differential proves an explicit executable path still maps a separate object, while `dlopen(NULL)` retains the global handle. Dependency-graph CPU still fails | P1 |
 | Constructor/destructor startup PIE | 1.1502×–1.1809× CPU upper bounds across three 31-sample `kernel-main-image-*-31` reports; 29 crabc calls vs 9 musl, with one marked application-output write each | lifecycle ordering is proven before/after `main`; Linux's already mapped PIE is consumed through validated auxv program-header/entry metadata, and the direct pinned-musl regression proves no second executable mapping. The marker isolates `main`, while whole-process calls retain startup/destructor cost and still fail the syscall gate | P2 |
 | Startup-linked five-DSO graph PIE | 1.1687×–1.2205× CPU upper bounds across three 31-sample `kernel-main-image-*-31` reports; 65 crabc calls vs 50 musl, with complete marked output regions | startup relocation proves the root resolves both graph branches to `31`; the initial-graph exact-name cache remains bounded, and consuming the kernel main image removes its duplicate map/open/read lifecycle. The whole-process syscall gate passes, but CPU remains red | P2 |
 | Loader startup | 1.1908×–1.2958× CPU upper bounds across three 31-sample `kernel-main-image-*-31` reports; 30 crabc calls vs 10 musl | `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`/`AT_ENTRY` describe the live Linux kernel mapping, and `AT_EXECFN` supplies the bounded executable `$ORIGIN`; the residual is separate image loading and mimalloc's eager constructor | P2 |
@@ -228,12 +228,15 @@ source-level fix can do that.
    rows now use CPU-pinned, deterministic interleaved pairs and a 10,000-
    resample one-sided bootstrap bound. The five-DSO fan-out `dlopen_graph`
    validates dependency relocation and invocation. Three
-   `main-self-identity-*-31` reports record 65 versus 50 whole-process calls
-   and a still-red 1.2334×–1.2695× CPU upper-bound range. Its 35 versus 40
-   marked calls avoid the prior non-contract main-image probe, while musl sets
-   `FD_CLOEXEC` on each DSO. The direct self-image differential preserves the
-   distinct explicit-path and `dlopen(NULL)` contracts. Continue removing only
-   process-startup calls required by no loader contract. For late TLS images, `expand_thread_tls` retains a
+   `loader-path-pthread-followup-{,repeat,repeat2}` reports record a still-red
+   1.1769×–1.2326× CPU upper-bound range after the immutable initial
+   `LD_LIBRARY_PATH` cache removes repeated delimiter scans through a bounded
+   16-component fast path. Its prior 65 versus 50 whole-process and 35 versus
+   40 marked-call lifecycle diagnostic avoids the non-contract main-image
+   probe, while musl sets `FD_CLOEXEC` on each DSO. The direct self-image
+   differential preserves the distinct explicit-path and `dlopen(NULL)`
+   contracts. Continue removing only process-startup calls required by no
+   loader contract. For late TLS images, `expand_thread_tls` retains a
    generation mismatch as its synchronization trigger, while the private TCB
    records the append-only module frontier already initialized by that
    allocation. It materializes only the absent suffix when its recorded
