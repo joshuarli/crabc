@@ -379,8 +379,14 @@ def compare_search_path(work: pathlib.Path, timeout: float) -> dict[str, object]
             ref_env = reference_env(work)
             got_env = candidate_env(work)
             if ld_directory is not None:
-                ref_env["LD_LIBRARY_PATH"] = str(ld_directory)
-                got_env["LD_LIBRARY_PATH"] = f"{TARGET}:{ld_directory}"
+                # Preserve the normal LD_LIBRARY_PATH precedence check while
+                # also exercising a failed component and an empty component.
+                # Empty components must not turn the current directory into a
+                # hidden search root, and the candidate's loader directory
+                # remains first only so it can find crabc's libc.
+                missing = work / "missing-library-path-component"
+                ref_env["LD_LIBRARY_PATH"] = f"{missing}::{ld_directory}"
+                got_env["LD_LIBRARY_PATH"] = f"{TARGET}:{missing}::{ld_directory}"
             ref = run([reference], env=ref_env, cwd=work, timeout=timeout)
             got = run([candidate], env=got_env, cwd=work, timeout=timeout)
             if ref.returncode != 0 or ref.stderr or ref.timed_out or ref.stdout not in {

@@ -476,6 +476,31 @@ struct DlErrorNode {
 // thread-pointer allocation cannot inherit a prior thread's pending error.
 static DLERROR_LOCK: AtomicBool = AtomicBool::new(false);
 static mut LD_LIBRARY_PATH: *const u8 = core::ptr::null();
+// The loader samples LD_LIBRARY_PATH from the initial kernel stack before
+// application code can create another thread. Its nonempty components are
+// therefore immutable loader input. Cache a bounded common case so every
+// DT_NEEDED edge need not rescan the same delimiters; an unusually long path
+// deliberately uses the existing bytewise route rather than truncating its
+// search. Parent RUNPATH/RPATH strings and direct dlopen names never use this
+// cache because their owning object's search semantics remain separate.
+const INITIAL_LD_LIBRARY_PATH_COMPONENT_CAPACITY: usize = 16;
+
+#[derive(Copy, Clone)]
+struct LibraryPathComponent {
+    offset: usize,
+    length: usize,
+}
+
+const EMPTY_LIBRARY_PATH_COMPONENT: LibraryPathComponent = LibraryPathComponent {
+    offset: 0,
+    length: 0,
+};
+
+static mut INITIAL_LD_LIBRARY_PATH_COMPONENTS: [LibraryPathComponent;
+    INITIAL_LD_LIBRARY_PATH_COMPONENT_CAPACITY] =
+    [EMPTY_LIBRARY_PATH_COMPONENT; INITIAL_LD_LIBRARY_PATH_COMPONENT_CAPACITY];
+static mut INITIAL_LD_LIBRARY_PATH_COMPONENT_COUNT: usize = 0;
+static mut INITIAL_LD_LIBRARY_PATH_COMPONENTS_COMPLETE: bool = false;
 static mut RUNPATH: *const u8 = core::ptr::null();
 static mut RUNPATH_LEN: usize = 0;
 const ORIGIN_CAPACITY: usize = 256;
@@ -2136,6 +2161,50 @@ struct OpenedLibrary {
     source: LibrarySearchSource,
 }
 
+/// Captures the bounded initial `LD_LIBRARY_PATH` component list.
+///
+/// The path comes directly from the initial environment before the loader
+/// transfers control to user code. Empty components retain the existing
+/// behavior of not making the current working directory an implicit library
+/// search root. Reaching the fixed capacity leaves `COMPLETE` false, which
+/// makes every caller use the pre-existing unbounded scanner.
+unsafe fn initialize_initial_ld_library_path(path: Option<*const u8>) {
+    LD_LIBRARY_PATH = path.unwrap_or(core::ptr::null());
+    INITIAL_LD_LIBRARY_PATH_COMPONENT_COUNT = 0;
+    INITIAL_LD_LIBRARY_PATH_COMPONENTS_COMPLETE = false;
+
+    let Some(path) = path else {
+        INITIAL_LD_LIBRARY_PATH_COMPONENTS_COMPLETE = true;
+        return;
+    };
+
+    let path_len = str_len(path);
+    let mut start = 0usize;
+    let mut count = 0usize;
+    while start < path_len {
+        let mut end = start;
+        while end < path_len && *path.add(end) != b':' {
+            end += 1;
+        }
+        if end > start {
+            if count == INITIAL_LD_LIBRARY_PATH_COMPONENT_CAPACITY {
+                return;
+            }
+            INITIAL_LD_LIBRARY_PATH_COMPONENTS[count] = LibraryPathComponent {
+                offset: start,
+                length: end - start,
+            };
+            count += 1;
+        }
+        if end == path_len {
+            break;
+        }
+        start = end + 1;
+    }
+    INITIAL_LD_LIBRARY_PATH_COMPONENT_COUNT = count;
+    INITIAL_LD_LIBRARY_PATH_COMPONENTS_COMPLETE = true;
+}
+
 unsafe fn find_library_fd(
     lib_name: *const u8,
     lib_name_len: usize,
@@ -2169,18 +2238,13 @@ unsafe fn find_library_fd(
     }
 
     if let Some(ldp) = ld_path {
-        let ldp_len = str_len(ldp);
-        let mut start = 0usize;
-        while start < ldp_len {
-            let mut end = start;
-            while end < ldp_len && *ldp.add(end) != b':' {
-                end += 1;
-            }
-            if end > start {
+        if ldp == LD_LIBRARY_PATH && INITIAL_LD_LIBRARY_PATH_COMPONENTS_COMPLETE {
+            for index in 0..INITIAL_LD_LIBRARY_PATH_COMPONENT_COUNT {
+                let component = INITIAL_LD_LIBRARY_PATH_COMPONENTS[index];
                 let fd = try_open(
                     &mut path_buf,
-                    ldp.add(start),
-                    end - start,
+                    ldp.add(component.offset),
+                    component.length,
                     lib_name,
                     lib_name_len,
                 );
@@ -2191,10 +2255,34 @@ unsafe fn find_library_fd(
                     });
                 }
             }
-            if end >= ldp_len {
-                break;
+        } else {
+            let ldp_len = str_len(ldp);
+            let mut start = 0usize;
+            while start < ldp_len {
+                let mut end = start;
+                while end < ldp_len && *ldp.add(end) != b':' {
+                    end += 1;
+                }
+                if end > start {
+                    let fd = try_open(
+                        &mut path_buf,
+                        ldp.add(start),
+                        end - start,
+                        lib_name,
+                        lib_name_len,
+                    );
+                    if fd >= 0 {
+                        return Some(OpenedLibrary {
+                            fd,
+                            source: LibrarySearchSource::LibraryPath,
+                        });
+                    }
+                }
+                if end >= ldp_len {
+                    break;
+                }
+                start = end + 1;
             }
-            start = end + 1;
         }
     }
 
@@ -5214,7 +5302,7 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     } else {
         find_env(sp, b"LD_LIBRARY_PATH=")
     };
-    LD_LIBRARY_PATH = ld_path.unwrap_or(core::ptr::null());
+    initialize_initial_ld_library_path(ld_path);
 
     // 2. Linux has already mapped the main PIE. Consume the kernel's exact
     // layout instead of opening and mapping a second executable image.
