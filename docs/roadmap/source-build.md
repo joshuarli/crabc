@@ -1,6 +1,6 @@
 # Source-build progression roadmap
 
-## Status and relationship to `TODO.md`
+## Status and ownership
 
 The Lua 5.4.8 adapter-sysroot gate is complete current evidence; its design,
 isolation boundary, and failure taxonomy are in
@@ -8,8 +8,8 @@ isolation boundary, and failure taxonomy are in
 [`docs/evidence/lua-source-build.md`](../evidence/lua-source-build.md).
 
 This document owns the detailed future acceptance contract for source-build
-work. It is not an independent queue: `TODO.md` owns priority and activation.
-The present performance contract remains in
+work. [`STATUS.md`](../../STATUS.md) routes current status and related
+roadmaps. The present performance contract remains in
 [`performance-completion.md`](performance-completion.md); source-build work
 does not weaken, delay, or replace its scorecard.
 

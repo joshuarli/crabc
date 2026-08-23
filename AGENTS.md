@@ -17,7 +17,7 @@ Musl 1.2.6 is the C/POSIX compatibility oracle. Rustix is a pinned native-API
 and behavior oracle for tests only. Glibc is never an oracle or fallback.
 
 Read [`SCOPE.md`](SCOPE.md), [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md),
-and [`TODO.md`](TODO.md) before selecting new work.
+and [`STATUS.md`](STATUS.md) before selecting new work.
 
 ## Code map
 
@@ -43,7 +43,8 @@ and [`TODO.md`](TODO.md) before selecting new work.
 | --- | --- |
 | Governing scope and non-goals | [`SCOPE.md`](SCOPE.md) |
 | Public support/limitation boundary | [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) |
-| Exact active work | [`TODO.md`](TODO.md) |
+| Current completion state and roadmap router | [`STATUS.md`](STATUS.md) |
+| Runtime ownership and dependency architecture | [`docs/design/architecture.md`](docs/design/architecture.md) |
 | Completed Lua source-build gate | [`docs/design/source-build.md`](docs/design/source-build.md) and [`docs/evidence/lua-source-build.md`](docs/evidence/lua-source-build.md) |
 | Future CPython and crabc-owned sysroot contract | [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) |
 | Performance completion contract | [`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md) |
@@ -60,7 +61,8 @@ and [`TODO.md`](TODO.md) before selecting new work.
 When documentation disagrees, use this precedence:
 
 1. Explicit user direction and this working contract.
-2. `SCOPE.md`, then `COMPATIBILITY-PROFILE.md`, then `TODO.md`.
+2. `SCOPE.md`, then `COMPATIBILITY-PROFILE.md`, then `STATUS.md` and the
+   applicable roadmap or machine-readable contract.
 3. Executable and machine-readable contracts: manifests, headers, pins,
    ledgers, scripts, and focused tests.
 4. Musl/POSIX/source-oracle evidence for the named behavior.

@@ -1,8 +1,8 @@
 # Historical runtime delivery record
 
 This is a concise provenance record for the completed M0–M12 delivery
-sequence. It is not a planning document: `TODO.md` is the only living
-prioritized work list, while detailed future acceptance contracts live under
+sequence. It is not a planning document. Current completion and future
+acceptance contracts are routed by [`STATUS.md`](../../STATUS.md) and
 [`docs/roadmap/`](../roadmap/).
 
 The complete contemporaneous plan is recoverable from Git blob
@@ -59,8 +59,9 @@ internal-runtime, scope-exception, and verified-native dispositions.
 
 ## How to use this record
 
-Use `TODO.md` for active work; the relevant design document for a current
-invariant; the relevant roadmap for detailed unfinished acceptance criteria;
+Use [`STATUS.md`](../../STATUS.md) for current status; the relevant design
+document for a current invariant; the relevant roadmap for detailed unfinished
+acceptance criteria;
 and harness-local documentation for runner mechanics. Use this document and
 the original blob only to understand why the present project boundaries and
 evidence standards exist.

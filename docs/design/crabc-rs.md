@@ -48,8 +48,10 @@ documented as ABI-only, Rust-subsumed, internal runtime, or the allocator scope
 exception. Do not turn a documented C group into a native API merely to raise
 a wrapper count.
 
-The active deferred groups and their scope limits are in
-[`TODO.md`](../../TODO.md). Completed delivery rationale is preserved in the
+The exact classification and scope limits for deferred groups are in
+[`compat/crabc-rs/coverage.toml`](../../compat/crabc-rs/coverage.toml); the
+relevant acceptance contract is selected through [`STATUS.md`](../../STATUS.md).
+Completed delivery rationale is preserved in the
 [historical `crabc-rs` record](../history/crabc-rs-delivery-plan.md).
 
 ## Bounded netdb snapshots

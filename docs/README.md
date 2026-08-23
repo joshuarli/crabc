@@ -9,7 +9,9 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Scope](../SCOPE.md) — Linux/AArch64 doctrine and non-goals.
 - [Compatibility profile](../COMPATIBILITY-PROFILE.md) — supported and
   intentionally limited behavior.
-- [Active TODO](../TODO.md) — the sole living prioritized work list.
+- [Project status](../STATUS.md) — current completion state and roadmap router.
+- [Runtime ownership architecture](design/architecture.md) — layer ownership,
+  dependency direction, and the private runtime wire boundary.
 - [Agent/project handoff](../AGENTS.md) — code map, source precedence, and
   canonical development commands.
 - [Generated compatibility dashboard](../COMPATIBILITY.md) — current measured
@@ -33,7 +35,7 @@ them; this router should explain ownership, not duplicate command contracts.
 ## Detailed acceptance contracts
 
 - [Performance completion](roadmap/performance-completion.md) — active
-  scorecard and release proof; it does not replace `TODO.md` priority.
+  scorecard and release proof.
 - [Software-corpus validation](roadmap/software-corpus-validation.md) —
   sequenced C0–C4 real-software and native-application program after the
   focused scorecard passes.
@@ -49,8 +51,8 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Semantic migration record](history/semantic-migration.md) — original blob
   IDs, loss-prevention ledger, and milestone-to-semantic rename map.
 
-Historical records never override root policy, `TODO.md`, machine-readable
-contracts, or generated evidence.
+Historical records never override root policy, [`STATUS.md`](../STATUS.md),
+machine-readable contracts, or generated evidence.
 
 ## Code-adjacent guides
 

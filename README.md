@@ -12,10 +12,11 @@ macOS/AArch64 libSystem backend; that does not make the libc portable.
 
 Read [`SCOPE.md`](SCOPE.md) for the engineering doctrine,
 [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) for the supported
-semantic profile, and [`TODO.md`](TODO.md) for the exact active Linux/AArch64
-work. [`docs/README.md`](docs/README.md) routes design, evidence, historical
-records, and code-adjacent harness guides. Compatibility evidence does not
-promise a native Rust wrapper for every C symbol.
+semantic profile, [`STATUS.md`](STATUS.md) for the current completion and
+roadmap router, and [`docs/design/architecture.md`](docs/design/architecture.md)
+for runtime ownership. [`docs/README.md`](docs/README.md) routes design,
+evidence, historical records, and code-adjacent harness guides. Compatibility
+evidence does not promise a native Rust wrapper for every C symbol.
 
 The active acceptance contracts are purpose-led rather than milestone-led:
 [`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md)

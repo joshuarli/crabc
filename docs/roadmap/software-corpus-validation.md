@@ -6,9 +6,10 @@
 [`performance-completion.md`](performance-completion.md) has a credible,
 passing focused scorecard for every mandatory row.
 
-`TODO.md` remains the only prioritized work list. This roadmap owns the
-detailed C0–C4 corpus acceptance contract; it does not turn existing
-compatibility cases into performance claims or create a second backlog.
+This roadmap owns the detailed C0–C4 corpus acceptance contract; the current
+completion and roadmap router is [`STATUS.md`](../../STATUS.md). It does not
+turn existing compatibility cases into performance claims or create a second
+backlog.
 
 ## Position in the roadmap
 

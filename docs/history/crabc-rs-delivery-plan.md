@@ -2,8 +2,9 @@
 
 This concise record preserves the rationale for the completed M0–M12
 `crabc-rs` delivery sequence. It is historical provenance, not a current
-queue. `TODO.md` owns priority, `docs/design/crabc-rs.md` owns present
-architecture, and `compat/crabc-rs/coverage.toml` owns exact capability
+queue. [`STATUS.md`](../../STATUS.md) routes current completion and roadmaps;
+`docs/design/crabc-rs.md` owns present architecture, and
+`compat/crabc-rs/coverage.toml` owns exact capability
 classification.
 
 The complete contemporaneous delivery plan is recoverable from Git blob
@@ -78,5 +79,6 @@ global coordination abstraction disguised as a safe API.
 ## How to use this record
 
 Read it for historical design rationale. For current behavior read the design
-document and capability ledger; for active work read `TODO.md`; and for future
-acceptance contracts read `docs/roadmap/`.
+document and capability ledger; for current status read
+[`STATUS.md`](../../STATUS.md); and for future acceptance contracts read
+`docs/roadmap/`.

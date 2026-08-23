@@ -6,17 +6,16 @@
 both passing and red rows; no performance-completion claim is available while a
 mandatory row is red, omitted, or unsupported.
 
-`TODO.md` remains the sole prioritized work list. This roadmap owns the
-detailed release scorecard, its evidence requirements, and the ordered
-completion work; it does not create a competing backlog. Stable measurement
-semantics and the current cost model live in
+This roadmap owns the detailed release scorecard and its evidence requirements;
+[`STATUS.md`](../../STATUS.md) is the current completion and roadmap router.
+Stable measurement semantics and the current cost model live in
 [`docs/design/performance.md`](../design/performance.md), while detailed runner
 mechanics live in [`compat/perf/README.md`](../../compat/perf/README.md).
 
-The roadmap activates only through a selected `TODO.md` performance item and
-must preserve the scoped Linux/AArch64, Linux 5.10, musl-oracle, allocator, and
-dependency boundaries. It is not a universal performance claim, an allocator
-research program, or permission to weaken correctness evidence.
+Performance work under this contract must preserve the scoped Linux/AArch64,
+Linux 5.10, musl-oracle, allocator, and dependency boundaries. It is not a
+universal performance claim, an allocator research program, or permission to
+weaken correctness evidence.
 
 ## Decision and scope
 
@@ -44,9 +43,8 @@ about arbitrary programs, arbitrary hardware, or every historical C symbol
 outside the supported profile. No row may be omitted because it is currently
 unfavorable.
 
-This is a forward-looking acceptance contract. [`TODO.md`](../../TODO.md)
-remains the current work list until its items are promoted or completed; this
-document specifies the proof required for that promotion.
+This is a forward-looking acceptance contract. It specifies the proof required
+before a performance-completion claim can be made.
 
 ## Acceptance scorecard
 
