@@ -24,13 +24,17 @@ rollback with allocation-free retry ownership after terminal unmap failure. A
 frozen-default external-arena purge slice schedules unpinned releases for four
 seconds, claims free-bitmap ownership during forced non-owning decommit, skips
 pinned backing, and preserves both external mapping ownership and immediate
-retry state on failure. Two bounded Milestone 5 substrates are also present:
+retry state on failure. Three bounded Milestone 5 substrates are also present:
 the AArch64 versioned TLS key, caller-owned slot, and locked global-key registry
-contract, plus the source low-bit live-page remote-free publication/owner-
-collection protocol. A default-off Loom model exercises the exact shared remote-
-head CAS loops for two publishers and an owner racing publication. These pieces
-are not yet wired into allocation/free, abandonment, compiler TLS, process,
-thread, teardown, or page-release lifecycle. A
+contract; the source low-bit live/abandoned-page remote-free head transitions;
+and one queue-detached, stable page's mapped/unmapped abandonment/adoption
+protocol, including failed-reader restoration and clear-once-set quiescence.
+A default-off Loom model exercises the exact shared live-owner remote-head CAS
+loops for two publishers and an owner racing publication. Deterministic native
+regressions cover abandonment publication, adoption versus a remote producer,
+and ownership-release races. These pieces are not yet wired into allocation/
+free routing, compiler TLS, process/thread teardown, terminal page release, or
+metadata reuse. A
 standalone test-only package exposes 16 `crabc_test_*` C symbols around one
 creating-thread context; it exports neither standard allocation names nor
 `mi_*` names. It is not a public allocator API and makes no
@@ -48,7 +52,7 @@ Run the harness through the pinned Linux/AArch64 development image:
 ./scripts/dev.sh allocator --full
 ./scripts/dev.sh allocator-perf --smoke
 ./scripts/dev.sh allocator-perf --full
-./scripts/dev.sh test -p crabc-mimalloc --features loom remote_free::loom_tests -- --test-threads=1
+./scripts/dev.sh test -p crabc-mimalloc --lib --features loom remote_free::loom_tests -- --test-threads=1
 ```
 
 `allocator --quick` is the current ordinary development gate. It verifies the
@@ -93,8 +97,8 @@ then runs both the existing crabc allocator fixture and 33 selected upstream
 API checks. After that passing Milestone 4 adapter lane it deliberately returns
 exit status 3 with an `UNMET MILESTONE` explanation until Milestone 5 supplies
 integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle, the
-remaining applicable Loom protocols, and pthread stress. The bounded live-page
-remote model and caller-owned TLS registry do not satisfy that lifecycle gate.
+remaining applicable Loom protocols, and pthread stress. The bounded page
+protocols and caller-owned TLS registry do not satisfy that lifecycle gate.
 Loom 0.7.2 is an exact, defaults-disabled dev-dependency: its allocation-backed
 `std` scheduler, `generator` build script, and tracing support stack exist only
 in tests. The generator's external assembly path is not selected on AArch64,

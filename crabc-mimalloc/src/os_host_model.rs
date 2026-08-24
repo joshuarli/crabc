@@ -52,6 +52,16 @@ pub(crate) fn monotonic_milliseconds() -> Result<i64> {
     Ok(0)
 }
 
+/// Deterministic counterpart of the allocator's best-effort scheduler yield.
+///
+/// Miri supplies no Linux scheduler transition. Returning success lets the
+/// bitmap clear-once-set loop re-observe its modeled atomic after yielding;
+/// it does not claim fairness or scheduling evidence.
+#[inline]
+pub(crate) fn thread_yield() -> Result<()> {
+    Ok(())
+}
+
 /// The allocation-free fragment of process-start information used here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StartupInput {

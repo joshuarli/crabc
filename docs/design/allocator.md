@@ -50,15 +50,22 @@ backing skips the path, decommit failure restores availability plus immediate
 retry state, and only the external owner may unmap the complete mapping.
 This is bounded engine evidence, not an exported production allocator: the
 crate still has no production public operation, libc integration, process/TLS
-lifecycle, integrated remote-free routing, abandonment/adoption, thread
-teardown, fork protocol, or backend selection. The present Milestone 5
-foundations are intentionally narrower: exact AArch64 versioned TLS keys,
-caller-owned per-thread slots, a lock-serialized global key registry over
-caller-owned source-sized bitmap blocks, and low-bit atomic remote publication
-plus owner collection for a pinned live owner-associated page. A test-only Loom
-model executes the same remote-head publication and detach loops under bounded
-producer/collector schedules. These slices do not install compiler TLS or
-permit abandonment, retirement, or page release while a remote producer exists.
+lifecycle, integrated remote-free routing, thread teardown, fork protocol, or
+backend selection. The present Milestone 5 foundations are intentionally
+narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, a
+lock-serialized global key registry over caller-owned source-sized bitmap
+blocks, low-bit atomic remote publication and owner collection, and a bounded
+one-page abandonment/adoption protocol. That protocol preserves mapped versus
+unmapped source classification, publishes the abandoned bitmap before
+releasing ownership, restores a failed reader's bit, waits for reader
+quiescence before unabandoning, and reassociates a claimed page before remote
+collection. It requires queue-detached, address-stable page/arena/theap
+metadata and intentionally does not release or reuse the page. A test-only
+Loom model executes the live-owner remote-head publication and detach loops
+under bounded producer/collector schedules; deterministic native regressions
+cover the new bitmap and abandonment interleavings. These slices do not
+install compiler TLS or provide the lifetime owner needed for thread teardown,
+terminal page release, or metadata reuse while a remote producer can exist.
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
 context for the standalone prefixed C evidence adapter. Its stable boxed control

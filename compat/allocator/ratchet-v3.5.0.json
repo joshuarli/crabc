@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 60,
-    "item_count": 57,
+    "implemented": 62,
+    "item_count": 59,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 60
+    "unit_verified": 62
   },
-  "port_map_sha256": "63f2f1b3b34cf55b04313c62b71bce79b565e3a109c8e4e926d42d13751da724",
+  "port_map_sha256": "cbe72373b7991d7eae9fd74b616146bf5faee09482f38f7a06fd46168d0b1739",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -130,6 +130,10 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/arena.c:bounded-page-abandonment-adoption-and-remote-owner-protocol": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/arena.c:default-delayed-external-arena-purge": [
       "implemented",
       "unit_verified"
@@ -139,6 +143,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:os-aligned-singleton-metadata-page-map-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.c:abandoned-page-claim-and-clear-once-set-quiescence": [
       "implemented",
       "unit_verified"
     ],

@@ -389,8 +389,11 @@ pub(super) struct PageFreeListState<'a> {
 /// The pointers name precisely the two atomic source fields a remote producer
 /// may inspect. No `Page` reference is retained or manufactured: a producer
 /// has no permission to read `theap`, `local_free`, `used`, or any other
-/// non-atomic field, and it may only preserve—not claim—the low owner bit of
-/// `xthread_free` while the surrounding lifecycle keeps the page associated.
+/// non-atomic field. The associated-page [`crate::remote_free::push`] path
+/// preserves the low owner bit, while the abandoned-page
+/// [`crate::remote_free::push_abandoned`] path may claim it. In either case,
+/// the surrounding caller retains the stable live page lifetime; only the
+/// abandoned path may use its acquired bit to enter owner-only collection.
 pub(super) struct PageRemoteFreeProducerState {
     pub(super) xthread_id: NonNull<AtomicUsize>,
     pub(super) xthread_free: NonNull<AtomicUsize>,
@@ -408,6 +411,32 @@ pub(super) struct PageRemoteFreeOwnerState {
     pub(super) local_free: NonNull<*mut Block>,
     pub(super) used: NonNull<usize>,
     pub(super) capacity: u16,
+}
+
+/// Raw field projection for the bounded abandoned-page state machine.
+///
+/// This is deliberately not a `&mut Page`: an abandoned-page producer may
+/// retain only the disjoint atomic `xthread_free` field while the owner moves
+/// the page between associated, mapped-abandoned, and unowned states. The
+/// abandonment module must validate the source state encoded in these fields
+/// before it mutates any ordinary member.
+pub(super) struct PageAbandonmentState {
+    pub(super) xthread_id: NonNull<AtomicUsize>,
+    pub(super) xthread_free: NonNull<AtomicUsize>,
+    pub(super) theap: NonNull<*mut Theap>,
+    pub(super) used: NonNull<usize>,
+    pub(super) reserved: u16,
+    pub(super) block_size: usize,
+    pub(super) memid: MemoryId,
+}
+
+/// Atomic-only abandoned-page projection available before low-bit ownership.
+///
+/// A bitmap reader may use this to perform `mi_page_claim_ownership`, but it
+/// has no permission to inspect page identity, arena provenance, or any other
+/// ordinary page member until that AcqRel claim succeeds.
+pub(super) struct PageAbandonmentAtomicState {
+    pub(super) xthread_free: NonNull<AtomicUsize>,
 }
 
 #[repr(C)]
@@ -1102,6 +1131,101 @@ impl Page {
         })
     }
 
+    /// Projects exactly the state needed by the abandoned-page protocol.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name initialized metadata that remains live until the
+    /// caller completes its source ownership transition. The caller must own
+    /// the non-atomic fields represented here whenever it reads or writes
+    /// them. Other threads may retain only the atomic remote-free projection;
+    /// the caller must not release or reuse this metadata until no producer,
+    /// map reader, or owning transition can observe it.
+    #[inline]
+    pub(super) unsafe fn abandonment_state_at(page: NonNull<Self>) -> PageAbandonmentState {
+        let page = page.as_ptr();
+        // SAFETY: caller supplies initialized stable metadata. These are only
+        // raw subobject pointers and do not manufacture a whole-page borrow.
+        let xthread_id = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_id)) };
+        let xthread_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_free)) };
+        // SAFETY: caller's owner/lifetime proof permits projections of these
+        // exact initialized ordinary fields without creating `&mut Page`.
+        let theap = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).theap)) };
+        let used = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) };
+        PageAbandonmentState {
+            xthread_id,
+            xthread_free,
+            theap,
+            used,
+            reserved: unsafe { (*page).reserved },
+            block_size: unsafe { (*page).block_size },
+            memid: unsafe { (*page).memid },
+        }
+    }
+
+    /// Projects only the atomic low-owner word required to claim an abandoned
+    /// page from its bitmap candidate.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name stable initialized metadata that remains live while
+    /// the returned atomic field can be used. The projection grants no access
+    /// to any ordinary page field; a caller must first acquire the low owner
+    /// bit before it calls [`Self::abandonment_state_at`] and reads identity or
+    /// provenance.
+    #[inline]
+    pub(super) unsafe fn abandonment_atomic_state_at(
+        page: NonNull<Self>,
+    ) -> PageAbandonmentAtomicState {
+        let page = page.as_ptr();
+        PageAbandonmentAtomicState {
+            // SAFETY: caller proves stable initialized metadata; derive one
+            // raw atomic subobject pointer without a whole-page borrow.
+            xthread_free: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_free))
+            },
+        }
+    }
+
+    /// Projects the owner collection fields only after an abandoned page has
+    /// been claimed. Unlike [`Self::remote_free_owner_state_at`], this accepts
+    /// the two source abandoned identities and deliberately does not inspect
+    /// the stale `theap` pointer.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be a live abandoned page whose `xthread_free` owner bit is
+    /// held by this caller. The caller must retain the metadata and every
+    /// remote block until collection completes, and must be the sole writer of
+    /// `local_free` and `used`.
+    #[inline]
+    pub(super) unsafe fn abandoned_remote_free_owner_state_at(
+        page: NonNull<Self>,
+    ) -> Option<PageRemoteFreeOwnerState> {
+        let page = page.as_ptr();
+        let xthread_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_free)) };
+        if unsafe { xthread_free.as_ref() }
+            .load(core::sync::atomic::Ordering::Acquire)
+            & 1
+            == 0
+        {
+            return None;
+        }
+        let xthread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) };
+        let thread_id = xthread_id.load(core::sync::atomic::Ordering::Acquire) & !PAGE_FLAG_MASK;
+        if thread_id != THREAD_ID_ABANDONED && thread_id != THREAD_ID_ABANDONED_MAPPED {
+            return None;
+        }
+        let local_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free)) };
+        let used = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) };
+        Some(PageRemoteFreeOwnerState {
+            xthread_free,
+            local_free,
+            used,
+            capacity: unsafe { (*page).capacity },
+        })
+    }
+
     /// Projects exactly the local free-list fields used by the single-thread
     /// source path.
     ///
@@ -1175,6 +1299,25 @@ impl Page {
         // A bounded owner-associated remote free must still reject it.
         self.xthread_id
             .store(THREAD_ID_ABANDONED, core::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) unsafe fn abandoned_test_set_arena_memory(
+        &mut self,
+        arena: *mut Arena,
+        slice_index: usize,
+        slice_count: usize,
+    ) -> bool {
+        let Some(memory) = (unsafe { MemoryId::from_arena(arena, slice_index, slice_count) }) else {
+            return false;
+        };
+        self.memid = memory;
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn abandoned_test_thread_id(&self) -> ThreadId {
+        self.xthread_id.load(core::sync::atomic::Ordering::Acquire) & !PAGE_FLAG_MASK
     }
 
     #[cfg(test)]

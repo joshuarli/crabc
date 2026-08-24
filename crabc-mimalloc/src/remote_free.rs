@@ -10,9 +10,10 @@
 // the exact `mi_thread_free_t` low-bit representation from
 // `include/mimalloc/types.h:388-418`.
 //
-// This bounded Milestone 5 slice handles only remote push and owner
-// collection for a live owner-associated page. It deliberately excludes
-// the separate `_mi_deferred_free` callback, abandonment/adoption, TLS/theap
+// This bounded Milestone 5 slice handles remote push and owner collection for
+// live owner-associated pages, plus the narrow `allow_collect=true` head
+// transition used by `abandoned`. It deliberately excludes the separate
+// `_mi_deferred_free` callback, general allocation/free routing, TLS/theap
 // attachment, page retirement, and page release. `remote_free_loom.rs`
 // separately models this module's exact head CAS transitions with Loom; it
 // does not model page lifetime, raw block pointers, or owner-local mutation.
@@ -48,6 +49,18 @@ pub(crate) enum RemoteFreeError {
     TooManyRemoteBlocks,
     /// The detached remote list would decrement `used` below zero.
     UsedCountUnderflow,
+}
+
+/// Result of `mi_free_block_mt(..., allow_collect=true)` on an abandoned page.
+///
+/// A producer that changed an unowned word into an owned word has acquired the
+/// source obligation to run the abandoned-page collection decision. The
+/// bounded abandonment module owns that decision; a producer that found an
+/// existing owner only published its block to that owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AbandonedRemotePush {
+    PublishedToExistingOwner,
+    ClaimedUnownedPage,
 }
 
 /// Publishes one remote free to a live owner-associated page.
@@ -125,6 +138,71 @@ pub(crate) unsafe fn collect(page: NonNull<Page>) -> Result<usize, RemoteFreeErr
     collect_state(state)
 }
 
+/// Publishes a remote free after a page has entered one of the source
+/// abandoned identities.
+///
+/// This is `src/free.c:80-95` with `allow_collect=true`: unlike [`push`], its
+/// successful CAS always writes the low owner bit. If the previous word was
+/// unowned, the caller receives [`AbandonedRemotePush::ClaimedUnownedPage`]
+/// and must immediately perform the source free/reclaim/re-abandon/unown
+/// decision before it releases the page lifetime.
+///
+/// # Safety
+///
+/// `page` must remain initialized and live through the publication and any
+/// resulting owner collection. It must be an abandoned page whose ordinary
+/// metadata and remote blocks remain valid; `block` must be one aligned,
+/// exclusively owned live allocation of that exact page and not previously
+/// freed. A caller receiving `ClaimedUnownedPage` owns the page's ordinary
+/// state until it transfers or releases the low owner bit according to the
+/// abandoned-page protocol. This function creates no producer `&Page`.
+pub(crate) unsafe fn push_abandoned(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+) -> Result<AbandonedRemotePush, RemoteFreeError> {
+    if block.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
+        return Err(RemoteFreeError::UnalignedBlock);
+    }
+    // SAFETY: caller supplies the stable initialized abandoned metadata.
+    let state = unsafe { Page::remote_free_producer_state_at(page) };
+    if !producer_has_abandoned_thread_identity(&state) {
+        return Err(RemoteFreeError::NotOwnerAssociated);
+    }
+    // SAFETY: state names initialized atomic source fields only.
+    let head = unsafe { state.xthread_free.as_ref() };
+    let block = block.cast::<Block>();
+    let block_address = block.as_ptr().expose_provenance();
+    let was_owned = publish_to_head_with_owner(head, block_address, |_| true, |previous_block| {
+        // SAFETY: caller retains exclusive ownership of this just-freed block
+        // until the AcqRel head publication succeeds.
+        unsafe { block_set_next(block, thread_free_block(previous_block)) };
+    })?;
+    Ok(if was_owned {
+        AbandonedRemotePush::PublishedToExistingOwner
+    } else {
+        AbandonedRemotePush::ClaimedUnownedPage
+    })
+}
+
+/// Collects an abandoned page's remote list after the caller has claimed its
+/// low owner bit.
+///
+/// This is the same `page.c:150-201` list operation as [`collect`], but its
+/// narrow raw projection permits the two abandoned `xthread_id` encodings and
+/// deliberately never reads the source-stale `theap` pointer.
+///
+/// # Safety
+///
+/// `page` must remain live and abandoned with its low owner bit held by this
+/// caller. The caller must be the sole writer of `used` and `local_free`, and
+/// every published block must remain valid until the detached list is merged.
+pub(crate) unsafe fn collect_abandoned(page: NonNull<Page>) -> Result<usize, RemoteFreeError> {
+    // SAFETY: caller supplies abandoned ownership and metadata lifetime.
+    let state = unsafe { Page::abandoned_remote_free_owner_state_at(page) }
+        .ok_or(RemoteFreeError::NotOwnerAssociated)?;
+    collect_state(state)
+}
+
 fn collect_state(state: PageRemoteFreeOwnerState) -> Result<usize, RemoteFreeError> {
     // SAFETY: state construction proved this is the initialized page atomic.
     let xthread_free = unsafe { state.xthread_free.as_ref() };
@@ -170,10 +248,33 @@ impl ThreadFreeHead for AtomicWord {
 fn publish_to_head<H, F>(
     head: &H,
     block: ThreadFree,
-    mut set_next: F,
+    set_next: F,
 ) -> Result<(), RemoteFreeError>
 where
     H: ThreadFreeHead + ?Sized,
+    F: FnMut(ThreadFree),
+{
+    publish_to_head_with_owner(head, block, is_owned, set_next).map(|_| ())
+}
+
+/// Shared source `mi_free_block_mt` head publication loop.
+///
+/// `owner_after_publication` is the sole semantic difference between an
+/// associated-page remote free (preserve the old low bit) and an
+/// `allow_collect=true` abandoned free (always set it). Returning the low-bit
+/// state of the successfully replaced word lets the latter identify the
+/// source ownership claim without duplicating any CAS transition. The Loom
+/// model continues to execute [`publish_to_head`]'s preserve-owner form; a
+/// later abandoned model can exercise this exact policy parameter as well.
+fn publish_to_head_with_owner<H, O, F>(
+    head: &H,
+    block: ThreadFree,
+    owner_after_publication: O,
+    mut set_next: F,
+) -> Result<bool, RemoteFreeError>
+where
+    H: ThreadFreeHead + ?Sized,
+    O: Fn(ThreadFree) -> bool,
     F: FnMut(ThreadFree),
 {
     if block & THREAD_FREE_OWNED != 0 {
@@ -183,13 +284,18 @@ where
     let mut previous = head.load_relaxed();
     loop {
         if !is_owned(previous) {
-            return Err(RemoteFreeError::NotOwnerAssociated);
+            // A normal associated-page publisher must retain an owner, but
+            // an abandoned `allow_collect` publisher is intentionally allowed
+            // to take it. The policy sees the exact source old word.
+            if !owner_after_publication(previous) {
+                return Err(RemoteFreeError::NotOwnerAssociated);
+            }
         }
         set_next(thread_free_block_address(previous));
-        let replacement = thread_free_create_address(block, is_owned(previous))
+        let replacement = thread_free_create_address(block, owner_after_publication(previous))
             .expect("the checked block alignment preserves the low owner bit");
         if head.cas_weak_acq_rel(&mut previous, replacement) {
-            return Ok(());
+            return Ok(is_owned(previous));
         }
     }
 }
@@ -287,6 +393,15 @@ fn producer_has_live_thread_identity(state: &PageRemoteFreeProducerState) -> boo
     thread_id != THREAD_ID_ABANDONED
         && thread_id != THREAD_ID_ABANDONED_MAPPED
         && thread_id != THREAD_ID_DETACHED
+}
+
+#[inline]
+fn producer_has_abandoned_thread_identity(state: &PageRemoteFreeProducerState) -> bool {
+    // SAFETY: producer state contains only initialized atomic subobjects.
+    let thread_id = unsafe { state.xthread_id.as_ref() }
+        .load(core::sync::atomic::Ordering::Acquire)
+        & !PAGE_FLAG_MASK;
+    thread_id == THREAD_ID_ABANDONED || thread_id == THREAD_ID_ABANDONED_MAPPED
 }
 
 #[inline]

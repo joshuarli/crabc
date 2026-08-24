@@ -15,11 +15,13 @@
 // `src/bitmap.c:26-568,594-915,933-1246` (field masks, field/chunk index
 // arithmetic, atomic set/clear, rollback, set-run selection, scalar relaxed
 // chunk observations, caller-owned bitmap initialization, range operations,
-// and conservative chunkmap maintenance), plus `src/bitmap.c:1583-1784,
+// and conservative chunkmap maintenance), `src/bitmap.c:109-129,920-928,
+// 1297-1380,1425-1432` (the abandoned-page single-bit claim visitor and
+// clear-once-set reader quiescence), plus `src/bitmap.c:1583-1784,
 // 1794-1997` (binned initialization, size bins, two-level claims, and exact
-// multi-chunk rollback). This slice intentionally excludes visitors,
-// callbacks, statistics-counter integration, `clear_once_set`/yielding, and
-// allocator-backed bitmap metadata.
+// multi-chunk rollback). This slice intentionally excludes general visitors,
+// callbacks, statistics-counter integration, and allocator-backed bitmap
+// metadata.
 
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
@@ -27,6 +29,7 @@ use core::ptr::NonNull;
 
 use crate::atomic::{
     word_and_acq_rel, word_cas_strong_acq_rel, word_cas_strong_relaxed,
+    word_cas_weak_acq_rel,
     word_exchange_release, word_load_acquire, word_load_relaxed, word_or_acq_rel,
     word_store_release, AtomicWord,
 };
@@ -174,6 +177,24 @@ pub(crate) struct TryClaim {
     claimed: bool,
     maybe_all_clear: bool,
     temporarily_unclaimed: bool,
+}
+
+/// Source-directed disposition after an abandoned-page bitmap reader has
+/// atomically removed one candidate bit.
+///
+/// `KeepSet` is not a rollback convenience: `arena.c:655-671` requires it
+/// after a failed ownership claim so a concurrent `unabandon` can observe the
+/// reader's completion through [`BitmapView::clear_once_set`]. There is no
+/// third disposition in this visitor: terminal removal first unabandons and
+/// therefore clears through `clear_once_set`, outside the reader callback.
+/// The narrow enum prevents a bitmap caller from silently choosing a different
+/// restoration policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AbandonedBitmapClaim {
+    /// The candidate page ownership claim succeeded; retain the bit clear.
+    Claimed,
+    /// Ownership was unavailable; restore the bit before returning to search.
+    KeepSet,
 }
 
 impl TryClaim {
@@ -1212,6 +1233,129 @@ impl<'storage> BitmapView<'storage> {
         // A checked layout always has a positive maximum bit count.
         self.is_clear_range(0, self.max_bits()).unwrap_or(false)
     }
+
+    /// Finds one set bit using the source's abandoned-page reader order,
+    /// atomically removes it, and lets the page-ownership transition decide
+    /// whether that bit remains removed.
+    ///
+    /// This is the narrow `mi_bitmap_try_find_and_claim` visitor used only by
+    /// `arena.c` abandoned-page adoption. It retains the source's relaxed
+    /// chunkmap observations, high-bit bounded cycle, `tseq % 8` spreading,
+    /// AcqRel bit claim, and conservative map repair. `claim` runs only while
+    /// its candidate bit is clear. If it reports [`AbandonedBitmapClaim::KeepSet`],
+    /// this method restores the bit and its conservative map before it can
+    /// return or inspect another candidate.
+    pub(crate) fn try_find_and_claim_abandoned<F>(
+        &self,
+        thread_sequence: usize,
+        mut claim: F,
+    ) -> Option<usize>
+    where
+        F: FnMut(usize) -> AbandonedBitmapClaim,
+    {
+        let chunkmap_field_count = (self.chunk_count() + BFIELD_BITS - 1) / BFIELD_BITS;
+        for chunkmap_field in 0..chunkmap_field_count {
+            let chunkmap_entry = word_load_relaxed(self.chunkmap().field(chunkmap_field));
+            let Some(highest) = bsr(chunkmap_entry) else {
+                continue;
+            };
+            let cycle = highest + 1;
+            // `mi_bitmap_find` first reduces `tseq` to eight buckets, then
+            // `mi_bfield_cycle_iterate` applies its 32-bit modulo.
+            let start = ((thread_sequence as u32 as usize) % 8) % cycle;
+            let cycle_mask = field_mask_valid(cycle - start, start);
+            let mut primary = chunkmap_entry & cycle_mask;
+            let mut rest = chunkmap_entry & !cycle_mask;
+
+            while primary != 0 || rest != 0 {
+                let candidates = if primary != 0 {
+                    &mut primary
+                } else {
+                    &mut rest
+                };
+                let candidate_bit = ctz(*candidates);
+                *candidates &= candidates.wrapping_sub(1);
+                let chunk_index = chunkmap_field * BFIELD_BITS + candidate_bit;
+                if chunk_index >= self.chunk_count() {
+                    // The source regards this as an internal invariant. A
+                    // checked Rust view instead ignores a stale invalid map
+                    // bit, never indexing outside its caller-owned storage.
+                    continue;
+                }
+                let chunk = self.chunk(chunk_index);
+                let Some(chunk_bit) = chunk.try_claim_one() else {
+                    // The chunkmap is conservative: a failed bit claim may
+                    // discover that its chunk was already drained.
+                    let _ = self.chunkmap_try_clear(chunk_index);
+                    continue;
+                };
+                let index = chunk_index * BCHUNK_BITS + chunk_bit;
+                match claim(index) {
+                    AbandonedBitmapClaim::Claimed => return Some(index),
+                    AbandonedBitmapClaim::KeepSet => {
+                        let restored = chunk.set_run(chunk_bit, 1);
+                        debug_assert!(matches!(restored, Some(transition) if transition.all_transitioned()));
+                        self.chunkmap_set(chunk_index);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Clears one abandoned-page map bit, waiting until a temporary reader
+    /// restores it when that reader lost the page ownership claim.
+    ///
+    /// This is the exact `mi_bitmap_clear_once_set` path used by
+    /// `_mi_arenas_page_unabandon`. A Relaxed observation avoids the usual
+    /// acquire cost. If a reader has temporarily cleared the bit, the second
+    /// Acquire observation and yielding loop establish the source's bitmap
+    /// quiescence: the writer does not clear permanently until that reader has
+    /// restored its failed candidate. A successful weak CAS uses AcqRel and
+    /// leaves the conservative chunk map set, as upstream does.
+    pub(crate) fn clear_once_set(&self, index: usize) -> Option<()> {
+        self.clear_once_set_with(index, || {})
+    }
+
+    fn clear_once_set_with<F>(&self, index: usize, mut observed_temporary_clear: F) -> Option<()>
+    where
+        F: FnMut(),
+    {
+        let range = self.range(index, 1)?;
+        let chunk_index = range.index / BCHUNK_BITS;
+        let chunk_bit = range.index % BCHUNK_BITS;
+        let field_index = chunk_bit / BFIELD_BITS;
+        let bit_index = chunk_bit % BFIELD_BITS;
+        let mask = field_mask_valid(1, bit_index);
+        let field = self.chunk(chunk_index).field(field_index);
+        let mut previous = word_load_relaxed(field);
+        loop {
+            if previous & mask == 0 {
+                observed_temporary_clear();
+                previous = word_load_acquire(field);
+                while previous & mask == 0 {
+                    // `sched_yield` is the Linux no-libc equivalent of the
+                    // pinned `_mi_prim_thread_yield` busy-wait backoff. Its
+                    // failure cannot turn a required quiescence wait into a
+                    // successful clear, so retain the loop either way.
+                    let _ = crate::os::thread_yield();
+                    previous = word_load_acquire(field);
+                }
+            }
+            let replacement = previous & !mask;
+            if word_cas_weak_acq_rel(field, &mut previous, replacement) {
+                return Some(());
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn clear_once_set_observing_temporary_clear<F>(&self, index: usize, observer: F) -> Option<()>
+    where
+        F: FnMut(),
+    {
+        self.clear_once_set_with(index, observer)
+    }
 }
 
 /// The frozen v3.5.0 size classes assigned to free-slice chunks.
@@ -2175,6 +2319,104 @@ mod tests {
         assert_eq!(bitmap.set_range(BCHUNK_BITS - 1, 2), None);
         assert_eq!(bitmap.clear_range(usize::MAX, 1), None);
         assert!(unsafe { bitmap.unsafe_set_range_local(BCHUNK_BITS, 1) }.is_none());
+    }
+
+    #[test]
+    fn abandoned_claim_restores_a_failed_page_ownership_candidate_before_continuing() {
+        use core::cell::Cell;
+
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
+        let mut storage = BitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BitmapView::initialize(
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        assert_eq!(bitmap.set_range(17, 1), Some(RunTransition::all_clear(0)));
+
+        let calls = Cell::new(0);
+        let first_search = bitmap.try_find_and_claim_abandoned(5, |_| {
+            let call = calls.get();
+            calls.set(call + 1);
+            assert_eq!(call, 0);
+            AbandonedBitmapClaim::KeepSet
+        });
+
+        // `mi_bitmap_find` snapshots each source candidate once. A failed
+        // callback restores the bit for the *next* search; it must not spin
+        // on the same candidate in one traversal.
+        assert_eq!(first_search, None);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(bitmap.is_set_range(17, 1), Some(true));
+        let second_search = bitmap.try_find_and_claim_abandoned(5, |_| {
+            calls.set(calls.get() + 1);
+            AbandonedBitmapClaim::Claimed
+        });
+        assert_eq!(second_search, Some(17));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(bitmap.is_clear_range(17, 1), Some(true));
+    }
+
+    #[test]
+    fn abandoned_clear_once_set_waits_for_a_failed_reader_to_restore_its_bit() {
+        extern crate std;
+
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let layout = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
+        let mut storage = BitmapTestStorage::uninit();
+        let bitmap = unsafe {
+            BitmapView::initialize(
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        assert_eq!(bitmap.set_range(3, 1), Some(RunTransition::all_clear(0)));
+        let bitmap = &bitmap;
+        let reader_has_claimed = Arc::new(Barrier::new(2));
+        let clearer_observed_temporary_clear = Arc::new(Barrier::new(2));
+        let allow_restore = Arc::new(Barrier::new(2));
+
+        thread::scope(|scope| {
+            let reader_for_thread = Arc::clone(&reader_has_claimed);
+            let restore_for_thread = Arc::clone(&allow_restore);
+            scope.spawn(move || {
+                assert_eq!(
+                    bitmap.try_find_and_claim_abandoned(0, |_| {
+                        reader_for_thread.wait();
+                        restore_for_thread.wait();
+                        AbandonedBitmapClaim::KeepSet
+                    }),
+                    None
+                );
+            });
+            reader_has_claimed.wait();
+            let clearer_for_thread = Arc::clone(&clearer_observed_temporary_clear);
+            scope.spawn(move || {
+                assert_eq!(
+                    bitmap.clear_once_set_observing_temporary_clear(3, || {
+                        clearer_for_thread.wait();
+                    }),
+                    Some(())
+                );
+            });
+            // This rendezvous is reached immediately after the clearer read
+            // the temporary zero and before the reader receives permission to
+            // restore it. The regression cannot pass merely because the
+            // reader happened to win the race first.
+            clearer_observed_temporary_clear.wait();
+            allow_restore.wait();
+        });
+
+        assert_eq!(bitmap.is_clear_range(3, 1), Some(true));
     }
 
     #[test]

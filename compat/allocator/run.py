@@ -3168,7 +3168,7 @@ def main() -> int:
         )
         if arguments.full:
             raise MilestoneUnavailable(
-                "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must complete integrated remote free, abandonment/adoption, thread/TLS lifecycle, remaining Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
+                "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must complete integrated remote free, lifecycle-safe abandonment/adoption and release, thread/TLS lifecycle, remaining Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
             )
         if arguments.perf_smoke or arguments.perf_full:
             raise MilestoneUnavailable(

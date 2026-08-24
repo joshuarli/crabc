@@ -28,13 +28,17 @@ strictly prefixed `crabc_test_*` symbols, passes the existing crabc allocator
 fixture, and passes 33 reviewed checks from pinned upstream `test-api.c` in an
 explicit creating-thread lifecycle. It exports no `malloc`, `mi_*`, or other
 production allocator symbol. This is not a production backend or readiness
-claim. Milestone 5 has only two bounded foundations: the exact AArch64
-16-bit-index/48-bit-generation TLS key and caller-owned slot contract, plus
-live-owner remote-free publication/collection using the source low-bit atomic
-head. Neither is integrated into allocation, thread, abandonment, teardown,
-or page-release lifecycle. Process/TLS lifecycle, remote-free routing,
-abandonment/adoption, concurrency modeling and stress, libc integration, the
-remaining upstream suites, and performance promotion gates remain open.
+claim. Milestone 5 now has three bounded foundations: the exact AArch64
+16-bit-index/48-bit-generation TLS key and caller-owned slot contract;
+live-owner and abandoned-page remote-free head transitions; and a one-page
+mapped/unmapped abandonment/adoption protocol with failed-reader bitmap
+restoration and clear-once-set quiescence. The last protocol requires stable,
+queue-detached metadata and deliberately performs no terminal page release or
+reuse. None of these pieces is integrated into allocation routing, process or
+thread lifecycle, teardown, or reusable page lifetime. Process/compiler-TLS
+lifecycle, heap/theap attachment, integrated remote-free routing, complete
+concurrency modeling and stress, libc integration, the remaining upstream
+suites, and performance promotion gates remain open.
 
 Future acceptance contracts are deliberately specific:
 

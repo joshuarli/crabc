@@ -32,7 +32,8 @@ use crate::atomic::{
     word_load_relaxed, AtomicWord,
 };
 use crate::bitmap::{
-    BinnedBitmapLayout, BinnedBitmapView, BitmapLayout, BitmapView, BCHUNK_SIZE,
+    AbandonedBitmapClaim, BinnedBitmapLayout, BinnedBitmapView, BitmapLayout,
+    BitmapView, BCHUNK_SIZE,
 };
 use crate::config::{
     ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, ARENA_SLICE_SIZE,
@@ -956,6 +957,74 @@ pub(crate) struct ArenaView<'arena> {
     _arena: PhantomData<&'arena Arena>,
 }
 
+/// One initialized main-heap `pages_abandoned[bin]` bitmap of a live arena.
+///
+/// This capability binds the bitmap to its source arena and size-class bin.
+/// The abandonment substrate uses it to prevent a caller from publishing a
+/// page into an arbitrary ordinary bitmap; it does not represent dynamic
+/// per-heap `mi_arena_pages_t` allocation, which still belongs to the later
+/// heap/theap lifecycle slice.
+pub(crate) struct ArenaAbandonedPages<'arena> {
+    arena: NonNull<Arena>,
+    bin: usize,
+    bitmap: BitmapView<'arena>,
+}
+
+impl ArenaAbandonedPages<'_> {
+    /// Returns the one source slice index only when this map owns the page's
+    /// arena provenance. A multi-slice page has one abandonment-map bit at its
+    /// first slice, exactly as `arena.c` does.
+    #[inline]
+    pub(crate) fn page_slice_index(&self, memory: MemoryId) -> Option<usize> {
+        let memory = memory.arena_memory()?;
+        if memory.arena != self.arena.as_ptr() {
+            return None;
+        }
+        let index = memory.slice_index as usize;
+        (index < self.bitmap.max_bits()).then_some(index)
+    }
+
+    #[inline]
+    pub(crate) const fn bin(&self) -> usize {
+        self.bin
+    }
+
+    /// Publishes one available abandoned page after its abandoned-mapped
+    /// identity has been installed. `true` is the source `was_clear` result;
+    /// callers must treat `false` as a violated one-page publication invariant.
+    #[inline]
+    pub(crate) fn publish(&self, slice_index: usize) -> bool {
+        matches!(
+            self.bitmap.set_range(slice_index, 1),
+            Some(transition) if transition.all_transitioned()
+        )
+    }
+
+    /// Searches with the exact source abandoned-page bitmap claim protocol.
+    #[inline]
+    pub(crate) fn try_claim<F>(&self, thread_sequence: usize, claim: F) -> Option<usize>
+    where
+        F: FnMut(usize) -> AbandonedBitmapClaim,
+    {
+        self.bitmap
+            .try_find_and_claim_abandoned(thread_sequence, claim)
+    }
+
+    /// Removes one mapped abandoned page only after any failed concurrent
+    /// reader restored its bit. This is `_mi_arenas_page_unabandon`'s required
+    /// bitmap quiescence boundary.
+    #[inline]
+    pub(crate) fn clear_once_set(&self, slice_index: usize) -> bool {
+        self.bitmap.clear_once_set(slice_index) == Some(())
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn is_published(&self, slice_index: usize) -> bool {
+        self.bitmap.is_set_range(slice_index, 1) == Some(true)
+    }
+}
+
 impl<'arena> ArenaView<'arena> {
     /// # Safety
     ///
@@ -1329,6 +1398,23 @@ impl<'arena> ArenaView<'arena> {
 
     pub(crate) unsafe fn pages(&self) -> Option<BitmapView<'arena>> {
         unsafe { self.ordinary_bitmap(self.arena().pages_main.pages) }
+    }
+
+    /// Attaches to one initialized main-heap abandoned-page bitmap.
+    ///
+    /// Dynamic heap-local `ArenaPages` images are intentionally not created
+    /// here. The returned capability is valid only while this `ArenaView`
+    /// keeps the in-place arena metadata live.
+    pub(crate) fn abandoned_pages(&self, bin: usize) -> Option<ArenaAbandonedPages<'arena>> {
+        if bin >= ARENA_BIN_COUNT {
+            return None;
+        }
+        let bitmap = unsafe { self.ordinary_bitmap(self.arena().pages_main.pages_abandoned[bin]) }?;
+        Some(ArenaAbandonedPages {
+            arena: self.arena,
+            bin,
+            bitmap,
+        })
     }
 }
 

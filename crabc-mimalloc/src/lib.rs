@@ -8,7 +8,9 @@
 //! singleton path below the metadata-alignment limit. The crate deliberately
 //! exposes no production allocator API or process/TLS lifecycle yet; a
 //! default-off test-adapter feature owns the only public operation context.
-//! Remote free, production teardown, and integration remain incomplete.
+//! Remote-free and one-page abandonment protocols are present as bounded
+//! substrates; allocation routing, production thread/TLS teardown, terminal
+//! abandoned-page release, and integration remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
 //! `crabc-libc`; this crate must not depend on it.
 
@@ -33,6 +35,7 @@ compile_error!("crabc-mimalloc supports Linux/AArch64 little-endian only");
 
 mod bits;
 mod aligned;
+mod abandoned;
 mod alloc;
 mod atomic;
 mod arena;
