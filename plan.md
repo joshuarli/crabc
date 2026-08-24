@@ -222,7 +222,7 @@ Add `crabc-mimalloc` to the workspace.
 
 Required production dependency direction:
 
-    crabc-mimalloc -> crabc-core
+    crabc-mimalloc -> crabc-core + chacha20 + zeroize
     crabc-libc     -> crabc-core + crabc-mimalloc
 
 Forbidden:
@@ -240,10 +240,17 @@ The intended production manifest is approximately:
     ...
 
     [dependencies]
+    chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }
     crabc-core = { path = "../crabc-core" }
+    zeroize = { version = "=1.9.0", default-features = false }
 
-Normal dependencies beyond `crabc-core` require a written capability
-justification. The expected normal dependency count is one.
+The focused RustCrypto dependencies above are the mandatory boundary around
+the pinned original-ChaCha permutation and key erasure: cryptographic
+algorithms and PRNG/DRBG cores must never be translated or maintained locally.
+Small, mature, focused production dependencies satisfying the governing
+`SCOPE.md` policy have standing approval, while every addition still requires
+a written capability and dependency-graph justification. The expected direct
+normal dependency count for this crate is three.
 
 Development-only verification dependencies are permitted when narrowly
 justified. In particular, Loom may be used for modeled atomic protocols.
