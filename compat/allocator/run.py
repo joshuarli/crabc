@@ -2770,6 +2770,32 @@ def rust_layout_probe(
     }
 
 
+def loom_remote_free_model() -> dict[str, Any]:
+    """Run the bounded scheduler over the production remote-head CAS loops."""
+
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--lib",
+        "--features",
+        "loom",
+        "--locked",
+        "remote_free::loom_tests",
+        "--",
+        "--test-threads=1",
+    ]
+    record = command_record(command, cwd=ROOT)
+    require_success(record, "Rust allocator remote-free Loom model")
+    output = str(record["stdout"]) + "\n" + str(record["stderr"])
+    return {
+        "command": command,
+        "passed_test_count": parse_rust_test_count(output),
+        "status": "passed",
+    }
+
+
 def integration_provenance() -> dict[str, str]:
     return {
         "crate": "libmimalloc-sys",
@@ -3062,6 +3088,7 @@ def run_milestone0(
         report["contracts"] = {relative(path): payload["summary"] for path, payload in contracts.items()}
         report["port_map"] = port_map_counts(port_map)
         report["production_dependency_graph"] = dependency_graph
+        report["remote_free_loom_model"] = loom_remote_free_model()
         report["release_symbol_contract"] = release_symbol_contract
         report["rust_release_layout"] = rust_layout
         report["adapted_test_contract"] = adapted_summary
@@ -3141,7 +3168,7 @@ def main() -> int:
         )
         if arguments.full:
             raise MilestoneUnavailable(
-                "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must provide remote free, abandonment/adoption, thread/TLS lifecycle, Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
+                "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must complete integrated remote free, abandonment/adoption, thread/TLS lifecycle, remaining Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
             )
         if arguments.perf_smoke or arguments.perf_full:
             raise MilestoneUnavailable(

@@ -13,11 +13,13 @@
 // This bounded Milestone 5 slice handles only remote push and owner
 // collection for a live owner-associated page. It deliberately excludes
 // the separate `_mi_deferred_free` callback, abandonment/adoption, TLS/theap
-// attachment, page retirement, page release, and Loom modeling.
+// attachment, page retirement, and page release. `remote_free_loom.rs`
+// separately models this module's exact head CAS transitions with Loom; it
+// does not model page lifetime, raw block pointers, or owner-local mutation.
 
 use core::ptr::{self, NonNull};
 
-use crate::atomic::{word_cas_weak_acq_rel, word_load_relaxed};
+use crate::atomic::{AtomicWord, word_cas_weak_acq_rel, word_load_relaxed};
 use crate::types::{
     Block, Page, PageRemoteFreeOwnerState, PageRemoteFreeProducerState, ThreadFree,
     PAGE_FLAG_MASK, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
@@ -85,22 +87,14 @@ pub(crate) unsafe fn push(
 
     // SAFETY: `state` names the initialized `xthread_free` atomic field.
     let word = unsafe { state.xthread_free.as_ref() };
-    let mut previous = word_load_relaxed(word);
-    loop {
-        if !is_owned(previous) {
-            return Err(RemoteFreeError::NotOwnerAssociated);
-        }
-        let previous_block = thread_free_block(previous);
+    let block = block.cast::<Block>();
+    let block_address = block.as_ptr().expose_provenance();
+    publish_to_head(word, block_address, |previous_block| {
         // SAFETY: the caller retains exclusive ownership of `block`; the
         // source normal-release profile stores its unencoded next pointer
         // before the release half of the publishing compare/exchange.
-        unsafe { block_set_next(block.cast(), previous_block) };
-        let replacement = thread_free_create(block.cast().as_ptr(), is_owned(previous))
-            .expect("the checked block alignment preserves the low owner bit");
-        if word_cas_weak_acq_rel(word, &mut previous, replacement) {
-            return Ok(());
-        }
-    }
+        unsafe { block_set_next(block, thread_free_block(previous_block)) };
+    })
 }
 
 /// Atomically detaches remote frees and merges them into the owner's local
@@ -134,23 +128,94 @@ pub(crate) unsafe fn collect(page: NonNull<Page>) -> Result<usize, RemoteFreeErr
 fn collect_state(state: PageRemoteFreeOwnerState) -> Result<usize, RemoteFreeError> {
     // SAFETY: state construction proved this is the initialized page atomic.
     let xthread_free = unsafe { state.xthread_free.as_ref() };
-    let mut previous = word_load_relaxed(xthread_free);
+    let detached = detach_from_head(xthread_free)?;
+    let Some(head) = NonNull::new(thread_free_block(detached)) else {
+        return Ok(0);
+    };
+    // SAFETY: a successful AcqRel detach synchronizes with every producer's
+    // release publication in the captured list. The caller of `collect`
+    // supplied the sole owner proof for non-atomic page fields and each
+    // source-shaped unencoded block link.
+    unsafe { collect_detached_to_local(state, head) }
+}
+
+/// The narrow atomic boundary for the `mi_thread_free_t` head only.
+///
+/// The production implementation is `AtomicUsize`; the test-only Loom model
+/// implements this exact two-operation boundary for `loom::AtomicUsize`.
+/// No allocator data structure is generic over atomics, and the model cannot
+/// enter a production build.
+trait ThreadFreeHead {
+    fn load_relaxed(&self) -> ThreadFree;
+
+    fn cas_weak_acq_rel(&self, expected: &mut ThreadFree, replacement: ThreadFree) -> bool;
+}
+
+impl ThreadFreeHead for AtomicWord {
+    #[inline]
+    fn load_relaxed(&self) -> ThreadFree {
+        word_load_relaxed(self)
+    }
+
+    #[inline]
+    fn cas_weak_acq_rel(&self, expected: &mut ThreadFree, replacement: ThreadFree) -> bool {
+        word_cas_weak_acq_rel(self, expected, replacement)
+    }
+}
+
+/// The source `mi_free_block_mt` head publication loop, factored only at its
+/// atomic boundary so the test-only Loom model executes the exact production
+/// load/CAS transition and ordering pair. `set_next` is the source store to
+/// the producer-owned block's first word and runs again after each failed CAS.
+fn publish_to_head<H, F>(
+    head: &H,
+    block: ThreadFree,
+    mut set_next: F,
+) -> Result<(), RemoteFreeError>
+where
+    H: ThreadFreeHead + ?Sized,
+    F: FnMut(ThreadFree),
+{
+    if block & THREAD_FREE_OWNED != 0 {
+        return Err(RemoteFreeError::UnalignedBlock);
+    }
+
+    let mut previous = head.load_relaxed();
     loop {
         if !is_owned(previous) {
             return Err(RemoteFreeError::NotOwnerAssociated);
         }
-        let head = thread_free_block(previous);
-        let Some(head) = NonNull::new(head) else {
-            return Ok(0);
-        };
-        let replacement = thread_free_create(ptr::null_mut(), is_owned(previous))
+        set_next(thread_free_block_address(previous));
+        let replacement = thread_free_create_address(block, is_owned(previous))
+            .expect("the checked block alignment preserves the low owner bit");
+        if head.cas_weak_acq_rel(&mut previous, replacement) {
+            return Ok(());
+        }
+    }
+}
+
+/// The source owner-side `mi_page_thread_free_collect` head detach loop.
+///
+/// The returned word retains the low owner bit. A zero block portion means
+/// the source fast path found no remote list and therefore performed no CAS.
+/// The Loom model calls this same function and validates that every observed
+/// detached word preserves ownership across producer publication races.
+fn detach_from_head<H>(head: &H) -> Result<ThreadFree, RemoteFreeError>
+where
+    H: ThreadFreeHead + ?Sized,
+{
+    let mut previous = head.load_relaxed();
+    loop {
+        if !is_owned(previous) {
+            return Err(RemoteFreeError::NotOwnerAssociated);
+        }
+        if thread_free_block_address(previous) == 0 {
+            return Ok(previous);
+        }
+        let replacement = thread_free_create_address(0, is_owned(previous))
             .expect("a null thread-free head always preserves its owner bit");
-        if word_cas_weak_acq_rel(xthread_free, &mut previous, replacement) {
-            // SAFETY: a successful AcqRel detach synchronizes with every
-            // producer's release publication in the captured list. The caller
-            // of `collect` supplied the sole owner proof for non-atomic page
-            // fields and each source-shaped unencoded block link.
-            return unsafe { collect_detached_to_local(state, head) };
+        if head.cas_weak_acq_rel(&mut previous, replacement) {
+            return Ok(previous);
         }
     }
 }
@@ -229,12 +294,19 @@ fn thread_free_block(thread_free: ThreadFree) -> *mut Block {
     // `mi_thread_free_t` stores a pointer in all bits except the low owner
     // bit. `expose_provenance` recorded that provenance when publishing; this
     // restores it after atomically loading the exact C word representation.
-    core::ptr::with_exposed_provenance_mut(thread_free & THREAD_FREE_BLOCK_MASK)
+    core::ptr::with_exposed_provenance_mut(thread_free_block_address(thread_free))
 }
 
 #[inline]
-fn thread_free_create(block: *mut Block, owned: bool) -> Result<ThreadFree, RemoteFreeError> {
-    let address = block.expose_provenance();
+const fn thread_free_block_address(thread_free: ThreadFree) -> ThreadFree {
+    thread_free & THREAD_FREE_BLOCK_MASK
+}
+
+#[inline]
+fn thread_free_create_address(
+    address: ThreadFree,
+    owned: bool,
+) -> Result<ThreadFree, RemoteFreeError> {
     if address & THREAD_FREE_OWNED != 0 {
         return Err(RemoteFreeError::UnalignedBlock);
     }
@@ -459,3 +531,7 @@ mod tests {
         assert_eq!(page.0.remote_free_test_local_chain_len(BLOCKS + 1), BLOCKS);
     }
 }
+
+#[cfg(all(test, feature = "loom"))]
+#[path = "remote_free_loom.rs"]
+mod loom_tests;

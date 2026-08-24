@@ -52,11 +52,13 @@ This is bounded engine evidence, not an exported production allocator: the
 crate still has no production public operation, libc integration, process/TLS
 lifecycle, integrated remote-free routing, abandonment/adoption, thread
 teardown, fork protocol, or backend selection. The present Milestone 5
-foundations are intentionally narrower: exact AArch64 versioned TLS key and
-caller-owned slot semantics, plus low-bit atomic remote publication and owner
-collection for a pinned live owner-associated page. They do not install
-compiler TLS or permit abandonment, retirement, or page release while a remote
-producer exists.
+foundations are intentionally narrower: exact AArch64 versioned TLS keys,
+caller-owned per-thread slots, a lock-serialized global key registry over
+caller-owned source-sized bitmap blocks, and low-bit atomic remote publication
+plus owner collection for a pinned live owner-associated page. A test-only Loom
+model executes the same remote-head publication and detach loops under bounded
+producer/collector schedules. These slices do not install compiler TLS or
+permit abandonment, retirement, or page release while a remote producer exists.
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
 context for the standalone prefixed C evidence adapter. Its stable boxed control
@@ -134,6 +136,25 @@ spurious reinitialization syscall. The pure-Rust generic implementation
 introduces no native call boundary and remains eligible for fat LTO; its
 AArch64 code size, selected NEON path, and throughput are explicitly
 unqualified until measured.
+
+### Concurrency-test dependency boundary
+
+`loom = "=0.7.2"`, with defaults disabled, is the sole allocator
+`dev-dependency`. It is enabled only by the empty `loom` test feature and models
+the exact `mi_thread_free_t` publication and owner-detach CAS loops shared with
+production. The model substitutes only the atomic head and address-free block
+links; raw-pointer lifetime, owner-local page mutation, abandonment, TLS, and
+page release remain outside that proof.
+
+Loom's normal test graph includes its `generator`, `scoped-tls`, `tracing`, and
+`tracing-subscriber` support stack. That graph uses `std`, allocation, global
+scheduler state, and TLS. `generator` has a build script and a `cc` dependency,
+but its external assembly path is PowerPC64-only and does not compile native
+code for Linux/AArch64. Cargo metadata traversal continues to admit only normal
+production edges from `crabc-mimalloc`, so Loom and its complete graph are absent
+from allocator production builds and have no production `no_std`, native-code,
+or fat-LTO consequence. `scripts/check_structure.py` pins this test boundary and
+rejects any additional allocator dev-dependency.
 
 ## Ownership and integration boundary
 

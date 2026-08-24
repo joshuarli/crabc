@@ -124,6 +124,22 @@ def main() -> int:
                 "crabc-mimalloc/Cargo.toml: zeroize must remain pinned to =1.9.0 "
                 "with defaults disabled and no features"
             )
+        dev_dependencies = mimalloc_manifest.get("dev-dependencies", {})
+        if set(dev_dependencies) != {"loom"}:
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: test-only dependencies must be exactly loom"
+            )
+        loom = dev_dependencies.get("loom", {})
+        if (
+            not isinstance(loom, dict)
+            or loom.get("version") != "=0.7.2"
+            or loom.get("default-features") is not False
+            or loom.get("features", [])
+        ):
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: loom must remain test-only, pinned to =0.7.2, "
+                "with defaults disabled and no features"
+            )
         package = mimalloc_manifest.get("package", {})
         if package.get("license") != "MIT":
             errors.append(

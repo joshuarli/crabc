@@ -645,7 +645,7 @@ class ContractTests(unittest.TestCase):
 
     def test_full_and_performance_modes_have_precise_unmet_milestones(self) -> None:
         full = (
-            "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must provide remote free, abandonment/adoption, thread/TLS lifecycle, Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
+            "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must complete integrated remote free, abandonment/adoption, thread/TLS lifecycle, remaining Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
         )
         performance = (
             "allocator performance is unavailable: Milestone 9 requires comparable C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; the current private one-thread engine is not a benchmark boundary."

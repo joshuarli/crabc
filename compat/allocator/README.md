@@ -25,10 +25,12 @@ frozen-default external-arena purge slice schedules unpinned releases for four
 seconds, claims free-bitmap ownership during forced non-owning decommit, skips
 pinned backing, and preserves both external mapping ownership and immediate
 retry state on failure. Two bounded Milestone 5 substrates are also present:
-the AArch64 versioned TLS key/caller-owned slot contract and the source low-bit
-live-page remote-free publication/owner-collection protocol. They are not yet
-wired into allocation/free, abandonment, compiler TLS, process, thread,
-teardown, or page-release lifecycle. A
+the AArch64 versioned TLS key, caller-owned slot, and locked global-key registry
+contract, plus the source low-bit live-page remote-free publication/owner-
+collection protocol. A default-off Loom model exercises the exact shared remote-
+head CAS loops for two publishers and an owner racing publication. These pieces
+are not yet wired into allocation/free, abandonment, compiler TLS, process,
+thread, teardown, or page-release lifecycle. A
 standalone test-only package exposes 16 `crabc_test_*` C symbols around one
 creating-thread context; it exports neither standard allocation names nor
 `mi_*` names. It is not a public allocator API and makes no
@@ -46,6 +48,7 @@ Run the harness through the pinned Linux/AArch64 development image:
 ./scripts/dev.sh allocator --full
 ./scripts/dev.sh allocator-perf --smoke
 ./scripts/dev.sh allocator-perf --full
+./scripts/dev.sh test -p crabc-mimalloc --features loom remote_free::loom_tests -- --test-threads=1
 ```
 
 `allocator --quick` is the current ordinary development gate. It verifies the
@@ -77,7 +80,10 @@ traverses Cargo metadata for the
 fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside
 the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
-only in `Cargo.lock` do not satisfy or fail that selected-graph judge.
+only in `Cargo.lock` do not satisfy or fail that selected-graph judge. It then
+runs the two test-only Loom schedules over the shared production remote-head
+publication/detach loops and records their exact pass count separately from the
+ordinary unit suite.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,
@@ -86,9 +92,13 @@ the hash-pinned upstream `test/test-api.c` without checking in a source fork,
 then runs both the existing crabc allocator fixture and 33 selected upstream
 API checks. After that passing Milestone 4 adapter lane it deliberately returns
 exit status 3 with an `UNMET MILESTONE` explanation until Milestone 5 supplies
-integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle,
-Loom protocols, and pthread stress. The bounded live-page remote protocol and
-caller-owned TLS slot substrate do not satisfy that lifecycle gate. Both
+integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle, the
+remaining applicable Loom protocols, and pthread stress. The bounded live-page
+remote model and caller-owned TLS registry do not satisfy that lifecycle gate.
+Loom 0.7.2 is an exact, defaults-disabled dev-dependency: its allocation-backed
+`std` scheduler, `generator` build script, and tracing support stack exist only
+in tests. The generator's external assembly path is not selected on AArch64,
+and Cargo's production-graph judge excludes the entire Loom graph. Both
 performance modes likewise remain explicitly unavailable; these status-3
 results are not skips and must not become successful placeholders.
 
