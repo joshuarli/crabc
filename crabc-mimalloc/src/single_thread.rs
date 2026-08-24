@@ -36,10 +36,11 @@
 // arenas and a caller-initialized page map. There is no TLS, first-class heap,
 // general lock-free remote-free routing, page abandonment, OS arena
 // reservation, or public API here. A bounded full-page collector integrates
-// an already-published remote list only for a live non-abandoning session;
-// the explicit detached metadata session has no remote producer path and
-// performs only the local false-force portion. Ordinary remote free routing
-// remains absent. Ordinary small,
+// an already-published remote list only for a live non-abandoning session.
+// `RemoteFreeProducer` is one private linear, scoped route to create that
+// publication for an exact `BIN_FULL` allocation; it is not general remote
+// free routing. The explicit detached metadata session has no remote producer
+// path and performs only the local false-force portion. Ordinary small,
 // medium, large, and singleton pages retain their pinned source geometry and
 // queue transitions. This lifecycle also supports ordinary and valid
 // in-arena aligned/reallocation operations plus the source OS-aligned
@@ -48,6 +49,8 @@
 // arena backing plus its metadata must remain pinned for the whole session;
 // OS-aligned singleton mappings instead carry their own explicit provenance.
 
+use core::cell::Cell;
+use core::marker::PhantomData;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
@@ -119,6 +122,82 @@ pub(crate) enum FreeError {
     InvalidBlock(FreeListError),
     /// A queue, page map, or arena ownership invariant could not be preserved.
     Lifecycle,
+}
+
+/// One non-mutating failure to prepare a scoped remote free.
+///
+/// This is deliberately separate from [`RemoteFreeError`]: preparation still
+/// holds the exclusive owner and has not published a remote-list link. The
+/// only admitted page is already in `BIN_FULL`, because this bounded slice's
+/// collector has no regular-page remote collection route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RemoteFreePreparationError {
+    /// The detached metadata session deliberately has no remote producer path.
+    DetachedSession,
+    /// The client address maps to no current page in this allocator's map.
+    Unmapped,
+    /// The mapped page belongs to another exclusive theap.
+    ForeignPage,
+    /// The client pointer does not recover one initialized current block.
+    InvalidBlock(FreeListError),
+    /// The page's source owner identity or low owned bit changed unexpectedly.
+    InvalidOwnerState,
+    /// This live page lacks the sole collector route admitted by this slice.
+    PageNotInFullQueue,
+}
+
+/// One linear, caller-scoped remote-free transfer from a full page.
+///
+/// The type stores only page and client/block raw addresses; its owner borrow
+/// is zero-sized. That borrow prevents safe allocation, local free,
+/// collection, retirement, page-map teardown, or allocator teardown until
+/// this capability is published or cancelled. It is `!Sync` by the explicit
+/// marker, and `Send` only so a scoped worker can publish the one transferred
+/// block before the owner resumes. Dropping the token does not publish or
+/// locally free the block; callers must consume it with [`Self::publish`] or
+/// [`Self::cancel`].
+#[must_use = "a remote-free producer must be published or cancelled before the owner can resume"]
+pub(crate) struct RemoteFreeProducer<'owner, 'bootstrap, 'arena, 'map> {
+    page: NonNull<Page>,
+    canonical_block: NonNull<u8>,
+    client_block: NonNull<u8>,
+    _owner: PhantomData<&'owner mut SingleThreadAllocator<'bootstrap, 'arena, 'map>>,
+    // `Cell` is intentionally !Sync. The explicit unsafe Send impl below
+    // grants only one scoped producer transfer, never shared access.
+    _not_sync: PhantomData<Cell<()>>,
+}
+
+// SAFETY: `begin_full_page_remote_free` grants this capability only after it
+// has pinned the exact live full page and canonical current block under the
+// allocator's exclusive borrow. The token carries no runtime allocator
+// reference; moving it to one scoped worker permits only `remote_free::push`.
+// Its `&mut SingleThreadAllocator` phantom borrow prevents safe owner/page-map
+// mutation until the worker has consumed or cancelled the token.
+unsafe impl Send for RemoteFreeProducer<'_, '_, '_, '_> {}
+
+impl<'owner, 'bootstrap, 'arena, 'map> RemoteFreeProducer<'owner, 'bootstrap, 'arena, 'map> {
+    /// Publishes the transferred canonical block through the exact bounded
+    /// live-owner remote-free push.
+    ///
+    /// The token's scoped owner borrow keeps its page, page-map entry, and
+    /// allocation live. `RemoteFreeError` is detected before publication, so
+    /// an error returns this intact capability for explicit cancellation or a
+    /// caller-visible terminal decision.
+    pub(crate) fn publish(self) -> Result<(), (Self, RemoteFreeError)> {
+        // SAFETY: construction proved the exact page/block and retained the
+        // owner borrow for the source producer lifetime.
+        match unsafe { remote_free::push(self.page, self.canonical_block) } {
+            Ok(()) => Ok(()),
+            Err(error) => Err((self, error)),
+        }
+    }
+
+    /// Cancels publication and restores the exact original client pointer to
+    /// the caller, leaving all allocator state unchanged.
+    #[inline]
+    pub(crate) fn cancel(self) -> NonNull<u8> {
+        self.client_block
+    }
 }
 
 /// One exclusive ordinary-allocation lifecycle over a caller-owned external arena.
@@ -1077,6 +1156,72 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         Ok(())
     }
 
+    /// Transfers one current full-page allocation to a scoped remote producer.
+    ///
+    /// The current bounded collector drains remote publication only from
+    /// `BIN_FULL`; regular-page admission would strand a safely published
+    /// block, so it is explicitly rejected until a later slice ports that
+    /// collection route. This method mutates neither the client block nor any
+    /// page/list/map field.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be one exact current allocation returned by this
+    /// allocator, must not have been freed or previously transferred, and all
+    /// client access must transfer to the returned token. The token must be
+    /// published by a joined/scoped worker or cancelled before the owner may
+    /// resume. This is not a general asynchronous free route: callers must
+    /// preserve the raw page/block lifetime and join the worker before owner
+    /// collection, retirement, or teardown.
+    pub(crate) unsafe fn begin_full_page_remote_free<'owner>(
+        &'owner mut self,
+        block: NonNull<u8>,
+    ) -> Result<RemoteFreeProducer<'owner, 'bootstrap, 'arena, 'map>, RemoteFreePreparationError> {
+        let thread = self
+            .session
+            .thread_id()
+            .ok_or(RemoteFreePreparationError::DetachedSession)?;
+        // SAFETY: the exclusive owner prevents a concurrent page-map mutation
+        // and keeps registered metadata live for this non-mutating lookup.
+        let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
+        let page = NonNull::new(page).ok_or(RemoteFreePreparationError::Unmapped)?;
+        // SAFETY: the map entry remains live under this owner's exclusive
+        // lifecycle. No raw page reference escapes the returned token.
+        let page = unsafe { &mut *page.as_ptr() };
+        if !self.owns_page(page) {
+            return Err(RemoteFreePreparationError::ForeignPage);
+        }
+        let page_pointer = NonNull::from(&mut *page);
+        // SAFETY: exclusive owner preflight keeps this initialized page-map
+        // entry live and prevents its identity/owner transition.
+        if !unsafe { Page::is_live_owner_for_thread_at(page_pointer, thread) } {
+            return Err(RemoteFreePreparationError::InvalidOwnerState);
+        }
+        let canonical_block = self
+            .canonical_block_start(page, block)
+            .ok_or(RemoteFreePreparationError::InvalidBlock(
+                FreeListError::InvalidBlock,
+            ))?;
+        // SAFETY: this exclusive preflight borrows the ordinary page state but
+        // does not mutate it; the source geometry is validated before the
+        // remote producer gets only raw atomic-field access.
+        let free_list = unsafe { LocalFreeList::from_page(page) }
+            .map_err(RemoteFreePreparationError::InvalidBlock)?;
+        free_list
+            .validate_local_free_preflight(canonical_block)
+            .map_err(RemoteFreePreparationError::InvalidBlock)?;
+        if !page_is_in_full(page) {
+            return Err(RemoteFreePreparationError::PageNotInFullQueue);
+        }
+        Ok(RemoteFreeProducer {
+            page: page_pointer,
+            canonical_block,
+            client_block: block,
+            _owner: PhantomData,
+            _not_sync: PhantomData,
+        })
+    }
+
     /// Finds the canonical source block for a current allocation. When any
     /// allocation in its page was overallocated and adjusted, mimalloc marks
     /// the page and derives the block base using `_mi_page_ptr_unalign`; the
@@ -1985,7 +2130,6 @@ mod tests {
     use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, fault};
     use crabc_core::Errno;
     use core::ffi::c_void;
-    use core::marker::PhantomData;
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1995,48 +2139,6 @@ mod tests {
     struct AlignedRegion {
         pointer: NonNull<u8>,
         layout: Layout,
-    }
-
-    /// The one test-only proof that a scoped worker may retain only the
-    /// producer's disjoint atomic-page projection. Moving this permit into
-    /// `thread::scope` consumes it before the owner resumes ordinary page
-    /// mutation, so collection and fixture teardown cannot outlive a remote
-    /// producer.
-    struct ScopedRemoteProducer<'page> {
-        page: NonNull<Page>,
-        block: NonNull<u8>,
-        _page_lifetime: PhantomData<&'page Page>,
-    }
-
-    // SAFETY: the permit is used exactly once by a scoped worker, which calls
-    // only `remote_free::push` on Page's disjoint atomic fields. The test
-    // joins that worker before the owner changes queue/list/page lifetime.
-    unsafe impl Send for ScopedRemoteProducer<'_> {}
-
-    impl<'page> ScopedRemoteProducer<'page> {
-        /// # Safety
-        ///
-        /// `page_lifetime` must remain a live owner-associated page until
-        /// this permit is consumed by `publish`; `block` must be one current
-        /// allocation from that page, transferred to the worker exactly once.
-        unsafe fn new(
-            page_lifetime: &'page Page,
-            page: NonNull<Page>,
-            block: NonNull<u8>,
-        ) -> Self {
-            let _ = page_lifetime;
-            Self {
-                page,
-                block,
-                _page_lifetime: PhantomData,
-            }
-        }
-
-        fn publish(self) -> Result<(), crate::remote_free::RemoteFreeError> {
-            // SAFETY: `Self::new` records the scoped stable-page/current-block
-            // proof, and the owner joins this worker before mutation.
-            unsafe { crate::remote_free::push(self.page, self.block) }
-        }
     }
 
     impl AlignedRegion {
@@ -2905,15 +3007,23 @@ mod tests {
             assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
             assert_eq!(unsafe { page.as_ref().used() }, capacity);
 
-            // SAFETY: the page is owner-associated and stable, and this
-            // exact current block transfers exclusively to the scoped worker.
-            let permit = unsafe { ScopedRemoteProducer::new(page.as_ref(), page, first) };
+            // SAFETY: `first` is an exact current allocation from this live
+            // allocator's full page. This transfers all client use to the
+            // scoped producer until it publishes or cancels.
+            let producer = unsafe { allocator.begin_full_page_remote_free(first) }
+                .expect("the full live page admits one remote producer");
             thread::scope(|scope| {
-                let producer = scope.spawn(move || permit.publish());
-                producer
+                let joined = scope.spawn(move || producer.publish());
+                match joined
                     .join()
                     .expect("the scoped remote producer must not panic")
-                    .expect("the full live page accepts its remote block");
+                {
+                    Ok(()) => {}
+                    Err((producer, error)) => {
+                        let block = producer.cancel();
+                        panic!("full live page rejected remote block {block:?}: {error:?}");
+                    }
+                }
             });
 
             // The source full-page collector detaches remote frees even when
@@ -2971,28 +3081,26 @@ mod tests {
             assert_eq!(unsafe { page.as_ref().used() }, capacity);
             let page_count_before = allocator.session.theap().page_count();
 
-            let producers = blocks[..capacity]
-                .iter()
-                .copied()
-                .map(|block| {
-                    // SAFETY: every selected block is one distinct live
-                    // allocation from `page`; each permit is consumed by the
-                    // one joined worker before any owner queue mutation.
-                    unsafe { ScopedRemoteProducer::new(page.as_ref(), page, block) }
-                })
-                .collect::<Vec<_>>();
-            thread::scope(|scope| {
-                let producer = scope.spawn(move || {
-                    for permit in producers {
-                        permit.publish()?;
+            for block in blocks[..capacity].iter().copied() {
+                // SAFETY: this exact full-page allocation transfers only to
+                // the one scoped worker. Publishing/joining each token before
+                // creating the next keeps the mutable owner borrow linear.
+                let producer = unsafe { allocator.begin_full_page_remote_free(block) }
+                    .expect("the full live page admits each remote producer");
+                thread::scope(|scope| {
+                    let joined = scope.spawn(move || producer.publish());
+                    match joined
+                        .join()
+                        .expect("the scoped remote producer must not panic")
+                    {
+                        Ok(()) => {}
+                        Err((producer, error)) => {
+                            let block = producer.cancel();
+                            panic!("full live page rejected remote block {block:?}: {error:?}");
+                        }
                     }
-                    Ok::<(), crate::remote_free::RemoteFreeError>(())
                 });
-                producer
-                    .join()
-                    .expect("the scoped remote producer must not panic")
-                    .expect("every full-page block accepts one remote publication");
-            });
+            }
 
             // `mi_theap_collect_full_pages` saves `next`, collects, and then
             // takes its all-free `_mi_page_free` branch. Do not dereference
@@ -3008,6 +3116,116 @@ mod tests {
             drop(blocks);
             // SAFETY: the successor remains the one current allocation not
             // published remotely; the released page's former blocks are gone.
+            unsafe { allocator.free(successor).unwrap() };
+        });
+    }
+
+    #[test]
+    fn full_page_remote_producer_is_send() {
+        fn assert_send<T: Send>() {}
+
+        assert_send::<RemoteFreeProducer<'static, 'static, 'static, 'static>>();
+    }
+
+    #[test]
+    fn full_page_remote_producer_rejects_regular_page_without_mutation() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(SMALL_SIZE_MAX, false).unwrap();
+            // SAFETY: the just-returned block is a current local allocation;
+            // the test observes only its still-registered owner metadata.
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let used_before = unsafe { page.as_ref().used() };
+            let bin = size_class::bin(unsafe { page.as_ref().block_size() }).unwrap();
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+
+            // SAFETY: this is the exact current allocation, but its regular
+            // page lacks a collector route in this bounded producer slice.
+            assert!(matches!(
+                unsafe { allocator.begin_full_page_remote_free(block) },
+                Err(RemoteFreePreparationError::PageNotInFullQueue)
+            ));
+            assert_eq!(unsafe { page.as_ref().used() }, used_before);
+            assert_eq!(allocator.queue_count(bin), Some(1));
+
+            // SAFETY: rejection left this original client allocation live and
+            // exclusively local, so the normal source local free is valid.
+            unsafe { allocator.free(block).unwrap() };
+        });
+    }
+
+    #[test]
+    fn detached_session_rejects_remote_producer_without_mutation() {
+        with_detached_allocator(|allocator| {
+            let block = allocator.allocate(SMALL_SIZE_MAX, false).unwrap();
+            // SAFETY: this detached fixture remains externally serialized;
+            // lookup observes the exact registered local allocation page.
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let used_before = unsafe { page.as_ref().used() };
+
+            // SAFETY: the block is exact/current, but the detached metadata
+            // session has no remote producer path by contract.
+            assert!(matches!(
+                unsafe { allocator.begin_full_page_remote_free(block) },
+                Err(RemoteFreePreparationError::DetachedSession)
+            ));
+            assert_eq!(unsafe { page.as_ref().used() }, used_before);
+
+            // SAFETY: detached rejection did not publish or transfer the
+            // client allocation, so ordinary local free remains valid.
+            unsafe { allocator.free(block).unwrap() };
+        });
+    }
+
+    #[test]
+    fn full_page_remote_producer_cancellation_restores_the_original_interior_client() {
+        with_allocator(|allocator| {
+            let client = allocator
+                .allocate_aligned_at(SMALL_MAX_OBJ_SIZE, 64, 1)
+                .unwrap();
+            // The source offset alignment equation forces this client address
+            // away from the word-aligned canonical free-list block.
+            assert_eq!(client.as_ptr().addr().wrapping_add(1) & 63, 0);
+            // SAFETY: `client` is the current adjusted allocation and the map
+            // retains its page through the following full-page setup.
+            let page = NonNull::new(unsafe { allocator.page_for_block(client) }).unwrap();
+            assert!(unsafe { page.as_ref().has_interior_pointers() });
+            let capacity = unsafe { page.as_ref().reserved() as usize };
+            let mut fillers = Vec::with_capacity(capacity);
+            while fillers.len() + 1 < capacity {
+                fillers.push(
+                    allocator
+                        .allocate_aligned_at(SMALL_MAX_OBJ_SIZE, 64, 1)
+                        .unwrap(),
+                );
+            }
+            let successor = allocator
+                .allocate_aligned_at(SMALL_MAX_OBJ_SIZE, 64, 1)
+                .unwrap();
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            // SAFETY: `client` is one exact full-page allocation transferred
+            // to the token. No producer is started, so cancellation must
+            // return the unadjusted client pointer without mutation.
+            let producer = unsafe { allocator.begin_full_page_remote_free(client) }
+                .expect("the full live adjusted page admits one producer");
+            assert_ne!(producer.canonical_block, client);
+            assert_eq!(producer.client_block, client);
+            let restored = producer.cancel();
+            assert_eq!(restored, client);
+            assert_eq!(unsafe { page.as_ref().used() }, capacity);
+
+            // SAFETY: cancellation restored the exact adjusted client pointer
+            // to local ownership; free must recover its canonical base and
+            // make the formerly full page regular again.
+            unsafe { allocator.free(restored).unwrap() };
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            for block in fillers {
+                // SAFETY: these are the remaining distinct current blocks on
+                // the same page, still locally owned after cancellation.
+                unsafe { allocator.free(block).unwrap() };
+            }
+            // SAFETY: this separate current allocation made the original
+            // page full and remains local throughout the test.
             unsafe { allocator.free(successor).unwrap() };
         });
     }

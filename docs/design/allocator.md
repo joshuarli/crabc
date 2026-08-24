@@ -85,12 +85,17 @@ backend selection. The present Milestone 5 foundations are intentionally
 narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, the
 older lock-serialized caller-storage registry substrate, and one distinct
 allocator-owned process-global regular-key registry, five private compiler-TLS
-roots with direct `TPIDR_EL0` identity,
-low-bit atomic remote publication and owner collection, one caller-proved
-joined/quiescent non-abandoning full-page collection pass: a live session
-consumes an already-published remote list before release-or-unfull, while the
-explicit detached metadata session has no remote producer path and performs
-only the local false-force portion; a bounded one-page abandonment/adoption
+roots with direct `TPIDR_EL0` identity, low-bit atomic remote publication and
+owner collection, and one private linear `RemoteFreeProducer` over an exact
+live `BIN_FULL` allocation. Its exclusive allocator borrow prevents safe owner
+mutation while one scoped worker holds the `Send`/`!Sync` token; `publish`
+touches only the source remote head and `cancel` restores the original client
+pointer. The caller must still prove the worker joined/quiesced before queue
+collection. The non-abandoning full-page pass then consumes that published
+list before release-or-unfull; the explicit detached metadata session has no
+producer path and performs only the local false-force portion. Regular pages
+are intentionally rejected because this slice has no regular-page remote
+collection route. A bounded one-page abandonment/adoption
 protocol, a current-thread-only regular TLS backing owner,
 one ticket-zero process-static main heap/default-Theap attachment, and one
 later-ticket dynamic Theap attachment over a caller-pinned Heap image. That

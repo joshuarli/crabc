@@ -2063,6 +2063,44 @@ impl Page {
         })
     }
 
+    /// Checks the exact live-owner identity needed before a scoped remote
+    /// producer can retain this page's raw atomic projection.
+    ///
+    /// This reads only initialized atomic fields plus the source `theap`
+    /// pointer and forms no whole-page reference. It is narrower than the
+    /// collection projections: a caller uses it before publication to reject
+    /// an invalid, detached, abandoned, or stale live owner without touching
+    /// a page/list/block field.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name live initialized page metadata for the duration of
+    /// these atomic reads. The caller must prevent concurrent page retirement,
+    /// reuse, registration, or unregistration.
+    #[inline]
+    pub(super) unsafe fn is_live_owner_for_thread_at(
+        page: NonNull<Self>,
+        expected_thread: LiveThreadId,
+    ) -> bool {
+        let page = page.as_ptr();
+        // SAFETY: caller supplies stable initialized page metadata; this is
+        // the source remote head's atomic owner bit.
+        let xthread_free = unsafe { &*core::ptr::addr_of!((*page).xthread_free) };
+        if xthread_free.load(Ordering::Acquire) & 1 == 0 {
+            return false;
+        }
+        // SAFETY: the pointer is initialized with the page; null cannot name
+        // a live associated owner.
+        if unsafe { (*page).theap }.is_null() {
+            return false;
+        }
+        // SAFETY: the source identity word is an initialized atomic field.
+        let thread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) }
+            .load(Ordering::Acquire)
+            & !PAGE_FLAG_MASK;
+        thread_id == expected_thread.get()
+    }
+
     /// Projects the raw owner fields used after remote detach by the
     /// false-force local half of `_mi_page_free_collect`.
     ///

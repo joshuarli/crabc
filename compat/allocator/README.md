@@ -113,12 +113,16 @@ pinned backing, and preserves both external mapping ownership and immediate
 retry state on failure. The other bounded Milestone 5 substrates are also present:
 the AArch64 versioned TLS key, caller-owned slot, caller-storage registry
 substrate, and allocator-owned process-global regular-key registry; the
-private compiler-TLS roots; the source low-bit
-live/abandoned-page remote-free head transitions; and one caller-proved
-joined/quiescent non-abandoning full-page collector: its live branch consumes
-an already-published remote list before release-or-unfull, while its detached
-metadata branch has no remote producer path and performs only local false-
-force collection;
+private compiler-TLS roots; the source low-bit live/abandoned-page remote-free
+head transitions; one private linear scoped `RemoteFreeProducer` for an exact
+live `BIN_FULL` allocation; and one caller-proved joined/quiescent
+non-abandoning full-page collector. The token holds an exclusive-owner borrow,
+is `Send` but explicitly `!Sync`, and permits a scoped worker only to publish
+the canonical block or cancel back to the original client pointer. Its live
+collector consumes an already-published remote list before release-or-unfull,
+while its detached metadata branch has no remote producer path and performs
+only local false-force collection. Regular-page producer admission is
+intentionally absent until a matching collection route exists;
 and one queue-detached, stable page's mapped/unmapped abandonment/adoption
 protocol, including failed-reader restoration and clear-once-set quiescence.
 A default-off Loom model exercises four exact shared head protocols: two
@@ -126,7 +130,8 @@ live-owner publishers, owner collection racing publication, bitmap adoption
 racing an abandoned producer, and abandoned unown racing publication.
 Deterministic native regressions separately cover the bitmap-field
 quiescence, abandonment publication, adoption versus a remote producer,
-ownership-release races, and the joined full-page release/unfull branches.
+ownership-release races, scoped producer cancellation/admission, and the
+joined full-page release/unfull branches.
 Except for that bounded full-page consumer, these pieces are not yet wired
 into allocation/free routing, integrated allocator TLS/process/thread teardown,
 terminal page release, or metadata reuse. The compiler-TLS codegen probe proves hidden

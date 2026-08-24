@@ -16,10 +16,14 @@ caller-managed external arena and page map. Large alignments use separately
 owned OS singleton mappings below the source's 256 MiB metadata limit, with
 allocation-free retry ownership when an injected terminal unmap fails. The
 slice includes checked counted allocation, full-page retention, retirement,
-and one caller-proved joined/quiescent non-abandoning full-page pass: live
-sessions consume an already-published remote list before exact release-or-
-unfull, while detached metadata sessions have no remote producer path and
-perform only the local false-force portion; plus
+and one private linear scoped `RemoteFreeProducer` for an exact live
+`BIN_FULL` allocation. Its exclusive owner borrow prevents safe allocator
+mutation while a scoped `Send`/`!Sync` worker may publish the canonical block
+or cancel back to the original client pointer. After caller-proved joined/
+quiescent publication, the non-abandoning full-page pass consumes the remote
+list before exact release-or-unfull; detached metadata sessions have no remote
+producer path and perform only the local false-force portion. Regular pages
+are rejected until a matching remote collection route exists; plus
 unregister-before-release and injected rollback. Unpinned external arenas now
 schedule the pinned 4-second `purge_decommits=1` path before slice reuse;
 forced collection claims the free bitmap while applying a non-owning
@@ -46,9 +50,10 @@ backend or readiness claim. Milestone 5 currently includes the exact AArch64
 older caller-storage registry substrate, and one allocator-owned process-global
 regular-key registry; five private compiler-TLS roots with direct `TPIDR_EL0`
 identity; live-owner and
-abandoned-page remote-free head transitions; one caller-proved
-joined/quiescent non-abandoning full-page remote-free collection/release-or-
-unfull pass (with the detached no-remote local branch); a one-page mapped/unmapped
+abandoned-page remote-free head transitions; one private scoped full-page
+remote producer and caller-proved joined/quiescent non-abandoning
+collection/release-or-unfull pass (with the detached no-remote local branch);
+a one-page mapped/unmapped
 abandonment/adoption protocol with failed-reader bitmap restoration and
 clear-once-set quiescence; an unsafe current-thread-only regular TLS backing
 owner; and one ticket-zero process-static main heap/default-Theap attachment.

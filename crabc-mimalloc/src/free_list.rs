@@ -388,6 +388,27 @@ impl<'a> LocalFreeList<'a> {
         Ok(())
     }
 
+    /// Validates non-mutating local-free preflight geometry and the lower
+    /// source `used` bound.
+    ///
+    /// This is intentionally narrower than [`Self::push_local`]: it checks
+    /// only initialized geometry and the source `used > 0` lower bound, then
+    /// leaves the block link and every page field untouched. The caller still
+    /// supplies the same exactly-once live-allocation proof as `push_local`;
+    /// the normal-release representation cannot detect a duplicate raw
+    /// pointer without mutating the local list.
+    #[inline]
+    pub(crate) fn validate_local_free_preflight(
+        &self,
+        block: NonNull<u8>,
+    ) -> Result<(), FreeListError> {
+        self.validate_initialized_block(block)?;
+        if self.used_value() == 0 {
+            return Err(FreeListError::InvalidUsedCount);
+        }
+        Ok(())
+    }
+
     /// Moves `local_free` to `free` only when the immediate list is exhausted.
     ///
     /// This is `mi_page_free_quick_collect`. It deliberately leaves a
