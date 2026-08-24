@@ -16,7 +16,7 @@ default = []
 # Private, allocation-backed process context used only by the standalone
 # prefixed C adapter's tests. Production builds retain the allocation-free engine.
 test-adapter = []
-# Enables the private Loom model for the bounded remote-free head protocol.
+# Enables the private Loom model for the bounded live and abandoned remote-head protocols.
 # This is meaningful only for this crate's unit-test build, where `loom` is a
 # dev-dependency; it never selects a production atomic backend.
 loom = []
@@ -27,7 +27,7 @@ crabc-core = { path = "../crabc-core" }
 zeroize = { version = "=1.9.0", default-features = false }
 
 [dev-dependencies]
-# Test-only finite scheduler for the exact remote-free head CAS transitions.
+# Test-only finite scheduler for the exact live and abandoned remote-head transitions.
 # See `src/remote_free_loom.rs`; this is deliberately absent from normal
 # Linux/AArch64 allocator builds.
 loom = { version = "=0.7.2", default-features = false }

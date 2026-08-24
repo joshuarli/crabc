@@ -29,10 +29,12 @@ the AArch64 versioned TLS key, caller-owned slot, and locked global-key registry
 contract; the source low-bit live/abandoned-page remote-free head transitions;
 and one queue-detached, stable page's mapped/unmapped abandonment/adoption
 protocol, including failed-reader restoration and clear-once-set quiescence.
-A default-off Loom model exercises the exact shared live-owner remote-head CAS
-loops for two publishers and an owner racing publication. Deterministic native
-regressions cover abandonment publication, adoption versus a remote producer,
-and ownership-release races. These pieces are not yet wired into allocation/
+A default-off Loom model exercises four exact shared head protocols: two
+live-owner publishers, owner collection racing publication, bitmap adoption
+racing an abandoned producer, and abandoned unown racing publication.
+Deterministic native regressions separately cover the bitmap-field
+quiescence, abandonment publication, adoption versus a remote producer, and
+ownership-release races. These pieces are not yet wired into allocation/
 free routing, compiler TLS, process/thread teardown, terminal page release, or
 metadata reuse. A
 standalone test-only package exposes 16 `crabc_test_*` C symbols around one
@@ -85,8 +87,9 @@ fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside
 the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
 only in `Cargo.lock` do not satisfy or fail that selected-graph judge. It then
-runs the two test-only Loom schedules over the shared production remote-head
-publication/detach loops and records their exact pass count separately from the
+runs the four test-only Loom schedules over the shared production remote-head
+publication/detach and abandoned owner-claim/unown loops and records their
+exact pass count separately from the
 ordinary unit suite.
 
 `allocator --full` extends that gate by building and auditing the standalone

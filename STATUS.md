@@ -32,7 +32,9 @@ claim. Milestone 5 now has three bounded foundations: the exact AArch64
 16-bit-index/48-bit-generation TLS key and caller-owned slot contract;
 live-owner and abandoned-page remote-free head transitions; and a one-page
 mapped/unmapped abandonment/adoption protocol with failed-reader bitmap
-restoration and clear-once-set quiescence. The last protocol requires stable,
+restoration and clear-once-set quiescence. Four bounded Loom schedules execute
+the shared live-owner and abandoned owner-claim/unown head transitions. The
+last protocol requires stable,
 queue-detached metadata and deliberately performs no terminal page release or
 reuse. None of these pieces is integrated into allocation routing, process or
 thread lifecycle, teardown, or reusable page lifetime. Process/compiler-TLS

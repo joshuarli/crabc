@@ -61,9 +61,10 @@ releasing ownership, restores a failed reader's bit, waits for reader
 quiescence before unabandoning, and reassociates a claimed page before remote
 collection. It requires queue-detached, address-stable page/arena/theap
 metadata and intentionally does not release or reuse the page. A test-only
-Loom model executes the live-owner remote-head publication and detach loops
-under bounded producer/collector schedules; deterministic native regressions
-cover the new bitmap and abandonment interleavings. These slices do not
+Loom model executes the live-owner remote-head publication/detach loops and
+the abandoned owner-claim/unown races under bounded schedules; deterministic
+native regressions cover the bitmap-field quiescence and full one-page
+abandonment interleavings. These slices do not
 install compiler TLS or provide the lifetime owner needed for thread teardown,
 terminal page release, or metadata reuse while a remote producer can exist.
 A default-off `test-adapter` feature is the sole exception to that public-
@@ -147,11 +148,13 @@ unqualified until measured.
 ### Concurrency-test dependency boundary
 
 `loom = "=0.7.2"`, with defaults disabled, is the sole allocator
-`dev-dependency`. It is enabled only by the empty `loom` test feature and models
-the exact `mi_thread_free_t` publication and owner-detach CAS loops shared with
-production. The model substitutes only the atomic head and address-free block
-links; raw-pointer lifetime, owner-local page mutation, abandonment, TLS, and
-page release remain outside that proof.
+`dev-dependency`. It is enabled only by the empty `loom` test feature and
+models the exact `mi_thread_free_t` publication, owner-detach, abandoned
+ownership-claim, and abandoned-unown transitions shared with production. The
+model substitutes only the atomic head, address-free block links, and a boolean
+for bitmap restoration responsibility; the bitmap field algorithm has its own
+native quiescence regression. Raw-pointer lifetime, owner-local page mutation,
+page identity, TLS, and page release remain outside that proof.
 
 Loom's normal test graph includes its `generator`, `scoped-tls`, `tracing`, and
 `tracing-subscriber` support stack. That graph uses `std`, allocation, global

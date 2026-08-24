@@ -165,6 +165,21 @@ run_workspace_tests() {
     # Preserve an explicit target selection, such as documented `--test`
     # regressions, while making the generic route integration-test only.
     local argument
+    local package_scoped=0
+    for argument in "$@"; do
+        case "$argument" in
+            -p|--package|--package=*)
+                package_scoped=1
+                ;;
+        esac
+    done
+    if [ "$package_scoped" -eq 1 ]; then
+        # An explicit package selector is already a complete Cargo scope.
+        # Injecting `--workspace` also selects unrelated no_std runtime lib-test
+        # targets and makes focused package commands fail during their link.
+        run_in_container cargo test "$@"
+        return
+    fi
     for argument in "$@"; do
         case "$argument" in
             --lib|--bins|--tests|--examples|--benches|--all-targets|--doc|--bin|--bin=*|--example|--example=*|--test|--test=*|--bench|--bench=*)

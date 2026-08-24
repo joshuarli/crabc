@@ -20,7 +20,9 @@
 
 use core::ptr::{self, NonNull};
 
-use crate::atomic::{AtomicWord, word_cas_weak_acq_rel, word_load_relaxed};
+use crate::atomic::{
+    AtomicWord, word_cas_weak_acq_rel, word_load_relaxed, word_or_acq_rel,
+};
 use crate::types::{
     Block, Page, PageRemoteFreeOwnerState, PageRemoteFreeProducerState, ThreadFree,
     PAGE_FLAG_MASK, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
@@ -61,6 +63,25 @@ pub(crate) enum RemoteFreeError {
 pub(crate) enum AbandonedRemotePush {
     PublishedToExistingOwner,
     ClaimedUnownedPage,
+}
+
+/// Result of the source `mi_page_claim_ownership` low-bit transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AbandonedOwnerClaim {
+    ClaimedUnowned,
+    AlreadyOwned,
+}
+
+/// One atomic head observation from `mi_abandoned_page_unown`.
+///
+/// A nonempty owned word cannot be released: its current owner must collect
+/// the returned remote head and then retry. `NotOwned` is a violated caller
+/// invariant rather than a recoverable ownership transfer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AbandonedOwnerHeadTransition {
+    Released,
+    RemotePublished(ThreadFree),
+    NotOwned,
 }
 
 /// Publishes one remote free to a live owner-associated page.
@@ -227,6 +248,8 @@ trait ThreadFreeHead {
     fn load_relaxed(&self) -> ThreadFree;
 
     fn cas_weak_acq_rel(&self, expected: &mut ThreadFree, replacement: ThreadFree) -> bool;
+
+    fn fetch_or_acq_rel(&self, value: ThreadFree) -> ThreadFree;
 }
 
 impl ThreadFreeHead for AtomicWord {
@@ -238,6 +261,75 @@ impl ThreadFreeHead for AtomicWord {
     #[inline]
     fn cas_weak_acq_rel(&self, expected: &mut ThreadFree, replacement: ThreadFree) -> bool {
         word_cas_weak_acq_rel(self, expected, replacement)
+    }
+
+    #[inline]
+    fn fetch_or_acq_rel(&self, value: ThreadFree) -> ThreadFree {
+        word_or_acq_rel(self, value)
+    }
+}
+
+/// Claims an abandoned page's low owner bit with the exact source AcqRel OR.
+///
+/// This is the atomic half of `mi_page_claim_ownership`. Bitmap disposition
+/// remains with `abandoned`: a failed bitmap reader must restore its bit.
+pub(super) fn claim_abandoned_owner(head: &AtomicWord) -> AbandonedOwnerClaim {
+    claim_abandoned_owner_with(head)
+}
+
+fn claim_abandoned_owner_with<H>(head: &H) -> AbandonedOwnerClaim
+where
+    H: ThreadFreeHead + ?Sized,
+{
+    if is_owned(head.fetch_or_acq_rel(THREAD_FREE_OWNED)) {
+        AbandonedOwnerClaim::AlreadyOwned
+    } else {
+        AbandonedOwnerClaim::ClaimedUnowned
+    }
+}
+
+/// Observes or releases one abandoned owner head using the source CAS loop.
+///
+/// The optional hook is empty in production. The bounded deterministic test
+/// uses it at the source interleaving point after observing an empty owned
+/// head and before attempting to clear ownership.
+pub(super) fn try_unown_abandoned_head<F>(
+    head: &AtomicWord,
+    before_release_cas: &mut Option<F>,
+) -> AbandonedOwnerHeadTransition
+where
+    F: FnOnce(),
+{
+    try_unown_abandoned_head_with(head, before_release_cas)
+}
+
+fn try_unown_abandoned_head_with<H, F>(
+    head: &H,
+    before_release_cas: &mut Option<F>,
+) -> AbandonedOwnerHeadTransition
+where
+    H: ThreadFreeHead + ?Sized,
+    F: FnOnce(),
+{
+    let mut previous = head.load_relaxed();
+    loop {
+        if !is_owned(previous) {
+            return AbandonedOwnerHeadTransition::NotOwned;
+        }
+        if thread_free_block_address(previous) != 0 {
+            return AbandonedOwnerHeadTransition::RemotePublished(previous);
+        }
+        if let Some(before_release_cas) = before_release_cas.take() {
+            before_release_cas();
+        }
+        let mut expected = previous;
+        if head.cas_weak_acq_rel(&mut expected, 0) {
+            return AbandonedOwnerHeadTransition::Released;
+        }
+        // Acquire failure observation is either a spurious retry or a remote
+        // publisher's nonempty owned word. The next iteration distinguishes
+        // those states without losing the collection obligation.
+        previous = expected;
     }
 }
 

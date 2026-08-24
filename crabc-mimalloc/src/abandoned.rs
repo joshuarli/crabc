@@ -17,10 +17,12 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
 use crate::arena::ArenaAbandonedPages;
-use crate::atomic::{word_cas_weak_acq_rel, word_cas_weak_release, word_load_relaxed, word_or_acq_rel};
+use crate::atomic::{word_cas_weak_release, word_load_relaxed};
 use crate::bitmap::AbandonedBitmapClaim;
 use crate::config::ARENA_BIN_COUNT;
-use crate::remote_free::{self, RemoteFreeError};
+use crate::remote_free::{
+    self, AbandonedOwnerClaim, AbandonedOwnerHeadTransition, RemoteFreeError,
+};
 use crate::size_class;
 use crate::types::{
     LiveThreadId, MemoryKind, Page, PageAbandonmentState, Theap, PAGE_FLAG_MASK,
@@ -28,7 +30,6 @@ use crate::types::{
 };
 
 const THREAD_FREE_OWNED: usize = 1;
-const THREAD_FREE_BLOCK_MASK: usize = !THREAD_FREE_OWNED;
 
 /// The bounded abandonment protocol refused an invalid source-state handoff.
 ///
@@ -211,8 +212,8 @@ where
         // `mi_page_claim_ownership`: the old value identifies whether a
         // concurrent free won. The AcqRel operation is the sole ownership
         // claim; ordinary fields remain untouched on failure.
-        let old = unsafe { word_or_acq_rel(state.xthread_free.as_ref(), THREAD_FREE_OWNED) };
-        if old & THREAD_FREE_OWNED != 0 {
+        let claim = remote_free::claim_abandoned_owner(unsafe { state.xthread_free.as_ref() });
+        if claim == AbandonedOwnerClaim::AlreadyOwned {
             return AbandonedBitmapClaim::KeepSet;
         }
         // SAFETY: success acquired the source owner bit. The resolver's
@@ -273,37 +274,29 @@ where
         return Err(AbandonError::NotAbandoned);
     }
     let xthread_free = unsafe { state.xthread_free.as_ref() };
-    let mut previous = word_load_relaxed(xthread_free);
     let mut before_release_cas = Some(before_release_cas);
     loop {
-        if !is_owned_word(previous) {
-            return Err(AbandonError::NotOwnedAssociated);
-        }
-        while previous & THREAD_FREE_BLOCK_MASK != 0 {
-            // SAFETY: this caller holds the owner bit and the abandoned-page
-            // lifetime proof; collection touches only owner fields.
-            unsafe { remote_free::collect_abandoned(page) }.map_err(AbandonError::RemoteFree)?;
-            if page_is_empty(&state) {
-                unabandon_mapped(&state, map)?;
-                return Ok(AbandonResult::Empty);
-            }
-            previous = word_load_relaxed(xthread_free);
-        }
-        if let Some(before_release_cas) = before_release_cas.take() {
-            before_release_cas();
-        }
-        let mut expected = previous;
-        if word_cas_weak_acq_rel(xthread_free, &mut expected, 0) {
-            return Ok(if source_thread_identity(&state) == THREAD_ID_ABANDONED_MAPPED {
+        match remote_free::try_unown_abandoned_head(xthread_free, &mut before_release_cas) {
+            AbandonedOwnerHeadTransition::Released => return Ok(if source_thread_identity(&state) == THREAD_ID_ABANDONED_MAPPED {
                 AbandonResult::UnownedMapped
             } else {
                 AbandonResult::UnownedUnmapped
-            });
+            }),
+            AbandonedOwnerHeadTransition::RemotePublished(_) => {
+                // SAFETY: this caller still holds the owner bit and the
+                // abandoned-page lifetime proof; collection touches only
+                // owner fields.
+                unsafe { remote_free::collect_abandoned(page) }
+                    .map_err(AbandonError::RemoteFree)?;
+                if page_is_empty(&state) {
+                    unabandon_mapped(&state, map)?;
+                    return Ok(AbandonResult::Empty);
+                }
+            }
+            AbandonedOwnerHeadTransition::NotOwned => {
+                return Err(AbandonError::NotOwnedAssociated);
+            }
         }
-        // The weak CAS failure updated `expected` with Acquire ordering. A
-        // producer publication cannot be lost: retrying its non-null head
-        // takes the source collection path above before ownership is released.
-        previous = expected;
     }
 }
 

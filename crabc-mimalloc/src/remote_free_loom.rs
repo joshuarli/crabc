@@ -5,17 +5,22 @@
 //! and owner-only fields are outside Loom's address-free scheduler model.
 //! This module instead gives each producer-owned block one unique aligned
 //! integer identity and a modeled `next` word. It executes
-//! [`super::publish_to_head`] and [`super::detach_from_head`] directly, so the
-//! production Relaxed load plus AcqRel/Acquire weak-CAS transitions cannot
+//! [`super::publish_to_head`], [`super::detach_from_head`],
+//! [`super::claim_abandoned_owner_with`], and
+//! [`super::try_unown_abandoned_head_with`] directly, so the production
+//! Relaxed load, AcqRel OR, and AcqRel/Acquire weak-CAS transitions cannot
 //! drift from this evidence.
 //!
-//! It proves only live-page remote publication and collection. It does not
-//! model page association, abandonment/adoption, retirement/release, TLS, or
-//! owner-local `used`/`local_free` mutation.
+//! It proves the low-bit head races for live-owner collection and bounded
+//! abandoned-page claim/unown. It does not model page identity, arena lookup,
+//! bitmap field atomics, retirement/release, TLS, or owner-local
+//! `used`/`local_free` mutation.
 
 use super::{
-    THREAD_FREE_OWNED, ThreadFree, detach_from_head, publish_to_head,
-    thread_free_block_address,
+    AbandonedOwnerClaim, AbandonedOwnerHeadTransition, THREAD_FREE_OWNED,
+    ThreadFree, claim_abandoned_owner_with, detach_from_head, publish_to_head,
+    publish_to_head_with_owner, thread_free_block_address,
+    try_unown_abandoned_head_with,
 };
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -45,6 +50,11 @@ impl super::ThreadFreeHead for AtomicUsize {
         .map(|_| ())
         .map_err(|actual| *expected = actual)
         .is_ok()
+    }
+
+    #[inline]
+    fn fetch_or_acq_rel(&self, value: ThreadFree) -> ThreadFree {
+        self.fetch_or(value, Ordering::AcqRel)
     }
 }
 
@@ -89,6 +99,23 @@ impl ModelBlocks {
         self.published[index].store(true, Ordering::Release);
     }
 
+    /// Executes the production `allow_collect=true` publication policy and
+    /// returns whether the successfully replaced word already had an owner.
+    fn publish_abandoned(&self, head: &AtomicUsize, index: usize) -> bool {
+        let block = Self::address(index);
+        let was_owned = publish_to_head_with_owner(
+            head,
+            block,
+            |_| true,
+            |previous_block| {
+                self.next[index].store(previous_block, Ordering::Relaxed);
+            },
+        )
+        .expect("the abandoned publisher may claim an unowned page");
+        self.published[index].store(true, Ordering::Release);
+        was_owned
+    }
+
     fn collect_once(&self, head: &AtomicUsize) -> usize {
         let detached = detach_from_head(head).expect("the model preserves ownership");
         assert_eq!(
@@ -122,6 +149,17 @@ impl ModelBlocks {
                 "the owner collected that remote block exactly once"
             );
         }
+    }
+
+    fn assert_collected(&self, index: usize) {
+        assert!(
+            self.published[index].load(Ordering::Acquire),
+            "the producer completed its source publication"
+        );
+        assert!(
+            self.collected[index].load(Ordering::Acquire),
+            "the owner collected that remote block exactly once"
+        );
     }
 }
 
@@ -183,5 +221,113 @@ fn loom_owner_collection_racing_publication_loses_no_block_and_keeps_owner_bit()
         assert_eq!(collected_before_joins + collected_after_joins, PRODUCER_COUNT);
         assert_eq!(head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
         blocks.assert_all_collected();
+    });
+}
+
+#[test]
+fn loom_bitmap_adopter_racing_abandoned_publisher_has_one_owner_and_correct_bitmap_responsibility() {
+    loom::model(|| {
+        let head = Arc::new(AtomicUsize::new(0));
+        let bitmap_published = Arc::new(AtomicBool::new(true));
+        let blocks = Arc::new(ModelBlocks::new());
+
+        let adopter_head = Arc::clone(&head);
+        let adopter_bitmap = Arc::clone(&bitmap_published);
+        let adopter = thread::spawn(move || {
+            assert!(
+                adopter_bitmap.swap(false, Ordering::AcqRel),
+                "the modeled bitmap reader temporarily owns the published bit"
+            );
+            let claim = claim_abandoned_owner_with(&*adopter_head);
+            if claim == AbandonedOwnerClaim::AlreadyOwned {
+                // This is the source `keep_abandoned=true` obligation: a
+                // producer that won ownership will later wait for this bit.
+                adopter_bitmap.store(true, Ordering::Release);
+            }
+            claim
+        });
+
+        let publisher_head = Arc::clone(&head);
+        let publisher_blocks = Arc::clone(&blocks);
+        let publisher = thread::spawn(move || {
+            publisher_blocks.publish_abandoned(&publisher_head, 0)
+        });
+
+        let adopter_claim = adopter.join().expect("bitmap adopter completes");
+        let publisher_found_owner = publisher.join().expect("abandoned publisher completes");
+        let adopter_found_unowned = adopter_claim == AbandonedOwnerClaim::ClaimedUnowned;
+        let publisher_found_unowned = !publisher_found_owner;
+
+        assert_ne!(
+            adopter_found_unowned, publisher_found_unowned,
+            "exactly one competing transition observes the old unowned word"
+        );
+        assert_eq!(
+            bitmap_published.load(Ordering::Acquire),
+            publisher_found_unowned,
+            "a producer winner keeps bitmap responsibility; an adopter winner consumes it"
+        );
+        assert_eq!(
+            head.load(Ordering::Acquire),
+            ModelBlocks::address(0) | THREAD_FREE_OWNED,
+            "the producer block and the unique owner bit remain published"
+        );
+
+        assert_eq!(blocks.collect_once(&head), 1);
+        assert_eq!(head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        blocks.assert_collected(0);
+    });
+}
+
+#[test]
+fn loom_abandoned_unown_racing_publisher_either_transfers_or_retains_collection_obligation() {
+    loom::model(|| {
+        let head = Arc::new(AtomicUsize::new(OWNER_EMPTY_HEAD));
+        let blocks = Arc::new(ModelBlocks::new());
+
+        let owner_head = Arc::clone(&head);
+        let owner = thread::spawn(move || {
+            let mut no_hook: Option<fn()> = None;
+            try_unown_abandoned_head_with(&*owner_head, &mut no_hook)
+        });
+
+        let publisher_head = Arc::clone(&head);
+        let publisher_blocks = Arc::clone(&blocks);
+        let publisher = thread::spawn(move || {
+            publisher_blocks.publish_abandoned(&publisher_head, 0)
+        });
+
+        let owner_transition = owner.join().expect("abandoned owner completes its head transition");
+        let publisher_found_owner = publisher.join().expect("abandoned publisher completes");
+
+        match owner_transition {
+            AbandonedOwnerHeadTransition::Released => assert!(
+                !publisher_found_owner,
+                "after unown wins, the producer must claim the unowned word"
+            ),
+            AbandonedOwnerHeadTransition::RemotePublished(observed) => {
+                assert!(
+                    publisher_found_owner,
+                    "when publication wins, the old owner keeps collection responsibility"
+                );
+                assert_eq!(
+                    thread_free_block_address(observed),
+                    ModelBlocks::address(0),
+                    "the failed unown observes the producer block"
+                );
+            }
+            AbandonedOwnerHeadTransition::NotOwned => {
+                panic!("the model begins with the abandoned owner bit held")
+            }
+        }
+        assert_eq!(
+            head.load(Ordering::Acquire),
+            ModelBlocks::address(0) | THREAD_FREE_OWNED,
+            "both legal outcomes retain one owner and the published block"
+        );
+
+        assert_eq!(blocks.collect_once(&head), 1);
+        assert_eq!(head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        blocks.assert_collected(0);
     });
 }
