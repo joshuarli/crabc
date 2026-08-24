@@ -209,8 +209,7 @@ pub mod epoll {
     ///
     /// Linux/AArch64 uses the naturally aligned 16-byte `epoll_event` layout:
     /// a 32-bit event mask followed by four bytes of padding and an eight-byte
-    /// data union. (The packed x86_64 ABI is intentionally outside this
-    /// target's contract.)
+    /// data union.
     #[repr(C)]
     #[derive(Clone, Copy, Eq, PartialEq, Hash)]
     pub struct Event {
