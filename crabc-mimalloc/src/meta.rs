@@ -404,7 +404,8 @@ impl MetaAllocator {
         this.active_entry_thread.store(thread, Ordering::Release);
         Ok(MetaEntry {
             owner: self,
-            guard,
+            entry_thread: thread,
+            guard: Some(guard),
         })
     }
 
@@ -544,7 +545,8 @@ impl MetaAllocator {
 /// A held metadata private lock and its exclusive initialized-state access.
 struct MetaEntry {
     owner: Pin<&'static MetaAllocator>,
-    guard: PrivateLockGuard<'static>,
+    entry_thread: usize,
+    guard: Option<PrivateLockGuard<'static>>,
 }
 
 impl MetaEntry {
@@ -588,13 +590,27 @@ impl MetaEntry {
 
 impl Drop for MetaEntry {
     fn drop(&mut self) {
-        self.owner
-            .get_ref()
-            .active_entry_thread
-            .store(0, Ordering::Release);
-        // `PrivateLockGuard` then performs the paired Release unlock.
-        let _ = &self.guard;
+        // Unlock before clearing the recursion marker. Clearing first would
+        // let same-thread signal reentry miss the marker and wait forever on
+        // this still-held nonrecursive lock. A different thread may acquire
+        // and replace the marker between these operations, so cleanup uses a
+        // compare-exchange and must not erase that successor's ownership.
+        drop(self.guard.take());
+        clear_entry_thread_after_unlock(
+            &self.owner.get_ref().active_entry_thread,
+            self.entry_thread,
+        );
     }
+}
+
+#[inline]
+fn clear_entry_thread_after_unlock(active: &AtomicUsize, entry_thread: usize) {
+    let _ = active.compare_exchange(
+        entry_thread,
+        0,
+        Ordering::Release,
+        Ordering::Relaxed,
+    );
 }
 
 #[inline]
@@ -799,6 +815,15 @@ mod tests {
             Err(MetaError::RecursiveEntry)
         ));
         drop(entry);
+    }
+
+    #[test]
+    fn entry_cleanup_does_not_erase_a_successor_marker() {
+        let marker = AtomicUsize::new(24);
+        clear_entry_thread_after_unlock(&marker, 12);
+        assert_eq!(marker.load(Ordering::Acquire), 24);
+        clear_entry_thread_after_unlock(&marker, 24);
+        assert_eq!(marker.load(Ordering::Acquire), 0);
     }
 
     #[test]
