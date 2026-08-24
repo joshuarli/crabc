@@ -98,10 +98,18 @@ unchanged. Its no-page teardown clears slot/backing, resets that cached root
 with `2 -> 1`, then detaches lists and releases metadata. Pre-publication OOM
 cleans up and rejects, whereas post-list-publication or post-root-reset failure
 returns a retained poisoned owner. A pre-mutation key-release lock failure
-retains only the linear lease in `AwaitingKeyRelease` for retry. General
-cached-root switching/reference ownership, page routing/abandonment
-integration, pthread/process hooks, complete subprocess layout/lifecycle, and
-C pthread-mutex layout claims remain absent. A
+retains only the linear lease in `AwaitingKeyRelease` for retry. Ordinary
+dynamic begin uses the source abandoning `true`/`2` option image and rejects a
+page session. The crate-private unsafe non-abandoning begin stores `false`/`-1`
+before heap publication and alone creates the sealed borrowed
+`DynamicTheapPageSession` for the shared private `PageAllocatorEngine`; its
+consuming finish requires no pages, queues/direct entries, collection poison,
+or pending OS release, while unfinished Drop latches the attachment terminally
+and transfers any pending OS release owner into that retained attachment.
+This is bounded private routing, not general dynamic allocation or remote-free
+concurrency. General cached-root switching/reference ownership, abandonment,
+pthread/process hooks, complete subprocess layout/lifecycle, and C
+pthread-mutex layout claims remain absent. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,

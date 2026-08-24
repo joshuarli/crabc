@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/threadlocal.c:23-214`,
-// `src/init.c:236-360,377-421,448-481`, `src/theap.c:236-306,357-369,414-449`,
+// `src/init.c:236-360,377-421,448-481`, `src/theap.c:228-306,357-369,414-449`,
 // `src/heap.c:60-100`, and `src/prim/prim-tls.c:211-229`.
 
 //! Private current-thread dynamic Theap attachment.
@@ -14,8 +14,12 @@
 //! one address-stable `Heap::bootstrap_empty()` image, this owner claims one
 //! regular TLS key, and it attaches one direct-zeroed metadata Theap to one
 //! later-ticket metadata TLD. It does not implement `mi_heap_new/delete`,
-//! subprocess heap lists/counters, general cached-root switching, page routing,
-//! pthread hooks, or public allocation APIs. It does implement the one
+//! subprocess heap lists/counters, general cached-root switching, pthread
+//! hooks, or public allocation APIs. Ordinary dynamic begin uses the source
+//! abandoning `true`/`2` option image and rejects a page session. The private
+//! unsafe non-abandoning begin selects source-reachable `false`/`-1` before
+//! Release heap publication; its exclusive borrowed `DynamicTheapPageSession`
+//! alone reaches the shared private page engine. It does implement the one
 //! owner-only cached-Theap root/reference pair which follows regular-slot
 //! publication in `src/heap.c:_mi_heap_theap_get_or_init`.
 
@@ -30,16 +34,19 @@ use core::ptr::NonNull;
 use crate::compiler_tls::{
     cached_theap, current_thread_identity, default_theap, fast_slot_peek, set_cached_theap,
 };
+use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
 use crate::owned_tls_key_registry::{
     OwnedThreadLocalKeyError, OwnedThreadLocalKeyLease, OwnedThreadLocalKeyRegistry,
 };
 use crate::os::MemoryConfig;
+use crate::os_page::OsAlignedPageOwner;
 use crate::subproc::MainSubprocess;
 use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner, ThreadLocalKey};
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
-    Heap, Theap, TheapDynamicInitError, ThreadLocalTheapListError,
+    DynamicTheapPageMode, Heap, MemoryId, Page, PageQueue, Theap, TheapDynamicInitError,
+    TheapOwner, ThreadLocalTheapListError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,6 +80,14 @@ pub(crate) enum DynamicTheapError {
     HeapRetire,
     TornDown,
     Poisoned,
+}
+
+/// A non-mutating refusal to borrow a dynamic attachment as the shared
+/// non-abandoning page engine's Theap session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicTheapPageSessionError {
+    Attachment(DynamicTheapError),
+    AbandoningMode,
 }
 
 /// A dynamic begin either rejects after complete pre-publication cleanup or
@@ -193,6 +208,8 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     theap: Option<MetaAllocation<'static>>,
     roots: UnrelatedRoots,
     cached_root_bound: bool,
+    page_mode: DynamicTheapPageMode,
+    terminal_os_release: Option<OsAlignedPageOwner>,
     thread: crate::types::LiveThreadId,
     state: DynamicAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -225,12 +242,43 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         // lifetime, and the caller upholds the documented current-thread
         // ownership condition.
         unsafe {
-            Self::begin_with_components(
+            Self::begin_with_components_mode(
                 config,
                 heap,
                 MainSubprocess::global(),
                 MetaAllocator::global(),
                 OwnedThreadLocalKeyRegistry::global(),
+                DynamicTheapPageMode::OrdinaryAbandoning,
+            )
+        }
+    }
+
+    /// Begins the one private production-shaped dynamic attachment whose
+    /// Theap option image disables abandonment before its Release heap
+    /// publication. This is the only dynamic mode that can borrow the shared
+    /// bounded page engine; callers may never toggle an already live Theap.
+    ///
+    /// # Safety
+    ///
+    /// The caller upholds every [`Self::begin`] ownership and current-thread
+    /// obligation, and additionally retains the returned attachment until a
+    /// page engine has either consumed `finish` successfully or latched a
+    /// terminal retained owner. This is crate-private integration structure,
+    /// not a public first-class heap constructor.
+    pub(crate) unsafe fn begin_non_abandoning(
+        config: MemoryConfig,
+        heap: Pin<&'heap mut Heap>,
+    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
+        // SAFETY: as `begin`, with the source-reachable non-abandoning option
+        // selected before `_mi_theap_init` publishes `heap`.
+        unsafe {
+            Self::begin_with_components_mode(
+                config,
+                heap,
+                MainSubprocess::global(),
+                MetaAllocator::global(),
+                OwnedThreadLocalKeyRegistry::global(),
+                DynamicTheapPageMode::NonAbandoningPageSession,
             )
         }
     }
@@ -249,6 +297,49 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,
         registry: &'static OwnedThreadLocalKeyRegistry,
+    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
+        unsafe {
+            Self::begin_with_components_mode(
+                config,
+                heap,
+                subprocess,
+                metadata,
+                registry,
+                DynamicTheapPageMode::OrdinaryAbandoning,
+            )
+        }
+    }
+
+    /// Test-capable private entry for the one non-abandoning page-session
+    /// owner. The selection is made before `_mi_theap_init` publishes its
+    /// heap pointer; callers may never toggle a live Theap.
+    #[cfg(test)]
+    pub(crate) unsafe fn begin_non_abandoning_with_components(
+        config: MemoryConfig,
+        heap: Pin<&'heap mut Heap>,
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        registry: &'static OwnedThreadLocalKeyRegistry,
+    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
+        unsafe {
+            Self::begin_with_components_mode(
+                config,
+                heap,
+                subprocess,
+                metadata,
+                registry,
+                DynamicTheapPageMode::NonAbandoningPageSession,
+            )
+        }
+    }
+
+    unsafe fn begin_with_components_mode(
+        config: MemoryConfig,
+        heap: Pin<&'heap mut Heap>,
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        registry: &'static OwnedThreadLocalKeyRegistry,
+        page_mode: DynamicTheapPageMode,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
         let thread = current_thread_identity()
             .ok_or(DynamicTheapBeginError::Rejected(DynamicTheapError::InvalidCurrentThread))?;
@@ -288,6 +379,8 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             theap: None,
             roots,
             cached_root_bound: false,
+            page_mode,
+            terminal_os_release: None,
             thread,
             state: DynamicAttachmentState::Preparing,
             _not_send_or_sync: PhantomData,
@@ -362,6 +455,18 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             .as_ref()
             .map(DynamicHeapBinding::key)
             .ok_or(DynamicTheapError::Poisoned)
+    }
+
+    /// Borrows this exact attachment as one non-abandoning page lifecycle.
+    ///
+    /// The returned session holds `&mut self`, so safe code cannot clear the
+    /// regular key/backing, cached root/ref, intrusive lists, typed metadata,
+    /// or caller-pinned Heap while the shared allocation engine (or its
+    /// scoped remote producer) exists.
+    pub(crate) fn page_session(
+        &mut self,
+    ) -> Result<DynamicTheapPageSession<'_, 'heap>, DynamicTheapPageSessionError> {
+        DynamicTheapPageSession::begin(self)
     }
 
     /// Performs the bounded no-page teardown sequence.
@@ -462,6 +567,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
 
     fn initialize_and_publish_theap(&mut self) -> Result<(), DynamicTheapError> {
         let key = self.binding()?.key();
+        let page_mode = self.page_mode;
         let theap_pointer = {
             let (heap, tld, allocation) = self.heap_tld_theap_mut()?;
             let theap = allocation
@@ -471,7 +577,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             // exact metadata TLD capability, and the Theap allocation through
             // both list lifetimes; its `!Send`/TPIDR proof excludes a second
             // thread or list mutator until source-ordered detachment.
-            unsafe { theap.initialize_dynamic_metadata(heap, tld) }
+            unsafe { theap.initialize_dynamic_metadata(heap, tld, page_mode) }
                 .map_err(DynamicTheapError::TheapInit)?;
             core::ptr::from_mut(theap).cast::<()>()
         };
@@ -801,17 +907,238 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     }
 }
 
+/// One borrowed page-owner view of a private dynamic Theap attachment.
+///
+/// This is deliberately not a general heap API. Its constructor validates the
+/// full attached/root/slot/list/refcount state and accepts only the typed mode
+/// that disabled abandonment before `_mi_theap_init` published `heap`.
+pub(crate) struct DynamicTheapPageSession<'attach, 'heap> {
+    attachment: &'attach mut DynamicTheapAttachment<'heap>,
+}
+
+impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
+    fn begin(
+        attachment: &'attach mut DynamicTheapAttachment<'heap>,
+    ) -> Result<Self, DynamicTheapPageSessionError> {
+        attachment
+            .prevalidate_teardown()
+            .map_err(DynamicTheapPageSessionError::Attachment)?;
+        let theap = attachment
+            .theap
+            .as_ref()
+            .and_then(MetaAllocation::dynamic_theap)
+            .ok_or(DynamicTheapPageSessionError::Attachment(
+                DynamicTheapError::TheapProjection,
+            ))?;
+        if attachment.page_mode != DynamicTheapPageMode::NonAbandoningPageSession
+            || theap.allows_page_abandon()
+            || theap.page_full_retain() != -1
+        {
+            return Err(DynamicTheapPageSessionError::AbandoningMode);
+        }
+        Ok(Self { attachment })
+    }
+
+    #[inline]
+    pub(crate) fn thread_sequence(&self) -> usize {
+        self.attachment
+            .tld
+            .as_ref()
+            .expect("a validated dynamic page session retains its TLD")
+            .sequence()
+            .get()
+    }
+
+    #[inline]
+    fn dynamic_theap(&self) -> &Theap {
+        self.attachment
+            .theap
+            .as_ref()
+            .and_then(MetaAllocation::dynamic_theap)
+            .expect("a validated borrowed dynamic page session retains its typed Theap")
+    }
+
+    #[inline]
+    fn dynamic_theap_mut(&mut self) -> &mut Theap {
+        self.attachment
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .expect("a validated borrowed dynamic page session retains its typed Theap")
+    }
+
+    /// Test-only non-mutating view of the attachment's teardown preflight.
+    /// It never invokes teardown, clears a root, or detaches a list while the
+    /// session owns the attachment borrow.
+    #[cfg(test)]
+    pub(crate) fn test_teardown_preflight(&mut self) -> Result<(), DynamicTheapError> {
+        self.attachment.prevalidate_teardown()
+    }
+}
+
+impl theap_page_session_sealed::Sealed for DynamicTheapPageSession<'_, '_> {}
+
+// SAFETY: construction revalidates the exact attached current-thread
+// TLD/Theap/Heap/list/root/refcount state while taking `&mut attachment`.
+// That borrow retains the typed metadata, regular key/backing, cached ref,
+// and pinned Heap for every engine/producers' raw page lifetime.
+unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
+    #[inline]
+    fn theap(&self) -> &Theap { self.dynamic_theap() }
+
+    #[inline]
+    fn thread_id(&self) -> Option<crate::types::LiveThreadId> {
+        Some(self.attachment.thread)
+    }
+
+    #[inline]
+    fn queue(&self, bin: usize) -> Option<&PageQueue> { self.dynamic_theap().queue(bin) }
+
+    #[inline]
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
+        self.dynamic_theap_mut().queue_mut(bin)
+    }
+
+    #[inline]
+    fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.dynamic_theap().direct_page(index)
+    }
+
+    #[inline]
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        self.dynamic_theap_mut().set_direct_page(index, page)
+    }
+
+    #[inline]
+    fn note_page_added(&mut self) { self.dynamic_theap_mut().note_page_added() }
+
+    #[inline]
+    fn note_page_removed(&mut self) -> bool { self.dynamic_theap_mut().note_page_removed() }
+
+    #[inline]
+    unsafe fn publish_fresh_page(
+        &mut self,
+        metadata: NonNull<Page>,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        let thread = self.attachment.thread;
+        let DynamicTheapAttachment { heap, theap, .. } = self.attachment;
+        // SAFETY: `DynamicTheapPageSession` retains the attachment's unique
+        // pinned Heap borrow, and its constructor proved the typed Theap/list
+        // binding. The returned engine keeps this borrow for the complete
+        // page lifecycle.
+        let heap = unsafe { Pin::get_unchecked_mut(heap.as_mut()) };
+        let theap = theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)?;
+        unsafe {
+            Page::publish_fresh_exclusive_owner_at(
+                metadata,
+                theap,
+                heap,
+                TheapOwner::Live(thread),
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                free_is_zero,
+                memid,
+            )
+        }
+    }
+
+    #[inline]
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { page.retire_exclusive() }
+
+    #[inline]
+    fn retired_bounds(&self) -> (usize, usize) { self.dynamic_theap().retired_bounds() }
+
+    #[inline]
+    fn note_retired_bin(&mut self, bin: usize) -> bool {
+        self.dynamic_theap_mut().note_retired_bin(bin)
+    }
+
+    #[inline]
+    fn reset_retired_bounds(&mut self) { self.dynamic_theap_mut().reset_retired_bounds() }
+
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner> {
+        if self.attachment.terminal_os_release.is_some() {
+            return Err(owner);
+        }
+        self.attachment.terminal_os_release = Some(owner);
+        Ok(())
+    }
+
+    #[inline]
+    fn latch_unfinished_page_engine(&mut self) {
+        self.attachment.state = DynamicAttachmentState::Poisoned;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arena::{ArenaId, ArenaRegistry, ArenaView, manage_external_in_place};
+    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
     use crate::compiler_tls::{
         dynamic_backing_peek, is_empty_dynamic_backing, set_cached_theap,
     };
     use crate::os::{PageSize, fault};
+    use crate::page_map::PageMap;
+    use crate::single_thread::DynamicTheapAllocator;
     use crate::tld::ThreadLocalDataOwner;
     use crate::types::MemoryKind;
+    use core::ptr::null_mut;
+    use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::boxed::Box;
     use std::thread;
+    use std::vec::Vec;
+
+    struct DynamicArenaRegion {
+        pointer: NonNull<u8>,
+        layout: Layout,
+    }
+
+    impl DynamicArenaRegion {
+        fn zeroed() -> Self {
+            let layout = Layout::from_size_align(ARENA_MIN_SIZE, ARENA_ALIGNMENT)
+                .expect("the pinned arena alignment is a valid test layout");
+            // SAFETY: the fixture owns this one external arena allocation and
+            // destroys every page-map entry before this region is dropped.
+            let pointer = NonNull::new(unsafe { alloc_zeroed(layout) })
+                .expect("the dynamic page fixture allocates its arena");
+            Self { pointer, layout }
+        }
+
+        #[inline]
+        fn as_ptr(&mut self) -> *mut u8 {
+            self.pointer.as_ptr()
+        }
+    }
+
+    impl Drop for DynamicArenaRegion {
+        fn drop(&mut self) {
+            // SAFETY: `pointer` was allocated exactly once with `layout` and
+            // the fixture's explicit engine shutdown removed all page users.
+            unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
+        }
+    }
+
+    /// The real page fixture either completes its explicit shutdown or models
+    /// one deliberately retained terminal owner. A boolean would make that
+    /// ownership choice too easy to invert at a call site.
+    enum DynamicPageFixtureOutcome {
+        TearDown,
+        RetainTerminal,
+    }
 
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
@@ -877,6 +1204,466 @@ mod tests {
                 panic!("the prepared later-ticket dynamic attachment did not enter terminal state: {error:?}")
             }
         }
+    }
+
+    /// Runs a real caller-managed arena/page-map through the private dynamic
+    /// non-abandoning page session. The callback must consume its engine with
+    /// `finish`; only then can this helper run attachment and map teardown.
+    fn with_non_abandoning_dynamic_page_fixture(
+        test: impl FnOnce(
+                &mut DynamicTheapAttachment<'static>,
+                ArenaView<'_>,
+                &mut PageMap,
+            ) -> DynamicPageFixtureOutcome
+            + Send
+            + 'static,
+    ) {
+        thread::spawn(move || {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut owner = match unsafe {
+                DynamicTheapAttachment::begin_non_abandoning_with_components(
+                    memory_config(),
+                    pinned_empty_heap(),
+                    subprocess,
+                    metadata,
+                    registry,
+                )
+            } {
+                Ok(owner) => owner,
+                Err(DynamicTheapBeginError::Rejected(error)) => {
+                    panic!("the prepared dynamic non-abandoning attachment succeeds: {error:?}")
+                }
+                Err(DynamicTheapBeginError::Retained { error, .. }) => {
+                    panic!("the prepared dynamic non-abandoning attachment is not terminal: {error:?}")
+                }
+            };
+            let mut region = DynamicArenaRegion::zeroed();
+            let registry = ArenaRegistry::new(null_mut());
+            let managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).expect("pinned page size"),
+                    true,
+                    true,
+                    true,
+                    -1,
+                    false,
+                    None,
+                )
+            }
+            .expect("the dynamic fixture registers its external arena");
+            let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+                .expect("registered arena has a view");
+            let mut page_map = PageMap::initialize(memory_config(), 0, true)
+                .expect("the dynamic fixture initializes one page map");
+
+            if matches!(
+                test(&mut owner, arena, &mut page_map),
+                DynamicPageFixtureOutcome::TearDown
+            ) {
+                owner
+                    .teardown()
+                    .expect("an explicitly finished dynamic page engine leaves a tear-downable attachment");
+                // SAFETY: successful `finish` has collected/released every
+                // page before this explicit source-plain page-map destruction
+                // point.
+                unsafe { page_map.destroy() }
+                    .expect("the dynamic fixture has no remaining page-map entries");
+            } else {
+                // A terminal dynamic poison intentionally retains the page
+                // engine's attachment plus its live map/arena/resource state. This
+                // isolated fixture models that production state by leaking
+                // all mutually linked storage after its assertions.
+                core::mem::forget(owner);
+                core::mem::forget(page_map);
+                core::mem::forget(region);
+                core::mem::forget(registry);
+            }
+        })
+        .join()
+        .expect("the dynamic page fixture remains on one current thread");
+    }
+
+    #[test]
+    fn ordinary_dynamic_attachment_rejects_page_session_without_arena_or_map_mutation() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            assert!(matches!(
+                owner.page_session(),
+                Err(DynamicTheapPageSessionError::AbandoningMode)
+            ));
+            owner
+                .teardown()
+                .expect("the refusing ordinary attachment has not created pages");
+        })
+        .join()
+        .expect("ordinary dynamic session refusal stays current-thread local");
+    }
+
+    #[test]
+    fn non_abandoning_dynamic_page_session_allocates_on_its_exact_theap_and_pinned_heap() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let heap = owner.heap.as_ref().get_ref() as *const Heap as *mut Heap;
+            let fields = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the attached dynamic owner retains its typed Theap")
+                .test_main_static_fields();
+            assert_eq!(fields.page_full_retain, -1);
+            assert!(!fields.allows_page_abandon);
+            let session = owner
+                .page_session()
+                .expect("the selected non-abandoning image admits the page engine");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(37, false)
+                .expect("the dynamic engine allocates a real regular page block");
+            let page = unsafe { allocator.page_for_block(block) };
+            assert!(!page.is_null());
+            // SAFETY: the current allocation keeps this dynamic page-map
+            // entry and its source page fields live until its matching free.
+            assert_eq!(unsafe { (*page).theap() }, allocator.theap_identity());
+            assert_eq!(unsafe { (*page).heap() }, heap);
+            assert_eq!(
+                allocator.test_attachment_teardown_preflight(),
+                Err(DynamicTheapError::PageCountNonZero),
+                "a live dynamic page rejects attachment teardown before root/key/list mutation"
+            );
+            // SAFETY: `block` is this test's sole current allocation.
+            unsafe { allocator.free(block) }.expect("the dynamic block frees locally");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_non_abandoning_full_page_collects_joined_remote_block_and_unfulls() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = crate::config::SMALL_MAX_OBJ_SIZE + crate::config::WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("dynamic medium block");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the dynamic medium block has a page");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            let mut blocks = Vec::with_capacity(reserved);
+            blocks.push(first);
+            while unsafe { page.as_ref().used() } < reserved {
+                let next = allocator
+                    .allocate(request, false)
+                    .expect("the dynamic medium page reaches its source full state");
+                assert_eq!(unsafe { allocator.page_for_block(next) }, page.as_ptr());
+                blocks.push(next);
+            }
+            assert_eq!(unsafe { page.as_ref().used() }, reserved);
+            assert_eq!(allocator.queue_count(crate::config::BIN_FULL), Some(1));
+
+            let producer = unsafe { allocator.begin_remote_free(blocks[0]) }
+                .expect("the dynamic full page admits the joined producer");
+            thread::scope(|scope| {
+                let joined = scope.spawn(move || producer.publish());
+                match joined.join().expect("dynamic full producer joins") {
+                    Ok(()) => {}
+                    Err((producer, error)) => {
+                        let original = producer.cancel();
+                        panic!("dynamic full remote publication rejected {original:?}: {error:?}");
+                    }
+                }
+            });
+
+            assert!(allocator.collect_retired(false));
+            assert_eq!(unsafe { page.as_ref().used() }, reserved - 1);
+            assert_eq!(allocator.queue_count(crate::config::BIN_FULL), Some(0));
+            let reused = allocator
+                .allocate(request, false)
+                .expect("the non-abandoning full collector restores the remote block");
+            assert_eq!(reused, blocks[0]);
+            blocks[0] = reused;
+            for block in blocks {
+                // SAFETY: the full collector returned the transferred block
+                // once and all sibling blocks remained local throughout.
+                unsafe { allocator.free(block) }.expect("the dynamic full block frees");
+            }
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn failed_dynamic_engine_finish_retains_the_engine_then_drop_latches_attachment_terminal() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(37, false)
+                .expect("a live page makes explicit finish fail without consuming authority");
+            let page = unsafe { allocator.page_for_block(block) };
+            let allocator = match allocator.finish() {
+                Ok(()) => panic!("a live dynamic page cannot finish"),
+                Err(allocator) => allocator,
+            };
+            // `finish(self)` has returned the sole live engine, so no caller
+            // can use a successfully finished value. Dropping this failed
+            // engine is deliberately non-destructive but latches attachment
+            // teardown instead of losing the live page/map ownership.
+            drop(allocator);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            assert!(!page.is_null());
+            assert_eq!(
+                unsafe { page_map.checked_lookup(block.as_ptr()) },
+                page,
+                "terminal dynamic attachment keeps its page-map entry rather than faking teardown"
+            );
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_pending_os_release_makes_finish_retain_then_drop_latch_attachment() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let fault = fault::install(fault::Plan::disabled());
+            let block = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("dynamic OS-aligned singleton");
+            fault.set(fault::Plan::at(
+                fault::Point::Unmap,
+                1,
+                crabc_core::Errno::NOMEM,
+            ));
+            // SAFETY: `block` is the singleton's sole live allocation; the
+            // injected unmap failure clears its page metadata but retains the
+            // unique mapping owner in the engine.
+            unsafe { allocator.free(block) }.expect("semantic free parks its OS owner");
+            assert!(allocator.has_pending_os_release());
+            let allocator = match allocator.finish() {
+                Ok(()) => panic!("a pending OS release cannot finish"),
+                Err(allocator) => allocator,
+            };
+            drop(allocator);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            assert!(
+                owner.terminal_os_release.is_some(),
+                "terminal Drop transfers the unique OS release owner into the retained attachment"
+            );
+            assert_eq!(
+                owner
+                    .theap
+                    .as_mut()
+                    .and_then(MetaAllocation::dynamic_theap_mut)
+                    .unwrap()
+                    .page_count(),
+                0,
+                "the retained terminal state is the engine's pending OS owner, not a live page"
+            );
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_regular_remote_free_is_joined_collected_and_reused() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator.allocate(37, false).expect("dynamic regular block");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the current dynamic block has a page-map entry");
+            let capacity = unsafe { page.as_ref().capacity() as usize };
+            let mut local_blocks = Vec::with_capacity(capacity);
+            local_blocks.push(block);
+            while unsafe { page.as_ref().used() } < capacity {
+                let next = allocator
+                    .allocate(37, false)
+                    .expect("the dynamic direct page supplies its initialized capacity");
+                assert_eq!(unsafe { allocator.page_for_block(next) }, page.as_ptr());
+                local_blocks.push(next);
+            }
+            assert!(capacity < unsafe { page.as_ref().reserved() as usize });
+            let producer = unsafe { allocator.begin_remote_free(block) }
+                .expect("the real dynamic regular page has an owner collection route");
+            thread::scope(|scope| {
+                let joined = scope.spawn(move || producer.publish());
+                match joined.join().expect("scoped producer remains live") {
+                    Ok(()) => {}
+                    Err((producer, error)) => {
+                        let original = producer.cancel();
+                        panic!("dynamic remote publication rejected {original:?}: {error:?}");
+                    }
+                }
+            });
+            let reused = allocator
+                .allocate(37, false)
+                .expect("the regular search false-collects the joined remote block");
+            assert_eq!(reused, block);
+            // SAFETY: collection returned this exact formerly remote block to
+            // local ownership once.
+            unsafe { allocator.free(reused) }.expect("the reused dynamic block frees");
+            for local in local_blocks.into_iter().skip(1) {
+                // SAFETY: these sibling allocations were never transferred
+                // and remain exact current blocks from this dynamic page.
+                unsafe { allocator.free(local) }.expect("the dynamic sibling frees");
+            }
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_non_abandoning_small_page_uses_the_stored_minus_one_full_profile() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator.allocate(37, false).expect("dynamic small block");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the dynamic small block has a page");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            let mut blocks = Vec::with_capacity(reserved);
+            blocks.push(first);
+            while unsafe { page.as_ref().used() } < reserved {
+                let next = allocator
+                    .allocate(37, false)
+                    .expect("the small page extends then exhausts through the shared engine");
+                assert_eq!(unsafe { allocator.page_for_block(next) }, page.as_ptr());
+                blocks.push(next);
+            }
+            assert_eq!(unsafe { page.as_ref().used() }, reserved);
+            let successor = allocator
+                .allocate(37, false)
+                .expect("the direct miss enters generic small-page search");
+            assert_ne!(
+                unsafe { allocator.page_for_block(successor) },
+                page.as_ptr(),
+                "the exhausted page is classified before a fresh successor is used"
+            );
+            // `_mi_page_to_full` immediately performs the second
+            // false-force collection. With no remote or local frees that
+            // collection unfulls this page again, so assert the exact
+            // transition witness rather than its transient queue position.
+            assert_eq!(
+                allocator.test_last_page_to_full(),
+                Some(page),
+                "the stored -1 profile routes an exhausted small page through BIN_FULL"
+            );
+            for block in blocks {
+                // SAFETY: all blocks remain exact local allocations; this
+                // only demonstrates immediate full routing, not remote flow.
+                unsafe { allocator.free(block) }.expect("the dynamic small block frees");
+            }
+            // SAFETY: this successor is a distinct, still-local allocation
+            // from the generic fallback that forced the source queue scan.
+            unsafe { allocator.free(successor) }.expect("the successor frees");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_collection_poison_retains_attachment_map_roots_and_key_authority() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let key = owner.key().expect("attached dynamic owner retains its key");
+            let theap = owner.theap_pointer().expect("typed dynamic Theap pointer");
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator.allocate(37, false).expect("dynamic regular block");
+            let page = unsafe { allocator.page_for_block(block) };
+            let page_ref = NonNull::new(page).expect("the current dynamic block has a page");
+            let capacity = unsafe { page_ref.as_ref().capacity() as usize };
+            let mut locals = Vec::with_capacity(capacity);
+            locals.push(block);
+            while unsafe { page_ref.as_ref().used() } < capacity {
+                let next = allocator.allocate(37, false).expect("dynamic page capacity");
+                assert_eq!(unsafe { allocator.page_for_block(next) }, page);
+                locals.push(next);
+            }
+            let producer = unsafe { allocator.begin_remote_free(block) }
+                .expect("the active dynamic regular page admits its producer");
+            thread::scope(|scope| {
+                let joined = scope.spawn(move || producer.publish());
+                match joined.join().expect("dynamic poison producer joins") {
+                    Ok(()) => {}
+                    Err((producer, error)) => {
+                        let original = producer.cancel();
+                        panic!("dynamic poison publication rejected {original:?}: {error:?}");
+                    }
+                }
+            });
+
+            allocator.inject_page_free_collect_failure_once();
+            assert_eq!(allocator.allocate(37, false), None);
+            assert!(allocator.test_has_collection_poison());
+            // The failure is before remote detachment, but production cannot
+            // clear its poison. Dropping this unfinished engine latches the
+            // dynamic attachment without releasing any related capability.
+            drop(allocator);
+
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            assert_eq!(cached_theap().as_ptr(), theap);
+            assert_eq!(
+                owner.backing.as_mut().unwrap().get(key).unwrap(),
+                theap.cast(),
+                "terminal collection poison keeps the regular key slot live"
+            );
+            assert!(dynamic_backing_peek().is_some());
+            assert_eq!(
+                unsafe { page_map.checked_lookup(block.as_ptr()) },
+                page,
+                "terminal collection poison retains the real dynamic map entry"
+            );
+            assert_eq!(
+                owner
+                    .theap
+                    .as_mut()
+                    .and_then(MetaAllocation::dynamic_theap_mut)
+                    .unwrap()
+                    .page_count(),
+                1
+            );
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
     }
 
     #[test]

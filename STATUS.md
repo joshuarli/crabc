@@ -143,9 +143,16 @@ unchanged; an after-publication or after-root-reset private failure returns a
 retained poisoned owner with only known-valid capabilities. The one retryable
 exception is a pre-mutation key-release lock error after other teardown: it
 retains only the lease until `AwaitingKeyRelease` succeeds. General cached-root
-switching/refcount ownership, remote-free routing, page routing or abandonment
-integration, full heap/Theap/arena/subprocess APIs, pthread/fork/process
-shutdown, stats/options/callbacks, and public ABI remain open.
+switching/refcount ownership, general remote-free routing/concurrency, general
+page routing or abandonment integration, full heap/Theap/arena/subprocess APIs,
+pthread/fork/process shutdown, stats/options/callbacks, and public ABI remain
+open. Ordinary dynamic begin stores the source abandoning `true`/`2` profile
+and rejects a page session. A crate-private unsafe non-abandoning begin instead
+stores `false`/`-1` before Release heap publication; its sealed borrowed
+`DynamicTheapPageSession` alone instantiates the shared private
+`PageAllocatorEngine`. Consuming finish requires a drained page lifecycle, and
+an unfinished engine Drop terminally latches the attachment rather than
+allowing teardown to claim quiescence.
 
 Separately, the exact source-layout `mi_random_ctx_t` image now lives directly
 in `Theap::random`: it preserves source input/output word order, counter
@@ -156,22 +163,23 @@ an error or short read, then retries only while weak. The source local
 approved RustCrypto expansion of transparent weak observations; this
 non-entropy-adding degraded-path difference is recorded in
 `compat/allocator/known-differences.md`. The static main-Theap slice initializes
-this exact image; both static and private dynamic Theap attachment use it, but
-allocator routing and production thread/process integration remain absent.
+this exact image; both static and private dynamic Theap attachment use it, and
+the narrow non-abandoning dynamic session reuses the private page engine.
+General allocator routing and production thread/process integration remain
+absent.
 Four bounded Loom
 schedules execute the shared live-owner and abandoned owner-claim/unown head
 transitions. The compiler-TLS evidence proves private initial-exec AArch64 code
-generation in a
-dedicated crate probe and proves that the pinned compiler default would instead
-emit TLSDESC; production integration must still apply the required per-crate
-model and audit the final linked ELF. The last protocol requires stable,
-queue-detached metadata and deliberately performs no terminal page release or
-reuse. None of these pieces is integrated into allocation routing, actual
-process/thread lifecycle hooks, full teardown, or reusable page lifetime.
-Process state,
-integrated allocator TLS lifecycle, dynamic heap/theap attachment, integrated
-remote-free routing, complete concurrency modeling and stress, libc
-integration, the remaining upstream
+generation in a dedicated crate probe and proves that the pinned compiler
+default would instead emit TLSDESC; public runtime integration must still apply
+the required per-crate model and audit the final linked ELF. The abandonment
+protocol requires stable, queue-detached metadata and deliberately performs no
+terminal page release or reuse; it is not part of the bounded dynamic page
+engine. General allocation routing, actual process/thread lifecycle hooks,
+full teardown, and reusable abandoned-page lifetime remain absent.
+Process state, general allocator TLS lifecycle, general dynamic heap/Theap
+attachment and remote-free routing, complete concurrency modeling and stress,
+libc integration, the remaining upstream
 suites, and performance promotion gates remain open.
 
 Future acceptance contracts are deliberately specific:

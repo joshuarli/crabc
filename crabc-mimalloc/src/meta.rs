@@ -514,6 +514,27 @@ impl<'owner> MetaAllocation<'owner> {
         Some(unsafe { &mut *self.pointer.as_ptr().cast::<Theap>() })
     }
 
+    /// Immutably projects a prior exact dynamic-Theap image while its retained
+    /// metadata capability is still live. The page-session boundary needs only
+    /// source queue/direct inspection through this reference; mutation remains
+    /// gated by the owner's unique mutable capability above.
+    #[inline]
+    pub(crate) fn dynamic_theap(&self) -> Option<&Theap> {
+        if !self.is_live()
+            || !self.dynamic_theap_initialized
+            || self.thread_local_data_initialized
+            || self.requested_size != size_of::<Theap>()
+            || self.pointer.as_ptr().addr() % align_of::<Theap>() != 0
+            || self.memory.kind() != MemoryKind::Malloc
+            || !self.has_consistent_malloc_provenance()
+        {
+            return None;
+        }
+        // SAFETY: the exact initialized image remains live through this
+        // capability. This shared projection does not permit mutation.
+        Some(unsafe { &*self.pointer.as_ptr().cast::<Theap>() })
+    }
+
     #[inline]
     fn claim(&self, expected: u8, next: u8) -> bool {
         self.state

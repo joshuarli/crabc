@@ -13,7 +13,7 @@
 // `include/mimalloc/types.h:608-758`
 // (arena-page and arena metadata layouts), `src/init.c:15-145` (the
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
-// empty-theap initializers), `src/theap.c:236-306,357-369,414-449` (dynamic
+// empty-theap initializers), `src/theap.c:228-306,357-369,414-449` (dynamic
 // Theap initialization, canonical cached reference pair, and list detach),
 // `src/arena.c:1023-1095` (fresh-page metadata
 // publication), `src/page.c:214-243,708-757` (false-force owner-local
@@ -2689,6 +2689,7 @@ impl Theap {
         &mut self,
         heap: &mut Heap,
         tld: &mut ThreadLocalData,
+        page_mode: DynamicTheapPageMode,
     ) -> Result<(), TheapDynamicInitError> {
         if self.is_initialized()
             || self.memid.kind() != MemoryKind::Malloc
@@ -2710,8 +2711,12 @@ impl Theap {
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
         self.allow_page_reclaim = true;
-        self.allow_page_abandon = true;
-        self.page_full_retain = 2;
+        // This source option image must be selected before the Release heap
+        // publication. Ordinary dynamic attachment keeps the normal abandon
+        // setting; the only alternate private mode is a non-abandoning page
+        // session whose bounded collector can drain every admitted route.
+        self.allow_page_abandon = page_mode.allows_page_abandon();
+        self.page_full_retain = page_mode.page_full_retain();
         self.is_detached = false;
 
         let self_pointer = core::ptr::from_mut(self);
@@ -2863,9 +2868,11 @@ impl Theap {
         // bounded lifecycle freezes that normal-release value rather than
         // introducing mutable option state.
         self.page_full_retain = 2;
-        // The normal source default permits abandonment. This bounded state
-        // intentionally uses the source's non-abandoning/destroyable-theap
-        // mode because it does not implement remote-free or adoption.
+        // The normal source default permits abandonment. This detached
+        // bootstrap is separately source-special-cased as non-abandoning with
+        // retain two; it supports only the bounded owner-local collector,
+        // never a remote producer, abandonment/adoption, or a live dynamic
+        // attachment session.
         self.allow_page_abandon = false;
         debug_assert!(self.matches_owner(owner));
         self.heap.store(
@@ -3044,6 +3051,36 @@ pub(crate) enum TheapMainStaticInitError {
     InvalidInput,
     ThreadList(ThreadLocalTheapListError),
     HeapList(HeapTheapListError),
+}
+
+/// The only dynamic-Theap option images represented before `_mi_theap_init`
+/// Release-publishes its heap pointer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicTheapPageMode {
+    /// Ordinary source mode: page abandonment remains enabled, so no bounded
+    /// local page session may be constructed over this attachment.
+    OrdinaryAbandoning,
+    /// Private bounded mode: abandonment is disabled before publication and
+    /// the shared non-abandoning page engine may drain its page lifecycle.
+    NonAbandoningPageSession,
+}
+
+impl DynamicTheapPageMode {
+    #[inline]
+    pub(crate) const fn allows_page_abandon(self) -> bool {
+        matches!(self, Self::OrdinaryAbandoning)
+    }
+
+    /// `mi_theap_options_init` derives both fields from
+    /// `mi_option_page_full_retain`: the source-reachable non-abandoning
+    /// profile is `-1`, not an invented `allow=false, retain=2` image.
+    #[inline]
+    pub(crate) const fn page_full_retain(self) -> isize {
+        match self {
+            Self::OrdinaryAbandoning => 2,
+            Self::NonAbandoningPageSession => -1,
+        }
+    }
 }
 
 /// A failed bounded dynamic `_mi_theap_init` transition.

@@ -227,14 +227,32 @@ live TLD registration, and invalidates/quiesces/frees metadata before retiring
 the caller binding and key. Pre-publication OOM cleans up and rejects;
 post-list-publication list/backing/free failures retain a poisoned owner and
 all still-valid capabilities. A pre-mutation key-release lock error is the
-sole retry state: `AwaitingKeyRelease` retries only that lease. This does not
-implement heap new/delete/destroy, general cached-root switching/references,
-routing, remote free, abandonment, pthread hooks, or process shutdown.
+sole retry state: `AwaitingKeyRelease` retries only that lease.
+
+The ordinary dynamic constructor stores the source abandoning option image
+`allow_page_abandon = true` / `page_full_retain = 2`, so
+`DynamicTheapAttachment::page_session` rejects it without touching an arena or
+page map. The crate-private unsafe non-abandoning constructor instead stores
+the source-reachable `false` / `-1` image before Release heap publication.
+Only that mode can create a sealed unsafe `DynamicTheapPageSession`, which
+borrows the attachment for the whole `PageAllocatorEngine` lifetime and
+revalidates its current thread, regular slot, cached root/refcount, lists,
+heap/TLD binding, zero page count, and exact option profile. It reuses the
+existing private page engine and its scoped joined/quiescent remote producer;
+it is not a general dynamic allocation route. `finish(self)` consumes a
+dynamic engine only after force collection, empty queues/direct entries, zero
+page count, and no retained collection poison or pending OS release. An
+unfinished engine Drop latches the attachment terminally, leaving its live
+page/map/resource state in place and transferring any pending OS release owner
+into that retained attachment rather than allowing teardown to claim
+quiescence. This does not implement heap new/delete/destroy, general
+cached-root switching/references, general dynamic routing or remote-free
+concurrency, abandonment, pthread hooks, or process shutdown.
 
 `PrivateLock` preserves the TLD field's private-lock meaning but is not a
 byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made.
-General cached-root switching/reference ownership, remote-free/page routing or
-abandonment integration, full heap/Theap/arena/subprocess APIs,
+General cached-root switching/reference ownership, general remote-free/page
+routing or abandonment integration, full heap/Theap/arena/subprocess APIs,
 pthread/process hooks, fork repair, process shutdown, and general lock
 destruction remain outside this slice.
 

@@ -21,6 +21,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::pin::Pin;
 use core::ptr::NonNull;
 
+use crate::os_page::OsAlignedPageOwner;
 use crate::types::{
     Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner,
     ThreadLocalData,
@@ -220,6 +221,62 @@ pub(crate) struct ExclusiveTheapSession<'a> {
     owner: TheapOwner,
 }
 
+/// Narrow private page-owner interface shared by the static bootstrap and the
+/// bounded dynamic-Theap page session.
+///
+/// It deliberately exposes queue/direct/page-accounting transitions rather
+/// than a mutable whole Heap or Theap. Each implementation holds the one
+/// address-stable source image and its exact owner/thread proof for the
+/// duration of a page lifecycle; `single_thread.rs` remains the sole page
+/// algorithm engine.
+pub(crate) mod theap_page_session_sealed {
+    pub(crate) trait Sealed {}
+}
+
+/// # Safety
+///
+/// An implementation must retain one stable initialized Theap, Heap, and TLD;
+/// prove the exact live owner/thread identity for every published page; keep
+/// page metadata/block mappings and the source queue/direct state exclusive;
+/// and prevent attachment/metadata/list teardown while the engine or a scoped
+/// producer may hold raw page state. `publish_fresh_page` must wire only that
+/// exact stable Theap/Heap pair.
+pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
+    fn theap(&self) -> &Theap;
+    fn thread_id(&self) -> Option<LiveThreadId>;
+    fn queue(&self, bin: usize) -> Option<&PageQueue>;
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue>;
+    fn direct_page(&self, index: usize) -> Option<*mut Page>;
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool;
+    fn note_page_added(&mut self);
+    fn note_page_removed(&mut self) -> bool;
+    unsafe fn publish_fresh_page(
+        &mut self,
+        metadata: NonNull<Page>,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Page>>;
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId>;
+    fn retired_bounds(&self) -> (usize, usize);
+    fn note_retired_bin(&mut self, bin: usize) -> bool;
+    fn reset_retired_bounds(&mut self);
+    /// Transfers a detached OS mapping owner into session-specific terminal
+    /// storage before an unfinished engine disappears. Implementations that
+    /// have no retained attachment return the unchanged owner to the caller.
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner>;
+    /// Latches an unfinished engine without freeing or detaching page state.
+    /// Static bootstrap sessions are inert; dynamic sessions poison their
+    /// retained attachment so later teardown/re-entry cannot lie.
+    fn latch_unfinished_page_engine(&mut self);
+}
+
 impl ExclusiveTheapSession<'_> {
     #[inline]
     fn state_mut(&mut self) -> &mut ExclusiveTheapBootstrap {
@@ -382,6 +439,64 @@ impl ExclusiveTheapSession<'_> {
     pub(crate) fn reset_retired_bounds(&mut self) {
         self.state_mut().theap.reset_retired_bounds();
     }
+}
+
+impl theap_page_session_sealed::Sealed for ExclusiveTheapSession<'_> {}
+
+unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
+    #[inline]
+    fn theap(&self) -> &Theap { Self::theap(self) }
+    #[inline]
+    fn thread_id(&self) -> Option<LiveThreadId> { Self::thread_id(self) }
+    #[inline]
+    fn queue(&self, bin: usize) -> Option<&PageQueue> { Self::queue(self, bin) }
+    #[inline]
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> { Self::queue_mut(self, bin) }
+    #[inline]
+    fn direct_page(&self, index: usize) -> Option<*mut Page> { Self::direct_page(self, index) }
+    #[inline]
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        Self::set_direct_page(self, index, page)
+    }
+    #[inline]
+    fn note_page_added(&mut self) { Self::note_page_added(self) }
+    #[inline]
+    fn note_page_removed(&mut self) -> bool { Self::note_page_removed(self) }
+    #[inline]
+    unsafe fn publish_fresh_page(
+        &mut self,
+        metadata: NonNull<Page>,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        unsafe {
+            Self::publish_fresh_page(
+                self, metadata, block_size, page_offset, reserved, slice_pcommitted,
+                free_is_zero, memid,
+            )
+        }
+    }
+    #[inline]
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { Self::retire_page(self, page) }
+    #[inline]
+    fn retired_bounds(&self) -> (usize, usize) { Self::retired_bounds(self) }
+    #[inline]
+    fn note_retired_bin(&mut self, bin: usize) -> bool { Self::note_retired_bin(self, bin) }
+    #[inline]
+    fn reset_retired_bounds(&mut self) { Self::reset_retired_bounds(self) }
+    #[inline]
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner> {
+        Err(owner)
+    }
+    #[inline]
+    fn latch_unfinished_page_engine(&mut self) {}
 }
 
 #[cfg(test)]

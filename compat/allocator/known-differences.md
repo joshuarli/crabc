@@ -181,8 +181,9 @@ result may refine it only when it can prove retained ownership.
 ### `CRABC-MI-DYNAMIC-THEAP-INVALID-OWNER` — accepted private lifecycle boundary
 
 - **Upstream/Rust:** `src/threadlocal.c:23-214`, `src/init.c:236-360,377-421,448-481`,
-  `src/theap.c:236-306,357-369,414-449`, and `src/heap.c:60-100` /
-  `dynamic_theap::DynamicTheapAttachment`.
+  `src/theap.c:228-306,357-369,414-449`, and `src/heap.c:60-100` /
+  `dynamic_theap::DynamicTheapAttachment`, `DynamicTheapPageSession`, and
+  `single_thread::PageAllocatorEngine`.
 - **Category:** private invalid-owner and incomplete dynamic-thread lifecycle
   handling only. It has no C ABI surface or valid allocation-trace
   differential entry.
@@ -210,7 +211,17 @@ result may refine it only when it can prove retained ownership.
   final regular-key release lock error after all other valid teardown work:
   `AwaitingKeyRelease` retains only the linear lease until that pre-mutation
   release succeeds. Safe typed metadata projections also reject released
-  capabilities before forming a reference.
+  capabilities before forming a reference. Ordinary dynamic begin stores the
+  source abandoning `true`/`2` profile and rejects page-session construction.
+  The crate-private unsafe non-abandoning begin stores the source-reachable
+  `false`/`-1` profile before Release heap publication; its sealed borrowed
+  session is the only dynamic instantiation of the private shared page engine.
+  The engine must be consumed by a fully quiescent finish; an unfinished drop,
+  retained collection poison, or pending OS unmap failure latches the
+  attachment terminally, transfers any pending OS release owner into it, and
+  retains the live page/map/resource state rather than claiming teardown. This
+  remains bounded private routing, not a general
+  dynamic allocation, abandonment, pthread, fork, or process lifecycle.
 - **Evidence:**
   `dynamic_theap::tests::post_list_publication_backing_failure_returns_a_retained_poisoned_owner`
   proves retained post-publication authority;
@@ -221,6 +232,12 @@ result may refine it only when it can prove retained ownership.
   post-root-reset terminal ordering;
   `key_release_lock_failure_keeps_only_the_linear_lease_for_retry` proves the
   lone retryable release state; and
+  `dynamic_theap::tests::non_abandoning_dynamic_page_session_allocates_on_its_exact_theap_and_pinned_heap`,
+  `dynamic_non_abandoning_small_page_uses_the_stored_minus_one_full_profile`,
+  `dynamic_non_abandoning_full_page_collects_joined_remote_block_and_unfulls`,
+  and `dynamic_pending_os_release_makes_finish_retain_then_drop_latch_attachment`
+  prove bounded dynamic page-session identity, source `-1` full routing,
+  joined remote collection, and terminal unfinished shutdown;
   `meta::tests::released_capability_cannot_project_any_safe_typed_image`
   proves released backing/TLD/dynamic-Theap capabilities cannot form safe
   byte references;
@@ -230,9 +247,10 @@ result may refine it only when it can prove retained ownership.
   publication, unrelated-root preservation, pre-mutation no-page rejection,
   exact list membership, ticket-zero refusal, and valid release order.
 - **Decision/removal:** accepted until a complete dynamic heap/Theap, general
-  cached-root switching/reference, private-lock retry, pthread/process
-  lifecycle, and allocator integration design can distinguish all failures and
-  reach full source shutdown. It does not authorize pointer reconstruction,
+  cached-root switching/reference, private-lock retry, public routing,
+  abandonment, pthread/process lifecycle, and allocator integration design can
+  distinguish all failures and reach full source shutdown. It does not
+  authorize pointer reconstruction,
   lock stealing, arbitrary predecessor restoration, implicit lease drop,
   post-publication rollback, or a false registration/key decrement.
 

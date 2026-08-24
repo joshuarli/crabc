@@ -59,9 +59,12 @@ use core::ptr::NonNull;
 
 use crate::arena::{ArenaId, ArenaView, release_arena_slices};
 use crate::{aligned, alloc, support};
-use crate::bootstrap::{BootstrapError, ExclusiveTheapBootstrap, ExclusiveTheapSession};
+use crate::bootstrap::{
+    BootstrapError, ExclusiveTheapBootstrap, ExclusiveTheapSession, TheapPageSession,
+};
+use crate::dynamic_theap::DynamicTheapPageSession;
 use crate::config::{
-    ARENA_SLICE_SIZE, BIN_FULL, BIN_HUGE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
+    ARENA_SLICE_SIZE, BIN_COUNT, BIN_FULL, BIN_HUGE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
     SMALL_SIZE_MAX, WORD_SIZE,
 };
 use crate::free_list::{FreeListError, LocalFreeList};
@@ -223,11 +226,11 @@ pub(crate) enum RemoteFreePreparationError {
 /// locally free the block; callers must consume it with [`Self::publish`] or
 /// [`Self::cancel`].
 #[must_use = "a remote-free producer must be published or cancelled before the owner can resume"]
-pub(crate) struct RemoteFreeProducer<'owner, 'bootstrap, 'arena, 'map> {
+pub(crate) struct RemoteFreeProducer<'owner> {
     page: NonNull<Page>,
     canonical_block: NonNull<u8>,
     client_block: NonNull<u8>,
-    _owner: PhantomData<&'owner mut SingleThreadAllocator<'bootstrap, 'arena, 'map>>,
+    _owner: PhantomData<&'owner mut ()>,
     // `Cell` is intentionally !Sync. The explicit unsafe Send impl below
     // grants only one scoped producer transfer, never shared access.
     _not_sync: PhantomData<Cell<()>>,
@@ -237,11 +240,11 @@ pub(crate) struct RemoteFreeProducer<'owner, 'bootstrap, 'arena, 'map> {
 // the exact live regular-or-full page and canonical current block under the
 // allocator's exclusive borrow. The token carries no runtime allocator
 // reference; moving it to one scoped worker permits only `remote_free::push`.
-// Its `&mut SingleThreadAllocator` phantom borrow prevents safe owner/page-map
+// Its erased exclusive-owner phantom borrow prevents safe engine/session/page-map
 // mutation until the worker has consumed or cancelled the token.
-unsafe impl Send for RemoteFreeProducer<'_, '_, '_, '_> {}
+unsafe impl Send for RemoteFreeProducer<'_> {}
 
-impl<'owner, 'bootstrap, 'arena, 'map> RemoteFreeProducer<'owner, 'bootstrap, 'arena, 'map> {
+impl<'owner> RemoteFreeProducer<'owner> {
     /// Publishes the transferred canonical block through the exact bounded
     /// live-owner remote-free push.
     ///
@@ -266,15 +269,16 @@ impl<'owner, 'bootstrap, 'arena, 'map> RemoteFreeProducer<'owner, 'bootstrap, 'a
     }
 }
 
-/// One exclusive ordinary-allocation lifecycle over a caller-owned external arena.
+/// Generic private ordinary-allocation engine over one narrow page owner.
 ///
-/// This value owns the activated [`ExclusiveTheapSession`], so it is the
-/// only operation capable of mutating the pinned exclusive theap. It borrows the
-/// arena and page map rather than reserving VM itself. Dropping it does not
+/// This value owns either the static [`ExclusiveTheapSession`] or a dynamic
+/// attachment-backed page session, so it is the only operation capable of
+/// mutating that session's pinned Theap. It borrows the arena and page map
+/// rather than reserving VM itself. Dropping it does not
 /// collect, abandon, unregister, or release any page: callers must force a
 /// collection before they dismantle the supplied arena or page map.
-pub(crate) struct SingleThreadAllocator<'bootstrap, 'arena, 'map> {
-    session: ExclusiveTheapSession<'bootstrap>,
+pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
+    session: Session,
     arena: ArenaView<'arena>,
     requested_arena: ArenaId,
     page_map: &'map PageMap,
@@ -292,9 +296,29 @@ pub(crate) struct SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     // recovery exists because a real failure can have ambiguous ownership.
     #[cfg(test)]
     page_free_collect_failure_once: bool,
+    // Records a source `mi_page_to_full` enqueue for focused dynamic-mode
+    // evidence even when the immediately following full collector unfulls an
+    // otherwise unchanged page before the public allocation returns.
+    #[cfg(test)]
+    last_page_to_full: Option<NonNull<Page>>,
+    // A successful explicit shutdown disarms Drop. Otherwise Drop must leave
+    // a dynamic attachment terminally retained rather than discarding this
+    // engine's poison/pending-release knowledge and allowing false teardown.
+    shutdown_complete: bool,
 }
 
-impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
+/// Existing static-session spelling/API. The generic engine above is private
+/// implementation structure, not a public first-class heap abstraction.
+pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
+    PageAllocatorEngine<'arena, 'map, ExclusiveTheapSession<'bootstrap>>;
+
+/// Private dynamic attachment specialization of the same page engine.
+pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
+    PageAllocatorEngine<'arena, 'map, DynamicTheapPageSession<'attach, 'heap>>;
+
+impl<'bootstrap, 'arena, 'map>
+    PageAllocatorEngine<'arena, 'map, ExclusiveTheapSession<'bootstrap>>
+{
     /// Activates the sole live default theap for this ordinary-page lifecycle.
     ///
     /// `bootstrap` must already occupy address-stable storage. `arena` must
@@ -325,6 +349,9 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             collection_poison: None,
             #[cfg(test)]
             page_free_collect_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            shutdown_complete: false,
         })
     }
 
@@ -351,8 +378,51 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             collection_poison: None,
             #[cfg(test)]
             page_free_collect_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            shutdown_complete: false,
         })
     }
+}
+
+impl<'attach, 'heap, 'arena, 'map>
+    PageAllocatorEngine<'arena, 'map, DynamicTheapPageSession<'attach, 'heap>>
+{
+    /// Instantiates the existing source page engine over one already validated
+    /// non-abandoning dynamic Theap session. The thread sequence is read from
+    /// the retained metadata TLD, never supplied independently by a caller.
+    pub(crate) fn activate_dynamic(
+        session: DynamicTheapPageSession<'attach, 'heap>,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map mut PageMap,
+    ) -> Self {
+        let thread_sequence = session.thread_sequence();
+        Self {
+            session,
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence,
+            pending_os_release: None,
+            collection_poison: None,
+            #[cfg(test)]
+            page_free_collect_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            shutdown_complete: false,
+        }
+    }
+
+    /// Test-only non-mutating attachment preflight. This deliberately cannot
+    /// call teardown while the engine owns the dynamic page session.
+    #[cfg(test)]
+    pub(crate) fn test_attachment_teardown_preflight(&mut self) -> Result<(), crate::dynamic_theap::DynamicTheapError> {
+        self.session.test_teardown_preflight()
+    }
+}
+
+impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, Session> {
 
     /// Returns the stable source `page->theap` identity of this exclusive
     /// lifecycle. The detached metadata wrapper uses it only for the exact
@@ -361,6 +431,35 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     #[inline]
     pub(crate) fn theap_identity(&self) -> *mut Theap {
         self.session.theap() as *const Theap as *mut Theap
+    }
+
+    /// Explicitly quiesces this bounded page lifecycle. A successful finish
+    /// force-collects releases, leaves no direct/queue/page state, no retained
+    /// poison, and no pending OS release; only then may a dynamic attachment
+    /// outlive the engine and proceed to its own source teardown.
+    pub(crate) fn finish(mut self) -> Result<(), Self> {
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            return Err(self);
+        }
+        if !self.collect_retired(true)
+            || self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+            || self.session.theap().page_count() != 0
+        {
+            return Err(self);
+        }
+        for bin in 0..BIN_COUNT {
+            if !self.session.queue(bin).is_some_and(|queue| queue.count() == 0) {
+                return Err(self);
+            }
+        }
+        for index in 0..PAGES_DIRECT {
+            if self.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                return Err(self);
+            }
+        }
+        self.shutdown_complete = true;
+        Ok(())
     }
 
     /// Looks up one current page while the caller holds this lifecycle's
@@ -1330,7 +1429,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     pub(crate) unsafe fn begin_remote_free<'owner>(
         &'owner mut self,
         block: NonNull<u8>,
-    ) -> Result<RemoteFreeProducer<'owner, 'bootstrap, 'arena, 'map>, RemoteFreePreparationError> {
+    ) -> Result<RemoteFreeProducer<'owner>, RemoteFreePreparationError> {
         if self.is_collection_poisoned() {
             return Err(RemoteFreePreparationError::CollectionPoisoned);
         }
@@ -1443,7 +1542,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     }
 
     #[cfg(test)]
-    fn has_pending_os_release(&self) -> bool {
+    pub(crate) fn has_pending_os_release(&self) -> bool {
         self.pending_os_release.is_some()
     }
 
@@ -1626,7 +1725,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     }
 
     #[cfg(test)]
-    fn inject_page_free_collect_failure_once(&mut self) {
+    pub(crate) fn inject_page_free_collect_failure_once(&mut self) {
         assert!(
             !self.page_free_collect_failure_once,
             "the focused test injection is one-shot"
@@ -1637,6 +1736,16 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     #[cfg(test)]
     fn retained_page_collect_poison(&self) -> Option<RetainedPageCollectPoison> {
         self.collection_poison
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_has_collection_poison(&self) -> bool {
+        self.collection_poison.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_last_page_to_full(&self) -> Option<NonNull<Page>> {
+        self.last_page_to_full
     }
 
     /// Removes only an `InjectedBeforeDetach` poison record so an isolated
@@ -1654,7 +1763,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     }
 
     #[cfg(test)]
-    fn queue_count(&self, bin: usize) -> Option<usize> {
+    pub(crate) fn queue_count(&self, bin: usize) -> Option<usize> {
         self.session.queue(bin).map(|queue| queue.count())
     }
 
@@ -2070,6 +2179,10 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         // SAFETY: `page` is one exhausted selected regular page and the
         // session exclusively owns both disjoint queue records and its links.
         unsafe { page_queue_enqueue_from_metadata(&mut *full, &mut *regular, page.as_ptr()) };
+        #[cfg(test)]
+        {
+            self.last_page_to_full = Some(page);
+        }
         self.update_direct_cache(bin);
         match self.page_free_collect_false(page) {
             Ok(()) => Ok(()),
@@ -2430,6 +2543,31 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
 
     fn owns_page(&self, page: &Page) -> bool {
         page.theap() == self.session.theap() as *const _ as *mut _
+    }
+}
+
+impl<'arena, 'map, Session: TheapPageSession> Drop
+    for PageAllocatorEngine<'arena, 'map, Session>
+{
+    fn drop(&mut self) {
+        if !self.shutdown_complete {
+            if let Some(owner) = self.pending_os_release.take() {
+                if let Err(owner) = self.session.retain_unfinished_os_release(owner) {
+                    // Static sessions have no longer-lived attachment in
+                    // which to retain this allocation-free retry token. The
+                    // owner has no destructor, so explicitly leaking it is
+                    // the only non-destructive Drop behavior; dynamic
+                    // sessions instead store it in their terminal owner.
+                    core::mem::forget(owner);
+                }
+            }
+            // This is intentionally non-destructive. Dynamic sessions retain
+            // their attachment and any pending OS release authority but
+            // become terminal; static sessions are otherwise inert. A Drop
+            // cannot manufacture source collection, page release, or
+            // attachment teardown.
+            self.session.latch_unfinished_page_engine();
+        }
     }
 }
 
@@ -3456,7 +3594,7 @@ mod tests {
     fn full_page_remote_producer_is_send() {
         fn assert_send<T: Send>() {}
 
-        assert_send::<RemoteFreeProducer<'static, 'static, 'static, 'static>>();
+        assert_send::<RemoteFreeProducer<'static>>();
     }
 
     #[test]
