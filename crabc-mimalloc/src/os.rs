@@ -23,9 +23,11 @@
 //!
 //! `StartupInput` is supplied by a future runtime owner. In particular, this
 //! module deliberately does not read `/proc/self/environ` or autonomously
-//! dereference `AT_RANDOM`: the latter belongs to the still-absent mimalloc
-//! random-state dependency. Tests may read `AT_PAGESZ` only to construct a
-//! real kernel-compatible input for their local mapping fixture.
+//! dereference `AT_RANDOM`: `random::TheapRandomImage` now uses direct
+//! `getrandom`, and startup material needs a separate lifetime/freshness
+//! contract before a process owner can consume it. Tests may read `AT_PAGESZ`
+//! only to construct a real kernel-compatible input for their local mapping
+//! fixture.
 
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -87,8 +89,9 @@ impl PageSize {
 /// The allocation-free fragment of process-start information used here.
 ///
 /// This carries only the verified kernel page size. `AT_RANDOM` is deliberately
-/// not copied or exposed: consuming it correctly requires the pinned
-/// mimalloc random-state implementation, which is outside this slice.
+/// not copied or exposed: the current random image initializes through direct
+/// `getrandom`, while a future process owner must separately define startup
+/// entropy lifetime and freshness before it may consume auxv material.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StartupInput {
     page_size: PageSize,

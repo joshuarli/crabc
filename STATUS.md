@@ -62,7 +62,16 @@ attachment, pthread/process hook, or C pthread-mutex size claim. Its teardown
 invalidates the TLD identity before attempting metadata free and terminally
 poisons on an internal consumption-ambiguous error. An audited future owner
 may connect `Unattached -> Attached -> Detached`; no such transition exists
-yet. Four bounded Loom
+yet. Separately, the exact source-layout `mi_random_ctx_t` image now lives
+directly in `Theap::random`: it preserves source input/output word order,
+counter carries, consumed-output clearing, direct random-field-address nonce
+identity, and in-place split. It calls direct Linux `getrandom` and continues
+weakly on an error or short read, then retries only while weak. The source
+local `_mi_random_shuffle` core is deliberately replaced by one
+domain-separated approved RustCrypto expansion of transparent weak
+observations; this non-entropy-adding degraded-path difference is recorded in
+`compat/allocator/known-differences.md`. It is not attached to a live theap,
+TLS root, or metadata teardown owner yet. Four bounded Loom
 schedules execute the shared live-owner and abandoned owner-claim/unown head
 transitions. The compiler-TLS evidence proves private initial-exec AArch64 code
 generation in a

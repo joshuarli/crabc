@@ -13,10 +13,13 @@ Linux memory policy, regular/aligned mapping ownership, a live two-level page
 map, ordinary and binned caller-owned bitmap views, an in-place external-arena
 substrate, the private futex-lock boundary, bounded nonallocating support
 kernels, the allocation-free recursive once protocol, pure page geometry, and
-the allocator random context over RustCrypto's original-ChaCha primitive. Five
-private compiler-TLS roots now preserve the pinned initial images and teardown
-values, while the selected Linux/AArch64 thread identity reads `TPIDR_EL0`
-directly. A
+the exact `mi_random_ctx_t` image stored in `Theap::random` over RustCrypto's
+original-ChaCha primitive. The random slice includes direct `getrandom`,
+error/short-read weak continuation, source counter/nonce/output clearing, and
+in-place address-identity splitting; its dependency-owned replacement for the
+source-local weak shuffle is recorded in `known-differences.md`. Five private
+compiler-TLS roots now preserve the pinned initial images and teardown values,
+while the selected Linux/AArch64 thread identity reads `TPIDR_EL0` directly. A
 process-static private metadata owner now ports the successful detached-Malloc
 paths in `src/subproc.c:19-88`: it directly maps its page map and external
 arena before publishing one detached theap, never touches compiler-TLS roots,

@@ -22,12 +22,14 @@ configuration, arithmetic, types, provenance, atomic operations, size classes,
 ordinary and binned caller-owned bitmap views, a live two-level page map,
 immutable Linux memory policy, regular/aligned mapping ownership, an in-place
 external-arena substrate, a private futex lock boundary, and bounded
-nonallocating support kernels. Its allocator-owned random context preserves the
-pinned source's original-ChaCha state and output contract through the audited
-RustCrypto primitive; OS entropy acquisition and runtime lifecycle wiring
-remain unfinished slices. The recursive allocation-free once protocol is
-present as a coordination primitive, but no process initialization state
-machine is yet claimed.
+nonallocating support kernels. Its allocator-owned random state is the exact
+`mi_random_ctx_t` image stored directly in `Theap::random`; it preserves the
+pinned original-ChaCha state and output contract through the audited RustCrypto
+primitive, direct entropy lifecycle, and a documented degraded entropy path.
+Theap/TLD attachment, publication, and teardown wiring remain unfinished
+slices. The recursive allocation-free once protocol is present as a
+coordination primitive, but no process initialization state machine is yet
+claimed.
 
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
 present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal
@@ -196,15 +198,33 @@ version, edge, source, build script, or proc macro outside the audited graph.
 It therefore still rejects a compiled libc dependency instead of mistaking
 lockfile presence for an active allocator edge.
 
-The intended use is `ChaCha20LegacyCore`, instantiated for one 64-byte block
-at a time from allocator-owned key/counter/nonce words. That preserves the
-pinned source's original-ChaCha 64-bit counter plus 64-bit nonce layout,
-low-nonce-word counter rollover, output word ordering, immediate clearing of
-consumed words, and split-context behavior without retaining a library RNG
-buffer. Entropy acquisition is injected so a strong context never performs a
-spurious reinitialization syscall. The pure-Rust generic implementation
-introduces no native call boundary and remains eligible for fat LTO; its
-AArch64 code size, selected NEON path, and throughput are explicitly
+`random::TheapRandomImage` is the authoritative `#[repr(C)]`
+`mi_random_ctx_t` layout: source sigma/key words occupy `input[0..12]`, its
+64-bit counter occupies `input[12..14]`, its 64-bit nonce occupies
+`input[14..16]`, and its C-ordered output/availability/weak fields follow.
+`ChaCha20LegacyCore` is instantiated one block at a time from those words.
+This preserves the pinned source's counter carry into only the low nonce word,
+output word ordering, immediate clearing of consumed words, and eager child
+block after `split_into`. Initialization and split derive nonces from the
+actual stable random-field address; they do not return a movable child context.
+
+`TheapRandomImage::initialize` calls direct Linux `getrandom` once. A complete
+fill makes a strong context. An error or short fill (`Ok(false)`) follows the
+source's continuation path, clears any temporary bytes, and marks the image
+weak. The source's `_mi_random_shuffle` core cannot be translated under the
+crypto policy, so `WeakObservations` serializes direct address, monotonic-clock,
+thread-pointer, process/thread-ID, and extra-seed observations into a
+domain-separated `ChaCha20LegacyCore` expansion. This is intentionally a
+dependency-owned substitute for the source weak-key expansion; it adds no
+entropy and does not create a second PRNG. `reinitialize_if_weak` retries direct
+entropy only for a weak image; strong images make no second syscall.
+
+Both `TheapRandomImage` and temporary key/output block copies are zeroized.
+Normal Rust-owned bootstrap/test values run `Drop`; metadata release bypasses
+Rust drop glue, so the future owner must call `TheapRandomImage::clear` before
+returning a live theap image to the metadata allocator. The pure-Rust generic
+implementation introduces no native call boundary and remains eligible for fat
+LTO; its AArch64 code size, selected NEON path, and throughput are explicitly
 unqualified until measured.
 
 ### Concurrency-test dependency boundary

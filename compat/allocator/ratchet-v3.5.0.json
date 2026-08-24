@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 66,
+    "implemented": 67,
     "item_count": 63,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 66
+    "unit_verified": 67
   },
-  "port_map_sha256": "af7d35c9958fa4ad2fb2cc74fb98fb4e56ac9508452247116bfdc71b9ac5c1be",
+  "port_map_sha256": "140def9e0ac588fe6425e8bb25c504f2070ba8c4f7bddbd66986d9a14710cdc1",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -317,7 +317,10 @@
     "unit:src/prim/prim.c": [],
     "unit:src/prim/unix/prim-tls.c": [],
     "unit:src/prim/unix/prim.c": [],
-    "unit:src/random.c": [],
+    "unit:src/random.c": [
+      "implemented",
+      "unit_verified"
+    ],
     "unit:src/static.c": [
       "implemented",
       "unit_verified"

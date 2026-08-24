@@ -34,6 +34,7 @@ use crate::config::{
     BIN_COUNT, BIN_FULL, LARGE_MAX_OBJ_WSIZE, PAGES_DIRECT, WORD_SIZE,
 };
 use crate::lock::PrivateLock;
+use crate::random::TheapRandomImage;
 
 pub(crate) type ThreadId = usize;
 pub(crate) type ThreadFree = usize;
@@ -1704,31 +1705,6 @@ static DETACHED_THREAD_LOCAL: DetachedThreadLocal = DetachedThreadLocal(ThreadLo
 #[inline]
 const fn detached_thread_local_ptr() -> *mut ThreadLocalData {
     core::ptr::addr_of!(DETACHED_THREAD_LOCAL.0).cast_mut()
-}
-
-/// Exact ABI image of `mi_random_ctx_t` used only by the static theap prefix.
-///
-/// The active random lifecycle is owned by `random::RandomContext`, whose
-/// RustCrypto-backed representation intentionally is not this C layout. The
-/// bootstrap only needs the source's all-zero input/output state with `weak`
-/// set, so an inert layout image keeps those roles separate.
-#[repr(C)]
-struct TheapRandomImage {
-    input: [u32; 16],
-    output: [u32; 16],
-    output_available: i32,
-    weak: bool,
-}
-
-impl TheapRandomImage {
-    const fn empty_weak() -> Self {
-        Self {
-            input: [0; 16],
-            output: [0; 16],
-            output_available: 0,
-            weak: true,
-        }
-    }
 }
 
 /// Source-layout prefix of `mi_theap_t` through `memid`.
