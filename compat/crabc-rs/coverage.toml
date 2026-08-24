@@ -29,7 +29,7 @@ missing_from_candidate_count = 0
 metadata_mismatches_count = 0
 reference_is_candidate_minus_candidate_only = true
 reference_sha256 = "93cd75cd5cffcef55541ffbd9ca496e7c18826a024d9250ee750b87c97fc9071"
-candidate_sha256 = "3771fea6077c2f49d8ef05e02de181ead0b888b60b17e92c716fa340b2cf0646"
+candidate_sha256 = "c40b59ac9d2e5844296b6e701fe1adb6c6ea52cacabeb88fae463de4bb597b79"
 candidate_symbols = [
   "_Exit", "_Fork", "_IO_feof_unlocked", "_IO_ferror_unlocked", "_IO_getc", "_IO_getc_unlocked", "_IO_putc", "_IO_putc_unlocked",
   "___environ", "__assert_fail", "__auxv", "__crabc_runtime_v1", "__crypt_blowfish", "__crypt_md5", "__crypt_r", "__crypt_sha256", "__crypt_sha512",
