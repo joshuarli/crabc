@@ -17,6 +17,14 @@ the allocator random context over RustCrypto's original-ChaCha primitive. Five
 private compiler-TLS roots now preserve the pinned initial images and teardown
 values, while the selected Linux/AArch64 thread identity reads `TPIDR_EL0`
 directly. A
+process-static private metadata owner now ports the successful detached-Malloc
+paths in `src/subproc.c:19-88`: it directly maps its page map and external
+arena before publishing one detached theap, never touches compiler-TLS roots,
+and uses a must-use owner-bound capability for source-ordered replacement and
+serialized cross-thread release. This remains only the M2 prerequisite:
+null/needs-no-free/non-Malloc release, subprocess lifecycle, live TLD/theap
+attachment, allocator-owned TLS backing, and public allocation routing are not
+claimed. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,

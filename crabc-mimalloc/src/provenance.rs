@@ -60,6 +60,34 @@ impl Address {
 }
 
 impl MemoryId {
+    /// Constructs the source `MI_MEM_MALLOC` provenance used for a block from
+    /// the dedicated metadata theap. This does not mean the public C
+    /// `malloc` ABI: metadata allocation remains a private process-runtime
+    /// operation with its own lifetime and lock contract.
+    #[inline]
+    pub(crate) const fn malloc(base: *mut u8, size: usize, initially_zero: bool) -> Self {
+        Self {
+            info: MemoryInfo {
+                malloc: crate::types::MallocMemory { base, size },
+            },
+            kind: MemoryKind::Malloc,
+            is_pinned: true,
+            initially_committed: true,
+            initially_zero,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn malloc_memory(&self) -> Option<crate::types::MallocMemory> {
+        if self.kind == MemoryKind::Malloc {
+            // SAFETY: `MemoryId::malloc` initializes this union member and no
+            // other constructor assigns `MemoryKind::Malloc`.
+            Some(unsafe { self.info.malloc })
+        } else {
+            None
+        }
+    }
+
     #[inline]
     pub(crate) const fn os(
         base: *mut u8,

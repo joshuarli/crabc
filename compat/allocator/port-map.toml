@@ -1129,13 +1129,28 @@ upstream = "src/theap.c"
 name = "default-theap-prefix-and-exclusive-pinned-bootstrap"
 source_region = "mi_heap_t/mi_tld_t prefixes, mi_theap_t through memid, empty bootstrap images, _mi_theap_init publication predicate, direct queues, page accounting, and retired-bin bounds"
 rust_module = "crabc_mimalloc::types and crabc_mimalloc::bootstrap"
-rust_item = "Heap/ThreadLocalData/Theap prefixes and DefaultSingleThreadBootstrap/DefaultSingleThreadSession"
-intentional_difference = "Caller pinning plus an explicit validated live thread identity replace TLS installation. The bounded theap is non-abandoning; omitted structure tails and global/process lifecycle are not claimed."
+rust_item = "Heap/ThreadLocalData/Theap prefixes and ExclusiveTheapBootstrap/ExclusiveTheapSession with explicit live or detached source owner"
+intentional_difference = "Caller pinning plus an explicit validated live thread identity replace TLS installation. The process metadata owner retains the source detached identity and requires external private-lock serialization. The bounded theap is non-abandoning; omitted structure tails and global/process lifecycle are not claimed."
 tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/bootstrap.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
 differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/subproc.c"
+name = "detached-malloc-metadata-theap-checkpoint"
+source_region = "_mi_meta_zalloc, _mi_meta_zalloc_aligned, _mi_meta_rezalloc, the successful MI_MEM_MALLOC branch of _mi_meta_free, and _mi_meta_is_meta_page (lines 19-88)"
+rust_module = "crabc_mimalloc::meta"
+rust_item = "process-static MetaAllocator/MetaAllocation with direct-OS page-map and external-arena bootstrap, detached ExclusiveTheapBootstrap, PrivateLock serialization, and owner-bound Malloc provenance"
+intentional_difference = "This is only the detached metadata-theap checkpoint. It accepts process-static owner-bound successful Malloc capabilities; the source null/needs-no-free and non-Malloc _mi_arenas_free branches, subprocess state/destruction, default heap deletion, arena-pages metadata/stats, and full process lifecycle remain absent. The source _mi_meta_rezalloc lock-release-before-copy/free ordering is retained."
+tests = ["crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/provenance.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
 stress_verified = false
 performance_qualified = false
 

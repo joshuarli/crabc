@@ -16,7 +16,7 @@ use core::pin::Pin;
 use core::ptr::{self, NonNull};
 
 use crate::arena::{manage_external_in_place, ArenaId, ArenaRegistry, ArenaView};
-use crate::bootstrap::DefaultSingleThreadBootstrap;
+use crate::bootstrap::ExclusiveTheapBootstrap;
 use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
 use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, StartupInput};
 use crate::page_map::{PageMap, PageMapRoot};
@@ -124,7 +124,7 @@ pub struct TestAllocatorContext {
     // This must be dropped before any stable pointee below.  Its borrows are
     // extended only after all four owners have their final addresses.
     allocator: Option<SingleThreadAllocator<'static, 'static, 'static>>,
-    _bootstrap: Pin<Box<DefaultSingleThreadBootstrap>>,
+    _bootstrap: Pin<Box<ExclusiveTheapBootstrap>>,
     page_map: Option<Box<PageMap>>,
     // The registry stores raw addresses inside `arena_mapping`; its leading
     // underscore marks this intentionally lifetime-only ownership edge.
@@ -600,7 +600,7 @@ impl TestAllocatorContext {
                 return Err(TestContextInitError::ThreadIdentity);
             }
         };
-        let mut bootstrap = Box::pin(DefaultSingleThreadBootstrap::new());
+        let mut bootstrap = Box::pin(ExclusiveTheapBootstrap::new());
         let allocator = {
             let page_map_ptr: *mut PageMap = &mut *page_map;
             // SAFETY: `bootstrap` and `page_map` are distinct Boxes whose
@@ -609,7 +609,7 @@ impl TestAllocatorContext {
             // mapped. Shutdown clears the root, drops `allocator`, destroys
             // the page map, and only then unmaps arena storage. No safe context
             // operation can move any pointee behind these extended borrows.
-            let bootstrap: Pin<&'static mut DefaultSingleThreadBootstrap> = unsafe {
+            let bootstrap: Pin<&'static mut ExclusiveTheapBootstrap> = unsafe {
                 core::mem::transmute(bootstrap.as_mut())
             };
             // SAFETY: see the shared stable-owner proof immediately above.

@@ -27,9 +27,19 @@ exact pinned C v3.5.0. A standalone default-off test package now exports 16
 strictly prefixed `crabc_test_*` symbols, passes the existing crabc allocator
 fixture, and passes 33 reviewed checks from pinned upstream `test-api.c` in an
 explicit creating-thread lifecycle. It exports no `malloc`, `mi_*`, or other
-production allocator symbol. This is not a production backend or readiness
-claim. Milestone 5 now has four bounded foundations: the exact AArch64
-16-bit-index/48-bit-generation TLS key and caller-owned slot contract; five
+production allocator symbol. Separately, the bounded production metadata-owner
+prerequisite from `src/subproc.c:19-88` now has one process-static detached
+theap backed by direct OS page-map and external-arena bootstrap state. It
+requires a caller-supplied frozen `MemoryConfig`, checks a live AArch64 thread
+pointer before its private lock, preserves `MemoryId::Malloc` owner-bound
+capabilities, and leaves compiler-TLS roots untouched. It supports zeroed and
+aligned zeroed allocation, source-ordered replacement, and serialized
+cross-thread free, with deterministic retryable and retained initialization
+failure states. It neither attaches a live TLD/theap nor implements the
+source's null/needs-no-free/non-Malloc release paths. This is not a production
+backend or readiness claim. Milestone 5 now has four bounded foundations: the
+exact AArch64 16-bit-index/48-bit-generation TLS key and caller-owned slot
+contract; five
 private compiler-TLS roots with direct `TPIDR_EL0` identity; live-owner and
 abandoned-page remote-free head transitions; and a one-page
 mapped/unmapped abandonment/adoption protocol with failed-reader bitmap

@@ -29,9 +29,12 @@
 // (direct-page, size-bin, and full-page predicates).
 //
 // This is the intentionally bounded normal-release lifecycle for exactly one
-// pinned default theap. It accepts only caller-managed external arenas and a
-// caller-initialized page map. There is no TLS, first-class heap, remote free,
-// page abandonment, OS arena reservation, or public API here. Ordinary small,
+// pinned exclusive theap. Ordinary activation supplies a live default theap;
+// the detached metadata wrapper supplies its own PrivateLock and reuses the
+// same exclusive mutation engine. It accepts only caller-managed external
+// arenas and a caller-initialized page map. There is no TLS, first-class heap,
+// lock-free remote-free routing, page abandonment, OS arena reservation, or
+// public API here. Ordinary small,
 // medium, large, and singleton pages retain their pinned source geometry and
 // queue transitions. This lifecycle also supports ordinary and valid
 // in-arena aligned/reallocation operations plus the source OS-aligned
@@ -45,7 +48,7 @@ use core::ptr::NonNull;
 
 use crate::arena::{ArenaId, ArenaView, release_arena_slices};
 use crate::{aligned, alloc, support};
-use crate::bootstrap::{BootstrapError, DefaultSingleThreadBootstrap, DefaultSingleThreadSession};
+use crate::bootstrap::{BootstrapError, ExclusiveTheapBootstrap, ExclusiveTheapSession};
 use crate::config::{
     ARENA_SLICE_SIZE, BIN_FULL, BIN_HUGE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
     SMALL_SIZE_MAX, WORD_SIZE,
@@ -56,7 +59,7 @@ use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedP
 use crate::page;
 use crate::page_map::PageMap;
 use crate::size_class;
-use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, Page, PageKind};
+use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, Page, PageKind, Theap};
 use crate::types::page_queue::{
     page_is_in_full, page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
@@ -81,7 +84,7 @@ enum ReleaseSpan {
     Os(PublishedOsAlignedPage),
 }
 
-/// One invalid local free at the explicit default-theap boundary.
+/// One invalid local free at the explicit exclusive-theap boundary.
 ///
 /// These are allocator-state failures, not a replacement for the C ABI's
 /// invalid-free policy. The eventual libc facade owns that policy; this
@@ -91,7 +94,7 @@ enum ReleaseSpan {
 pub(crate) enum FreeError {
     /// The address maps to no current ordinary page in this explicit lifecycle.
     Unmapped,
-    /// The mapped page is not owned by this pinned default theap.
+    /// The mapped page is not owned by this pinned exclusive theap.
     ForeignPage,
     /// The block is not one live scalar allocation from that page.
     InvalidBlock(FreeListError),
@@ -101,13 +104,13 @@ pub(crate) enum FreeError {
 
 /// One exclusive ordinary-allocation lifecycle over a caller-owned external arena.
 ///
-/// This value owns the activated [`DefaultSingleThreadSession`], so it is the
-/// only operation capable of mutating the pinned default theap. It borrows the
+/// This value owns the activated [`ExclusiveTheapSession`], so it is the
+/// only operation capable of mutating the pinned exclusive theap. It borrows the
 /// arena and page map rather than reserving VM itself. Dropping it does not
 /// collect, abandon, unregister, or release any page: callers must force a
 /// collection before they dismantle the supplied arena or page map.
 pub(crate) struct SingleThreadAllocator<'bootstrap, 'arena, 'map> {
-    session: DefaultSingleThreadSession<'bootstrap>,
+    session: ExclusiveTheapSession<'bootstrap>,
     arena: ArenaView<'arena>,
     requested_arena: ArenaId,
     page_map: &'map PageMap,
@@ -119,7 +122,7 @@ pub(crate) struct SingleThreadAllocator<'bootstrap, 'arena, 'map> {
 }
 
 impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
-    /// Activates the sole default theap for this ordinary-page lifecycle.
+    /// Activates the sole live default theap for this ordinary-page lifecycle.
     ///
     /// `bootstrap` must already occupy address-stable storage. `arena` must
     /// denote a registry-published external arena whose backing allocation and
@@ -131,14 +134,14 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     /// is normally [`ArenaId::none`] for nonexclusive external arenas, or the
     /// parent arena identity for an exclusive arena.
     pub(crate) fn activate(
-        bootstrap: Pin<&'bootstrap mut DefaultSingleThreadBootstrap>,
+        bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
         thread_id: LiveThreadId,
         arena: ArenaView<'arena>,
         requested_arena: ArenaId,
         page_map: &'map mut PageMap,
         thread_sequence: usize,
     ) -> Result<Self, BootstrapError> {
-        let session = bootstrap.activate(thread_id)?;
+        let session = bootstrap.activate_live(thread_id)?;
         Ok(Self {
             session,
             arena,
@@ -147,6 +150,46 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             thread_sequence,
             pending_os_release: None,
         })
+    }
+
+    /// Activates the detached process metadata theap over the same source
+    /// page/arena lifecycle. Every later operation must be externally
+    /// serialized by the metadata private lock; this is not a thread-local or
+    /// remote-free-capable allocator instance.
+    pub(crate) fn activate_detached(
+        bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map mut PageMap,
+        thread_sequence: usize,
+    ) -> Result<Self, BootstrapError> {
+        let session = bootstrap.activate_detached()?;
+        Ok(Self {
+            session,
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence,
+            pending_os_release: None,
+        })
+    }
+
+    /// Returns the stable source `page->theap` identity of this exclusive
+    /// lifecycle. The detached metadata wrapper uses it only for the exact
+    /// `_mi_meta_is_meta_page` pointer comparison; it never dereferences an
+    /// abandoned page's origin pointer.
+    #[inline]
+    pub(crate) fn theap_identity(&self) -> *mut Theap {
+        self.session.theap() as *const Theap as *mut Theap
+    }
+
+    /// Looks up one current page while the caller holds this lifecycle's
+    /// external exclusion. The detached metadata owner uses this only in a
+    /// focused identity regression; no raw page lifetime escapes the lock.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn page_for_block(&self, block: NonNull<u8>) -> *mut Page {
+        unsafe { self.page_map.checked_lookup(block.as_ptr()) }
     }
 
     /// Allocates one normal-release ordinary block, optionally clearing its
@@ -194,7 +237,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
                 Ok(Some(block)) => return Some(block),
                 Ok(None) => {
                     // The direct page is fully initialized and exhausted. In
-                    // this bounded default-theap mode it is retained locally
+                    // this bounded exclusive-theap mode it is retained locally
                     // in the full queue, never abandoned.
                     if !self.move_regular_to_full(bin, page.as_ptr()) {
                         return None;
@@ -949,8 +992,11 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     ///
     /// `block` must be exactly one current block returned by this allocator,
     /// must not have been previously freed, and no alias may access it after
-    /// this call. The caller must also retain the allocator's exclusive
-    /// default-theap capability; remote frees are deliberately not accepted.
+    /// this call. The caller must also retain the allocator's exclusive-theap
+    /// mutation capability. This primitive does not implement the general
+    /// lock-free remote-free protocol; a detached metadata wrapper may call it
+    /// from another thread only while its process-private lock supplies that
+    /// same exclusive mutation condition.
     pub(crate) unsafe fn free(&mut self, block: NonNull<u8>) -> Result<(), FreeError> {
         // SAFETY: the caller's live-local-allocation contract excludes a
         // simultaneous page-map registration or unregistration for this block.
@@ -1930,7 +1976,7 @@ mod tests {
             false,
         );
         let mut page_map = PageMap::initialize(config, 0, true).unwrap();
-        let bootstrap = DefaultSingleThreadBootstrap::new();
+        let bootstrap = ExclusiveTheapBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
         let mut allocator = SingleThreadAllocator::activate(
             bootstrap.as_mut(),
@@ -1984,7 +2030,7 @@ mod tests {
         .unwrap();
         let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
         let mut page_map = PageMap::initialize(config, 0, true).unwrap();
-        let bootstrap = DefaultSingleThreadBootstrap::new();
+        let bootstrap = ExclusiveTheapBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
         let mut allocator = SingleThreadAllocator::activate(
             bootstrap.as_mut(),
@@ -2124,7 +2170,7 @@ mod tests {
             false,
         );
         let mut page_map = PageMap::initialize(config, 0, true).unwrap();
-        let bootstrap = DefaultSingleThreadBootstrap::new();
+        let bootstrap = ExclusiveTheapBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
         let mut allocator = SingleThreadAllocator::activate(
             bootstrap.as_mut(),

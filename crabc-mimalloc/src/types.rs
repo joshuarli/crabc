@@ -80,6 +80,35 @@ impl LiveThreadId {
     }
 }
 
+/// The exact source identity attached to one exclusively mutated theap.
+///
+/// Ordinary default theaps carry a valid running-thread identity. The
+/// process metadata theap is different: `src/init.c` intentionally keeps its
+/// TLD detached and serializes all of its access through
+/// `theap_meta_lock`. Keeping that distinction in the type prevents the
+/// metadata owner from pretending it is a thread-local cache belonging to
+/// whichever thread initialized it first.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TheapOwner {
+    Live(LiveThreadId),
+    Detached,
+}
+
+impl TheapOwner {
+    #[inline]
+    pub(crate) const fn thread_id(self) -> ThreadId {
+        match self {
+            Self::Live(thread_id) => thread_id.get(),
+            Self::Detached => THREAD_ID_DETACHED,
+        }
+    }
+
+    #[inline]
+    const fn is_detached(self) -> bool {
+        matches!(self, Self::Detached)
+    }
+}
+
 /// Opaque because the subprocess lifecycle is outside the bootstrap slice.
 pub(crate) enum Subprocess {}
 
@@ -129,6 +158,11 @@ impl ThreadLocalData {
     #[inline]
     pub(crate) fn attach_exclusive(&mut self, thread_id: LiveThreadId) {
         self.thread_id = thread_id.get();
+    }
+
+    #[inline]
+    fn matches_owner(&self, owner: TheapOwner) -> bool {
+        self.thread_id == owner.thread_id()
     }
 }
 
@@ -736,10 +770,24 @@ impl Page {
         heap: &mut Heap,
         thread_id: LiveThreadId,
     ) {
-        debug_assert!(theap.matches_thread(thread_id));
+        self.associate_exclusive_owner(theap, heap, TheapOwner::Live(thread_id));
+    }
+
+    /// Associates a page with either a live-thread or detached exclusive
+    /// theap. Detached ownership is valid only for the process metadata
+    /// theap, whose callers serialize every operation with its private lock;
+    /// it is never a remote-free or abandonment owner.
+    pub(crate) fn associate_exclusive_owner(
+        &mut self,
+        theap: &mut Theap,
+        heap: &mut Heap,
+        owner: TheapOwner,
+    ) {
+        debug_assert!(theap.matches_owner(owner));
         self.theap = core::ptr::from_mut(theap);
         self.heap = core::ptr::from_mut(heap);
-        self.xthread_id.store(thread_id.get(), core::sync::atomic::Ordering::Release);
+        self.xthread_id
+            .store(owner.thread_id(), core::sync::atomic::Ordering::Release);
         // The source's owner bit permits access to the non-atomic page fields.
         // This exclusive slice has no remote-free transitions but begins with
         // the same owned empty-list state.
@@ -752,7 +800,7 @@ impl Page {
     /// `arena.c:mi_arenas_page_alloc_fresh` followed by the reset invariants
     /// checked in `page.c:_mi_page_init`; extending the local free list is a
     /// separate operation. The pointed theap and heap must be the stable
-    /// fields of a pinned [`crate::bootstrap::DefaultSingleThreadBootstrap`].
+    /// fields of a pinned [`crate::bootstrap::ExclusiveTheapBootstrap`].
     /// `reserved` is the complete source-reserved block count and must be
     /// nonzero. `page_offset` identifies the already-provisioned live block
     /// area; this routine deliberately does not allocate, map, or validate it.
@@ -761,6 +809,35 @@ impl Page {
         theap: &mut Theap,
         heap: &mut Heap,
         thread_id: LiveThreadId,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> bool {
+        self.publish_fresh_exclusive_owner(
+            theap,
+            heap,
+            TheapOwner::Live(thread_id),
+            block_size,
+            page_offset,
+            reserved,
+            slice_pcommitted,
+            free_is_zero,
+            memid,
+        )
+    }
+
+    /// Owner-typed source fresh-page publication shared by the live default
+    /// and detached metadata theaps. The caller's external synchronization
+    /// is what makes either path exclusive; this routine itself introduces no
+    /// remote-free capability.
+    pub(crate) fn publish_fresh_exclusive_owner(
+        &mut self,
+        theap: &mut Theap,
+        heap: &mut Heap,
+        owner: TheapOwner,
         block_size: usize,
         page_offset: usize,
         reserved: u16,
@@ -785,7 +862,7 @@ impl Page {
         self.next = null_mut();
         self.prev = null_mut();
         self.memid = memid;
-        self.associate_exclusive(theap, heap, thread_id);
+        self.associate_exclusive_owner(theap, heap, owner);
         // `MI_PAGE_META_IS_ALIGNED` is enabled in the frozen profile. As in
         // `arena.c`, publish the self map only after every ordinary page field
         // and exclusive owner record is ready.
@@ -819,10 +896,41 @@ impl Page {
     /// geometry/provenance inputs must describe that existing memory. This
     /// method maps no memory and does not validate a virtual-memory range.
     pub(crate) unsafe fn publish_fresh_exclusive_at(
-        mut metadata: NonNull<Self>,
+        metadata: NonNull<Self>,
         theap: &mut Theap,
         heap: &mut Heap,
         thread_id: LiveThreadId,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Self>> {
+        unsafe {
+            Self::publish_fresh_exclusive_owner_at(
+                metadata,
+                theap,
+                heap,
+                TheapOwner::Live(thread_id),
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                free_is_zero,
+                memid,
+            )
+        }
+    }
+
+    /// Raw owner-typed fresh-page publication for the detached metadata
+    /// theap and ordinary live theaps. See
+    /// [`Self::publish_fresh_exclusive_at`] for the storage obligations.
+    pub(crate) unsafe fn publish_fresh_exclusive_owner_at(
+        mut metadata: NonNull<Self>,
+        theap: &mut Theap,
+        heap: &mut Heap,
+        owner: TheapOwner,
         block_size: usize,
         page_offset: usize,
         reserved: u16,
@@ -843,10 +951,10 @@ impl Page {
         // required release transition, not a debug-only invariant check.
         // Keeping its boolean result explicit also preserves the raw entry
         // point's checked failure boundary in every optimization profile.
-        if !page.publish_fresh_exclusive(
+        if !page.publish_fresh_exclusive_owner(
             theap,
             heap,
-            thread_id,
+            owner,
             block_size,
             page_offset,
             reserved,
@@ -1514,7 +1622,7 @@ impl Theap {
     ///
     /// The caller must first attach `tld` to a valid [`LiveThreadId`] and must
     /// ensure both input addresses remain stable for every associated page.
-    /// `DefaultSingleThreadBootstrap` is the only owner in this slice and
+    /// `ExclusiveTheapBootstrap` is the only owner in this slice and
     /// makes that condition explicit with `Pin`. Publishing `heap` last is
     /// source order from `src/theap.c:_mi_theap_init`: it is the initialized
     /// predicate and must not become non-null before the preceding fields are
@@ -1527,6 +1635,30 @@ impl Theap {
         let Some(thread_id) = LiveThreadId::new(tld.thread_id()) else {
             return false;
         };
+        self.bind_exclusive_owner(heap, tld, TheapOwner::Live(thread_id))
+    }
+
+    /// Binds the empty source image to one process-lived detached metadata
+    /// theap. It deliberately accepts only the source detached TLD identity;
+    /// callers serialize every mutation with the metadata private lock and
+    /// must never route remote frees or abandonment through this theap.
+    pub(crate) fn bind_exclusive_detached(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+    ) -> bool {
+        self.bind_exclusive_owner(heap, tld, TheapOwner::Detached)
+    }
+
+    fn bind_exclusive_owner(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+        owner: TheapOwner,
+    ) -> bool {
+        if !tld.matches_owner(owner) {
+            return false;
+        }
         if self.is_initialized() {
             return false;
         }
@@ -1535,7 +1667,7 @@ impl Theap {
         self.refcount.store(1, core::sync::atomic::Ordering::Release);
         self.subproc
             .store(heap.subprocess, core::sync::atomic::Ordering::Release);
-        self.is_detached = false;
+        self.is_detached = owner.is_detached();
         // `theap.c:mi_theap_options_init` snapshots the default
         // `mi_option_page_full_retain == 2` into each initialized theap. This
         // bounded lifecycle freezes that normal-release value rather than
@@ -1545,7 +1677,7 @@ impl Theap {
         // intentionally uses the source's non-abandoning/destroyable-theap
         // mode because it does not implement remote-free or adoption.
         self.allow_page_abandon = false;
-        debug_assert!(self.matches_thread(thread_id));
+        debug_assert!(self.matches_owner(owner));
         self.heap.store(
             core::ptr::from_mut(heap),
             core::sync::atomic::Ordering::Release,
@@ -1560,10 +1692,15 @@ impl Theap {
 
     #[inline]
     pub(crate) fn matches_thread(&self, thread_id: LiveThreadId) -> bool {
+        self.matches_owner(TheapOwner::Live(thread_id))
+    }
+
+    #[inline]
+    fn matches_owner(&self, owner: TheapOwner) -> bool {
         // The only constructors use `DETACHED_THREAD_LOCAL` or a pinned
-        // `DefaultSingleThreadBootstrap` field, both live for this reference.
+        // exclusive bootstrap field, both live for this reference.
         let tld = unsafe { self.tld.as_ref() };
-        matches!(tld, Some(tld) if tld.thread_id() == thread_id.get())
+        matches!(tld, Some(tld) if tld.matches_owner(owner))
     }
 
     #[inline]

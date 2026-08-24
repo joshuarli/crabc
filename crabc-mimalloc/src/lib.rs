@@ -47,6 +47,7 @@ mod compiler_tls;
 mod free_list;
 mod invariants;
 mod lock;
+mod meta;
 mod once;
 mod os_page;
 #[cfg(miri)]

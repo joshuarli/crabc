@@ -29,6 +29,25 @@ remain unfinished slices. The recursive allocation-free once protocol is
 present as a coordination primitive, but no process initialization state
 machine is yet claimed.
 
+The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
+present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal
+operations require `Pin<&'static MetaAllocator>`, validate the current live
+AArch64 thread-pointer identity before taking a nonrecursive `PrivateLock`,
+then lazily build a direct-OS page map and aligned external arena in their
+final static slots before Release-publishing a detached `ExclusiveTheap`.
+The ordinary page lifecycle supplies the first and later metadata blocks; no
+`alloc`, libc, public pthread API, compiler-TLS root, separate metadata slab,
+or mmap-per-block path participates. Its must-use, non-Copy
+`MetaAllocation<'owner>` capability records the static owner address, requested
+size, and `MemoryId::Malloc` provenance. A future TLD/theap lifecycle owner
+must retain and move that capability as a field, never reconstruct it from the
+raw pointer. The checkpoint retains the source allocation-under-lock,
+unlock-before-copy/free `rezalloc` ordering and serializes cross-thread free,
+but it intentionally covers only successful Malloc capabilities: null,
+needs-no-free, and non-Malloc arena-release paths, subprocess destruction,
+full heap/theap lifecycle, allocator-owned TLS backing, and public ABI routing
+remain open.
+
 One private vertical slice now binds a caller-pinned default theap to a
 caller-managed external arena and page map. It claims and publishes exact
 small, medium, large, and singleton spans, maintains direct and generic

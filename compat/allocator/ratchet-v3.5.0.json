@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 63,
-    "item_count": 60,
+    "implemented": 64,
+    "item_count": 61,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 63
+    "unit_verified": 64
   },
-  "port_map_sha256": "ce41ce1f7c55a385d2ea5740377a83ed1c44e27dc12f9e312d2e2e23fe582c6f",
+  "port_map_sha256": "b65d5603b155ee1dfffd01902fda25316be5b32e92c19d53f44fe5b38e07cd03",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -259,6 +259,10 @@
       "unit_verified"
     ],
     "item:src/random.c:original-chacha-context-state-and-output-contract": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/subproc.c:detached-malloc-metadata-theap-checkpoint": [
       "implemented",
       "unit_verified"
     ],

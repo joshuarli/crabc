@@ -20,7 +20,8 @@ use core::pin::Pin;
 use core::ptr::NonNull;
 
 use crate::types::{
-    Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, ThreadLocalData,
+    Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner,
+    ThreadLocalData,
 };
 
 // `Theap` contains raw pointers and must not be shared for mutation. This
@@ -58,16 +59,16 @@ pub(crate) const fn empty_default_theap_ptr() -> *mut Theap {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BootstrapError {
-    /// This caller-owned image has already published its default theap.
+    /// This caller-owned image has already published its exclusive theap.
     AlreadyInitialized,
     /// The supplied state violated the source thread-identity predicate.
     InvalidThreadState,
 }
 
-/// Caller-owned backing storage for one default heap/theap bootstrap.
+/// Caller-owned backing storage for one exclusive heap/theap bootstrap.
 ///
 /// It may be constructed allocation-free and moved while inactive. Before
-/// [`Self::activate`] can wire `Theap` and `Page` raw pointers, the caller
+/// an activation method can wire `Theap` and `Page` raw pointers, the caller
 /// must place it in address-stable storage and pass `Pin<&mut Self>`. The
 /// active session exposes only controlled queue/direct-cache/page operations;
 /// it never exposes a mutable whole `Theap` or `Heap` that could invalidate
@@ -75,100 +76,128 @@ pub(crate) enum BootstrapError {
 ///
 /// This type is private allocator state, is intentionally `!Unpin`, and makes
 /// no Send, Sync, TLS, or concurrency claim. One exclusive caller supplies a
-/// source-valid [`LiveThreadId`] and retains the resulting session for the
-/// complete local-page lifecycle.
-pub(crate) struct DefaultSingleThreadBootstrap {
+/// source-valid [`LiveThreadId`] for an ordinary session, or a process owner
+/// supplies the source detached identity for metadata allocation.
+pub(crate) struct ExclusiveTheapBootstrap {
     heap: Heap,
     tld: ThreadLocalData,
     theap: Theap,
-    active_thread: Option<LiveThreadId>,
+    active_owner: Option<TheapOwner>,
     // Raw-pointer marker prevents accidental Send/Sync claims for this
     // exclusive mutable state; `PhantomPinned` makes pointer wiring durable.
     _not_send_or_sync: PhantomData<*mut ()>,
     _pin: PhantomPinned,
 }
 
-impl DefaultSingleThreadBootstrap {
+impl ExclusiveTheapBootstrap {
     /// Creates an inert, allocation-free bootstrap image.
     ///
     /// It has the source empty-theap contents but still points at the static
-    /// detached TLD and has no published heap. Pin it and call [`Self::activate`]
-    /// before associating any live [`Page`].
+    /// detached TLD and has no published heap. Pin it before activating one
+    /// live or detached owner.
     #[inline]
     pub(crate) const fn new() -> Self {
         Self {
             heap: Heap::bootstrap_empty(),
             tld: ThreadLocalData::detached(),
             theap: Theap::empty(),
-            active_thread: None,
+            active_owner: None,
             _not_send_or_sync: PhantomData,
             _pin: PhantomPinned,
         }
     }
 
-    /// Attaches and publishes the default theap after this image is pinned.
+    /// Attaches and publishes a live-thread theap after this image is pinned.
     ///
     /// This is the bounded source order from `_mi_thread_init_with_heap` and
     /// `_mi_theap_init`: record the caller identity in the TLD, complete the
     /// ordinary theap fields, then publish the heap pointer last. The returned
     /// session is the sole local owner; it neither installs nor reads TLS.
-    pub(crate) fn activate(
+    pub(crate) fn activate_live(
         self: Pin<&mut Self>,
         thread_id: LiveThreadId,
-    ) -> Result<DefaultSingleThreadSession<'_>, BootstrapError> {
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        self.activate_owner(TheapOwner::Live(thread_id))
+    }
+
+    /// Activates the source detached metadata-theap form.
+    ///
+    /// The resulting session is not thread-local: a process owner must hold
+    /// its private lock around every operation. It deliberately has no
+    /// thread identity, TLS access, remote-free path, or abandonment path.
+    pub(crate) fn activate_detached(
+        self: Pin<&mut Self>,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        self.activate_owner(TheapOwner::Detached)
+    }
+
+    fn activate_owner(
+        self: Pin<&mut Self>,
+        owner: TheapOwner,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
         // SAFETY: `Self` is !Unpin and this method never moves a field. The
         // newly stored self-referential raw pointers target the pinned `heap`
         // and `tld` fields and remain valid while the returned session borrows
         // this Pin.
         let state = unsafe { self.get_unchecked_mut() };
-        if state.active_thread.is_some() {
+        if state.active_owner.is_some() {
             return Err(BootstrapError::AlreadyInitialized);
         }
 
-        state.tld.attach_exclusive(thread_id);
-        if !state
-            .theap
-            .bind_exclusive_single_thread(&mut state.heap, &mut state.tld)
-        {
+        if let TheapOwner::Live(thread_id) = owner {
+            state.tld.attach_exclusive(thread_id);
+        }
+        let bound = match owner {
+            TheapOwner::Live(_) => state
+                .theap
+                .bind_exclusive_single_thread(&mut state.heap, &mut state.tld),
+            TheapOwner::Detached => state
+                .theap
+                .bind_exclusive_detached(&mut state.heap, &mut state.tld),
+        };
+        if !bound {
             return Err(BootstrapError::InvalidThreadState);
         }
-        state.active_thread = Some(thread_id);
+        state.active_owner = Some(owner);
 
-        Ok(DefaultSingleThreadSession {
+        Ok(ExclusiveTheapSession {
             // SAFETY: `state` came from the pinned receiver and remains in
             // place for the session lifetime. Reborrowing it restores the
             // pin rather than moving the bootstrap image.
             state: unsafe { Pin::new_unchecked(state) },
-            thread_id,
+            owner,
         })
     }
 
     #[inline]
     pub(crate) const fn active_thread(&self) -> Option<LiveThreadId> {
-        self.active_thread
+        match self.active_owner {
+            Some(TheapOwner::Live(thread_id)) => Some(thread_id),
+            Some(TheapOwner::Detached) | None => None,
+        }
     }
 }
 
-/// Exclusive capability for the one live default theap.
+/// Exclusive capability for one activated live or detached theap.
 ///
-/// It deliberately offers only the state transitions required by the local
-/// small-page slice. Dropping it does not detach, abandon, or free anything;
-/// thread teardown and all cross-thread protocols remain later lifecycle
-/// work.
-pub(crate) struct DefaultSingleThreadSession<'a> {
-    state: Pin<&'a mut DefaultSingleThreadBootstrap>,
-    thread_id: LiveThreadId,
+/// It deliberately offers only the state transitions required by the bounded
+/// exclusive page lifecycle. Dropping it does not detach, abandon, or free
+/// anything; live-thread teardown and lock-free remote-free protocols remain
+/// later work.
+pub(crate) struct ExclusiveTheapSession<'a> {
+    state: Pin<&'a mut ExclusiveTheapBootstrap>,
+    owner: TheapOwner,
 }
 
-impl DefaultSingleThreadSession<'_> {
+impl ExclusiveTheapSession<'_> {
     #[inline]
-    fn state_mut(&mut self) -> &mut DefaultSingleThreadBootstrap {
+    fn state_mut(&mut self) -> &mut ExclusiveTheapBootstrap {
         // SAFETY: session construction holds the sole mutable borrow of the
         // pinned bootstrap. This helper does not move any pinned field.
         unsafe { self.state.as_mut().get_unchecked_mut() }
     }
 
-    /// Inspects the initialized default theap without permitting replacement
+    /// Inspects the initialized exclusive theap without permitting replacement
     /// of its address-stable backing field.
     #[inline]
     pub(crate) fn theap(&self) -> &Theap {
@@ -176,8 +205,11 @@ impl DefaultSingleThreadSession<'_> {
     }
 
     #[inline]
-    pub(crate) const fn thread_id(&self) -> LiveThreadId {
-        self.thread_id
+    pub(crate) const fn thread_id(&self) -> Option<LiveThreadId> {
+        match self.owner {
+            TheapOwner::Live(thread_id) => Some(thread_id),
+            TheapOwner::Detached => None,
+        }
     }
 
     /// Returns one source `mi_page_queue_t` under the exclusive session.
@@ -249,16 +281,16 @@ impl DefaultSingleThreadSession<'_> {
         free_is_zero: bool,
         memid: MemoryId,
     ) -> Option<NonNull<Page>> {
-        let thread_id = self.thread_id;
+        let owner = self.owner;
         let state = self.state_mut();
         // SAFETY: this method forwards its raw-metadata and live-area
         // obligations unchanged; `state` owns the stable pinned theap/heap.
         unsafe {
-            Page::publish_fresh_exclusive_at(
+            Page::publish_fresh_exclusive_owner_at(
                 metadata,
                 &mut state.theap,
                 &mut state.heap,
-                thread_id,
+                owner,
                 block_size,
                 page_offset,
                 reserved,
@@ -269,16 +301,16 @@ impl DefaultSingleThreadSession<'_> {
         }
     }
 
-    /// Associates `page` with this stable default theap and heap.
+    /// Associates `page` with this stable exclusive theap and heap.
     ///
     /// The page metadata and its described block area must remain stable and
     /// exclusively owned for as long as it remains associated. In particular,
     /// callers must not use the static [`EMPTY_PAGE`] sentinel here.
     #[inline]
     pub(crate) fn associate_page(&mut self, page: &mut Page) {
-        let thread_id = self.thread_id;
+        let owner = self.owner;
         let state = self.state_mut();
-        page.associate_exclusive(&mut state.theap, &mut state.heap, thread_id);
+        page.associate_exclusive_owner(&mut state.theap, &mut state.heap, owner);
     }
 
     /// Clears a local-page association before metadata reuse.
@@ -377,13 +409,13 @@ mod tests {
 
     #[test]
     fn pinned_activation_binds_stable_owner_addresses_and_publishes_heap_last() {
-        let bootstrap = DefaultSingleThreadBootstrap::new();
+        let bootstrap = ExclusiveTheapBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
         let thread_id = LiveThreadId::new(12).expect("valid source-shaped id");
 
         let session = bootstrap
             .as_mut()
-            .activate(thread_id)
+            .activate_live(thread_id)
             .expect("first pinned activation succeeds");
         let state = session.state.as_ref().get_ref();
         let theap = session.theap();
@@ -406,9 +438,40 @@ mod tests {
 
         drop(session);
         assert!(matches!(
-            bootstrap.as_mut().activate(thread_id),
+            bootstrap.as_mut().activate_live(thread_id),
             Err(BootstrapError::AlreadyInitialized)
         ), "this bounded slice has no detach/reinitialize lifecycle");
+    }
+
+    #[test]
+    fn detached_activation_keeps_the_source_detached_identity_and_forbids_abandonment() {
+        let bootstrap = ExclusiveTheapBootstrap::new();
+        let mut bootstrap = core::pin::pin!(bootstrap);
+        let session = bootstrap
+            .as_mut()
+            .activate_detached()
+            .expect("a detached source bootstrap activates once");
+        let state = session.state.as_ref().get_ref();
+        let theap = session.theap();
+
+        assert_eq!(session.thread_id(), None);
+        assert_eq!(state.active_thread(), None);
+        assert!(theap.is_initialized());
+        assert!(theap.is_detached());
+        assert_eq!(theap.refcount(), 1);
+        assert_eq!(theap.page_full_retain(), 2);
+        assert!(!theap.allows_page_abandon());
+        assert_eq!(
+            theap.heap(),
+            core::ptr::addr_of!(state.heap).cast_mut(),
+            "the detached theap publishes its address-stable heap last"
+        );
+
+        drop(session);
+        assert!(matches!(
+            bootstrap.as_mut().activate_detached(),
+            Err(BootstrapError::AlreadyInitialized)
+        ));
     }
 
     #[repr(C, align(8))]
@@ -419,12 +482,12 @@ mod tests {
 
     #[test]
     fn pinned_session_raw_publication_initializes_metadata_before_page_access() {
-        let bootstrap = DefaultSingleThreadBootstrap::new();
+        let bootstrap = ExclusiveTheapBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
         let thread_id = LiveThreadId::new(12).expect("valid source-shaped id");
         let mut session = bootstrap
             .as_mut()
-            .activate(thread_id)
+            .activate_live(thread_id)
             .expect("pinned bootstrap activates");
         let mut backing = FreshPageBacking {
             page: MaybeUninit::uninit(),
