@@ -87,16 +87,21 @@ older lock-serialized caller-storage registry substrate, and one distinct
 allocator-owned process-global regular-key registry, five private compiler-TLS
 roots with direct `TPIDR_EL0` identity, low-bit atomic remote publication and
 owner collection, and one private linear `RemoteFreeProducer` over an exact
-live `BIN_FULL` allocation. Its exclusive allocator borrow prevents safe owner
-mutation while one scoped worker holds the `Send`/`!Sync` token; `publish`
-touches only the source remote head and `cancel` restores the original client
-pointer. The caller must still prove the worker joined/quiesced before queue
-collection. The non-abandoning full-page pass then consumes that published
-list before release-or-unfull; the explicit detached metadata session has no
-producer path and performs only the local false-force portion. Regular pages
-are intentionally rejected because this slice has no regular-page remote
-collection route. A bounded one-page abandonment/adoption
-protocol, a current-thread-only regular TLS backing owner,
+active matching regular non-huge-bin or `BIN_FULL` allocation. Its exclusive
+allocator borrow prevents safe owner mutation while one scoped worker holds the
+`Send`/`!Sync` token; `publish` touches only the source remote head and
+`cancel` restores the original client pointer. The caller must still prove the
+worker joined/quiesced before queue collection. The regular generic scan,
+including a small direct-cache miss, consumes publication before it extends or
+classifies a page full; the non-abandoning full-page pass consumes it before
+release-or-unfull. Every non-abandoning move to `BIN_FULL` also performs the
+source's second false-force collection after enqueue. The explicit detached
+metadata session has no producer path and performs only the local false-force
+portion. A false-force collection error permanently poisons this private
+allocator with the exact page, error, and any already-popped block; all later
+allocation, inspection, free, producer preparation, and collection entry
+points reject without another queue or page-map transition. A bounded one-page
+abandonment/adoption protocol, a current-thread-only regular TLS backing owner,
 one ticket-zero process-static main heap/default-Theap attachment, and one
 later-ticket dynamic Theap attachment over a caller-pinned Heap image. That
 backing owner has an explicitly unsafe lifecycle boundary: its caller must

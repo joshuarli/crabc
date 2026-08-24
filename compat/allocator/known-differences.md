@@ -26,38 +26,59 @@ capability that could name freed storage. This state is not a valid C-program
 observable difference and has no C differential entry; a richer metadata-free
 result may refine it only when it can prove retained ownership.
 
-### `CRABC-MI-SCOPED-FULL-PAGE-REMOTE-PRODUCER` — accepted bounded routing boundary
+### `CRABC-MI-SCOPED-REGULAR-AND-FULL-REMOTE-PRODUCER` — accepted bounded routing boundary
 
 - **Upstream/Rust:** `src/free.c:mi_free_block_mt` and
-  `src/page.c:mi_page_thread_free_collect` /
+  `src/page.c:mi_page_thread_free_collect`,
+  `mi_page_queue_find_free_ex`, `mi_page_to_full`, and
   `mi_theap_collect_full_pages`, represented by
   `single_thread::RemoteFreeProducer` and
-  `SingleThreadAllocator::begin_full_page_remote_free`.
+  `SingleThreadAllocator::begin_remote_free`.
 - **Category:** private routing/lifetime boundary only. It has no C ABI
   surface or valid allocation-trace differential entry.
 - **Difference:** mimalloc admits normal remote frees from general allocation
   routes and collects them under its full lifecycle. This bounded port admits
-  exactly one caller-proved current allocation from a live same-Theap/same-
-  thread `BIN_FULL` page. The linear `Send`/`!Sync` token holds the exclusive
-  allocator borrow while a scoped worker may only publish the canonical block
-  or cancel to the original client pointer. Regular pages, detached sessions,
-  a producer registry, concurrent queue collection, abandonment integration,
-  owner exit, pthread lifecycle, and general asynchronous/public free routing
-  remain absent. The caller still proves join/quiescence before queue
-  collection because existing queue helpers borrow page metadata.
+  one caller-proved current allocation from a live same-Theap/same-thread page
+  only when it is an active `BIN_FULL` member or an active matching regular
+  non-huge-bin member. The regular source candidate scan (including a small
+  direct-cache miss) consumes publication before extension/full
+  classification; the full scan consumes it before unfull/release. The linear
+  `Send`/`!Sync` token holds the exclusive allocator borrow while a scoped
+  worker may only publish the canonical block or cancel to the original client
+  pointer. Detached sessions, a producer registry, concurrent queue
+  collection, abandonment integration, owner exit, pthread lifecycle, and
+  general asynchronous/public free routing remain absent. The caller still
+  proves join/quiescence before queue collection because existing queue helpers
+  borrow page metadata. Unlike the infallible C collection calls, a Rust
+  false-force collection error permanently poisons this private allocator and
+  retains the exact page, error, and optional locally popped block; production
+  allocation, inspection, free, producer preparation, and collection then all
+  reject rather than guessing whether a detached remote list remains owned.
 - **Evidence:**
   `single_thread::tests::full_page_false_collection_reclaims_a_joined_remote_block_for_ordinary_reuse`
   and
   `full_page_false_collection_releases_a_joined_remotely_empty_page` prove
   source-order joined publication followed by unfull/reuse and all-free
-  release. `full_page_remote_producer_cancellation_restores_the_original_interior_client`
-  proves canonicalization does not lose the client pointer;
-  `full_page_remote_producer_rejects_regular_page_without_mutation` and
-  `detached_session_rejects_remote_producer_without_mutation` prove the two
-  admission boundaries. The type-level `full_page_remote_producer_is_send`
-  check proves the intentionally narrow cross-thread capability.
-- **Decision/removal:** accepted until regular candidate remote collection,
-  producer lifetime registration, queue-safe concurrent collection, and the
+  release. `regular_generic_remote_publication_is_collected_before_full_classification`
+  and `small_direct_remote_publication_retries_the_direct_page_before_full_transition`
+  prove regular generic and direct-to-generic collection, exact reuse, used
+  decrement, and no incorrect full transition.
+  `page_to_full_collects_a_remote_publication_after_the_enqueue` proves the
+  second non-abandoning `mi_page_to_full` collection: a local head can trigger
+  the move while a distinct remote publication is detached and installed only
+  after enqueue.
+  `page_to_full_collection_failure_permanently_retains_the_popped_block`
+  injects that post-enqueue false-force failure and proves retained page/block
+  identity plus non-mutating rejection at later allocation, inspection, free,
+  producer-preparation, and collection boundaries.
+  `remote_producer_rejects_an_unlinked_regular_page_without_mutation` proves
+  active regular-queue membership is required and preserves the rejected
+  allocation for ordinary local cleanup.
+  `full_page_remote_producer_cancellation_restores_the_original_interior_client`
+  proves canonicalization does not lose the client pointer; the detached and
+  type-level Send regressions prove their respective admission/type boundaries.
+- **Decision/removal:** accepted until producer lifetime registration,
+  queue-safe concurrent collection, general allocation/free routing, and the
   broader allocator/thread lifecycle are ported. It does not authorize an
   unbounded `Send` page handle, raw-pointer ownership reconstruction, or a
   general remote-free API.

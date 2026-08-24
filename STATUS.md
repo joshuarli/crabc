@@ -16,18 +16,24 @@ caller-managed external arena and page map. Large alignments use separately
 owned OS singleton mappings below the source's 256 MiB metadata limit, with
 allocation-free retry ownership when an injected terminal unmap fails. The
 slice includes checked counted allocation, full-page retention, retirement,
-and one private linear scoped `RemoteFreeProducer` for an exact live
-`BIN_FULL` allocation. Its exclusive owner borrow prevents safe allocator
-mutation while a scoped `Send`/`!Sync` worker may publish the canonical block
-or cancel back to the original client pointer. After caller-proved joined/
-quiescent publication, the non-abandoning full-page pass consumes the remote
-list before exact release-or-unfull; detached metadata sessions have no remote
-producer path and perform only the local false-force portion. Regular pages
-are rejected until a matching remote collection route exists; plus
-unregister-before-release and injected rollback. Unpinned external arenas now
-schedule the pinned 4-second `purge_decommits=1` path before slice reuse;
-forced collection claims the free bitmap while applying a non-owning
-decommit, preserves the external mapping owner, and retains retry state after
+and one private linear scoped `RemoteFreeProducer` for an exact active matching
+regular non-huge-bin or `BIN_FULL` allocation. Its exclusive owner borrow
+prevents safe allocator mutation while a scoped `Send`/`!Sync` worker may
+publish the canonical block or cancel back to the original client pointer.
+After caller-proved joined/quiescent publication, regular generic search
+(including a small direct-cache miss) consumes the remote list before extension
+or full classification, and the non-abandoning full-page pass consumes it
+before exact release-or-unfull. Every non-abandoning move to `BIN_FULL` also
+performs the source's post-enqueue false-force collection. Detached metadata
+sessions have no remote producer path and perform only the local false-force
+portion. Any false-force collection error permanently poisons this private
+allocator, retaining the exact page, error, and any already-popped block; all
+later allocation, inspection, free, producer preparation, and collection
+entry points reject without further queue or page-map mutation. This bounded
+slice also retains unregister-before-release and injected rollback. Unpinned
+external arenas now schedule the pinned 4-second `purge_decommits=1` path
+before slice reuse. Forced collection claims the free bitmap while applying a
+non-owning decommit, preserves the external mapping owner, and retains retry state after
 an injected decommit failure. The ordinary allocator gate
 matches 447 Rust-owned layout/configuration values, 378 address-independent
 small-allocation trace values, and 51 fundamental-operation values against
@@ -50,9 +56,9 @@ backend or readiness claim. Milestone 5 currently includes the exact AArch64
 older caller-storage registry substrate, and one allocator-owned process-global
 regular-key registry; five private compiler-TLS roots with direct `TPIDR_EL0`
 identity; live-owner and
-abandoned-page remote-free head transitions; one private scoped full-page
-remote producer and caller-proved joined/quiescent non-abandoning
-collection/release-or-unfull pass (with the detached no-remote local branch);
+abandoned-page remote-free head transitions; one private scoped active regular
+or full remote producer and caller-proved joined/quiescent false-force regular
+candidate/full-collection paths (with the detached no-remote local branch);
 a one-page mapped/unmapped
 abandonment/adoption protocol with failed-reader bitmap restoration and
 clear-once-set quiescence; an unsafe current-thread-only regular TLS backing
