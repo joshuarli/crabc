@@ -45,8 +45,9 @@ raw pointer. The checkpoint retains the source allocation-under-lock,
 unlock-before-copy/free `rezalloc` ordering and serializes cross-thread free,
 but it intentionally covers only successful Malloc capabilities: null,
 needs-no-free, and non-Malloc arena-release paths, subprocess destruction,
-full heap/theap lifecycle, allocator-owned TLS backing, and public ABI routing
-remain open.
+full heap/theap lifecycle, and public ABI routing remain open. A separate,
+narrow regular-TLS owner now retains its `MetaAllocation` capability while its
+dynamic compiler-TLS root is live; it does not attach a TLD or theap.
 
 One private vertical slice now binds a caller-pinned default theap to a
 caller-managed external arena and page map. It claims and publishes exact
@@ -74,9 +75,27 @@ backend selection. The present Milestone 5 foundations are intentionally
 narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, a
 lock-serialized global key registry over caller-owned source-sized bitmap
 blocks, five private compiler-TLS roots with direct `TPIDR_EL0` identity,
-low-bit atomic remote publication and owner collection, and a bounded
-one-page abandonment/adoption protocol. That protocol preserves mapped versus
-unmapped source classification, publishes the abandoned bitmap before
+low-bit atomic remote publication and owner collection, a bounded one-page
+abandonment/adoption protocol, and a current-thread-only regular TLS backing
+owner. That owner has an explicitly unsafe attach boundary: its caller must
+exclusively own the current `TPIDR_EL0` TLS lifecycle. It obtains a zeroed
+`mi_thread_locals_t`-shaped flexible image from `MetaAllocator`, starts at 16
+slots, doubles below 1024, adds 1024 at and above 1024, honors the least-index
+override, rejects a derived count above 65535, and publishes `memid` then
+`count` before the regular dynamic root. Its live projection checks the header
+count and exact Malloc provenance against the retained capability; null
+out-of-range writes do not allocate, and generation matching remains the
+caller-owned slot contract. Regular teardown frees before setting only that
+dynamic root null, leaving the default/cached/fast roots untouched. If an
+internal metadata free or replacement reports an ownership-consumption
+ambiguous error, the owner clears that root and becomes terminal rather than
+inventing a retryable capability. No valid-program C semantic difference is
+claimed from that internal error limitation. The backing owner does not provide
+the source's TLD/theap attachment, allocator-backed global key registry,
+process or pthread teardown hook, or production ELF integration.
+
+The abandonment/adoption protocol preserves mapped versus unmapped source
+classification, publishes the abandoned bitmap before
 releasing ownership, restores a failed reader's bit, waits for reader
 quiescence before unabandoning, and reassociates a claimed page before remote
 collection. It requires queue-detached, address-stable page/arena/theap
@@ -90,9 +109,8 @@ without `__tls_get_addr`; its negative control proves the pinned compiler
 default emits TLSDESC. Rust has no per-static model annotation, so this is a
 bounded crate-codegen proof: production integration must apply the same
 per-crate setting and audit the final linked static and shared images. These
-slices do not provide allocator-owned dynamic TLS backing or the lifetime owner
-needed for thread teardown, terminal page release, or metadata reuse while a
-remote producer can exist.
+slices do not provide integrated allocator thread lifecycle, terminal page
+release, or metadata reuse while a remote producer can exist.
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
 context for the standalone prefixed C evidence adapter. Its stable boxed control

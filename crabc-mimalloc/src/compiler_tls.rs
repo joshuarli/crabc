@@ -6,11 +6,12 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/prim-tls.h:12-275`,
-// `src/prim/prim-tls.c:15-34,211-254`, and `src/threadlocal.c:18-74,185-217`.
-// This bounded slice supplies only the source-shaped compiler-TLS roots and
-// allocation-free pointer access. Dynamic metadata allocation and growth,
+// `src/prim/prim-tls.c:15-34,211-254`, and `src/threadlocal.c:23-214`.
+// This bounded slice supplies source-shaped compiler-TLS roots, the regular
+// dynamic flexible header, and allocation-free root access. `thread_local`
+// owns the current-thread regular backing allocation, growth, and teardown;
 // theap publication/refcounting, process initialization, libc/pthread hooks,
-// and complete thread teardown remain separate lifecycle work.
+// and full thread lifecycle integration remain separate work.
 
 //! Private Linux/AArch64 compiler-TLS roots.
 //!
@@ -23,6 +24,7 @@
 //! `-Z tls-model=initial-exec` setting and may not infer safety from these
 //! declarations alone.
 
+use core::mem::size_of;
 use core::ptr::NonNull;
 
 use crate::bootstrap::empty_default_theap_ptr;
@@ -32,9 +34,9 @@ use crate::types::{LiveThreadId, MemoryId, Theap};
 /// Fixed prefix and source-declared first slot of `mi_thread_locals_t`.
 ///
 /// A live dynamically grown image has additional contiguous slots after
-/// `slots[0]`; this bounded checkpoint neither allocates nor projects them.
-/// Keeping the source header shape here makes the initial count-zero image
-/// explicit without pretending it owns the later metadata allocator.
+/// `slots[0]`. The allocation owner lives in `thread_local`; it must use
+/// [`Self::allocation_size`] rather than Rust's fixed-prefix size when it
+/// obtains the source flexible layout from the detached metadata theap.
 #[repr(C)]
 pub(crate) struct DynamicThreadLocalBacking {
     count: usize,
@@ -52,6 +54,70 @@ impl DynamicThreadLocalBacking {
     #[inline]
     pub(crate) const fn count(&self) -> usize {
         self.count
+    }
+
+    /// Returns the exact source request for `count` usable TLS slots.
+    ///
+    /// Pinned `mi_thread_locals_expand` deliberately asks for
+    /// `sizeof(mi_thread_locals_t) + count * sizeof(mi_tls_slot_t)`, even
+    /// though its declared C prefix already contains `slots[1]`. Keep that
+    /// byte contract rather than normalizing it to a Rust flexible-array
+    /// helper. A capacity of 65,535 is the largest source-valid count: it
+    /// addresses indices zero through 65,534, while a request for index
+    /// 65,535 must reject the derived count 65,536.
+    #[inline]
+    pub(crate) const fn allocation_size(count: usize) -> Option<usize> {
+        if count == 0 || count > u16::MAX as usize {
+            return None;
+        }
+        match count.checked_mul(size_of::<ThreadLocalSlot>()) {
+            Some(slots) => size_of::<Self>().checked_add(slots),
+            None => None,
+        }
+    }
+
+    /// Returns the aligned source header address for one owned dynamic image.
+    ///
+    /// The caller holds the unique [`crate::meta::MetaAllocation`] capability
+    /// whose exact request size was checked by its narrow typed projection.
+    /// Writing `memid` before `count` keeps the root unpublished until both
+    /// header fields describe the replacement image, as in `threadlocal.c`.
+    #[inline]
+    pub(crate) unsafe fn initialize_owned_header(&mut self, memid: MemoryId, count: usize) {
+        debug_assert!(Self::allocation_size(count).is_some());
+        // SAFETY: the owner has checked the exact flexible allocation size;
+        // these fields are in its fixed prefix. `memid` is written first so
+        // no caller can observe a positive count with stale provenance when
+        // the compiler-TLS root is finally installed.
+        unsafe {
+            core::ptr::addr_of_mut!(self.memid).write(memid);
+            core::ptr::addr_of_mut!(self.count).write(count);
+        }
+    }
+
+    /// Views the live flexible slot suffix under the dynamic owner's unique
+    /// current-thread authority.
+    ///
+    /// # Safety
+    ///
+    /// The backing must have been projected from a `MetaAllocation` whose
+    /// exact request matches `allocation_size(self.count)`, and no other
+    /// thread may read or write the slots. `ThreadLocalBackingOwner` is the
+    /// sole caller; this is not a general compiler-TLS raw-parts API.
+    #[inline]
+    pub(crate) unsafe fn slots_mut(&mut self) -> &mut [ThreadLocalSlot] {
+        // SAFETY: upheld by the caller's exact flexible-allocation proof.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                core::ptr::addr_of_mut!(self.slots).cast::<ThreadLocalSlot>(),
+                self.count,
+            )
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.memid
     }
 
     #[cfg(test)]
@@ -80,6 +146,12 @@ static EMPTY_DYNAMIC_BACKING: ImmutableEmptyDynamicBacking =
 #[inline]
 const fn empty_dynamic_backing_ptr() -> *mut DynamicThreadLocalBacking {
     core::ptr::addr_of!(EMPTY_DYNAMIC_BACKING.0).cast_mut()
+}
+
+/// Whether a root still names the source's immutable count-zero image.
+#[inline]
+pub(crate) fn is_empty_dynamic_backing(backing: NonNull<DynamicThreadLocalBacking>) -> bool {
+    core::ptr::eq(backing.as_ptr(), empty_dynamic_backing_ptr())
 }
 
 // These five roots deliberately remain private Rust statics. In a normal
@@ -132,6 +204,15 @@ pub(crate) fn dynamic_backing_peek() -> Option<NonNull<DynamicThreadLocalBacking
 pub(crate) fn install_dynamic_backing(backing: NonNull<DynamicThreadLocalBacking>) {
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { DYNAMIC_BACKING_ROOT = backing.as_ptr() };
+}
+
+/// Clears only the regular dynamic-backing root after its lifecycle owner has
+/// attempted source-ordered metadata release. This intentionally leaves the
+/// fast/default/cached/helper roots untouched; their lifecycle is separate.
+#[inline(always)]
+pub(crate) fn clear_dynamic_backing() {
+    // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
+    unsafe { DYNAMIC_BACKING_ROOT = core::ptr::null_mut() };
 }
 
 /// Peeks at mimalloc's dedicated fast dynamic slot.

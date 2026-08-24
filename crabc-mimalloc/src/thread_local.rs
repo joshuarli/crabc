@@ -4,21 +4,33 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/threadlocal.c:18-315` and
+// Source map: pinned mimalloc v3.5.0 `src/threadlocal.c:23-315` and
 // `include/mimalloc/prim-tls.h:41-50,193-229`. This slice preserves the
 // AArch64 key encoding, caller-owned slot semantics, and the global
-// free-index claim/release protocol. The source's allocator-backed metadata
-// growth is represented by a caller-owned fixed sequence of exact 1024-bit
-// growth blocks. Compiler TLS access, process initialization, backing-slot
-// allocation, and thread teardown remain separate lifecycle work.
+// free-index claim/release protocol. A current-thread lifecycle owner now
+// uses the process-static metadata allocator for the source-shaped regular
+// flexible backing, exact expansion, root publication, and bounded regular
+// teardown. The registry itself remains caller-owned; process initialization,
+// TLD/theap attachment, and actual libc/pthread lifecycle hooks remain
+// separate work.
 
 //! Dynamic versioned-thread-local slot and global-key substrate.
 
 use core::cell::UnsafeCell;
+use core::marker::PhantomData;
+use core::pin::Pin;
+use core::ptr::NonNull;
 
 use crabc_core::Result as CoreResult;
 
+use crate::compiler_tls::{
+    DynamicThreadLocalBacking, clear_dynamic_backing, current_thread_identity,
+    dynamic_backing_peek, install_dynamic_backing, is_empty_dynamic_backing,
+};
 use crate::lock::PrivateLock;
+use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
+use crate::os::MemoryConfig;
+use crate::types::LiveThreadId;
 
 /// The low key-field width used by pinned mimalloc on 64-bit targets.
 ///
@@ -481,13 +493,400 @@ impl ThreadLocalSlots<'_> {
     }
 }
 
+/// The regular current-thread compiler-TLS backing cannot service this
+/// operation without violating its source lifecycle contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadLocalBackingError {
+    /// `TPIDR_EL0` did not encode a valid live source thread identity.
+    InvalidCurrentThread,
+    /// A current-thread owner was used from a different AArch64 thread.
+    WrongThread,
+    /// The current root already names a live dynamically owned image.
+    RootAlreadyOwned,
+    /// The dynamic root is null after thread teardown.
+    RootTornDown,
+    /// The root no longer names this owner's exact metadata capability.
+    RootChanged,
+    /// The owner has completed teardown and cannot be reused.
+    TornDown,
+    /// An internal metadata-free/replacement failure made this owner terminal.
+    Poisoned,
+    /// The source growth rule would require more than 65,535 slots.
+    SlotCountLimit,
+    /// A checked source flexible-allocation size overflowed `usize`.
+    AllocationSizeOverflow,
+    /// The one allowed typed projection no longer matched its allocation.
+    BackingProjection,
+    /// The process metadata owner rejected or could not complete the request.
+    Metadata(MetaError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThreadLocalBackingState {
+    Active,
+    TornDown,
+    Poisoned,
+}
+
+/// One current-thread owner of mimalloc's regular dynamic TLS image.
+///
+/// This is the lifecycle-side owner of the raw compiler-TLS pointer in
+/// `compiler_tls`; it is intentionally not another TLS root. It retains the
+/// exact `MetaAllocation` capability so a growth replacement cannot publish
+/// a raw pointer without matching metadata provenance. The private marker
+/// makes this type `!Send` and `!Sync`: its every operation validates the
+/// captured direct `TPIDR_EL0` identity, but the type system also prevents a
+/// safe move to a second thread.
+///
+/// The constructor is `unsafe` because the source's initially immutable
+/// count-zero root cannot distinguish two idle Rust owners. The integrating
+/// TLD/thread lifecycle must provide exclusive ownership of this current
+/// thread's regular backing for the entire value lifetime; no other owner may
+/// begin, access, reset, or replace this root until this owner tears it down.
+/// It must also call [`Self::teardown`] before discarding a live owner.
+#[must_use = "a live current-thread TLS backing owner must be torn down explicitly"]
+pub(crate) struct ThreadLocalBackingOwner {
+    metadata: Pin<&'static MetaAllocator>,
+    config: MemoryConfig,
+    thread: LiveThreadId,
+    allocation: Option<MetaAllocation<'static>>,
+    count: usize,
+    state: ThreadLocalBackingState,
+    _not_send_sync: PhantomData<*mut ()>,
+}
+
+impl ThreadLocalBackingOwner {
+    /// Begins one source-shaped owner using the process metadata singleton.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the current thread's regular mimalloc TLS lifecycle
+    /// exclusively. In particular, no second `ThreadLocalBackingOwner` may
+    /// exist for this thread, and no other code may mutate the dynamic root
+    /// until this owner tears it down. The caller must eventually call
+    /// [`Self::teardown`] while still on this exact `TPIDR_EL0` identity.
+    pub(crate) unsafe fn begin(config: MemoryConfig) -> Result<Self, ThreadLocalBackingError> {
+        // SAFETY: forwarded unchanged to the common constructor; production
+        // always binds the committed process-static metadata owner.
+        unsafe { Self::begin_with_metadata(MetaAllocator::global(), config) }
+    }
+
+    /// Binds the current thread to one already-static metadata owner.
+    ///
+    /// Keeping this common primitive private gives tests an isolated
+    /// process-lifetime metadata fixture for deterministic allocation-failure
+    /// injection. Production [`Self::begin`] always uses `MetaAllocator::global`.
+    ///
+    /// # Safety
+    ///
+    /// Identical to [`Self::begin`], plus `metadata` must be process-lived and
+    /// must remain the owner that releases every returned `MetaAllocation`.
+    unsafe fn begin_with_metadata(
+        metadata: Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+    ) -> Result<Self, ThreadLocalBackingError> {
+        let thread = current_thread_identity().ok_or(ThreadLocalBackingError::InvalidCurrentThread)?;
+        let root = dynamic_backing_peek().ok_or(ThreadLocalBackingError::RootTornDown)?;
+        if !is_empty_dynamic_backing(root) {
+            return Err(ThreadLocalBackingError::RootAlreadyOwned);
+        }
+        Ok(Self {
+            metadata,
+            config,
+            thread,
+            allocation: None,
+            count: 0,
+            state: ThreadLocalBackingState::Active,
+            _not_send_sync: PhantomData,
+        })
+    }
+
+    /// Gets one regular TLS value only when the backing slot generation
+    /// matches `key`. The empty image, a stale generation, and a null value
+    /// all produce null, exactly as `_mi_thread_local_get_regular` does.
+    pub(crate) fn get(
+        &mut self,
+        key: ThreadLocalKey,
+    ) -> Result<*mut (), ThreadLocalBackingError> {
+        let Some(backing) = self.current_backing_mut()? else {
+            return Ok(core::ptr::null_mut());
+        };
+        // SAFETY: `current_backing_mut` proved this owner retains the exact
+        // flexible allocation and is the unique current-thread mutator.
+        let slots = ThreadLocalSlots::new(unsafe { backing.slots_mut() });
+        Ok(slots.get(key))
+    }
+
+    /// Sets one regular TLS value, growing the allocator-owned flexible image
+    /// by the exact `threadlocal.c` rule when a non-null out-of-range value
+    /// needs capacity. A null out-of-range write succeeds without growth.
+    pub(crate) fn set(
+        &mut self,
+        key: ThreadLocalKey,
+        value: *mut (),
+    ) -> Result<(), ThreadLocalBackingError> {
+        let index = key.index().get();
+        self.ensure_active_current()?;
+
+        if index >= self.count {
+            // `mi_thread_local_set_expand` returns before it looks at or
+            // grows the image for this source null edge.
+            if value.is_null() {
+                self.ensure_current_root()?;
+                return Ok(());
+            }
+            self.expand(index)?;
+        }
+
+        let backing = self
+            .current_backing_mut()?
+            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+        // SAFETY: `index < self.count` after `expand`, and the backing was
+        // projected from its exact flexible request under this owner.
+        let mut slots = ThreadLocalSlots::new(unsafe { backing.slots_mut() });
+        match slots.set(key, value) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(ThreadLocalBackingError::BackingProjection),
+        }
+    }
+
+    /// Releases a live dynamic backing, then makes only its compiler-TLS root
+    /// null. This is the source order in `_mi_thread_locals_thread_done`.
+    ///
+    /// `SingleThreadAllocator::free` can report `Lifecycle` after it already
+    /// linked the block locally or attempted terminal cleanup. The current
+    /// metadata capability cannot distinguish that post-consumption error from
+    /// a pre-consumption error, so this bounded port does not offer a false
+    /// retry path. It always clears the root after the free attempt and marks
+    /// the owner poisoned on failure; a later full metadata-free result type
+    /// can refine this only when it proves retained ownership.
+    pub(crate) fn teardown(&mut self) -> Result<(), ThreadLocalBackingError> {
+        self.ensure_active_current()?;
+        if self.count == 0 {
+            // The source keeps the shared empty image installed because it
+            // owns no allocation to release. Still verify no foreign root was
+            // installed through an unsafe lifecycle violation.
+            self.ensure_current_root()?;
+            self.state = ThreadLocalBackingState::TornDown;
+            return Ok(());
+        }
+
+        // Check identity before taking the capability. A foreign root must
+        // not be cleared or freed through this owner.
+        let _ = self
+            .current_backing_mut()?
+            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+        let mut allocation = self
+            .allocation
+            .take()
+            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+        let result = self.metadata.free(&mut allocation);
+
+        // The source clears the root only after `_mi_meta_free`. On an engine
+        // error, conservatively clear it anyway: keeping a pointer whose free
+        // may already have linked or released its block is less safe than the
+        // source's normal null-after-free state. Dropping this non-Drop
+        // capability intentionally retains no retryable raw projection.
+        clear_dynamic_backing();
+        self.count = 0;
+        match result {
+            Ok(()) => {
+                self.state = ThreadLocalBackingState::TornDown;
+                Ok(())
+            }
+            Err(error) => {
+                self.state = ThreadLocalBackingState::Poisoned;
+                Err(ThreadLocalBackingError::Metadata(error))
+            }
+        }
+    }
+
+    #[inline]
+    fn ensure_active_current(&self) -> Result<(), ThreadLocalBackingError> {
+        match self.state {
+            ThreadLocalBackingState::Active => self.ensure_current_thread(),
+            ThreadLocalBackingState::TornDown => Err(ThreadLocalBackingError::TornDown),
+            ThreadLocalBackingState::Poisoned => Err(ThreadLocalBackingError::Poisoned),
+        }
+    }
+
+    #[inline]
+    fn ensure_current_thread(&self) -> Result<(), ThreadLocalBackingError> {
+        match current_thread_identity() {
+            Some(thread) if thread == self.thread => Ok(()),
+            Some(_) => Err(ThreadLocalBackingError::WrongThread),
+            None => Err(ThreadLocalBackingError::InvalidCurrentThread),
+        }
+    }
+
+    fn ensure_current_root(&self) -> Result<(), ThreadLocalBackingError> {
+        self.ensure_active_current()?;
+        let root = dynamic_backing_peek().ok_or(ThreadLocalBackingError::RootTornDown)?;
+        if self.count == 0 {
+            return if self.allocation.is_none() && is_empty_dynamic_backing(root) {
+                Ok(())
+            } else {
+                Err(ThreadLocalBackingError::RootChanged)
+            };
+        }
+
+        let allocation = self
+            .allocation
+            .as_ref()
+            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+        // A shared exact-size proof is enough for the pointer comparison; the
+        // mutable projection remains private to the current-thread owner.
+        let expected = allocation.pointer();
+        if root.as_ptr().cast::<u8>() != expected.as_ptr() {
+            return Err(ThreadLocalBackingError::RootChanged);
+        }
+        Ok(())
+    }
+
+    fn current_backing_mut(
+        &mut self,
+    ) -> Result<Option<&mut DynamicThreadLocalBacking>, ThreadLocalBackingError> {
+        self.ensure_current_root()?;
+        if self.count == 0 {
+            return Ok(None);
+        }
+        let allocation = self
+            .allocation
+            .as_mut()
+            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+        let (header_count, header_memory) = {
+            let backing = allocation
+                .dynamic_thread_local_backing_mut(self.count)
+                .ok_or(ThreadLocalBackingError::BackingProjection)?;
+            (backing.count(), backing.memory_id())
+        };
+        if header_count != self.count || !allocation.matches_memory_id(header_memory) {
+            return Err(ThreadLocalBackingError::BackingProjection);
+        }
+        let backing = allocation
+            .dynamic_thread_local_backing_mut(self.count)
+            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+        Ok(Some(backing))
+    }
+
+    fn expand(&mut self, least_index: usize) -> Result<(), ThreadLocalBackingError> {
+        self.ensure_current_root()?;
+        let old_count = self.count;
+        let count = expanded_slot_count(old_count, least_index)?;
+        let size = DynamicThreadLocalBacking::allocation_size(count)
+            .ok_or(ThreadLocalBackingError::AllocationSizeOverflow)?;
+
+        let replacement = if old_count == 0 {
+            self.metadata.zalloc(self.config, size)
+        } else {
+            let old = self
+                .allocation
+                .as_mut()
+                .ok_or(ThreadLocalBackingError::BackingProjection)?;
+            self.metadata.rezalloc(self.config, Some(old), size)
+        };
+        let replacement = match replacement {
+            Ok(replacement) => replacement,
+            Err(error @ MetaError::Free(_) | error @ MetaError::ReleasedOrStale) => {
+                // A successful replacement may already have consumed the old
+                // backing before reporting this internal lifecycle failure.
+                // Do not leave its old root live or offer a false retry.
+                self.poison_root();
+                return Err(ThreadLocalBackingError::Metadata(error));
+            }
+            Err(error) => return Err(ThreadLocalBackingError::Metadata(error)),
+        };
+
+        // Keep the new provenance capability in this owner before its raw
+        // address becomes reachable through compiler TLS. Replacing the old
+        // capability after successful rezalloc drops only its explicitly
+        // rejected/released Rust token; the source free already ran.
+        self.allocation = Some(replacement);
+        self.count = count;
+        let allocation = self
+            .allocation
+            .as_mut()
+            .ok_or(ThreadLocalBackingError::BackingProjection)?;
+        let memid = allocation.memory_id();
+        let backing = match allocation.dynamic_thread_local_backing_mut(count) {
+            Some(backing) => backing,
+            None => {
+                self.poison_root();
+                return Err(ThreadLocalBackingError::BackingProjection);
+            }
+        };
+        // SAFETY: this is the exact flexible metadata allocation for `count`.
+        // It is either fresh zeroed storage or the source-order copied old
+        // image. The fixed header is initialized before root publication.
+        unsafe { backing.initialize_owned_header(memid, count) };
+        let backing = NonNull::from(backing);
+        install_dynamic_backing(backing);
+        Ok(())
+    }
+
+    fn poison_root(&mut self) {
+        clear_dynamic_backing();
+        self.allocation = None;
+        self.count = 0;
+        self.state = ThreadLocalBackingState::Poisoned;
+    }
+}
+
+/// Implements `mi_thread_locals_expand`'s count transition before metadata
+/// allocation. `least_index` is an index, not a requested count.
+#[inline]
+fn expanded_slot_count(
+    old_count: usize,
+    least_index: usize,
+) -> Result<usize, ThreadLocalBackingError> {
+    let mut count = if old_count == 0 {
+        16
+    } else if old_count >= 1024 {
+        old_count
+            .checked_add(1024)
+            .ok_or(ThreadLocalBackingError::AllocationSizeOverflow)?
+    } else {
+        old_count
+            .checked_mul(2)
+            .ok_or(ThreadLocalBackingError::AllocationSizeOverflow)?
+    };
+    if count <= least_index {
+        count = least_index
+            .checked_add(1)
+            .ok_or(ThreadLocalBackingError::SlotCountLimit)?;
+    }
+    if count > u16::MAX as usize {
+        return Err(ThreadLocalBackingError::SlotCountLimit);
+    }
+    Ok(count)
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
 
     use super::*;
+    use crate::os::{PageSize, fault};
+    use crate::types::MemoryKind;
     use std::sync::{mpsc, Barrier};
     use std::thread;
+
+    fn memory_config() -> MemoryConfig {
+        MemoryConfig::from_observations(
+            PageSize::new(4096).expect("the pinned native test page size is valid"),
+            1024 * 1024,
+            false,
+            false,
+        )
+    }
+
+    fn key(index: usize, version: u64) -> ThreadLocalKey {
+        ThreadLocalKey::from_parts(
+            ThreadLocalSlotIndex::new(index).expect("the test index fits the source key"),
+            version,
+        )
+        .expect("the test version is source-valid")
+    }
 
     #[test]
     fn reused_index_rejects_the_previous_generation_until_rewritten() {
@@ -807,5 +1206,327 @@ mod tests {
             1,
             "only the explicit release lifecycle operation may make a key reusable"
         );
+    }
+
+    #[test]
+    fn current_thread_backing_first_allocates_the_exact_flexible_image_and_leaves_other_roots_alone() {
+        thread::spawn(|| {
+            let identity = current_thread_identity().expect("AArch64 TPIDR_EL0 is live");
+            let fast_before = crate::compiler_tls::fast_slot_peek();
+            let default_before = crate::compiler_tls::default_theap();
+            let cached_before = crate::compiler_tls::cached_theap();
+            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }
+                .expect("the fresh child root is the immutable empty image");
+            let mut payload = 0x41usize;
+            let value = (&mut payload as *mut usize).cast();
+
+            owner.set(key(15, 1), value).unwrap();
+            assert_eq!(owner.count, 16, "the source starts at sixteen slots");
+            let root = dynamic_backing_peek().expect("the initialized image is published");
+            assert!(!is_empty_dynamic_backing(root));
+            // SAFETY: `owner` retains the exact metadata capability until its
+            // teardown below, and the compiler root is checked against it.
+            let backing = unsafe { root.as_ref() };
+            assert_eq!(backing.count(), 16);
+            assert_eq!(backing.memory_id().kind(), MemoryKind::Malloc);
+            assert!(backing.memory_id().is_pinned());
+            assert!(backing.memory_id().initially_committed());
+            assert!(backing.memory_id().initially_zero());
+            assert!(owner
+                .allocation
+                .as_ref()
+                .expect("root publication retains its capability")
+                .matches_memory_id(backing.memory_id()));
+            assert_eq!(owner.get(key(15, 1)).unwrap(), value);
+            assert_eq!(current_thread_identity(), Some(identity));
+            assert_eq!(crate::compiler_tls::fast_slot_peek(), fast_before);
+            assert_eq!(crate::compiler_tls::default_theap(), default_before);
+            assert_eq!(crate::compiler_tls::cached_theap(), cached_before);
+
+            owner.teardown().unwrap();
+            assert!(dynamic_backing_peek().is_none());
+            assert!(matches!(
+                owner.get(key(15, 1)),
+                Err(ThreadLocalBackingError::TornDown)
+            ));
+            assert_eq!(crate::compiler_tls::fast_slot_peek(), fast_before);
+            assert_eq!(crate::compiler_tls::default_theap(), default_before);
+            assert_eq!(crate::compiler_tls::cached_theap(), cached_before);
+        })
+        .join()
+        .expect("the isolated native TLS lifecycle completes");
+    }
+
+    #[test]
+    fn current_thread_backing_preserves_slots_across_exact_source_growth_edges() {
+        thread::spawn(|| {
+            assert_eq!(
+                DynamicThreadLocalBacking::allocation_size(16),
+                Some(
+                    core::mem::size_of::<DynamicThreadLocalBacking>()
+                        + 16 * core::mem::size_of::<ThreadLocalSlot>()
+                ),
+                "the flexible source request includes the declared slots[1] prefix"
+            );
+            assert_eq!(DynamicThreadLocalBacking::allocation_size(0), None);
+            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut first_payload = 0x11usize;
+            let mut second_payload = 0x22usize;
+            let mut third_payload = 0x33usize;
+            let mut fourth_payload = 0x44usize;
+            let mut fifth_payload = 0x55usize;
+            let first = (&mut first_payload as *mut usize).cast();
+            let second = (&mut second_payload as *mut usize).cast();
+            let third = (&mut third_payload as *mut usize).cast();
+            let fourth = (&mut fourth_payload as *mut usize).cast();
+            let fifth = (&mut fifth_payload as *mut usize).cast();
+
+            owner.set(key(15, 1), first).unwrap();
+            assert_eq!(owner.count, 16);
+            owner.set(key(16, 1), second).unwrap();
+            assert_eq!(owner.count, 32, "below 1024 the source doubles");
+            assert_eq!(owner.get(key(15, 1)).unwrap(), first);
+            owner.set(key(1023, 1), third).unwrap();
+            assert_eq!(
+                owner.count, 1024,
+                "least-index override wins over the interim 64-slot doubling result"
+            );
+            assert_eq!(owner.get(key(15, 1)).unwrap(), first);
+            assert_eq!(owner.get(key(16, 1)).unwrap(), second);
+            owner.set(key(1024, 1), fourth).unwrap();
+            assert_eq!(owner.count, 2048, "at 1024 the source grows by 1024");
+            owner.set(key(1025, 1), fifth).unwrap();
+            assert_eq!(owner.count, 2048, "an in-range source set does not grow again");
+            assert_eq!(owner.get(key(1023, 1)).unwrap(), third);
+            assert_eq!(owner.get(key(1024, 1)).unwrap(), fourth);
+            assert_eq!(owner.get(key(1025, 1)).unwrap(), fifth);
+
+            owner.teardown().unwrap();
+        })
+        .join()
+        .expect("the isolated growth lifecycle completes");
+    }
+
+    #[test]
+    fn current_thread_backing_rejects_stale_generation_and_null_out_of_range_needs_no_growth() {
+        thread::spawn(|| {
+            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let stale = key(4, 1);
+            let replacement = key(4, 2);
+            let missing = key(512, 1);
+            let mut old_payload = 0x71usize;
+            let mut new_payload = 0x72usize;
+            let old_value = (&mut old_payload as *mut usize).cast();
+            let new_value = (&mut new_payload as *mut usize).cast();
+
+            owner.set(missing, core::ptr::null_mut()).unwrap();
+            assert_eq!(owner.count, 0);
+            assert!(is_empty_dynamic_backing(
+                dynamic_backing_peek().expect("the empty image stays installed")
+            ));
+            owner.set(stale, old_value).unwrap();
+            assert_eq!(owner.get(stale).unwrap(), old_value);
+            assert_eq!(
+                owner.get(replacement).unwrap(),
+                core::ptr::null_mut(),
+                "a reused key index must not observe its stale generation"
+            );
+            owner.set(replacement, new_value).unwrap();
+            assert_eq!(owner.get(stale).unwrap(), core::ptr::null_mut());
+            assert_eq!(owner.get(replacement).unwrap(), new_value);
+
+            owner.teardown().unwrap();
+        })
+        .join()
+        .expect("the isolated stale-generation lifecycle completes");
+    }
+
+    #[test]
+    fn current_thread_backing_rejects_the_source_count_above_the_16_bit_ceiling() {
+        thread::spawn(|| {
+            let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+            let mut payload = 0x99usize;
+            let value = (&mut payload as *mut usize).cast();
+            assert_eq!(expanded_slot_count(0, 65_534), Ok(65_535));
+            assert_eq!(
+                expanded_slot_count(0, 65_535),
+                Err(ThreadLocalBackingError::SlotCountLimit)
+            );
+            assert_eq!(
+                owner.set(key(65_535, 1), value),
+                Err(ThreadLocalBackingError::SlotCountLimit)
+            );
+            assert_eq!(owner.count, 0);
+            assert!(is_empty_dynamic_backing(
+                dynamic_backing_peek().expect("a rejected first growth leaves the empty root")
+            ));
+            owner.teardown().unwrap();
+        })
+        .join()
+        .expect("the isolated source-limit lifecycle completes");
+    }
+
+    #[test]
+    fn current_thread_backing_allocation_failure_keeps_the_empty_root_and_retries() {
+        let metadata = MetaAllocator::test_static_owner();
+        thread::spawn(move || {
+            let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, crabc_core::Errno::NOMEM));
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(metadata, memory_config())
+            }
+            .unwrap();
+            let mut payload = 0xabusize;
+            let value = (&mut payload as *mut usize).cast();
+
+            assert!(matches!(
+                owner.set(key(0, 1), value),
+                Err(ThreadLocalBackingError::Metadata(MetaError::InitializationFailed))
+            ));
+            assert_eq!(owner.count, 0);
+            assert!(owner.allocation.is_none());
+            assert!(is_empty_dynamic_backing(
+                dynamic_backing_peek().expect("failed first allocation cannot publish a root")
+            ));
+
+            fault.set(fault::Plan::disabled());
+            owner.set(key(0, 1), value).unwrap();
+            assert_eq!(owner.get(key(0, 1)).unwrap(), value);
+            owner.teardown().unwrap();
+        })
+        .join()
+        .expect("the isolated injected-allocation-failure lifecycle completes");
+    }
+
+    #[test]
+    fn current_thread_backing_failed_live_growth_preserves_root_value_and_capability() {
+        const FILLER_SIZE: usize = 1024 * 1024;
+        const MAX_FILLERS: usize = 128;
+        const MAX_TAIL_FILLERS: usize = 8192;
+
+        let metadata = MetaAllocator::test_static_owner();
+        thread::spawn(move || {
+            let mut owner = unsafe {
+                ThreadLocalBackingOwner::begin_with_metadata(metadata, memory_config())
+            }
+            .unwrap();
+            let original_key = key(15, 1);
+            let growth_key = key(16, 1);
+            let mut original_payload = 0xdead_beefusize;
+            let mut grown_payload = 0xbeef_deadusize;
+            let original_value = (&mut original_payload as *mut usize).cast();
+            let grown_value = (&mut grown_payload as *mut usize).cast();
+            owner.set(original_key, original_value).unwrap();
+            let root_before = dynamic_backing_peek().expect("the first live image is published");
+            let growth_size = DynamicThreadLocalBacking::allocation_size(32)
+                .expect("the 16-to-32 source replacement request is representable");
+
+            let mut fillers = std::vec::Vec::new();
+            for _ in 0..MAX_FILLERS {
+                match metadata.zalloc(memory_config(), FILLER_SIZE) {
+                    Ok(filler) => fillers.push(filler),
+                    Err(MetaError::AllocationUnavailable) => break,
+                    Err(error) => panic!("unexpected metadata-fill failure: {error:?}"),
+                }
+            }
+            assert!(
+                fillers.len() < MAX_FILLERS,
+                "the fixed detached metadata arena must eventually reject retained 1 MiB requests"
+            );
+            let mut tail_exhausted = false;
+            for _ in 0..MAX_TAIL_FILLERS {
+                match metadata.zalloc(memory_config(), growth_size) {
+                    Ok(filler) => fillers.push(filler),
+                    Err(MetaError::AllocationUnavailable) => {
+                        tail_exhausted = true;
+                        break;
+                    }
+                    Err(error) => panic!("unexpected tail-fill failure: {error:?}"),
+                }
+            }
+            assert!(
+                tail_exhausted,
+                "retained target-size pages must consume the last metadata arena capacity"
+            );
+
+            assert_eq!(
+                owner.set(growth_key, grown_value),
+                Err(ThreadLocalBackingError::Metadata(MetaError::AllocationUnavailable))
+            );
+            assert_eq!(owner.count, 16);
+            assert_eq!(dynamic_backing_peek(), Some(root_before));
+            assert_eq!(owner.get(original_key).unwrap(), original_value);
+            assert!(owner.allocation.is_some(), "the old release capability remains live");
+
+            for filler in &mut fillers {
+                metadata.free(filler).unwrap();
+            }
+            owner.set(growth_key, grown_value).unwrap();
+            assert_eq!(owner.count, 32);
+            assert_eq!(owner.get(original_key).unwrap(), original_value);
+            assert_eq!(owner.get(growth_key).unwrap(), grown_value);
+            owner.teardown().unwrap();
+        })
+        .join()
+        .expect("the isolated live-growth failure lifecycle completes");
+    }
+
+    #[test]
+    fn current_thread_backings_are_isolated_across_overlapping_native_threads() {
+        const THREADS: usize = 2;
+        let start = std::sync::Arc::new(Barrier::new(THREADS + 1));
+        let (sender, receiver) = mpsc::channel();
+        let mut workers = std::vec::Vec::new();
+
+        for payload in [0x101usize, 0x202usize] {
+            let worker_start = std::sync::Arc::clone(&start);
+            let worker_sender = sender.clone();
+            workers.push(thread::spawn(move || {
+                let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
+                let identity = current_thread_identity().expect("the worker has TPIDR_EL0");
+                let fast_before = crate::compiler_tls::fast_slot_peek();
+                let default_before = crate::compiler_tls::default_theap();
+                let cached_before = crate::compiler_tls::cached_theap();
+                let mut payload = payload;
+                let value = (&mut payload as *mut usize).cast();
+                owner.set(key(3, 1), value).unwrap();
+                let root = dynamic_backing_peek().expect("the worker published its own root");
+                worker_start.wait();
+                let observed = owner.get(key(3, 1)).unwrap();
+                worker_sender
+                    .send((
+                        identity.get(),
+                        root.as_ptr() as usize,
+                        observed as usize,
+                        value as usize,
+                        crate::compiler_tls::fast_slot_peek()
+                            .map_or(0, |pointer| pointer.as_ptr() as usize),
+                        fast_before.map_or(0, |pointer| pointer.as_ptr() as usize),
+                        crate::compiler_tls::default_theap().as_ptr() as usize,
+                        default_before.as_ptr() as usize,
+                        crate::compiler_tls::cached_theap().as_ptr() as usize,
+                        cached_before.as_ptr() as usize,
+                    ))
+                    .unwrap();
+                owner.teardown().unwrap();
+                assert!(dynamic_backing_peek().is_none());
+            }));
+        }
+        drop(sender);
+        start.wait();
+
+        let results = (0..THREADS)
+            .map(|_| receiver.recv().expect("every worker reports before teardown"))
+            .collect::<std::vec::Vec<_>>();
+        for worker in workers {
+            worker.join().expect("the worker TLS lifecycle completes");
+        }
+        assert_ne!(results[0].0, results[1].0, "TPIDR_EL0 identities are distinct");
+        assert_ne!(results[0].1, results[1].1, "each worker owns a separate backing");
+        for result in &results {
+            assert_eq!(result.2, result.3, "each worker retrieves only its own value");
+            assert_eq!(result.4, result.5, "regular backing leaves the fast root alone");
+            assert_eq!(result.6, result.7, "regular backing leaves default-theap alone");
+            assert_eq!(result.8, result.9, "regular backing leaves cached-theap alone");
+        }
     }
 }

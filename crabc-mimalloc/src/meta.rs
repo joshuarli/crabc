@@ -28,9 +28,12 @@
 //! before the initialized state is Release-published; none is destroyed or
 //! moved for the process lifetime.
 
+#[cfg(test)]
+extern crate std;
+
 use core::cell::UnsafeCell;
 use core::marker::{PhantomData, PhantomPinned};
-use core::mem::MaybeUninit;
+use core::mem::{MaybeUninit, align_of};
 use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -39,6 +42,7 @@ use crabc_core::Errno;
 
 use crate::arena::{manage_external_in_place, ArenaId, ArenaRegistry, ArenaView};
 use crate::bootstrap::{BootstrapError, ExclusiveTheapBootstrap};
+use crate::compiler_tls::DynamicThreadLocalBacking;
 use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, MAX_VABITS};
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, MemoryConfig};
@@ -151,6 +155,50 @@ impl<'owner> MetaAllocation<'owner> {
         self.memory
     }
 
+    /// Whether `memory` is the exact Malloc provenance recorded by this
+    /// capability, including the source-visible allocation attributes.
+    #[inline]
+    pub(crate) fn matches_memory_id(&self, memory: MemoryId) -> bool {
+        let Some(expected) = self.memory.malloc_memory() else {
+            return false;
+        };
+        let Some(actual) = memory.malloc_memory() else {
+            return false;
+        };
+        expected.base == actual.base
+            && expected.size == actual.size
+            && self.memory.kind() == memory.kind()
+            && self.memory.is_pinned() == memory.is_pinned()
+            && self.memory.initially_committed() == memory.initially_committed()
+            && self.memory.initially_zero() == memory.initially_zero()
+    }
+
+    /// Projects this capability as the one source-shaped dynamic TLS backing.
+    ///
+    /// This is deliberately the only typed flexible-allocation projection.
+    /// It accepts precisely `sizeof(mi_thread_locals_t) + count *
+    /// sizeof(mi_tls_slot_t)`, requires the backing's native alignment, and
+    /// borrows through the existing owner-bound capability. There is no
+    /// generic raw-parts or arbitrary-type cast API: a future metadata user
+    /// needs its own audited typed projection and source layout proof.
+    #[inline]
+    pub(crate) fn dynamic_thread_local_backing_mut(
+        &mut self,
+        count: usize,
+    ) -> Option<&mut DynamicThreadLocalBacking> {
+        let required = DynamicThreadLocalBacking::allocation_size(count)?;
+        if self.requested_size != required
+            || self.pointer.as_ptr().addr() % align_of::<DynamicThreadLocalBacking>() != 0
+        {
+            return None;
+        }
+        // SAFETY: the exact source flexible request is checked above. The
+        // metadata allocation is zeroed when fresh and source-copied when
+        // replaced, both valid representations of the fixed header; `&mut
+        // MetaAllocation` is the unique capability for these bytes.
+        Some(unsafe { &mut *self.pointer.as_ptr().cast::<DynamicThreadLocalBacking>() })
+    }
+
     #[inline]
     fn claim(&self, expected: u8, next: u8) -> bool {
         self.state
@@ -240,6 +288,19 @@ impl MetaAllocator {
     pub(crate) fn global() -> Pin<&'static Self> {
         // SAFETY: this object is a process static and cannot move.
         unsafe { Pin::new_unchecked(&PROCESS_METADATA_ALLOCATOR) }
+    }
+
+    /// Builds an isolated process-lifetime owner for tests that must inject a
+    /// first-allocation failure without depending on singleton test ordering.
+    /// Production lifecycle code must use [`Self::global`] exclusively.
+    #[cfg(test)]
+    pub(crate) fn test_static_owner() -> Pin<&'static Self> {
+        let owner: &'static MetaAllocator =
+            std::boxed::Box::leak(std::boxed::Box::new(MetaAllocator::new()));
+        // SAFETY: the deliberately leaked test fixture has a process-lifetime
+        // address, matching the static-reference requirement of its detached
+        // page-map/bootstrap/allocator slots.
+        unsafe { Pin::new_unchecked(owner) }
     }
 
     /// Allocates zeroed metadata through the detached source theap.

@@ -37,24 +37,33 @@ aligned zeroed allocation, source-ordered replacement, and serialized
 cross-thread free, with deterministic retryable and retained initialization
 failure states. It neither attaches a live TLD/theap nor implements the
 source's null/needs-no-free/non-Malloc release paths. This is not a production
-backend or readiness claim. Milestone 5 now has four bounded foundations: the
+backend or readiness claim. Milestone 5 now has five bounded foundations: the
 exact AArch64 16-bit-index/48-bit-generation TLS key and caller-owned slot
-contract; five
-private compiler-TLS roots with direct `TPIDR_EL0` identity; live-owner and
-abandoned-page remote-free head transitions; and a one-page
+contract; five private compiler-TLS roots with direct `TPIDR_EL0` identity;
+live-owner and abandoned-page remote-free head transitions; a one-page
 mapped/unmapped abandonment/adoption protocol with failed-reader bitmap
-restoration and clear-once-set quiescence. Four bounded Loom schedules execute
-the shared live-owner and abandoned owner-claim/unown head transitions. The
-compiler-TLS evidence proves private initial-exec AArch64 code generation in a
+restoration and clear-once-set quiescence; plus an unsafe current-thread-only
+regular TLS backing owner. The owner uses the process-static metadata allocator
+for the exact flexible `mi_thread_locals_t` request, source growth rule,
+header-before-root publication, generation-checked regular slots, and
+free-before-dynamic-root-null teardown. It leaves fast/default/cached roots
+alone and becomes terminal after an internal metadata error whose consumption
+cannot be distinguished, rather than claiming a false retry capability. It has
+no TLD/theap attachment, global allocator-backed key registry, pthread or
+process lifecycle hook, or production ELF integration. Four bounded Loom
+schedules execute the shared live-owner and abandoned owner-claim/unown head
+transitions. The compiler-TLS evidence proves private initial-exec AArch64 code
+generation in a
 dedicated crate probe and proves that the pinned compiler default would instead
 emit TLSDESC; production integration must still apply the required per-crate
 model and audit the final linked ELF. The last protocol requires stable,
 queue-detached metadata and deliberately performs no terminal page release or
-reuse. None of these pieces is integrated into allocation routing, process or
-thread lifecycle, teardown, or reusable page lifetime. Process state,
-allocator-owned TLS backing and lifecycle, heap/theap attachment, integrated
-remote-free routing, complete
-concurrency modeling and stress, libc integration, the remaining upstream
+reuse. None of these pieces is integrated into allocation routing, actual
+process/thread lifecycle hooks, full teardown, or reusable page lifetime.
+Process state,
+integrated allocator TLS lifecycle, heap/theap attachment, integrated
+remote-free routing, complete concurrency modeling and stress, libc
+integration, the remaining upstream
 suites, and performance promotion gates remain open.
 
 Future acceptance contracts are deliberately specific:

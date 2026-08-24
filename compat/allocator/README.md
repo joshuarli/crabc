@@ -23,8 +23,16 @@ arena before publishing one detached theap, never touches compiler-TLS roots,
 and uses a must-use owner-bound capability for source-ordered replacement and
 serialized cross-thread release. This remains only the M2 prerequisite:
 null/needs-no-free/non-Malloc release, subprocess lifecycle, live TLD/theap
-attachment, allocator-owned TLS backing, and public allocation routing are not
-claimed. A
+attachment, and public allocation routing are not claimed. A narrow unsafe
+current-thread-only owner now uses that metadata prerequisite for regular
+dynamic TLS backing: it retains the typed Malloc capability, follows the
+source 16/double/+1024/least-index/65535 growth rule, publishes a fully
+initialized flexible header before the dynamic root, validates live header
+provenance, and frees before clearing only that root. It deliberately has no
+TLD/theap attachment, allocator-backed global key registry, or actual
+process/pthread lifecycle hook; an internal consumption-ambiguous metadata
+error clears the root and terminally poisons the owner instead of offering an
+unjustified retry capability. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,
@@ -47,7 +55,7 @@ racing an abandoned producer, and abandoned unown racing publication.
 Deterministic native regressions separately cover the bitmap-field
 quiescence, abandonment publication, adoption versus a remote producer, and
 ownership-release races. These pieces are not yet wired into allocation/free
-routing, allocator-owned TLS backing, process/thread teardown, terminal page
+routing, integrated allocator TLS/process/thread teardown, terminal page
 release, or metadata reuse. The compiler-TLS codegen probe proves hidden
 initial-exec AArch64 root access and direct thread-pointer identity without a
 TLS resolver, but production integration must still apply that per-crate model
