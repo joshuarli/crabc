@@ -36,13 +36,15 @@ candidate/regular/full queues, extends and collects scalar local free lists,
 retires fully free pages, unregisters complete spans before arena release, and
 rolls back injected commitment, bitmap, and page-map failures. The quick oracle
 gate compares 378 address-independent allocation facts with exact pinned C
-v3.5.0 across all 62 small-bin transition requests. It also records a 51-key
-exact-C fundamental-operation baseline whose Rust comparison remains explicitly
-blocked. Pure aligned-pointer and realloc extent kernels are source-mapped and
-unit tested but not wired to live operations. This is bounded engine evidence,
+v3.5.0 across all 62 small-bin transition requests. A second 51-key exact
+differential record covers page-kind selection, checked calloc, ordinary
+reallocation, aligned and offset-aligned allocation, usable size, preservation,
+and invalid-size failure. Those operations are live in the private lifecycle,
+including OS-aligned singleton ownership for power-of-two alignments above
+64 KiB and below the 256 MiB metadata limit. This is bounded engine evidence,
 not an exported allocator: the crate still has no public operation, libc
-integration, process/TLS lifecycle, remote free, live aligned/reallocation
-path, purge scheduling, thread teardown, fork protocol, or backend selection.
+integration, process/TLS lifecycle, remote free, purge scheduling, thread
+teardown, fork protocol, or backend selection.
 A fixed-capacity `cfg(miri)` mapping model exercises current
 VM ownership and page-map transitions without broadening production support;
 the pinned toolchain does not currently install Miri itself. No allocator

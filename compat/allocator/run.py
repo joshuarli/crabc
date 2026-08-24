@@ -1443,7 +1443,7 @@ def build_test_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]
         kind = "test-source" if path.suffix in {".c", ".cc", ".cpp"} else "test-support"
         items.append(
             {
-                "blocked_by": "Milestone 4: Rust test C API adapter and fundamental allocation API are not implemented.",
+                "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
                 "kind": kind,
                 "path": name,
                 "sha256": sha256_file(path),
@@ -2112,15 +2112,16 @@ def build_fundamental_trace(
     }
 
 
-def blocked_fundamental_trace_comparison() -> dict[str, str]:
-    """Describe the intentional absence of a Rust Milestone 4 trace probe."""
+def pending_fundamental_trace_comparison() -> dict[str, str]:
+    """Describe the same-run comparison before the Rust library probe runs."""
 
     return {
         "reason": (
-            "Rust fundamental-operation trace is not wired yet; the pinned C "
-            "record is baseline evidence only and no Rust/C parity claim is made."
+            "The pinned C record is built before the Rust library probe; "
+            "run_milestone0 replaces this marker with the exact comparison "
+            "before it writes a report."
         ),
-        "status": "blocked",
+        "status": "pending",
     }
 
 
@@ -2183,7 +2184,7 @@ def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: S
         )
         result["fundamental_trace"] = {
             "c_oracle": build_fundamental_trace(compiler, source, profile_dir, flags),
-            "rust_comparison": blocked_fundamental_trace_comparison(),
+            "rust_comparison": pending_fundamental_trace_comparison(),
         }
     return result
 
@@ -2386,7 +2387,9 @@ def production_dependency_graph() -> dict[str, Any]:
 
 
 def rust_layout_probe(
-    c_release_layout: Mapping[str, int], c_release_small_trace: Mapping[str, int]
+    c_release_layout: Mapping[str, int],
+    c_release_small_trace: Mapping[str, int],
+    c_release_fundamental_trace: Mapping[str, int],
 ) -> dict[str, Any]:
     command = [
         "cargo",
@@ -2402,6 +2405,7 @@ def rust_layout_probe(
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
     rust_layout = parse_rust_layout(output)
     rust_small_trace = parse_small_trace(output)
+    rust_fundamental_trace = parse_fundamental_trace(output)
     return {
         "command": command,
         "comparison": compare_rust_layout(c_release_layout, rust_layout),
@@ -2410,6 +2414,12 @@ def rust_layout_probe(
         "single_thread_small_trace": {
             "comparison": compare_small_trace(c_release_small_trace, rust_small_trace),
             "record": rust_small_trace,
+        },
+        "single_thread_fundamental_trace": {
+            "comparison": compare_fundamental_trace(
+                c_release_fundamental_trace, rust_fundamental_trace
+            ),
+            "record": rust_fundamental_trace,
         },
     }
 
@@ -2479,7 +2489,11 @@ def run_milestone0(*, offline: bool, generate_contracts: bool, check_only: bool)
         rust_layout = rust_layout_probe(
             profiles["release"]["layout"],
             profiles["release"]["single_thread_small_trace"]["record"],
+            profiles["release"]["fundamental_trace"]["c_oracle"]["record"],
         )
+        profiles["release"]["fundamental_trace"]["rust_comparison"] = rust_layout[
+            "single_thread_fundamental_trace"
+        ]["comparison"]
         report = milestone0_report(pin, archive, source, profiles)
         report["contracts"] = {relative(path): payload["summary"] for path, payload in contracts.items()}
         report["port_map"] = port_map_counts(port_map)
@@ -2535,11 +2549,11 @@ def main() -> int:
         run_milestone0(offline=arguments.offline, generate_contracts=False, check_only=False)
         if arguments.full:
             raise MilestoneUnavailable(
-                "allocator --full is unavailable at Milestone 0: Milestone 4 must provide the Rust test C API adapter and fundamental allocation API before upstream tests, traces, stress, backend matrix, fork/TLS, and corpus lanes can run."
+                "allocator --full is unavailable: Milestone 4 must provide the Rust test C API adapter and process-owned allocator context before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
             )
         if arguments.perf_smoke or arguments.perf_full:
             raise MilestoneUnavailable(
-                "allocator performance is unavailable at Milestone 0: Milestone 9 requires both C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; no Rust operation is implemented or benchmarked."
+                "allocator performance is unavailable: Milestone 9 requires comparable C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; the current private one-thread engine is not a benchmark boundary."
             )
         print(REPORT_ROOT / "latest.json")
         return 0

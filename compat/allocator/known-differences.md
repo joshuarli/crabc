@@ -10,11 +10,13 @@ The source pin is defined in
 No differences are recorded. The current Rust crate contains source-mapped
 foundations plus a private, explicit single-thread ordinary-allocation
 lifecycle across small, medium, large, and singleton pages. Its small path has
-exact address-independent trace parity with pinned C v3.5.0; the generic page
-kinds currently have focused invariant evidence and a 51-key pinned-C
-fundamental baseline, not Rust/C differential parity. The lifecycle is not
+exact address-independent trace parity with pinned C v3.5.0, and a separate
+51-key exact differential record covers the bounded fundamental page-kind,
+calloc, realloc, aligned/offset-aligned, usable-size, preservation, and failure
+slice. This includes live arena-backed alignment through 64 KiB and separately
+owned OS-aligned singleton mappings below 256 MiB. The lifecycle is not
 exported and does not imply parity for the absent process/TLS, remote-free,
-live aligned/reallocation, teardown, purge, or public-API regions.
+teardown, purge, or public-API regions.
 
 ## Entry requirements
 

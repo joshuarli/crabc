@@ -15,8 +15,11 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/alloc.c:21-103,130-191`
-// (`mi_page_malloc_zero`, `mi_theap_malloc_small_zero_nonnull`, and generic
-// allocation dispatch), `src/free.c:28-50` (`mi_free_block_local`),
+// (`mi_page_malloc_zero`, `mi_theap_malloc_small_zero_nonnull`, generic
+// allocation dispatch, and ordinary realloc), `src/alloc-aligned.c:68-241,
+// 347-388` (natural/overallocated aligned allocation and aligned realloc),
+// `src/free.c:28-50,104-114,522-542` (local free, interior-base recovery,
+// and aligned usable size),
 // `src/page.c:360-522,708-1069` (free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
 // `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
@@ -28,16 +31,20 @@
 // This is the intentionally bounded normal-release lifecycle for exactly one
 // pinned default theap. It accepts only caller-managed external arenas and a
 // caller-initialized page map. There is no TLS, first-class heap, remote free,
-// page abandonment, OS arena reservation, aligned allocation, or realloc path
-// here. Ordinary small, medium, large, and singleton pages retain their
-// pinned source geometry and queue transitions. The owning bootstrap session
-// is exclusive and the arena backing plus its metadata must remain pinned for
-// the whole session.
+// page abandonment, OS arena reservation, or public API here. Ordinary small,
+// medium, large, and singleton pages retain their pinned source geometry and
+// queue transitions. This lifecycle also supports ordinary and valid
+// in-arena aligned/reallocation operations plus the source OS-aligned
+// singleton branch between `MI_PAGE_MAX_OVERALLOC_ALIGN` and
+// `MI_PAGE_META_ALIGNMENT`. The owning bootstrap session is exclusive and the
+// arena backing plus its metadata must remain pinned for the whole session;
+// OS-aligned singleton mappings instead carry their own explicit provenance.
 
 use core::pin::Pin;
 use core::ptr::NonNull;
 
 use crate::arena::{ArenaId, ArenaView, release_arena_slices};
+use crate::{aligned, alloc, support};
 use crate::bootstrap::{BootstrapError, DefaultSingleThreadBootstrap, DefaultSingleThreadSession};
 use crate::config::{
     ARENA_SLICE_SIZE, BIN_FULL, BIN_HUGE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
@@ -45,6 +52,7 @@ use crate::config::{
 };
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
+use crate::os_page::{OsAlignedPageClaim, PublishedOsAlignedPage};
 use crate::page;
 use crate::page_map::PageMap;
 use crate::size_class;
@@ -58,6 +66,20 @@ use crate::types::page_queue::{
 const RETIRE_CYCLES: u8 = 16;
 const RETIRE_MAX_PAGES: usize = 3;
 const PAGE_MAX_CANDIDATES: isize = 4;
+
+/// One prevalidated terminal backing span. Arena and OS-aligned singleton
+/// pages keep materially different ownership: an arena span returns a claim
+/// to its bitmap, while an OS singleton holds a unique raw mapping reclaim
+/// right and secondary metadata aliases.
+enum ReleaseSpan {
+    Arena {
+        memory: MemoryId,
+        slice_start: *mut u8,
+        size: usize,
+        slice_index: usize,
+    },
+    Os(PublishedOsAlignedPage),
+}
 
 /// One invalid local free at the explicit default-theap boundary.
 ///
@@ -417,7 +439,476 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         self.allocate(request, true)
     }
 
-    /// Returns the full usable block size for one live local ordinary allocation.
+    /// Allocates a zero-filled `count * size` byte block.
+    ///
+    /// This is the private `mi_count_size_overflow` + calloc path. An
+    /// unrepresentable product returns `None` before any page, arena, or
+    /// free-list transition. It remains caller-managed and does not expose a
+    /// public C ABI or errno policy.
+    #[inline]
+    pub(crate) fn allocate_zeroed_count(
+        &mut self,
+        count: usize,
+        size: usize,
+    ) -> Option<NonNull<u8>> {
+        self.allocate(size_class::count_size(count, size)?, true)
+    }
+
+    /// Allocates one valid aligned block with zero offset.
+    ///
+    /// This covers natural and overallocated arena alignment through
+    /// `MI_PAGE_MAX_OVERALLOC_ALIGN` (64 KiB), plus the source OS-aligned
+    /// singleton route through but excluding `MI_PAGE_META_ALIGNMENT`
+    /// (256 MiB). The latter accepts only zero offset and owns a distinct OS
+    /// mapping; 256 MiB and higher remain rejected by the pinned metadata
+    /// safety limit.
+    #[inline]
+    pub(crate) fn allocate_aligned(
+        &mut self,
+        size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        self.allocate_aligned_at_inner(size, alignment, 0, false)
+    }
+
+    /// Allocates one valid in-arena block whose `pointer + offset` is aligned.
+    ///
+    /// The offset is an address equation, not an in-range byte index. As in
+    /// pinned mimalloc, it may exceed `size`; only power-of-two alignments up
+    /// through `MI_PAGE_MAX_OVERALLOC_ALIGN` are available in this lifecycle.
+    #[inline]
+    pub(crate) fn allocate_aligned_at(
+        &mut self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> Option<NonNull<u8>> {
+        self.allocate_aligned_at_inner(size, alignment, offset, false)
+    }
+
+    /// Allocates one zero-filled valid aligned block with zero offset.
+    #[inline]
+    pub(crate) fn allocate_aligned_zeroed(
+        &mut self,
+        size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        self.allocate_aligned_at_inner(size, alignment, 0, true)
+    }
+
+    /// Allocates one zero-filled valid in-arena offset-aligned block.
+    #[inline]
+    pub(crate) fn allocate_aligned_zeroed_at(
+        &mut self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> Option<NonNull<u8>> {
+        self.allocate_aligned_at_inner(size, alignment, offset, true)
+    }
+
+    /// Performs checked counted zero allocation before the bounded aligned
+    /// path. Product overflow leaves all allocator state unmodified.
+    #[inline]
+    pub(crate) fn allocate_aligned_zeroed_count_at(
+        &mut self,
+        count: usize,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> Option<NonNull<u8>> {
+        self.allocate_aligned_at_inner(size_class::count_size(count, size)?, alignment, offset, true)
+    }
+
+    #[inline]
+    pub(crate) fn allocate_aligned_zeroed_count(
+        &mut self,
+        count: usize,
+        size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        self.allocate_aligned_zeroed_count_at(count, size, alignment, 0)
+    }
+
+    /// The exact `mi_theap_malloc_zero_aligned_at` subset with arena-backed
+    /// provenance. The fast branch uses only an already-immediate small
+    /// free-list head; it never extends or substitutes a different page before
+    /// the generic natural/overallocated source selection.
+    fn allocate_aligned_at_inner(
+        &mut self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        if !size_class::alignment_is_valid(alignment) {
+            return None;
+        }
+        if let Some(block) = self.allocate_aligned_small_head(size, alignment, offset, zero) {
+            return Some(block);
+        }
+
+        let os_page_size = self.page_map.memory_config().page_size().bytes();
+        match aligned::allocation_plan(size, alignment, offset, os_page_size)? {
+            aligned::AlignedAllocationPlan::Natural => {
+                let block = self.allocate(size, zero)?;
+                let is_aligned = block.as_ptr().addr() & (alignment - 1) == 0;
+                if is_aligned {
+                    return Some(block);
+                }
+                // The plan's source geometry proves this branch unreachable.
+                // Keep a release-build failure explicit and balanced rather
+                // than returning an invalid alignment or leaking the block.
+                let _ = unsafe { self.free(block) };
+                None
+            }
+            aligned::AlignedAllocationPlan::Overallocate { request } => {
+                let base = self.allocate(request, zero)?;
+                let adjustment = match aligned::pointer_adjustment(
+                    base.as_ptr().addr(),
+                    alignment,
+                    offset,
+                ) {
+                    Some(adjustment) => adjustment,
+                    None => {
+                        // SAFETY: `base` is the just-created current block;
+                        // this defensive impossible-kernel outcome must not
+                        // leave an arena claim live.
+                        let _ = unsafe { self.free(base) };
+                        return None;
+                    }
+                };
+                let block = match NonNull::new(base.as_ptr().wrapping_add(adjustment)) {
+                    Some(block) => block,
+                    None => {
+                        // SAFETY: see the matching pointer-adjustment branch.
+                        let _ = unsafe { self.free(base) };
+                        return None;
+                    }
+                };
+                if adjustment != 0 {
+                    // SAFETY: `base` remains a current allocation, so its
+                    // page-map entry and metadata are live for this exact
+                    // source interior-pointer flag transition.
+                    let page = unsafe { self.page_map.checked_lookup(base.as_ptr()) };
+                    let Some(page) = (unsafe { page.as_ref() }) else {
+                        // SAFETY: `base` is still current despite the failed
+                        // publication proof, so it can be balanced locally.
+                        let _ = unsafe { self.free(base) };
+                        return None;
+                    };
+                    if !self.owns_page(page) {
+                        let _ = unsafe { self.free(base) };
+                        return None;
+                    }
+                    page.set_has_interior_pointers(true);
+                }
+                Some(block)
+            }
+            // `alloc-aligned.c` routes this through an OS-aligned singleton
+            // outside arenas. Its primary/secondary metadata and mapping
+            // release provenance are deliberately distinct from arena pages.
+            aligned::AlignedAllocationPlan::HugeSingleton { request, alignment } => {
+                self.allocate_os_aligned_singleton(request, alignment, zero)
+            }
+        }
+    }
+
+    /// Allocates the source OS-aligned singleton branch for an alignment
+    /// strictly between `MI_PAGE_MAX_OVERALLOC_ALIGN` and
+    /// `MI_PAGE_META_ALIGNMENT`. This is intentionally not an arena fallback:
+    /// the mapping owns its metadata prefix and its terminal release right.
+    fn allocate_os_aligned_singleton(
+        &mut self,
+        request: usize,
+        alignment: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        let config = self.page_map.memory_config();
+        let block_size = config.good_alloc_size(request);
+        if block_size == 0 || block_size < request {
+            return None;
+        }
+        let page = self.allocate_fresh_os_aligned_page(block_size, alignment)?;
+        match self.pop_or_extend(page, zero) {
+            Ok(Some(block)) => {
+                if self.move_regular_to_full(BIN_HUGE, page.as_ptr()) {
+                    Some(block)
+                } else {
+                    // SAFETY: the just-popped block is still the sole live
+                    // allocation; restoring it permits terminal rollback of
+                    // the fresh OS mapping through its normal provenance.
+                    let _ = unsafe { self.free(block) };
+                    None
+                }
+            }
+            Ok(None) | Err(_) => {
+                // The fresh helper extended exactly one block before queue
+                // publication, so this branch is an invariant failure. Its
+                // mapping has not escaped and must not remain queue-owned.
+                let _ = self.release_page(BIN_HUGE, page.as_ptr());
+                None
+            }
+        }
+    }
+
+    /// Tries the opportunistic source small-page free-head fast path. `None`
+    /// means either that it does not apply or that no matching immediate head
+    /// exists; the generic aligned selector then owns the next transition.
+    fn allocate_aligned_small_head(
+        &mut self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        if size > SMALL_SIZE_MAX || alignment > size {
+            return None;
+        }
+        let direct_index = invariants::word_count(size)?;
+        if direct_index >= PAGES_DIRECT {
+            return None;
+        }
+        let page = self.session.direct_page(direct_index)?;
+        if page == EMPTY_PAGE.as_ptr() {
+            return None;
+        }
+        // SAFETY: the direct cache is owned exclusively by this lifecycle and
+        // names only its current regular pages.
+        let page_ref = unsafe { page.as_ref() }?;
+        let head = NonNull::new(page_ref.free_list_head().cast::<u8>())?;
+        if head.as_ptr().addr().wrapping_add(offset) & (alignment - 1) != 0 {
+            return None;
+        }
+        let block = self.pop_or_extend(NonNull::new(page)?, zero).ok()??;
+        debug_assert_eq!(block, head);
+        Some(block)
+    }
+
+    /// Reallocates one ordinary allocation. `None` is the C null-pointer
+    /// case. A failed replacement preserves `block`; `reallocate(Some(p), 0)`
+    /// instead returns a distinct non-null zero-size block and frees `p` only
+    /// after that replacement is fully initialized.
+    ///
+    /// # Safety
+    ///
+    /// When present, `block` must be one current allocation from this exact
+    /// allocator, with no aliased access during the operation.
+    pub(crate) unsafe fn reallocate(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.reallocate_inner(block, new_size, false) }
+    }
+
+    /// Reallocates one ordinary allocation and zeroes the source-defined
+    /// replacement extent. This is the bounded `rezalloc`/`recalloc` core.
+    ///
+    /// # Safety
+    ///
+    /// The caller obligations are identical to [`Self::reallocate`].
+    pub(crate) unsafe fn reallocate_zeroed(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.reallocate_inner(block, new_size, true) }
+    }
+
+    /// Core `mi_theap_realloc_zero_ex` behavior for the one owning heap.
+    unsafe fn reallocate_inner(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        let Some(block) = block else {
+            return self.allocate(new_size, zero);
+        };
+        // SAFETY: the public reallocation contract proves that `block` stays
+        // live and exclusively accessible through this decision and possible
+        // replacement copy.
+        let old_usable = unsafe { self.usable_size(block) }?;
+        let plan = alloc::reallocation_plan(Some(old_usable), new_size, true);
+        if plan == alloc::ReallocationPlan::Reuse {
+            return Some(block);
+        }
+
+        let replacement = self.allocate(new_size, false)?;
+        // SAFETY: successful local allocation returns one current block.
+        let Some(new_usable) = (unsafe { self.usable_size(replacement) }) else {
+            // SAFETY: preserve the old allocation and balance the just-made
+            // replacement if an internal page-map proof unexpectedly fails.
+            let _ = unsafe { self.free(replacement) };
+            return None;
+        };
+        let alloc::ReallocationPlan::Replace { copy_size, .. } = plan else {
+            return None;
+        };
+        if let Some(range) = alloc::replacement_zero_range(plan, new_usable, zero) {
+            // SAFETY: ordinary blocks begin at source block bases and are
+            // machine-word aligned; the range is checked against new usable.
+            unsafe {
+                support::zero_bytes_aligned(
+                    replacement.as_ptr().wrapping_add(range.start),
+                    range.end - range.start,
+                )
+            };
+        } else if alloc::replacement_zeros_first_byte(new_size, zero) {
+            // SAFETY: every successful allocator block has at least one byte.
+            unsafe { replacement.as_ptr().write(0) };
+        }
+        // SAFETY: replacement and old live blocks are distinct because the old
+        // block remains allocated, and `copy_size` is their checked overlap.
+        unsafe { support::copy_bytes_aligned(replacement.as_ptr(), block.as_ptr(), copy_size) };
+        // SAFETY: source frees the old allocation only after allocation,
+        // zeroing, and copy all succeeded.
+        if unsafe { self.free(block) }.is_err() {
+            // SAFETY: retaining the old allocation remains preferable to
+            // leaking the fully independent replacement on an invariant fault.
+            let _ = unsafe { self.free(replacement) };
+            return None;
+        }
+        Some(replacement)
+    }
+
+    /// Reallocates one zero-offset aligned allocation. Valid alignment remains
+    /// bounded to the arena and OS-singleton subset described by
+    /// [`Self::allocate_aligned`].
+    ///
+    /// # Safety
+    ///
+    /// When present, `block` must be current and satisfy the original aligned
+    /// allocation contract for this allocator.
+    #[inline]
+    pub(crate) unsafe fn reallocate_aligned(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.reallocate_aligned_at_inner(block, new_size, alignment, 0, false) }
+    }
+
+    /// Reallocates one offset-aligned allocation.
+    ///
+    /// # Safety
+    ///
+    /// The caller obligations are identical to [`Self::reallocate_aligned`],
+    /// with the supplied `offset` matching the original address equation.
+    #[inline]
+    pub(crate) unsafe fn reallocate_aligned_at(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.reallocate_aligned_at_inner(block, new_size, alignment, offset, false) }
+    }
+
+    /// Reallocates and zeroes a valid aligned allocation with zero offset.
+    ///
+    /// # Safety
+    ///
+    /// The caller obligations are identical to [`Self::reallocate_aligned`].
+    #[inline]
+    pub(crate) unsafe fn reallocate_aligned_zeroed(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.reallocate_aligned_at_inner(block, new_size, alignment, 0, true) }
+    }
+
+    /// Reallocates and zeroes a valid offset-aligned allocation.
+    ///
+    /// # Safety
+    ///
+    /// The caller obligations are identical to [`Self::reallocate_aligned_at`].
+    #[inline]
+    pub(crate) unsafe fn reallocate_aligned_zeroed_at(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+        alignment: usize,
+        offset: usize,
+    ) -> Option<NonNull<u8>> {
+        unsafe { self.reallocate_aligned_at_inner(block, new_size, alignment, offset, true) }
+    }
+
+    unsafe fn reallocate_aligned_at_inner(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        if !size_class::alignment_is_valid(alignment) {
+            return None;
+        }
+        if alignment <= core::mem::size_of::<usize>() && offset == 0 {
+            // SAFETY: this is the source delegation for ordinary alignment.
+            return unsafe { self.reallocate_inner(block, new_size, zero) };
+        }
+        let Some(block) = block else {
+            return self.allocate_aligned_at_inner(new_size, alignment, offset, zero);
+        };
+        // SAFETY: caller proves the current aligned allocation remains live.
+        let old_usable = unsafe { self.usable_size(block) }?;
+        if aligned::realloc_can_reuse(
+            block.as_ptr().addr(),
+            old_usable,
+            new_size,
+            alignment,
+            offset,
+        ) {
+            return Some(block);
+        }
+
+        let replacement = self.allocate_aligned_at_inner(new_size, alignment, offset, false)?;
+        // SAFETY: replacement is current and its aligned usable size is valid.
+        let Some(new_usable) = (unsafe { self.usable_size(replacement) }) else {
+            // SAFETY: this mirrors ordinary replacement failure cleanup while
+            // retaining the original aligned allocation untouched.
+            let _ = unsafe { self.free(replacement) };
+            return None;
+        };
+        let plan = alloc::reallocation_plan(Some(old_usable), new_size, false);
+        let alloc::ReallocationPlan::Replace { copy_size, .. } = plan else {
+            return None;
+        };
+        if let Some(range) = aligned::replacement_zero_range(copy_size, new_usable, zero) {
+            // SAFETY: an offset-aligned client pointer need not be word
+            // aligned, so aligned realloc uses the source's arbitrary memcpy
+            // and memzero kernels.
+            unsafe {
+                support::zero_bytes(
+                    replacement.as_ptr().wrapping_add(range.start),
+                    range.end - range.start,
+                )
+            };
+        }
+        // SAFETY: live replacement and old ranges do not overlap and the
+        // checked copy extent fits both adjusted usable sizes.
+        unsafe { support::copy_bytes(replacement.as_ptr(), block.as_ptr(), copy_size) };
+        // SAFETY: the old block remains live until replacement work completes.
+        if unsafe { self.free(block) }.is_err() {
+            // SAFETY: see ordinary replacement failure handling above.
+            let _ = unsafe { self.free(replacement) };
+            return None;
+        }
+        Some(replacement)
+    }
+
+    /// Returns the source usable size for one live local allocation.
+    ///
+    /// Base allocations expose their full page block size. Once a page has an
+    /// adjusted aligned allocation, each queried pointer is first recovered to
+    /// its canonical base and reports that block size less its own adjustment.
     ///
     /// # Safety
     ///
@@ -432,7 +923,12 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         if !self.owns_page(page) {
             return None;
         }
-        Some(page.block_size())
+        let base = self.canonical_block_start(page, block)?;
+        if page.has_interior_pointers() {
+            aligned::usable_size(page.block_size(), block.as_ptr().addr(), base.as_ptr().addr())
+        } else {
+            Some(page.block_size())
+        }
     }
 
     /// Returns one local block by page-map lookup and source local-free push.
@@ -455,6 +951,9 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         if !self.owns_page(page) {
             return Err(FreeError::ForeignPage);
         }
+        let base = self
+            .canonical_block_start(page, block)
+            .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
 
         let (used, in_full, bin) = {
             // SAFETY: this lifecycle owns the page, its blocks, and all local
@@ -462,15 +961,21 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             let mut free_list = unsafe { LocalFreeList::from_page(page) }
                 .map_err(FreeError::InvalidBlock)?;
             // SAFETY: the public caller contract proves exactly-once ownership
-            // of `block`; the borrowed list additionally validates page range
+            // of `block`; the borrowed list additionally validates the
+            // canonical base block's page range
             // and initialized-capacity membership before writing a link.
-            unsafe { free_list.push_local(block) }
+            unsafe { free_list.push_local(base) }
                 .map_err(FreeError::InvalidBlock)?;
             (free_list.used(), page_is_in_full(page), size_class::bin(page.block_size()))
         };
         let bin = bin.ok_or(FreeError::Lifecycle)?;
 
         if used == 0 {
+            // `mi_page_retire` clears the page-wide interior marker only once
+            // every allocation from the page has returned. Clearing it for an
+            // individual aligned free would make another live interior
+            // pointer unfreeable and give it the wrong usable size.
+            page.set_has_interior_pointers(false);
             if in_full {
                 // A full page with its final local block returned is not a
                 // regular retired page in the source; release it directly.
@@ -492,6 +997,27 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             return Err(FreeError::Lifecycle);
         }
         Ok(())
+    }
+
+    /// Finds the canonical source block for a current allocation. When any
+    /// allocation in its page was overallocated and adjusted, mimalloc marks
+    /// the page and derives the block base using `_mi_page_ptr_unalign`; the
+    /// resulting raw pointer preserves the caller allocation's provenance.
+    fn canonical_block_start(&self, page: &Page, block: NonNull<u8>) -> Option<NonNull<u8>> {
+        if !page.has_interior_pointers() {
+            return Some(block);
+        }
+        // SAFETY: the caller already proved this live page's allocation
+        // contract. `Page::start` is valid for its source-described block
+        // area, and this helper only derives the same allocation's base.
+        let page_start = unsafe { page.start() };
+        let base_address = aligned::recover_block_start(
+            block.as_ptr().addr(),
+            page_start.addr(),
+            page.block_size(),
+        )?;
+        let adjustment = block.as_ptr().addr().checked_sub(base_address)?;
+        NonNull::new(block.as_ptr().wrapping_sub(adjustment))
     }
 
     /// Collects source-retired regular pages. `force` releases every currently
@@ -579,6 +1105,145 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             }
         }
         Ok(None)
+    }
+
+    /// Performs the `alloc-aligned.c`/`arena.c` fresh OS-singleton sequence.
+    ///
+    /// The claim remains unpublished while primary metadata, any secondary
+    /// aliases, the one-block free list, and the source-clipped page-map span
+    /// are prepared. Only after the huge queue owns a fully initialized page
+    /// does `into_published` transfer its exact mapping release right into
+    /// the page's copied OS `MemoryId`.
+    fn allocate_fresh_os_aligned_page(
+        &mut self,
+        block_size: usize,
+        alignment: usize,
+    ) -> Option<NonNull<Page>> {
+        let config = self.page_map.memory_config();
+        let claim = OsAlignedPageClaim::allocate(config, block_size, alignment).ok()?;
+        let layout = claim.layout();
+        let metadata = match claim.metadata() {
+            Some(metadata) => metadata,
+            None => {
+                let _ = claim.release();
+                return None;
+            }
+        };
+        let slice_start = match claim.slice_start() {
+            Some(slice_start) => slice_start,
+            None => {
+                let _ = claim.release();
+                return None;
+            }
+        };
+        let memory = match claim.memory_id() {
+            Ok(memory) => memory,
+            Err(_) => {
+                let _ = claim.release();
+                return None;
+            }
+        };
+        let page = match unsafe {
+            self.session.publish_fresh_page(
+                metadata,
+                layout.block_size(),
+                layout.page_offset(),
+                1,
+                0,
+                memory.initially_zero(),
+                memory,
+            )
+        } {
+            Some(page) => page,
+            None => {
+                let _ = claim.release();
+                return None;
+            }
+        };
+        if unsafe { !claim.publish_secondary_metadata(page) } {
+            self.rollback_fresh_os_aligned(claim, page, false, false);
+            return None;
+        }
+
+        let initialized = (|| {
+            // SAFETY: `page` was initialized from the live OS claim's primary
+            // metadata and describes its committed one-block area. No queue
+            // or map observer sees it until this initialization completes.
+            let mut free_list = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }.ok()?;
+            (free_list.extend().ok()? == 1).then_some(())
+        })();
+        if initialized.is_none() {
+            self.rollback_fresh_os_aligned(claim, page, true, false);
+            return None;
+        }
+
+        // SAFETY: the primary is fully initialized; the exact source-clipped
+        // range is the only part published to page-map lookup. Larger OS
+        // mappings retain their full extent solely in `MemoryId`.
+        if unsafe {
+            self.page_map
+                .register_range(slice_start.as_ptr(), layout.page_map_size(), page)
+        }
+        .is_err()
+        {
+            self.rollback_fresh_os_aligned(claim, page, true, false);
+            return None;
+        }
+
+        self.push_regular_page(BIN_HUGE, page);
+        // This is an infallible handoff under `OsAlignedPageClaim`'s private
+        // state machine: construction returns only an active `Mapping`; the
+        // only method that can close it is the consuming `release`, which has
+        // not run; and `into_published` performs no syscall after checking
+        // that active bit. Its Result preserves the lower-level defensive API,
+        // not a recoverable post-queue publication branch. A normal `None`
+        // here would strand the queue and erase the only claim token.
+        match claim.into_published() {
+            Ok(_) => {}
+            Err(_) => unreachable!("an unconsumed OS-aligned claim stays active"),
+        }
+        Some(page)
+    }
+
+    /// Reverses an unpublished OS-aligned fresh attempt without consulting the
+    /// arena bitmap. The order mirrors its publication: clear page-map state,
+    /// then aliases, then primary metadata, then the still-local mapping.
+    fn rollback_fresh_os_aligned(
+        &mut self,
+        claim: OsAlignedPageClaim,
+        page: NonNull<Page>,
+        aliases_published: bool,
+        page_map_registered: bool,
+    ) {
+        let layout = claim.layout();
+        if page_map_registered {
+            let Some(slice_start) = claim.slice_start() else {
+                return;
+            };
+            // SAFETY: no allocation or queue entry escaped this failed fresh
+            // attempt, so this exact registration is private.
+            if unsafe {
+                self.page_map
+                    .unregister_range(slice_start.as_ptr(), layout.page_map_size())
+            }
+            .is_err()
+            {
+                // Preserve the active claim and metadata rather than reclaim a
+                // mapping while a stale page-map entry could still name it.
+                return;
+            }
+        }
+        if aliases_published && !unsafe { claim.clear_secondary_metadata(page) } {
+            // An alias ownership mismatch is a terminal provenance fault: do
+            // not reclaim the mapping while an alias could still name it.
+            return;
+        }
+        // SAFETY: failed fresh pages were never queue linked and retain no
+        // live block, so only this session owns their primary retirement.
+        if unsafe { self.session.retire_page(&mut *page.as_ptr()) }.is_none() {
+            return;
+        }
+        let _ = claim.release();
     }
 
     /// Performs the fresh-page half of `_mi_arenas_page_alloc` for an
@@ -813,7 +1478,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     }
 
     fn release_page(&mut self, bin: usize, page: *mut Page) -> bool {
-        let Some((memory, slice_start, size, slice_index)) = self.release_span(page) else {
+        let Some(span) = self.release_span(page) else {
             return false;
         };
         let queue = match self.session.queue_mut(bin) {
@@ -830,43 +1495,116 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             self.update_direct_cache(bin);
         }
 
-        // SAFETY: `memory` describes the prevalidated, still map-published
-        // span; no plain lookup overlaps this explicit lifecycle transition.
-        if unsafe { self.page_map.unregister_range(slice_start, size) }.is_err() {
-            self.reinsert_after_release_failure(bin, page);
-            return false;
+        match span {
+            ReleaseSpan::Arena {
+                memory,
+                slice_start,
+                size,
+                slice_index,
+            } => {
+                // SAFETY: `memory` describes the prevalidated, still
+                // map-published span; no plain lookup overlaps this explicit
+                // lifecycle transition.
+                if unsafe { self.page_map.unregister_range(slice_start, size) }.is_err() {
+                    self.reinsert_after_release_failure(bin, page);
+                    return false;
+                }
+                let cleared = unsafe {
+                    self.arena
+                        .pages()
+                        .and_then(|pages| pages.clear_range(slice_index, 1))
+                };
+                if cleared != Some(true) {
+                    // The map is already clear, so do not release the arena
+                    // span on an arena-page registration invariant failure. It
+                    // remains a visible diagnostic leak rather than a
+                    // use-after-release.
+                    return false;
+                }
+                // SAFETY: queue/direct/map membership is gone and local free
+                // state is fully free, so the session may reset metadata
+                // before slice release.
+                let retired = unsafe { self.session.retire_page(&mut *page) };
+                if retired.is_none() {
+                    return false;
+                }
+                // SAFETY: source ordering has unregistered the page before
+                // this exact outstanding external-arena claim is returned to
+                // its free bitmap.
+                unsafe { release_arena_slices(memory) }
+            }
+            ReleaseSpan::Os(published) => {
+                let layout = published.layout();
+                let expected_memory = published.memory_id();
+                // SAFETY: `PublishedOsAlignedPage` prevalidated the exact
+                // clipped source range while it still mapped to this primary.
+                if unsafe {
+                    self.page_map.unregister_range(
+                        published.slice_start().as_ptr(),
+                        layout.page_map_size(),
+                    )
+                }
+                .is_err()
+                {
+                    self.reinsert_after_release_failure(bin, page);
+                    return false;
+                }
+                // SAFETY: page-map lookup is gone before the secondary slots
+                // are cleared, and this single-thread lifecycle has no other
+                // aligned metadata reader.
+                if unsafe { !published.clear_secondary_metadata() } {
+                    return false;
+                }
+                // SAFETY: this primary is detached, entirely free, and its
+                // aliases are clear; it can no longer be observed after the
+                // following exact mapping reclamation.
+                let Some(retired) = (unsafe { self.session.retire_page(&mut *page) }) else {
+                    return false;
+                };
+                let Some(retired_os) = retired.os_memory() else {
+                    return false;
+                };
+                let Some(expected_os) = expected_memory.os_memory() else {
+                    return false;
+                };
+                if !retired.is_os()
+                    || retired_os.base != expected_os.base
+                    || retired_os.size != expected_os.size
+                    || retired.initially_committed() != expected_memory.initially_committed()
+                    || retired.initially_zero() != expected_memory.initially_zero()
+                {
+                    return false;
+                }
+                // SAFETY: `published` owns the unique raw release right and
+                // all map/alias/primary metadata predecessors now completed.
+                unsafe { published.reclaim() }.is_ok()
+            }
         }
-        let cleared = unsafe {
-            self.arena
-                .pages()
-                .and_then(|pages| pages.clear_range(slice_index, 1))
-        };
-        if cleared != Some(true) {
-            // The map is already clear, so do not release the arena span on an
-            // arena-page registration invariant failure. It remains a visible
-            // diagnostic leak rather than a use-after-release.
-            return false;
-        }
-        // SAFETY: queue/direct/map membership is gone and local free state is
-        // fully free, so the session may reset metadata before slice release.
-        let retired = unsafe { self.session.retire_page(&mut *page) };
-        if retired.is_none() {
-            return false;
-        }
-        // SAFETY: source ordering has unregistered the page before this exact
-        // outstanding external-arena claim is returned to its free bitmap.
-        unsafe { release_arena_slices(memory) }
     }
 
-    /// Validates every external-arena and page-map fact needed for terminal
-    /// release before detaching a queue member. This makes malformed retained
-    /// provenance a recoverable lifecycle error rather than an orphaned page.
-    fn release_span(&self, page: *mut Page) -> Option<(MemoryId, *mut u8, usize, usize)> {
+    /// Validates every arena or OS-aligned page-map fact needed for terminal
+    /// release before detaching a queue member. This preserves the distinct
+    /// source release provenance instead of treating an OS mapping as an
+    /// external-arena bitmap claim.
+    fn release_span(&self, page: *mut Page) -> Option<ReleaseSpan> {
         let page = NonNull::new(page)?;
         // SAFETY: only a page currently linked in this session's queue reaches
         // this helper, so its metadata remains live for this preflight.
         let page_ref = unsafe { page.as_ref() };
         let memory = page_ref.memid();
+        if memory.is_os() {
+            // SAFETY: this preflight holds exclusive live-page ownership and
+            // serializes the page-map observations named by the constructor.
+            let published = unsafe {
+                PublishedOsAlignedPage::from_page(self.page_map.memory_config(), page)
+            }?;
+            // SAFETY: the returned token carries the exact clipped range and
+            // primary address whose entries must still name this page.
+            if unsafe { !published.page_map_entries_match(self.page_map) } {
+                return None;
+            }
+            return Some(ReleaseSpan::Os(published));
+        }
         let arena_memory = memory.arena_memory()?;
         if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
             return None;
@@ -917,7 +1655,12 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
                 return None;
             }
         }
-        Some((memory, slice_start, size, slice_index))
+        Some(ReleaseSpan::Arena {
+            memory,
+            slice_start,
+            size,
+            slice_index,
+        })
     }
 
     fn reinsert_after_release_failure(&mut self, bin: usize, page: *mut Page) {
@@ -995,7 +1738,8 @@ mod tests {
     use crate::arena::{ArenaRegistry, CommitHook, manage_external_in_place};
     use crate::config::{
         ARENA_ALIGNMENT, ARENA_MIN_SIZE, LARGE_MAX_OBJ_SIZE, MAX_ALIGN_SIZE,
-        MEDIUM_MAX_OBJ_SIZE, SMALL_MAX_OBJ_SIZE, WORD_SIZE,
+        MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
+        KIB, SMALL_MAX_OBJ_SIZE, MIB, WORD_SIZE,
     };
     use crate::os::{MemoryConfig, PageSize};
     use core::ffi::c_void;
@@ -1152,6 +1896,23 @@ mod tests {
             }
         }
         true
+    }
+
+    unsafe fn write_bytes(pointer: NonNull<u8>, size: usize, byte: u8) {
+        // SAFETY: callers retain one unique current allocation for the exact
+        // requested range while this test-only helper initializes its bytes.
+        unsafe { core::ptr::write_bytes(pointer.as_ptr(), byte, size) };
+    }
+
+    unsafe fn content_hash(pointer: NonNull<u8>, size: usize) -> u64 {
+        let mut value = 14_695_981_039_346_656_037u64;
+        for index in 0..size {
+            // SAFETY: callers retain one current allocation covering the
+            // exact address-independent trace extent.
+            value ^= unsafe { pointer.as_ptr().add(index).read() } as u64;
+            value = value.wrapping_mul(1_099_511_628_211);
+        }
+        value
     }
 
     fn mapped_span(
@@ -1662,6 +2423,563 @@ mod tests {
             assert_eq!(unsafe { allocator.free(invalid) }, Err(FreeError::InvalidBlock(FreeListError::InvalidBlock)));
             // SAFETY: `zeroed` is still live after the rejected invalid free.
             unsafe { allocator.free(zeroed).unwrap() };
+        });
+    }
+
+    #[test]
+    fn counted_zero_allocation_checks_overflow_and_clears_the_full_live_block() {
+        with_allocator(|allocator| {
+            assert!(allocator.allocate_zeroed_count(usize::MAX, 2).is_none());
+            assert!(allocator
+                .allocate_aligned_zeroed_count_at(usize::MAX, 2, 64, 7)
+                .is_none());
+
+            let counted = allocator.allocate_zeroed_count(3, 17).unwrap();
+            let counted_usable = unsafe { allocator.usable_size(counted) }.unwrap();
+            assert!(counted_usable >= 51);
+            assert!(unsafe { bytes_equal(counted, counted_usable, 0) });
+
+            let aligned_counted = allocator
+                .allocate_aligned_zeroed_count(2, 17, 64)
+                .unwrap();
+            assert_eq!(aligned_counted.as_ptr().addr() & 63, 0);
+            let aligned_counted_usable = unsafe { allocator.usable_size(aligned_counted) }.unwrap();
+            assert!(aligned_counted_usable >= 34);
+            assert!(unsafe { bytes_equal(aligned_counted, aligned_counted_usable, 0) });
+
+            let aligned_zeroed = allocator.allocate_aligned_zeroed(17, 32).unwrap();
+            assert_eq!(aligned_zeroed.as_ptr().addr() & 31, 0);
+            let aligned_zeroed_usable = unsafe { allocator.usable_size(aligned_zeroed) }.unwrap();
+            assert!(unsafe { bytes_equal(aligned_zeroed, aligned_zeroed_usable, 0) });
+
+            let max_aligned = allocator
+                .allocate_aligned_zeroed_at(7, PAGE_MAX_OVERALLOC_ALIGN, 3)
+                .unwrap();
+            assert_eq!(
+                max_aligned.as_ptr().addr().wrapping_add(3) & (PAGE_MAX_OVERALLOC_ALIGN - 1),
+                0,
+            );
+            let max_usable = unsafe { allocator.usable_size(max_aligned) }.unwrap();
+            assert!(max_usable >= 7);
+            assert!(unsafe { bytes_equal(max_aligned, max_usable, 0) });
+
+            // `alloc-aligned.c` rejects this metadata-limit boundary rather
+            // than attempting an OS singleton whose metadata prefix cannot
+            // safely represent the source layout.
+            assert!(allocator
+                .allocate_aligned(7, 256 * MIB)
+                .is_none());
+
+            // SAFETY: each pointer is a distinct current allocation.
+            unsafe { allocator.free(counted).unwrap() };
+            unsafe { allocator.free(aligned_counted).unwrap() };
+            unsafe { allocator.free(aligned_zeroed).unwrap() };
+            unsafe { allocator.free(max_aligned).unwrap() };
+        });
+    }
+
+    #[test]
+    fn os_aligned_singletons_publish_clipped_maps_aliases_and_reclaim_their_mapping() {
+        with_allocator(|allocator| {
+            for (request, alignment, aliases_expected) in [
+                (7usize, 128 * KIB, false),
+                (3 * ARENA_SLICE_SIZE, MIB, true),
+            ] {
+                let block = allocator.allocate_aligned(request, alignment).unwrap();
+                assert_eq!(block.as_ptr().addr() & (alignment - 1), 0);
+                // SAFETY: this current allocation retains the complete primary
+                // page metadata and its source-clipped map registration.
+                let primary = unsafe { allocator.page_map.checked_lookup(block.as_ptr()) };
+                let primary = NonNull::new(primary).unwrap();
+                let page = unsafe { primary.as_ref() };
+                let expected_request = match aligned::allocation_plan(
+                    request,
+                    alignment,
+                    0,
+                    allocator.page_map.memory_config().page_size().bytes(),
+                ) {
+                    Some(aligned::AlignedAllocationPlan::HugeSingleton { request, .. }) => request,
+                    plan => panic!("expected OS-aligned singleton plan, got {plan:?}"),
+                };
+                let expected_block_size = allocator
+                    .page_map
+                    .memory_config()
+                    .good_alloc_size(expected_request);
+                assert_eq!(page.block_size(), expected_block_size);
+                assert_eq!(page.reserved(), 1);
+                assert_eq!(page.slice_pcommitted(), 0);
+                assert!(page.memid().is_os());
+                assert_eq!(page.aligned_alias_owner(), primary.as_ptr());
+                assert_eq!(unsafe { page.start() }, block.as_ptr());
+
+                // SAFETY: the primary is live, exclusive, and still has every
+                // published map/metadata predecessor required by this exact
+                // reconstruction.
+                let published = unsafe {
+                    PublishedOsAlignedPage::from_page(
+                        allocator.page_map.memory_config(),
+                        primary,
+                    )
+                }
+                .unwrap();
+                let layout = published.layout();
+                assert_eq!(layout.block_size(), expected_block_size);
+                assert_eq!(layout.alignment(), alignment);
+                assert_eq!(layout.metadata_slot_count() > 1, aliases_expected);
+                let slice_start = published.slice_start();
+                for offset in (0..layout.page_map_size()).step_by(ARENA_SLICE_SIZE) {
+                    // SAFETY: source map registration remains live until the
+                    // matching local free below triggers terminal release.
+                    assert_eq!(
+                        unsafe {
+                            allocator
+                                .page_map
+                                .checked_lookup(slice_start.as_ptr().wrapping_add(offset))
+                        },
+                        primary.as_ptr(),
+                    );
+                }
+                if aliases_expected {
+                    let base = slice_start.as_ptr().wrapping_sub(layout.alignment());
+                    let alias_offset = layout
+                        .metadata_offset()
+                        .checked_add(core::mem::size_of::<Page>())
+                        .unwrap();
+                    // SAFETY: this second committed metadata slot is a live
+                    // source alias until terminal release clears it before
+                    // reclaiming the containing OS mapping.
+                    let alias = unsafe { &*base.wrapping_add(alias_offset).cast::<Page>() };
+                    assert_eq!(alias.aligned_alias_owner(), primary.as_ptr());
+                }
+
+                // SAFETY: a singleton is full after its sole allocation, so
+                // this free executes the immediate full-page terminal order:
+                // clipped unregister, aliases clear, primary retire, exact
+                // published-mapping reclaim.
+                unsafe { allocator.free(block).unwrap() };
+                for offset in (0..layout.page_map_size()).step_by(ARENA_SLICE_SIZE) {
+                    // SAFETY: lookup is integer-indexed and the source-clipped
+                    // entry was cleared before the mapping was unmapped.
+                    assert!(unsafe {
+                        allocator
+                            .page_map
+                            .checked_lookup(slice_start.as_ptr().wrapping_add(offset))
+                    }
+                    .is_null());
+                }
+            }
+
+            // The last valid power-of-two below the metadata limit stays on
+            // the OS-aligned route; the exact 256 MiB limit is rejected.
+            let near_limit = allocator.allocate_aligned(7, 128 * MIB).unwrap();
+            assert_eq!(near_limit.as_ptr().addr() & (128 * MIB - 1), 0);
+            unsafe { allocator.free(near_limit).unwrap() };
+            assert!(allocator.allocate_aligned(7, 256 * MIB).is_none());
+        });
+    }
+
+    #[test]
+    fn aligned_small_head_natural_and_overallocated_blocks_keep_their_base_contract() {
+        with_allocator(|allocator| {
+            let ordinary = allocator.allocate(17, false).unwrap();
+            let direct = invariants::word_count(17).unwrap();
+            let page = allocator.direct_page(direct).unwrap();
+            // SAFETY: `ordinary` is still current and this page is its exact
+            // source direct-cache page before the local free below.
+            let ordinary_page = unsafe { allocator.page_map.checked_lookup(ordinary.as_ptr()) };
+            assert_eq!(ordinary_page, page);
+            // SAFETY: return the exact allocation to make it the immediate
+            // source free-list head consumed by the aligned fast path.
+            unsafe { allocator.free(ordinary).unwrap() };
+            let head = unsafe { NonNull::new((*page).free_list_head().cast::<u8>()) }.unwrap();
+            assert_eq!(head.as_ptr().addr() & (MAX_ALIGN_SIZE - 1), 0);
+
+            let fast = allocator.allocate_aligned_at(17, MAX_ALIGN_SIZE, 0).unwrap();
+            assert_eq!(fast, head);
+            assert_eq!(fast.as_ptr().addr() & (MAX_ALIGN_SIZE - 1), 0);
+
+            // This empty direct cache takes the source natural-alignment
+            // branch rather than the opportunistic existing-head branch.
+            let natural = allocator.allocate_aligned(31, MAX_ALIGN_SIZE).unwrap();
+            assert_eq!(natural.as_ptr().addr() & (MAX_ALIGN_SIZE - 1), 0);
+
+            // An ordinary base allocation and two offset-aligned allocations
+            // share the overallocated 80-byte page. The page-wide marker must
+            // allow base and adjusted frees and remain true until all adjusted
+            // owners have returned.
+            let base = allocator.allocate(80, false).unwrap();
+            let adjusted_one = allocator.allocate_aligned_at(17, 64, 7).unwrap();
+            let adjusted_two = allocator.allocate_aligned_at(17, 64, 7).unwrap();
+            assert_eq!(adjusted_one.as_ptr().addr().wrapping_add(7) & 63, 0);
+            assert_eq!(adjusted_two.as_ptr().addr().wrapping_add(7) & 63, 0);
+            let adjusted_page = unsafe { allocator.page_map.checked_lookup(adjusted_one.as_ptr()) };
+            assert_eq!(adjusted_page, unsafe { allocator.page_map.checked_lookup(base.as_ptr()) });
+            assert_eq!(adjusted_page, unsafe { allocator.page_map.checked_lookup(adjusted_two.as_ptr()) });
+            // SAFETY: all three allocations retain their shared page metadata.
+            let adjusted_page = unsafe { &*adjusted_page };
+            assert!(adjusted_page.has_interior_pointers());
+            let block_start = aligned::recover_block_start(
+                adjusted_one.as_ptr().addr(),
+                unsafe { adjusted_page.start() }.addr(),
+                adjusted_page.block_size(),
+            )
+            .unwrap();
+            assert_eq!(
+                unsafe { allocator.usable_size(adjusted_one) },
+                aligned::usable_size(
+                    adjusted_page.block_size(),
+                    adjusted_one.as_ptr().addr(),
+                    block_start,
+                ),
+            );
+
+            // SAFETY: these current allocations exercise the canonical base
+            // recovery while other adjusted blocks still keep the marker live.
+            unsafe { allocator.free(base).unwrap() };
+            assert!(adjusted_page.has_interior_pointers());
+            unsafe { allocator.free(adjusted_one).unwrap() };
+            assert!(adjusted_page.has_interior_pointers());
+            unsafe { allocator.free(adjusted_two).unwrap() };
+            assert!(!adjusted_page.has_interior_pointers());
+            unsafe { allocator.free(fast).unwrap() };
+            unsafe { allocator.free(natural).unwrap() };
+        });
+    }
+
+    #[test]
+    fn ordinary_realloc_uses_floor_half_and_preserves_rezalloc_bytes() {
+        with_allocator(|allocator| {
+            let original = allocator.allocate(33, false).unwrap();
+            let original_usable = unsafe { allocator.usable_size(original) }.unwrap();
+            assert!(original_usable >= 33);
+            // SAFETY: fill the entire source usable range so the replacement
+            // copy extent is directly observable below.
+            unsafe { write_bytes(original, original_usable, 0x5a) };
+
+            let floor_half = original_usable / 2;
+            let reused = unsafe { allocator.reallocate(Some(original), floor_half) }.unwrap();
+            assert_eq!(reused, original);
+            let replacement = unsafe { allocator.reallocate(Some(reused), floor_half - 1) }.unwrap();
+            assert_ne!(replacement, reused);
+            assert!(unsafe { bytes_equal(replacement, floor_half - 1, 0x5a) });
+
+            let replacement_usable = unsafe { allocator.usable_size(replacement) }.unwrap();
+            // SAFETY: seed the complete old usable range before a zeroed grow
+            // that must allocate a distinct block and zero from the source
+            // last-word extent through the new usable end.
+            unsafe { write_bytes(replacement, replacement_usable, 0x3c) };
+            let grown = unsafe {
+                allocator.reallocate_zeroed(Some(replacement), replacement_usable + 17)
+            }
+            .unwrap();
+            let grown_usable = unsafe { allocator.usable_size(grown) }.unwrap();
+            assert_ne!(grown, replacement);
+            assert!(unsafe { bytes_equal(grown, replacement_usable, 0x3c) });
+            assert!(unsafe {
+                bytes_equal(
+                    NonNull::new(grown.as_ptr().wrapping_add(replacement_usable)).unwrap(),
+                    grown_usable - replacement_usable,
+                    0,
+                )
+            });
+
+            let zero_size = unsafe { allocator.reallocate(Some(grown), 0) }.unwrap();
+            assert_ne!(zero_size, grown);
+            // SAFETY: a successful source-compatible zero-size replacement
+            // explicitly clears its first byte before freeing `grown`.
+            assert_eq!(unsafe { zero_size.as_ptr().read() }, 0);
+            unsafe { allocator.free(zero_size).unwrap() };
+        });
+    }
+
+    #[test]
+    fn aligned_realloc_uses_ceil_half_and_zeroes_replacement_growth() {
+        with_allocator(|allocator| {
+            let original = allocator.allocate_aligned_at(33, 64, 7).unwrap();
+            let original_usable = unsafe { allocator.usable_size(original) }.unwrap();
+            assert!(original_usable >= 33);
+            unsafe { write_bytes(original, original_usable, 0x96) };
+
+            // `usable - usable / 2` is ceil(usable / 2), unlike the ordinary
+            // floor-half condition. Exactly that lower bound reuses the block.
+            let ceil_half = original_usable - original_usable / 2;
+            let reused = unsafe {
+                allocator.reallocate_aligned_at(Some(original), ceil_half, 64, 7)
+            }
+            .unwrap();
+            assert_eq!(reused, original);
+            let replacement = unsafe {
+                allocator.reallocate_aligned_at(Some(reused), ceil_half - 1, 64, 7)
+            }
+            .unwrap();
+            assert_ne!(replacement, reused);
+            assert_eq!(replacement.as_ptr().addr().wrapping_add(7) & 63, 0);
+            assert!(unsafe { bytes_equal(replacement, ceil_half - 1, 0x96) });
+
+            let replacement_usable = unsafe { allocator.usable_size(replacement) }.unwrap();
+            unsafe { write_bytes(replacement, replacement_usable, 0x47) };
+            let grown = unsafe {
+                allocator.reallocate_aligned_zeroed_at(
+                    Some(replacement),
+                    replacement_usable + 17,
+                    64,
+                    7,
+                )
+            }
+            .unwrap();
+            let grown_usable = unsafe { allocator.usable_size(grown) }.unwrap();
+            assert_ne!(grown, replacement);
+            assert_eq!(grown.as_ptr().addr().wrapping_add(7) & 63, 0);
+            assert!(unsafe { bytes_equal(grown, replacement_usable, 0x47) });
+            assert!(unsafe {
+                bytes_equal(
+                    NonNull::new(grown.as_ptr().wrapping_add(replacement_usable)).unwrap(),
+                    grown_usable - replacement_usable,
+                    0,
+                )
+            });
+            unsafe { allocator.free(grown).unwrap() };
+
+            // The zero-offset wrappers delegate through the ordinary-aligned
+            // path while retaining the same in-arena valid-alignment bound.
+            let zero_offset = allocator.allocate_aligned(33, MAX_ALIGN_SIZE).unwrap();
+            let initial_usable = unsafe { allocator.usable_size(zero_offset) }.unwrap();
+            unsafe { write_bytes(zero_offset, initial_usable, 0x2b) };
+            let zero_offset = unsafe {
+                allocator.reallocate_aligned(Some(zero_offset), initial_usable + 1, MAX_ALIGN_SIZE)
+            }
+            .unwrap();
+            let zero_offset_usable = unsafe { allocator.usable_size(zero_offset) }.unwrap();
+            assert!(unsafe { bytes_equal(zero_offset, initial_usable, 0x2b) });
+            unsafe { write_bytes(zero_offset, zero_offset_usable, 0x2b) };
+            let zero_offset = unsafe {
+                allocator.reallocate_aligned_zeroed(
+                    Some(zero_offset),
+                    zero_offset_usable + 17,
+                    MAX_ALIGN_SIZE,
+                )
+            }
+            .unwrap();
+            assert!(unsafe { bytes_equal(zero_offset, zero_offset_usable, 0x2b) });
+            unsafe { allocator.free(zero_offset).unwrap() };
+        });
+    }
+
+    #[test]
+    fn failed_realloc_preserves_the_original_live_block() {
+        with_allocator(|allocator| {
+            let original = allocator.allocate(64, false).unwrap();
+            unsafe { write_bytes(original, 64, 0xa7) };
+
+            // Consume every other arena slice. The live original prevents its
+            // own small page from retirement, so the generic large request's
+            // mandated force-collect/retry cannot manufacture a 64-slice span.
+            let mut held = Vec::new();
+            while let Some(claim) = allocator
+                .arena
+                .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            {
+                held.push(claim);
+            }
+            assert!(unsafe { allocator.reallocate(Some(original), LARGE_MAX_OBJ_SIZE) }.is_none());
+            assert!(unsafe { bytes_equal(original, 64, 0xa7) });
+
+            // SAFETY: failure deliberately leaves `original` live and intact.
+            unsafe { allocator.free(original).unwrap() };
+            assert!(allocator.collect_retired(true));
+            for claim in held {
+                assert!(claim.release());
+            }
+        });
+    }
+
+    #[test]
+    fn fundamental_trace_matches_the_pinned_address_independent_oracle_record() {
+        with_allocator(|allocator| {
+            std::println!("CRABC_MI_FUNDAMENTAL_TRACE_BEGIN");
+
+            for (name, request) in [
+                ("small", SMALL_MAX_OBJ_SIZE),
+                ("medium", SMALL_MAX_OBJ_SIZE + 1),
+                ("large", MEDIUM_MAX_OBJ_SIZE + 1),
+                ("singleton", LARGE_MAX_OBJ_SIZE + 1),
+            ] {
+                let block = allocator.allocate(request, false).unwrap();
+                let usable = unsafe { allocator.usable_size(block) }.unwrap();
+                std::println!("trace.fundamental.class.{name}.request={request}");
+                std::println!("trace.fundamental.class.{name}.usable={usable}");
+                std::println!(
+                    "trace.fundamental.class.{name}.success={}",
+                    u8::from(usable >= request),
+                );
+                unsafe { allocator.free(block).unwrap() };
+            }
+
+            let calloc_count = 7usize;
+            let calloc_size = 13usize;
+            let calloc_total = calloc_count * calloc_size;
+            let zeroed = allocator
+                .allocate_zeroed_count(calloc_count, calloc_size)
+                .unwrap();
+            let zeroed_usable = unsafe { allocator.usable_size(zeroed) }.unwrap();
+            std::println!("trace.fundamental.calloc.count={calloc_count}");
+            std::println!("trace.fundamental.calloc.size={calloc_size}");
+            std::println!("trace.fundamental.calloc.usable={zeroed_usable}");
+            std::println!(
+                "trace.fundamental.calloc.cleared={}",
+                u8::from(unsafe { bytes_equal(zeroed, calloc_total, 0) }),
+            );
+            std::println!(
+                "trace.fundamental.calloc.content_hash={}",
+                unsafe { content_hash(zeroed, calloc_total) },
+            );
+            unsafe { allocator.free(zeroed).unwrap() };
+
+            let overflow_count = usize::MAX;
+            let overflow_size = 2usize;
+            let overflow = allocator.allocate_zeroed_count(overflow_count, overflow_size);
+            std::println!("trace.fundamental.calloc_overflow.count={overflow_count}");
+            std::println!("trace.fundamental.calloc_overflow.size={overflow_size}");
+            std::println!(
+                "trace.fundamental.calloc_overflow.returns_null={}",
+                u8::from(overflow.is_none()),
+            );
+
+            let realloc_null = unsafe { allocator.reallocate(None, 41) }.unwrap();
+            unsafe { write_bytes(realloc_null, 41, 0x31) };
+            std::println!("trace.fundamental.realloc_null.request=41");
+            std::println!(
+                "trace.fundamental.realloc_null.usable={}",
+                unsafe { allocator.usable_size(realloc_null) }.unwrap(),
+            );
+            std::println!(
+                "trace.fundamental.realloc_null.content_hash={}",
+                unsafe { content_hash(realloc_null, 41) },
+            );
+            unsafe { allocator.free(realloc_null).unwrap() };
+
+            let grow_original_size = 257usize;
+            let grow_size = 8193usize;
+            let grow = allocator.allocate(grow_original_size, false).unwrap();
+            unsafe { write_bytes(grow, grow_original_size, 0x42) };
+            let grow_before = unsafe { content_hash(grow, grow_original_size) };
+            let grow = unsafe { allocator.reallocate(Some(grow), grow_size) }.unwrap();
+            let grow_after = unsafe { content_hash(grow, grow_original_size) };
+            std::println!(
+                "trace.fundamental.realloc_grow.original_size={grow_original_size}"
+            );
+            std::println!("trace.fundamental.realloc_grow.new_size={grow_size}");
+            std::println!(
+                "trace.fundamental.realloc_grow.usable={}",
+                unsafe { allocator.usable_size(grow) }.unwrap(),
+            );
+            std::println!(
+                "trace.fundamental.realloc_grow.preserved={}",
+                u8::from(grow_before == grow_after),
+            );
+            std::println!("trace.fundamental.realloc_grow.content_hash={grow_after}");
+
+            let shrink_size = 71usize;
+            let shrink_expected = unsafe { content_hash(grow, shrink_size) };
+            let grow = unsafe { allocator.reallocate(Some(grow), shrink_size) }.unwrap();
+            let shrink_after = unsafe { content_hash(grow, shrink_size) };
+            std::println!("trace.fundamental.realloc_shrink.new_size={shrink_size}");
+            std::println!(
+                "trace.fundamental.realloc_shrink.usable={}",
+                unsafe { allocator.usable_size(grow) }.unwrap(),
+            );
+            std::println!(
+                "trace.fundamental.realloc_shrink.preserved={}",
+                u8::from(shrink_expected == shrink_after),
+            );
+            std::println!("trace.fundamental.realloc_shrink.content_hash={shrink_after}");
+            unsafe { allocator.free(grow).unwrap() };
+
+            let failure_preserved = allocator.allocate(59, false).unwrap();
+            unsafe { write_bytes(failure_preserved, 59, 0x73) };
+            let failure_before = unsafe { content_hash(failure_preserved, 59) };
+            let failed = unsafe {
+                allocator.reallocate(Some(failure_preserved), MAX_ALLOC_SIZE + 1)
+            };
+            let failure_after = unsafe { content_hash(failure_preserved, 59) };
+            std::println!(
+                "trace.fundamental.realloc_failure.request={}",
+                MAX_ALLOC_SIZE + 1,
+            );
+            std::println!(
+                "trace.fundamental.realloc_failure.returns_null={}",
+                u8::from(failed.is_none()),
+            );
+            std::println!(
+                "trace.fundamental.realloc_failure.preserved={}",
+                u8::from(failure_before == failure_after),
+            );
+            std::println!(
+                "trace.fundamental.realloc_failure.content_hash={failure_after}"
+            );
+            unsafe { allocator.free(failure_preserved).unwrap() };
+
+            let size_zero = allocator.allocate(59, false).unwrap();
+            let size_zero = unsafe { allocator.reallocate(Some(size_zero), 0) }.unwrap();
+            std::println!("trace.fundamental.realloc_size_zero.request=0");
+            std::println!("trace.fundamental.realloc_size_zero.returns_nonnull=1");
+            std::println!(
+                "trace.fundamental.realloc_size_zero.usable={}",
+                unsafe { allocator.usable_size(size_zero) }.unwrap(),
+            );
+            unsafe { allocator.free(size_zero).unwrap() };
+
+            let aligned_size = 97usize;
+            let aligned_alignment = 256usize;
+            let aligned = allocator
+                .allocate_aligned(aligned_size, aligned_alignment)
+                .unwrap();
+            let aligned_usable = unsafe { allocator.usable_size(aligned) }.unwrap();
+            std::println!("trace.fundamental.aligned.size={aligned_size}");
+            std::println!("trace.fundamental.aligned.alignment={aligned_alignment}");
+            std::println!("trace.fundamental.aligned.usable={aligned_usable}");
+            std::println!(
+                "trace.fundamental.aligned.valid={}",
+                u8::from(
+                    aligned_usable >= aligned_size
+                        && aligned.as_ptr().addr() % aligned_alignment == 0
+                ),
+            );
+            unsafe { allocator.free(aligned).unwrap() };
+
+            let offset_size = 191usize;
+            let offset_alignment = 512usize;
+            let offset = 13usize;
+            let offset_aligned = allocator
+                .allocate_aligned_at(offset_size, offset_alignment, offset)
+                .unwrap();
+            let offset_usable = unsafe { allocator.usable_size(offset_aligned) }.unwrap();
+            std::println!("trace.fundamental.offset_aligned.size={offset_size}");
+            std::println!(
+                "trace.fundamental.offset_aligned.alignment={offset_alignment}"
+            );
+            std::println!("trace.fundamental.offset_aligned.offset={offset}");
+            std::println!("trace.fundamental.offset_aligned.usable={offset_usable}");
+            std::println!(
+                "trace.fundamental.offset_aligned.valid={}",
+                u8::from(
+                    offset_usable >= offset_size
+                        && offset_aligned.as_ptr().addr().wrapping_add(offset)
+                            % offset_alignment
+                            == 0
+                ),
+            );
+            unsafe { allocator.free(offset_aligned).unwrap() };
+
+            let forced_oom_request = MAX_ALLOC_SIZE + 1;
+            let forced_oom = allocator.allocate(forced_oom_request, false);
+            std::println!("trace.fundamental.oom.request={forced_oom_request}");
+            std::println!("trace.fundamental.oom.classification_invalid_request=1");
+            std::println!(
+                "trace.fundamental.oom.returns_null={}",
+                u8::from(forced_oom.is_none()),
+            );
+            std::println!("CRABC_MI_FUNDAMENTAL_TRACE_END");
         });
     }
 }

@@ -9,13 +9,17 @@
 // pointer adjustment, and aligned realloc reuse) and `src/free.c:104-114,
 // 522-542` (interior-pointer recovery and aligned usable size).
 //
-// These are address-independent selection and checked pointer-arithmetic
-// kernels. Live page flags, allocation, copying, zeroing, and release stay in
-// the owning allocator lifecycle.
+// These are address-independent selection, checked pointer-arithmetic, and
+// aligned-reallocation extent kernels. Live page flags, allocation, copying,
+// zeroing, and release stay in the owning allocator lifecycle.
+
+use core::mem::size_of;
+use core::ops::Range;
 
 use crate::config::{
     MAX_ALIGN_SIZE, MAX_ALLOC_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
-    PAGE_MAX_START_BLOCK_ALIGN2, PAGE_OSPAGE_BLOCK_ALIGN2, SMALL_SIZE_MAX,
+    PAGE_MAX_START_BLOCK_ALIGN2, PAGE_META_ALIGNMENT, PAGE_OSPAGE_BLOCK_ALIGN2,
+    SMALL_SIZE_MAX,
 };
 use crate::size_class;
 
@@ -53,7 +57,7 @@ pub(crate) const fn allocation_plan(
     }
 
     if alignment > PAGE_MAX_OVERALLOC_ALIGN {
-        if offset != 0 {
+        if offset != 0 || alignment >= PAGE_META_ALIGNMENT {
             return None;
         }
         let request = if size <= SMALL_SIZE_MAX {
@@ -134,6 +138,31 @@ pub(crate) const fn realloc_can_reuse(
         && pointer.wrapping_add(offset) & (alignment - 1) == 0
 }
 
+/// Returns the aligned-rezalloc zero extent after a successful replacement.
+///
+/// Unlike ordinary realloc, pinned `alloc-aligned.c` cannot round this start
+/// down: an arbitrary offset can make the returned pointer unaligned. It
+/// subtracts exactly one word from the copy extent and uses the unaligned byte
+/// kernel so padding at that boundary is initialized before the old bytes are
+/// copied back over it.
+#[inline]
+pub(crate) const fn replacement_zero_range(
+    copy_size: usize,
+    new_usable: usize,
+    zero: bool,
+) -> Option<Range<usize>> {
+    let zero_start = if copy_size >= size_of::<isize>() {
+        copy_size - size_of::<isize>()
+    } else {
+        0
+    };
+    if zero && new_usable > zero_start {
+        Some(zero_start..new_usable)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,6 +191,8 @@ mod tests {
             })
         );
         assert_eq!(allocation_plan(8, PAGE_MAX_OVERALLOC_ALIGN * 2, 1, OS_PAGE), None);
+        assert_eq!(allocation_plan(8, PAGE_META_ALIGNMENT, 0, OS_PAGE), None);
+        assert_eq!(allocation_plan(8, 2 * PAGE_META_ALIGNMENT, 0, OS_PAGE), None);
         assert_eq!(allocation_plan(8, 0, 0, OS_PAGE), None);
         assert_eq!(allocation_plan(8, 24, 0, OS_PAGE), None);
         assert_eq!(allocation_plan(MAX_ALLOC_SIZE + 1, 16, 0, OS_PAGE), None);
@@ -209,5 +240,13 @@ mod tests {
         assert!(!realloc_can_reuse(0x1040, 128, 129, 64, 0));
         assert!(!realloc_can_reuse(0x1040, 128, 64, 128, 1));
         assert!(!realloc_can_reuse(0x1040, 128, 64, 0, 0));
+    }
+
+    #[test]
+    fn aligned_rezalloc_keeps_the_unaligned_previous_last_word_extent() {
+        assert_eq!(replacement_zero_range(31, 144, true), Some(23..144));
+        assert_eq!(replacement_zero_range(7, 144, true), Some(0..144));
+        assert_eq!(replacement_zero_range(31, 23, true), None);
+        assert_eq!(replacement_zero_range(31, 144, false), None);
     }
 }

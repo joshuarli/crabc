@@ -17,9 +17,10 @@ the allocator random context over RustCrypto's original-ChaCha primitive. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,
-retirement, full-span unregister-before-release, and failure rollback. Pure
-aligned-pointer and reallocation extent kernels are present but are not wired
-to live operations. It is not a public allocator API and makes no
+retirement, full-span unregister-before-release, checked counted allocation,
+ordinary and aligned reallocation, live aligned/offset-aligned allocation,
+separately owned OS-aligned singleton mappings below 256 MiB, and failure
+rollback. It is not a public allocator API and makes no
 allocator-readiness or whole-port parity claim. Its fixed-capacity `cfg(miri)`
 model covers current mapping and page-map ownership. The pinned image does not
 currently contain Miri, so forced-`cfg(miri)` execution is smoke evidence only
@@ -52,8 +53,11 @@ alignment observation, payload preservation, zeroing, and a 96-block repeated
 fill/free permutation. Raw addresses are deliberately excluded. The gate also
 records a separate 51-key exact-C baseline for page-kind, calloc, realloc,
 aligned/offset-aligned, usable-size, preservation, and invalid-size OOM
-behavior. Its Rust comparison is explicitly `blocked`; the baseline is not a
-generic-operation parity claim. The gate also traverses Cargo metadata for the
+behavior. The same library run emits an independent 51-key Rust record and
+requires exact equality with that pinned C baseline. This proves the bounded
+single-thread engine's fundamental operation slice; it is not yet a public C
+adapter, process-lifecycle, or whole-allocator parity claim. The gate also
+traverses Cargo metadata for the
 fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside
 the audited `chacha20`/`zeroize` graph. Target-conditional packages retained

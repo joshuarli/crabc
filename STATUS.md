@@ -10,14 +10,18 @@ remains the generated record of current compatibility evidence and
 measurements; it is not edited by hand.
 
 The allocator program currently has one bounded executable vertical slice:
-an explicit pinned default theap can allocate and locally free small blocks
-from a caller-managed external arena and page map, including full-page
-retention, retirement, unregister-before-release, and injected rollback. The
-ordinary allocator gate matches 447 Rust-owned layout/configuration values and
-378 address-independent small-allocation trace values against exact pinned C
-v3.5.0. This is not a production backend or readiness claim; process/TLS and
-remote-free lifecycle, the remaining allocation families, libc integration,
-stress, full upstream tests, and performance promotion gates remain open.
+an explicit pinned default theap can allocate, reallocate, and locally free
+small, medium, large, singleton, aligned, and offset-aligned blocks from a
+caller-managed external arena and page map. Large alignments use separately
+owned OS singleton mappings below the source's 256 MiB metadata limit. The
+slice includes checked counted allocation, full-page retention, retirement,
+unregister-before-release, and injected rollback. The ordinary allocator gate
+matches 447 Rust-owned layout/configuration values, 378 address-independent
+small-allocation trace values, and 51 fundamental-operation values against
+exact pinned C v3.5.0. This is not a production backend or readiness claim;
+the process-owned C test adapter, process/TLS and remote-free lifecycle, libc
+integration, stress, full upstream tests, and performance promotion gates
+remain open.
 
 Future acceptance contracts are deliberately specific:
 

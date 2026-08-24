@@ -438,11 +438,11 @@ CRABC_MI_FUNDAMENTAL_TRACE_END
         with self.assertRaisesRegex(RUNNER.HarnessError, "raw address"):
             RUNNER.parse_fundamental_trace(hexadecimal)
 
-    def test_fundamental_trace_comparison_is_explicitly_blocked_until_rust_wires_markers(self) -> None:
-        status = RUNNER.blocked_fundamental_trace_comparison()
-        self.assertEqual(status["status"], "blocked")
-        self.assertIn("baseline evidence only", status["reason"])
-        self.assertIn("no Rust/C parity claim", status["reason"])
+    def test_fundamental_trace_same_run_marker_cannot_claim_comparison(self) -> None:
+        status = RUNNER.pending_fundamental_trace_comparison()
+        self.assertEqual(status["status"], "pending")
+        self.assertIn("before the Rust library probe", status["reason"])
+        self.assertIn("replaces this marker", status["reason"])
 
     def test_layout_parser_rejects_duplicate_machine_record_keys(self) -> None:
         with self.assertRaisesRegex(RUNNER.HarnessError, "duplicate layout probe key"):
@@ -554,10 +554,10 @@ class ContractTests(unittest.TestCase):
 
     def test_full_and_performance_modes_have_precise_unmet_milestones(self) -> None:
         full = (
-            "allocator --full is unavailable at Milestone 0: Milestone 4 must provide the Rust test C API adapter and fundamental allocation API before upstream tests, traces, stress, backend matrix, fork/TLS, and corpus lanes can run."
+            "allocator --full is unavailable: Milestone 4 must provide the Rust test C API adapter and process-owned allocator context before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
         )
         performance = (
-            "allocator performance is unavailable at Milestone 0: Milestone 9 requires both C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; no Rust operation is implemented or benchmarked."
+            "allocator performance is unavailable: Milestone 9 requires comparable C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; the current private one-thread engine is not a benchmark boundary."
         )
         self.assertIn("Milestone 4", full)
         self.assertIn("Milestone 9", performance)

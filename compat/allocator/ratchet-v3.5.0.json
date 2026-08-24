@@ -4,16 +4,16 @@
   "configuration_profile_count": 5,
   "format": 1,
   "port_map_counts": {
-    "differential_verified": 11,
+    "differential_verified": 12,
     "exported": 0,
-    "implemented": 52,
-    "item_count": 49,
+    "implemented": 54,
+    "item_count": 51,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 52
+    "unit_verified": 54
   },
-  "port_map_sha256": "44fc15fc248d7d77c8b08a1dc107c5dbc085a8fe187117740d42da4df503f458",
+  "port_map_sha256": "0785fa6fb79cb9682f26ca22719600695c72418197f83d95e964b341ee07922d",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -96,6 +96,11 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/alloc.c:explicit-default-theap-fundamental-operation-record": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/alloc.c:explicit-default-theap-ordinary-generic-page-lifecycle": [
       "implemented",
       "unit_verified"
@@ -118,6 +123,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:external-arena-contiguous-claim-page-metadata-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:os-aligned-singleton-metadata-page-map-and-release": [
       "implemented",
       "unit_verified"
     ],
@@ -266,7 +275,7 @@
     "unit:src/theap.c": [],
     "unit:src/threadlocal.c": []
   },
-  "upstream_test_contract_sha256": "23b48530f1a66018d4b5cde0d113aef9075ba000da7a0d80ad6f9145af57a89f",
+  "upstream_test_contract_sha256": "5038850500b5cdbc6bfd069312b10672c207bea9d26a71a819b6dbf45fd81511",
   "upstream_test_inventory_file_count": 16,
   "upstream_test_source_count": 13
 }

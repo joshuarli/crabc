@@ -3,10 +3,11 @@
 //! The crate contains source-mapped allocator foundations and one private,
 //! explicit single-thread ordinary-allocation lifecycle over a caller-managed
 //! external arena and page map. That lifecycle covers small, medium, large,
-//! and singleton pages; aligned-pointer and reallocation policy kernels are
-//! present but are not wired to live allocation state. The crate deliberately
-//! exposes no public allocator API or process/TLS lifecycle yet; aligned and
-//! realloc operations, remote free, teardown, and integration remain incomplete.
+//! and singleton pages, checked counted allocation, ordinary reallocation,
+//! arena-bounded aligned operations, and the separately owned OS-aligned
+//! singleton path below the metadata-alignment limit. The crate deliberately
+//! exposes no public allocator API or process/TLS lifecycle yet; remote free,
+//! teardown, and integration remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
 //! `crabc-libc`; this crate must not depend on it.
 
@@ -38,6 +39,7 @@ mod free_list;
 mod invariants;
 mod lock;
 mod once;
+mod os_page;
 #[cfg(miri)]
 #[path = "os_host_model.rs"]
 mod os;

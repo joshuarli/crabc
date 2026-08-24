@@ -577,6 +577,94 @@ impl Page {
         }
     }
 
+    /// Creates the zero page image used only for secondary aligned-metadata
+    /// lookup slots.
+    ///
+    /// Pinned `arena.c` zeroes the metadata prefix and initializes only the
+    /// `self` atomic in these aliases. Every zero bit-pattern below is a valid
+    /// Rust field value, including `MemoryKind::None`; spelling out the image
+    /// avoids treating arbitrary bytes as an initialized `Page`.
+    const fn empty_aligned_alias() -> Self {
+        Self {
+            self_: AtomicPtr::new(null_mut()),
+            xthread_id: AtomicUsize::new(0),
+            free: null_mut(),
+            used: 0,
+            local_free: null_mut(),
+            block_size: 0,
+            page_offset: 0,
+            capacity: 0,
+            reserved: 0,
+            slice_pcommitted: 0,
+            retire_expire: 0,
+            free_is_zero: false,
+            xthread_free: AtomicUsize::new(0),
+            theap: null_mut(),
+            heap: null_mut(),
+            next: null_mut(),
+            prev: null_mut(),
+            memid: MemoryId::none(),
+        }
+    }
+
+    /// Initializes one secondary `_mi_aligned_ptr_page0` metadata slot.
+    ///
+    /// The slot is a lookup alias, not an allocator page: every field remains
+    /// at the source zero image except `self`, which publishes the primary
+    /// page with Release ordering.
+    ///
+    /// # Safety
+    ///
+    /// `slot` must be aligned writable storage for one `Page` in the committed
+    /// metadata prefix belonging to `owner`. It must not contain a live Rust
+    /// value or be visible to a concurrent lookup until this call returns.
+    /// `owner` must remain address-stable and live until this exact slot is
+    /// cleared or its entire mapping is released after reader quiescence.
+    pub(crate) unsafe fn publish_aligned_alias_at(
+        slot: NonNull<Page>,
+        owner: NonNull<Page>,
+    ) {
+        // SAFETY: the caller supplies uninitialized/exclusively reusable slot
+        // storage; writing a complete valid image precedes all observation.
+        unsafe { slot.as_ptr().write(Self::empty_aligned_alias()) };
+        // SAFETY: the preceding write initialized the complete `Page` image
+        // and the caller retains exclusive publication rights to its atomic.
+        unsafe { &*core::ptr::addr_of!((*slot.as_ptr()).self_) }
+            .store(owner.as_ptr(), core::sync::atomic::Ordering::Release);
+    }
+
+    /// Clears one secondary aligned-metadata alias before mapping release.
+    ///
+    /// A false result means the slot did not name `owner`; the caller must not
+    /// unmap on that ownership mismatch.
+    ///
+    /// # Safety
+    ///
+    /// `slot` must name a live initialized alias slot created by
+    /// [`Self::publish_aligned_alias_at`]. The caller must serialize this
+    /// transition with other writers and establish lookup quiescence before
+    /// releasing the containing mapping.
+    pub(crate) unsafe fn clear_aligned_alias_at(
+        slot: NonNull<Page>,
+        owner: NonNull<Page>,
+    ) -> bool {
+        // SAFETY: the caller proves the alias slot is initialized and live.
+        unsafe { &*core::ptr::addr_of!((*slot.as_ptr()).self_) }
+            .compare_exchange(
+                owner.as_ptr(),
+                null_mut(),
+                core::sync::atomic::Ordering::AcqRel,
+                core::sync::atomic::Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Reads the aligned metadata owner published in this slot.
+    #[inline]
+    pub(crate) fn aligned_alias_owner(&self) -> *mut Page {
+        self.self_.load(core::sync::atomic::Ordering::Acquire)
+    }
+
     /// Associates a newly initialized page with the caller's exclusive
     /// default theap.
     ///
@@ -794,6 +882,14 @@ impl Page {
     #[inline]
     pub(crate) const fn capacity(&self) -> u16 {
         self.capacity
+    }
+
+    /// Returns the source count of committed OS pages for an on-demand page.
+    /// Zero is the fully committed sentinel used by ordinary committed pages
+    /// and OS-aligned singleton pages in the frozen profile.
+    #[inline]
+    pub(crate) const fn slice_pcommitted(&self) -> u16 {
+        self.slice_pcommitted
     }
 
     /// Sets the local page capacity record before the page is published into
@@ -1683,6 +1779,35 @@ mod tests {
         assert!(page.next.is_null());
         assert!(page.prev.is_null());
         assert_eq!(page.memid().kind(), MemoryKind::None);
+    }
+
+    #[test]
+    fn aligned_metadata_alias_publishes_only_its_primary_owner() {
+        let mut primary = Page::empty();
+        let mut alias = Page::empty();
+        alias.block_size = 73;
+        alias.used = 9;
+        alias.memid = MemoryId::static_empty();
+        let primary = NonNull::from(&mut primary);
+        let alias = NonNull::from(&mut alias);
+
+        // SAFETY: both test pages are exclusive, address-stable stack values;
+        // the alias is not observed until publication returns.
+        unsafe { Page::publish_aligned_alias_at(alias, primary) };
+        // SAFETY: publication initialized the complete alias Page image.
+        let alias_ref = unsafe { alias.as_ref() };
+        assert_eq!(alias_ref.aligned_alias_owner(), primary.as_ptr());
+        assert_eq!(alias_ref.block_size(), 0);
+        assert_eq!(alias_ref.used(), 0);
+        assert_eq!(alias_ref.memid().kind(), MemoryKind::None);
+
+        // SAFETY: this test serializes the matching alias transition and does
+        // not access it after the clear except to inspect its atomic owner.
+        assert!(unsafe { Page::clear_aligned_alias_at(alias, primary) });
+        assert!(alias_ref.aligned_alias_owner().is_null());
+        // SAFETY: the alias no longer names the primary, so a second clear is
+        // rejected without changing any ownership state.
+        assert!(!unsafe { Page::clear_aligned_alias_at(alias, primary) });
     }
 
     #[test]
