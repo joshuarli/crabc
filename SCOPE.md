@@ -157,6 +157,12 @@ explicitly limited compatibility
 
 rather than implementing cryptography here.
 
+This applies equally to compatibility ports. Preserve the surrounding state
+machine and observable contract, but obtain every cryptographic permutation,
+round function, hash, cipher, MAC, password primitive, and PRNG/DRBG core from
+a reviewed focused dependency. Source fidelity is never permission to
+translate or maintain the cryptographic algorithm locally.
+
 ---
 
 ## 5. A fixed allocator port is compatibility work, not research
@@ -830,6 +836,17 @@ when the actual subsystem needs them.
 
 Do not reimplement these merely to claim zero dependencies.
 
+Cryptographic algorithms are a mandatory dependency boundary, not a
+dependency-minimization tradeoff. `crabc` may implement the direct OS entropy
+acquisition and the domain-specific state/lifecycle around a primitive, but
+the cryptographic primitive itself must come from a reviewed focused crate.
+If no suitable dependency exists, the feature remains explicitly limited.
+
+Dependencies meeting the criteria above have standing project approval; they
+do not require a case-by-case permission round trip. That authority does not
+remove the audit record below. Ask before importing a framework-scale,
+native-code, unusually broad, or otherwise difficult-to-audit dependency.
+
 ---
 
 ## 22. Dependencies that should trigger scrutiny
@@ -871,7 +888,7 @@ is enough.
 
 ---
 
-## 23. Every new production dependency needs a short justification
+## 23. Every new production dependency needs a short recorded justification
 
 For every normal dependency, answer:
 

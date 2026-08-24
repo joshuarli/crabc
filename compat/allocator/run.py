@@ -42,6 +42,35 @@ UPSTREAM_TEST_CONTRACT = ALLOCATOR_ROOT / "upstream-tests-v3.5.0.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 
+PRODUCTION_RUST_TARGET = "aarch64-unknown-linux-musl"
+CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
+EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS: Mapping[str, str] = {
+    "crabc-mimalloc": "0.3.0",
+    "crabc-core": "0.3.0",
+    "chacha20": "0.10.1",
+    "cfg-if": "1.0.4",
+    "cipher": "0.5.2",
+    "block-buffer": "0.12.1",
+    "hybrid-array": "0.4.14",
+    "typenum": "1.20.1",
+    "crypto-common": "0.2.2",
+    "inout": "0.2.2",
+    "zeroize": "1.9.0",
+}
+EXPECTED_PRODUCTION_DEPENDENCY_EDGES: Mapping[str, tuple[str, ...]] = {
+    "crabc-mimalloc": ("chacha20", "crabc-core", "zeroize"),
+    "crabc-core": (),
+    "chacha20": ("cfg-if", "cipher", "zeroize"),
+    "cfg-if": (),
+    "cipher": ("block-buffer", "crypto-common", "inout"),
+    "block-buffer": ("hybrid-array",),
+    "hybrid-array": ("typenum",),
+    "typenum": (),
+    "crypto-common": ("hybrid-array",),
+    "inout": ("hybrid-array",),
+    "zeroize": (),
+}
+
 STATUS_FIELDS = (
     "exported",
     "implemented",
@@ -375,6 +404,19 @@ int main(void) {
   U("offsetof.mi_memid_t.is_pinned", offsetof(mi_memid_t, is_pinned));
   U("offsetof.mi_memid_t.initially_committed", offsetof(mi_memid_t, initially_committed));
   U("offsetof.mi_memid_t.initially_zero", offsetof(mi_memid_t, initially_zero));
+  U("sizeof.mi_random_ctx_t", sizeof(mi_random_ctx_t));
+  U("alignof.mi_random_ctx_t", _Alignof(mi_random_ctx_t));
+  U("offsetof.mi_random_ctx_t.input", offsetof(mi_random_ctx_t, input));
+  U("offsetof.mi_random_ctx_t.output", offsetof(mi_random_ctx_t, output));
+  U("offsetof.mi_random_ctx_t.output_available", offsetof(mi_random_ctx_t, output_available));
+  U("offsetof.mi_random_ctx_t.weak", offsetof(mi_random_ctx_t, weak));
+  U("sizeof.mi_page_map_t", sizeof(mi_page_map_t));
+  U("alignof.mi_page_map_t", _Alignof(mi_page_map_t));
+  U("offsetof.mi_page_map_t.committed_count", offsetof(mi_page_map_t, committed_count));
+  U("offsetof.mi_page_map_t.reserved_size", offsetof(mi_page_map_t, reserved_size));
+  U("offsetof.mi_page_map_t.memid", offsetof(mi_page_map_t, memid));
+  U("offsetof.mi_page_map_t.lock", offsetof(mi_page_map_t, lock));
+  U("offsetof.mi_page_map_t.submaps", offsetof(mi_page_map_t, submaps));
   U("sizeof.mi_page_t", sizeof(mi_page_t));
   U("alignof.mi_page_t", _Alignof(mi_page_t));
   U("offsetof.mi_page_t.xthread_free", offsetof(mi_page_t, xthread_free));
@@ -406,8 +448,29 @@ int main(void) {
   U("offsetof.mi_heap_t.stats", offsetof(mi_heap_t, stats));
   U("sizeof.mi_arena_t", sizeof(mi_arena_t));
   U("alignof.mi_arena_t", _Alignof(mi_arena_t));
+  U("offsetof.mi_arena_t.memid", offsetof(mi_arena_t, memid));
+  U("offsetof.mi_arena_t.subproc", offsetof(mi_arena_t, subproc));
+  U("offsetof.mi_arena_t.arena_idx", offsetof(mi_arena_t, arena_idx));
+  U("offsetof.mi_arena_t.start", offsetof(mi_arena_t, start));
   U("offsetof.mi_arena_t.slice_count", offsetof(mi_arena_t, slice_count));
+  U("offsetof.mi_arena_t.info_slices", offsetof(mi_arena_t, info_slices));
+  U("offsetof.mi_arena_t.numa_node", offsetof(mi_arena_t, numa_node));
+  U("offsetof.mi_arena_t.is_exclusive", offsetof(mi_arena_t, is_exclusive));
+  U("offsetof.mi_arena_t.purge_expire", offsetof(mi_arena_t, purge_expire));
+  U("offsetof.mi_arena_t.commit_fun", offsetof(mi_arena_t, commit_fun));
+  U("offsetof.mi_arena_t.commit_fun_arg", offsetof(mi_arena_t, commit_fun_arg));
+  U("offsetof.mi_arena_t.total_size", offsetof(mi_arena_t, total_size));
+  U("offsetof.mi_arena_t.parent", offsetof(mi_arena_t, parent));
   U("offsetof.mi_arena_t.slices_free", offsetof(mi_arena_t, slices_free));
+  U("offsetof.mi_arena_t.slices_committed", offsetof(mi_arena_t, slices_committed));
+  U("offsetof.mi_arena_t.slices_dirty", offsetof(mi_arena_t, slices_dirty));
+  U("offsetof.mi_arena_t.slices_purge", offsetof(mi_arena_t, slices_purge));
+  U("offsetof.mi_arena_t.pages_meta", offsetof(mi_arena_t, pages_meta));
+  U("offsetof.mi_arena_t.pages_main", offsetof(mi_arena_t, pages_main));
+  U("sizeof.mi_arena_pages_t", sizeof(mi_arena_pages_t));
+  U("alignof.mi_arena_pages_t", _Alignof(mi_arena_pages_t));
+  U("offsetof.mi_arena_pages_t.pages", offsetof(mi_arena_pages_t, pages));
+  U("offsetof.mi_arena_pages_t.pages_abandoned", offsetof(mi_arena_pages_t, pages_abandoned));
   U("sizeof.mi_stats_t", sizeof(mi_stats_t));
   U("alignof.mi_stats_t", _Alignof(mi_stats_t));
   U("MI_MALLOC_VERSION", MI_MALLOC_VERSION);
@@ -1629,6 +1692,203 @@ def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: S
     }
 
 
+def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Judge the exact normal dependency graph selected for production AArch64.
+
+    Cargo lockfiles retain target-conditional packages, so lockfile presence is
+    not evidence that a dependency is linked. The caller must obtain `metadata`
+    with `--filter-platform` for `PRODUCTION_RUST_TARGET`; this function then
+    traverses only normal dependency edges reachable from `crabc-mimalloc`.
+    """
+
+    raw_packages = metadata.get("packages")
+    raw_resolve = metadata.get("resolve")
+    if not isinstance(raw_packages, list) or not isinstance(raw_resolve, dict):
+        raise HarnessError("Cargo metadata lacks packages or a resolved graph")
+    raw_nodes = raw_resolve.get("nodes")
+    if not isinstance(raw_nodes, list):
+        raise HarnessError("Cargo metadata lacks resolved dependency nodes")
+
+    packages: dict[str, Mapping[str, Any]] = {}
+    for package in raw_packages:
+        if not isinstance(package, dict):
+            raise HarnessError("Cargo metadata contains an invalid package")
+        package_id = package.get("id")
+        if not isinstance(package_id, str) or not package_id or package_id in packages:
+            raise HarnessError("Cargo metadata contains an invalid or duplicate package id")
+        packages[package_id] = package
+
+    nodes: dict[str, Mapping[str, Any]] = {}
+    for node in raw_nodes:
+        if not isinstance(node, dict):
+            raise HarnessError("Cargo metadata contains an invalid dependency node")
+        package_id = node.get("id")
+        if not isinstance(package_id, str) or not package_id or package_id in nodes:
+            raise HarnessError("Cargo metadata contains an invalid or duplicate dependency node id")
+        nodes[package_id] = node
+
+    roots = [
+        package_id
+        for package_id, package in packages.items()
+        if package.get("name") == "crabc-mimalloc"
+        and package.get("version") == EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS["crabc-mimalloc"]
+        and package.get("source") is None
+    ]
+    if len(roots) != 1:
+        raise HarnessError("Cargo metadata must contain exactly one workspace crabc-mimalloc 0.3.0 root")
+
+    selected_ids: set[str] = set()
+    selected_edges: dict[str, tuple[str, ...]] = {}
+    pending = [roots[0]]
+    while pending:
+        package_id = pending.pop()
+        if package_id in selected_ids:
+            continue
+        package = packages.get(package_id)
+        node = nodes.get(package_id)
+        if package is None or node is None:
+            raise HarnessError(f"Cargo metadata has no package/node pair for selected id {package_id}")
+        name = package.get("name")
+        version = package.get("version")
+        if not isinstance(name, str) or not isinstance(version, str):
+            raise HarnessError(f"Cargo metadata has an unnamed selected package: {package_id}")
+        raw_dependencies = node.get("deps")
+        if not isinstance(raw_dependencies, list):
+            raise HarnessError(f"Cargo metadata has invalid dependencies for {name} {version}")
+        normal_dependency_ids: list[str] = []
+        for dependency in raw_dependencies:
+            if not isinstance(dependency, dict):
+                raise HarnessError(f"Cargo metadata has an invalid dependency for {name} {version}")
+            dependency_id = dependency.get("pkg")
+            dependency_kinds = dependency.get("dep_kinds")
+            if not isinstance(dependency_id, str) or not isinstance(dependency_kinds, list):
+                raise HarnessError(f"Cargo metadata has an invalid dependency edge for {name} {version}")
+            normal = False
+            for dependency_kind in dependency_kinds:
+                if not isinstance(dependency_kind, dict) or "kind" not in dependency_kind:
+                    raise HarnessError(f"Cargo metadata has an invalid dependency kind for {name} {version}")
+                if dependency_kind["kind"] is None:
+                    normal = True
+            if normal:
+                if dependency_id not in packages:
+                    raise HarnessError(
+                        f"Cargo metadata names an unknown selected dependency {dependency_id}"
+                    )
+                normal_dependency_ids.append(dependency_id)
+        dependency_names: list[str] = []
+        for dependency_id in normal_dependency_ids:
+            dependency_name = packages[dependency_id].get("name")
+            if not isinstance(dependency_name, str):
+                raise HarnessError(f"Cargo metadata has an unnamed dependency {dependency_id}")
+            dependency_names.append(dependency_name)
+        if len(dependency_names) != len(set(dependency_names)):
+            raise HarnessError(f"Cargo metadata duplicates a normal dependency edge for {name} {version}")
+        selected_ids.add(package_id)
+        selected_edges[name] = tuple(sorted(dependency_names))
+        pending.extend(normal_dependency_ids)
+
+    selected_versions = {
+        (str(packages[package_id].get("name")), str(packages[package_id].get("version")))
+        for package_id in selected_ids
+    }
+    expected_versions = set(EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS.items())
+    unexpected = sorted(selected_versions - expected_versions)
+    missing = sorted(expected_versions - selected_versions)
+    if unexpected:
+        rendered = ", ".join(f"{name} {version}" for name, version in unexpected)
+        label = "package" if len(unexpected) == 1 else "packages"
+        raise HarnessError(f"unexpected selected {label}: {rendered}")
+    if missing:
+        rendered = ", ".join(f"{name} {version}" for name, version in missing)
+        label = "package" if len(missing) == 1 else "packages"
+        raise HarnessError(f"missing selected {label}: {rendered}")
+
+    build_scripts: list[str] = []
+    proc_macros: list[str] = []
+    report_packages: list[dict[str, str]] = []
+    for package_id in selected_ids:
+        package = packages[package_id]
+        name = str(package["name"])
+        version = str(package["version"])
+        source = package.get("source")
+        expected_source = None if name in {"crabc-mimalloc", "crabc-core"} else CRATES_IO_SOURCE
+        if source != expected_source:
+            raise HarnessError(
+                f"selected package has an unexpected source: {name} {version} ({source!r})"
+            )
+        raw_targets = package.get("targets")
+        if not isinstance(raw_targets, list):
+            raise HarnessError(f"Cargo metadata has invalid targets for {name} {version}")
+        for target in raw_targets:
+            if not isinstance(target, dict) or not isinstance(target.get("kind"), list):
+                raise HarnessError(f"Cargo metadata has an invalid target for {name} {version}")
+            kinds = target["kind"]
+            if "custom-build" in kinds:
+                build_scripts.append(f"{name} {version}")
+            if "proc-macro" in kinds:
+                proc_macros.append(f"{name} {version}")
+        if name != "crabc-mimalloc":
+            report_packages.append(
+                {
+                    "name": name,
+                    "source": "workspace" if source is None else "crates.io",
+                    "version": version,
+                }
+            )
+    if build_scripts:
+        rendered = ", ".join(sorted(build_scripts))
+        label = "script" if len(build_scripts) == 1 else "scripts"
+        raise HarnessError(f"selected build {label}: {rendered}")
+    if proc_macros:
+        rendered = ", ".join(sorted(proc_macros))
+        label = "macro" if len(proc_macros) == 1 else "macros"
+        raise HarnessError(f"selected proc {label}: {rendered}")
+
+    expected_edges = {
+        name: tuple(sorted(dependencies))
+        for name, dependencies in EXPECTED_PRODUCTION_DEPENDENCY_EDGES.items()
+    }
+    if selected_edges != expected_edges:
+        differences = [
+            f"{name}: expected {expected_edges.get(name, ())}, selected {selected_edges.get(name, ())}"
+            for name in sorted(set(expected_edges) | set(selected_edges))
+            if expected_edges.get(name) != selected_edges.get(name)
+        ]
+        raise HarnessError("selected dependency edge mismatch (" + "; ".join(differences) + ")")
+
+    report_packages.sort(key=lambda package: (package["name"], package["version"]))
+    return {
+        "build_script_count": 0,
+        "external_package_count": sum(package["source"] == "crates.io" for package in report_packages),
+        "packages": report_packages,
+        "proc_macro_count": 0,
+        "target": PRODUCTION_RUST_TARGET,
+    }
+
+
+def production_dependency_graph() -> dict[str, Any]:
+    command = [
+        "cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--filter-platform",
+        PRODUCTION_RUST_TARGET,
+        "--locked",
+    ]
+    record = command_record(command, cwd=ROOT)
+    require_success(record, "Rust allocator production dependency graph")
+    try:
+        metadata = json.loads(str(record["stdout"]))
+    except json.JSONDecodeError as error:
+        raise HarnessError(f"Cargo metadata did not return valid JSON: {error}") from error
+    if not isinstance(metadata, dict):
+        raise HarnessError("Cargo metadata did not return a JSON object")
+    report = validate_production_dependency_graph(metadata)
+    report["command"] = command
+    return report
+
+
 def rust_layout_probe(c_release_layout: Mapping[str, int]) -> dict[str, Any]:
     command = [
         "cargo",
@@ -1713,10 +1973,12 @@ def run_milestone0(*, offline: bool, generate_contracts: bool, check_only: bool)
         release_symbol_contract = validate_release_symbol_contract(
             contracts[API_CONTRACT], profiles["release"]["symbols"]
         )
+        dependency_graph = production_dependency_graph()
         rust_layout = rust_layout_probe(profiles["release"]["layout"])
         report = milestone0_report(pin, archive, source, profiles)
         report["contracts"] = {relative(path): payload["summary"] for path, payload in contracts.items()}
         report["port_map"] = port_map_counts(port_map)
+        report["production_dependency_graph"] = dependency_graph
         report["release_symbol_contract"] = release_symbol_contract
         report["rust_release_layout"] = rust_layout
         write_json(REPORT_ROOT / "latest.json", report)

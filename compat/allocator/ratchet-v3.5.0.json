@@ -4,16 +4,16 @@
   "configuration_profile_count": 5,
   "format": 1,
   "port_map_counts": {
-    "differential_verified": 7,
+    "differential_verified": 8,
     "exported": 0,
-    "implemented": 39,
-    "item_count": 36,
+    "implemented": 45,
+    "item_count": 42,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 39
+    "unit_verified": 45
   },
-  "port_map_sha256": "0e5ddfcdaeac047f3f1fbbb9c28676823ea9b8f18f78ffd5d1e2f4cb9b9e34ae",
+  "port_map_sha256": "2e34625c3391e62e9dccdc4aba05a48c180863c0f4c590d36f6a2353fdc26e94",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -72,6 +72,11 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:include/mimalloc/types.h:mi_arena_t-and-mi_arena_pages_t-default-layout": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:include/mimalloc/types.h:mi_memkind_t-and-mi_memid_t": [
       "implemented",
       "unit_verified",
@@ -88,6 +93,14 @@
       "differential_verified"
     ],
     "item:src/arena.c:_mi_arenas_page_alloc-kind-selection": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:arena-identity-registry-layout-and-in-place-external-management": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.c:mi_bbitmap-layout-bins-search-and-rollback": [
       "implemented",
       "unit_verified"
     ],
@@ -124,7 +137,15 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/os.c:mi_os_mem_config-and-good-allocation-size": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/os.c:mi_os_page_align_areax": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page-map.c:mapped-two-level-page-map-lifecycle": [
       "implemented",
       "unit_verified"
     ],
@@ -163,6 +184,10 @@
       "unit_verified"
     ],
     "item:src/prim/unix/prim.c:linux-regular-map-memory-transitions": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/random.c:original-chacha-context-state-and-output-contract": [
       "implemented",
       "unit_verified"
     ],

@@ -27,7 +27,7 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | `ldso/` | `crabc-ldso`: AArch64 dynamic linker and private runtime-state owner. `ldso/src/lib.rs` is the target/linkage root; `ldso/src/loader.rs` owns loader algorithms and state. |
 | `crabc-core/` | Shared typed `no_std` Linux/AArch64 primitives used by the Rust facade. |
 | `crabc-rs/` | Public idiomatic Rust facade, direct probes, and native tests. |
-| `crabc-mimalloc/` | Fixed-upstream allocator provenance. Its future `#![no_std]` engine is a Linux/AArch64 semantic port of pinned mimalloc, not a new allocator design. |
+| `crabc-mimalloc/` | Fixed-upstream allocator provenance and incomplete `#![no_std]` engine. It is a Linux/AArch64 semantic port of pinned mimalloc, not a new allocator design or the current production backend. |
 | `include/` | Installed public C headers. |
 | `tests/` | Root Rust integration tests and C fixtures. |
 | `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, performance, and capability-ledger evidence. |
@@ -112,8 +112,10 @@ does not replace the pinned native evidence environment.
   differential oracle; require a written design note plus differential and
   performance evidence for any algorithmic divergence. `crabc-rs` uses normal
   Rust allocation and does not expose C allocation APIs.
-- Never hand-roll cryptography. Entropy syscalls are in scope; compatibility
-  crypto requires an approved focused Rust dependency or an explicit limit.
+- Never hand-roll cryptography, including when porting compatibility source.
+  Entropy syscalls and domain-specific state machines are in scope; every
+  cryptographic algorithm or PRNG/DRBG core requires a reviewed focused Rust
+  dependency or the feature remains explicitly limited.
 - Locale support is `C`, `POSIX`, and `C.UTF-8`; Rust-facing text is UTF-8.
   Do not add general locale/legacy-encoding databases.
 - Parse conventional system files. Do not build NSS, plugin/provider systems,
@@ -121,10 +123,12 @@ does not replace the pinned native evidence environment.
   security-policy frameworks, or portability layers.
 - DNS is the bounded `/etc/hosts` + `/etc/resolv.conf`, A/AAAA/CNAME, search,
   UDP/TCP fallback, retry/failover profile. Exclude DNSSEC, DoH, DoT, and mDNS.
-- A new production dependency needs user consultation unless the user has
-  already approved that exact decision. Document its primitive, normal
-  transitive graph, build/native code, allocation/global state, `no_std`, and
-  LTO consequences.
+- Small, mature, focused production dependencies that satisfy `SCOPE.md`'s
+  dependency policy have standing approval and do not need case-by-case user
+  consultation. Document the primitive, exact normal transitive graph,
+  build/native code, allocation/global state, `no_std`, and LTO consequences.
+  Consult the user before adding a framework-scale, native-code, unusually
+  broad, or otherwise difficult-to-audit dependency.
 - Scalar behavior is canonical. Remove structural and algorithmic cost first;
   use SIMD only as a separately proven, measured final optimization (except
   for a fully proved established math kernel). Crypto stays in approved

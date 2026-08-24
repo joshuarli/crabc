@@ -116,7 +116,10 @@ directory and never creates a directory entry. Filesystems without
 
 Small, mature, focused Rust dependencies are welcome when they are safer and
 more auditable than a local replacement (for example optimized text or crypto
-primitives). Every production dependency records the provided primitive, why
+primitives), and these dependencies have standing approval without a separate
+permission round trip. Framework-scale, native-code, unusually broad, or
+otherwise difficult-to-audit dependencies still require consultation. Every
+production dependency records the provided primitive, why
 `core`/`alloc` is insufficient, normal transitive dependencies, proc-macros,
 build scripts/native code, allocation/global state, `no_std` suitability, and
 LTO implications. Prefer LLVM-visible Rust code, simple inlineable call graphs,

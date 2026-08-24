@@ -9,23 +9,26 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/bitmap.h:61-123` (64-bit
-// field/chunk representation, bitmap header, and dynamic trailing chunks) and
+// Source map: pinned mimalloc v3.5.0 `src/bitmap.h:61-123,231-340` (64-bit
+// field/chunk representation plus ordinary and binned dynamic headers),
+// `include/mimalloc-stats.h:85-93` (chunk-bin classification), and
 // `src/bitmap.c:26-568,594-915,933-1246` (field masks, field/chunk index
 // arithmetic, atomic set/clear, rollback, set-run selection, scalar relaxed
 // chunk observations, caller-owned bitmap initialization, range operations,
-// and conservative chunkmap maintenance). This pure slice intentionally
-// excludes binned-chunk policy, visitors/callbacks, statistics,
-// `clear_once_set`/yielding, allocator-backed metadata, and every
-// arena/subprocess lifecycle path.
+// and conservative chunkmap maintenance), plus `src/bitmap.c:1583-1784,
+// 1794-1997` (binned initialization, size bins, two-level claims, and exact
+// multi-chunk rollback). This slice intentionally excludes visitors,
+// callbacks, statistics-counter integration, `clear_once_set`/yielding, and
+// allocator-backed bitmap metadata.
 
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 
 use crate::atomic::{
-    word_and_acq_rel, word_cas_strong_acq_rel, word_exchange_release, word_load_acquire,
-    word_load_relaxed, word_or_acq_rel, word_store_release, AtomicWord,
+    word_and_acq_rel, word_cas_strong_acq_rel, word_cas_strong_relaxed,
+    word_exchange_release, word_load_acquire, word_load_relaxed, word_or_acq_rel,
+    word_store_release, AtomicWord,
 };
 use crate::bits::{bsf, bsr, clz, ctz, popcount};
 use crate::config::BCHUNK_BITS;
@@ -212,6 +215,30 @@ impl TryClaim {
 struct FieldTryClaim {
     result: TryClaim,
     previous: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ChunkSearchClaim {
+    index: Option<usize>,
+    temporarily_unclaimed: bool,
+}
+
+impl ChunkSearchClaim {
+    #[inline]
+    const fn found(index: usize, temporarily_unclaimed: bool) -> Self {
+        Self {
+            index: Some(index),
+            temporarily_unclaimed,
+        }
+    }
+
+    #[inline]
+    const fn not_found(temporarily_unclaimed: bool) -> Self {
+        Self {
+            index: None,
+            temporarily_unclaimed,
+        }
+    }
 }
 
 /// One cache-aligned `mi_bchunk_t` for the frozen 64-bit configuration.
@@ -473,11 +500,18 @@ impl Chunk {
     /// order is low-to-high, with the source's byte-aligned `n == 8` path and
     /// its cross-field run search retained. It never crosses a chunk boundary.
     pub(crate) fn try_claim_run(&self, len: usize) -> Option<usize> {
+        self.try_claim_run_detailed(len).index
+    }
+
+    fn try_claim_run_detailed(&self, len: usize) -> ChunkSearchClaim {
         if len == 0 || len > BCHUNK_BITS {
-            return None;
+            return ChunkSearchClaim::not_found(false);
         }
         if len == 1 {
-            return self.try_claim_one();
+            return match self.try_claim_one() {
+                Some(index) => ChunkSearchClaim::found(index, false),
+                None => ChunkSearchClaim::not_found(false),
+            };
         }
         if len == 8 {
             return self.try_claim_byte();
@@ -590,7 +624,8 @@ impl Chunk {
         None
     }
 
-    fn try_claim_byte(&self) -> Option<usize> {
+    fn try_claim_byte(&self) -> ChunkSearchClaim {
+        let mut temporarily_unclaimed = false;
         for field_index in 0..BCHUNK_FIELDS {
             let mut value = word_load_relaxed(self.field(field_index));
             if value == 0 {
@@ -608,8 +643,12 @@ impl Chunk {
                     field_index,
                     field_mask_valid(8, bit_index),
                 );
+                temporarily_unclaimed |= claim.result.temporarily_unclaimed();
                 if claim.result.claimed {
-                    return Some(field_index * BFIELD_BITS + bit_index);
+                    return ChunkSearchClaim::found(
+                        field_index * BFIELD_BITS + bit_index,
+                        temporarily_unclaimed,
+                    );
                 }
                 value = claim.previous;
                 tries += 1;
@@ -618,11 +657,14 @@ impl Chunk {
                 }
             }
         }
-        None
+        ChunkSearchClaim::not_found(temporarily_unclaimed)
     }
 
-    fn try_claim_run_within_field_width(&self, len: usize) -> Option<usize> {
-        let base_mask = field_mask(len, 0)?;
+    fn try_claim_run_within_field_width(&self, len: usize) -> ChunkSearchClaim {
+        let Some(base_mask) = field_mask(len, 0) else {
+            return ChunkSearchClaim::not_found(false);
+        };
+        let mut temporarily_unclaimed = false;
         for field_index in 0..BCHUNK_FIELDS {
             let mut previous = word_load_relaxed(self.field(field_index));
             let mut value = previous;
@@ -635,8 +677,12 @@ impl Chunk {
                 if value & mask == mask {
                     let claim = self.try_clear_mask_optimistic(field_index, mask);
                     previous = claim.previous;
+                    temporarily_unclaimed |= claim.result.temporarily_unclaimed();
                     if claim.result.claimed {
-                        return Some(field_index * BFIELD_BITS + bit_index);
+                        return ChunkSearchClaim::found(
+                            field_index * BFIELD_BITS + bit_index,
+                            temporarily_unclaimed,
+                        );
                     }
                     value = previous;
                 } else {
@@ -650,19 +696,22 @@ impl Chunk {
                     let pre = ctz(!word_load_relaxed(self.field(field_index + 1)));
                     if post + pre >= len {
                         let index = field_index * BFIELD_BITS + (BFIELD_BITS - post);
-                        if self.try_claim_at(index, len)?.claimed {
-                            return Some(index);
+                        let claim = self.try_claim_at(index, len).unwrap_or(TryClaim::rejected(false));
+                        temporarily_unclaimed |= claim.temporarily_unclaimed();
+                        if claim.claimed {
+                            return ChunkSearchClaim::found(index, temporarily_unclaimed);
                         }
                     }
                 }
             }
         }
-        None
+        ChunkSearchClaim::not_found(temporarily_unclaimed)
     }
 
-    fn try_claim_run_across_fields(&self, len: usize) -> Option<usize> {
+    fn try_claim_run_across_fields(&self, len: usize) -> ChunkSearchClaim {
         let skip_count = (len - 1) / BFIELD_BITS;
         let mut field_index = 0;
+        let mut temporarily_unclaimed = false;
         while field_index < BCHUNK_FIELDS - skip_count {
             let mut remaining = len;
             let value = word_load_relaxed(self.field(field_index));
@@ -691,12 +740,16 @@ impl Chunk {
                 }
             }
 
-            if remaining == 0 && self.try_claim_at(index, len)?.claimed {
-                return Some(index);
+            if remaining == 0 {
+                let claim = self.try_claim_at(index, len).unwrap_or(TryClaim::rejected(false));
+                temporarily_unclaimed |= claim.temporarily_unclaimed();
+                if claim.claimed {
+                    return ChunkSearchClaim::found(index, temporarily_unclaimed);
+                }
             }
             field_index += 1;
         }
-        None
+        ChunkSearchClaim::not_found(temporarily_unclaimed)
     }
 }
 
@@ -862,6 +915,35 @@ impl<'storage> BitmapView<'storage> {
 
         Some(Self {
             // The null case is rejected above.
+            storage: unsafe { NonNull::new_unchecked(storage) },
+            layout,
+            _storage: PhantomData,
+        })
+    }
+
+    /// Attaches to a bitmap image initialized for this exact dynamic layout.
+    ///
+    /// # Safety
+    ///
+    /// The storage and publication obligations of [`Self::initialize`] must
+    /// remain valid for `'storage`. The caller must not create a concurrent
+    /// alias that performs non-atomic access or initializes the same image.
+    pub(crate) unsafe fn attach(
+        storage: *mut u8,
+        storage_byte_count: usize,
+        layout: BitmapLayout,
+    ) -> Option<Self> {
+        if storage.is_null()
+            || (storage as usize) % BCHUNK_SIZE != 0
+            || storage_byte_count < layout.byte_size()
+        {
+            return None;
+        }
+        let prefix = storage.cast::<BitmapPrefix>();
+        if unsafe { word_load_relaxed(&(*prefix).chunk_count) } != layout.chunk_count {
+            return None;
+        }
+        Some(Self {
             storage: unsafe { NonNull::new_unchecked(storage) },
             layout,
             _storage: PhantomData,
@@ -1132,6 +1214,606 @@ impl<'storage> BitmapView<'storage> {
     }
 }
 
+/// The frozen v3.5.0 size classes assigned to free-slice chunks.
+///
+/// `None` is deliberately represented even though it has no dedicated
+/// chunk-map: it means that a completely free chunk has not yet been reserved
+/// for one of the five allocation size classes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ChunkBin {
+    Small,
+    Other,
+    Medium,
+    Large,
+    Huge,
+    None,
+}
+
+impl ChunkBin {
+    const MAPPED_COUNT: usize = 5;
+
+    #[inline]
+    pub(crate) const fn of_slice_count(slice_count: usize) -> Self {
+        if slice_count == 1 {
+            Self::Small
+        } else if slice_count == 8 {
+            Self::Medium
+        } else if slice_count == BFIELD_BITS {
+            // `MI_ENABLE_LARGE_PAGES` is true in the frozen profile.
+            Self::Large
+        } else if slice_count > BCHUNK_BITS {
+            Self::Huge
+        } else {
+            Self::Other
+        }
+    }
+
+    #[inline]
+    const fn index(self) -> usize {
+        match self {
+            Self::Small => 0,
+            Self::Other => 1,
+            Self::Medium => 2,
+            Self::Large => 3,
+            Self::Huge => 4,
+            Self::None => 5,
+        }
+    }
+
+    #[inline]
+    const fn from_index(index: usize) -> Self {
+        match index {
+            0 => Self::Small,
+            1 => Self::Other,
+            2 => Self::Medium,
+            3 => Self::Large,
+            4 => Self::Huge,
+            _ => Self::None,
+        }
+    }
+}
+
+/// Fixed prefix of `mi_bbitmap_t` before its dynamic `chunks` tail.
+#[repr(C, align(64))]
+struct BinnedBitmapPrefix {
+    chunk_count: AtomicWord,
+    chunk_max_accessed: AtomicWord,
+    subprocess: *mut crate::types::Subprocess,
+    padding: [usize; BCHUNK_SIZE / size_of::<usize>() - 3],
+    chunkmap: Chunk,
+    chunkmap_bins: [Chunk; ChunkBin::MAPPED_COUNT],
+}
+
+const BINNED_BITMAP_CHUNKS_OFFSET: usize = size_of::<BinnedBitmapPrefix>();
+
+const _: [(); BCHUNK_SIZE] = [(); align_of::<BinnedBitmapPrefix>()];
+const _: [(); 7 * BCHUNK_SIZE] = [(); BINNED_BITMAP_CHUNKS_OFFSET];
+const _: [(); 0] = [(); BINNED_BITMAP_CHUNKS_OFFSET % BCHUNK_SIZE];
+
+/// Checked dynamic layout returned by `mi_bbitmap_size`.
+///
+/// Unlike the ordinary bitmap layout, the source rounds a positive bit count
+/// up to a whole chunk. The rounded capacity is part of the resulting view;
+/// callers that need to hide padding retain their original logical bound.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct BinnedBitmapLayout {
+    chunk_count: usize,
+}
+
+impl BinnedBitmapLayout {
+    pub(crate) const fn for_bit_count(bit_count: usize) -> Option<Self> {
+        if bit_count == 0 || bit_count > BITMAP_MAX_BIT_COUNT {
+            return None;
+        }
+        let Some(rounded) = bit_count.checked_add(BCHUNK_BITS - 1) else {
+            return None;
+        };
+        let chunk_count = rounded / BCHUNK_BITS;
+        if chunk_count == 0 || chunk_count > BITMAP_MAX_CHUNK_COUNT {
+            return None;
+        }
+        Some(Self { chunk_count })
+    }
+
+    #[inline]
+    pub(crate) const fn chunk_count(self) -> usize {
+        self.chunk_count
+    }
+
+    #[inline]
+    pub(crate) const fn max_bits(self) -> usize {
+        self.chunk_count * BCHUNK_BITS
+    }
+
+    #[inline]
+    pub(crate) const fn byte_size(self) -> usize {
+        BINNED_BITMAP_CHUNKS_OFFSET + self.chunk_count * BCHUNK_SIZE
+    }
+}
+
+/// Lifetime-bound view over a caller-owned `mi_bbitmap_t` image.
+pub(crate) struct BinnedBitmapView<'storage> {
+    storage: NonNull<u8>,
+    layout: BinnedBitmapLayout,
+    _storage: PhantomData<&'storage mut [u8]>,
+}
+
+// SAFETY: initialization establishes the source's atomic representation and
+// ties all later access to the backing region. Non-atomic initialization is
+// available only through `&mut self` under an explicit quiescence contract.
+unsafe impl Send for BinnedBitmapView<'_> {}
+unsafe impl Sync for BinnedBitmapView<'_> {}
+
+impl<'storage> BinnedBitmapView<'storage> {
+    /// Initializes a binned bitmap in caller-owned BCHUNK-aligned storage.
+    ///
+    /// # Safety
+    ///
+    /// `storage` must be one exclusively owned writable allocation covering
+    /// `layout.byte_size()` bytes for `'storage`. If `already_zero` is true,
+    /// the complete image must already contain initialized zero bytes. No
+    /// concurrent observer may access it until this call returns.
+    pub(crate) unsafe fn initialize(
+        subprocess: *mut crate::types::Subprocess,
+        storage: *mut u8,
+        storage_byte_count: usize,
+        layout: BinnedBitmapLayout,
+        already_zero: bool,
+    ) -> Option<Self> {
+        if storage.is_null()
+            || (storage as usize) % BCHUNK_SIZE != 0
+            || storage_byte_count < layout.byte_size()
+        {
+            return None;
+        }
+        if !already_zero {
+            unsafe { core::ptr::write_bytes(storage, 0, layout.byte_size()) };
+        }
+        let prefix = storage.cast::<BinnedBitmapPrefix>();
+        // Preserve `mi_bbitmap_init` order: publish the count, then install the
+        // constant subprocess statistics owner before returning the view.
+        unsafe { word_store_release(&(*prefix).chunk_count, layout.chunk_count) };
+        unsafe { (*prefix).subprocess = subprocess };
+        Some(Self {
+            storage: unsafe { NonNull::new_unchecked(storage) },
+            layout,
+            _storage: PhantomData,
+        })
+    }
+
+    /// Attaches to an image previously initialized for this exact layout.
+    ///
+    /// # Safety
+    ///
+    /// The storage and publication obligations of [`Self::initialize`] must
+    /// remain in force, and the caller must not create an alias that performs
+    /// non-atomic access for the returned lifetime.
+    pub(crate) unsafe fn attach(
+        storage: *mut u8,
+        storage_byte_count: usize,
+        layout: BinnedBitmapLayout,
+    ) -> Option<Self> {
+        if storage.is_null()
+            || (storage as usize) % BCHUNK_SIZE != 0
+            || storage_byte_count < layout.byte_size()
+        {
+            return None;
+        }
+        let prefix = storage.cast::<BinnedBitmapPrefix>();
+        if unsafe { word_load_relaxed(&(*prefix).chunk_count) } != layout.chunk_count {
+            return None;
+        }
+        Some(Self {
+            storage: unsafe { NonNull::new_unchecked(storage) },
+            layout,
+            _storage: PhantomData,
+        })
+    }
+
+    #[inline]
+    fn prefix(&self) -> &BinnedBitmapPrefix {
+        unsafe { &*self.storage.as_ptr().cast::<BinnedBitmapPrefix>() }
+    }
+
+    #[inline]
+    fn chunks_ptr(&self) -> *mut Chunk {
+        unsafe {
+            self.storage
+                .as_ptr()
+                .add(BINNED_BITMAP_CHUNKS_OFFSET)
+                .cast::<Chunk>()
+        }
+    }
+
+    #[inline]
+    fn chunk(&self, chunk_index: usize) -> &Chunk {
+        debug_assert!(chunk_index < self.layout.chunk_count());
+        unsafe { &*self.chunks_ptr().add(chunk_index) }
+    }
+
+    #[inline]
+    fn chunkmap(&self) -> &Chunk {
+        &self.prefix().chunkmap
+    }
+
+    #[inline]
+    fn bin_map(&self, bin: ChunkBin) -> &Chunk {
+        debug_assert!(bin.index() < ChunkBin::MAPPED_COUNT);
+        &self.prefix().chunkmap_bins[bin.index()]
+    }
+
+    #[inline]
+    pub(crate) const fn byte_size(&self) -> usize {
+        self.layout.byte_size()
+    }
+
+    #[inline]
+    pub(crate) fn chunk_count(&self) -> usize {
+        word_load_relaxed(&self.prefix().chunk_count)
+    }
+
+    #[inline]
+    pub(crate) fn max_bits(&self) -> usize {
+        self.chunk_count() * BCHUNK_BITS
+    }
+
+    #[inline]
+    pub(crate) fn subprocess(&self) -> *mut crate::types::Subprocess {
+        self.prefix().subprocess
+    }
+
+    #[inline]
+    pub(crate) fn max_accessed_chunk(&self) -> usize {
+        word_load_relaxed(&self.prefix().chunk_max_accessed)
+    }
+
+    pub(crate) fn highest_clear_relaxed(&self) -> Option<usize> {
+        for chunk_index in (0..self.chunk_count()).rev() {
+            if let Some(index) = self.chunk(chunk_index).highest_clear_relaxed() {
+                return Some(chunk_index * BCHUNK_BITS + index);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn chunk_bin(&self, chunk_index: usize) -> Option<ChunkBin> {
+        if chunk_index >= self.chunk_count() {
+            return None;
+        }
+        for index in 0..ChunkBin::MAPPED_COUNT {
+            let bin = ChunkBin::from_index(index);
+            if self.bin_map(bin).is_set_run(chunk_index, 1) {
+                return Some(bin);
+            }
+        }
+        Some(ChunkBin::None)
+    }
+
+    fn set_chunk_bin(&self, chunk_index: usize, selected: ChunkBin) {
+        debug_assert!(chunk_index < self.chunk_count());
+        for index in 0..ChunkBin::MAPPED_COUNT {
+            let bin = ChunkBin::from_index(index);
+            if bin == selected {
+                let _ = self.bin_map(bin).set_run(chunk_index, 1);
+            } else {
+                let _ = self.bin_map(bin).clear_run(chunk_index, 1);
+            }
+        }
+    }
+
+    fn set_max_accessed(&self, chunk_index: usize) {
+        let mut old_max = word_load_relaxed(&self.prefix().chunk_max_accessed);
+        if chunk_index > old_max {
+            let _ = word_cas_strong_relaxed(
+                &self.prefix().chunk_max_accessed,
+                &mut old_max,
+                chunk_index,
+            );
+        }
+    }
+
+    fn chunkmap_set(&self, chunk_index: usize, check_all_set: bool) {
+        debug_assert!(chunk_index < self.chunk_count());
+        if check_all_set && self.chunk(chunk_index).all_are_set_relaxed() {
+            self.set_chunk_bin(chunk_index, ChunkBin::None);
+        }
+        let _ = self.chunkmap().set_run(chunk_index, 1);
+        self.set_max_accessed(chunk_index);
+    }
+
+    fn chunkmap_try_clear(&self, chunk_index: usize) -> bool {
+        let chunk = self.chunk(chunk_index);
+        if !chunk.all_are_clear_relaxed() {
+            return false;
+        }
+        let _ = self.chunkmap().clear_run(chunk_index, 1);
+        if !chunk.all_are_clear_relaxed() {
+            let _ = self.chunkmap().set_run(chunk_index, 1);
+            return false;
+        }
+        self.set_max_accessed(chunk_index);
+        true
+    }
+
+    /// Local-only `mi_bbitmap_unsafe_setN`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have exclusive quiescent access to every touched chunk
+    /// and its conservative map bits. Multi-chunk ranges must start at a chunk
+    /// boundary, matching all source callers of the non-atomic middle-chunk
+    /// path.
+    pub(crate) unsafe fn unsafe_set_range_local(
+        &mut self,
+        index: usize,
+        len: usize,
+    ) -> Option<()> {
+        let range = BitmapRange::new(index, len, self.max_bits())?;
+        let chunk_start = range.index / BCHUNK_BITS;
+        let map_count = range.len / BCHUNK_BITS + usize::from(range.len % BCHUNK_BITS != 0);
+        let touched_count = (range.index % BCHUNK_BITS)
+            .checked_add(range.len)?
+            .checked_add(BCHUNK_BITS - 1)?
+            / BCHUNK_BITS;
+        // `mi_bchunks_unsafe_setN` derives its map span from `n` alone. Its
+        // arena callers may begin inside a chunk only when the range ends on a
+        // chunk boundary; reject any other shape before it could leave the
+        // conservative map missing the final touched chunk.
+        if touched_count != map_count {
+            return None;
+        }
+        let _ = self.chunkmap().set_run(chunk_start, map_count);
+
+        let mut chunk_index = chunk_start;
+        let mut chunk_bit = range.index % BCHUNK_BITS;
+        let mut remaining = range.len;
+        let first = core::cmp::min(BCHUNK_BITS - chunk_bit, remaining);
+        let _ = self.chunk(chunk_index).set_run(chunk_bit, first);
+        chunk_index += 1;
+        remaining -= first;
+
+        let whole_chunks = remaining / BCHUNK_BITS;
+        for offset in 0..whole_chunks {
+            unsafe {
+                self.chunks_ptr()
+                    .add(chunk_index + offset)
+                    .write(Chunk::all_set())
+            };
+        }
+        chunk_index += whole_chunks;
+        remaining -= whole_chunks * BCHUNK_BITS;
+        if remaining != 0 {
+            chunk_bit = 0;
+            let _ = self.chunk(chunk_index).set_run(chunk_bit, remaining);
+        }
+        Some(())
+    }
+
+    pub(crate) fn set_range(&self, index: usize, len: usize) -> Option<bool> {
+        let range = BitmapRange::new(index, len, self.max_bits())?;
+        let mut chunk_index = range.index / BCHUNK_BITS;
+        let mut chunk_bit = range.index % BCHUNK_BITS;
+        let mut remaining = range.len;
+        let mut all_clear = true;
+        while remaining != 0 {
+            let count = core::cmp::min(BCHUNK_BITS - chunk_bit, remaining);
+            let transition = self.chunk(chunk_index).set_run(chunk_bit, count)?;
+            all_clear &= transition.all_transitioned();
+            self.chunkmap_set(chunk_index, true);
+            remaining -= count;
+            chunk_bit = 0;
+            chunk_index += 1;
+        }
+        Some(all_clear)
+    }
+
+    pub(crate) fn is_xset_range(&self, set: bool, index: usize, len: usize) -> Option<bool> {
+        let range = BitmapRange::new(index, len, self.max_bits())?;
+        let mut chunk_index = range.index / BCHUNK_BITS;
+        let mut chunk_bit = range.index % BCHUNK_BITS;
+        let mut remaining = range.len;
+        while remaining != 0 {
+            let count = core::cmp::min(BCHUNK_BITS - chunk_bit, remaining);
+            if !self.chunk(chunk_index).is_xset_run(set, chunk_bit, count) {
+                return Some(false);
+            }
+            remaining -= count;
+            chunk_bit = 0;
+            chunk_index += 1;
+        }
+        Some(true)
+    }
+
+    #[inline]
+    pub(crate) fn is_set_range(&self, index: usize, len: usize) -> Option<bool> {
+        self.is_xset_range(true, index, len)
+    }
+
+    #[inline]
+    pub(crate) fn is_clear_range(&self, index: usize, len: usize) -> Option<bool> {
+        self.is_xset_range(false, index, len)
+    }
+
+    /// Exact single-chunk `mi_bbitmap_try_clearNC` boundary.
+    pub(crate) fn try_clear_within_chunk(&self, index: usize, len: usize) -> Option<bool> {
+        let range = BitmapRange::new(index, len, self.max_bits())?;
+        if len > BCHUNK_BITS {
+            return None;
+        }
+        let chunk_index = range.index / BCHUNK_BITS;
+        let chunk_bit = range.index % BCHUNK_BITS;
+        if chunk_bit.checked_add(len)? > BCHUNK_BITS {
+            return None;
+        }
+        let result = self.chunk(chunk_index).try_claim_at(chunk_bit, len)?;
+        if result.is_claimed() && result.maybe_all_clear() {
+            let _ = self.chunkmap_try_clear(chunk_index);
+        } else if result.temporarily_unclaimed() {
+            self.chunkmap_set(chunk_index, false);
+        }
+        Some(result.is_claimed())
+    }
+
+    /// Binned two-level search with the source's thread spreading, bin order,
+    /// specialized one-chunk claims, and huge-object chunk rollback.
+    pub(crate) fn try_find_and_claim(&self, thread_sequence: usize, len: usize) -> Option<usize> {
+        if len == 0 || len > self.max_bits() {
+            return None;
+        }
+        if len > BCHUNK_BITS {
+            return self.try_find_and_claim_chunks(len);
+        }
+        self.try_find_and_claim_within_chunk(thread_sequence, len)
+    }
+
+    fn try_find_and_claim_within_chunk(
+        &self,
+        thread_sequence: usize,
+        len: usize,
+    ) -> Option<usize> {
+        let cmap_max_count = (self.chunk_count() + BFIELD_BITS - 1) / BFIELD_BITS;
+        let chunk_accessed = self.max_accessed_chunk();
+        let cmap_accessed = chunk_accessed / BFIELD_BITS;
+        let cmap_accessed_bits = 1 + chunk_accessed % BFIELD_BITS;
+        let cmap_mask = field_mask_valid(cmap_max_count, 0);
+        let cmap_cycle = cmap_accessed + 1;
+        let requested_bin = ChunkBin::of_slice_count(len);
+
+        let outer_start = (thread_sequence as u32 as usize) % cmap_cycle;
+        let outer_cycle_mask = field_mask_valid(cmap_cycle - outer_start, outer_start);
+        let mut outer_primary = cmap_mask & outer_cycle_mask;
+        let mut outer_rest = cmap_mask & !outer_cycle_mask;
+        while outer_primary != 0 || outer_rest != 0 {
+            let source = if outer_primary != 0 {
+                &mut outer_primary
+            } else {
+                &mut outer_rest
+            };
+            let cmap_index = ctz(*source);
+            *source &= source.wrapping_sub(1);
+
+            let cmap_entry = word_load_relaxed(self.chunkmap().field(cmap_index));
+            if cmap_entry == 0 {
+                continue;
+            }
+            let entry_cycle = if cmap_index != cmap_accessed {
+                BFIELD_BITS
+            } else {
+                cmap_accessed_bits
+            };
+            let mut bin_masks = [0usize; 6];
+            bin_masks[ChunkBin::None.index()] = cmap_entry;
+            for bin_index in 0..ChunkBin::MAPPED_COUNT {
+                let bin = ChunkBin::from_index(bin_index);
+                let value = word_load_relaxed(self.bin_map(bin).field(cmap_index)) & cmap_entry;
+                bin_masks[bin_index] = value;
+                bin_masks[ChunkBin::None.index()] &= !value;
+            }
+
+            let mut bin = ChunkBin::Small;
+            loop {
+                let entry = bin_masks[bin.index()];
+                let start = (thread_sequence as u32 as usize) % entry_cycle;
+                let cycle_mask = field_mask_valid(entry_cycle - start, start);
+                let mut primary = entry & cycle_mask;
+                let mut rest = entry & !cycle_mask;
+                while primary != 0 || rest != 0 {
+                    let source = if primary != 0 { &mut primary } else { &mut rest };
+                    let entry_index = ctz(*source);
+                    *source &= source.wrapping_sub(1);
+                    let chunk_index = cmap_index * BFIELD_BITS + entry_index;
+                    if chunk_index >= self.chunk_count() {
+                        continue;
+                    }
+                    let result = self.chunk(chunk_index).try_claim_run_detailed(len);
+                    if let Some(chunk_bit) = result.index {
+                        if chunk_bit == 0 && bin == ChunkBin::None {
+                            self.set_chunk_bin(chunk_index, requested_bin);
+                        }
+                        return Some(chunk_index * BCHUNK_BITS + chunk_bit);
+                    }
+                    if result.temporarily_unclaimed {
+                        self.chunkmap_set(chunk_index, false);
+                    } else {
+                        let _ = self.chunkmap_try_clear(chunk_index);
+                    }
+                }
+
+                if bin == ChunkBin::None {
+                    break;
+                }
+                bin = if bin == requested_bin {
+                    ChunkBin::None
+                } else {
+                    ChunkBin::from_index(bin.index() + 1)
+                };
+            }
+        }
+        None
+    }
+
+    fn try_find_and_claim_chunks(&self, len: usize) -> Option<usize> {
+        let required = (len + BCHUNK_BITS - 1) / BCHUNK_BITS;
+        if self.chunk_count() < required {
+            return None;
+        }
+        let mut chunk_index = 0;
+        while chunk_index <= self.chunk_count() - required {
+            let mut count = 0;
+            while count < required && self.chunk(chunk_index + count).all_are_set_relaxed() {
+                count += 1;
+            }
+            if count == required {
+                if self.try_claim_chunks_at(chunk_index, len) {
+                    for offset in 0..count {
+                        self.set_chunk_bin(chunk_index + offset, ChunkBin::Huge);
+                    }
+                    return Some(chunk_index * BCHUNK_BITS);
+                }
+                count = 0;
+            }
+            chunk_index += count + 1;
+        }
+        None
+    }
+
+    fn try_claim_chunks_at(&self, chunk_index: usize, len: usize) -> bool {
+        if len == 0
+            || chunk_index >= self.chunk_count()
+            || chunk_index
+                .checked_mul(BCHUNK_BITS)
+                .and_then(|start| start.checked_add(len))
+                .is_none_or(|end| end > self.max_bits())
+        {
+            return false;
+        }
+        let mut remaining = len;
+        let mut claimed_count = 0;
+        while remaining != 0 {
+            let count = core::cmp::min(remaining, BCHUNK_BITS);
+            let Some(claim) = self.chunk(chunk_index + claimed_count).try_claim_at(0, count) else {
+                break;
+            };
+            if !claim.is_claimed() {
+                break;
+            }
+            remaining -= count;
+            claimed_count += 1;
+        }
+        if remaining == 0 {
+            return true;
+        }
+        while claimed_count != 0 {
+            claimed_count -= 1;
+            let _ = self
+                .chunk(chunk_index + claimed_count)
+                .set_run(0, BCHUNK_BITS);
+            self.chunkmap_set(chunk_index + claimed_count, false);
+        }
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1142,12 +1824,101 @@ mod tests {
         bytes: [MaybeUninit<u8>; 320],
     }
 
+    #[repr(align(64))]
+    struct BinnedBitmapTestStorage {
+        bytes: [MaybeUninit<u8>; 640],
+    }
+
     impl BitmapTestStorage {
         const fn uninit() -> Self {
             Self {
                 bytes: [const { MaybeUninit::uninit() }; 320],
             }
         }
+    }
+
+    impl BinnedBitmapTestStorage {
+        const fn uninit() -> Self {
+            Self {
+                bytes: [const { MaybeUninit::uninit() }; 640],
+            }
+        }
+    }
+
+    #[test]
+    fn binned_bitmap_layout_rounds_to_chunks_and_preserves_the_source_header() {
+        assert_eq!(BinnedBitmapLayout::for_bit_count(0), None);
+        assert_eq!(BinnedBitmapLayout::for_bit_count(1).unwrap().chunk_count(), 1);
+        assert_eq!(
+            BinnedBitmapLayout::for_bit_count(BCHUNK_BITS).unwrap().byte_size(),
+            8 * BCHUNK_SIZE,
+        );
+        assert_eq!(
+            BinnedBitmapLayout::for_bit_count(BCHUNK_BITS + 1)
+                .unwrap()
+                .chunk_count(),
+            2,
+        );
+        assert_eq!(
+            BinnedBitmapLayout::for_bit_count(BCHUNK_BITS + 1)
+                .unwrap()
+                .byte_size(),
+            9 * BCHUNK_SIZE,
+        );
+        assert_eq!(BinnedBitmapLayout::for_bit_count(BITMAP_MAX_BIT_COUNT + 1), None);
+    }
+
+    #[test]
+    fn binned_claim_specializations_keep_chunk_boundaries_and_size_bins() {
+        let layout = BinnedBitmapLayout::for_bit_count(BCHUNK_BITS * 2).unwrap();
+        let mut storage = BinnedBitmapTestStorage::uninit();
+        let mut bitmap = unsafe {
+            BinnedBitmapView::initialize(
+                core::ptr::null_mut(),
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+
+        unsafe { bitmap.unsafe_set_range_local(0, bitmap.max_bits()).unwrap() };
+        assert_eq!(bitmap.try_find_and_claim(7, 1), Some(0));
+        assert_eq!(bitmap.chunk_bin(0), Some(ChunkBin::Small));
+        assert_eq!(bitmap.try_find_and_claim(7, 8), Some(8));
+        // The NX source path is not field-aligned: after the one- and
+        // byte-sized claims, the next 64-bit run starts at bit 16.
+        assert_eq!(bitmap.try_find_and_claim(7, BFIELD_BITS), Some(16));
+
+        let whole_chunk = bitmap.try_find_and_claim(7, BCHUNK_BITS).unwrap();
+        assert_eq!(whole_chunk, BCHUNK_BITS);
+        assert_eq!(bitmap.chunk_bin(1), Some(ChunkBin::Other));
+        assert_eq!(bitmap.try_find_and_claim(0, 0), None);
+        assert_eq!(bitmap.try_find_and_claim(0, bitmap.max_bits() + 1), None);
+    }
+
+    #[test]
+    fn failed_multi_chunk_claim_restores_each_fully_claimed_prefix_chunk() {
+        let layout = BinnedBitmapLayout::for_bit_count(BCHUNK_BITS * 2).unwrap();
+        let mut storage = BinnedBitmapTestStorage::uninit();
+        let mut bitmap = unsafe {
+            BinnedBitmapView::initialize(
+                core::ptr::null_mut(),
+                storage.bytes.as_mut_ptr().cast(),
+                storage.bytes.len(),
+                layout,
+                false,
+            )
+            .unwrap()
+        };
+        unsafe { bitmap.unsafe_set_range_local(0, bitmap.max_bits()).unwrap() };
+        assert!(bitmap.try_clear_within_chunk(BCHUNK_BITS, 1).unwrap());
+
+        assert!(!bitmap.try_claim_chunks_at(0, BCHUNK_BITS + 1));
+        assert!(bitmap.chunk(0).all_are_set_relaxed());
+        assert!(bitmap.chunk(1).is_clear_run(0, 1));
+        assert!(bitmap.chunkmap().is_set_run(0, 1));
     }
 
     #[test]

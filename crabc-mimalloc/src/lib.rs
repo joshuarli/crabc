@@ -25,6 +25,7 @@ compile_error!("crabc-mimalloc supports Linux/AArch64 little-endian only");
 
 mod bits;
 mod atomic;
+mod arena;
 mod bitmap;
 mod config;
 mod invariants;
@@ -38,6 +39,7 @@ mod os;
 mod page;
 mod page_map;
 mod provenance;
+mod random;
 mod size_class;
 mod support;
 mod types;

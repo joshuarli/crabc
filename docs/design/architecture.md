@@ -1,6 +1,7 @@
 # Runtime ownership architecture
 
-`crabc` has five layers with deliberately narrow ownership boundaries.
+`crabc` has six runtime-development/evidence layers with deliberately narrow ownership
+boundaries.
 
 1. `crabc-core` owns stateless typed Linux/AArch64 kernel and vDSO operations.
    It has no process-global runtime owner.
@@ -8,13 +9,19 @@
    C layouts, compatibility translation, and other libc process state.
 3. `ldso` is the one production dynamic linker. It owns ELF loading,
    relocation, symbol scope, loader TLS, and loader process state.
-4. `crabc-rs` is the idiomatic Rust facade. It consumes `crabc-core` directly
+4. `crabc-mimalloc` is the incomplete pinned, errno-free allocator engine. It
+   consumes `crabc-core` and reviewed focused cryptographic primitives, but
+   never libc; after promotion, `libc` owns its C ABI adaptation and lifecycle
+   integration. The existing C backend remains production until then.
+5. `crabc-rs` is the idiomatic Rust facade. It consumes `crabc-core` directly
    for typed native operations and never treats the C ABI as its syscall API.
-5. `compat`, `tests`, and `libc-test-harness` are executable evidence. They
+6. `compat`, `tests`, and `libc-test-harness` are executable evidence. They
    validate contracts but are not runtime dependencies.
 
-The normal dependency direction is toward narrower boundaries: `crabc-rs` and
-`libc` may consume `crabc-core`; evidence may exercise every runtime layer.
+The normal dependency direction is toward narrower boundaries: `crabc-rs`,
+`crabc-mimalloc`, and `libc` may consume `crabc-core`; `libc` may consume
+`crabc-mimalloc` after its promotion; evidence may exercise every runtime
+layer before promotion.
 `ldso` stays independently bootstrappable because it starts before ordinary
 runtime services are available. Neither `crabc-core` nor `crabc-rs` may own
 libc or loader singleton state.

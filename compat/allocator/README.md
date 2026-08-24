@@ -8,11 +8,15 @@ system. The immutable source and licensing record are in
 [`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md); the design
 boundary is in [`docs/design/allocator.md`](../../docs/design/allocator.md).
 
-The workspace crate currently contains source-mapped foundations, the private
-regular Linux mapping and futex-lock boundaries, bounded nonallocating support
+The workspace crate currently contains source-mapped foundations, immutable
+Linux memory policy, regular/aligned mapping ownership, a live two-level page
+map, ordinary and binned caller-owned bitmap views, an in-place external-arena
+substrate, the private futex-lock boundary, bounded nonallocating support
 kernels, the allocation-free recursive once protocol, page-queue intrusive
-metadata kernels (without theap accounting), pure page geometry,
-and a fixed-capacity `cfg(miri)` mapping model. It exposes no
+metadata kernels (without theap accounting), pure page geometry, and the
+allocator random context over RustCrypto's original-ChaCha primitive. Its
+fixed-capacity `cfg(miri)` model covers current mapping and page-map ownership.
+It exposes no
 allocator operation and makes no allocator-readiness or parity claim. The
 pinned image does not currently contain Miri, so forced-`cfg(miri)` execution
 is smoke evidence only and is never reported as a Miri pass.
@@ -37,7 +41,11 @@ are under `compat/reports/allocator/oracle/`. The gate runs the complete
 `crabc-mimalloc` library unit suite with a marked Rust machine record and
 rejects any mismatch in the currently ported configuration constants,
 page/memory-ID layout, queue block-size table, or bin-selection boundary
-vectors.
+vectors. It also traverses Cargo metadata for the fixed
+`aarch64-unknown-linux-musl` target and rejects any selected allocator
+dependency package, version, source, edge, build script, or proc macro outside
+the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
+only in `Cargo.lock` do not satisfy or fail that selected-graph judge.
 
 `allocator --full` and both performance modes deliberately return exit status
 3 with an `UNMET MILESTONE` explanation until their real Rust adapter,

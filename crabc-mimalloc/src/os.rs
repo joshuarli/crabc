@@ -11,15 +11,14 @@
 //! Private, allocation-free Linux virtual-memory primitives for the allocator
 //! engine.
 //!
-//! This is deliberately a direct primitive boundary, not the allocator's OS
-//! policy layer. It implements only the pinned default Unix regular-mapping
-//! behavior which can be completed without process option state: anonymous
-//! private mappings, commit/uncommit transitions, reset/purge, protection,
-//! and explicit release. It does not select huge pages, query overcommit or
-//! transparent-huge-page policy, create aligned random hints, count NUMA
-//! topology, parse options, or create mimalloc random state. Those upstream
-//! paths require state or dependencies owned by later slices and are absent
-//! here rather than represented by a successful placeholder.
+//! This boundary now includes the pinned immutable OS-memory configuration and
+//! ordinary mmap policy needed by the live page map: Linux overcommit/THP and
+//! physical-memory observation, regular and guaranteed-aligned mappings,
+//! commit/uncommit transitions, reset/purge, protection, and explicit release.
+//! It does not select huge pages, mutate process THP policy, create randomized
+//! aligned hints, parse allocator options, or create mimalloc random state.
+//! Those upstream paths require state owned by later slices and are absent
+//! rather than represented by a successful placeholder.
 //!
 //! `StartupInput` is supplied by a future runtime owner. In particular, this
 //! module deliberately does not read `/proc/self/environ` or autonomously
@@ -42,6 +41,7 @@ const PROT_READ: u32 = 0x1;
 const PROT_WRITE: u32 = 0x2;
 const MAP_PRIVATE: u32 = 0x02;
 const MAP_ANONYMOUS: u32 = 0x20;
+const MAP_NORESERVE: u32 = 0x4000;
 const MADV_DONTNEED: u32 = 4;
 const MADV_FREE: u32 = 8;
 const CLOCK_MONOTONIC: i32 = 1;
@@ -105,6 +105,165 @@ impl StartupInput {
     pub(crate) const fn page_size(self) -> PageSize {
         self.page_size
     }
+}
+
+/// The pinned default Linux/AArch64 OS-memory policy after primitive probing.
+///
+/// This is the typed counterpart of `mi_os_mem_config_t`. It contains facts
+/// observed during process initialization, not mutable allocator options.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MemoryConfig {
+    page_size: PageSize,
+    large_page_size: usize,
+    alloc_granularity: usize,
+    physical_memory_in_kib: usize,
+    virtual_address_bits: usize,
+    has_overcommit: bool,
+    has_partial_free: bool,
+    has_virtual_reserve: bool,
+    has_transparent_huge_pages: bool,
+}
+
+impl MemoryConfig {
+    const DEFAULT_PHYSICAL_MEMORY_IN_KIB: usize = 32 * 1024 * 1024;
+    const LARGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
+
+    /// Probes the exact allocation-free Linux inputs used by
+    /// `_mi_prim_mem_init`, retaining each source fallback on observation
+    /// failure.
+    pub(crate) fn detect(startup: StartupInput) -> Self {
+        let page_size = startup.page_size();
+        Self {
+            page_size,
+            large_page_size: Self::LARGE_PAGE_SIZE,
+            alloc_granularity: page_size.bytes(),
+            physical_memory_in_kib: detected_physical_memory_in_kib()
+                .unwrap_or(Self::DEFAULT_PHYSICAL_MEMORY_IN_KIB),
+            virtual_address_bits: crate::config::MAX_VABITS,
+            has_overcommit: read_small_file(
+                b"/proc/sys/vm/overcommit_memory\0",
+                overcommit_from_bytes,
+            )
+            .unwrap_or(true),
+            has_partial_free: true,
+            has_virtual_reserve: true,
+            has_transparent_huge_pages: read_small_file(
+                b"/sys/kernel/mm/transparent_hugepage/enabled\0",
+                transparent_huge_pages_from_bytes,
+            )
+            .unwrap_or(false),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn from_observations(
+        page_size: PageSize,
+        physical_memory_in_kib: usize,
+        has_overcommit: bool,
+        has_transparent_huge_pages: bool,
+    ) -> Self {
+        Self {
+            page_size,
+            large_page_size: Self::LARGE_PAGE_SIZE,
+            alloc_granularity: page_size.bytes(),
+            physical_memory_in_kib,
+            virtual_address_bits: crate::config::MAX_VABITS,
+            has_overcommit,
+            has_partial_free: true,
+            has_virtual_reserve: true,
+            has_transparent_huge_pages,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn page_size(self) -> PageSize { self.page_size }
+    #[inline]
+    pub(crate) const fn large_page_size(self) -> usize { self.large_page_size }
+    #[inline]
+    pub(crate) const fn alloc_granularity(self) -> usize { self.alloc_granularity }
+    #[inline]
+    pub(crate) const fn physical_memory_in_kib(self) -> usize { self.physical_memory_in_kib }
+    #[inline]
+    pub(crate) const fn virtual_address_bits(self) -> usize { self.virtual_address_bits }
+    #[inline]
+    pub(crate) const fn has_overcommit(self) -> bool { self.has_overcommit }
+    #[inline]
+    pub(crate) const fn has_partial_free(self) -> bool { self.has_partial_free }
+    #[inline]
+    pub(crate) const fn has_virtual_reserve(self) -> bool { self.has_virtual_reserve }
+    #[inline]
+    pub(crate) const fn has_transparent_huge_pages(self) -> bool {
+        self.has_transparent_huge_pages
+    }
+
+    /// Implements `_mi_os_canuse_large_page` without consulting option state.
+    #[inline]
+    pub(crate) const fn can_use_large_page(self, size: usize, alignment: usize) -> bool {
+        self.large_page_size != 0
+            && size % self.large_page_size == 0
+            && alignment % self.large_page_size == 0
+    }
+
+    /// Implements `_mi_os_good_alloc_size`, including its overflow fallback.
+    pub(crate) fn good_alloc_size(self, size: usize) -> usize {
+        let alignment = if size < 512 * 1024 {
+            self.page_size.bytes()
+        } else if size < 2 * 1024 * 1024 {
+            64 * 1024
+        } else if size < 8 * 1024 * 1024 {
+            256 * 1024
+        } else if size < 32 * 1024 * 1024 {
+            1024 * 1024
+        } else {
+            4 * 1024 * 1024
+        };
+        if size >= usize::MAX - alignment {
+            size
+        } else {
+            invariants::align_up(size, alignment).unwrap_or(size)
+        }
+    }
+}
+
+fn detected_physical_memory_in_kib() -> Option<usize> {
+    let info = crabc_core::system::sysinfo().ok()?;
+    physical_memory_in_kib(info.totalram, info.mem_unit)
+}
+
+fn physical_memory_in_kib(totalram: u64, mem_unit: u32) -> Option<usize> {
+    if mem_unit == 0 {
+        return None;
+    }
+    let totalram = usize::try_from(totalram).ok()?;
+    if mem_unit == 1024 {
+        Some(totalram)
+    } else {
+        totalram.checked_mul(mem_unit as usize).map(|bytes| bytes / 1024)
+    }
+}
+
+#[inline]
+fn overcommit_from_bytes(bytes: &[u8]) -> bool {
+    bytes.first().map_or(true, |byte| matches!(byte, b'0' | b'1'))
+}
+
+#[inline]
+fn transparent_huge_pages_from_bytes(bytes: &[u8]) -> bool {
+    !contains_bytes(bytes, b"[never]")
+}
+
+fn read_small_file<T>(path: &'static [u8], interpret: impl FnOnce(&[u8]) -> T) -> Option<T> {
+    let fd = unsafe { crabc_core::fs::openat_raw(crabc_core::AT_FDCWD, path.as_ptr(), 0, 0) }.ok()?;
+    let mut buffer = [0u8; 64];
+    let read = crabc_core::io::read(fd, &mut buffer);
+    let _ = crabc_core::io::close(fd);
+    let count = read.ok()?;
+    if count == 0 { None } else { Some(interpret(&buffer[..count.min(buffer.len())])) }
+}
+
+#[inline]
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
 }
 
 /// The initial protection requested for a private anonymous mapping.
@@ -181,8 +340,36 @@ impl Mapping {
         length: usize,
         access: MapAccess,
     ) -> Result<Self> {
+        Self::map_regular(startup, length, access, false)
+    }
+
+    /// Maps the pinned regular allocator path, including Linux overcommit's
+    /// `MAP_NORESERVE` selection.
+    pub(crate) fn map_for_allocator(
+        config: MemoryConfig,
+        length: usize,
+        access: MapAccess,
+    ) -> Result<Self> {
+        Self::map_regular(
+            StartupInput::new(config.page_size()),
+            length,
+            access,
+            config.has_overcommit(),
+        )
+    }
+
+    fn map_regular(
+        startup: StartupInput,
+        length: usize,
+        access: MapAccess,
+        no_reserve: bool,
+    ) -> Result<Self> {
         validate_mapping_length(startup.page_size, length)?;
         fault_before(FaultPoint::Map)?;
+        let mut flags = MAP_PRIVATE | MAP_ANONYMOUS;
+        if no_reserve {
+            flags |= MAP_NORESERVE;
+        }
 
         // SAFETY: `length` is non-zero and a multiple of the startup-owned
         // kernel page size. A null hint and fd -1 are the Linux anonymous-map
@@ -193,7 +380,7 @@ impl Mapping {
                 core::ptr::null_mut(),
                 length,
                 access.protection(),
-                MAP_PRIVATE | MAP_ANONYMOUS,
+                flags,
                 -1,
                 0,
             )
@@ -207,6 +394,71 @@ impl Mapping {
             initially_zero: true,
             is_mapped: true,
         })
+    }
+
+    /// Guarantees a power-of-two aligned regular mapping by overmapping and
+    /// partially releasing the prefix and suffix when the direct map is not
+    /// aligned. This is the active mmap branch of
+    /// `mi_os_prim_alloc_aligned`.
+    pub(crate) fn map_aligned_for_allocator(
+        config: MemoryConfig,
+        length: usize,
+        alignment: usize,
+        access: MapAccess,
+    ) -> Result<Self> {
+        let page_size = config.page_size().bytes();
+        if alignment < page_size || !alignment.is_power_of_two() {
+            return Err(Errno::INVAL);
+        }
+        let mut direct = Self::map_for_allocator(config, length, access)?;
+        let direct_base = direct.base()?;
+        if direct_base.addr() % alignment == 0 {
+            return Ok(direct);
+        }
+        direct.unmap()?;
+
+        let over_length = length.checked_add(alignment).ok_or(Errno::NOMEM)?;
+        let mut over = Self::map_for_allocator(config, over_length, access)?;
+        let base = over.base()?;
+        let aligned_address = invariants::align_up(base.addr(), alignment).ok_or(Errno::NOMEM)?;
+        let prefix = aligned_address - base.addr();
+        let suffix = over_length - prefix - length;
+        let aligned = base.wrapping_add(prefix);
+
+        if prefix != 0 {
+            unsafe { crabc_core::mm::munmap_raw(base, prefix) }?;
+        }
+        if suffix != 0 {
+            unsafe { crabc_core::mm::munmap_raw(aligned.wrapping_add(length), suffix) }?;
+        }
+        over.address = aligned;
+        over.length = length;
+        Ok(over)
+    }
+
+    /// Transfers this non-RAII mapping into a published raw-pointer owner.
+    ///
+    /// The caller must arrange exactly one later [`Mapping::reclaim_published`]
+    /// after all readers have quiesced. This narrow ownership handoff exists
+    /// for page-map submaps whose base pointer is itself the published token.
+    pub(crate) fn into_published(mut self) -> Result<*mut u8> {
+        self.active()?;
+        self.is_mapped = false;
+        Ok(self.address)
+    }
+
+    /// Reclaims a mapping previously transferred by [`Mapping::into_published`].
+    ///
+    /// # Safety
+    ///
+    /// `address` must be the provenance-bearing base of one still-live mapping
+    /// created by this module, `length` must be its exact current extent, and
+    /// the caller must own the unique release right with no live accesses.
+    pub(crate) unsafe fn reclaim_published(address: *mut u8, length: usize) -> Result<()> {
+        if address.is_null() || length == 0 {
+            return Err(Errno::INVAL);
+        }
+        unsafe { crabc_core::mm::munmap_raw(address, length) }
     }
 
     /// Returns whether the original anonymous mapping was zero initialized.
@@ -764,6 +1016,45 @@ mod tests {
         for bytes in [4 * 1024, 16 * 1024, 64 * 1024] {
             assert_eq!(PageSize::new(bytes).unwrap().bytes(), bytes);
         }
+    }
+
+    #[test]
+    fn memory_policy_parsers_preserve_linux_fallbacks_and_source_rounding() {
+        let page_size = PageSize::new(4 * 1024).unwrap();
+        let config = MemoryConfig::from_observations(page_size, 123_456, false, true);
+        assert_eq!(config.page_size(), page_size);
+        assert_eq!(config.large_page_size(), 2 * 1024 * 1024);
+        assert_eq!(config.alloc_granularity(), page_size.bytes());
+        assert_eq!(config.physical_memory_in_kib(), 123_456);
+        assert_eq!(config.virtual_address_bits(), crate::config::MAX_VABITS);
+        assert!(!config.has_overcommit());
+        assert!(config.has_partial_free());
+        assert!(config.has_virtual_reserve());
+        assert!(config.has_transparent_huge_pages());
+
+        assert!(overcommit_from_bytes(b"0\n"));
+        assert!(overcommit_from_bytes(b"1\n"));
+        assert!(!overcommit_from_bytes(b"2\n"));
+        assert!(transparent_huge_pages_from_bytes(b"always [madvise] never\n"));
+        assert!(!transparent_huge_pages_from_bytes(b"always madvise [never]\n"));
+        assert_eq!(physical_memory_in_kib(17, 1024), Some(17));
+        assert_eq!(physical_memory_in_kib(4097, 1), Some(4));
+        assert_eq!(physical_memory_in_kib(1, 0), None);
+
+        assert_eq!(config.good_alloc_size(1), 4 * 1024);
+        assert_eq!(config.good_alloc_size(512 * 1024 + 1), 576 * 1024);
+        assert_eq!(config.good_alloc_size(2 * 1024 * 1024 + 1), 2304 * 1024);
+        assert_eq!(config.good_alloc_size(usize::MAX), usize::MAX);
+        assert!(config.can_use_large_page(2 * 1024 * 1024, 2 * 1024 * 1024));
+        assert!(!config.can_use_large_page(2 * 1024 * 1024, 4 * 1024));
+
+        let detected = MemoryConfig::detect(current_startup());
+        assert_eq!(detected.page_size(), current_startup().page_size());
+        assert_eq!(detected.alloc_granularity(), detected.page_size().bytes());
+        assert!(detected.physical_memory_in_kib() > 0);
+        assert_eq!(detected.virtual_address_bits(), crate::config::MAX_VABITS);
+        assert!(detected.has_partial_free());
+        assert!(detected.has_virtual_reserve());
     }
 
     #[test]

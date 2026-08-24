@@ -95,9 +95,34 @@ def main() -> int:
         with mimalloc_manifest_path.open("rb") as stream:
             mimalloc_manifest = tomllib.load(stream)
         dependencies = mimalloc_manifest.get("dependencies", {})
-        if set(dependencies) != {"crabc-core"}:
+        if set(dependencies) != {"chacha20", "crabc-core", "zeroize"}:
             errors.append(
-                "crabc-mimalloc/Cargo.toml: normal dependencies must be exactly crabc-core"
+                "crabc-mimalloc/Cargo.toml: normal dependencies must be exactly "
+                "chacha20, crabc-core, and zeroize"
+            )
+        chacha = dependencies.get("chacha20", {})
+        if not isinstance(chacha, dict) or chacha.get("version") != "=0.10.1":
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: chacha20 must remain pinned to =0.10.1"
+            )
+        elif chacha.get("default-features") is not False or set(chacha.get("features", [])) != {
+            "legacy",
+            "zeroize",
+        }:
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: chacha20 must disable defaults and select only "
+                "legacy plus zeroize"
+            )
+        zeroize = dependencies.get("zeroize", {})
+        if (
+            not isinstance(zeroize, dict)
+            or zeroize.get("version") != "=1.9.0"
+            or zeroize.get("default-features") is not False
+            or zeroize.get("features", [])
+        ):
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: zeroize must remain pinned to =1.9.0 "
+                "with defaults disabled and no features"
             )
         package = mimalloc_manifest.get("package", {})
         if package.get("license") != "MIT":

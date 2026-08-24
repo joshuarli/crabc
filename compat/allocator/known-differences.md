@@ -1,15 +1,16 @@
 # Pinned mimalloc Rust/C known differences
 
 This is the durable register of observable or algorithmic differences between
-the future `crabc-mimalloc` Rust port and exact pinned mimalloc v3.5.0 C.
+the incomplete `crabc-mimalloc` Rust port and exact pinned mimalloc v3.5.0 C.
 The source pin is defined in
 [`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md).
 
 ## Current status
 
-No differences are recorded. The current Rust crate contains only pure
-source-mapped foundations and exposes no allocator engine operation, so it
-makes no Rust/C parity claim.
+No differences are recorded. The current Rust crate contains source-mapped
+foundations and partial OS, page-map, bitmap, arena, and random-state
+substrates, but exposes no allocation/free operation and makes no Rust/C parity
+claim.
 
 ## Entry requirements
 

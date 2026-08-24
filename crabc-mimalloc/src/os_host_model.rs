@@ -1,17 +1,16 @@
 //! Miri-only model of the allocator's private mapping primitive boundary.
 //!
 //! This module is selected only by `cfg(miri)`. It is deliberately not a host
-//! platform backend: a fixed, page-aligned static buffer represents one live
-//! anonymous mapping at a time, so Miri can exercise the current allocator
-//! foundations without Linux/AArch64 syscalls. The model records mapping and
-//! logical accessibility transitions. It does not model host protection
+//! platform backend: fixed, page-aligned static regions represent a bounded
+//! set of live anonymous mappings, so Miri can exercise allocator ownership
+//! and lazy page-map publication without Linux/AArch64 syscalls. The model
+//! records mapping and logical accessibility transitions. It does not model host protection
 //! faults, kernel RSS, `MADV_FREE` reclamation, or Linux scheduling/process
 //! observations; tests must not infer any of those properties from it.
 
-use core::cell::Cell;
 use core::cell::UnsafeCell;
 use core::num::NonZeroUsize;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crabc_core::{Errno, Result};
 
@@ -62,6 +61,101 @@ impl StartupInput {
     }
 }
 
+/// Deterministic host-model counterpart of the Linux OS-memory policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct MemoryConfig {
+    page_size: PageSize,
+    large_page_size: usize,
+    alloc_granularity: usize,
+    physical_memory_in_kib: usize,
+    virtual_address_bits: usize,
+    has_overcommit: bool,
+    has_partial_free: bool,
+    has_virtual_reserve: bool,
+    has_transparent_huge_pages: bool,
+}
+
+impl MemoryConfig {
+    const DEFAULT_PHYSICAL_MEMORY_IN_KIB: usize = 32 * 1024 * 1024;
+    const LARGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
+
+    /// Returns fixed source fallbacks; this model never observes the host OS.
+    pub(crate) const fn detect(startup: StartupInput) -> Self {
+        Self::from_observations(
+            startup.page_size(),
+            Self::DEFAULT_PHYSICAL_MEMORY_IN_KIB,
+            true,
+            false,
+        )
+    }
+
+    pub(crate) const fn from_observations(
+        page_size: PageSize,
+        physical_memory_in_kib: usize,
+        has_overcommit: bool,
+        has_transparent_huge_pages: bool,
+    ) -> Self {
+        Self {
+            page_size,
+            large_page_size: Self::LARGE_PAGE_SIZE,
+            alloc_granularity: page_size.bytes(),
+            physical_memory_in_kib,
+            virtual_address_bits: crate::config::MAX_VABITS,
+            has_overcommit,
+            has_partial_free: true,
+            has_virtual_reserve: true,
+            has_transparent_huge_pages,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn page_size(self) -> PageSize { self.page_size }
+    #[inline]
+    pub(crate) const fn large_page_size(self) -> usize { self.large_page_size }
+    #[inline]
+    pub(crate) const fn alloc_granularity(self) -> usize { self.alloc_granularity }
+    #[inline]
+    pub(crate) const fn physical_memory_in_kib(self) -> usize { self.physical_memory_in_kib }
+    #[inline]
+    pub(crate) const fn virtual_address_bits(self) -> usize { self.virtual_address_bits }
+    #[inline]
+    pub(crate) const fn has_overcommit(self) -> bool { self.has_overcommit }
+    #[inline]
+    pub(crate) const fn has_partial_free(self) -> bool { self.has_partial_free }
+    #[inline]
+    pub(crate) const fn has_virtual_reserve(self) -> bool { self.has_virtual_reserve }
+    #[inline]
+    pub(crate) const fn has_transparent_huge_pages(self) -> bool {
+        self.has_transparent_huge_pages
+    }
+
+    #[inline]
+    pub(crate) const fn can_use_large_page(self, size: usize, alignment: usize) -> bool {
+        self.large_page_size != 0
+            && size % self.large_page_size == 0
+            && alignment % self.large_page_size == 0
+    }
+
+    pub(crate) fn good_alloc_size(self, size: usize) -> usize {
+        let alignment = if size < 512 * 1024 {
+            self.page_size.bytes()
+        } else if size < 2 * 1024 * 1024 {
+            64 * 1024
+        } else if size < 8 * 1024 * 1024 {
+            256 * 1024
+        } else if size < 32 * 1024 * 1024 {
+            1024 * 1024
+        } else {
+            4 * 1024 * 1024
+        };
+        if size >= usize::MAX - alignment {
+            size
+        } else {
+            invariants::align_up(size, alignment).unwrap_or(size)
+        }
+    }
+}
+
 /// The initial protection requested for a private anonymous mapping.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MapAccess {
@@ -85,29 +179,49 @@ pub(crate) enum DecommitOutcome {
     DoesNotNeedRecommit,
 }
 
-// The model owns no dynamic memory. It deliberately limits one mapping to a
-// single 64-KiB backing range, which accommodates one page at each supported
-// Linux/AArch64 base-page size and up to sixteen 4-KiB pages. The alignment is
-// sufficient for every supported page size, preserving the production map's
-// base-pointer alignment precondition.
-const HOST_MAPPING_CAPACITY: usize = 64 * 1024;
-const HOST_MAX_PAGES: usize = HOST_MAPPING_CAPACITY / 4_096;
+// The model owns no dynamic memory. Sixteen 64-KiB slots model ordinary maps
+// and lazy page-map submaps; one 5-MiB slot accommodates the maximum 48-bit
+// top-level page-map reservation plus its trailing submap. All bases retain
+// the production boundary's 64-KiB alignment.
+const HOST_SMALL_CAPACITY: usize = 64 * 1024;
+const HOST_SMALL_SLOTS: usize = 16;
+const HOST_LARGE_CAPACITY: usize = 5 * 1024 * 1024;
+const HOST_MAX_PAGES: usize = HOST_LARGE_CAPACITY / 4_096;
 
 #[repr(C, align(65536))]
-struct HostMemory {
-    bytes: UnsafeCell<[u8; HOST_MAPPING_CAPACITY]>,
+struct HostLargeMemory {
+    bytes: UnsafeCell<[u8; HOST_LARGE_CAPACITY]>,
 }
 
-// SAFETY: `HOST_MAPPING_IN_USE` grants one live `Mapping` exclusive access to
-// the raw static storage. The model never creates references into `bytes`.
-unsafe impl Sync for HostMemory {}
+// SAFETY: the corresponding atomic slot owner grants one live `Mapping`
+// exclusive access to each raw static region. The model never creates
+// references into `bytes`.
+unsafe impl Sync for HostLargeMemory {}
 
-static HOST_MEMORY: HostMemory = HostMemory {
-    bytes: UnsafeCell::new([0; HOST_MAPPING_CAPACITY]),
+#[repr(C, align(65536))]
+struct HostSmallMemory {
+    bytes: UnsafeCell<[u8; HOST_SMALL_CAPACITY * HOST_SMALL_SLOTS]>,
+}
+
+unsafe impl Sync for HostSmallMemory {}
+
+static HOST_LARGE_MEMORY: HostLargeMemory = HostLargeMemory {
+    bytes: UnsafeCell::new([0; HOST_LARGE_CAPACITY]),
 };
-static HOST_MAPPING_IN_USE: AtomicBool = AtomicBool::new(false);
+static HOST_SMALL_MEMORY: HostSmallMemory = HostSmallMemory {
+    bytes: UnsafeCell::new([0; HOST_SMALL_CAPACITY * HOST_SMALL_SLOTS]),
+};
+static HOST_LARGE_IN_USE: AtomicBool = AtomicBool::new(false);
+static HOST_SMALL_IN_USE: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
 
-/// One static-buffer mapping with an explicit, non-RAII release edge.
+#[derive(Clone, Copy)]
+enum HostSlot {
+    Large,
+    Small(usize),
+}
+
+/// One bounded static-region mapping with an explicit, non-RAII release edge.
 ///
 /// The logical accessibility mask tracks the production transitions so tests
 /// can exercise their state ordering. It cannot make Miri fault a raw-pointer
@@ -119,8 +233,12 @@ pub(crate) struct Mapping {
     page_size: PageSize,
     initially_committed: bool,
     initially_zero: bool,
-    accessible_pages: Cell<u64>,
+    // Page-map commitment can race exactly as it does in the production
+    // boundary. Keep the model's observation mask atomic so that exercising
+    // that protocol under Miri does not introduce a model-only data race.
+    accessible_pages: AtomicU64,
     is_mapped: bool,
+    slot: HostSlot,
 }
 
 impl Mapping {
@@ -132,19 +250,11 @@ impl Mapping {
         access: MapAccess,
     ) -> Result<Self> {
         validate_mapping_length(startup.page_size, length)?;
-        if length > HOST_MAPPING_CAPACITY {
+        if length > HOST_LARGE_CAPACITY {
             return Err(Errno::NOMEM);
         }
         fault_before(FaultPoint::Map)?;
-
-        if HOST_MAPPING_IN_USE
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            return Err(Errno::NOMEM);
-        }
-
-        let address = host_memory_base();
+        let (slot, address) = allocate_host_slot(length)?;
         // SAFETY: The atomic reservation above ensures this `Mapping` is the
         // sole owner of the complete static buffer. `length` was checked
         // against the buffer capacity, and no reference is created.
@@ -152,6 +262,7 @@ impl Mapping {
         let page_count = length / startup.page_size.bytes();
         let accessible_pages = match access {
             MapAccess::Reserved => 0,
+            MapAccess::Committed if page_count >= u64::BITS as usize => u64::MAX,
             MapAccess::Committed => page_mask(0, page_count),
         };
 
@@ -161,9 +272,52 @@ impl Mapping {
             page_size: startup.page_size,
             initially_committed: matches!(access, MapAccess::Committed),
             initially_zero: true,
-            accessible_pages: Cell::new(accessible_pages),
+            accessible_pages: AtomicU64::new(accessible_pages),
             is_mapped: true,
+            slot,
         })
+    }
+
+    pub(crate) fn map_for_allocator(
+        config: MemoryConfig,
+        length: usize,
+        access: MapAccess,
+    ) -> Result<Self> {
+        Self::map_anonymous(StartupInput::new(config.page_size()), length, access)
+    }
+
+    pub(crate) fn map_aligned_for_allocator(
+        config: MemoryConfig,
+        length: usize,
+        alignment: usize,
+        access: MapAccess,
+    ) -> Result<Self> {
+        let page_size = config.page_size().bytes();
+        if alignment < page_size || !alignment.is_power_of_two() {
+            return Err(Errno::INVAL);
+        }
+        let mapping = Self::map_for_allocator(config, length, access)?;
+        if mapping.address.addr() % alignment == 0 {
+            Ok(mapping)
+        } else {
+            let mut mapping = mapping;
+            mapping.unmap()?;
+            Err(Errno::NOMEM)
+        }
+    }
+
+    pub(crate) fn into_published(mut self) -> Result<*mut u8> {
+        self.active()?;
+        self.is_mapped = false;
+        Ok(self.address)
+    }
+
+    /// # Safety
+    ///
+    /// The arguments must identify one uniquely owned host-model mapping
+    /// transferred by `into_published`, with all accesses quiesced.
+    pub(crate) unsafe fn reclaim_published(address: *mut u8, length: usize) -> Result<()> {
+        release_host_slot(address, length)
     }
 
     /// Returns whether the original anonymous mapping was zero initialized.
@@ -196,7 +350,8 @@ impl Mapping {
     #[inline]
     fn page_is_accessible(&self, page_index: usize) -> bool {
         page_index < self.length / self.page_size.bytes()
-            && (self.accessible_pages.get() & (1u64 << page_index)) != 0
+            && page_index < u64::BITS as usize
+            && (self.accessible_pages.load(Ordering::Acquire) & (1u64 << page_index)) != 0
     }
 
     /// Applies the production covering-page commit transition to model state.
@@ -210,8 +365,9 @@ impl Mapping {
             return Ok(None);
         };
         fault_before(FaultPoint::Commit)?;
-        self.accessible_pages
-            .set(self.accessible_pages.get() | range.page_mask());
+        if let Some(mask) = range.tracked_page_mask() {
+            self.accessible_pages.fetch_or(mask, Ordering::AcqRel);
+        }
         Ok(Some(CommitOutcome::NotKnownZero))
     }
 
@@ -231,7 +387,7 @@ impl Mapping {
         // preserving the source-defined fact that decommit does not require a
         // recommit transition in this frozen profile.
         // SAFETY: `range.address` is provenance-preservingly derived from the
-        // one live static mapping and `range.length` remains within it. No
+        // this live static mapping and `range.length` remains within it. No
         // reference into the range exists at this primitive boundary.
         unsafe { core::ptr::write_bytes(range.address, 0, range.length) };
         Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
@@ -267,9 +423,9 @@ impl Mapping {
     pub(crate) fn unmap(&mut self) -> Result<()> {
         self.active()?;
         fault_before(FaultPoint::Unmap)?;
-        self.accessible_pages.set(0);
+        self.accessible_pages.store(0, Ordering::Release);
         self.is_mapped = false;
-        HOST_MAPPING_IN_USE.store(false, Ordering::Release);
+        release_slot(self.slot);
         Ok(())
     }
 
@@ -283,13 +439,13 @@ impl Mapping {
         } else {
             FaultPoint::Unprotect
         })?;
-        let current = self.accessible_pages.get();
-        let next = if protect {
-            current & !range.page_mask()
-        } else {
-            current | range.page_mask()
-        };
-        self.accessible_pages.set(next);
+        if let Some(mask) = range.tracked_page_mask() {
+            if protect {
+                self.accessible_pages.fetch_and(!mask, Ordering::AcqRel);
+            } else {
+                self.accessible_pages.fetch_or(mask, Ordering::AcqRel);
+            }
+        }
         Ok(true)
     }
 
@@ -361,8 +517,14 @@ struct MappingRange {
 
 impl MappingRange {
     #[inline]
-    fn page_mask(self) -> u64 {
-        page_mask(self.first_page, self.page_count)
+    fn tracked_page_mask(self) -> Option<u64> {
+        if self.first_page >= u64::BITS as usize
+            || self.page_count > u64::BITS as usize - self.first_page
+        {
+            None
+        } else {
+            Some(page_mask(self.first_page, self.page_count))
+        }
     }
 }
 
@@ -375,8 +537,66 @@ enum PageAlignment {
 }
 
 #[inline]
-fn host_memory_base() -> *mut u8 {
-    HOST_MEMORY.bytes.get().cast::<u8>()
+fn allocate_host_slot(length: usize) -> Result<(HostSlot, *mut u8)> {
+    if length <= HOST_SMALL_CAPACITY {
+        loop {
+            let current = HOST_SMALL_IN_USE.load(Ordering::Acquire);
+            let Some(index) = (0..HOST_SMALL_SLOTS)
+                .find(|index| current & (1usize << index) == 0)
+            else {
+                return Err(Errno::NOMEM);
+            };
+            let next = current | (1usize << index);
+            if HOST_SMALL_IN_USE
+                .compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let base = HOST_SMALL_MEMORY.bytes.get().cast::<u8>();
+                return Ok((HostSlot::Small(index), base.wrapping_add(index * HOST_SMALL_CAPACITY)));
+            }
+        }
+    }
+    if HOST_LARGE_IN_USE
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return Err(Errno::NOMEM);
+    }
+    Ok((HostSlot::Large, HOST_LARGE_MEMORY.bytes.get().cast::<u8>()))
+}
+
+fn release_slot(slot: HostSlot) {
+    match slot {
+        HostSlot::Large => HOST_LARGE_IN_USE.store(false, Ordering::Release),
+        HostSlot::Small(index) => {
+            HOST_SMALL_IN_USE.fetch_and(!(1usize << index), Ordering::Release);
+        }
+    }
+}
+
+fn release_host_slot(address: *mut u8, length: usize) -> Result<()> {
+    if length == 0 {
+        return Err(Errno::INVAL);
+    }
+    let large = HOST_LARGE_MEMORY.bytes.get().cast::<u8>();
+    if address == large && length <= HOST_LARGE_CAPACITY {
+        if HOST_LARGE_IN_USE.swap(false, Ordering::AcqRel) {
+            return Ok(());
+        }
+        return Err(Errno::INVAL);
+    }
+    let small = HOST_SMALL_MEMORY.bytes.get().cast::<u8>();
+    let offset = address.addr().checked_sub(small.addr()).ok_or(Errno::INVAL)?;
+    if length > HOST_SMALL_CAPACITY || offset % HOST_SMALL_CAPACITY != 0 {
+        return Err(Errno::INVAL);
+    }
+    let index = offset / HOST_SMALL_CAPACITY;
+    if index >= HOST_SMALL_SLOTS {
+        return Err(Errno::INVAL);
+    }
+    let mask = 1usize << index;
+    let previous = HOST_SMALL_IN_USE.fetch_and(!mask, Ordering::AcqRel);
+    if previous & mask == 0 { Err(Errno::INVAL) } else { Ok(()) }
 }
 
 #[inline]
@@ -384,7 +604,12 @@ fn page_mask(first_page: usize, page_count: usize) -> u64 {
     debug_assert!(page_count > 0);
     debug_assert!(first_page < HOST_MAX_PAGES);
     debug_assert!(first_page + page_count <= HOST_MAX_PAGES);
-    ((1u64 << page_count) - 1) << first_page
+    let low = if page_count == u64::BITS as usize {
+        u64::MAX
+    } else {
+        (1u64 << page_count) - 1
+    };
+    low << first_page
 }
 
 #[inline]
@@ -546,6 +771,31 @@ mod tests {
     }
 
     #[test]
+    fn injected_memory_policy_is_deterministic_and_source_shaped() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let page_size = PageSize::new(4 * 1024).unwrap();
+        let config = MemoryConfig::from_observations(page_size, 123_456, false, true);
+        assert_eq!(config.page_size(), page_size);
+        assert_eq!(config.large_page_size(), 2 * 1024 * 1024);
+        assert_eq!(config.alloc_granularity(), page_size.bytes());
+        assert_eq!(config.physical_memory_in_kib(), 123_456);
+        assert_eq!(config.virtual_address_bits(), crate::config::MAX_VABITS);
+        assert!(!config.has_overcommit());
+        assert!(config.has_partial_free());
+        assert!(config.has_virtual_reserve());
+        assert!(config.has_transparent_huge_pages());
+        assert_eq!(config.good_alloc_size(1), 4 * 1024);
+        assert_eq!(config.good_alloc_size(512 * 1024 + 1), 576 * 1024);
+        assert!(config.can_use_large_page(2 * 1024 * 1024, 2 * 1024 * 1024));
+        assert!(!config.can_use_large_page(2 * 1024 * 1024, 4 * 1024));
+
+        let fallback = MemoryConfig::detect(StartupInput::new(page_size));
+        assert_eq!(fallback.physical_memory_in_kib(), 32 * 1024 * 1024);
+        assert!(fallback.has_overcommit());
+        assert!(!fallback.has_transparent_huge_pages());
+    }
+
+    #[test]
     fn map_rejects_invalid_or_unmodelable_ranges_without_a_transition() {
         let _fault = fault::install(fault::Plan::disabled());
         let input = startup(4 * 1024);
@@ -560,7 +810,7 @@ mod tests {
             Err(Errno::INVAL)
         ));
         assert!(matches!(
-            Mapping::map_anonymous(input, HOST_MAPPING_CAPACITY + page, MapAccess::Reserved),
+            Mapping::map_anonymous(input, HOST_LARGE_CAPACITY + page, MapAccess::Reserved),
             Err(Errno::NOMEM)
         ));
     }

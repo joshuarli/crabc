@@ -21,6 +21,62 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 
+def production_dependency_metadata() -> dict[str, object]:
+    versions = {
+        "crabc-mimalloc": "0.3.0",
+        "crabc-core": "0.3.0",
+        "chacha20": "0.10.1",
+        "cfg-if": "1.0.4",
+        "cipher": "0.5.2",
+        "block-buffer": "0.12.1",
+        "hybrid-array": "0.4.14",
+        "typenum": "1.20.1",
+        "crypto-common": "0.2.2",
+        "inout": "0.2.2",
+        "zeroize": "1.9.0",
+    }
+    edges = {
+        "crabc-mimalloc": ("chacha20", "crabc-core", "zeroize"),
+        "crabc-core": (),
+        "chacha20": ("cfg-if", "cipher", "zeroize"),
+        "cfg-if": (),
+        "cipher": ("block-buffer", "crypto-common", "inout"),
+        "block-buffer": ("hybrid-array",),
+        "hybrid-array": ("typenum",),
+        "typenum": (),
+        "crypto-common": ("hybrid-array",),
+        "inout": ("hybrid-array",),
+        "zeroize": (),
+    }
+    packages = []
+    nodes = []
+    for name, version in versions.items():
+        package_id = f"{name} {version}"
+        packages.append(
+            {
+                "id": package_id,
+                "name": name,
+                "version": version,
+                "source": None if name.startswith("crabc-") else "registry+https://github.com/rust-lang/crates.io-index",
+                "targets": [{"kind": ["lib"]}],
+            }
+        )
+        nodes.append(
+            {
+                "id": package_id,
+                "deps": [
+                    {
+                        "name": dependency.replace("-", "_"),
+                        "pkg": f"{dependency} {versions[dependency]}",
+                        "dep_kinds": [{"kind": None, "target": None}],
+                    }
+                    for dependency in edges[name]
+                ],
+            }
+        )
+    return {"packages": packages, "resolve": {"nodes": nodes}}
+
+
 class ArchiveTests(unittest.TestCase):
     def test_safe_extract_accepts_only_the_expected_archive_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -53,6 +109,84 @@ class ArchiveTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_production_dependency_graph_is_exact_and_build_code_free(self) -> None:
+        report = RUNNER.validate_production_dependency_graph(production_dependency_metadata())
+        self.assertEqual(report["target"], "aarch64-unknown-linux-musl")
+        self.assertEqual(report["external_package_count"], 9)
+        self.assertEqual(report["build_script_count"], 0)
+        self.assertEqual(report["proc_macro_count"], 0)
+        self.assertEqual(
+            [(package["name"], package["version"]) for package in report["packages"]],
+            sorted(
+                (name, version)
+                for name, version in {
+                    "crabc-core": "0.3.0",
+                    "chacha20": "0.10.1",
+                    "cfg-if": "1.0.4",
+                    "cipher": "0.5.2",
+                    "block-buffer": "0.12.1",
+                    "hybrid-array": "0.4.14",
+                    "typenum": "1.20.1",
+                    "crypto-common": "0.2.2",
+                    "inout": "0.2.2",
+                    "zeroize": "1.9.0",
+                }.items()
+            ),
+        )
+
+    def test_production_dependency_graph_rejects_a_selected_libc_edge(self) -> None:
+        metadata = production_dependency_metadata()
+        packages = metadata["packages"]
+        nodes = metadata["resolve"]["nodes"]
+        assert isinstance(packages, list) and isinstance(nodes, list)
+        packages.append(
+            {
+                "id": "libc 0.2.189",
+                "name": "libc",
+                "version": "0.2.189",
+                "source": "registry+https://github.com/rust-lang/crates.io-index",
+                "targets": [{"kind": ["lib"]}],
+            }
+        )
+        nodes.append({"id": "libc 0.2.189", "deps": []})
+        chacha = next(node for node in nodes if node["id"] == "chacha20 0.10.1")
+        chacha["deps"].append(
+            {
+                "name": "libc",
+                "pkg": "libc 0.2.189",
+                "dep_kinds": [{"kind": None, "target": None}],
+            }
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unexpected selected package: libc 0.2.189"):
+            RUNNER.validate_production_dependency_graph(metadata)
+
+    def test_production_dependency_graph_rejects_build_scripts(self) -> None:
+        metadata = production_dependency_metadata()
+        packages = metadata["packages"]
+        assert isinstance(packages, list)
+        cipher = next(package for package in packages if package["name"] == "cipher")
+        cipher["targets"].append({"kind": ["custom-build"]})
+        with self.assertRaisesRegex(RUNNER.HarnessError, "selected build script: cipher 0.5.2"):
+            RUNNER.validate_production_dependency_graph(metadata)
+
+    def test_production_dependency_graph_rejects_proc_macros(self) -> None:
+        metadata = production_dependency_metadata()
+        packages = metadata["packages"]
+        assert isinstance(packages, list)
+        cipher = next(package for package in packages if package["name"] == "cipher")
+        cipher["targets"].append({"kind": ["proc-macro"]})
+        with self.assertRaisesRegex(RUNNER.HarnessError, "selected proc macro: cipher 0.5.2"):
+            RUNNER.validate_production_dependency_graph(metadata)
+
+    def test_production_dependency_graph_rejects_edge_drift_with_the_same_packages(self) -> None:
+        metadata = production_dependency_metadata()
+        nodes = metadata["resolve"]["nodes"]
+        assert isinstance(nodes, list)
+        chacha = next(node for node in nodes if node["id"] == "chacha20 0.10.1")
+        chacha["deps"] = [dependency for dependency in chacha["deps"] if dependency["name"] != "zeroize"]
+        with self.assertRaisesRegex(RUNNER.HarnessError, "selected dependency edge mismatch"):
+            RUNNER.validate_production_dependency_graph(metadata)
+
     def test_external_static_inline_and_cxx_template_parsing_are_distinct(self) -> None:
         header = """
             mi_decl_export void* mi_malloc(size_t size);

@@ -7,23 +7,26 @@
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/types.h:288-456`
 // (`MemoryKind`, memory-ID layout, `Block`, page flags, and `Page`),
 // `include/mimalloc/types.h:499-557` (`PageKind` and `PageQueue`), and
-// `src/init.c:15-80` (the empty-page and all 75 default queue initializers).
+// `include/mimalloc/types.h:608-758` (arena-page and arena metadata layouts),
+// `src/init.c:15-80` (the empty-page and all 75 default queue initializers),
+// and `src/arena.c:199-219` (arena memory-ID construction and projection).
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
 // are isolated in the `page_queue` child module below.
-// This module deliberately stops before heap, theap, TLD, lock, and statistics
-// state: those fields require their complete lifecycle and atomic contracts,
-// and are therefore absent rather than stubbed.
+// This module deliberately stops before heap, theap, TLD, subprocess, lock,
+// and statistics layouts: those require their complete lifecycle and atomic
+// contracts, and remain opaque rather than stubbed.
 
+use core::ffi::c_void;
 use core::mem::{align_of, size_of};
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicPtr, AtomicUsize};
+use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize};
 
 use crate::config::{
     BIN_COUNT, BIN_FULL, LARGE_MAX_OBJ_WSIZE, PAGES_DIRECT, WORD_SIZE,
 };
 
-pub(crate) enum Arena {}
 pub(crate) enum Heap {}
+pub(crate) enum Subprocess {}
 pub(crate) enum Theap {}
 
 #[repr(C)]
@@ -93,6 +96,94 @@ pub(crate) struct MemoryId {
 
 impl MemoryId {
     #[inline]
+    const fn empty_with_kind(kind: MemoryKind) -> Self {
+        Self {
+            info: MemoryInfo {
+                os: OsMemory {
+                    base: null_mut(),
+                    size: 0,
+                },
+            },
+            kind,
+            is_pinned: false,
+            initially_committed: false,
+            initially_zero: false,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn none() -> Self {
+        Self::empty_with_kind(MemoryKind::None)
+    }
+
+    /// Relinquishes ownership while preserving the source memory attributes.
+    ///
+    /// `mi_manage_os_memory_ex2` changes only `memkind` after publishing the
+    /// parent arena. Sub-arenas must therefore retain the original committed,
+    /// pinned, and zero-state observations even though they do not own the
+    /// external allocation.
+    #[inline]
+    pub(crate) fn relinquish_ownership(&mut self) {
+        self.kind = MemoryKind::None;
+    }
+
+    #[inline]
+    pub(crate) const fn external(
+        base: *mut u8,
+        size: usize,
+        initially_committed: bool,
+        is_pinned: bool,
+        initially_zero: bool,
+    ) -> Self {
+        Self {
+            info: MemoryInfo {
+                os: OsMemory { base, size },
+            },
+            kind: MemoryKind::External,
+            is_pinned,
+            initially_committed,
+            initially_zero,
+        }
+    }
+
+    #[inline]
+    /// Constructs arena provenance after checking the source's slice bounds.
+    ///
+    /// # Safety
+    ///
+    /// `arena` must point to a live initialized arena for the duration of this
+    /// check and every later operation that projects the stored pointer.
+    pub(crate) unsafe fn from_arena(
+        arena: *mut Arena,
+        slice_index: usize,
+        slice_count: usize,
+    ) -> Option<Self> {
+        if arena.is_null()
+            || slice_count == 0
+            || slice_index >= u32::MAX as usize
+            || slice_count >= u32::MAX as usize
+        {
+            return None;
+        }
+        if slice_index >= unsafe { (*arena).slice_count } {
+            return None;
+        }
+        Some(Self {
+            info: MemoryInfo {
+                arena: ArenaMemory {
+                    arena,
+                    slice_index: slice_index as u32,
+                    slice_count: slice_count as u32,
+                },
+            },
+            kind: MemoryKind::Arena,
+            is_pinned: false,
+            initially_committed: false,
+            initially_zero: false,
+        })
+    }
+
+    #[inline]
     pub(crate) const fn static_empty() -> Self {
         Self {
             info: MemoryInfo {
@@ -136,6 +227,30 @@ impl MemoryId {
     #[inline]
     pub(crate) const fn initially_zero(&self) -> bool {
         self.initially_zero
+    }
+
+    #[inline]
+    pub(crate) fn os_memory(&self) -> Option<OsMemory> {
+        if matches!(
+            self.kind,
+            MemoryKind::External
+                | MemoryKind::Os
+                | MemoryKind::OsHuge
+                | MemoryKind::OsRemap
+        ) {
+            Some(unsafe { self.info.os })
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub(crate) fn arena_memory(&self) -> Option<ArenaMemory> {
+        if self.kind == MemoryKind::Arena {
+            Some(unsafe { self.info.arena })
+        } else {
+            None
+        }
     }
 }
 
@@ -251,6 +366,59 @@ pub(crate) struct Page {
     memid: MemoryId,
 }
 
+/// Public-source custom commit/decommit hook retained by externally managed
+/// arenas. The function pointer is nullable in [`Arena`].
+pub(crate) type CommitFunction = unsafe extern "C" fn(
+    commit: bool,
+    start: *mut u8,
+    size: usize,
+    is_zero: *mut bool,
+    user_argument: *mut c_void,
+) -> bool;
+
+/// C-shaped `mi_arena_pages_t` header. Its variable-size ordinary bitmaps live
+/// in caller-owned storage immediately after this fixed pointer table.
+#[repr(C)]
+pub(crate) struct ArenaPages {
+    pub(crate) pages: *mut u8,
+    pub(crate) pages_abandoned: [*mut u8; crate::config::ARENA_BIN_COUNT],
+}
+
+/// The fixed `mi_arena_t` metadata image for the frozen default profile.
+///
+/// Bitmap pointers name atomically accessed caller-owned images in the arena's
+/// reserved prefix. All non-atomic fields are initialized before registry
+/// publication and remain immutable in the current substrate, except for the
+/// source-defined partial-split adjustment of a parent `total_size`.
+#[repr(C)]
+pub(crate) struct Arena {
+    pub(crate) memid: MemoryId,
+    pub(crate) subprocess: *mut Subprocess,
+    pub(crate) arena_index: usize,
+    pub(crate) start: *mut u8,
+    pub(crate) slice_count: usize,
+    pub(crate) info_slices: usize,
+    pub(crate) numa_node: i32,
+    pub(crate) is_exclusive: bool,
+    pub(crate) purge_expire: AtomicI64,
+    pub(crate) commit_function: Option<CommitFunction>,
+    pub(crate) commit_function_argument: *mut c_void,
+    pub(crate) total_size: usize,
+    pub(crate) parent: *mut Arena,
+    pub(crate) slices_free: *mut u8,
+    pub(crate) slices_committed: *mut u8,
+    pub(crate) slices_dirty: *mut u8,
+    pub(crate) slices_purge: *mut u8,
+    pub(crate) pages_meta: *mut Page,
+    pub(crate) pages_main: ArenaPages,
+}
+
+// SAFETY: registry publication gives shared access only after every ordinary
+// field and bitmap pointer is initialized. Concurrent bitmap state is atomic;
+// later lifecycle slices must preserve this publication/quiescence contract.
+unsafe impl Send for Arena {}
+unsafe impl Sync for Arena {}
+
 impl Page {
     const fn empty() -> Self {
         Self {
@@ -300,6 +468,10 @@ const _: [(); 16] = [(); size_of::<MemoryInfo>()];
 const _: [(); 8] = [(); align_of::<MemoryInfo>()];
 const _: [(); 24] = [(); size_of::<MemoryId>()];
 const _: [(); 8] = [(); align_of::<MemoryId>()];
+const _: [(); 496] = [(); size_of::<ArenaPages>()];
+const _: [(); 8] = [(); align_of::<ArenaPages>()];
+const _: [(); 648] = [(); size_of::<Arena>()];
+const _: [(); 8] = [(); align_of::<Arena>()];
 const _: [(); 8] = [(); size_of::<Block>()];
 const _: [(); 32] = [(); size_of::<PageQueue>()];
 const _: [(); 128] = [(); size_of::<Page>()];
@@ -366,6 +538,40 @@ mod tests {
         record!(
             "offsetof.mi_page_queue_t.block_size",
             offset_of!(PageQueue, block_size)
+        );
+        record!("sizeof.mi_arena_t", size_of::<Arena>());
+        record!("alignof.mi_arena_t", align_of::<Arena>());
+        record!("offsetof.mi_arena_t.memid", offset_of!(Arena, memid));
+        record!("offsetof.mi_arena_t.subproc", offset_of!(Arena, subprocess));
+        record!("offsetof.mi_arena_t.arena_idx", offset_of!(Arena, arena_index));
+        record!("offsetof.mi_arena_t.start", offset_of!(Arena, start));
+        record!("offsetof.mi_arena_t.slice_count", offset_of!(Arena, slice_count));
+        record!("offsetof.mi_arena_t.info_slices", offset_of!(Arena, info_slices));
+        record!("offsetof.mi_arena_t.numa_node", offset_of!(Arena, numa_node));
+        record!("offsetof.mi_arena_t.is_exclusive", offset_of!(Arena, is_exclusive));
+        record!("offsetof.mi_arena_t.purge_expire", offset_of!(Arena, purge_expire));
+        record!("offsetof.mi_arena_t.commit_fun", offset_of!(Arena, commit_function));
+        record!(
+            "offsetof.mi_arena_t.commit_fun_arg",
+            offset_of!(Arena, commit_function_argument)
+        );
+        record!("offsetof.mi_arena_t.total_size", offset_of!(Arena, total_size));
+        record!("offsetof.mi_arena_t.parent", offset_of!(Arena, parent));
+        record!("offsetof.mi_arena_t.slices_free", offset_of!(Arena, slices_free));
+        record!(
+            "offsetof.mi_arena_t.slices_committed",
+            offset_of!(Arena, slices_committed)
+        );
+        record!("offsetof.mi_arena_t.slices_dirty", offset_of!(Arena, slices_dirty));
+        record!("offsetof.mi_arena_t.slices_purge", offset_of!(Arena, slices_purge));
+        record!("offsetof.mi_arena_t.pages_meta", offset_of!(Arena, pages_meta));
+        record!("offsetof.mi_arena_t.pages_main", offset_of!(Arena, pages_main));
+        record!("sizeof.mi_arena_pages_t", size_of::<ArenaPages>());
+        record!("alignof.mi_arena_pages_t", align_of::<ArenaPages>());
+        record!("offsetof.mi_arena_pages_t.pages", offset_of!(ArenaPages, pages));
+        record!(
+            "offsetof.mi_arena_pages_t.pages_abandoned",
+            offset_of!(ArenaPages, pages_abandoned)
         );
         record!("MI_DEBUG", crate::config::DEBUG_LEVEL);
         record!("MI_SECURE", crate::config::SECURE_LEVEL);
@@ -579,6 +785,20 @@ mod tests {
         assert_eq!(page.block_size, 0);
         assert_eq!(page.capacity, 0);
         assert_eq!(page.reserved, 0);
+    }
+
+    #[test]
+    fn relinquishing_parent_memory_ownership_preserves_subarena_observations() {
+        let base = core::ptr::without_provenance_mut::<u8>(0x1_0000);
+        let mut memory = MemoryId::external(base, 32 * 1024 * 1024, true, true, true);
+
+        memory.relinquish_ownership();
+
+        assert_eq!(memory.kind(), MemoryKind::None);
+        assert!(memory.is_pinned());
+        assert!(memory.initially_committed());
+        assert!(memory.initially_zero());
+        assert!(memory.os_memory().is_none(), "a subarena does not own the parent mapping");
     }
 
     #[test]
