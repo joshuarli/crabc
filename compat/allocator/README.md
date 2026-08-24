@@ -59,10 +59,12 @@ claim repairs conservative chunk-map state, expansion preserves a nonzero
 prefix, and only the appended range is then marked free. The
 63-block/64,512-bit ceiling prevents a 64th allocation. A non-Copy
 lease requires explicit release; bounded shutdown rejects live leases and late
-operations. It neither installs compiler TLS nor attaches a key to a
-current-thread backing. Typed-image invariant and ownership-ambiguous
+operations. It never installs compiler TLS itself; the private dynamic
+attachment is its sole current-thread consumer. Typed-image invariant and ownership-ambiguous
 post-commit failures poison with retained process-static ownership; allocation
-failure before commit preserves the old image/generation. The static branch
+failure before commit preserves the old image/generation. Every safe typed
+backing/TLD/dynamic-Theap projection also checks that its retained capability
+is still live before forming a byte reference. The static branch
 attaches that exact TLD to cache-aligned,
 address-stable `Heap` and default `Theap` slots within one process-static
 owner. It preflights the immutable empty dynamic root plus empty default/cached
@@ -86,9 +88,16 @@ invalidates and quiesces the TLD, then releases its live count and terminally
 retires static TLD storage. A fallible private lock/list boundary after root
 reset is also terminal invalid-owner handling, retaining storage and
 registration rather than claiming teardown; source heap-busy retry remains
-absent. Dynamic TLD/Theap allocation, cached-root refcounts,
-registry-to-thread attachment, page routing/abandonment integration,
-pthread/process hooks,
+absent. `dynamic_theap.rs` now takes a nonzero ticket through an atomic
+later-ticket gate, then retains one `!Send` caller-pinned Heap, metadata TLD
+and registration, typed Malloc Theap, regular backing, and regular-key lease.
+It preserves dynamic `_mi_theap_init` through both lists before publishing only
+the regular slot; default/fast/cached stay unchanged. Its no-page teardown
+clears slot/backing before list detach and metadata release. Pre-publication
+OOM cleans up and rejects, whereas post-list-publication failure returns a
+retained poisoned owner. A pre-mutation key-release lock failure retains only
+the linear lease in `AwaitingKeyRelease` for retry. Cached-root refcounts,
+page routing/abandonment integration, pthread/process hooks,
 complete subprocess layout/lifecycle, and C pthread-mutex layout claims
 remain absent. A
 private explicit single-thread slice now binds a pinned default theap to a

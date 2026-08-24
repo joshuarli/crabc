@@ -7,9 +7,9 @@
 //! arena-bounded aligned operations, and the separately owned OS-aligned
 //! singleton path below the metadata-alignment limit. The crate deliberately
 //! exposes no production allocator API; a default-off test-adapter feature
-//! owns the only public operation context. One private ticket-zero static TLD
-//! can attach a process-static main heap/default Theap, but dynamic TLS/Theap,
-//! production thread/process teardown, and integration remain incomplete.
+//! owns the only public operation context. Private static ticket-zero and
+//! regular-key dynamic Theap attachments exist, but production thread/process
+//! teardown and allocator integration remain incomplete.
 //! Remote-free and one-page abandonment protocols are bounded substrates;
 //! allocation routing and terminal abandoned-page release remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
@@ -45,6 +45,7 @@ mod bitmap;
 mod bootstrap;
 mod config;
 mod compiler_tls;
+mod dynamic_theap;
 mod free_list;
 mod invariants;
 mod lock;

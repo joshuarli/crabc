@@ -49,7 +49,9 @@ or mmap-per-block path participates. Its must-use, non-Copy
 `MetaAllocation<'owner>` capability records the static owner address, requested
 size, and `MemoryId::Malloc` provenance. The bounded regular-TLS and
 subprocess-attached/no-theap TLD owners retain and move that capability as a field, never
-reconstruct it from the raw pointer. The checkpoint retains the source allocation-under-lock,
+reconstruct it from the raw pointer. Every safe typed backing, TLD, and dynamic-Theap
+projection first requires that capability's atomic lifecycle to remain live, so a
+released capability cannot form a reference into freed bytes. The checkpoint retains the source allocation-under-lock,
 unlock-before-copy/free `rezalloc` ordering and serializes cross-thread free,
 but it intentionally covers only successful Malloc capabilities: null,
 needs-no-free, and non-Malloc arena-release paths, subprocess destruction,
@@ -86,7 +88,8 @@ allocator-owned process-global regular-key registry, five private compiler-TLS
 roots with direct `TPIDR_EL0` identity,
 low-bit atomic remote publication and owner collection, a bounded one-page
 abandonment/adoption protocol, a current-thread-only regular TLS backing owner,
-and one ticket-zero process-static main heap/default-Theap attachment. That
+one ticket-zero process-static main heap/default-Theap attachment, and one
+later-ticket dynamic Theap attachment over a caller-pinned Heap image. That
 backing owner has an explicitly unsafe lifecycle boundary: its caller must
 exclusively own the current `TPIDR_EL0` TLS lifecycle. It obtains a zeroed
 `mi_thread_locals_t`-shaped flexible image from `MetaAllocator`, starts at 16
@@ -100,9 +103,11 @@ dynamic root null, leaving the default/cached/fast roots untouched. If an
 internal metadata free or replacement reports an ownership-consumption
 ambiguous error, the owner clears that root and becomes terminal rather than
 inventing a retryable capability. No valid-program C semantic difference is
-claimed from that internal error limitation. The backing owner does not provide
-the source's TLD/theap attachment, key-to-current-thread backing integration,
-process or pthread teardown hook, or production ELF integration.
+claimed from that internal error limitation. `DynamicTheapAttachment` is the
+only key-to-current-thread integration: it retains the backing owner with one
+linear regular-key lease, metadata TLD registration/allocation, typed dynamic
+Theap metadata, and a pinned caller Heap. Process/pthread hooks and production
+ELF integration remain absent.
 
 `owned_tls_key_registry.rs` ports the separate process-global regular-key
 bitmap from `src/threadlocal.c:221-315`. It is allocator metadata, not
@@ -118,7 +123,8 @@ growth preserves the old image, Release-publishes the larger count without
 clearing that prefix, then marks only the append free. The linear lease requires
 explicit release; drop deliberately does not return a key. Bounded shutdown
 rejects live leases and late claim/release, but is not `_mi_thread_locals_done`,
-fast-key deletion, current-thread slot attachment, or process shutdown. The
+fast-key deletion, or process shutdown. It never installs compiler TLS itself;
+the private dynamic attachment is its sole current-thread consumer. The
 fixed lock order is registry then `MetaAllocator`. Typed-image invariant or
 ownership-ambiguous post-commit-free failures poison and retain process-static
 ownership; allocation failures before commit preserve the old image and
@@ -189,12 +195,29 @@ terminal invalid-owner states; a post-mutation unlock error likewise requires
 invalid concurrency or a kernel/private-lock failure, and process-static
 storage/live registration remain rather than claiming teardown. This slice
 does not implement source heap-busy retry.
+
+`DynamicTheapAttachment` uses `MainSubprocess::issue_later_thread_ticket` so
+it atomically refuses ticket zero rather than racing static process-main
+selection. It is `!Send`/`!Sync`, holds the caller-pinned Heap plus exact
+metadata TLD/live-registration/Theap/backing/key capabilities, and preserves
+dynamic `_mi_theap_init` through the TLD and heap lists before publishing only
+the regular-key slot. Default, fast, and cached roots remain unchanged. Its
+no-page preflight validates TPIDR identity, those unrelated roots, exact
+single-member lists, regular slot, and `page_count == 0` before mutation. Valid
+teardown clears the slot and dynamic backing before detach, Release-clears the
+Theap heap, releases the live TLD registration, then invalidates/quiesces and
+frees metadata before retiring the caller binding and key. Pre-publication OOM cleans up and rejects;
+post-list-publication list/backing/free failures retain a poisoned owner and
+all still-valid capabilities. A pre-mutation key-release lock error is the
+sole retry state: `AwaitingKeyRelease` retries only that lease. This does not
+implement heap new/delete/destroy, cached references, routing, remote free,
+abandonment, pthread hooks, or process shutdown.
+
 `PrivateLock` preserves the TLD field's private-lock meaning but is not a
-byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made. Dynamic
-TLD/Theap allocation, cached-root refcounting, registry-to-thread attachment,
-remote-free/page routing or abandonment integration, full heap/Theap/arena/
-subprocess APIs, pthread/process hooks, fork repair, process shutdown, and
-general lock destruction remain outside this slice.
+byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made.
+Cached-root refcounting, remote-free/page routing or abandonment integration,
+full heap/Theap/arena/subprocess APIs, pthread/process hooks, fork repair,
+process shutdown, and general lock destruction remain outside this slice.
 
 The abandonment/adoption protocol preserves mapped versus unmapped source
 classification, publishes the abandoned bitmap before

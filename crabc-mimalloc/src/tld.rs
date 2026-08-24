@@ -30,7 +30,8 @@ use crate::compiler_tls::current_thread_identity;
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
 use crate::os::{MemoryConfig, numa_node};
 use crate::subproc::{
-    MainStaticThreadLocalData, MainStaticTldError, MainSubprocess, ThreadRegistrationLease,
+    LaterThreadTicketError, MainStaticThreadLocalData, MainStaticTldError, MainSubprocess,
+    ThreadRegistrationLease,
 };
 use crate::types::{
     LiveThreadId, MemoryKind, ThreadLocalData, ThreadLocalDataQuiesceError,
@@ -44,6 +45,9 @@ pub(crate) enum ThreadLocalDataError {
     InvalidCurrentThread,
     /// An owner was moved or otherwise invoked from a different thread.
     WrongThread,
+    /// The bounded dynamic-Theap selection gate observed that ticket zero is
+    /// still reserved for the explicit process-static main attachment.
+    FirstTicketReserved,
     /// The caller's NUMA observation cannot fit the source's signed `int`
     /// field, so no metadata allocation was attempted.
     NumaNodeOutOfRange,
@@ -138,6 +142,36 @@ impl ThreadLocalDataOwner {
         }
     }
 
+    /// Creates and immediately converts one metadata-backed later-ticket TLD
+    /// into the private dynamic-Theap ownership form.
+    ///
+    /// Unlike [`Self::begin`], this uses the atomic nonzero-ticket selection
+    /// gate: it never consumes ticket zero merely to discover that a dynamic
+    /// Theap cannot own the process-static main branch. The resulting TLD is
+    /// initialized through the same direct-zeroed image and consuming
+    /// registration transition as the generic owner, then moves out of this
+    /// owner before any Theap list entry is installed. The generic
+    /// `ThreadLocalDataOwner` therefore retains its no-theap invariant.
+    ///
+    /// # Safety
+    ///
+    /// The caller has the same exclusive current-thread TLD lifecycle duty as
+    /// [`Self::begin`], plus exclusive process-selection authority for this
+    /// later dynamic branch. It must retain the returned owner until the
+    /// dynamic attachment completes teardown or records a terminal failure.
+    pub(crate) unsafe fn begin_later_dynamic_attachment(
+        config: MemoryConfig,
+    ) -> Result<DynamicAttachedThreadLocalData, ThreadLocalDataError> {
+        // SAFETY: production uses the process-lived selected metadata owner.
+        unsafe {
+            Self::begin_later_dynamic_attachment_with_main_and_metadata(
+                MainSubprocess::global(),
+                MetaAllocator::global(),
+                config,
+            )
+        }
+    }
+
     /// Returns the fully initialized, subprocess-attached/no-theap TLD after
     /// validating its current-thread and storage-provenance invariants.
     pub(crate) fn current(&mut self) -> Result<&ThreadLocalData, ThreadLocalDataError> {
@@ -219,6 +253,25 @@ impl ThreadLocalDataOwner {
         unsafe { Self::begin_with_main_and_metadata(subprocess, metadata, config) }
     }
 
+    /// Creates the same later-ticket attached-TLD transition with an explicit
+    /// process-main metadata owner. This is the narrow integration seam for
+    /// the private dynamic-Theap owner; the selected capability must remain
+    /// the owner of every returned TLD/Theap/backing allocation.
+    pub(crate) unsafe fn begin_later_dynamic_attachment_with_metadata(
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+    ) -> Result<DynamicAttachedThreadLocalData, ThreadLocalDataError> {
+        // SAFETY: the private dynamic owner and isolated tests uphold the
+        // production method's lifecycle obligations over process-lived
+        // component identities.
+        unsafe {
+            Self::begin_later_dynamic_attachment_with_main_and_metadata(
+                subprocess, metadata, config,
+            )
+        }
+    }
+
     unsafe fn begin_with_main_and_metadata(
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,
@@ -280,6 +333,78 @@ impl ThreadLocalDataOwner {
             state: ThreadLocalDataState::Active,
             _not_send_or_sync: PhantomData,
         })
+    }
+
+    unsafe fn begin_later_dynamic_attachment_with_main_and_metadata(
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+    ) -> Result<DynamicAttachedThreadLocalData, ThreadLocalDataError> {
+        let thread = current_thread_identity().ok_or(ThreadLocalDataError::InvalidCurrentThread)?;
+        let numa = i32::try_from(numa_node()).map_err(|_| ThreadLocalDataError::NumaNodeOutOfRange)?;
+        // This selection gate is intentionally before the source creation
+        // sequence: it atomically refuses zero, but every successful nonzero
+        // result is the exact old relaxed counter value used by the normal
+        // metadata TLD branch.
+        let ticket = subprocess
+            .issue_later_thread_ticket()
+            .map_err(|LaterThreadTicketError::FirstTicketReserved| {
+                ThreadLocalDataError::FirstTicketReserved
+            })?;
+        let sequence = ticket.sequence();
+        debug_assert!(!ticket.is_first_main_tld());
+        let mut allocation = metadata
+            .zalloc_for_main_subprocess(config, subprocess, size_of::<ThreadLocalData>())
+            .map_err(ThreadLocalDataError::Metadata)?;
+        if !allocation.initialize_thread_local_data_subprocess_attached_no_theap(
+            thread,
+            sequence,
+            numa,
+            subprocess,
+        ) {
+            return match metadata.free(&mut allocation) {
+                Ok(()) => Err(ThreadLocalDataError::Projection),
+                Err(error) => Err(ThreadLocalDataError::Metadata(error)),
+            };
+        }
+        let registration = {
+            // SAFETY: the direct-zeroed capability completed its exact TLD
+            // image immediately above and remains exclusively retained.
+            let tld = unsafe { allocation.newly_initialized_thread_local_data_mut() };
+            // SAFETY: `tld` has the matching later ticket's sequence/thread.
+            unsafe { ticket.activate_after_initialized_tld(tld, thread) }
+        };
+        let owner = Self {
+            metadata,
+            subprocess,
+            thread,
+            sequence,
+            storage: Some(ThreadLocalDataStorage::Metadata(allocation)),
+            registration: Some(registration),
+            state: ThreadLocalDataState::Active,
+            _not_send_or_sync: PhantomData,
+        };
+        Ok(owner.into_dynamic_attached())
+    }
+
+    fn into_dynamic_attached(mut self) -> DynamicAttachedThreadLocalData {
+        debug_assert!(self.current_mut().is_ok());
+        let allocation = match self.storage.take() {
+            Some(ThreadLocalDataStorage::Metadata(allocation)) => allocation,
+            Some(ThreadLocalDataStorage::MainStatic(_)) | None => {
+                unreachable!("only the nonzero metadata TLD branch may attach dynamically")
+            }
+        };
+        DynamicAttachedThreadLocalData {
+            metadata: self.metadata,
+            subprocess: self.subprocess,
+            thread: self.thread,
+            sequence: self.sequence,
+            allocation: Some(allocation),
+            registration: self.registration.take(),
+            state: ThreadLocalDataState::Active,
+            _not_send_or_sync: PhantomData,
+        }
     }
 
     #[inline]
@@ -347,6 +472,140 @@ impl ThreadLocalDataOwner {
     #[cfg(test)]
     fn uses_main_static_storage(&self) -> bool {
         matches!(self.storage.as_ref(), Some(ThreadLocalDataStorage::MainStatic(_)))
+    }
+}
+
+/// Private metadata-backed TLD ownership after a consuming transition out of
+/// [`ThreadLocalDataOwner`]'s no-theap checkpoint.
+///
+/// It retains the exact direct-zeroed allocation and live registration while
+/// `dynamic_theap` owns the one attached Theap/list entry. Its projection
+/// validates the common initialized-TLD fields but deliberately does not
+/// claim an empty list; the dynamic attachment proves that exact membership
+/// at its own publication and teardown boundaries.
+#[must_use = "an attached dynamic TLD must be detached and explicitly retired"]
+pub(crate) struct DynamicAttachedThreadLocalData {
+    metadata: Pin<&'static MetaAllocator>,
+    subprocess: &'static MainSubprocess,
+    thread: LiveThreadId,
+    sequence: ThreadSequence,
+    allocation: Option<MetaAllocation<'static>>,
+    registration: Option<ThreadRegistrationLease>,
+    state: ThreadLocalDataState,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl DynamicAttachedThreadLocalData {
+    #[inline]
+    pub(crate) const fn thread(&self) -> LiveThreadId {
+        self.thread
+    }
+
+    #[inline]
+    pub(crate) const fn sequence(&self) -> ThreadSequence {
+        self.sequence
+    }
+
+    #[inline]
+    pub(crate) const fn subprocess(&self) -> &'static MainSubprocess {
+        self.subprocess
+    }
+
+    #[inline]
+    pub(crate) const fn metadata(&self) -> Pin<&'static MetaAllocator> {
+        self.metadata
+    }
+
+    /// Projects the exact retained TLD while its attached-Theap owner is
+    /// current. The `MetaAllocation` origin/initialized marker remains the
+    /// same narrow proof used by the original no-theap owner.
+    pub(crate) fn current_mut(&mut self) -> Result<&mut ThreadLocalData, ThreadLocalDataError> {
+        self.ensure_active_current()?;
+        let allocation = self
+            .allocation
+            .as_mut()
+            .ok_or(ThreadLocalDataError::Projection)?;
+        let (matches_lifecycle, memory) = {
+            let tld = allocation
+                .thread_local_data_mut()
+                .ok_or(ThreadLocalDataError::Projection)?;
+            (
+                tld.matches_subprocess_attached_lifecycle(
+                    self.thread,
+                    self.sequence,
+                    self.subprocess,
+                ),
+                tld.memory_id(),
+            )
+        };
+        if !matches_lifecycle || !allocation.matches_memory_id(memory) {
+            return Err(ThreadLocalDataError::Projection);
+        }
+        allocation
+            .thread_local_data_mut()
+            .ok_or(ThreadLocalDataError::Projection)
+    }
+
+    /// Retires this TLD only after its dynamic Theap was fully detached from
+    /// both intrusive lists. After validating the empty-list state, this
+    /// follows `mi_tld_free` order: release the live registration, invalidate
+    /// identity, prove lock quiescence, then release metadata. A later private-
+    /// lock or metadata failure leaves this concrete owner terminal with no
+    /// fabricated registration or allocation capability.
+    pub(crate) fn teardown_after_theap_detached(&mut self) -> Result<(), ThreadLocalDataError> {
+        self.ensure_active_current()?;
+        {
+            let tld = self.current_mut()?;
+            if !tld.is_subprocess_attached_no_theap() {
+                return Err(ThreadLocalDataError::Projection);
+            }
+        }
+        let registration = self
+            .registration
+            .take()
+            .ok_or(ThreadLocalDataError::Projection)?;
+        registration.release();
+        let quiesce = match self.current_mut() {
+            Ok(tld) => {
+                tld.invalidate_attached_theap_for_teardown();
+                tld.quiesce_theap_list_lock_for_teardown()
+            }
+            Err(error) => {
+                self.state = ThreadLocalDataState::Poisoned;
+                return Err(error);
+            }
+        };
+        if let Err(error) = quiesce {
+            self.state = ThreadLocalDataState::Poisoned;
+            return Err(ThreadLocalDataError::TheapListLock(error));
+        }
+        let mut allocation = self
+            .allocation
+            .take()
+            .ok_or(ThreadLocalDataError::Projection)?;
+        match self.metadata.free(&mut allocation) {
+            Ok(()) => {
+                self.state = ThreadLocalDataState::TornDown;
+                Ok(())
+            }
+            Err(error) => {
+                self.state = ThreadLocalDataState::Poisoned;
+                Err(ThreadLocalDataError::Metadata(error))
+            }
+        }
+    }
+
+    #[inline]
+    fn ensure_active_current(&self) -> Result<(), ThreadLocalDataError> {
+        match self.state {
+            ThreadLocalDataState::Active => match current_thread_identity() {
+                Some(thread) if thread == self.thread => Ok(()),
+                Some(_) => Err(ThreadLocalDataError::WrongThread),
+                None => Err(ThreadLocalDataError::InvalidCurrentThread),
+            },
+            ThreadLocalDataState::TornDown => Err(ThreadLocalDataError::TornDown),
+            ThreadLocalDataState::Poisoned => Err(ThreadLocalDataError::Poisoned),
+        }
     }
 }
 
@@ -632,5 +891,53 @@ mod tests {
         );
         assert_eq!(subprocess.live_thread_count(), 0);
         assert!(matches!(owner.current(), Err(ThreadLocalDataError::Poisoned)));
+    }
+
+    #[test]
+    fn dynamic_teardown_releases_registration_before_busy_lock_poison() {
+        let (subprocess, metadata) = fixture();
+        let mut first = unsafe {
+            ThreadLocalDataOwner::begin_with_test_metadata(
+                subprocess,
+                metadata,
+                memory_config(),
+            )
+        }
+        .expect("the fixture starts with its ticket-zero static TLD");
+        first.teardown().unwrap();
+
+        let mut owner = unsafe {
+            ThreadLocalDataOwner::begin_later_dynamic_attachment_with_metadata(
+                subprocess,
+                metadata,
+                memory_config(),
+            )
+        }
+        .expect("the next ticket creates one dynamic-attached metadata TLD");
+        assert_eq!(subprocess.live_thread_count(), 1);
+        owner
+            .current_mut()
+            .unwrap()
+            .test_inject_busy_theaps_lock();
+        assert_eq!(
+            owner.teardown_after_theap_detached(),
+            Err(ThreadLocalDataError::TheapListLock(
+                ThreadLocalDataQuiesceError::Busy
+            ))
+        );
+        assert_eq!(
+            subprocess.live_thread_count(),
+            0,
+            "source mi_tld_free decrements thread_count before lock destruction"
+        );
+        assert!(owner.registration.is_none());
+        assert!(owner.allocation.is_some());
+        assert!(matches!(
+            owner.current_mut(),
+            Err(ThreadLocalDataError::Poisoned)
+        ));
+        // The injected invalid lock state deliberately leaves its metadata
+        // capability terminally retained rather than pretending it was freed.
+        core::mem::forget(owner);
     }
 }

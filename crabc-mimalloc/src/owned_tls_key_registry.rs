@@ -143,6 +143,8 @@ pub(crate) struct OwnedThreadLocalKeyRegistry {
     fail_next_bitmap_allocation: AtomicUsize,
     #[cfg(test)]
     bitmap_allocation_attempts: AtomicUsize,
+    #[cfg(test)]
+    fail_next_release_lock: AtomicUsize,
 }
 
 // SAFETY: all mutable state, including the linear metadata capability, is
@@ -159,6 +161,8 @@ impl OwnedThreadLocalKeyRegistry {
             fail_next_bitmap_allocation: AtomicUsize::new(0),
             #[cfg(test)]
             bitmap_allocation_attempts: AtomicUsize::new(0),
+            #[cfg(test)]
+            fail_next_release_lock: AtomicUsize::new(0),
         }
     }
 
@@ -177,10 +181,14 @@ impl OwnedThreadLocalKeyRegistry {
         &'static self,
         config: MemoryConfig,
     ) -> Result<OwnedThreadLocalKeyLease, OwnedThreadLocalKeyError> {
-        self.claim_selected(config, MainSubprocess::global(), MetaAllocator::global())
+        self.claim_for_main_subprocess(config, MainSubprocess::global(), MetaAllocator::global())
     }
 
-    fn claim_selected(
+    /// Claims a regular key while validating the one selected main-subprocess
+    /// metadata identity. This stays internal to the current-thread dynamic
+    /// attachment; callers may not use it to route a registry image through a
+    /// thread-local backing or a different subprocess.
+    pub(crate) fn claim_for_main_subprocess(
         &'static self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
@@ -235,6 +243,7 @@ impl OwnedThreadLocalKeyRegistry {
                         return Ok(OwnedThreadLocalKeyLease {
                             registry: self,
                             key,
+                            state: OwnedThreadLocalKeyLeaseState::Live,
                         });
                     }
                     self.expand_locked(state, config)?;
@@ -358,6 +367,12 @@ impl OwnedThreadLocalKeyRegistry {
 
     #[inline]
     fn release_claimed(&self, key: ThreadLocalKey) -> Result<(), OwnedThreadLocalKeyError> {
+        #[cfg(test)]
+        if self.fail_next_release_lock.swap(0, Ordering::Relaxed) != 0 {
+            // This narrow seam models a private-lock acquisition failure
+            // before any bitmap, live-count, or lease transition occurs.
+            return Err(OwnedThreadLocalKeyError::Lock(Errno::INTR));
+        }
         let guard = self.lock.lock().map_err(OwnedThreadLocalKeyError::Lock)?;
         // SAFETY: the lock serializes bitmap and live-lease state.
         let state = unsafe { &mut *self.state.get() };
@@ -441,28 +456,33 @@ impl OwnedThreadLocalKeyRegistry {
     }
 
     #[cfg(test)]
-    fn test_static_owner() -> &'static Self {
+    pub(crate) fn test_static_owner() -> &'static Self {
         std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
     #[cfg(test)]
-    fn test_claim_selected(
+    pub(crate) fn test_claim_selected(
         &'static self,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,
     ) -> Result<OwnedThreadLocalKeyLease, OwnedThreadLocalKeyError> {
-        self.claim_selected(config, subprocess, metadata)
+        self.claim_for_main_subprocess(config, subprocess, metadata)
     }
 
     #[cfg(test)]
-    fn test_fail_next_bitmap_allocation(&self) {
+    pub(crate) fn test_fail_next_bitmap_allocation(&self) {
         self.fail_next_bitmap_allocation.store(1, Ordering::Relaxed);
     }
 
     #[cfg(test)]
     fn test_bitmap_allocation_attempts(&self) -> usize {
         self.bitmap_allocation_attempts.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_fail_next_release_lock(&self) {
+        self.fail_next_release_lock.store(1, Ordering::Relaxed);
     }
 
     #[cfg(test)]
@@ -485,6 +505,16 @@ impl OwnedThreadLocalKeyRegistry {
         );
         drop(guard);
         result
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_live_lease_count(&self) -> usize {
+        let guard = self.lock.lock().expect("the isolated test registry lock is available");
+        // SAFETY: the test lock serializes the same private state projection
+        // as production claim/release operations.
+        let count = unsafe { (*self.state.get()).live_leases };
+        guard.unlock().expect("the isolated test registry lock unlocks");
+        count
     }
 
     #[cfg(test)]
@@ -526,12 +556,28 @@ static PROCESS_OWNED_THREAD_LOCAL_KEYS: OwnedThreadLocalKeyRegistry =
 /// Linear lease for one regular process-global dynamic TLS key.
 ///
 /// It is intentionally neither `Copy` nor `Clone`. Dropping it does not free
-/// the index, matching a missed source `_mi_thread_local_free`; only consuming
-/// [`Self::release`] records the exact bitmap release transition.
+/// the index, matching a missed source `_mi_thread_local_free`; only an
+/// explicit successful [`Self::release`] records the exact bitmap transition.
 #[must_use = "a claimed regular TLS key must be explicitly released"]
 pub(crate) struct OwnedThreadLocalKeyLease {
     registry: &'static OwnedThreadLocalKeyRegistry,
     key: ThreadLocalKey,
+    state: OwnedThreadLocalKeyLeaseState,
+}
+
+/// The local linear state of one claimed regular key.
+///
+/// The registry records the process-global bit and live count; this state
+/// records whether this particular capability still has release authority.
+/// A private-lock failure happens before any registry mutation and therefore
+/// leaves the lease live. Every other registry failure is either already
+/// terminal or transitions the registry to an invalid-owner state, so the
+/// lease becomes terminal rather than advertising a false retry capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OwnedThreadLocalKeyLeaseState {
+    Live,
+    Released,
+    Terminal,
 }
 
 impl OwnedThreadLocalKeyLease {
@@ -545,9 +591,24 @@ impl OwnedThreadLocalKeyLease {
     /// The caller must first make every dynamic TLS slot quiescent. The source
     /// release ignores the generation and sets only the decoded index; this
     /// linear token prevents a second safe release of the same live claim.
+    /// A private-lock failure retains this live token because the registry was
+    /// not touched; all other failure modes terminalize it explicitly.
     #[inline]
-    pub(crate) fn release(self) -> Result<(), OwnedThreadLocalKeyError> {
-        self.registry.release_claimed(self.key)
+    pub(crate) fn release(&mut self) -> Result<(), OwnedThreadLocalKeyError> {
+        if self.state != OwnedThreadLocalKeyLeaseState::Live {
+            return Err(OwnedThreadLocalKeyError::InvalidRelease);
+        }
+        match self.registry.release_claimed(self.key) {
+            Ok(()) => {
+                self.state = OwnedThreadLocalKeyLeaseState::Released;
+                Ok(())
+            }
+            Err(error @ OwnedThreadLocalKeyError::Lock(_)) => Err(error),
+            Err(error) => {
+                self.state = OwnedThreadLocalKeyLeaseState::Terminal;
+                Err(error)
+            }
+        }
     }
 }
 
@@ -586,7 +647,7 @@ mod tests {
     #[test]
     fn first_regular_key_uses_index_zero_version_one_and_never_fast_raw_one() {
         let (registry, metadata, subprocess) = fixture();
-        let lease = registry
+        let mut lease = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the first registry image allocates");
 
@@ -601,7 +662,7 @@ mod tests {
     #[test]
     fn first_image_is_exact_aligned_malloc_metadata_for_the_selected_main_subprocess() {
         let (registry, metadata, subprocess) = fixture();
-        let lease = registry
+        let mut lease = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the first registry image allocates");
         let (layout, memory, address) = registry
@@ -640,7 +701,7 @@ mod tests {
             .test_bitmap_image()
             .expect("the first image remains retained while full");
 
-        let appended = registry
+        let mut appended = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the full first image expands by exactly one block");
         assert_eq!(appended.key().index().get(), TLS_REGISTRY_EXPANSION_BITS);
@@ -651,18 +712,18 @@ mod tests {
         assert_eq!(layout.byte_size(), 384);
         assert_ne!(new_address, old_address, "the aligned replacement is a distinct typed image");
 
-        let released_old = leases.swap_remove(17);
+        let mut released_old = leases.swap_remove(17);
         released_old
             .release()
             .expect("an old-prefix index remains explicitly releasable after copy");
-        let reclaimed = registry
+        let mut reclaimed = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the copied old prefix retains its released free bit");
         assert_eq!(reclaimed.key().index().get(), 17);
 
         reclaimed.release().unwrap();
         appended.release().unwrap();
-        for lease in leases {
+        for mut lease in leases {
             lease.release().unwrap();
         }
         registry.shutdown().expect("no live lease remains after explicit cleanup");
@@ -702,15 +763,15 @@ mod tests {
             "a failed expansion preserves every prior claim, image, and generation"
         );
 
-        let released = leases.swap_remove(9);
+        let mut released = leases.swap_remove(9);
         released.release().unwrap();
-        let retry = registry
+        let mut retry = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the retained image stays usable after failed expansion");
         assert_eq!(retry.key().index().get(), 9);
         assert_eq!(retry.key().version(), TLS_REGISTRY_EXPANSION_BITS as u64 + 1);
         retry.release().unwrap();
-        for lease in leases {
+        for mut lease in leases {
             lease.release().unwrap();
         }
         registry.shutdown().unwrap();
@@ -719,7 +780,7 @@ mod tests {
     #[test]
     fn explicit_release_reclaims_an_index_with_a_new_generation_and_stale_slot_is_null() {
         let (registry, metadata, subprocess) = fixture();
-        let first = registry
+        let mut first = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the first key allocates");
         let first_key = first.key();
@@ -729,7 +790,7 @@ mod tests {
         slots.set(first_key, value).unwrap();
         first.release().unwrap();
 
-        let reused = registry
+        let mut reused = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the released lowest index is reclaimed");
         assert_eq!(reused.key().index(), first_key.index());
@@ -745,13 +806,13 @@ mod tests {
     #[test]
     fn source_generation_wrap_skips_zero_exactly_at_the_48_bit_ceiling() {
         let (registry, metadata, subprocess) = fixture();
-        let first = registry
+        let mut first = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the first bitmap initializes");
         first.release().unwrap();
         registry.test_set_last_claimed(TLS_VERSION_MAX - 1);
 
-        let wrapped = registry
+        let mut wrapped = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the released source index is reusable at the wrap edge");
         assert_eq!(wrapped.key().index().get(), 0);
@@ -817,7 +878,7 @@ mod tests {
                     worker_sender.send(raw).unwrap();
                     worker_claimed.wait();
                     worker_release.wait();
-                    for lease in leases {
+                    for mut lease in leases {
                         lease.release().unwrap();
                     }
                 });
@@ -840,7 +901,7 @@ mod tests {
             release.wait();
         });
 
-        let reused = registry
+        let mut reused = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("all explicit worker releases restore the bitmap");
         assert_eq!(reused.key().index().get(), 0);
@@ -869,9 +930,38 @@ mod tests {
     }
 
     #[test]
+    fn pre_mutation_release_lock_failure_retains_the_live_lease_for_retry() {
+        let (registry, metadata, subprocess) = fixture();
+        let mut lease = registry
+            .test_claim_selected(config(), subprocess, metadata)
+            .expect("the first regular key is live");
+        let key = lease.key();
+
+        registry.test_fail_next_release_lock();
+        assert_eq!(
+            lease.release(),
+            Err(OwnedThreadLocalKeyError::Lock(Errno::INTR)),
+            "the injected failure occurs before the registry bitmap or count changes"
+        );
+        assert_eq!(registry.test_state().1, 1, "the key remains live after a pre-mutation failure");
+
+        lease
+            .release()
+            .expect("the same retained lease can release after the transient failure");
+        assert_eq!(registry.test_state().1, 0);
+        assert_eq!(
+            lease.release(),
+            Err(OwnedThreadLocalKeyError::InvalidRelease),
+            "a successful release is one-way even though the token remains observable"
+        );
+        assert_eq!(key.index().get(), 0);
+        registry.shutdown().unwrap();
+    }
+
+    #[test]
     fn shutdown_requires_quiescence_then_rejects_late_claim_and_release_without_bitmap_access() {
         let (registry, metadata, subprocess) = fixture();
-        let lease = registry
+        let mut lease = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("the first source key is live");
         let key = lease.key();
@@ -903,7 +993,7 @@ mod tests {
         let cached_before = crate::compiler_tls::cached_theap();
         let registry_address = registry as *const OwnedThreadLocalKeyRegistry as usize;
 
-        let lease = registry
+        let mut lease = registry
             .test_claim_selected(config(), subprocess, metadata)
             .expect("registry metadata is process-global, not compiler TLS");
         assert_ne!(registry_address, 0);

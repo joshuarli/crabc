@@ -109,8 +109,19 @@ or a kernel/private-lock failure outside the valid owner contract. It is a
 terminal invalid-owner state that retains process-static storage and its live
 registration rather than retrying or claiming completed teardown. The
 represented `Heap` ends at the source `memid`; its abandoned/arena regions are
-valid zero/deferred fields, not a full C-size or heap API claim. Dynamic
-TLD/Theap, registry-to-thread integration, cached-root refcounting, remote-free
+valid zero/deferred fields, not a full C-size or heap API claim.
+
+`dynamic_theap.rs` adds one private later-ticket current-thread attachment.
+It atomically refuses ticket zero, then retains the caller-pinned first-class
+Heap, metadata TLD/live registration, typed Malloc Theap, dynamic backing, and
+linear regular-key lease. Dynamic `_mi_theap_init` completes TLD-list/random/
+cookie/Release-heap/heap-list order before publishing only the regular TLS
+slot; default, fast, and cached roots remain unchanged. No-page teardown clears
+that slot and backing before detaching lists and freeing metadata. Preflight
+root/list/page failures leave authority unchanged; a post-list-publication
+failure returns a retained poisoned owner. The one retryable exception is a
+pre-mutation key-release lock error after other teardown: it retains only the
+lease until `AwaitingKeyRelease` succeeds. Cached-root refcounting, remote-free
 routing, page routing or abandonment integration, full heap/Theap/arena/
 subprocess APIs, pthread/fork/process shutdown, stats/options/callbacks, and
 public ABI remain open.
@@ -124,7 +135,8 @@ an error or short read, then retries only while weak. The source local
 approved RustCrypto expansion of transparent weak observations; this
 non-entropy-adding degraded-path difference is recorded in
 `compat/allocator/known-differences.md`. The static main-Theap slice initializes
-this exact image; dynamic Theap and metadata-owner attachment remain absent.
+this exact image; both static and private dynamic Theap attachment use it, but
+allocator routing and production thread/process integration remain absent.
 Four bounded Loom
 schedules execute the shared live-owner and abandoned owner-claim/unown head
 transitions. The compiler-TLS evidence proves private initial-exec AArch64 code

@@ -51,7 +51,7 @@ use crate::page_map::PageMap;
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::size_class;
 use crate::types::{
-    LiveThreadId, MemoryId, MemoryKind, Page, ThreadLocalData, ThreadSequence,
+    LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData, ThreadSequence,
 };
 use crate::subproc::MainSubprocess;
 
@@ -169,6 +169,7 @@ pub(crate) struct MetaAllocation<'owner> {
     origin: MetaAllocationOrigin,
     bitmap_image_state: BitmapImageState,
     thread_local_data_initialized: bool,
+    dynamic_theap_initialized: bool,
     _owner: PhantomData<Pin<&'owner MetaAllocator>>,
 }
 
@@ -195,6 +196,7 @@ impl<'owner> MetaAllocation<'owner> {
             origin,
             bitmap_image_state: BitmapImageState::Fresh,
             thread_local_data_initialized: false,
+            dynamic_theap_initialized: false,
             _owner: PhantomData,
         }
     }
@@ -341,7 +343,8 @@ impl<'owner> MetaAllocation<'owner> {
         count: usize,
     ) -> Option<&mut DynamicThreadLocalBacking> {
         let required = DynamicThreadLocalBacking::allocation_size(count)?;
-        if self.requested_size != required
+        if !self.is_live()
+            || self.requested_size != required
             || self.pointer.as_ptr().addr() % align_of::<DynamicThreadLocalBacking>() != 0
         {
             return None;
@@ -372,8 +375,10 @@ impl<'owner> MetaAllocation<'owner> {
         numa_node: i32,
         subprocess: &'static MainSubprocess,
     ) -> bool {
-        if self.origin != MetaAllocationOrigin::DirectZeroed
+        if !self.is_live()
+            || self.origin != MetaAllocationOrigin::DirectZeroed
             || self.thread_local_data_initialized
+            || self.dynamic_theap_initialized
             || self.requested_size != size_of::<ThreadLocalData>()
             || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
         {
@@ -411,7 +416,9 @@ impl<'owner> MetaAllocation<'owner> {
     /// `rezalloc` image or arbitrary metadata bytes.
     #[inline]
     pub(crate) fn thread_local_data_mut(&mut self) -> Option<&mut ThreadLocalData> {
-        if !self.thread_local_data_initialized
+        if !self.is_live()
+            || !self.thread_local_data_initialized
+            || self.dynamic_theap_initialized
             || self.requested_size != size_of::<ThreadLocalData>()
             || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
         {
@@ -438,12 +445,14 @@ impl<'owner> MetaAllocation<'owner> {
     ///
     /// The caller must have received `true` from
     /// [`Self::initialize_thread_local_data_subprocess_attached_no_theap`]
-    /// on this exact, still-exclusively-borrowed capability immediately before
-    /// this call. No safe caller may manufacture a typed TLD from arbitrary
-    /// metadata bytes.
+    /// on this exact, still-live, exclusively-borrowed capability immediately
+    /// before this call. No concurrent or intervening `MetaAllocator::free`
+    /// may consume it, and no safe caller may manufacture a typed TLD from
+    /// arbitrary metadata bytes.
     #[inline]
     pub(crate) unsafe fn newly_initialized_thread_local_data_mut(&mut self) -> &mut ThreadLocalData {
         debug_assert!(self.thread_local_data_initialized);
+        debug_assert!(self.is_live());
         debug_assert_eq!(self.requested_size, size_of::<ThreadLocalData>());
         debug_assert_eq!(self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>(), 0);
         // SAFETY: the caller's explicit contract establishes that the
@@ -453,11 +462,70 @@ impl<'owner> MetaAllocation<'owner> {
         unsafe { &mut *self.pointer.as_ptr().cast::<ThreadLocalData>() }
     }
 
+    /// Initializes and projects one exact direct-zeroed dynamic Theap image.
+    ///
+    /// The full Rust `Theap` image is written from its source empty image;
+    /// this validates the metadata allocation/provenance boundary without
+    /// asserting that it equals the complete C `mi_theap_t` size. The caller
+    /// retains this linear capability through `_mi_theap_init` and final
+    /// metadata release, and no general raw Theap cast is exposed.
+    #[inline]
+    pub(crate) fn initialize_dynamic_theap_metadata(&mut self) -> Option<&mut Theap> {
+        if !self.is_live()
+            || self.origin != MetaAllocationOrigin::DirectZeroed
+            || self.thread_local_data_initialized
+            || self.dynamic_theap_initialized
+            || self.requested_size != size_of::<Theap>()
+            || self.pointer.as_ptr().addr() % align_of::<Theap>() != 0
+            || self.memory.kind() != MemoryKind::Malloc
+            || !self.has_consistent_malloc_provenance()
+        {
+            return None;
+        }
+        // SAFETY: the exact direct-zeroed Malloc capability has the Rust
+        // Theap request size/alignment and is exclusively retained here. A
+        // complete empty source image is written before its typed projection
+        // can escape.
+        unsafe { self.pointer.as_ptr().cast::<Theap>().write(Theap::empty()) };
+        let theap = unsafe { &mut *self.pointer.as_ptr().cast::<Theap>() };
+        if !theap.set_dynamic_metadata_memid(self.memory) {
+            return None;
+        }
+        self.dynamic_theap_initialized = true;
+        Some(theap)
+    }
+
+    /// Projects a prior exact dynamic-Theap initialization while its linear
+    /// metadata capability remains live.
+    #[inline]
+    pub(crate) fn dynamic_theap_mut(&mut self) -> Option<&mut Theap> {
+        if !self.is_live()
+            || !self.dynamic_theap_initialized
+            || self.thread_local_data_initialized
+            || self.requested_size != size_of::<Theap>()
+            || self.pointer.as_ptr().addr() % align_of::<Theap>() != 0
+            || self.memory.kind() != MemoryKind::Malloc
+            || !self.has_consistent_malloc_provenance()
+        {
+            return None;
+        }
+        // SAFETY: only the initializer above can set this marker, and the
+        // unique capability keeps the exact dynamic image alive.
+        Some(unsafe { &mut *self.pointer.as_ptr().cast::<Theap>() })
+    }
+
     #[inline]
     fn claim(&self, expected: u8, next: u8) -> bool {
         self.state
             .compare_exchange(expected, next, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
+    }
+
+    /// Typed safe projections may dereference the allocation bytes only while
+    /// the linear capability still owns a live metadata allocation.
+    #[inline]
+    fn is_live(&self) -> bool {
+        self.state.load(Ordering::Acquire) == ALLOCATION_LIVE
     }
 
     #[inline]
@@ -542,6 +610,8 @@ pub(crate) struct MetaAllocator {
     allocator: UnsafeCell<MaybeUninit<SingleThreadAllocator<'static, 'static, 'static>>>,
     subprocess: AtomicPtr<MainSubprocess>,
     registry: ArenaRegistry,
+    #[cfg(test)]
+    fail_next_direct_zeroed_size: AtomicUsize,
     _pin: PhantomPinned,
 }
 
@@ -565,6 +635,8 @@ impl MetaAllocator {
             allocator: UnsafeCell::new(MaybeUninit::uninit()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
+            #[cfg(test)]
+            fail_next_direct_zeroed_size: AtomicUsize::new(0),
             _pin: PhantomPinned,
         }
     }
@@ -612,6 +684,15 @@ impl MetaAllocator {
     ) -> Result<MetaAllocation<'static>, MetaError> {
         let mut entry = self.enter()?;
         entry.ensure_ready(config, subprocess)?;
+        #[cfg(test)]
+        if size != 0
+            && self
+                .fail_next_direct_zeroed_size
+                .compare_exchange(size, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            return Err(MetaError::AllocationUnavailable);
+        }
         let pointer = entry
             .allocator()
             .allocate_zeroed(size)
@@ -622,6 +703,17 @@ impl MetaAllocator {
             size,
             MetaAllocationOrigin::DirectZeroed,
         ))
+    }
+
+    /// Makes one test-only direct-zeroed request of exactly `size` fail after
+    /// the detached owner is ready. This isolates a later lifecycle
+    /// allocation edge without pretending that the source metadata allocator
+    /// has a production per-request fault policy.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_fail_next_direct_zeroed_size(&self, size: usize) {
+        assert_ne!(size, 0);
+        self.fail_next_direct_zeroed_size.store(size, Ordering::Release);
     }
 
     /// Allocates zeroed metadata with the source alignment contract.
@@ -680,8 +772,23 @@ impl MetaAllocator {
         old: Option<&mut MetaAllocation<'static>>,
         new_size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
+        self.rezalloc_for_main_subprocess(config, MainSubprocess::global(), old, new_size)
+    }
+
+    /// Replaces one metadata allocation while retaining the already selected
+    /// main-subprocess identity. Current-thread TLS backing uses this rather
+    /// than the global convenience route so all of its images remain with the
+    /// same TLD/Theap/registry process selection in isolated tests and later
+    /// integration.
+    pub(crate) fn rezalloc_for_main_subprocess(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        old: Option<&mut MetaAllocation<'static>>,
+        new_size: usize,
+    ) -> Result<MetaAllocation<'static>, MetaError> {
         let Some(old) = old else {
-            return self.zalloc(config, new_size);
+            return self.zalloc_for_main_subprocess(config, subprocess, new_size);
         };
         if !old.belongs_to(self) {
             return Err(MetaError::ForeignOwner);
@@ -689,7 +796,7 @@ impl MetaAllocator {
 
         let (replacement, copy_size) = {
             let mut entry = self.enter()?;
-            entry.ensure_ready(config, MainSubprocess::global())?;
+            entry.ensure_ready(config, subprocess)?;
             if !old.claim(ALLOCATION_LIVE, ALLOCATION_MOVING)
                 || !old.has_consistent_malloc_provenance()
             {
@@ -1282,6 +1389,48 @@ mod tests {
         ));
         assert!(replacement.thread_local_data_mut().is_none());
         allocator.free(&mut replacement).unwrap();
+    }
+
+    #[test]
+    fn released_capability_cannot_project_any_safe_typed_image() {
+        let allocator = static_allocator();
+        let count = 16;
+        let mut backing = allocator
+            .zalloc(config(), DynamicThreadLocalBacking::allocation_size(count).unwrap())
+            .expect("the exact fresh backing allocation succeeds");
+
+        allocator.free(&mut backing).unwrap();
+        assert!(
+            backing.dynamic_thread_local_backing_mut(count).is_none(),
+            "a released linear capability must not form a safe reference into freed bytes"
+        );
+
+        let thread = LiveThreadId::new(crate::os::thread_pointer_identity())
+            .expect("the native AArch64 test thread has a live identity");
+        let mut tld = allocator
+            .zalloc(config(), size_of::<ThreadLocalData>())
+            .expect("the exact fresh TLD allocation succeeds");
+        assert!(tld.initialize_thread_local_data_subprocess_attached_no_theap(
+            thread,
+            ThreadSequence::from_previous_total_count(9),
+            0,
+            MainSubprocess::global(),
+        ));
+        allocator.free(&mut tld).unwrap();
+        assert!(
+            tld.thread_local_data_mut().is_none(),
+            "a released capability must not project an already initialized TLD"
+        );
+
+        let mut theap = allocator
+            .zalloc(config(), size_of::<Theap>())
+            .expect("the exact fresh dynamic Theap allocation succeeds");
+        assert!(theap.initialize_dynamic_theap_metadata().is_some());
+        allocator.free(&mut theap).unwrap();
+        assert!(
+            theap.dynamic_theap_mut().is_none(),
+            "a released capability must not project an already initialized dynamic Theap"
+        );
     }
 
     #[test]

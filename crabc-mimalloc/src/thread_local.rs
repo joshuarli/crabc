@@ -31,6 +31,7 @@ use crate::compiler_tls::{
 use crate::lock::PrivateLock;
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
 use crate::os::MemoryConfig;
+use crate::subproc::MainSubprocess;
 use crate::types::LiveThreadId;
 
 /// The low key-field width used by pinned mimalloc on 64-bit targets.
@@ -565,6 +566,7 @@ enum ThreadLocalBackingState {
 #[must_use = "a live current-thread TLS backing owner must be torn down explicitly"]
 pub(crate) struct ThreadLocalBackingOwner {
     metadata: Pin<&'static MetaAllocator>,
+    subprocess: &'static MainSubprocess,
     config: MemoryConfig,
     thread: LiveThreadId,
     allocation: Option<MetaAllocation<'static>>,
@@ -586,21 +588,26 @@ impl ThreadLocalBackingOwner {
     pub(crate) unsafe fn begin(config: MemoryConfig) -> Result<Self, ThreadLocalBackingError> {
         // SAFETY: forwarded unchanged to the common constructor; production
         // always binds the committed process-static metadata owner.
-        unsafe { Self::begin_with_metadata(MetaAllocator::global(), config) }
+        unsafe {
+            Self::begin_with_metadata(MetaAllocator::global(), MainSubprocess::global(), config)
+        }
     }
 
-    /// Binds the current thread to one already-static metadata owner.
+    /// Binds the current thread to one already-selected process-lived metadata
+    /// owner.
     ///
-    /// Keeping this common primitive private gives tests an isolated
-    /// process-lifetime metadata fixture for deterministic allocation-failure
-    /// injection. Production [`Self::begin`] always uses `MetaAllocator::global`.
+    /// The private dynamic-Theap attachment uses this to retain one exact
+    /// selected owner for its TLD, Theap, and backing capabilities. Production
+    /// [`Self::begin`] always uses `MetaAllocator::global`; tests may supply
+    /// an isolated process-lifetime fixture.
     ///
     /// # Safety
     ///
-    /// Identical to [`Self::begin`], plus `metadata` must be process-lived and
-    /// must remain the owner that releases every returned `MetaAllocation`.
-    unsafe fn begin_with_metadata(
+    /// Identical to [`Self::begin`], plus `metadata`/`subprocess` must be the
+    /// selected process-lived pair that releases every returned allocation.
+    pub(crate) unsafe fn begin_with_metadata(
         metadata: Pin<&'static MetaAllocator>,
+        subprocess: &'static MainSubprocess,
         config: MemoryConfig,
     ) -> Result<Self, ThreadLocalBackingError> {
         let thread = current_thread_identity().ok_or(ThreadLocalBackingError::InvalidCurrentThread)?;
@@ -610,6 +617,7 @@ impl ThreadLocalBackingOwner {
         }
         Ok(Self {
             metadata,
+            subprocess,
             config,
             thread,
             allocation: None,
@@ -795,13 +803,19 @@ impl ThreadLocalBackingOwner {
             .ok_or(ThreadLocalBackingError::AllocationSizeOverflow)?;
 
         let replacement = if old_count == 0 {
-            self.metadata.zalloc(self.config, size)
+            self.metadata
+                .zalloc_for_main_subprocess(self.config, self.subprocess, size)
         } else {
             let old = self
                 .allocation
                 .as_mut()
                 .ok_or(ThreadLocalBackingError::BackingProjection)?;
-            self.metadata.rezalloc(self.config, Some(old), size)
+            self.metadata.rezalloc_for_main_subprocess(
+                self.config,
+                self.subprocess,
+                Some(old),
+                size,
+            )
         };
         let replacement = match replacement {
             Ok(replacement) => replacement,
@@ -1390,7 +1404,11 @@ mod tests {
         thread::spawn(move || {
             let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, crabc_core::Errno::NOMEM));
             let mut owner = unsafe {
-                ThreadLocalBackingOwner::begin_with_metadata(metadata, memory_config())
+                ThreadLocalBackingOwner::begin_with_metadata(
+                    metadata,
+                    MainSubprocess::global(),
+                    memory_config(),
+                )
             }
             .unwrap();
             let mut payload = 0xabusize;
@@ -1424,7 +1442,11 @@ mod tests {
         let metadata = MetaAllocator::test_static_owner();
         thread::spawn(move || {
             let mut owner = unsafe {
-                ThreadLocalBackingOwner::begin_with_metadata(metadata, memory_config())
+                ThreadLocalBackingOwner::begin_with_metadata(
+                    metadata,
+                    MainSubprocess::global(),
+                    memory_config(),
+                )
             }
             .unwrap();
             let original_key = key(15, 1);

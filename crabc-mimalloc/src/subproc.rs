@@ -109,6 +109,43 @@ impl MainSubprocess {
         }
     }
 
+    /// Reserves exactly one nonzero source sequence for the bounded dynamic
+    /// Theap path without consuming ticket zero.
+    ///
+    /// This is an intentional Rust process-selection gate, not a replacement
+    /// for `mi_tld_create`'s unconditional `fetch_add`: ticket zero belongs to
+    /// the separately selected static-main path in this milestone. The CAS
+    /// loop is Relaxed like the source counter and prevents a read-then-add
+    /// race from accidentally seizing that static ticket. Once a nonzero old
+    /// value is reserved it is a normal source ticket; later TLD allocation
+    /// failure still consumes it and leaves the live count unchanged.
+    #[inline]
+    pub(crate) fn issue_later_thread_ticket(
+        &'static self,
+    ) -> Result<ThreadRegistrationTicket, LaterThreadTicketError> {
+        let mut observed = self.thread_total_count.load(Ordering::Relaxed);
+        loop {
+            if observed == 0 {
+                return Err(LaterThreadTicketError::FirstTicketReserved);
+            }
+            match self.thread_total_count.compare_exchange_weak(
+                observed,
+                observed.wrapping_add(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(old) => {
+                    return Ok(ThreadRegistrationTicket {
+                        subprocess: self,
+                        sequence: ThreadSequence::from_previous_total_count(old),
+                        _not_send_or_sync: PhantomData,
+                    });
+                }
+                Err(current) => observed = current,
+            }
+        }
+    }
+
     #[inline]
     pub(crate) const fn as_ptr(&self) -> *mut Self {
         core::ptr::from_ref(self).cast_mut()
@@ -237,6 +274,14 @@ pub(crate) struct ThreadRegistrationTicket {
     subprocess: &'static MainSubprocess,
     sequence: ThreadSequence,
     _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// Dynamic attachment deliberately leaves the process-main static ticket for
+/// `MainStaticTheapAttachment`; this is the explicit outcome when it has not
+/// yet been consumed by the selected bootstrap owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LaterThreadTicketError {
+    FirstTicketReserved,
 }
 
 impl ThreadRegistrationTicket {
@@ -395,6 +440,25 @@ mod tests {
         };
         assert_eq!(main.live_thread_count(), 1);
         lease.release();
+        assert_eq!(main.live_thread_count(), 0);
+    }
+
+    #[test]
+    fn later_ticket_gate_never_consumes_the_reserved_static_zero_sequence() {
+        let main = MainSubprocess::test_static_owner();
+        assert!(matches!(
+            main.issue_later_thread_ticket(),
+            Err(LaterThreadTicketError::FirstTicketReserved)
+        ));
+        assert_eq!(main.total_thread_count(), 0);
+
+        let first = main.issue_thread_ticket();
+        assert_eq!(first.sequence().get(), 0);
+        let later = main
+            .issue_later_thread_ticket()
+            .expect("a consumed static ticket permits exactly the next later sequence");
+        assert_eq!(later.sequence().get(), 1);
+        assert_eq!(main.total_thread_count(), 2);
         assert_eq!(main.live_thread_count(), 0);
     }
 }
