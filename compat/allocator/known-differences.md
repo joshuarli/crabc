@@ -15,7 +15,7 @@ exact address-independent trace parity with pinned C v3.5.0, and a separate
 calloc, realloc, aligned/offset-aligned, usable-size, preservation, and failure
 slice. This includes live arena-backed alignment through 64 KiB and separately
 owned OS-aligned singleton mappings below 256 MiB. The lifecycle is not
-exported and does not imply parity for the absent process/TLS, remote-free,
+exported and does not imply parity for the absent process/TLS, general remote-free routing,
 teardown, purge, or public-API regions. The private regular-TLS and generic
 subprocess-attached/no-theap TLD owners record one internal recovery limitation
 in the source map:

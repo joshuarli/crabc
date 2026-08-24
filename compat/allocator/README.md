@@ -114,17 +114,22 @@ retry state on failure. The other bounded Milestone 5 substrates are also presen
 the AArch64 versioned TLS key, caller-owned slot, caller-storage registry
 substrate, and allocator-owned process-global regular-key registry; the
 private compiler-TLS roots; the source low-bit
-live/abandoned-page remote-free head transitions;
+live/abandoned-page remote-free head transitions; and one caller-proved
+joined/quiescent non-abandoning full-page collector: its live branch consumes
+an already-published remote list before release-or-unfull, while its detached
+metadata branch has no remote producer path and performs only local false-
+force collection;
 and one queue-detached, stable page's mapped/unmapped abandonment/adoption
 protocol, including failed-reader restoration and clear-once-set quiescence.
 A default-off Loom model exercises four exact shared head protocols: two
 live-owner publishers, owner collection racing publication, bitmap adoption
 racing an abandoned producer, and abandoned unown racing publication.
 Deterministic native regressions separately cover the bitmap-field
-quiescence, abandonment publication, adoption versus a remote producer, and
-ownership-release races. These pieces are not yet wired into allocation/free
-routing, integrated allocator TLS/process/thread teardown, terminal page
-release, or metadata reuse. The compiler-TLS codegen probe proves hidden
+quiescence, abandonment publication, adoption versus a remote producer,
+ownership-release races, and the joined full-page release/unfull branches.
+Except for that bounded full-page consumer, these pieces are not yet wired
+into allocation/free routing, integrated allocator TLS/process/thread teardown,
+terminal page release, or metadata reuse. The compiler-TLS codegen probe proves hidden
 initial-exec AArch64 root access and direct thread-pointer identity without a
 TLS resolver, but production integration must still apply that per-crate model
 and audit the final linked ELF. A

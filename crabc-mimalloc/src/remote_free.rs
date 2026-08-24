@@ -14,9 +14,14 @@
 // live owner-associated pages, plus the narrow `allow_collect=true` head
 // transition used by `abandoned`. It deliberately excludes the separate
 // `_mi_deferred_free` callback, general allocation/free routing, TLS/theap
-// attachment, page retirement, and page release. `remote_free_loom.rs`
-// separately models this module's exact head CAS transitions with Loom; it
-// does not model page lifetime, raw block pointers, or owner-local mutation.
+// attachment, page retirement, and page release. `single_thread.rs` is the
+// sole bounded consumer that follows a successful detach with false-force
+// full-page collection, whose caller proves live producers are
+// joined/quiescent before its queue transition. The explicit detached metadata
+// branch has no remote producer path and does not call this module.
+// `remote_free_loom.rs` separately models this module's
+// exact head CAS transitions with Loom; it does not model page lifetime, raw
+// block pointers, or owner-local mutation.
 
 use core::ptr::{self, NonNull};
 

@@ -13,17 +13,20 @@
 // zeroing branch of `mi_page_malloc_zero`), and `src/free.c:28-50`
 // (`mi_free_block_local`).
 //
-// This is the frozen normal-release path only: `MI_ENCODE_FREELIST == 0`,
-// `MI_PADDING == 0`, and no cross-thread `xthread_free`, page queue, theap, or
-// allocation API policy is present. Pinned v3.5.0 has no separate delayed-free
-// state; its `_mi_deferred_free` user callback is outside this local-list core.
-// This module operates only through a caller-owned page area and the narrow
-// local-list projection of `types::Page`.
+// This is the frozen normal-release path only: `MI_ENCODE_FREELIST == 0` and
+// `MI_PADDING == 0`. This module neither detaches `xthread_free` nor performs
+// queue/theap/allocation policy. Its bounded raw false-force transfer is used
+// only after `remote_free` has detached a caller-proved joined/quiescent live
+// producer list; the explicit detached metadata branch has no remote
+// producer path and uses this local transfer directly. The existing borrowed
+// core remains exclusive-local. Pinned v3.5.0 has no
+// separate delayed-free state; its `_mi_deferred_free` user callback is outside
+// this local-list core.
 
 use core::mem::{align_of, size_of};
 use core::ptr::{self, NonNull};
 
-use crate::types::{Block, Page, PageFreeListState};
+use crate::types::{Block, Page, PageFreeListState, PageLocalCollectState};
 
 const MAX_EXTEND_SIZE: usize = 8 * 1024;
 const MIN_EXTEND: usize = 1;
@@ -539,6 +542,96 @@ impl<'a> LocalFreeList<'a> {
         // storage is the exact `MI_ENCODE_FREELIST == 0` representation.
         unsafe { ptr::write(block.as_ptr().cast::<*mut u8>(), next) };
     }
+}
+
+/// Performs only the false-force local half of `_mi_page_free_collect`.
+///
+/// Pinned `page.c:214-243` first detaches a remote list, then moves
+/// `local_free` to `free` only when `free` is null. The append path is for
+/// `force == true` and is intentionally unavailable here. This raw state is
+/// distinct from [`LocalFreeList`]: it avoids a whole-page mutable borrow.
+/// The enclosing full-page lifecycle still has a caller-proved
+/// joined/quiescent precondition before it makes any queue transition. The
+/// detached metadata branch instead has an explicit no-remote-producer
+/// contract.
+///
+/// # Safety
+///
+/// The caller must have completed the remote detach first and exclusively own
+/// the projected ordinary fields. `state` must come from one live associated
+/// page whose area remains writable for this operation. It must preserve that
+/// page's no-retirement/no-release lifetime while the raw collection runs.
+pub(crate) unsafe fn collect_local_false(
+    state: PageLocalCollectState,
+) -> Result<bool, FreeListError> {
+    validate_raw_collect_state(&state)?;
+    // SAFETY: caller supplies exclusive ordinary-field ownership. The raw
+    // state construction established these exact initialized field pointers.
+    let local_free = unsafe { *state.local_free.as_ptr() };
+    let Some(local_free) = NonNull::new(local_free) else {
+        return Ok(false);
+    };
+    validate_raw_initialized_block(&state, local_free)?;
+    // SAFETY: see the `local_free` read above; source false-force collection
+    // observes `free` only to decide whether it may transfer the local head.
+    if unsafe { !(*state.free.as_ptr()).is_null() } {
+        return Ok(false);
+    }
+    // SAFETY: the local head is a validated initialized block, `free` is
+    // empty, and caller exclusivity covers these three ordinary fields. This
+    // is exactly the source false-force transfer; it neither appends nor
+    // creates a delayed/deferred list state.
+    unsafe {
+        *state.free.as_ptr() = local_free.as_ptr();
+        *state.local_free.as_ptr() = ptr::null_mut();
+        *state.free_is_zero.as_ptr() = false;
+    }
+    Ok(true)
+}
+
+fn validate_raw_collect_state(state: &PageLocalCollectState) -> Result<(), FreeListError> {
+    if state.reserved == 0
+        || state.block_size < LINK_SIZE
+        || state.block_size % LINK_ALIGN != 0
+        || state.area.addr().get() % LINK_ALIGN != 0
+        || state.capacity > state.reserved
+    {
+        return Err(FreeListError::InvalidPage);
+    }
+    // SAFETY: the caller's ordinary-field proof covers this raw field read;
+    // only the source owner updates `used`.
+    if unsafe { *state.used.as_ptr() } > state.capacity as usize {
+        return Err(FreeListError::InvalidPage);
+    }
+    let required = usize::from(state.reserved)
+        .checked_mul(state.block_size)
+        .ok_or(FreeListError::InvalidPage)?;
+    if state.area_bytes < required {
+        return Err(FreeListError::InsufficientStorage);
+    }
+    Ok(())
+}
+
+fn validate_raw_initialized_block(
+    state: &PageLocalCollectState,
+    block: NonNull<Block>,
+) -> Result<(), FreeListError> {
+    let initialized_bytes = usize::from(state.capacity)
+        .checked_mul(state.block_size)
+        .ok_or(FreeListError::InvalidBlock)?;
+    let base = state.area.addr().get();
+    let end = base
+        .checked_add(initialized_bytes)
+        .ok_or(FreeListError::InvalidBlock)?;
+    let address = block.as_ptr().addr();
+    if address < base
+        || address >= end
+        || (address - base) % state.block_size != 0
+        || address % LINK_ALIGN != 0
+    {
+        return Err(FreeListError::InvalidBlock);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

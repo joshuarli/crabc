@@ -20,7 +20,8 @@
 // 347-388` (natural/overallocated aligned allocation and aligned realloc),
 // `src/free.c:28-50,104-114,522-542` (local free, interior-base recovery,
 // and aligned usable size),
-// `src/page.c:360-522,708-1069` (free-page search, full-page retention,
+// `src/page.c:150-242,460-522,708-1069` (remote/local free collection,
+// full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
 // `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
 // queue mutations), `src/arena.c:950-1283` (fresh regular/singleton page
@@ -33,8 +34,12 @@
 // the detached metadata wrapper supplies its own PrivateLock and reuses the
 // same exclusive mutation engine. It accepts only caller-managed external
 // arenas and a caller-initialized page map. There is no TLS, first-class heap,
-// lock-free remote-free routing, page abandonment, OS arena reservation, or
-// public API here. Ordinary small,
+// general lock-free remote-free routing, page abandonment, OS arena
+// reservation, or public API here. A bounded full-page collector integrates
+// an already-published remote list only for a live non-abandoning session;
+// the explicit detached metadata session has no remote producer path and
+// performs only the local false-force portion. Ordinary remote free routing
+// remains absent. Ordinary small,
 // medium, large, and singleton pages retain their pinned source geometry and
 // queue transitions. This lifecycle also supports ordinary and valid
 // in-arena aligned/reallocation operations plus the source OS-aligned
@@ -58,6 +63,7 @@ use crate::invariants;
 use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage};
 use crate::page;
 use crate::page_map::PageMap;
+use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
 use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, Page, PageKind, Theap};
@@ -70,6 +76,18 @@ use crate::types::page_queue::{
 const RETIRE_CYCLES: u8 = 16;
 const RETIRE_MAX_PAGES: usize = 3;
 const PAGE_MAX_CANDIDATES: isize = 4;
+
+/// One failed source full-page collection boundary.
+///
+/// These are private invalid-owner/lifecycle observations. The collector
+/// cannot safely continue queue transitions after one because source
+/// collection has rejected either remote ownership or raw local geometry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FullPageCollectError {
+    Remote(RemoteFreeError),
+    Local(FreeListError),
+    InvalidOwnerState,
+}
 
 /// One prevalidated terminal backing span. Arena and OS-aligned singleton
 /// pages keep materially different ownership: an arena span returns a claim
@@ -1131,54 +1149,138 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     /// `force` releases every currently retired page in the tracked range and
     /// forces any scheduled unpinned arena decommit; `false` decrements the
     /// normal retirement countdown and observes the pinned 4-second arena
-    /// expiry. This intentionally does not visit the full queue: a local free
-    /// transitions full pages back to their regular bin first.
+    /// expiry. After the regular retired-bin pass, the non-abandoning source
+    /// branch also scans BIN_FULL: it detaches already-published remote frees,
+    /// runs only `_mi_page_free_collect(page, false)`'s local transfer, then
+    /// releases all-free pages or returns no-longer-full pages to their exact
+    /// regular bin before the arena purge. A live session performs remote
+    /// detach first; the explicit detached session has no remote producer
+    /// path and performs only the source local false-force portion. In either
+    /// case, callers must prove producers joined/quiescent before the later
+    /// queue helpers borrow page metadata during their transitions.
     pub(crate) fn collect_retired(&mut self, force: bool) -> bool {
         if !self.retry_pending_os_release() {
             return false;
         }
         let (minimum, maximum) = self.session.retired_bounds();
-        if minimum >= BIN_FULL || minimum > maximum {
-            self.session.reset_retired_bounds();
-            return self
-                .arena
-                .collect_scheduled_purge(self.page_map.memory_config().page_size(), force);
-        }
-
         self.session.reset_retired_bounds();
-        for bin in minimum..=maximum {
-            let mut page = match self.session.queue(bin) {
-                Some(queue) => queue.first(),
-                None => return false,
-            };
-            let mut visited = 0usize;
-            while !page.is_null() && visited < RETIRE_MAX_PAGES {
-                visited += 1;
-                // SAFETY: every queue link is owned exclusively by this
-                // session; save the successor before a possible release.
-                let next = unsafe { (*page).next() };
-                let expire = unsafe { (*page).retire_expire() };
-                if expire == 0 {
-                    break;
-                }
-                if unsafe { (*page).used() } == 0 {
-                    let next_expire = expire - 1;
-                    unsafe { (*page).set_retire_expire(next_expire) };
-                    if force || next_expire == 0 {
-                        if !self.release_page(bin, page) {
+        if minimum < BIN_FULL && minimum <= maximum {
+            for bin in minimum..=maximum {
+                let mut page = match self.session.queue(bin) {
+                    Some(queue) => queue.first(),
+                    None => return false,
+                };
+                let mut visited = 0usize;
+                while !page.is_null() && visited < RETIRE_MAX_PAGES {
+                    visited += 1;
+                    // SAFETY: every queue link is owned exclusively by this
+                    // session; save the successor before a possible release.
+                    let next = unsafe { (*page).next() };
+                    let expire = unsafe { (*page).retire_expire() };
+                    if expire == 0 {
+                        break;
+                    }
+                    if unsafe { (*page).used() } == 0 {
+                        let next_expire = expire - 1;
+                        unsafe { (*page).set_retire_expire(next_expire) };
+                        if force || next_expire == 0 {
+                            if !self.release_page(bin, page) {
+                                return false;
+                            }
+                        } else if !self.session.note_retired_bin(bin) {
                             return false;
                         }
-                    } else if !self.session.note_retired_bin(bin) {
-                        return false;
+                    } else {
+                        unsafe { (*page).set_retire_expire(0) };
                     }
-                } else {
-                    unsafe { (*page).set_retire_expire(0) };
+                    page = next;
                 }
-                page = next;
             }
+        }
+        if !self.collect_full_pages_non_abandoning() {
+            return false;
         }
         self.arena
             .collect_scheduled_purge(self.page_map.memory_config().page_size(), force)
+    }
+
+    /// Ports `mi_theap_collect_full_pages` for this explicitly
+    /// non-abandoning session. It saves each full-queue successor before
+    /// false-force collection because release can retire the current
+    /// metadata. Live sessions first detach remote publication; detached
+    /// sessions have no remote producer path.
+    fn collect_full_pages_non_abandoning(&mut self) -> bool {
+        if self.session.theap().allows_page_abandon() {
+            return true;
+        }
+        let mut page = match self.session.queue(BIN_FULL) {
+            Some(queue) => queue.first(),
+            None => return false,
+        };
+        while !page.is_null() {
+            // SAFETY: the source full queue and its links are exclusively
+            // owned by this session. Save before potential queue detach/release.
+            let next = unsafe { (*page).next() };
+            let page_nonnull = match NonNull::new(page) {
+                Some(page) => page,
+                None => return false,
+            };
+            if self.page_free_collect_false(page_nonnull).is_err() {
+                return false;
+            }
+            // SAFETY: false-force collection preserves this live current
+            // page until the following exact full/all-free decision.
+            let used = unsafe { (*page).used() };
+            let reserved = unsafe { (*page).reserved() as usize };
+            if used != reserved {
+                if used == 0 {
+                    if !self.release_page(BIN_FULL, page) {
+                        return false;
+                    }
+                } else {
+                    let bin = match size_class::bin(unsafe { (*page).block_size() }) {
+                        Some(bin) if bin < BIN_FULL => bin,
+                        _ => return false,
+                    };
+                    if !self.move_full_to_regular(bin, page) {
+                        return false;
+                    }
+                }
+            }
+            page = next;
+        }
+        true
+    }
+
+    /// Exact false-force `_mi_page_free_collect` ordering for a full page:
+    /// a live owner detaches/merges remote frees first, then transfers
+    /// `local_free` only if `free` remains null. The explicit detached
+    /// metadata session has no remote producer path and starts at that local
+    /// transfer. It deliberately does not append a local list or create a
+    /// delayed/deferred state.
+    fn page_free_collect_false(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), FullPageCollectError> {
+        let expected_thread = self.session.thread_id();
+        if expected_thread.is_some() {
+            // SAFETY: the full-queue owner preserves page lifetime and
+            // exclusive ordinary fields. A remote producer may retain only
+            // its disjoint atomic state; the caller proves it joined before
+            // the later queue transition or potential page release.
+            unsafe { remote_free::collect(page) }.map_err(FullPageCollectError::Remote)?;
+        }
+        // SAFETY: a live owner completed remote detach. A detached session
+        // instead has `THREAD_ID_DETACHED` and its explicit externally
+        // serialized no-remote-producer contract. Either proof derives raw
+        // local fields without a whole-page mutable borrow.
+        let state = unsafe { Page::local_collect_state_for_owner_at(page, expected_thread) }
+            .ok_or(FullPageCollectError::InvalidOwnerState)?;
+        // SAFETY: see `Page::local_collect_state_for_owner_at`; this performs
+        // only the source false-force transfer of owner-local ordinary fields.
+        unsafe { crate::free_list::collect_local_false(state) }
+            .map_err(FullPageCollectError::Local)?;
+        Ok(())
     }
 
     #[cfg(test)]
@@ -1883,14 +1985,58 @@ mod tests {
     use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, fault};
     use crabc_core::Errno;
     use core::ffi::c_void;
+    use core::marker::PhantomData;
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
     use std::vec::Vec;
 
     struct AlignedRegion {
         pointer: NonNull<u8>,
         layout: Layout,
+    }
+
+    /// The one test-only proof that a scoped worker may retain only the
+    /// producer's disjoint atomic-page projection. Moving this permit into
+    /// `thread::scope` consumes it before the owner resumes ordinary page
+    /// mutation, so collection and fixture teardown cannot outlive a remote
+    /// producer.
+    struct ScopedRemoteProducer<'page> {
+        page: NonNull<Page>,
+        block: NonNull<u8>,
+        _page_lifetime: PhantomData<&'page Page>,
+    }
+
+    // SAFETY: the permit is used exactly once by a scoped worker, which calls
+    // only `remote_free::push` on Page's disjoint atomic fields. The test
+    // joins that worker before the owner changes queue/list/page lifetime.
+    unsafe impl Send for ScopedRemoteProducer<'_> {}
+
+    impl<'page> ScopedRemoteProducer<'page> {
+        /// # Safety
+        ///
+        /// `page_lifetime` must remain a live owner-associated page until
+        /// this permit is consumed by `publish`; `block` must be one current
+        /// allocation from that page, transferred to the worker exactly once.
+        unsafe fn new(
+            page_lifetime: &'page Page,
+            page: NonNull<Page>,
+            block: NonNull<u8>,
+        ) -> Self {
+            let _ = page_lifetime;
+            Self {
+                page,
+                block,
+                _page_lifetime: PhantomData,
+            }
+        }
+
+        fn publish(self) -> Result<(), crate::remote_free::RemoteFreeError> {
+            // SAFETY: `Self::new` records the scoped stable-page/current-block
+            // proof, and the owner joins this worker before mutation.
+            unsafe { crate::remote_free::push(self.page, self.block) }
+        }
     }
 
     impl AlignedRegion {
@@ -1983,6 +2129,57 @@ mod tests {
         let mut allocator = SingleThreadAllocator::activate(
             bootstrap.as_mut(),
             LiveThreadId::new(12).unwrap(),
+            arena,
+            ArenaId::none(),
+            &mut page_map,
+            0,
+        )
+        .unwrap();
+
+        test(&mut allocator);
+        assert!(allocator.collect_retired(true));
+        drop(allocator);
+        // SAFETY: force collection removed every page-map entry and all local
+        // users before the explicit page-map destruction boundary.
+        unsafe { page_map.destroy() }.unwrap();
+    }
+
+    /// Runs one externally serialized detached metadata-theap lifecycle.
+    ///
+    /// This mirrors `MetaAllocator`'s source `THREAD_ID_DETACHED` mode while
+    /// retaining an isolated caller-managed arena and page map for the
+    /// full-page collection regression below.
+    fn with_detached_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
+        let mut region = AlignedRegion::zeroed();
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                true,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(),
+            1024 * 1024,
+            false,
+            false,
+        );
+        let mut page_map = PageMap::initialize(config, 0, true).unwrap();
+        let bootstrap = ExclusiveTheapBootstrap::new();
+        let mut bootstrap = core::pin::pin!(bootstrap);
+        let mut allocator = SingleThreadAllocator::activate_detached(
+            bootstrap.as_mut(),
+            MainSubprocess::test_static_owner(),
             arena,
             ArenaId::none(),
             &mut page_map,
@@ -2681,6 +2878,171 @@ mod tests {
                 // SAFETY: every remaining element is still live exactly once.
                 unsafe { allocator.free(block).unwrap() };
             }
+        });
+    }
+
+    #[test]
+    fn full_page_false_collection_reclaims_a_joined_remote_block_for_ordinary_reuse() {
+        with_allocator(|allocator| {
+            let request = SMALL_SIZE_MAX;
+            let bin = size_class::bin(request).unwrap();
+            let first = allocator.allocate(request, false).unwrap();
+            // SAFETY: `first` is a current allocation in this live exclusive
+            // session; the page map retains its metadata through the scoped
+            // producer and the following owner collection.
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            let capacity = unsafe { page.as_ref().reserved() as usize };
+            assert!(capacity > 1);
+
+            // Consume the first small page and allocate one block from its
+            // successor. The next direct allocation moved the exhausted page
+            // into BIN_FULL, exactly as the non-abandoning source branch does.
+            let mut blocks = Vec::with_capacity(capacity + 1);
+            blocks.push(first);
+            while blocks.len() <= capacity {
+                blocks.push(allocator.allocate(request, false).unwrap());
+            }
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+            assert_eq!(unsafe { page.as_ref().used() }, capacity);
+
+            // SAFETY: the page is owner-associated and stable, and this
+            // exact current block transfers exclusively to the scoped worker.
+            let permit = unsafe { ScopedRemoteProducer::new(page.as_ref(), page, first) };
+            thread::scope(|scope| {
+                let producer = scope.spawn(move || permit.publish());
+                producer
+                    .join()
+                    .expect("the scoped remote producer must not panic")
+                    .expect("the full live page accepts its remote block");
+            });
+
+            // The source full-page collector detaches remote frees even when
+            // no regular retirement range exists, then makes this page a
+            // regular candidate. This assertion is red before that collector
+            // is integrated: current `collect_retired(false)` strands it.
+            assert!(allocator.collect_retired(false));
+            assert_eq!(unsafe { page.as_ref().used() }, capacity - 1);
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            assert_eq!(allocator.queue_count(bin), Some(2));
+
+            // `mi_page_queue_enqueue_from_full` appends the reclaimed page,
+            // so exhaust the one preceding regular page before the ordinary
+            // allocator reaches the exact remotely returned block.
+            let mut filler = Vec::with_capacity(capacity - 1);
+            let reused = loop {
+                let block = allocator.allocate(request, false).unwrap();
+                if block == first {
+                    break block;
+                }
+                filler.push(block);
+            };
+            assert_eq!(filler.len(), capacity - 1);
+            blocks[0] = reused;
+
+            for block in blocks.into_iter().chain(filler) {
+                // SAFETY: the remote block was reclaimed into this ordinary
+                // lifecycle exactly once, and every other block remains one
+                // current allocation from this fixture.
+                unsafe { allocator.free(block).unwrap() };
+            }
+        });
+    }
+
+    #[test]
+    fn full_page_false_collection_releases_a_joined_remotely_empty_page() {
+        with_allocator(|allocator| {
+            let request = SMALL_SIZE_MAX;
+            let first = allocator.allocate(request, false).unwrap();
+            // SAFETY: `first` is a current allocation from this live owner
+            // session. The page map and arena retain its complete page while
+            // the scoped producers publish and the owner collects.
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            let capacity = unsafe { page.as_ref().reserved() as usize };
+            assert!(capacity > 1);
+
+            // Fill this page and take one allocation from its successor so
+            // the full queue owns exactly this first page.
+            let mut blocks = Vec::with_capacity(capacity + 1);
+            blocks.push(first);
+            while blocks.len() <= capacity {
+                blocks.push(allocator.allocate(request, false).unwrap());
+            }
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+            assert_eq!(unsafe { page.as_ref().used() }, capacity);
+            let page_count_before = allocator.session.theap().page_count();
+
+            let producers = blocks[..capacity]
+                .iter()
+                .copied()
+                .map(|block| {
+                    // SAFETY: every selected block is one distinct live
+                    // allocation from `page`; each permit is consumed by the
+                    // one joined worker before any owner queue mutation.
+                    unsafe { ScopedRemoteProducer::new(page.as_ref(), page, block) }
+                })
+                .collect::<Vec<_>>();
+            thread::scope(|scope| {
+                let producer = scope.spawn(move || {
+                    for permit in producers {
+                        permit.publish()?;
+                    }
+                    Ok::<(), crate::remote_free::RemoteFreeError>(())
+                });
+                producer
+                    .join()
+                    .expect("the scoped remote producer must not panic")
+                    .expect("every full-page block accepts one remote publication");
+            });
+
+            // `mi_theap_collect_full_pages` saves `next`, collects, and then
+            // takes its all-free `_mi_page_free` branch. Do not dereference
+            // `page` after this point: its metadata and backing are retired.
+            assert!(allocator.collect_retired(false));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            assert_eq!(allocator.session.theap().page_count(), page_count_before - 1);
+            // SAFETY: page-map lookup is an owner observation only; this
+            // exact block address was unregistered before release.
+            assert!(unsafe { allocator.page_map.checked_lookup(first.as_ptr()) }.is_null());
+
+            let successor = blocks.pop().unwrap();
+            drop(blocks);
+            // SAFETY: the successor remains the one current allocation not
+            // published remotely; the released page's former blocks are gone.
+            unsafe { allocator.free(successor).unwrap() };
+        });
+    }
+
+    #[test]
+    fn detached_full_page_collection_skips_the_live_remote_protocol() {
+        with_detached_allocator(|allocator| {
+            let request = SMALL_SIZE_MAX;
+            let first = allocator.allocate(request, false).unwrap();
+            // SAFETY: this is one current allocation in the externally
+            // serialized detached session; its page remains map-published
+            // through the collection and following local cleanup.
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            let capacity = unsafe { page.as_ref().reserved() as usize };
+            let mut blocks = Vec::with_capacity(capacity + 1);
+            blocks.push(first);
+            while blocks.len() <= capacity {
+                blocks.push(allocator.allocate(request, false).unwrap());
+            }
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            // The detached bootstrap has no remote-free path. The source
+            // full-page pass must therefore preserve its local false-force
+            // decision instead of attempting the live-owner remote protocol.
+            let collected = allocator.collect_retired(false);
+
+            for block in blocks {
+                // SAFETY: every block remains one distinct current local
+                // allocation. This cleanup runs before the red assertion, so
+                // an intentionally failing pre-fix test does not strand a
+                // page-map entry or arena span.
+                unsafe { allocator.free(block).unwrap() };
+            }
+            assert!(allocator.collect_retired(true));
+            assert!(collected);
         });
     }
 

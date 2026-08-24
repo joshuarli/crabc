@@ -14,7 +14,8 @@
 // (arena-page and arena metadata layouts), `src/init.c:15-145` (the
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
 // empty-theap initializers), `src/arena.c:1023-1095` (fresh-page metadata
-// publication), `src/page.c:708-757` (fresh-page local-state invariants),
+// publication), `src/page.c:214-243,708-757` (false-force owner-local
+// collection and fresh-page local-state invariants),
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
 // are isolated in the `page_queue` child module below.
@@ -1247,6 +1248,29 @@ pub(super) struct PageRemoteFreeOwnerState {
     pub(super) capacity: u16,
 }
 
+/// Narrow owner-only projection for the false-force local half of
+/// `_mi_page_free_collect`.
+///
+/// Unlike [`PageFreeListState`], this carries raw field pointers and never
+/// creates a whole-page mutable reference. The bounded full-page collector is
+/// nevertheless a caller-proved joined/quiescent lifecycle: later queue
+/// transitions still use existing queue helpers that borrow page metadata.
+/// The test-only scoped producer models that proof but is not a production
+/// lifetime capability. The caller remains responsible for the live-page,
+/// owner-associated, non-abandoning, and no-release proof; this state grants
+/// no queue or lifetime transition.
+pub(super) struct PageLocalCollectState {
+    pub(super) area: NonNull<u8>,
+    pub(super) area_bytes: usize,
+    pub(super) block_size: usize,
+    pub(super) capacity: u16,
+    pub(super) reserved: u16,
+    pub(super) free: NonNull<*mut Block>,
+    pub(super) local_free: NonNull<*mut Block>,
+    pub(super) used: NonNull<usize>,
+    pub(super) free_is_zero: NonNull<bool>,
+}
+
 /// Raw field projection for the bounded abandoned-page state machine.
 ///
 /// This is deliberately not a `&mut Page`: an abandoned-page producer may
@@ -2036,6 +2060,96 @@ impl Page {
             // SAFETY: capacity is immutable while the page is live in this
             // bounded slice and belongs to the exclusive owner contract.
             capacity: unsafe { (*page).capacity },
+        })
+    }
+
+    /// Projects the raw owner fields used after remote detach by the
+    /// false-force local half of `_mi_page_free_collect`.
+    ///
+    /// This is deliberately separate from [`Self::local_free_list_state`]: a
+    /// `PageFreeListState` borrows the local fields through a `&mut Page`,
+    /// while this narrow collection step does not manufacture a whole-page
+    /// mutable reference. The surrounding full-page lifecycle still requires
+    /// caller-proved joined/quiescent producers before its later queue
+    /// transition helpers.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be live initialized metadata for an owner matching
+    /// `expected_thread`: `Some` requires that exact live thread identity,
+    /// while `None` requires the explicit detached owner. The caller must
+    /// exclusively own the ordinary fields below and keep the page plus its
+    /// complete block area live until the collection completes; it must not
+    /// detach, retire, reuse, or release the page. A live owner may have
+    /// other threads retaining only [`Self::remote_free_producer_state_at`]
+    /// and may not touch the ordinary fields. The detached branch instead
+    /// has the bootstrap/session's externally serialized no-remote-producer
+    /// contract. The caller must prove that `page_offset` and
+    /// `reserved * block_size` describe the same live writable area as the
+    /// page's local lists.
+    #[inline]
+    pub(super) unsafe fn local_collect_state_for_owner_at(
+        page: NonNull<Self>,
+        expected_thread: Option<LiveThreadId>,
+    ) -> Option<PageLocalCollectState> {
+        let page = page.as_ptr();
+        // SAFETY: caller supplies initialized stable metadata; read only the
+        // atomic owner word before any ordinary-field projection.
+        let xthread_free = unsafe { &*core::ptr::addr_of!((*page).xthread_free) };
+        if xthread_free.load(Ordering::Acquire) & 1 == 0 {
+            return None;
+        }
+        // SAFETY: the caller supplies the owner proof for these ordinary
+        // fields; producers retain only atomic field pointers.
+        if unsafe { (*page).theap }.is_null() {
+            return None;
+        }
+        // SAFETY: the xthread identity is an initialized atomic field.
+        let thread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) }
+            .load(Ordering::Acquire)
+            & !PAGE_FLAG_MASK;
+        match expected_thread {
+            Some(expected) if thread_id == expected.get() => {}
+            None if thread_id == THREAD_ID_DETACHED => {}
+            _ => return None,
+        }
+
+        // SAFETY: the stated caller proof permits these owner-only geometry
+        // reads without manufacturing a `Page` reference.
+        let block_size = unsafe { (*page).block_size };
+        let reserved = unsafe { (*page).reserved };
+        let capacity = unsafe { (*page).capacity };
+        let used = unsafe { (*page).used };
+        let page_offset = unsafe { (*page).page_offset };
+        if block_size == 0
+            || reserved == 0
+            || capacity > reserved
+            || used > capacity as usize
+            || page_offset == 0
+        {
+            return None;
+        }
+        let area_bytes = usize::from(reserved).checked_mul(block_size)?;
+        // SAFETY: the caller proves the exact described area is live; this is
+        // raw address derivation only and does not create a whole-page borrow.
+        let area = unsafe { NonNull::new_unchecked(page.cast::<u8>().add(page_offset)) };
+        Some(PageLocalCollectState {
+            area,
+            area_bytes,
+            block_size,
+            capacity,
+            reserved,
+            // SAFETY: these are initialized owner-only subobjects; the
+            // returned raw pointers are not dereferenced until the caller
+            // performs its source-ordered local collection.
+            free: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) },
+            local_free: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free))
+            },
+            used: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) },
+            free_is_zero: unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero))
+            },
         })
     }
 

@@ -86,8 +86,12 @@ narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, the
 older lock-serialized caller-storage registry substrate, and one distinct
 allocator-owned process-global regular-key registry, five private compiler-TLS
 roots with direct `TPIDR_EL0` identity,
-low-bit atomic remote publication and owner collection, a bounded one-page
-abandonment/adoption protocol, a current-thread-only regular TLS backing owner,
+low-bit atomic remote publication and owner collection, one caller-proved
+joined/quiescent non-abandoning full-page collection pass: a live session
+consumes an already-published remote list before release-or-unfull, while the
+explicit detached metadata session has no remote producer path and performs
+only the local false-force portion; a bounded one-page abandonment/adoption
+protocol, a current-thread-only regular TLS backing owner,
 one ticket-zero process-static main heap/default-Theap attachment, and one
 later-ticket dynamic Theap attachment over a caller-pinned Heap image. That
 backing owner has an explicitly unsafe lifecycle boundary: its caller must
