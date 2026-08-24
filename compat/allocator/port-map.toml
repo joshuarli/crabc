@@ -173,10 +173,10 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/free.c"
-source_region = "local, delayed, and remote free protocols"
+source_region = "owner-local local_free and cross-thread xthread_free deferred-list protocols"
 rust_module = "crabc_mimalloc::free_list, crabc_mimalloc::remote_free, and crabc_mimalloc::single_thread"
 rust_item = "partial: exclusive local free, aligned interior-base recovery, unfull, retirement, arena/OS terminal page release, and bounded live-owner remote push/collection"
-intentional_difference = "The live-owner remote protocol is not yet integrated into allocation/free routing; abandonment/adoption, the separate deferred-free callback, encoded links, padding/security validation, and public invalid-free policy remain absent."
+intentional_difference = "Pinned v3.5.0 has no separate delayed-free state. The live-owner xthread_free protocol is not yet integrated into allocation/free routing; abandonment/adoption, the separate _mi_deferred_free user callback, encoded links, padding/security validation, and public invalid-free policy remain absent."
 tests = ["crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/remote_free.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/run.py"]
 exported = false
 implemented = false
@@ -1130,7 +1130,7 @@ name = "scalar-local-page-free-list-allocation-and-collection"
 source_region = "mi_block_next/set_next, mi_page_extend_free, mi_page_free_quick_collect, local _mi_page_free_collect, mi_page_malloc_zero scalar pop/zero, and mi_free_block_local"
 rust_module = "crabc_mimalloc::free_list"
 rust_item = "LocalFreeList over PageFreeListState"
-intentional_difference = "The borrowed core uses real live-page fields and the frozen unencoded normal-release profile. Encoded links, padding/security, remote/delayed free, queues, and API policy are outside this item."
+intentional_difference = "The borrowed core uses real live-page fields and the frozen unencoded normal-release profile. Encoded links, padding/security, cross-thread xthread_free integration, queues, the unrelated _mi_deferred_free user callback, and API policy are outside this item; pinned v3.5.0 has no separate delayed-free state."
 tests = ["crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/run.py"]
 exported = false
 implemented = true

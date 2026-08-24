@@ -14,9 +14,11 @@
 // (`mi_free_block_local`).
 //
 // This is the frozen normal-release path only: `MI_ENCODE_FREELIST == 0`,
-// `MI_PADDING == 0`, and no remote-free, delayed-free, page queue, theap, or
-// allocation API policy is present. It operates only through a caller-owned
-// page area and the narrow local-list projection of `types::Page`.
+// `MI_PADDING == 0`, and no cross-thread `xthread_free`, page queue, theap, or
+// allocation API policy is present. Pinned v3.5.0 has no separate delayed-free
+// state; its `_mi_deferred_free` user callback is outside this local-list core.
+// This module operates only through a caller-owned page area and the narrow
+// local-list projection of `types::Page`.
 
 use core::mem::{align_of, size_of};
 use core::ptr::{self, NonNull};
@@ -348,8 +350,8 @@ impl<'a> LocalFreeList<'a> {
     /// Pushes one currently allocated block onto the source `local_free` list.
     ///
     /// This local-only operation intentionally performs no remote-free atomic
-    /// protocol, padding validation, page-queue transition, retirement, or
-    /// delayed-free callback.
+    /// protocol, padding validation, page-queue transition, retirement, or the
+    /// unrelated `_mi_deferred_free` user callback.
     ///
     /// # Safety
     ///

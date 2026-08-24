@@ -386,7 +386,7 @@ Preserve upstream terminology where it conveys allocator invariants:
 - theap
 - TLD
 - page queues
-- delayed free
+- owner-local and cross-thread deferred-free lists
 - remote free
 - abandoned state
 - subprocess
@@ -746,8 +746,10 @@ Required stress cases include:
 12. CROSS-THREAD FREE AND ATOMIC PROTOCOLS
 ======================================================================
 
-Translate the v3.5.0 local-free, remote-free, delayed-free, and page ownership
-protocols exactly before optimizing.
+Translate the v3.5.0 owner-local `local_free`, cross-thread `xthread_free`, and
+page ownership protocols exactly before optimizing. The pinned release has no
+separate delayed-free state; its unrelated `_mi_deferred_free` user callback is
+part of the later callback surface.
 
 For every atomic field, document:
 
@@ -771,7 +773,7 @@ Required Loom/model scenarios include, as applicable:
 
 - local free racing remote free
 - multiple remote frees
-- delayed-free state transitions
+- local/remote deferred-list state transitions
 - owner collecting while another thread publishes
 - page retirement racing remote publication
 - heap/theap detachment
@@ -1697,7 +1699,7 @@ Acceptance:
 Milestone 5: concurrency and thread lifecycle
 
 - remote free
-- delayed free
+- owner-local and cross-thread deferred-free list integration
 - page abandonment/adoption
 - thread initialization and teardown
 - dynamic versioned TLS slots
