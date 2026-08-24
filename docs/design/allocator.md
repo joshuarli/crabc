@@ -54,7 +54,8 @@ lifecycle, integrated remote-free routing, thread teardown, fork protocol, or
 backend selection. The present Milestone 5 foundations are intentionally
 narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, a
 lock-serialized global key registry over caller-owned source-sized bitmap
-blocks, low-bit atomic remote publication and owner collection, and a bounded
+blocks, five private compiler-TLS roots with direct `TPIDR_EL0` identity,
+low-bit atomic remote publication and owner collection, and a bounded
 one-page abandonment/adoption protocol. That protocol preserves mapped versus
 unmapped source classification, publishes the abandoned bitmap before
 releasing ownership, restores a failed reader's bit, waits for reader
@@ -64,9 +65,15 @@ metadata and intentionally does not release or reuse the page. A test-only
 Loom model executes the live-owner remote-head publication/detach loops and
 the abandoned owner-claim/unown races under bounded schedules; deterministic
 native regressions cover the bitmap-field quiescence and full one-page
-abandonment interleavings. These slices do not
-install compiler TLS or provide the lifetime owner needed for thread teardown,
-terminal page release, or metadata reuse while a remote producer can exist.
+abandonment interleavings. A dedicated pinned-target probe proves that the TLS
+roots are hidden `STT_TLS` objects accessed through initial-exec relocations
+without `__tls_get_addr`; its negative control proves the pinned compiler
+default emits TLSDESC. Rust has no per-static model annotation, so this is a
+bounded crate-codegen proof: production integration must apply the same
+per-crate setting and audit the final linked static and shared images. These
+slices do not provide allocator-owned dynamic TLS backing or the lifetime owner
+needed for thread teardown, terminal page release, or metadata reuse while a
+remote producer can exist.
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
 context for the standalone prefixed C evidence adapter. Its stable boxed control

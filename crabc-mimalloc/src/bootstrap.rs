@@ -46,6 +46,16 @@ pub(crate) fn empty_default_theap() -> &'static Theap {
     &EMPTY_DEFAULT_THEAP.0
 }
 
+/// Returns the source empty-theap address for compiler-TLS initialization.
+///
+/// The pointer is mutable only because the pinned C TLS roots have mutable
+/// pointer type. The static image itself remains immutable and no caller may
+/// use this address to mutate it.
+#[inline]
+pub(crate) const fn empty_default_theap_ptr() -> *mut Theap {
+    core::ptr::addr_of!(EMPTY_DEFAULT_THEAP.0).cast_mut()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BootstrapError {
     /// This caller-owned image has already published its default theap.

@@ -16,6 +16,7 @@
 
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
+#![feature(thread_local)]
 
 #[cfg(feature = "test-adapter")]
 extern crate alloc as rust_alloc;
@@ -42,6 +43,7 @@ mod arena;
 mod bitmap;
 mod bootstrap;
 mod config;
+mod compiler_tls;
 mod free_list;
 mod invariants;
 mod lock;

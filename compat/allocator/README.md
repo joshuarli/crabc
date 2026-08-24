@@ -13,7 +13,10 @@ Linux memory policy, regular/aligned mapping ownership, a live two-level page
 map, ordinary and binned caller-owned bitmap views, an in-place external-arena
 substrate, the private futex-lock boundary, bounded nonallocating support
 kernels, the allocation-free recursive once protocol, pure page geometry, and
-the allocator random context over RustCrypto's original-ChaCha primitive. A
+the allocator random context over RustCrypto's original-ChaCha primitive. Five
+private compiler-TLS roots now preserve the pinned initial images and teardown
+values, while the selected Linux/AArch64 thread identity reads `TPIDR_EL0`
+directly. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,
@@ -24,9 +27,10 @@ rollback with allocation-free retry ownership after terminal unmap failure. A
 frozen-default external-arena purge slice schedules unpinned releases for four
 seconds, claims free-bitmap ownership during forced non-owning decommit, skips
 pinned backing, and preserves both external mapping ownership and immediate
-retry state on failure. Three bounded Milestone 5 substrates are also present:
+retry state on failure. Four bounded Milestone 5 substrates are also present:
 the AArch64 versioned TLS key, caller-owned slot, and locked global-key registry
-contract; the source low-bit live/abandoned-page remote-free head transitions;
+contract; the private compiler-TLS roots; the source low-bit
+live/abandoned-page remote-free head transitions;
 and one queue-detached, stable page's mapped/unmapped abandonment/adoption
 protocol, including failed-reader restoration and clear-once-set quiescence.
 A default-off Loom model exercises four exact shared head protocols: two
@@ -34,9 +38,12 @@ live-owner publishers, owner collection racing publication, bitmap adoption
 racing an abandoned producer, and abandoned unown racing publication.
 Deterministic native regressions separately cover the bitmap-field
 quiescence, abandonment publication, adoption versus a remote producer, and
-ownership-release races. These pieces are not yet wired into allocation/
-free routing, compiler TLS, process/thread teardown, terminal page release, or
-metadata reuse. A
+ownership-release races. These pieces are not yet wired into allocation/free
+routing, allocator-owned TLS backing, process/thread teardown, terminal page
+release, or metadata reuse. The compiler-TLS codegen probe proves hidden
+initial-exec AArch64 root access and direct thread-pointer identity without a
+TLS resolver, but production integration must still apply that per-crate model
+and audit the final linked ELF. A
 standalone test-only package exposes 16 `crabc_test_*` C symbols around one
 creating-thread context; it exports neither standard allocation names nor
 `mi_*` names. It is not a public allocator API and makes no
@@ -52,6 +59,7 @@ Run the harness through the pinned Linux/AArch64 development image:
 ```sh
 ./scripts/dev.sh allocator --quick
 ./scripts/dev.sh allocator --full
+./scripts/dev.sh allocator-tls
 ./scripts/dev.sh allocator-perf --smoke
 ./scripts/dev.sh allocator-perf --full
 ./scripts/dev.sh test -p crabc-mimalloc --lib --features loom remote_free::loom_tests -- --test-threads=1
@@ -91,6 +99,15 @@ runs the four test-only Loom schedules over the shared production remote-head
 publication/detach and abandoned owner-claim/unown loops and records their
 exact pass count separately from the
 ordinary unit suite.
+
+The quick gate also invokes the dedicated allocator compiler-TLS judge. It
+builds one default-off probe codegen unit with
+`-Ztls-model=initial-exec`, requires all five roots to be hidden `STT_TLS`
+objects in the appropriate initialized/uninitialized TLS sections, and rejects
+resolver-based or dynamic TLS relocation forms. A negative-control build must
+show that the pinned compiler default emits TLSDESC, keeping the production
+model requirement explicit. `allocator-tls` runs this judge alone and writes
+`compat/reports/allocator/tls-codegen.json`.
 
 `allocator --full` extends that gate by building and auditing the standalone
 static and shared test adapter, including its exact 16-symbol export boundary,

@@ -40,6 +40,7 @@ Commands:
   lua [options]       build Lua 5.4 against the crabc adapter sysroot
   allocator --quick|--full
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
+  allocator-tls       prove private initial-exec allocator TLS codegen
   allocator-perf --smoke|--full
                       request allocator comparison evidence (unavailable until its milestone)
   perf [options]      measure equivalent musl/crabc C-runtime workloads (release build)
@@ -395,6 +396,14 @@ case "$command" in
                 exit 2
                 ;;
         esac
+        ;;
+    allocator-tls)
+        ensure_image
+        if [ "$#" -ne 0 ]; then
+            usage >&2
+            exit 2
+        fi
+        run_in_container python3 compat/allocator/tls-codegen/run.py
         ;;
     allocator-perf)
         ensure_image

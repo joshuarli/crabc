@@ -20,6 +20,10 @@ test-adapter = []
 # This is meaningful only for this crate's unit-test build, where `loom` is a
 # dev-dependency; it never selects a production atomic backend.
 loom = []
+# Retains named, test-only witnesses for the allocator's private compiler-TLS
+# roots so the pinned AArch64 ELF harness can inspect their exact access model.
+# Normal allocator builds expose neither these witnesses nor a TLS ABI.
+tls-codegen-probe = []
 
 [dependencies]
 chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }

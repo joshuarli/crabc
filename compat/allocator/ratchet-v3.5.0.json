@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 62,
-    "item_count": 59,
+    "implemented": 63,
+    "item_count": 60,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 62
+    "unit_verified": 63
   },
-  "port_map_sha256": "94b99b7d88c29d56ca9b6ff885100c3ba0ab58760651f32ae49119bfc5d6c235",
+  "port_map_sha256": "ce41ce1f7c55a385d2ea5740377a83ed1c44e27dc12f9e312d2e2e23fe582c6f",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -67,6 +67,10 @@
       "unit_verified"
     ],
     "item:include/mimalloc/internal.h:nonallocating-byte-memory-support-kernels": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/prim-tls.h:linux-aarch64-private-compiler-tls-root-codegen": [
       "implemented",
       "unit_verified"
     ],

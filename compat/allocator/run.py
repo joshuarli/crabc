@@ -43,6 +43,8 @@ ADAPTED_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-v3.5.0.json"
 TEST_ADAPTER_ROOT = ALLOCATOR_ROOT / "test-adapter"
 TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
 TEST_ADAPTER_FIXTURE = TEST_ADAPTER_ROOT / "allocator-fixture-wrapper.c"
+TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run.py"
+TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 
@@ -2796,6 +2798,22 @@ def loom_remote_free_model() -> dict[str, Any]:
     }
 
 
+def compiler_tls_codegen() -> dict[str, Any]:
+    """Prove the private allocator roots use the required AArch64 TLS model."""
+
+    command = [sys.executable, str(TLS_CODEGEN_RUNNER)]
+    record = command_record(command, cwd=ROOT)
+    require_success(record, "Rust allocator compiler-TLS codegen")
+    report = read_json(TLS_CODEGEN_REPORT)
+    if report.get("status") != "pass":
+        raise HarnessError("allocator compiler-TLS report did not record a pass")
+    return {
+        "command": command,
+        "report": report,
+        "status": "passed",
+    }
+
+
 def integration_provenance() -> dict[str, str]:
     return {
         "crate": "libmimalloc-sys",
@@ -3087,6 +3105,7 @@ def run_milestone0(
         report = milestone0_report(pin, archive, source, profiles)
         report["contracts"] = {relative(path): payload["summary"] for path, payload in contracts.items()}
         report["port_map"] = port_map_counts(port_map)
+        report["compiler_tls_codegen"] = compiler_tls_codegen()
         report["production_dependency_graph"] = dependency_graph
         report["remote_free_loom_model"] = loom_remote_free_model()
         report["release_symbol_contract"] = release_symbol_contract
