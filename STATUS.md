@@ -37,7 +37,7 @@ aligned zeroed allocation, source-ordered replacement, and serialized
 cross-thread free, with deterministic retryable and retained initialization
 failure states. It neither attaches a live TLD/theap nor implements the
 source's null/needs-no-free/non-Malloc release paths. This is not a production
-backend or readiness claim. Milestone 5 now has five bounded foundations: the
+backend or readiness claim. Milestone 5 now has six bounded foundations: the
 exact AArch64 16-bit-index/48-bit-generation TLS key and caller-owned slot
 contract; five private compiler-TLS roots with direct `TPIDR_EL0` identity;
 live-owner and abandoned-page remote-free head transitions; a one-page
@@ -50,7 +50,19 @@ free-before-dynamic-root-null teardown. It leaves fast/default/cached roots
 alone and becomes terminal after an internal metadata error whose consumption
 cannot be distinguished, rather than claiming a false retry capability. It has
 no TLD/theap attachment, global allocator-backed key registry, pthread or
-process lifecycle hook, or production ELF integration. Four bounded Loom
+process lifecycle hook, or production ELF integration. Separately, an unsafe
+current-thread TLD owner now retains one full source-ordered `mi_tld_t`-shaped
+direct-zeroed metadata allocation. Its sequence is supplied as the old value
+from a future source-shaped total-thread counter rather than invented here; it
+records direct `TPIDR_EL0`, Linux NUMA, the exact Unix non-threadpool result,
+an initialized private lock, null subprocess/theap-list fields, and exact
+Malloc provenance. It exposes only the unattached checkpoint: no subprocess
+count, process-main static TLD, theap/default/cached/fast root, list
+attachment, pthread/process hook, or C pthread-mutex size claim. Its teardown
+invalidates the TLD identity before attempting metadata free and terminally
+poisons on an internal consumption-ambiguous error. An audited future owner
+may connect `Unattached -> Attached -> Detached`; no such transition exists
+yet. Four bounded Loom
 schedules execute the shared live-owner and abandoned owner-claim/unown head
 transitions. The compiler-TLS evidence proves private initial-exec AArch64 code
 generation in a

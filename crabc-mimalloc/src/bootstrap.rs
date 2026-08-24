@@ -145,7 +145,7 @@ impl ExclusiveTheapBootstrap {
         }
 
         if let TheapOwner::Live(thread_id) = owner {
-            state.tld.attach_exclusive(thread_id);
+            state.tld.attach_bootstrap_exclusive(thread_id);
         }
         let bound = match owner {
             TheapOwner::Live(_) => state

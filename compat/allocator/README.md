@@ -33,6 +33,18 @@ TLD/theap attachment, allocator-backed global key registry, or actual
 process/pthread lifecycle hook; an internal consumption-ambiguous metadata
 error clears the root and terminally poisons the owner instead of offering an
 unjustified retry capability. A
+second unsafe current-thread-only owner now allocates one full
+source-ordered `mi_tld_t` image through the same metadata allocator. It takes
+the old source total-thread-count value explicitly rather than inventing a
+process counter, records direct `TPIDR_EL0`, Linux NUMA, and the exact Unix
+non-threadpool result, and keeps subprocess and theap-list fields null. Its
+typed projection accepts only a fresh direct zeroed metadata request; teardown
+invalidates the thread ID before attempting free and terminally poisons on a
+consumption-ambiguous error. This is an unattached checkpoint, not full
+`mi_tld_create`/`mi_tld_free`: no subprocess accounting, list attachment,
+theap/default/cached/fast TLS publication, pthread/process hook, or C
+pthread-mutex layout claim exists. A later audited owner may connect the
+explicit `Unattached -> Attached -> Detached` state transition. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,

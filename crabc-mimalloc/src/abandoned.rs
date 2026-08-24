@@ -483,7 +483,7 @@ mod tests {
         theap: &mut Theap,
         thread_id: LiveThreadId,
     ) -> NonNull<Theap> {
-        tld.attach_exclusive(thread_id);
+        tld.attach_bootstrap_exclusive(thread_id);
         assert!(theap.bind_exclusive_single_thread(heap, tld));
         NonNull::from(theap)
     }

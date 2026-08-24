@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 65,
-    "item_count": 62,
+    "implemented": 66,
+    "item_count": 63,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 65
+    "unit_verified": 66
   },
-  "port_map_sha256": "c9a67fedcc90b349d1631ce5808a8143dd4d24ea8df285cdf114b9ab787dd6aa",
+  "port_map_sha256": "af7d35c9958fa4ad2fb2cc74fb98fb4e56ac9508452247116bfdc71b9ac5c1be",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -182,6 +182,10 @@
       "implemented",
       "unit_verified",
       "differential_verified"
+    ],
+    "item:src/init.c:current-thread-unattached-tld-metadata-lifecycle": [
+      "implemented",
+      "unit_verified"
     ],
     "item:src/init.c:feature-gated-one-thread-test-process-context": [
       "implemented",

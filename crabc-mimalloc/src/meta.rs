@@ -33,7 +33,7 @@ extern crate std;
 
 use core::cell::UnsafeCell;
 use core::marker::{PhantomData, PhantomPinned};
-use core::mem::{MaybeUninit, align_of};
+use core::mem::{MaybeUninit, align_of, size_of};
 use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -49,7 +49,9 @@ use crate::os::{MapAccess, Mapping, MemoryConfig};
 use crate::page_map::PageMap;
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::size_class;
-use crate::types::{LiveThreadId, MemoryId, Page};
+use crate::types::{
+    LiveThreadId, MemoryId, Page, ThreadLocalData, ThreadSequence,
+};
 
 const COLD: u8 = 0;
 const READY: u8 = 1;
@@ -60,6 +62,19 @@ const ALLOCATION_MOVING: u8 = 1;
 const ALLOCATION_RELEASING: u8 = 2;
 const ALLOCATION_RELEASED: u8 = 3;
 const ALLOCATION_REJECTED: u8 = 4;
+
+/// The source allocation route that formed a metadata capability.
+///
+/// Typed TLD initialization accepts only the direct `_mi_meta_zalloc` path:
+/// its bytes are known to be a fresh zero image. A replacement may have been
+/// source-copied and an aligned request follows a different source call, so
+/// neither may masquerade as a fresh-zeroed `mi_tld_t` initialization image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MetaAllocationOrigin {
+    DirectZeroed,
+    AlignedZeroed,
+    Replacement,
+}
 
 /// One private metadata allocation error.
 ///
@@ -119,6 +134,8 @@ pub(crate) struct MetaAllocation<'owner> {
     requested_size: usize,
     owner: NonNull<MetaAllocator>,
     state: AtomicU8,
+    origin: MetaAllocationOrigin,
+    thread_local_data_initialized: bool,
     _owner: PhantomData<Pin<&'owner MetaAllocator>>,
 }
 
@@ -134,6 +151,7 @@ impl<'owner> MetaAllocation<'owner> {
         owner: Pin<&'owner MetaAllocator>,
         pointer: NonNull<u8>,
         requested_size: usize,
+        origin: MetaAllocationOrigin,
     ) -> Self {
         Self {
             pointer,
@@ -141,6 +159,8 @@ impl<'owner> MetaAllocation<'owner> {
             requested_size,
             owner: NonNull::from(owner.get_ref()),
             state: AtomicU8::new(ALLOCATION_LIVE),
+            origin,
+            thread_local_data_initialized: false,
             _owner: PhantomData,
         }
     }
@@ -197,6 +217,69 @@ impl<'owner> MetaAllocation<'owner> {
         // replaced, both valid representations of the fixed header; `&mut
         // MetaAllocation` is the unique capability for these bytes.
         Some(unsafe { &mut *self.pointer.as_ptr().cast::<DynamicThreadLocalBacking>() })
+    }
+
+    /// Initializes this direct-zeroed capability as one complete
+    /// source-ordered `mi_tld_t`.
+    ///
+    /// The bounded TLD lifecycle has no generic metadata cast: it may only
+    /// initialize exactly one aligned [`ThreadLocalData`] request from the
+    /// direct `_mi_meta_zalloc` route and must retain this capability through
+    /// source-ordered invalidation and release. The Rust TLD's private-lock
+    /// field is a documented Linux futex boundary, so this proves the
+    /// translated layout request rather than asserting a C
+    /// `sizeof(mi_tld_t)` ABI identity. Replacements and aligned requests are
+    /// rejected before a TLD reference can form.
+    #[inline]
+    pub(crate) fn initialize_thread_local_data_unattached(
+        &mut self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node: i32,
+    ) -> bool {
+        if self.origin != MetaAllocationOrigin::DirectZeroed
+            || self.thread_local_data_initialized
+            || self.requested_size != size_of::<ThreadLocalData>()
+            || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
+        {
+            return false;
+        }
+        // SAFETY: direct `zalloc` reaches `allocate_zeroed`, so this exact
+        // typed request has the all-zero representation. That is valid for
+        // every represented TLD field before initialization: null pointers,
+        // false booleans, zero atomics in `PrivateLock`, and
+        // `MemoryKind::None`'s zero discriminant in `MemoryId`. The exact
+        // size/alignment proof above permits the temporary reference, and the
+        // complete image is written before it can escape this method.
+        let tld = unsafe { &mut *self.pointer.as_ptr().cast::<ThreadLocalData>() };
+        // SAFETY: this method retains the unique fresh-zeroed capability and
+        // writes every source-ordered field before publishing the initialized
+        // projection below.
+        unsafe {
+            tld.initialize_unattached(thread_id, thread_sequence, numa_node, self.memory);
+        }
+        self.thread_local_data_initialized = true;
+        true
+    }
+
+    /// Projects an already initialized bounded `mi_tld_t` image.
+    ///
+    /// Only [`Self::initialize_thread_local_data_unattached`] can set this
+    /// marker, and it rejects replacement/non-zero metadata routes. The
+    /// projection therefore cannot accidentally form a TLD reference over a
+    /// `rezalloc` image or arbitrary metadata bytes.
+    #[inline]
+    pub(crate) fn thread_local_data_mut(&mut self) -> Option<&mut ThreadLocalData> {
+        if !self.thread_local_data_initialized
+            || self.requested_size != size_of::<ThreadLocalData>()
+            || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
+        {
+            return None;
+        }
+        // SAFETY: the initialized-only marker is set immediately after the
+        // complete write above, and this unique capability keeps the typed
+        // image live.
+        Some(unsafe { &mut *self.pointer.as_ptr().cast::<ThreadLocalData>() })
     }
 
     #[inline]
@@ -315,7 +398,12 @@ impl MetaAllocator {
             .allocator()
             .allocate_zeroed(size)
             .ok_or(MetaError::AllocationUnavailable)?;
-        Ok(MetaAllocation::new(self, pointer, size))
+        Ok(MetaAllocation::new(
+            self,
+            pointer,
+            size,
+            MetaAllocationOrigin::DirectZeroed,
+        ))
     }
 
     /// Allocates zeroed metadata with the source alignment contract.
@@ -334,7 +422,12 @@ impl MetaAllocator {
             .allocator()
             .allocate_aligned_zeroed(size, alignment)
             .ok_or(MetaError::AllocationUnavailable)?;
-        Ok(MetaAllocation::new(self, pointer, size))
+        Ok(MetaAllocation::new(
+            self,
+            pointer,
+            size,
+            MetaAllocationOrigin::AlignedZeroed,
+        ))
     }
 
     /// Replaces a metadata allocation with a zeroed one.
@@ -377,7 +470,15 @@ impl MetaAllocator {
                 old.restore_live();
                 return Err(MetaError::AllocationUnavailable);
             };
-            (MetaAllocation::new(self, pointer, new_size), new_size.min(old_usable))
+            (
+                MetaAllocation::new(
+                    self,
+                    pointer,
+                    new_size,
+                    MetaAllocationOrigin::Replacement,
+                ),
+                new_size.min(old_usable),
+            )
         };
 
         // SAFETY: `old` is in MOVING state under its exclusive mutable
@@ -730,6 +831,30 @@ mod tests {
         assert!(allocator.free(&mut block).is_ok());
         let mut aligned = aligned;
         assert!(allocator.free(&mut aligned).is_ok());
+    }
+
+    #[test]
+    fn typed_tld_initialization_rejects_aligned_and_replacement_origins() {
+        let allocator = static_allocator();
+        let thread = LiveThreadId::new(crate::os::thread_pointer_identity())
+            .expect("the native AArch64 test thread has a live identity");
+        let sequence = ThreadSequence::from_previous_total_count(7);
+        let tld_size = size_of::<ThreadLocalData>();
+
+        let mut aligned = allocator
+            .zalloc_aligned(config(), tld_size, 4096)
+            .expect("the aligned metadata request succeeds");
+        assert!(!aligned.initialize_thread_local_data_unattached(thread, sequence, 0));
+        assert!(aligned.thread_local_data_mut().is_none());
+        allocator.free(&mut aligned).unwrap();
+
+        let mut old = allocator.zalloc(config(), 8).unwrap();
+        let mut replacement = allocator
+            .rezalloc(config(), Some(&mut old), tld_size)
+            .expect("the replacement request succeeds");
+        assert!(!replacement.initialize_thread_local_data_unattached(thread, sequence, 0));
+        assert!(replacement.thread_local_data_mut().is_none());
+        allocator.free(&mut replacement).unwrap();
     }
 
     #[test]

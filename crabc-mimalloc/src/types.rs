@@ -8,8 +8,8 @@
 // (`MemoryKind`, memory-ID layout, `Block`, page flags, and `Page`),
 // `include/mimalloc/types.h:499-598` (the default-theap prefix, including
 // `mi_page_queue_t`, `mi_random_ctx_t`, and `mi_theap_t` through `memid`),
-// `include/mimalloc/types.h:618-701` (the heap and TLD prefixes used by the
-// bootstrap-only ownership model), `include/mimalloc/types.h:608-758`
+// `include/mimalloc/types.h:618-701` (the heap prefix and complete
+// source-ordered TLD fields), `include/mimalloc/types.h:608-758`
 // (arena-page and arena metadata layouts), `src/init.c:15-145` (the
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
 // empty-theap initializers), `src/arena.c:1023-1095` (fresh-page metadata
@@ -17,12 +17,12 @@
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
 // are isolated in the `page_queue` child module below.
-// `Heap`, `ThreadLocalData`, and `Theap` below are exact source-layout
-// *prefixes* only. The included fields are the complete state used by the
-// allocation-free, exclusive single-thread bootstrap. The remaining heap,
-// TLD, subprocess, lock, and statistics lifecycle is deliberately absent;
-// no code may treat a prefix size as `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`,
-// or `sizeof(mi_theap_t)`.
+// `Heap` and `Theap` below are exact source-layout *prefixes* only.
+// `ThreadLocalData` preserves all source field ordering and meaning, but its
+// lock is the documented private-futex boundary rather than a pthread ABI
+// object. The remaining heap, subprocess, TLD attachment/list, lock, and
+// statistics lifecycle is deliberately absent; no code may treat a Rust type
+// here as `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`, or `sizeof(mi_theap_t)`.
 
 use core::ffi::c_void;
 use core::mem::{align_of, size_of};
@@ -33,6 +33,7 @@ use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize};
 use crate::config::{
     BIN_COUNT, BIN_FULL, LARGE_MAX_OBJ_WSIZE, PAGES_DIRECT, WORD_SIZE,
 };
+use crate::lock::PrivateLock;
 
 pub(crate) type ThreadId = usize;
 pub(crate) type ThreadFree = usize;
@@ -77,6 +78,33 @@ impl LiveThreadId {
     #[inline]
     pub(crate) const fn get(self) -> ThreadId {
         self.0.get()
+    }
+}
+
+/// One source-issued `mi_tld_t::thread_seq` value.
+///
+/// `src/init.c:mi_tld_create` obtains this value from the previous result of
+/// its relaxed `subproc->thread_total_count` increment. The process/subprocess
+/// owner that owns that counter does not exist in this bounded slice, so this
+/// type deliberately records a supplied value without creating a second
+/// process-global sequence source. Future process initialization must pass the
+/// exact old counter value through [`Self::from_previous_total_count`].
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ThreadSequence(usize);
+
+impl ThreadSequence {
+    /// Records the old value returned by the source relaxed total-thread
+    /// counter increment.
+    #[inline]
+    pub(crate) const fn from_previous_total_count(previous: usize) -> Self {
+        Self(previous)
+    }
+
+    /// Returns the source sequence value stored in `mi_tld_t`.
+    #[inline]
+    pub(crate) const fn get(self) -> usize {
+        self.0
     }
 }
 
@@ -132,14 +160,26 @@ impl Heap {
     }
 }
 
-/// Prefix of `mi_tld_t` through its thread identity.
+/// Source-ordered `mi_tld_t` fields.
 ///
-/// Queue locks, theap lists, NUMA selection, and the rest of `mi_tld_t` need
-/// the omitted thread lifecycle. This prefix exists only to retain the exact
-/// pointer and identity relationship used by `mi_theap_t` during bootstrap.
+/// The field order and meanings match pinned `include/mimalloc/types.h`, but
+/// this is not a byte-for-byte C ABI claim: [`PrivateLock`] is the allocator's
+/// audited Linux futex boundary, not the upstream pthread-mutex object. The
+/// detached bootstrap and the bounded current-thread metadata owner are the
+/// only constructors. The latter remains explicitly unattached: it publishes
+/// neither a subprocess nor a theap list, and cannot stand in for a complete
+/// `mi_tld_create` lifecycle.
 #[repr(C)]
 pub(crate) struct ThreadLocalData {
     thread_id: ThreadId,
+    thread_seq: usize,
+    numa_node: i32,
+    subprocess: *mut Subprocess,
+    theaps: *mut Theap,
+    theaps_lock: PrivateLock,
+    recurse: bool,
+    is_in_threadpool: bool,
+    memid: MemoryId,
 }
 
 impl ThreadLocalData {
@@ -147,6 +187,14 @@ impl ThreadLocalData {
     pub(crate) const fn detached() -> Self {
         Self {
             thread_id: THREAD_ID_DETACHED,
+            thread_seq: 0,
+            numa_node: 0,
+            subprocess: null_mut(),
+            theaps: null_mut(),
+            theaps_lock: PrivateLock::new(),
+            recurse: false,
+            is_in_threadpool: false,
+            memid: MemoryId::static_empty(),
         }
     }
 
@@ -155,9 +203,128 @@ impl ThreadLocalData {
         self.thread_id
     }
 
+    /// Returns the source sequence previously issued by the process owner.
     #[inline]
-    pub(crate) fn attach_exclusive(&mut self, thread_id: LiveThreadId) {
+    pub(crate) const fn thread_sequence(&self) -> ThreadSequence {
+        ThreadSequence(self.thread_seq)
+    }
+
+    /// Returns the NUMA node selected by the pinned Unix primitive.
+    #[inline]
+    pub(crate) const fn numa_node(&self) -> i32 {
+        self.numa_node
+    }
+
+    /// Returns whether this TLD is deliberately outside the unported
+    /// subprocess/theap lifecycle.
+    #[inline]
+    pub(crate) const fn is_unattached(&self) -> bool {
+        self.subprocess.is_null() && self.theaps.is_null()
+    }
+
+    /// Returns whether a deferred callback is currently recursing.
+    #[inline]
+    pub(crate) const fn recursing(&self) -> bool {
+        self.recurse
+    }
+
+    /// Returns the pinned Unix thread-pool observation.
+    #[inline]
+    pub(crate) const fn is_in_threadpool(&self) -> bool {
+        self.is_in_threadpool
+    }
+
+    /// Returns the metadata provenance of this exact TLD allocation.
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.memid
+    }
+
+    /// Test-only witness that `mi_tld_init`'s private theap-list lock starts
+    /// unlocked in the complete metadata image.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_theaps_lock_is_unlocked(&self) -> bool {
+        self.theaps_lock.try_lock().is_some()
+    }
+
+    /// Records a live identity on caller-pinned/static bootstrap storage.
+    ///
+    /// This is the allocation-free bootstrap-only identity update used by
+    /// [`crate::bootstrap::ExclusiveTheapBootstrap`]. It neither initializes
+    /// a dynamic metadata TLD nor attaches it to a subprocess or theap list;
+    /// `ThreadLocalDataOwner` owns that distinct future lifecycle boundary.
+    #[inline]
+    pub(crate) fn attach_bootstrap_exclusive(&mut self, thread_id: LiveThreadId) {
         self.thread_id = thread_id.get();
+    }
+
+    /// Initializes the complete, unattached result of the bounded
+    /// `mi_tld_create` adaptation.
+    ///
+    /// # Safety
+    ///
+    /// `self` must name the unique fresh-zeroed, properly aligned valid image
+    /// for one `ThreadLocalData` metadata request. No concurrent observer may
+    /// exist there. `memid` must describe that exact allocation. The caller
+    /// must keep the allocation live until the source-ordered invalidation and
+    /// metadata release transition completes.
+    pub(crate) unsafe fn initialize_unattached(
+        &mut self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node: i32,
+        memid: MemoryId,
+    ) {
+        // SAFETY: the caller proves this fresh-zeroed metadata image is
+        // uniquely owned. Writing the complete source-ordered image replaces
+        // its valid zero representation before any observer can receive a
+        // reference.
+        unsafe {
+            core::ptr::write(
+                self,
+                Self {
+                    thread_id: thread_id.get(),
+                    thread_seq: thread_sequence.get(),
+                    numa_node,
+                    subprocess: null_mut(),
+                    theaps: null_mut(),
+                    theaps_lock: PrivateLock::new(),
+                    recurse: false,
+                    // `src/prim/unix/prim.c` returns false exactly.
+                    is_in_threadpool: false,
+                    memid,
+                },
+            );
+        }
+    }
+
+    /// Checks the complete bounded TLD invariant before its owner exposes it.
+    #[inline]
+    pub(crate) fn matches_unattached_lifecycle(
+        &self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+    ) -> bool {
+        self.thread_id == thread_id.get()
+            && self.thread_seq == thread_sequence.get()
+            && self.is_unattached()
+            && !self.recurse
+            // This is the pinned Unix primitive result, not a guessed policy.
+            && !self.is_in_threadpool
+    }
+
+    /// Executes the `mi_tld_free` identity invalidation before the bounded
+    /// metadata release attempt.
+    ///
+    /// The full source also decrements `subproc->thread_count` and destroys
+    /// the pthread lock. This owner is explicitly unattached, so it cannot
+    /// truthfully perform either operation; its unique no-waiter lifecycle
+    /// instead makes the private lock ready for mapping release.
+    #[inline]
+    pub(crate) fn invalidate_unattached_for_teardown(&mut self) {
+        debug_assert!(self.is_unattached());
+        self.thread_id = usize::MAX;
     }
 
     #[inline]
@@ -1518,9 +1685,26 @@ impl BootstrapPage {
 pub(crate) static EMPTY_PAGE: BootstrapPage = BootstrapPage(Page::empty());
 
 // `src/init.c:mi_tld_detached`. It is immutable: the live default-theap
-// bootstrap owns a separate TLD prefix after pinning. Keeping this source
-// static separate is what lets the initial empty theap avoid any TLS access.
-pub(crate) static DETACHED_THREAD_LOCAL: ThreadLocalData = ThreadLocalData::detached();
+// bootstrap owns a separate TLD after pinning. Dynamic TLD fields contain raw
+// pointers and therefore must not grant a blanket `Sync` implementation to
+// `ThreadLocalData`; this wrapper grants it only to this never-mutated static
+// source image. Keeping it separate is what lets the initial empty theap
+// avoid any TLS access.
+#[repr(transparent)]
+struct DetachedThreadLocal(ThreadLocalData);
+
+// SAFETY: no public API yields a reference or mutable pointer to the wrapped
+// TLD. The empty static theap stores its address only as an immutable source
+// sentinel; a live bootstrap replaces that pointer with its own pinned TLD
+// before it can publish a mutable theap.
+unsafe impl Sync for DetachedThreadLocal {}
+
+static DETACHED_THREAD_LOCAL: DetachedThreadLocal = DetachedThreadLocal(ThreadLocalData::detached());
+
+#[inline]
+const fn detached_thread_local_ptr() -> *mut ThreadLocalData {
+    core::ptr::addr_of!(DETACHED_THREAD_LOCAL.0).cast_mut()
+}
 
 /// Exact ABI image of `mi_random_ctx_t` used only by the static theap prefix.
 ///
@@ -1592,7 +1776,7 @@ impl Theap {
     pub(crate) const fn empty() -> Self {
         Self {
             pages_free_direct: [EMPTY_PAGE.as_ptr(); PAGES_DIRECT],
-            tld: core::ptr::addr_of!(DETACHED_THREAD_LOCAL).cast_mut(),
+            tld: detached_thread_local_ptr(),
             heap: AtomicPtr::new(null_mut()),
             subproc: AtomicPtr::new(null_mut()),
             refcount: AtomicUsize::new(1),
@@ -2174,7 +2358,7 @@ mod tests {
         let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
         let mut heap = Heap::bootstrap_empty();
         let mut tld = ThreadLocalData::detached();
-        tld.attach_exclusive(thread_id);
+        tld.attach_bootstrap_exclusive(thread_id);
         let mut theap = Theap::empty();
         assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
         assert_eq!(theap.page_full_retain(), 2);
@@ -2253,7 +2437,7 @@ mod tests {
         let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
         let mut heap = Heap::bootstrap_empty();
         let mut tld = ThreadLocalData::detached();
-        tld.attach_exclusive(thread_id);
+        tld.attach_bootstrap_exclusive(thread_id);
         let mut theap = Theap::empty();
         assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
 
@@ -2323,7 +2507,7 @@ mod tests {
         let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
         let mut heap = Heap::bootstrap_empty();
         let mut tld = ThreadLocalData::detached();
-        tld.attach_exclusive(thread_id);
+        tld.attach_bootstrap_exclusive(thread_id);
         let mut theap = Theap::empty();
         assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
 

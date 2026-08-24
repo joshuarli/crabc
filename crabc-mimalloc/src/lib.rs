@@ -66,6 +66,7 @@ mod support;
 #[cfg(feature = "test-adapter")]
 mod test_context;
 mod thread_local;
+mod tld;
 mod types;
 
 #[cfg(feature = "test-adapter")]

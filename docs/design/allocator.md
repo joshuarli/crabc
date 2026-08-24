@@ -39,9 +39,9 @@ The ordinary page lifecycle supplies the first and later metadata blocks; no
 `alloc`, libc, public pthread API, compiler-TLS root, separate metadata slab,
 or mmap-per-block path participates. Its must-use, non-Copy
 `MetaAllocation<'owner>` capability records the static owner address, requested
-size, and `MemoryId::Malloc` provenance. A future TLD/theap lifecycle owner
-must retain and move that capability as a field, never reconstruct it from the
-raw pointer. The checkpoint retains the source allocation-under-lock,
+size, and `MemoryId::Malloc` provenance. The bounded regular-TLS and
+unattached-TLD owners retain and move that capability as a field, never
+reconstruct it from the raw pointer. The checkpoint retains the source allocation-under-lock,
 unlock-before-copy/free `rezalloc` ordering and serializes cross-thread free,
 but it intentionally covers only successful Malloc capabilities: null,
 needs-no-free, and non-Malloc arena-release paths, subprocess destruction,
@@ -77,7 +77,7 @@ lock-serialized global key registry over caller-owned source-sized bitmap
 blocks, five private compiler-TLS roots with direct `TPIDR_EL0` identity,
 low-bit atomic remote publication and owner collection, a bounded one-page
 abandonment/adoption protocol, and a current-thread-only regular TLS backing
-owner. That owner has an explicitly unsafe attach boundary: its caller must
+owner. That owner has an explicitly unsafe lifecycle boundary: its caller must
 exclusively own the current `TPIDR_EL0` TLS lifecycle. It obtains a zeroed
 `mi_thread_locals_t`-shaped flexible image from `MetaAllocator`, starts at 16
 slots, doubles below 1024, adds 1024 at and above 1024, honors the least-index
@@ -93,6 +93,24 @@ inventing a retryable capability. No valid-program C semantic difference is
 claimed from that internal error limitation. The backing owner does not provide
 the source's TLD/theap attachment, allocator-backed global key registry,
 process or pthread teardown hook, or production ELF integration.
+
+A separate unsafe `ThreadLocalDataOwner` now owns one full source-ordered
+`mi_tld_t`-shaped metadata image for its exact current `TPIDR_EL0` identity.
+It accepts a `ThreadSequence` supplied by the future process owner—the old
+value of the source relaxed `thread_total_count` increment—rather than
+inventing an unconnected global counter. It records the existing Linux NUMA
+observation, the pinned Unix `is_in_threadpool = false` result, initialized
+private lock, null subprocess/theap-list pointers, and exact Malloc `memid`.
+The typed capability can initialize this image only from a fresh direct zeroed
+metadata request, never a replacement or aligned request. Its bounded teardown
+invalidates `thread_id` before attempting metadata free and becomes terminal
+on a consumption-ambiguous error. This is not full `mi_tld_create` or
+`mi_tld_free`: it has no subprocess count, main static TLD, list attachment,
+compiler-TLS publication, pthread/process hook, or general lock destructor.
+`PrivateLock` preserves the TLD field's private-lock meaning but is not a
+byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made. A
+later audited owner-controlled `Unattached -> Attached -> Detached` transition
+may connect it to theap lifecycle; this checkpoint exposes only `Unattached`.
 
 The abandonment/adoption protocol preserves mapped versus unmapped source
 classification, publishes the abandoned bitmap before
