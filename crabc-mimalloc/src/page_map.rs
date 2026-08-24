@@ -221,6 +221,19 @@ unsafe impl Send for PageMap {}
 unsafe impl Sync for PageMap {}
 
 impl PageMap {
+    /// Returns the immutable OS-memory facts captured when this source page
+    /// map was initialized.
+    ///
+    /// Fresh-page selection must use the same frozen page size and
+    /// `_mi_os_good_alloc_size` policy as page-map mappings.  The value is
+    /// `Copy` and contains no mutable option state, so exposing this narrow
+    /// observation does not weaken the page map's external synchronization
+    /// contract.
+    #[inline]
+    pub(crate) const fn memory_config(&self) -> MemoryConfig {
+        self.config
+    }
+
     /// Reserves and initializes the source two-level page map.
     pub(crate) fn initialize(
         config: MemoryConfig,

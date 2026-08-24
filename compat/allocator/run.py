@@ -677,6 +677,183 @@ int main(void) {
 """
 
 
+# This trace deliberately exercises only public allocator operations, while
+# selecting each ordinary page class with the exact v3.5.0 boundary constants
+# from `mimalloc/internal.h`.  The emitted record contains only logical case
+# names, booleans, sizes, and deterministic content fingerprints: emitting an
+# allocation address would make a differential record non-reproducible and
+# would not prove an allocator contract.
+FUNDAMENTAL_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+
+static bool bytes_equal(const uint8_t* bytes, size_t size, uint8_t value) {
+  for (size_t index = 0; index < size; index++) {
+    if (bytes[index] != value) return false;
+  }
+  return true;
+}
+
+/* A deterministic non-cryptographic content fingerprint for trace evidence. */
+static uint64_t content_hash(const uint8_t* bytes, size_t size) {
+  uint64_t value = UINT64_C(14695981039346656037);
+  for (size_t index = 0; index < size; index++) {
+    value ^= bytes[index];
+    value *= UINT64_C(1099511628211);
+  }
+  return value;
+}
+
+static bool record_page_class(const char* name, size_t request) {
+  uint8_t* const block = (uint8_t*)mi_malloc(request);
+  if (block == NULL) return false;
+  const size_t usable = mi_usable_size(block);
+  const bool valid = usable >= request;
+  printf("trace.fundamental.class.%s.request=%zu\n", name, request);
+  printf("trace.fundamental.class.%s.usable=%zu\n", name, usable);
+  printf("trace.fundamental.class.%s.success=%u\n", name, valid);
+  mi_free(block);
+  return valid;
+}
+
+int main(void) {
+  puts("CRABC_MI_FUNDAMENTAL_TRACE_BEGIN");
+
+  if (!record_page_class("small", MI_SMALL_MAX_OBJ_SIZE)) return 2;
+  if (!record_page_class("medium", MI_SMALL_MAX_OBJ_SIZE + 1)) return 3;
+  if (!record_page_class("large", MI_MEDIUM_MAX_OBJ_SIZE + 1)) return 4;
+  if (!record_page_class("singleton", MI_LARGE_MAX_OBJ_SIZE + 1)) return 5;
+
+  const size_t calloc_count = 7;
+  const size_t calloc_size = 13;
+  const size_t calloc_total = calloc_count * calloc_size;
+  uint8_t* const zeroed = (uint8_t*)mi_calloc(calloc_count, calloc_size);
+  if (zeroed == NULL) return 6;
+  printf("trace.fundamental.calloc.count=%zu\n", calloc_count);
+  printf("trace.fundamental.calloc.size=%zu\n", calloc_size);
+  printf("trace.fundamental.calloc.usable=%zu\n", mi_usable_size(zeroed));
+  printf("trace.fundamental.calloc.cleared=%u\n", bytes_equal(zeroed, calloc_total, 0));
+  printf("trace.fundamental.calloc.content_hash=%llu\n",
+         (unsigned long long)content_hash(zeroed, calloc_total));
+  mi_free(zeroed);
+
+  const size_t overflow_count = SIZE_MAX;
+  const size_t overflow_size = 2;
+  void* const overflow = mi_calloc(overflow_count, overflow_size);
+  printf("trace.fundamental.calloc_overflow.count=%zu\n", overflow_count);
+  printf("trace.fundamental.calloc_overflow.size=%zu\n", overflow_size);
+  printf("trace.fundamental.calloc_overflow.returns_null=%u\n", overflow == NULL);
+  if (overflow != NULL) {
+    mi_free(overflow);
+    return 7;
+  }
+
+  uint8_t* const realloc_null = (uint8_t*)mi_realloc(NULL, 41);
+  if (realloc_null == NULL) return 8;
+  memset(realloc_null, 0x31, 41);
+  printf("trace.fundamental.realloc_null.request=41\n");
+  printf("trace.fundamental.realloc_null.usable=%zu\n", mi_usable_size(realloc_null));
+  printf("trace.fundamental.realloc_null.content_hash=%llu\n",
+         (unsigned long long)content_hash(realloc_null, 41));
+  mi_free(realloc_null);
+
+  const size_t grow_original_size = 257;
+  const size_t grow_size = 8193;
+  uint8_t* grow = (uint8_t*)mi_malloc(grow_original_size);
+  if (grow == NULL) return 9;
+  memset(grow, 0x42, grow_original_size);
+  const uint64_t grow_before = content_hash(grow, grow_original_size);
+  grow = (uint8_t*)mi_realloc(grow, grow_size);
+  if (grow == NULL) return 10;
+  const uint64_t grow_after = content_hash(grow, grow_original_size);
+  printf("trace.fundamental.realloc_grow.original_size=%zu\n", grow_original_size);
+  printf("trace.fundamental.realloc_grow.new_size=%zu\n", grow_size);
+  printf("trace.fundamental.realloc_grow.usable=%zu\n", mi_usable_size(grow));
+  printf("trace.fundamental.realloc_grow.preserved=%u\n", grow_before == grow_after);
+  printf("trace.fundamental.realloc_grow.content_hash=%llu\n", (unsigned long long)grow_after);
+
+  const size_t shrink_size = 71;
+  const uint64_t shrink_expected = content_hash(grow, shrink_size);
+  grow = (uint8_t*)mi_realloc(grow, shrink_size);
+  if (grow == NULL) return 11;
+  const uint64_t shrink_after = content_hash(grow, shrink_size);
+  printf("trace.fundamental.realloc_shrink.new_size=%zu\n", shrink_size);
+  printf("trace.fundamental.realloc_shrink.usable=%zu\n", mi_usable_size(grow));
+  printf("trace.fundamental.realloc_shrink.preserved=%u\n", shrink_expected == shrink_after);
+  printf("trace.fundamental.realloc_shrink.content_hash=%llu\n", (unsigned long long)shrink_after);
+  mi_free(grow);
+
+  uint8_t* failure_preserved = (uint8_t*)mi_malloc(59);
+  if (failure_preserved == NULL) return 12;
+  memset(failure_preserved, 0x73, 59);
+  const uint64_t failure_before = content_hash(failure_preserved, 59);
+  void* const failed_realloc = mi_realloc(failure_preserved, MI_MAX_ALLOC_SIZE + 1);
+  if (failed_realloc != NULL) {
+    mi_free(failed_realloc);
+    return 13;
+  }
+  const uint64_t failure_after = content_hash(failure_preserved, 59);
+  printf("trace.fundamental.realloc_failure.request=%zu\n", (size_t)(MI_MAX_ALLOC_SIZE + 1));
+  printf("trace.fundamental.realloc_failure.returns_null=%u\n", failed_realloc == NULL);
+  printf("trace.fundamental.realloc_failure.preserved=%u\n", failure_before == failure_after);
+  printf("trace.fundamental.realloc_failure.content_hash=%llu\n", (unsigned long long)failure_after);
+  mi_free(failure_preserved);
+
+  uint8_t* size_zero = (uint8_t*)mi_malloc(59);
+  if (size_zero == NULL) return 14;
+  size_zero = (uint8_t*)mi_realloc(size_zero, 0);
+  printf("trace.fundamental.realloc_size_zero.request=0\n");
+  printf("trace.fundamental.realloc_size_zero.returns_nonnull=%u\n", size_zero != NULL);
+  if (size_zero == NULL) return 15;
+  printf("trace.fundamental.realloc_size_zero.usable=%zu\n", mi_usable_size(size_zero));
+  mi_free(size_zero);
+
+  const size_t aligned_size = 97;
+  const size_t aligned_alignment = 256;
+  uint8_t* const aligned = (uint8_t*)mi_malloc_aligned(aligned_size, aligned_alignment);
+  if (aligned == NULL) return 16;
+  printf("trace.fundamental.aligned.size=%zu\n", aligned_size);
+  printf("trace.fundamental.aligned.alignment=%zu\n", aligned_alignment);
+  printf("trace.fundamental.aligned.usable=%zu\n", mi_usable_size(aligned));
+  printf("trace.fundamental.aligned.valid=%u\n",
+         mi_usable_size(aligned) >= aligned_size && ((uintptr_t)aligned % aligned_alignment) == 0);
+  mi_free(aligned);
+
+  const size_t offset_size = 191;
+  const size_t offset_alignment = 512;
+  const size_t offset = 13;
+  uint8_t* const offset_aligned =
+      (uint8_t*)mi_malloc_aligned_at(offset_size, offset_alignment, offset);
+  if (offset_aligned == NULL) return 17;
+  printf("trace.fundamental.offset_aligned.size=%zu\n", offset_size);
+  printf("trace.fundamental.offset_aligned.alignment=%zu\n", offset_alignment);
+  printf("trace.fundamental.offset_aligned.offset=%zu\n", offset);
+  printf("trace.fundamental.offset_aligned.usable=%zu\n", mi_usable_size(offset_aligned));
+  printf("trace.fundamental.offset_aligned.valid=%u\n",
+         mi_usable_size(offset_aligned) >= offset_size
+             && (((uintptr_t)offset_aligned + offset) % offset_alignment) == 0);
+  mi_free(offset_aligned);
+
+  const size_t forced_oom_request = MI_MAX_ALLOC_SIZE + 1;
+  void* const forced_oom = mi_malloc(forced_oom_request);
+  printf("trace.fundamental.oom.request=%zu\n", forced_oom_request);
+  printf("trace.fundamental.oom.classification_invalid_request=1\n");
+  printf("trace.fundamental.oom.returns_null=%u\n", forced_oom == NULL);
+  if (forced_oom != NULL) {
+    mi_free(forced_oom);
+    return 18;
+  }
+
+  puts("CRABC_MI_FUNDAMENTAL_TRACE_END");
+  return 0;
+}
+"""
+
+
 class HarnessError(RuntimeError):
     """A reproducibility, source, or oracle-build contract failure."""
 
@@ -1607,6 +1784,51 @@ def parse_small_trace(output: str) -> dict[str, int]:
     return parse_layout(output[start:stop].strip())
 
 
+def parse_address_independent_trace(
+    output: str, *, begin: str, end: str, description: str
+) -> dict[str, int]:
+    """Parse one marked trace and reject address-bearing machine fields.
+
+    Trace records are intentionally portable across allocator processes and
+    runs.  A future Rust probe must therefore emit only logical identifiers,
+    booleans, sizes, and content fingerprints under the same marker schema;
+    raw allocation addresses are neither stable evidence nor an allowed field.
+    """
+
+    if output.count(begin) != 1 or output.count(end) != 1:
+        raise HarnessError(f"{description} did not emit exactly one pair of markers")
+    start = output.index(begin) + len(begin)
+    stop = output.index(end)
+    if stop <= start:
+        raise HarnessError(f"{description} emitted reversed markers")
+    record = output[start:stop].strip()
+    if re.search(r"\b0[xX][0-9A-Fa-f]+\b", record):
+        raise HarnessError(f"{description} emitted a raw address")
+    values = parse_layout(record)
+    address_key = next(
+        (
+            key
+            for key in values
+            if re.search(r"(?:^|[._-])(?:addr(?:ess)?|ptr|pointer)(?:$|[._-])", key)
+        ),
+        None,
+    )
+    if address_key is not None:
+        raise HarnessError(f"{description} emitted a raw address field: {address_key}")
+    return values
+
+
+def parse_fundamental_trace(output: str) -> dict[str, int]:
+    """Parse the pinned-C or future-Rust fundamental-operation trace."""
+
+    return parse_address_independent_trace(
+        output,
+        begin="CRABC_MI_FUNDAMENTAL_TRACE_BEGIN",
+        end="CRABC_MI_FUNDAMENTAL_TRACE_END",
+        description="fundamental-operation trace",
+    )
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -1679,6 +1901,33 @@ def compare_small_trace(
     if problems:
         raise HarnessError(
             "Rust small-allocation trace differs from pinned release C: "
+            + "; ".join(problems)
+        )
+    return {"compared_value_count": len(rust_trace), "status": "matched"}
+
+
+def compare_fundamental_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require a future Rust fundamental trace to equal the pinned C record."""
+
+    missing_from_c = sorted(set(rust_trace).difference(c_trace))
+    missing_from_rust = sorted(set(c_trace).difference(rust_trace))
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in sorted(set(c_trace).intersection(rust_trace))
+        if c_trace[key] != rust_trace[key]
+    ]
+    problems: list[str] = []
+    if missing_from_c:
+        problems.append("missing from C oracle: " + ", ".join(missing_from_c))
+    if missing_from_rust:
+        problems.append("missing from Rust port: " + ", ".join(missing_from_rust))
+    if mismatches:
+        problems.append("value mismatches: " + ", ".join(mismatches))
+    if problems:
+        raise HarnessError(
+            "Rust fundamental-operation trace differs from pinned release C: "
             + "; ".join(problems)
         )
     return {"compared_value_count": len(rust_trace), "status": "matched"}
@@ -1823,6 +2072,58 @@ def build_small_trace(
     }
 
 
+def build_fundamental_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the pinned-C baseline for the Milestone 4 public API slice."""
+
+    trace_source = profile_dir / "fundamental-trace-probe.c"
+    trace_binary = profile_dir / "fundamental-trace-probe"
+    trace_source.write_text(FUNDAMENTAL_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C fundamental-operation trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C fundamental-operation trace execution")
+    return {
+        "command": command,
+        "record": parse_fundamental_trace(str(run["stdout"])),
+    }
+
+
+def blocked_fundamental_trace_comparison() -> dict[str, str]:
+    """Describe the intentional absence of a Rust Milestone 4 trace probe."""
+
+    return {
+        "reason": (
+            "Rust fundamental-operation trace is not wired yet; the pinned C "
+            "record is baseline evidence only and no Rust/C parity claim is made."
+        ),
+        "status": "blocked",
+    }
+
+
 def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: Sequence[str]) -> dict[str, Any]:
     profile_dir = REPORT_ROOT / "oracle" / name
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -1880,6 +2181,10 @@ def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: S
         result["single_thread_small_trace"] = build_small_trace(
             compiler, source, profile_dir, flags
         )
+        result["fundamental_trace"] = {
+            "c_oracle": build_fundamental_trace(compiler, source, profile_dir, flags),
+            "rust_comparison": blocked_fundamental_trace_comparison(),
+        }
     return result
 
 

@@ -813,6 +813,37 @@ impl Page {
         self.block_size
     }
 
+    /// Reads the source `MI_PAGE_HAS_INTERIOR_POINTERS` flag.
+    ///
+    /// A live aligned allocation may begin after its source free-list block;
+    /// this page-wide flag tells free and usable-size lookup to recover the
+    /// block base before applying ordinary block invariants. The flag shares
+    /// the low bits of `xthread_id`, exactly as in
+    /// `internal.h:mi_page_has_interior_pointers`.
+    #[inline]
+    pub(crate) fn has_interior_pointers(&self) -> bool {
+        self.xthread_id.load(core::sync::atomic::Ordering::Relaxed)
+            & PAGE_HAS_INTERIOR_POINTERS
+            != 0
+    }
+
+    /// Applies `internal.h:mi_page_set_has_interior_pointers` without changing
+    /// the page's owner identity or full-queue membership flag.
+    #[inline]
+    pub(crate) fn set_has_interior_pointers(&self, has_interior_pointers: bool) {
+        if has_interior_pointers {
+            self.xthread_id.fetch_or(
+                PAGE_HAS_INTERIOR_POINTERS,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        } else {
+            self.xthread_id.fetch_and(
+                !PAGE_HAS_INTERIOR_POINTERS,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        }
+    }
+
     #[inline]
     pub(crate) fn set_block_size(&mut self, block_size: usize) {
         self.block_size = block_size;
@@ -1079,6 +1110,11 @@ impl Theap {
         self.subproc
             .store(heap.subprocess, core::sync::atomic::Ordering::Release);
         self.is_detached = false;
+        // `theap.c:mi_theap_options_init` snapshots the default
+        // `mi_option_page_full_retain == 2` into each initialized theap. This
+        // bounded lifecycle freezes that normal-release value rather than
+        // introducing mutable option state.
+        self.page_full_retain = 2;
         // The normal source default permits abandonment. This bounded state
         // intentionally uses the source's non-abandoning/destroyable-theap
         // mode because it does not implement remote-free or adoption.
@@ -1122,6 +1158,11 @@ impl Theap {
     #[inline]
     pub(crate) const fn page_count(&self) -> usize {
         self.page_count
+    }
+
+    #[inline]
+    pub(crate) const fn page_full_retain(&self) -> isize {
+        self.page_full_retain
     }
 
     #[inline]
@@ -1573,6 +1614,7 @@ mod tests {
         tld.attach_exclusive(thread_id);
         let mut theap = Theap::empty();
         assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+        assert_eq!(theap.page_full_retain(), 2);
 
         let mut page = Page::empty();
         page.used = 7;
@@ -1607,6 +1649,33 @@ mod tests {
         assert_eq!(page.capacity(), 0);
         assert_eq!(page.reserved(), 32);
         assert_eq!(page.block_size(), 16);
+        assert!(!page.has_interior_pointers());
+        page.set_has_interior_pointers(true);
+        assert!(page.has_interior_pointers());
+        assert_eq!(
+            page.xthread_id.load(core::sync::atomic::Ordering::Relaxed),
+            thread_id.get() | PAGE_HAS_INTERIOR_POINTERS,
+        );
+        page.set_has_interior_pointers(false);
+        assert!(!page.has_interior_pointers());
+        assert_eq!(
+            page.xthread_id.load(core::sync::atomic::Ordering::Relaxed),
+            thread_id.get(),
+        );
+        page.xthread_id.fetch_or(
+            PAGE_IN_FULL_QUEUE,
+            core::sync::atomic::Ordering::Relaxed,
+        );
+        page.set_has_interior_pointers(true);
+        page.set_has_interior_pointers(false);
+        assert_eq!(
+            page.xthread_id.load(core::sync::atomic::Ordering::Relaxed),
+            thread_id.get() | PAGE_IN_FULL_QUEUE,
+        );
+        page.xthread_id.fetch_and(
+            !PAGE_IN_FULL_QUEUE,
+            core::sync::atomic::Ordering::Relaxed,
+        );
         assert_eq!(page.page_offset(), 128);
         assert_eq!(page.slice_pcommitted, 0);
         assert!(!page.free_is_zero);

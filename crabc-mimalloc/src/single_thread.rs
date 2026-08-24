@@ -15,43 +15,49 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/alloc.c:21-103,130-191`
-// (`mi_page_malloc_zero`, `mi_theap_malloc_small_zero_nonnull`, and direct
-// small-page selection), `src/free.c:28-50` (`mi_free_block_local`),
-// `src/page.c:708-902,360-522` (free-page search, fresh page queueing,
-// full-page retention, retirement, and forced retired-page collection),
-// `src/page-queue.c:126-423` (direct-cache range maintenance around queue
-// mutations), `src/arena.c:950-1114,1210-1283` (fresh regular page metadata,
-// arena-page registration, page-map publication, and release ordering), and
-// `include/mimalloc/internal.h:650-654,945-949` (direct-page and size-bin
-// selection).
+// (`mi_page_malloc_zero`, `mi_theap_malloc_small_zero_nonnull`, and generic
+// allocation dispatch), `src/free.c:28-50` (`mi_free_block_local`),
+// `src/page.c:360-522,708-1069` (free-page search, full-page retention,
+// retirement, forced retry, regular and huge page selection),
+// `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
+// queue mutations), `src/arena.c:950-1283` (fresh regular/singleton page
+// metadata, arena-page registration, page-map publication, and release
+// ordering), and `include/mimalloc/internal.h:650-654,945-949`
+// (direct-page, size-bin, and full-page predicates).
 //
 // This is the intentionally bounded normal-release lifecycle for exactly one
 // pinned default theap. It accepts only caller-managed external arenas and a
 // caller-initialized page map. There is no TLS, first-class heap, remote free,
-// page abandonment, OS arena reservation, large/medium/aligned allocation, or
-// realloc path here. The owning bootstrap session is exclusive and the arena
-// backing plus its metadata must remain pinned for the whole session.
+// page abandonment, OS arena reservation, aligned allocation, or realloc path
+// here. Ordinary small, medium, large, and singleton pages retain their
+// pinned source geometry and queue transitions. The owning bootstrap session
+// is exclusive and the arena backing plus its metadata must remain pinned for
+// the whole session.
 
 use core::pin::Pin;
 use core::ptr::NonNull;
 
 use crate::arena::{ArenaId, ArenaView, release_arena_slices};
 use crate::bootstrap::{BootstrapError, DefaultSingleThreadBootstrap, DefaultSingleThreadSession};
-use crate::config::{ARENA_SLICE_SIZE, BIN_FULL, PAGES_DIRECT, SMALL_SIZE_MAX, SMALL_PAGE_SIZE};
+use crate::config::{
+    ARENA_SLICE_SIZE, BIN_FULL, BIN_HUGE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
+    SMALL_SIZE_MAX,
+};
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
 use crate::page;
 use crate::page_map::PageMap;
 use crate::size_class;
-use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, Page};
+use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, Page, PageKind};
 use crate::types::page_queue::{
     page_is_in_full, page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
-    page_queue_remove_metadata,
+    page_queue_move_to_front_metadata, page_queue_remove_metadata,
 };
 
 const RETIRE_CYCLES: u8 = 16;
 const RETIRE_MAX_PAGES: usize = 3;
+const PAGE_MAX_CANDIDATES: isize = 4;
 
 /// One invalid local free at the explicit default-theap boundary.
 ///
@@ -60,8 +66,8 @@ const RETIRE_MAX_PAGES: usize = 3;
 /// no-std engine instead refuses to mutate page state when the pinned local
 /// ownership proof is absent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SmallFreeError {
-    /// The address maps to no current small page in this explicit lifecycle.
+pub(crate) enum FreeError {
+    /// The address maps to no current ordinary page in this explicit lifecycle.
     Unmapped,
     /// The mapped page is not owned by this pinned default theap.
     ForeignPage,
@@ -71,14 +77,14 @@ pub(crate) enum SmallFreeError {
     Lifecycle,
 }
 
-/// One exclusive small-allocation lifecycle over a caller-owned external arena.
+/// One exclusive ordinary-allocation lifecycle over a caller-owned external arena.
 ///
 /// This value owns the activated [`DefaultSingleThreadSession`], so it is the
 /// only operation capable of mutating the pinned default theap. It borrows the
 /// arena and page map rather than reserving VM itself. Dropping it does not
 /// collect, abandon, unregister, or release any page: callers must force a
 /// collection before they dismantle the supplied arena or page map.
-pub(crate) struct SingleThreadSmallAllocator<'bootstrap, 'arena, 'map> {
+pub(crate) struct SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     session: DefaultSingleThreadSession<'bootstrap>,
     arena: ArenaView<'arena>,
     requested_arena: ArenaId,
@@ -86,8 +92,8 @@ pub(crate) struct SingleThreadSmallAllocator<'bootstrap, 'arena, 'map> {
     thread_sequence: usize,
 }
 
-impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'map> {
-    /// Activates the sole default theap for this small-page lifecycle.
+impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
+    /// Activates the sole default theap for this ordinary-page lifecycle.
     ///
     /// `bootstrap` must already occupy address-stable storage. `arena` must
     /// denote a registry-published external arena whose backing allocation and
@@ -116,14 +122,27 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
         })
     }
 
-    /// Allocates one normal-release small block, optionally clearing its full
-    /// source block size. Requests above `MI_SMALL_SIZE_MAX` intentionally
-    /// return `None`; medium, large, singleton, aligned, and generic paths are
-    /// separate future lifecycle slices.
+    /// Allocates one normal-release ordinary block, optionally clearing its
+    /// full source block size.
+    ///
+    /// Requests through `MI_SMALL_SIZE_MAX` retain the direct-cache path.
+    /// Other valid requests follow `mi_find_page`: ordinary queue bins use the
+    /// frozen `mi_good_size` result, while the huge bin uses
+    /// `_mi_os_good_alloc_size` and a one-block singleton page. Aligned and
+    /// interior-pointer allocation remain a separate lifecycle slice.
     pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
-        if request > SMALL_SIZE_MAX {
+        if !size_class::request_size_is_valid(request) {
             return None;
         }
+
+        if request <= SMALL_SIZE_MAX {
+            return self.allocate_small_direct(request, zero);
+        }
+
+        self.allocate_generic(request, zero)
+    }
+
+    fn allocate_small_direct(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
         let bin = size_class::bin(request)?;
         let direct_index = invariants::word_count(request)?;
         if direct_index >= PAGES_DIRECT {
@@ -133,7 +152,8 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
         loop {
             let direct = self.session.direct_page(direct_index)?;
             if direct == EMPTY_PAGE.as_ptr() {
-                let page = self.allocate_fresh_regular_page(bin)?;
+                let block_size = size_class::bin_size(bin)?;
+                let page = self.allocate_fresh_page(block_size, PageKind::Small)?;
                 self.push_regular_page(bin, page);
                 continue;
             }
@@ -154,13 +174,250 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
         }
     }
 
-    /// Allocates a zero-filled small block.
+    /// The no-direct-cache half of `mi_find_page` plus
+    /// `mi_malloc_generic_fallback`. A failed fresh claim is retried once
+    /// after forced retired-page collection, exactly at the generic OOM
+    /// boundary; a non-huge queue is otherwise searched by its source bin.
+    fn allocate_generic(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+        let bin = size_class::bin(request)?;
+        if bin == BIN_HUGE {
+            let block_size = self.page_map.memory_config().good_alloc_size(request);
+            if block_size == 0 || block_size < request {
+                return None;
+            }
+            return self.allocate_generic_with_retry(bin, block_size, PageKind::Singleton, zero);
+        }
+
+        let page_size = self.page_map.memory_config().page_size().bytes();
+        let block_size = size_class::good_size(request, page_size)?;
+        if size_class::bin(block_size)? != bin {
+            return None;
+        }
+        let kind = size_class::page_kind_for_block_size(block_size)?;
+        if kind == PageKind::Singleton {
+            return None;
+        }
+        self.allocate_generic_with_retry(bin, block_size, kind, zero)
+    }
+
+    fn allocate_generic_with_retry(
+        &mut self,
+        bin: usize,
+        block_size: usize,
+        kind: PageKind,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        for attempt in 0..2 {
+            if let Some(block) = self.allocate_generic_once(bin, block_size, kind, zero) {
+                return Some(block);
+            }
+            if attempt == 0 && !self.collect_retired(true) {
+                return None;
+            }
+        }
+        None
+    }
+
+    fn allocate_generic_once(
+        &mut self,
+        bin: usize,
+        block_size: usize,
+        kind: PageKind,
+        zero: bool,
+    ) -> Option<NonNull<u8>> {
+        // Huge pages contain exactly one block and are never candidates for
+        // queue reuse. The fresh page enters the huge queue only long enough
+        // for the source full-page transition below.
+        if bin == BIN_HUGE {
+            let page = self.allocate_fresh_page(block_size, kind)?;
+            self.push_regular_page(bin, page);
+            let block = self.pop_or_extend(page, zero).ok()??;
+            if !self.move_regular_to_full(bin, page.as_ptr()) {
+                return None;
+            }
+            return Some(block);
+        }
+
+        let page = self.find_generic_queue_page(bin, block_size, kind)?;
+        match self.pop_or_extend(page, zero) {
+            Ok(Some(block)) => {
+                // `mi_malloc_generic_fallback` moves a full medium, large,
+                // or singleton page immediately. Small pages use the source
+                // retain-count path while a later queue scan considers them.
+                let full = unsafe {
+                    let page = page.as_ref();
+                    page.used() == page.reserved() as usize
+                };
+                if block_size > SMALL_MAX_OBJ_SIZE && full
+                    && !self.move_regular_to_full(bin, page.as_ptr())
+                {
+                    return None;
+                }
+                Some(block)
+            }
+            // `find_generic_queue_page` returns only a source-immediately-
+            // available page. A contrary result is a local-list invariant
+            // failure, not a reason to select a different queue member.
+            Ok(None) | Err(_) => None,
+        }
+    }
+
+    /// Ports `mi_page_queue_lookup_free_first` and
+    /// `mi_page_queue_find_free_ex` for an ordinary queue. In particular it
+    /// retains up to the pinned `page_full_retain` small full pages, searches
+    /// up to the pinned candidate limit for a fuller reusable page, releases
+    /// an all-free previous candidate, and moves the final candidate to the
+    /// queue head. The regular fresh-page fallback performs the source's
+    /// non-forced retired-page collection before it claims a span.
+    fn find_generic_queue_page(
+        &mut self,
+        bin: usize,
+        block_size: usize,
+        kind: PageKind,
+    ) -> Option<NonNull<Page>> {
+        let first = self.session.queue(bin)?.first();
+        if let Some(first) = NonNull::new(first) {
+            match self.page_quick_collect(first) {
+                Ok(true) => {
+                    // `mi_page_queue_lookup_free_first` leaves its head in
+                    // place and clears retirement only after choosing it.
+                    unsafe { first.as_ptr().as_mut() }?.set_retire_expire(0);
+                    return Some(first);
+                }
+                Ok(false) => {}
+                Err(_) => return None,
+            }
+        }
+
+        let mut page = first;
+        let mut candidate: *mut Page = core::ptr::null_mut();
+        let mut candidate_limit = 0isize;
+        let mut page_full_retain = if block_size > SMALL_MAX_OBJ_SIZE {
+            0
+        } else {
+            self.session.theap().page_full_retain()
+        };
+
+        while !page.is_null() {
+            // SAFETY: `page` is a current queue member. Save its successor
+            // before a source transition can move either current or an older
+            // candidate to the full queue or release that candidate.
+            let next = unsafe { (*page).next() };
+            candidate_limit -= 1;
+            let immediate_available = match NonNull::new(page) {
+                Some(page) => match self.page_quick_collect(page) {
+                    Ok(available) => available,
+                    Err(_) => return None,
+                },
+                None => return None,
+            };
+            // SAFETY: this source-plain lifecycle has exclusive queue/page
+            // ownership for the duration of the candidate scan.
+            let expandable = unsafe { (*page).capacity() < (*page).reserved() };
+
+            if !immediate_available && !expandable {
+                page_full_retain -= 1;
+                if page_full_retain < 0 && !self.move_regular_to_full(bin, page) {
+                    return None;
+                }
+            } else {
+                if candidate.is_null() {
+                    candidate = page;
+                    candidate_limit = PAGE_MAX_CANDIDATES;
+                } else {
+                    // SAFETY: candidate remains queue-linked until either the
+                    // explicit all-free release below or its final move.
+                    let candidate_is_all_free = unsafe { (*candidate).used() == 0 };
+                    if candidate_is_all_free {
+                        if !self.release_page(bin, candidate) {
+                            return None;
+                        }
+                        candidate = page;
+                    } else {
+                        // `mi_page_is_mostly_used`: avoid preferring a page
+                        // whose remaining capacity is within its final eighth.
+                        let page_reserved = unsafe { (*page).reserved() as usize };
+                        let page_used = unsafe { (*page).used() };
+                        let mostly_used = page_reserved
+                            .checked_sub(page_used)
+                            .map(|free| free <= page_reserved / 8)
+                            .unwrap_or(true);
+                        if page_used >= unsafe { (*candidate).used() } && !mostly_used {
+                            candidate = page;
+                        }
+                    }
+                }
+                if immediate_available || candidate_limit <= 0 {
+                    break;
+                }
+            }
+            page = next;
+        }
+
+        if let Some(candidate) = NonNull::new(candidate) {
+            match self.page_make_immediate(candidate) {
+                Ok(true) => {}
+                Ok(false) | Err(_) => return None,
+            }
+            let queue = self.session.queue_mut(bin)? as *mut _;
+            // SAFETY: the candidate remains a member of this exclusively
+            // owned regular queue; moving it changes no page-count state.
+            unsafe { page_queue_move_to_front_metadata(&mut *queue, candidate.as_ptr()) };
+            self.update_direct_cache(bin);
+            // SAFETY: choosing this valid live candidate mirrors the source
+            // post-search retirement reset.
+            unsafe { candidate.as_ptr().as_mut() }?.set_retire_expire(0);
+            return Some(candidate);
+        }
+
+        if !self.collect_retired(false) {
+            return None;
+        }
+        let fresh = self.allocate_fresh_page(block_size, kind)?;
+        self.push_regular_page(bin, fresh);
+        Some(fresh)
+    }
+
+    /// Performs the source's local-only `mi_page_free_quick_collect` without
+    /// extending capacity. Queue candidate search uses this first to decide
+    /// whether a page has an immediately reusable block.
+    fn page_quick_collect(&mut self, page: NonNull<Page>) -> Result<bool, FreeListError> {
+        // SAFETY: callers name an active queue page while this exclusive
+        // lifecycle owns its local free-list and associated theap.
+        let page = unsafe { &mut *page.as_ptr() };
+        // SAFETY: the active page's source geometry and exclusive local-list
+        // conditions are maintained by fresh publication and queue ownership.
+        let mut free_list = unsafe { LocalFreeList::from_page(page) }?;
+        free_list.quick_collect()
+    }
+
+    /// Extends only the source-selected candidate when it has no immediate
+    /// local block. `mi_page_queue_find_free_ex` performs this after the
+    /// bounded candidate search rather than while it scans the queue head.
+    fn page_make_immediate(&mut self, page: NonNull<Page>) -> Result<bool, FreeListError> {
+        // SAFETY: callers name the selected live queue page, and this method
+        // performs no queue or page-map operation while the list is borrowed.
+        let page = unsafe { &mut *page.as_ptr() };
+        // SAFETY: the selected page retains the fresh-publication local-list
+        // geometry and exclusive ownership invariant.
+        let mut free_list = unsafe { LocalFreeList::from_page(page) }?;
+        if free_list.quick_collect()? {
+            return Ok(true);
+        }
+        if free_list.capacity() < free_list.reserved() {
+            let _ = free_list.extend()?;
+            return free_list.quick_collect();
+        }
+        Ok(false)
+    }
+
+    /// Allocates a zero-filled ordinary block.
     #[inline]
     pub(crate) fn allocate_zeroed(&mut self, request: usize) -> Option<NonNull<u8>> {
         self.allocate(request, true)
     }
 
-    /// Returns the full usable block size for one live local small allocation.
+    /// Returns the full usable block size for one live local ordinary allocation.
     ///
     /// # Safety
     ///
@@ -186,32 +443,32 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
     /// must not have been previously freed, and no alias may access it after
     /// this call. The caller must also retain the allocator's exclusive
     /// default-theap capability; remote frees are deliberately not accepted.
-    pub(crate) unsafe fn free(&mut self, block: NonNull<u8>) -> Result<(), SmallFreeError> {
+    pub(crate) unsafe fn free(&mut self, block: NonNull<u8>) -> Result<(), FreeError> {
         // SAFETY: the caller's live-local-allocation contract excludes a
         // simultaneous page-map registration or unregistration for this block.
         let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
-        let page = NonNull::new(page).ok_or(SmallFreeError::Unmapped)?;
+        let page = NonNull::new(page).ok_or(FreeError::Unmapped)?;
         // SAFETY: page-map registration keeps the returned metadata live until
         // this lifecycle unregisters it, and this `&mut self` owns the only
         // local mutation capability.
         let page = unsafe { &mut *page.as_ptr() };
         if !self.owns_page(page) {
-            return Err(SmallFreeError::ForeignPage);
+            return Err(FreeError::ForeignPage);
         }
 
         let (used, in_full, bin) = {
             // SAFETY: this lifecycle owns the page, its blocks, and all local
             // free-list metadata. It never exposes a remote or concurrent path.
             let mut free_list = unsafe { LocalFreeList::from_page(page) }
-                .map_err(SmallFreeError::InvalidBlock)?;
+                .map_err(FreeError::InvalidBlock)?;
             // SAFETY: the public caller contract proves exactly-once ownership
             // of `block`; the borrowed list additionally validates page range
             // and initialized-capacity membership before writing a link.
             unsafe { free_list.push_local(block) }
-                .map_err(SmallFreeError::InvalidBlock)?;
+                .map_err(FreeError::InvalidBlock)?;
             (free_list.used(), page_is_in_full(page), size_class::bin(page.block_size()))
         };
-        let bin = bin.ok_or(SmallFreeError::Lifecycle)?;
+        let bin = bin.ok_or(FreeError::Lifecycle)?;
 
         if used == 0 {
             if in_full {
@@ -220,19 +477,19 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
                 if self.release_page(BIN_FULL, page as *mut Page) {
                     return Ok(());
                 }
-                return Err(SmallFreeError::Lifecycle);
+                return Err(FreeError::Lifecycle);
             }
             if self.retire_or_release(bin, page as *mut Page) {
                 return Ok(());
             }
-            return Err(SmallFreeError::Lifecycle);
+            return Err(FreeError::Lifecycle);
         }
 
         if in_full {
             if self.move_full_to_regular(bin, page as *mut Page) {
                 return Ok(());
             }
-            return Err(SmallFreeError::Lifecycle);
+            return Err(FreeError::Lifecycle);
         }
         Ok(())
     }
@@ -324,14 +581,25 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
         Ok(None)
     }
 
-    fn allocate_fresh_regular_page(&mut self, bin: usize) -> Option<NonNull<Page>> {
-        let block_size = size_class::bin_size(bin)?;
-        if block_size == 0 || block_size > SMALL_SIZE_MAX {
-            return None;
-        }
+    /// Performs the fresh-page half of `_mi_arenas_page_alloc` for an
+    /// ordinary, non-aligned request. `kind` is derived from the selected
+    /// block size before this function is entered, so all source span and
+    /// reserved-count transitions stay together with the claim provenance.
+    fn allocate_fresh_page(
+        &mut self,
+        block_size: usize,
+        kind: PageKind,
+    ) -> Option<NonNull<Page>> {
+        let slice_count = match kind {
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                page::regular_page_slice_count(kind)?
+            }
+            PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+        };
+        let allocation_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
         let claim = self.arena.try_claim_suitable_slices(
             self.requested_arena,
-            1,
+            slice_count,
             true,
             self.thread_sequence,
         )?;
@@ -366,11 +634,16 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
                 return None;
             }
         };
-        let reserved = match page::reserved_object_count(SMALL_PAGE_SIZE, usable_offset, block_size) {
-            Some(reserved) => reserved,
-            None => {
-                let _ = claim.release();
-                return None;
+        let reserved = match kind {
+            PageKind::Singleton => 1,
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                match page::reserved_object_count(allocation_size, usable_offset, block_size) {
+                    Some(reserved) => reserved,
+                    None => {
+                        let _ = claim.release();
+                        return None;
+                    }
+                }
             }
         };
 
@@ -404,7 +677,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
             }
         };
         if !registered_in_arena {
-            self.rollback_fresh(page, slice_start, memory, false, false);
+            self.rollback_fresh(page, slice_start, allocation_size, memory, false, false);
             return None;
         }
         // SAFETY: `page` is fully initialized and remains address-stable until
@@ -412,11 +685,11 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
         // lookup racing this source-plain page-map write.
         if unsafe {
             self.page_map
-                .register_range(slice_start, ARENA_SLICE_SIZE, page)
+                .register_range(slice_start, allocation_size, page)
         }
         .is_err()
         {
-            self.rollback_fresh(page, slice_start, memory, true, false);
+            self.rollback_fresh(page, slice_start, allocation_size, memory, true, false);
             return None;
         }
 
@@ -431,7 +704,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
             Some(())
         })();
         if initialized.is_none() {
-            self.rollback_fresh(page, slice_start, memory, true, true);
+            self.rollback_fresh(page, slice_start, allocation_size, memory, true, true);
             return None;
         }
         Some(page)
@@ -441,6 +714,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
         &mut self,
         page: NonNull<Page>,
         slice_start: *mut u8,
+        allocation_size: usize,
         memory: MemoryId,
         arena_registered: bool,
         page_map_registered: bool,
@@ -450,7 +724,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
             // registered above; no allocation was handed out.
             let _ = unsafe {
                 self.page_map
-                    .unregister_range(slice_start, ARENA_SLICE_SIZE)
+                    .unregister_range(slice_start, allocation_size)
             };
         }
         if arena_registered {
@@ -523,10 +797,16 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
             Some(queue) => queue.count(),
             None => return false,
         };
-        if count <= RETIRE_MAX_PAGES
+        if bin < BIN_HUGE
+            && count <= RETIRE_MAX_PAGES
             && (count == 1 || page.block_size() < SMALL_SIZE_MAX)
         {
-            page.set_retire_expire(RETIRE_CYCLES);
+            let cycles = if page.block_size() <= SMALL_MAX_OBJ_SIZE {
+                RETIRE_CYCLES
+            } else {
+                RETIRE_CYCLES / 4
+            };
+            page.set_retire_expire(cycles);
             return self.session.note_retired_bin(bin);
         }
         self.release_page(bin, page as *mut Page)
@@ -593,21 +873,34 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
         }
         let slice_index = arena_memory.slice_index as usize;
         let slice_count = arena_memory.slice_count as usize;
-        // This bounded small-page slice owns exactly the one fresh regular
-        // 64KiB slice it claimed. Larger page kinds are deliberately absent.
-        if slice_count != 1 {
-            return None;
-        }
         let size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
         let slice_start = self.arena.slice_start(slice_index)?;
         let block_size = page_ref.block_size();
-        if block_size == 0 || block_size > SMALL_SIZE_MAX {
+        let kind = size_class::page_kind_for_block_size(block_size)?;
+        let expected_slice_count = match kind {
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                page::regular_page_slice_count(kind)?
+            }
+            PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+        };
+        if slice_count != expected_slice_count {
             return None;
         }
-        // Validate `page_offset` in integer space. Calling `Page::start` on
+        // Validate page geometry in integer space. Calling `Page::start` on
         // malformed metadata would itself require the very layout guarantee
-        // this preflight is meant to establish.
+        // this preflight is meant to establish. Regular pages derive their
+        // complete object count from the span; ordinary singleton pages always
+        // reserve exactly one block.
         let usable_offset = page::page_usable_start_offset(block_size)?;
+        let expected_reserved = match kind {
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                page::reserved_object_count(size, usable_offset, block_size)?
+            }
+            PageKind::Singleton => 1,
+        };
+        if page_ref.reserved() != expected_reserved {
+            return None;
+        }
         let expected_start = slice_start.addr().checked_add(usable_offset)?;
         if expected_start >= slice_start.addr().checked_add(size)?
             || expected_start.checked_sub(page.as_ptr().addr())? != page_ref.page_offset()
@@ -615,10 +908,14 @@ impl<'bootstrap, 'arena, 'map> SingleThreadSmallAllocator<'bootstrap, 'arena, 'm
             return None;
         }
         // SAFETY: this explicit lifecycle serializes all source-plain map
-        // accesses. Keeping this equality before queue removal proves that
-        // terminal unregistration will target the page's actual map span.
-        if unsafe { self.page_map.checked_lookup(slice_start) } != page.as_ptr() {
-            return None;
+        // accesses. Checking every claimed slice before queue removal proves
+        // that terminal unregistration targets exactly the map range published
+        // for this one page, rather than merely its leading slice.
+        for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+            let address = slice_start.addr().checked_add(offset)? as *const u8;
+            if unsafe { self.page_map.checked_lookup(address) } != page.as_ptr() {
+                return None;
+            }
         }
         Some((memory, slice_start, size, slice_index))
     }
@@ -696,12 +993,16 @@ mod tests {
 
     use super::*;
     use crate::arena::{ArenaRegistry, CommitHook, manage_external_in_place};
-    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, MAX_ALIGN_SIZE, WORD_SIZE};
+    use crate::config::{
+        ARENA_ALIGNMENT, ARENA_MIN_SIZE, LARGE_MAX_OBJ_SIZE, MAX_ALIGN_SIZE,
+        MEDIUM_MAX_OBJ_SIZE, SMALL_MAX_OBJ_SIZE, WORD_SIZE,
+    };
     use crate::os::{MemoryConfig, PageSize};
     use core::ffi::c_void;
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::vec::Vec;
 
     struct AlignedRegion {
         pointer: NonNull<u8>,
@@ -767,7 +1068,7 @@ mod tests {
         true
     }
 
-    fn with_allocator(test: impl FnOnce(&mut SingleThreadSmallAllocator<'_, '_, '_>)) {
+    fn with_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
         let mut region = AlignedRegion::zeroed();
         let registry = ArenaRegistry::new(null_mut());
         let managed = unsafe {
@@ -795,7 +1096,7 @@ mod tests {
         let mut page_map = PageMap::initialize(config, 0, true).unwrap();
         let bootstrap = DefaultSingleThreadBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
-        let mut allocator = SingleThreadSmallAllocator::activate(
+        let mut allocator = SingleThreadAllocator::activate(
             bootstrap.as_mut(),
             LiveThreadId::new(12).unwrap(),
             arena,
@@ -853,6 +1154,31 @@ mod tests {
         true
     }
 
+    fn mapped_span(
+        allocator: &SingleThreadAllocator<'_, '_, '_>,
+        block: NonNull<u8>,
+        expected_kind: PageKind,
+    ) -> (*mut u8, usize, usize) {
+        // SAFETY: the caller retains `block` as a current allocation and this
+        // single-thread fixture serializes the source-plain page-map lookup.
+        let page = unsafe { allocator.page_map.checked_lookup(block.as_ptr()) };
+        assert!(!page.is_null());
+        // SAFETY: the live page-map registration keeps this page metadata
+        // address-stable until the test returns the block and collects it.
+        let page = unsafe { &*page };
+        assert_eq!(size_class::page_kind_for_block_size(page.block_size()), Some(expected_kind));
+        let memory = page.memid().arena_memory().unwrap();
+        let start = allocator.arena.slice_start(memory.slice_index as usize).unwrap();
+        let size = memory.slice_count as usize * ARENA_SLICE_SIZE;
+        for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+            let address = start.wrapping_add(offset);
+            // SAFETY: every page-map entry across the published source span
+            // remains stable while this test holds the allocation live.
+            assert_eq!(unsafe { allocator.page_map.checked_lookup(address) }, page as *const Page as *mut Page);
+        }
+        (start, size, page.block_size())
+    }
+
     #[test]
     fn page_metadata_commit_failure_returns_the_fresh_claim_for_reuse() {
         let mut region = AlignedRegion::zeroed();
@@ -892,7 +1218,7 @@ mod tests {
         let mut page_map = PageMap::initialize(config, 0, true).unwrap();
         let bootstrap = DefaultSingleThreadBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
-        let mut allocator = SingleThreadSmallAllocator::activate(
+        let mut allocator = SingleThreadAllocator::activate(
             bootstrap.as_mut(),
             LiveThreadId::new(12).unwrap(),
             arena,
@@ -1047,6 +1373,229 @@ mod tests {
     }
 
     #[test]
+    fn generic_page_kinds_publish_the_exact_span_and_good_size_boundaries() {
+        with_allocator(|allocator| {
+            let requests = [
+                SMALL_SIZE_MAX,
+                SMALL_SIZE_MAX + 1,
+                SMALL_MAX_OBJ_SIZE - 1,
+                SMALL_MAX_OBJ_SIZE,
+                SMALL_MAX_OBJ_SIZE + 1,
+                MEDIUM_MAX_OBJ_SIZE - 1,
+                MEDIUM_MAX_OBJ_SIZE,
+                MEDIUM_MAX_OBJ_SIZE + 1,
+                LARGE_MAX_OBJ_SIZE - 1,
+                LARGE_MAX_OBJ_SIZE,
+                LARGE_MAX_OBJ_SIZE + 1,
+            ];
+            let mut starts = [null_mut(); 11];
+            let mut start_count = 0usize;
+
+            for request in requests {
+                let block = allocator.allocate(request, false).unwrap();
+                let expected_usable = if request <= LARGE_MAX_OBJ_SIZE {
+                    size_class::good_size(
+                        request,
+                        allocator.page_map.memory_config().page_size().bytes(),
+                    )
+                    .unwrap()
+                } else {
+                    allocator.page_map.memory_config().good_alloc_size(request)
+                };
+                let expected_kind = size_class::page_kind_for_block_size(expected_usable).unwrap();
+                let expected_slices = match expected_kind {
+                    PageKind::Small | PageKind::Medium | PageKind::Large => {
+                        page::regular_page_slice_count(expected_kind).unwrap()
+                    }
+                    PageKind::Singleton => page::singleton_page_slice_count(expected_usable).unwrap(),
+                };
+                assert_eq!(unsafe { allocator.usable_size(block) }, Some(expected_usable));
+                let (start, size, block_size) = mapped_span(allocator, block, expected_kind);
+                assert_eq!(size, expected_slices * ARENA_SLICE_SIZE);
+                assert_eq!(block_size, expected_usable);
+                starts[start_count] = start;
+                start_count += 1;
+                // SAFETY: each boundary allocation remains live exactly until
+                // this matching local free below.
+                unsafe { allocator.free(block).unwrap() };
+            }
+
+            assert!(allocator.collect_retired(true));
+            for start in starts[..start_count].iter().copied() {
+                // SAFETY: forced collection completed every retired page's
+                // whole-span unregister transition before arena release.
+                assert!(unsafe { allocator.page_map.checked_lookup(start) }.is_null());
+            }
+        });
+    }
+
+    #[test]
+    fn generic_medium_and_large_full_pages_unfull_and_release_their_whole_spans() {
+        with_allocator(|allocator| {
+            for request in [SMALL_MAX_OBJ_SIZE + 1, MEDIUM_MAX_OBJ_SIZE + 1] {
+                let first = allocator.allocate(request, false).unwrap();
+                let expected_kind = if request <= MEDIUM_MAX_OBJ_SIZE {
+                    PageKind::Medium
+                } else {
+                    PageKind::Large
+                };
+                let (start, size, block_size) = mapped_span(allocator, first, expected_kind);
+                // SAFETY: `first` is current and maps to live metadata for the
+                // following source-reserved count inspection.
+                let page = unsafe { allocator.page_map.checked_lookup(first.as_ptr()).as_ref() }.unwrap();
+                let count = page.reserved() as usize;
+                assert!(count > 1 && count <= 64);
+                let bin = size_class::bin(block_size).unwrap();
+                let mut blocks = [NonNull::dangling(); 64];
+                blocks[0] = first;
+                for block in blocks.iter_mut().take(count).skip(1) {
+                    *block = allocator.allocate(request, false).unwrap();
+                }
+                assert_eq!(allocator.queue_count(bin), Some(0));
+                assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+                // Returning one block from a full regular page moves it to
+                // its source size bin before the remaining local frees.
+                unsafe { allocator.free(blocks[0]).unwrap() };
+                assert_eq!(allocator.queue_count(bin), Some(1));
+                assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+                for block in blocks.into_iter().take(count).skip(1) {
+                    // SAFETY: every array slot names a distinct current block.
+                    unsafe { allocator.free(block).unwrap() };
+                }
+                assert!(allocator.collect_retired(true));
+                for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+                    // SAFETY: source release unregistered the full span prior
+                    // to returning the external arena slices.
+                    assert!(unsafe { allocator.page_map.checked_lookup(start.wrapping_add(offset)) }.is_null());
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn singleton_pages_use_the_huge_queue_and_release_without_retirement() {
+        with_allocator(|allocator| {
+            let request = LARGE_MAX_OBJ_SIZE + 1;
+            let block = allocator.allocate(request, false).unwrap();
+            let (start, size, _) = mapped_span(allocator, block, PageKind::Singleton);
+            assert_eq!(allocator.queue_count(BIN_HUGE), Some(0));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+            // SAFETY: a singleton's sole returned block leaves its full page
+            // all free, so the special queue follows immediate release.
+            unsafe { allocator.free(block).unwrap() };
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+                // SAFETY: special-page release unregisters every mapped slice.
+                assert!(unsafe { allocator.page_map.checked_lookup(start.wrapping_add(offset)) }.is_null());
+            }
+        });
+    }
+
+    #[test]
+    fn generic_zeroing_clears_a_reused_medium_block() {
+        with_allocator(|allocator| {
+            let request = SMALL_MAX_OBJ_SIZE + 1;
+            let block = allocator.allocate(request, false).unwrap();
+            // SAFETY: the current block has at least `request` writable bytes.
+            unsafe { core::ptr::write_bytes(block.as_ptr(), 0xa5, request) };
+            // SAFETY: return that exact local block once for reuse.
+            unsafe { allocator.free(block).unwrap() };
+            let zeroed = allocator.allocate_zeroed(request).unwrap();
+            assert!(unsafe { bytes_equal(zeroed, request, 0) });
+            // SAFETY: `zeroed` is still current and uniquely owned here.
+            unsafe { allocator.free(zeroed).unwrap() };
+        });
+    }
+
+    #[test]
+    fn generic_fresh_failure_force_collects_retired_span_and_retries_once() {
+        with_allocator(|allocator| {
+            let retired_request = MEDIUM_MAX_OBJ_SIZE + 1;
+            let retry_request = LARGE_MAX_OBJ_SIZE;
+            let retired_size = size_class::good_size(
+                retired_request,
+                allocator.page_map.memory_config().page_size().bytes(),
+            )
+            .unwrap();
+            let retry_size = size_class::good_size(
+                retry_request,
+                allocator.page_map.memory_config().page_size().bytes(),
+            )
+            .unwrap();
+            assert_ne!(size_class::bin(retired_size), size_class::bin(retry_size));
+
+            let retired = allocator.allocate(retired_request, false).unwrap();
+            // SAFETY: returning the sole current block leaves this regular
+            // large page source-retired but still arena-owned.
+            unsafe { allocator.free(retired).unwrap() };
+
+            // Claim every other usable slice. The different retry bin cannot
+            // reuse the retired page, so its first fresh attempt fails. The
+            // generic source path must force-collect, regain this exact
+            // 64-slice span, and then retry once successfully.
+            let mut held = Vec::new();
+            while let Some(claim) = allocator
+                .arena
+                .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            {
+                held.push(claim);
+            }
+            let retried = allocator.allocate(retry_request, false).unwrap();
+            assert_eq!(unsafe { allocator.usable_size(retried) }, Some(retry_size));
+            // SAFETY: this is the exact current retry allocation.
+            unsafe { allocator.free(retried).unwrap() };
+            assert!(allocator.collect_retired(true));
+            for claim in held {
+                assert!(claim.release());
+            }
+        });
+    }
+
+    #[test]
+    fn generic_small_queue_retains_full_pages_then_moves_a_reusable_candidate_to_front() {
+        with_allocator(|allocator| {
+            let request = SMALL_SIZE_MAX + 1;
+            let bin = size_class::bin(request).unwrap();
+            let first = allocator.allocate(request, false).unwrap();
+            // SAFETY: the first allocation maps to a fresh live page whose
+            // source-reserved count is stable until all test blocks return.
+            let page = unsafe { allocator.page_map.checked_lookup(first.as_ptr()).as_ref() }.unwrap();
+            let count = page.reserved() as usize;
+            assert!(count > 1);
+            let mut blocks = Vec::with_capacity(count * 4);
+            blocks.push(first);
+            while blocks.len() < count * 4 {
+                blocks.push(allocator.allocate(request, false).unwrap());
+            }
+
+            // The fourth page is the queue head and full. The third page is
+            // next and also full, until this local free supplies the scan's
+            // first immediate candidate. The pinned retain count keeps the
+            // earlier small full pages in the regular queue long enough for
+            // the bounded candidate scan to reach it.
+            let third_first = count * 2;
+            let third_page = unsafe { allocator.page_map.checked_lookup(blocks[third_first].as_ptr()) };
+            assert_eq!(allocator.session.queue(bin).unwrap().first(), unsafe {
+                allocator.page_map.checked_lookup(blocks[count * 3].as_ptr())
+            });
+            // SAFETY: this one exact third-page block is still live.
+            unsafe { allocator.free(blocks[third_first]).unwrap() };
+            let reused = allocator.allocate(request, false).unwrap();
+            assert_eq!(reused, blocks[third_first]);
+            assert_eq!(allocator.session.queue(bin).unwrap().first(), third_page);
+            blocks[third_first] = reused;
+
+            for block in blocks {
+                // SAFETY: each current allocation is returned exactly once;
+                // the replaced third slot is the sole post-reuse owner.
+                unsafe { allocator.free(block).unwrap() };
+            }
+            assert!(allocator.collect_retired(true));
+        });
+    }
+
+    #[test]
     fn all_small_good_size_boundaries_select_the_source_direct_cache_page() {
         with_allocator(|allocator| {
             let (requests, count) = small_boundaries();
@@ -1110,7 +1659,7 @@ mod tests {
             let invalid = NonNull::new(unsafe { zeroed.as_ptr().add(1) }).unwrap();
             // SAFETY: this intentionally violates the exact-block requirement;
             // the implementation must reject it before changing list state.
-            assert_eq!(unsafe { allocator.free(invalid) }, Err(SmallFreeError::InvalidBlock(FreeListError::InvalidBlock)));
+            assert_eq!(unsafe { allocator.free(invalid) }, Err(FreeError::InvalidBlock(FreeListError::InvalidBlock)));
             // SAFETY: `zeroed` is still live after the rejected invalid free.
             unsafe { allocator.free(zeroed).unwrap() };
         });

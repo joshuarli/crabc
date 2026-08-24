@@ -374,6 +374,76 @@ noise after
                 },
             )
 
+    def test_fundamental_trace_parser_requires_one_address_independent_machine_record(self) -> None:
+        output = """
+noise before
+CRABC_MI_FUNDAMENTAL_TRACE_BEGIN
+trace.fundamental.class.small.request=10240
+trace.fundamental.class.small.usable=10240
+trace.fundamental.class.small.success=1
+trace.fundamental.calloc.content_hash=14695981039346656037
+CRABC_MI_FUNDAMENTAL_TRACE_END
+noise after
+"""
+        self.assertEqual(
+            RUNNER.parse_fundamental_trace(output),
+            {
+                "trace.fundamental.calloc.content_hash": 14695981039346656037,
+                "trace.fundamental.class.small.request": 10240,
+                "trace.fundamental.class.small.success": 1,
+                "trace.fundamental.class.small.usable": 10240,
+            },
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "fundamental-operation trace.*markers"):
+            RUNNER.parse_fundamental_trace("trace.fundamental.class.small.request=10240\n")
+
+    def test_fundamental_trace_comparison_names_missing_and_mismatched_values(self) -> None:
+        c_trace = {
+            "trace.fundamental.class.small.request": 10240,
+            "trace.fundamental.class.small.success": 1,
+            "trace.fundamental.class.small.usable": 10240,
+        }
+        self.assertEqual(
+            RUNNER.compare_fundamental_trace(c_trace, c_trace),
+            {"compared_value_count": 3, "status": "matched"},
+        )
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            r"missing from C oracle: trace\.fundamental\.extra; "
+            r"missing from Rust port: trace\.fundamental\.class\.small\.usable; "
+            r"value mismatches: trace\.fundamental\.class\.small\.success \(C=1, Rust=0\)",
+        ):
+            RUNNER.compare_fundamental_trace(
+                c_trace,
+                {
+                    "trace.fundamental.class.small.request": 10240,
+                    "trace.fundamental.class.small.success": 0,
+                    "trace.fundamental.extra": 1,
+                },
+            )
+
+    def test_fundamental_trace_parser_rejects_raw_address_fields(self) -> None:
+        output = """
+CRABC_MI_FUNDAMENTAL_TRACE_BEGIN
+trace.fundamental.class.small.address=12345
+CRABC_MI_FUNDAMENTAL_TRACE_END
+"""
+        with self.assertRaisesRegex(RUNNER.HarnessError, "raw address field"):
+            RUNNER.parse_fundamental_trace(output)
+        hexadecimal = """
+CRABC_MI_FUNDAMENTAL_TRACE_BEGIN
+trace.fundamental.class.small.content_hash=0xface
+CRABC_MI_FUNDAMENTAL_TRACE_END
+"""
+        with self.assertRaisesRegex(RUNNER.HarnessError, "raw address"):
+            RUNNER.parse_fundamental_trace(hexadecimal)
+
+    def test_fundamental_trace_comparison_is_explicitly_blocked_until_rust_wires_markers(self) -> None:
+        status = RUNNER.blocked_fundamental_trace_comparison()
+        self.assertEqual(status["status"], "blocked")
+        self.assertIn("baseline evidence only", status["reason"])
+        self.assertIn("no Rust/C parity claim", status["reason"])
+
     def test_layout_parser_rejects_duplicate_machine_record_keys(self) -> None:
         with self.assertRaisesRegex(RUNNER.HarnessError, "duplicate layout probe key"):
             RUNNER.parse_layout("pointer.size=8\npointer.size=4\n")

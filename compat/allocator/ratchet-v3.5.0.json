@@ -6,14 +6,14 @@
   "port_map_counts": {
     "differential_verified": 11,
     "exported": 0,
-    "implemented": 49,
-    "item_count": 46,
+    "implemented": 52,
+    "item_count": 49,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 49
+    "unit_verified": 52
   },
-  "port_map_sha256": "dc77626e8fd67256ba5489163093a46f0ee7dd5f75579d8a21f1d9d87a8f89de",
+  "port_map_sha256": "44fc15fc248d7d77c8b08a1dc107c5dbc085a8fe187117740d42da4df503f458",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -92,10 +92,22 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:src/alloc-aligned.c:aligned-request-and-interior-pointer-kernels": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/alloc.c:explicit-default-theap-ordinary-generic-page-lifecycle": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/alloc.c:explicit-default-theap-small-allocation-lifecycle": [
       "implemented",
       "unit_verified",
       "differential_verified"
+    ],
+    "item:src/alloc.c:ordinary-reallocation-decision-and-extents": [
+      "implemented",
+      "unit_verified"
     ],
     "item:src/arena.c:_mi_arenas_page_alloc-kind-selection": [
       "implemented",

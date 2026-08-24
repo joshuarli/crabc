@@ -30,16 +30,20 @@ present as a coordination primitive, but no process initialization state
 machine is yet claimed.
 
 One private vertical slice now binds a caller-pinned default theap to a
-caller-managed external arena and page map. It claims and publishes 64-KiB
-small pages, maintains the direct cache and regular/full queues, extends and
-collects scalar local free lists, retires fully free pages, unregisters them
-before arena release, and rolls back injected commitment, bitmap, and page-map
-failures. The quick oracle gate compares 378 address-independent allocation
-facts with exact pinned C v3.5.0 across all 62 small-bin transition requests.
-This is bounded engine evidence, not an exported allocator: the crate still
-has no public operation, libc integration, process/TLS lifecycle, remote free,
-medium/large/aligned/reallocation path, thread teardown, fork protocol, or
-backend selection. A fixed-capacity `cfg(miri)` mapping model exercises current
+caller-managed external arena and page map. It claims and publishes exact
+small, medium, large, and singleton spans, maintains direct and generic
+candidate/regular/full queues, extends and collects scalar local free lists,
+retires fully free pages, unregisters complete spans before arena release, and
+rolls back injected commitment, bitmap, and page-map failures. The quick oracle
+gate compares 378 address-independent allocation facts with exact pinned C
+v3.5.0 across all 62 small-bin transition requests. It also records a 51-key
+exact-C fundamental-operation baseline whose Rust comparison remains explicitly
+blocked. Pure aligned-pointer and realloc extent kernels are source-mapped and
+unit tested but not wired to live operations. This is bounded engine evidence,
+not an exported allocator: the crate still has no public operation, libc
+integration, process/TLS lifecycle, remote free, live aligned/reallocation
+path, purge scheduling, thread teardown, fork protocol, or backend selection.
+A fixed-capacity `cfg(miri)` mapping model exercises current
 VM ownership and page-map transitions without broadening production support;
 the pinned toolchain does not currently install Miri itself. No allocator
 readiness or promotion claim follows from this slice.

@@ -1,10 +1,12 @@
 //! Linux/AArch64 allocator-engine port of the pinned mimalloc upstream.
 //!
 //! The crate contains source-mapped allocator foundations and one private,
-//! explicit single-thread small-allocation lifecycle over a caller-managed
-//! external arena and page map. It deliberately exposes no public allocator
-//! API or process/TLS lifecycle yet; medium, large, aligned, realloc, remote
-//! free, teardown, and integration slices remain incomplete.
+//! explicit single-thread ordinary-allocation lifecycle over a caller-managed
+//! external arena and page map. That lifecycle covers small, medium, large,
+//! and singleton pages; aligned-pointer and reallocation policy kernels are
+//! present but are not wired to live allocation state. The crate deliberately
+//! exposes no public allocator API or process/TLS lifecycle yet; aligned and
+//! realloc operations, remote free, teardown, and integration remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
 //! `crabc-libc`; this crate must not depend on it.
 
@@ -25,6 +27,8 @@
 compile_error!("crabc-mimalloc supports Linux/AArch64 little-endian only");
 
 mod bits;
+mod aligned;
+mod alloc;
 mod atomic;
 mod arena;
 mod bitmap;
