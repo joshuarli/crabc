@@ -1,0 +1,21 @@
+[package]
+name = "crabc-mimalloc-test-adapter"
+version.workspace = true
+edition.workspace = true
+description = "Test-only prefixed C ABI adapter for the crabc mimalloc port"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+
+[features]
+default = []
+# This crate is deliberately unusable without the engine's allocation-backed,
+# test-only context. Production allocator builds remain no_std and do not
+# contain this C evidence ABI.
+test-adapter = ["crabc-mimalloc/test-adapter"]
+
+[dependencies]
+crabc-mimalloc = { path = "../../../crabc-mimalloc", default-features = false }

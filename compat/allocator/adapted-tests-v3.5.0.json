@@ -1,0 +1,256 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-adapted-test-api",
+  "milestone": "M4",
+  "upstream": {
+    "project": "microsoft/mimalloc",
+    "version": "3.5.0",
+    "tag": "v3.5.0",
+    "tag_object": "438b0c4b78d2599aede7fca3ddacc28863b0eae8",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "repository": "https://github.com/microsoft/mimalloc.git",
+    "archive_source": "https://codeload.github.com/microsoft/mimalloc/tar.gz/refs/tags/v3.5.0",
+    "archive_path": "compat/allocator/.cache/mimalloc-3.5.0.tar.gz",
+    "archive_root": "mimalloc-3.5.0",
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
+  },
+  "fixture_source": "test/test-api.c",
+  "source_hashes": {
+    "test/test-api.c": "85a31dd69a5f53697c093716e03778af7db077b32f78f7436dc8eacc8bb687b1",
+    "test/testhelper.h": "ab1421bf38c423c38ed3e91c2e803d2bda6cac4335d4f90a8e3555083350e681"
+  },
+  "patch": {
+    "path": "compat/allocator/adapted/test-api-m4.patch",
+    "sha256": "d05008d162424140042631a7b38a25d6fe8d28c9a6d9fdd6672eaa254d7a4113",
+    "apply_from": "the extracted mimalloc-3.5.0 root",
+    "apply_command": "patch -p1 < /path/to/crabc/compat/allocator/adapted/test-api-m4.patch"
+  },
+  "adapted_source": {
+    "path": "test/test-api.c",
+    "sha256": "a59758d06d4dd990cee580f3157a10893133cff91c9c41f8dd5625477c0ad1f1"
+  },
+  "adapter_header": {
+    "include_spelling": "crabc-mimalloc-test-adapter.h",
+    "expected_include_directory": "compat/allocator/test-adapter",
+    "observed_checkout_path": "compat/allocator/test-adapter/crabc-mimalloc-test-adapter.h",
+    "note": "The include spelling matches the concurrently built adapter header and its crabc_test_* declarations."
+  },
+  "expected_adapter_symbols": [
+    "crabc_test_calloc",
+    "crabc_test_calloc_aligned",
+    "crabc_test_free",
+    "crabc_test_init",
+    "crabc_test_malloc",
+    "crabc_test_malloc_aligned",
+    "crabc_test_malloc_aligned_at",
+    "crabc_test_posix_memalign",
+    "crabc_test_realloc",
+    "crabc_test_realloc_aligned",
+    "crabc_test_reallocarray",
+    "crabc_test_rezalloc_aligned",
+    "crabc_test_shutdown",
+    "crabc_test_usable_size",
+    "crabc_test_zalloc",
+    "crabc_test_zalloc_aligned"
+  ],
+  "required_prefixed_adapter_symbols": [
+    {
+      "upstream_spelling": "mi_calloc",
+      "prefixed_symbol": "crabc_test_calloc",
+      "signature": "void *(size_t count, size_t size)"
+    },
+    {
+      "upstream_spelling": "mi_free",
+      "prefixed_symbol": "crabc_test_free",
+      "signature": "void (void *p)"
+    },
+    {
+      "upstream_spelling": "mi_malloc",
+      "prefixed_symbol": "crabc_test_malloc",
+      "signature": "void *(size_t size)"
+    },
+    {
+      "upstream_spelling": "mi_malloc_aligned",
+      "prefixed_symbol": "crabc_test_malloc_aligned",
+      "signature": "void *(size_t size, size_t alignment)"
+    },
+    {
+      "upstream_spelling": "mi_malloc_aligned_at",
+      "prefixed_symbol": "crabc_test_malloc_aligned_at",
+      "signature": "void *(size_t size, size_t alignment, size_t offset)"
+    },
+    {
+      "upstream_spelling": "mi_memalign",
+      "prefixed_symbol": "crabc_test_malloc_aligned",
+      "signature": "void *(size_t size, size_t alignment) via source macro argument reorder"
+    },
+    {
+      "upstream_spelling": "mi_posix_memalign",
+      "prefixed_symbol": "crabc_test_posix_memalign",
+      "signature": "int (void **out, size_t alignment, size_t size)"
+    },
+    {
+      "upstream_spelling": "mi_realloc",
+      "prefixed_symbol": "crabc_test_realloc",
+      "signature": "void *(void *p, size_t size)"
+    },
+    {
+      "upstream_spelling": "mi_realloc_aligned",
+      "prefixed_symbol": "crabc_test_realloc_aligned",
+      "signature": "void *(void *p, size_t size, size_t alignment)"
+    },
+    {
+      "upstream_spelling": "mi_reallocarray",
+      "prefixed_symbol": "crabc_test_reallocarray",
+      "signature": "void *(void *p, size_t count, size_t size)"
+    },
+    {
+      "upstream_spelling": "mi_rezalloc_aligned",
+      "prefixed_symbol": "crabc_test_rezalloc_aligned",
+      "signature": "void *(void *p, size_t size, size_t alignment)"
+    },
+    {
+      "upstream_spelling": "mi_usable_size",
+      "prefixed_symbol": "crabc_test_usable_size",
+      "signature": "size_t (const void *p)"
+    },
+    {
+      "upstream_spelling": "mi_zalloc_aligned",
+      "prefixed_symbol": "crabc_test_zalloc_aligned",
+      "signature": "void *(size_t size, size_t alignment)"
+    }
+  ],
+  "selected_tests": [
+    { "name": "zero_aligned_first", "source_test": "test/test-api.c:681-689", "category": "first-allocation" },
+    { "name": "malloc-zero", "source_test": "test/test-api.c:100-104", "category": "malloc" },
+    { "name": "malloc-nomem1", "source_test": "test/test-api.c:105-107", "category": "malloc" },
+    { "name": "malloc-free-null", "source_test": "test/test-api.c:108-110", "category": "malloc" },
+    { "name": "calloc-overflow", "source_test": "test/test-api.c:116-119", "category": "calloc" },
+    { "name": "calloc0", "source_test": "test/test-api.c:125-130", "category": "calloc" },
+    { "name": "posix_memalign1", "source_test": "test/test-api.c:143-148", "category": "posix_memalign" },
+    { "name": "posix_memalign_no_align", "source_test": "test/test-api.c:149-153", "category": "posix_memalign" },
+    { "name": "posix_memalign_zero", "source_test": "test/test-api.c:154-159", "category": "posix_memalign" },
+    { "name": "posix_memalign_nopow2", "source_test": "test/test-api.c:160-164", "category": "posix_memalign" },
+    { "name": "posix_memalign_nomem", "source_test": "test/test-api.c:165-169", "category": "posix_memalign" },
+    { "name": "malloc-aligned1", "source_test": "test/test-api.c:174-176", "category": "aligned" },
+    { "name": "malloc-aligned2", "source_test": "test/test-api.c:177-179", "category": "aligned" },
+    { "name": "malloc-aligned3", "source_test": "test/test-api.c:180-186", "category": "aligned" },
+    { "name": "malloc-aligned4", "source_test": "test/test-api.c:187-195", "category": "aligned" },
+    { "name": "malloc-aligned5", "source_test": "test/test-api.c:196-202", "category": "aligned" },
+    { "name": "malloc-aligned7", "source_test": "test/test-api.c:222-226", "category": "aligned" },
+    { "name": "malloc-aligned8", "source_test": "test/test-api.c:227-236", "category": "aligned" },
+    { "name": "malloc-aligned9", "source_test": "test/test-api.c:238-260", "category": "aligned" },
+    { "name": "malloc-aligned9a", "source_test": "test/test-api.c:262-268", "category": "aligned" },
+    { "name": "malloc-aligned10", "source_test": "test/test-api.c:270-283", "category": "aligned" },
+    { "name": "mimalloc-aligned12", "source_test": "test/test-api.c:290-294", "category": "aligned" },
+    { "name": "mimalloc-aligned13", "source_test": "test/test-api.c:296-317", "category": "aligned" },
+    { "name": "malloc-aligned-at1", "source_test": "test/test-api.c:318-320", "category": "aligned-at" },
+    { "name": "malloc-aligned-at2", "source_test": "test/test-api.c:321-323", "category": "aligned-at" },
+    { "name": "memalign1", "source_test": "test/test-api.c:324-332", "category": "memalign" },
+    { "name": "zalloc-aligned-small1", "source_test": "test/test-api.c:333-338", "category": "aligned-zero" },
+    { "name": "rezalloc_aligned-small1", "source_test": "test/test-api.c:339-347", "category": "aligned-realloc" },
+    { "name": "rezalloc_aligned_zeros", "source_test": "test/test-api.c:349-362", "category": "aligned-realloc", "adaptation": "Return the final live block after the upstream assertions so the adapter's explicit terminal shutdown can prove zero outstanding allocations." },
+    { "name": "realloc-null", "source_test": "test/test-api.c:367-371", "category": "realloc" },
+    { "name": "realloc-null-sizezero", "source_test": "test/test-api.c:373-377", "category": "realloc" },
+    { "name": "realloc-sizezero", "source_test": "test/test-api.c:379-384", "category": "realloc" },
+    { "name": "reallocarray-null-sizezero", "source_test": "test/test-api.c:386-390", "category": "realloc" }
+  ],
+  "omitted_tests": [
+    { "name": "mi_option_disable(mi_option_verbose)", "source_test": "test/test-api.c:74", "reason": "The bounded adapter exposes no option mutation surface; process/options lifecycle is outside M4.", "milestone": "M5+" },
+    { "name": "C++ new-handler checks", "source_test": "test/test-api.c:76-94", "reason": "The adapted fixture is C11 and the adapter has no C++ exception/new-handler ABI.", "milestone": "later C++ compatibility milestone" },
+    { "name": "malloc-free-invalid-low", "source_test": "test/test-api.c:111-115", "reason": "Invalid-pointer and wrong-use behavior is outside the valid one-thread M4 caller contract.", "milestone": "M5+" },
+    { "name": "malloc-large", "source_test": "test/test-api.c:120-123", "reason": "Large stress/resource behavior is not part of the first bounded fixture slice.", "milestone": "M5+" },
+    { "name": "mi_urealloc_invalid", "source_test": "test/test-api.c:132-138", "reason": "The adapter does not expose mi_urealloc or its pre/post usable-size contract.", "milestone": "M5+" },
+    { "name": "malloc-aligned6", "source_test": "test/test-api.c:203-221", "reason": "The upstream test is already disabled in the pinned source and is not an M4 execution target.", "milestone": "M5+" },
+    { "name": "mimalloc-aligned13 commented mi_good_size assertion", "source_test": "test/test-api.c:308-313", "reason": "This assertion is commented out in the pinned source; it is removed so the adapted translation unit contains no unsupported mi_good_size reference.", "milestone": "M5+" },
+    { "name": "malloc_aligned11", "source_test": "test/test-api.c:284-289", "reason": "The upstream test is already disabled and requires theap APIs outside the M4 context.", "milestone": "theap milestone" },
+    { "name": "realloc-guarded", "source_test": "test/test-api.c:392-400", "reason": "Guarded repeated realloc stress is outside the first deterministic one-thread fixture.", "milestone": "M5+" },
+    { "name": "free_small1/free_small2", "source_test": "test/test-api.c:401-421", "reason": "These require mi_free_size and mi_rezalloc surfaces not included in this adapter slice.", "milestone": "M5+" },
+    { "name": "umalloc1", "source_test": "test/test-api.c:424-441", "reason": "Returned-block-size APIs mi_umalloc, mi_urealloc, and mi_ufree are not in the M4 surface.", "milestone": "M5+" },
+    { "name": "arena_reserve", "source_test": "test/test-api.c:443-447", "reason": "Arena reservation ownership is not part of the process-owned one-thread adapter boundary.", "milestone": "M5+" },
+    { "name": "heap-os1/heap-os2/heap-many", "source_test": "test/test-api.c:449-500", "reason": "Heap, collect, stats, and thread-local lifecycle APIs are outside M4.", "milestone": "M5+" },
+    { "name": "theap checks", "source_test": "test/test-api.c:502-505", "reason": "The pinned calls are commented out and theap/thread teardown is excluded by the M4 scope.", "milestone": "theap milestone" },
+    { "name": "threaded zero_aligned_first", "source_test": "test/test-api.c:508-513", "reason": "M4 invokes the same helper directly on the creating thread before any other engine allocation; no TLS or thread runner is adapted.", "milestone": "M8" },
+    { "name": "mi_stats_print", "source_test": "test/test-api.c:515", "reason": "Statistics output is not part of the bounded engine context.", "milestone": "M5+" },
+    { "name": "realpath", "source_test": "test/test-api.c:517-526", "reason": "This unrelated libc path API is not an allocator adapter target.", "milestone": "not planned for this fixture" },
+    { "name": "stl_allocator1/stl_allocator2", "source_test": "test/test-api.c:528-530", "reason": "C++ STL allocator coverage requires a C++ ABI/test build not included in M4.", "milestone": "later C++ compatibility milestone" },
+    { "name": "stl_theap_allocator1..4", "source_test": "test/test-api.c:531-534", "reason": "The pinned calls are disabled and require C++ theap support outside M4.", "milestone": "theap milestone" },
+    { "name": "larger test functions", "source_test": "test/test-api.c:542-675", "reason": "The block contains commented theap code and C++ STL helpers; removing it keeps unsupported mi_* names out of the adapted C fixture.", "milestone": "later C++/theap milestones" },
+    { "name": "theap/C++ declarations", "source_test": "test/test-api.c:45-55", "reason": "Unused prototypes for excluded C++/theap helpers are removed with their unsupported bodies.", "milestone": "later C++/theap milestones" }
+  ],
+  "required_first_test": {
+    "name": "zero_aligned_first",
+    "source_test": "test/test-api.c:681-689",
+    "invocation": "CHECK(\"zero_aligned_first\", test_zero_aligned_first());",
+    "assertions": [
+      "crabc_test_init succeeds before the call",
+      "test_zero_aligned_first is invoked directly, not through mi_run_on_thread",
+      "mi_malloc_aligned(0, 16) is the first engine allocation on the creating thread",
+      "both zero-size aligned allocations are non-null and satisfy their alignment",
+      "the helper frees both returned blocks"
+    ]
+  },
+  "required_init_assertions": [
+    "crabc_test_init() is the only adapter operation before the first CHECK",
+    "a nonzero init result prints a diagnostic and returns failure",
+    "no selected test runs without successful initialization"
+  ],
+  "required_summary_assertions": [
+    "print_test_summary() runs exactly once before shutdown",
+    "the upstream succeeded/failed summary remains on stdout/stderr as emitted by testhelper.h",
+    "any upstream CHECK failure contributes to the process failure result"
+  ],
+  "required_shutdown_assertions": [
+    "crabc_test_shutdown() runs after the upstream summary",
+    "shutdown must return zero for fixture success",
+    "a nonzero shutdown result is printed and makes main return failure",
+    "main returns failure when either upstream checks or shutdown fails"
+  ],
+  "compile_requirements": {
+    "language": "C11",
+    "compiler": "musl-gcc from the pinned Linux/AArch64 container",
+    "include_directories": [
+      "<extracted-root>/include",
+      "<repo>/compat/allocator/test-adapter"
+    ],
+    "required_header": "crabc-mimalloc-test-adapter.h",
+    "rust_staticlib": "target/aarch64-unknown-linux-musl/release/libcrabc_mimalloc_test_adapter.a",
+    "link_command_shape": "musl-gcc test-api-m4.o <rust-staticlib> -L/usr/lib -lgcc_s -lc -o test-api-m4",
+    "link_order": "fixture object, adapter staticlib, then musl/system libraries",
+    "adapter_feature": "test-adapter",
+    "expected_dynamic_dependencies": [
+      "libc.musl-aarch64.so.1",
+      "libgcc_s.so.1"
+    ],
+    "native_library_search_paths": [
+      "/usr/lib"
+    ],
+    "native_static_libs": [
+      "-lgcc_s",
+      "-lc"
+    ],
+    "notes": "The fixture is source-only provenance: do not check in an extracted or copied C fork. Build the staticlib for the pinned musl AArch64 target before linking. The pinned musl-gcc specs replace the normal library search list, so /usr/lib is named explicitly to resolve Alpine's libgcc_s linker script while retaining rustc's exact native-static-libs order."
+  },
+  "verification": {
+    "patch_applies_cleanly": true,
+    "patch_round_trip_stable": true,
+    "adapted_source_sha256_verified": true,
+    "raw_mi_references_checked": [
+      "mi_calloc",
+      "mi_free",
+      "mi_malloc",
+      "mi_malloc_aligned",
+      "mi_malloc_aligned_at",
+      "mi_memalign",
+      "mi_posix_memalign",
+      "mi_realloc",
+      "mi_reallocarray",
+      "mi_rezalloc_aligned",
+      "mi_usable_size",
+      "mi_zalloc_aligned"
+    ],
+    "unsupported_raw_mi_references_found": [],
+    "header_compile_verified": true,
+    "header_compile_note": "The patched source passed host C11 syntax compilation with the concurrently built adapter header and pinned include tree; the pinned Docker musl/AArch64 build remains the runner's execution boundary."
+  }
+}

@@ -458,6 +458,7 @@ impl Mapping {
         if address.is_null() || length == 0 {
             return Err(Errno::INVAL);
         }
+        fault_before(FaultPoint::Unmap)?;
         unsafe { crabc_core::mm::munmap_raw(address, length) }
     }
 
@@ -854,7 +855,7 @@ pub(crate) fn entropy_fill(buffer: &mut [u8]) -> Result<bool> {
 
 #[repr(u8)]
 #[derive(Clone, Copy, Eq, PartialEq)]
-enum FaultPoint {
+pub(crate) enum FaultPoint {
     Map = 1,
     Commit = 2,
     Decommit = 3,
@@ -878,49 +879,85 @@ fn fault_before(_point: FaultPoint) -> Result<()> {
 }
 
 #[cfg(test)]
-mod fault {
+pub(crate) mod fault {
     use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
     use crabc_core::{Errno, Result};
 
-    pub(super) use super::FaultPoint as Point;
+    pub(crate) use super::FaultPoint as Point;
 
     const ANY_POINT: usize = 0;
     static LOCKED: AtomicBool = AtomicBool::new(false);
     static SELECTED_POINT: AtomicUsize = AtomicUsize::new(ANY_POINT);
     static FAILURE_ORDINAL: AtomicUsize = AtomicUsize::new(0);
     static OBSERVED: AtomicUsize = AtomicUsize::new(0);
+    static SECOND_SELECTED_POINT: AtomicUsize = AtomicUsize::new(ANY_POINT);
+    static SECOND_FAILURE_ORDINAL: AtomicUsize = AtomicUsize::new(0);
+    static SECOND_OBSERVED: AtomicUsize = AtomicUsize::new(0);
+    // A paired rollback fault activates only after the primary operation has
+    // failed. Setup `unmap`s before a later metadata `commit` must not
+    // consume the cleanup `unmap` injection intended to follow that commit.
+    static SECOND_ENABLED: AtomicBool = AtomicBool::new(false);
     static FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
 
     /// An allocation-free deterministic failure plan for one serial test.
     #[derive(Clone, Copy)]
-    pub(super) struct Plan {
+    pub(crate) struct Plan {
         point: usize,
         ordinal: usize,
+        second_point: usize,
+        second_ordinal: usize,
         error: Errno,
     }
 
     impl Plan {
-        pub(super) const fn disabled() -> Self {
+        pub(crate) const fn disabled() -> Self {
             Self {
                 point: ANY_POINT,
                 ordinal: 0,
+                second_point: ANY_POINT,
+                second_ordinal: 0,
                 error: Errno::NOMEM,
             }
         }
 
-        pub(super) const fn any_nth(ordinal: usize, error: Errno) -> Self {
+        pub(crate) const fn any_nth(ordinal: usize, error: Errno) -> Self {
             Self {
                 point: ANY_POINT,
                 ordinal,
+                second_point: ANY_POINT,
+                second_ordinal: 0,
                 error,
             }
         }
 
-        pub(super) const fn at(point: Point, ordinal: usize, error: Errno) -> Self {
+        pub(crate) const fn at(point: Point, ordinal: usize, error: Errno) -> Self {
             Self {
                 point: point as usize,
                 ordinal,
+                second_point: ANY_POINT,
+                second_ordinal: 0,
+                error,
+            }
+        }
+
+        /// Fails a primary occurrence, then one rollback occurrence.
+        ///
+        /// The second point becomes active only after the first one fails.
+        /// This stays allocation-free while testing a failed operation whose
+        /// cleanup itself needs a second explicit release failure.
+        pub(crate) const fn at_pair(
+            point: Point,
+            ordinal: usize,
+            second_point: Point,
+            second_ordinal: usize,
+            error: Errno,
+        ) -> Self {
+            Self {
+                point: point as usize,
+                ordinal,
+                second_point: second_point as usize,
+                second_ordinal,
                 error,
             }
         }
@@ -930,9 +967,9 @@ mod fault {
     ///
     /// This is test-only spin synchronization over static atomics; it neither
     /// allocates nor involves the allocator engine under test.
-    pub(super) struct Guard;
+    pub(crate) struct Guard;
 
-    pub(super) fn install(plan: Plan) -> Guard {
+    pub(crate) fn install(plan: Plan) -> Guard {
         while LOCKED
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
@@ -944,11 +981,11 @@ mod fault {
     }
 
     impl Guard {
-        pub(super) fn set(&self, plan: Plan) {
+        pub(crate) fn set(&self, plan: Plan) {
             set(plan);
         }
 
-        pub(super) fn observed(&self) -> usize {
+        pub(crate) fn observed(&self) -> usize {
             OBSERVED.load(Ordering::Acquire)
         }
     }
@@ -964,26 +1001,44 @@ mod fault {
     fn set(plan: Plan) {
         SELECTED_POINT.store(plan.point, Ordering::Relaxed);
         FAILURE_ORDINAL.store(plan.ordinal, Ordering::Relaxed);
+        SECOND_SELECTED_POINT.store(plan.second_point, Ordering::Relaxed);
+        SECOND_FAILURE_ORDINAL.store(plan.second_ordinal, Ordering::Relaxed);
         FAILURE_ERROR.store(plan.error.raw(), Ordering::Relaxed);
         OBSERVED.store(0, Ordering::Release);
+        SECOND_OBSERVED.store(0, Ordering::Release);
+        SECOND_ENABLED.store(false, Ordering::Release);
     }
 
     #[inline]
-    pub(super) fn before(point: Point) -> Result<()> {
+    pub(crate) fn before(point: Point) -> Result<()> {
         let selected = SELECTED_POINT.load(Ordering::Acquire);
-        if selected != ANY_POINT && selected != point as usize {
-            return Ok(());
+        if selected == ANY_POINT || selected == point as usize {
+            let ordinal = FAILURE_ORDINAL.load(Ordering::Acquire);
+            if ordinal != 0 {
+                let observed = OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
+                if observed == ordinal {
+                    SECOND_ENABLED.store(true, Ordering::Release);
+                    let error = FAILURE_ERROR.load(Ordering::Acquire);
+                    // SAFETY: `Plan` obtains `error` from a valid `Errno`, so
+                    // the stored integer remains a positive Linux errno.
+                    return Err(unsafe { Errno::from_raw(error).unwrap_unchecked() });
+                }
+            }
         }
-        let ordinal = FAILURE_ORDINAL.load(Ordering::Acquire);
-        if ordinal == 0 {
-            return Ok(());
-        }
-        let observed = OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
-        if observed == ordinal {
-            let error = FAILURE_ERROR.load(Ordering::Acquire);
-            // SAFETY: `Plan` obtains `error` from a valid `Errno`, so the
-            // stored integer remains a positive Linux errno throughout.
-            return Err(unsafe { Errno::from_raw(error).unwrap_unchecked() });
+        let second_selected = SECOND_SELECTED_POINT.load(Ordering::Acquire);
+        if SECOND_ENABLED.load(Ordering::Acquire)
+            && (second_selected == ANY_POINT || second_selected == point as usize)
+        {
+            let second_ordinal = SECOND_FAILURE_ORDINAL.load(Ordering::Acquire);
+            if second_ordinal != 0 {
+                let second_observed = SECOND_OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
+                if second_observed == second_ordinal {
+                    let error = FAILURE_ERROR.load(Ordering::Acquire);
+                    // SAFETY: `Plan` obtains `error` from a valid `Errno`, so
+                    // the stored integer remains a positive Linux errno.
+                    return Err(unsafe { Errno::from_raw(error).unwrap_unchecked() });
+                }
+            }
         }
         Ok(())
     }

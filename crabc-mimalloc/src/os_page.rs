@@ -278,38 +278,127 @@ pub(crate) struct PublishedOsAlignedPage {
     primary: NonNull<Page>,
 }
 
+/// The single, allocation-free owner of an OS-aligned singleton mapping after
+/// it can no longer remain on a normal page queue.
+///
+/// An unpublished claim is still responsible for its mapping and any private
+/// fresh-page rollback. A published token is admitted here only after page-map
+/// entries, aliases, and primary metadata have been detached. Neither variant
+/// has a destructor: callers must retry [`Self::release`] explicitly.
+pub(crate) enum OsAlignedPageOwner {
+    Claim(OsAlignedPageClaim),
+    Published(PublishedOsAlignedPage),
+}
+
+/// One failed exact OS-aligned mapping release which retains its unique owner.
+pub(crate) struct OsAlignedPageReleaseFailure {
+    error: OsAlignedPageError,
+    owner: OsAlignedPageOwner,
+}
+
+impl OsAlignedPageReleaseFailure {
+    #[inline]
+    pub(crate) const fn error(&self) -> OsAlignedPageError {
+        self.error
+    }
+
+    #[inline]
+    pub(crate) fn into_owner(self) -> OsAlignedPageOwner {
+        self.owner
+    }
+}
+
+/// A fresh OS-aligned claim failure which may retain a live rollback owner.
+///
+/// A map failure owns nothing. If a metadata/block commit fails and its
+/// mandatory explicit `unmap` also fails, this value carries the live claim so
+/// the allocator can park and retry it instead of losing the mapping.
+pub(crate) struct OsAlignedPageAllocationFailure {
+    error: OsAlignedPageError,
+    claim: Option<OsAlignedPageClaim>,
+}
+
+impl OsAlignedPageAllocationFailure {
+    #[inline]
+    fn released(error: OsAlignedPageError) -> Self {
+        Self { error, claim: None }
+    }
+
+    #[inline]
+    fn with_claim(error: OsAlignedPageError, claim: OsAlignedPageClaim) -> Self {
+        Self {
+            error,
+            claim: Some(claim),
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn error(&self) -> OsAlignedPageError {
+        self.error
+    }
+
+    #[inline]
+    pub(crate) fn into_owner(self) -> Option<OsAlignedPageOwner> {
+        self.claim.map(OsAlignedPageOwner::Claim)
+    }
+}
+
 impl OsAlignedPageClaim {
     /// Reserves and commits one exact source OS-aligned singleton claim.
     pub(crate) fn allocate(
         config: MemoryConfig,
         block_size: usize,
         alignment: usize,
-    ) -> Result<Self, OsAlignedPageError> {
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
         let layout = OsAlignedPageLayout::new(config, block_size, alignment)
-            .ok_or_else(|| OsAlignedPageError::new(OsAlignedPageFailureStage::Map, Errno::INVAL))?;
+            .ok_or_else(|| {
+                OsAlignedPageAllocationFailure::released(OsAlignedPageError::new(
+                    OsAlignedPageFailureStage::Map,
+                    Errno::INVAL,
+                ))
+            })?;
         let mut mapping = Mapping::map_aligned_for_allocator(
             config,
             layout.mapping_length(),
             PAGE_META_ALIGNMENT,
             MapAccess::Reserved,
         )
-        .map_err(|error| OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error))?;
+        .map_err(|error| {
+            OsAlignedPageAllocationFailure::released(OsAlignedPageError::new(
+                OsAlignedPageFailureStage::Map,
+                error,
+            ))
+        })?;
 
         if let Err(error) = mapping.commit(0, layout.metadata_commit_size()) {
-            let cleanup = mapping.unmap().err();
-            return Err(OsAlignedPageError::with_cleanup(
+            let failure = OsAlignedPageError::with_cleanup(
                 OsAlignedPageFailureStage::MetadataCommit,
                 error,
-                cleanup,
-            ));
+                mapping.unmap().err(),
+            );
+            return if failure.cleanup().is_some() {
+                Err(OsAlignedPageAllocationFailure::with_claim(
+                    failure,
+                    Self { mapping, layout },
+                ))
+            } else {
+                Err(OsAlignedPageAllocationFailure::released(failure))
+            };
         }
         if let Err(error) = mapping.commit(layout.alignment(), layout.allocation_size()) {
-            let cleanup = mapping.unmap().err();
-            return Err(OsAlignedPageError::with_cleanup(
+            let failure = OsAlignedPageError::with_cleanup(
                 OsAlignedPageFailureStage::BlockCommit,
                 error,
-                cleanup,
-            ));
+                mapping.unmap().err(),
+            );
+            return if failure.cleanup().is_some() {
+                Err(OsAlignedPageAllocationFailure::with_claim(
+                    failure,
+                    Self { mapping, layout },
+                ))
+            } else {
+                Err(OsAlignedPageAllocationFailure::released(failure))
+            };
         }
 
         Ok(Self { mapping, layout })
@@ -427,10 +516,18 @@ impl OsAlignedPageClaim {
     }
 
     /// Releases an unpublished claim after metadata/page rollback.
-    pub(crate) fn release(mut self) -> Result<(), OsAlignedPageError> {
-        self.mapping
-            .unmap()
-            .map_err(|error| OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error))
+    ///
+    /// An `unmap` failure returns this exact still-live claim inside
+    /// [`OsAlignedPageReleaseFailure`]. The caller must park or otherwise
+    /// retain it for a later explicit retry; no implicit release occurs.
+    pub(crate) fn release(mut self) -> Result<(), OsAlignedPageReleaseFailure> {
+        match self.mapping.unmap() {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
+                owner: OsAlignedPageOwner::Claim(self),
+            }),
+        }
     }
 }
 
@@ -561,13 +658,35 @@ impl PublishedOsAlignedPage {
     /// The page-map range and every secondary alias must be clear, the primary
     /// page must be retired, all readers must be quiescent, and this token must
     /// retain the unique mapping release right.
-    pub(crate) unsafe fn reclaim(self) -> Result<(), OsAlignedPageError> {
+    pub(crate) unsafe fn reclaim(self) -> Result<(), OsAlignedPageReleaseFailure> {
         // SAFETY: the method contract preserves the original published base,
         // exact rounded length, and unique terminal ownership.
-        unsafe {
+        match unsafe {
             Mapping::reclaim_published(self.base.as_ptr(), self.layout.mapping_length())
+        } {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageReleaseFailure {
+                error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
+                owner: OsAlignedPageOwner::Published(self),
+            }),
         }
-        .map_err(|error| OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error))
+    }
+}
+
+impl OsAlignedPageOwner {
+    /// Retries the exact explicit release represented by this one owner.
+    ///
+    /// # Safety
+    ///
+    /// When this is [`Self::Published`], the caller must preserve the terminal
+    /// detached-page preconditions documented by [`PublishedOsAlignedPage::reclaim`].
+    /// An unpublished claim remains private and has no additional precondition.
+    pub(crate) unsafe fn release(self) -> Result<(), OsAlignedPageReleaseFailure> {
+        match self {
+            Self::Claim(claim) => claim.release(),
+            // SAFETY: forwarded from this method's published-owner contract.
+            Self::Published(published) => unsafe { published.reclaim() },
+        }
     }
 }
 
@@ -575,7 +694,8 @@ impl PublishedOsAlignedPage {
 mod tests {
     use super::*;
     use crate::config::{KIB, MIB};
-    use crate::os::PageSize;
+    use crate::os::{PageSize, fault};
+    use crabc_core::Errno;
 
     fn config(page_size: usize) -> MemoryConfig {
         MemoryConfig::from_observations(
@@ -597,14 +717,14 @@ mod tests {
 
         let error = match OsAlignedPageClaim::allocate(config, 4 * KIB, 64 * KIB) {
             Ok(claim) => {
-                claim.release().unwrap();
+                assert!(matches!(claim.release(), Ok(())));
                 panic!("arena-bounded alignment must not create an OS claim");
             }
             Err(error) => error,
         };
-        assert_eq!(error.stage(), OsAlignedPageFailureStage::Map);
-        assert_eq!(error.operation(), Errno::INVAL);
-        assert_eq!(error.cleanup(), None);
+        assert_eq!(error.error().stage(), OsAlignedPageFailureStage::Map);
+        assert_eq!(error.error().operation(), Errno::INVAL);
+        assert_eq!(error.error().cleanup(), None);
     }
 
     #[test]
@@ -670,8 +790,10 @@ mod tests {
 
     #[test]
     fn live_claim_commits_only_the_derived_ranges_and_releases_explicitly() {
-        let claim = OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
-            .expect("OS-aligned singleton claim");
+        let claim = match OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB) {
+            Ok(claim) => claim,
+            Err(_) => panic!("OS-aligned singleton claim"),
+        };
         let base = claim.base().unwrap();
         let slice_start = claim.slice_start().unwrap();
         let metadata = claim.metadata().unwrap();
@@ -694,6 +816,82 @@ mod tests {
             assert_eq!(base.read(), 0x51);
             assert_eq!(slice_start.as_ptr().read(), 0x73);
         }
-        claim.release().unwrap();
+        assert!(matches!(claim.release(), Ok(())));
+    }
+
+    #[test]
+    fn failed_unpublished_release_retains_one_claim_for_retry() {
+        let fault = fault::install(fault::Plan::disabled());
+        let claim = match OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB) {
+            Ok(claim) => claim,
+            Err(_) => panic!("OS-aligned singleton claim"),
+        };
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failure = match claim.release() {
+            Ok(()) => panic!("the configured unpublished release must fail"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::Release);
+        assert_eq!(failure.error().operation(), Errno::NOMEM);
+        let owner = failure.into_owner();
+        fault.set(fault::Plan::disabled());
+        match owner {
+            OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
+            OsAlignedPageOwner::Published(_) => panic!("unpublished release changed owner kind"),
+        }
+    }
+
+    #[test]
+    fn commit_failure_with_failed_cleanup_transfers_the_live_claim_owner() {
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Commit,
+            1,
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+        let failure = match OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB) {
+            Ok(claim) => {
+                assert!(matches!(claim.release(), Ok(())));
+                panic!("the configured metadata commit must fail");
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::MetadataCommit);
+        assert_eq!(failure.error().operation(), Errno::NOMEM);
+        assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
+        let owner = failure.into_owner().expect("failed cleanup retains its claim");
+        fault.set(fault::Plan::disabled());
+        match owner {
+            OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
+            OsAlignedPageOwner::Published(_) => panic!("commit rollback cannot publish a page"),
+        }
+    }
+
+    #[test]
+    fn block_commit_failure_with_failed_cleanup_retains_the_live_claim_owner() {
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Commit,
+            2,
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+        let failure = match OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB) {
+            Ok(claim) => {
+                assert!(matches!(claim.release(), Ok(())));
+                panic!("the configured block commit must fail");
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::BlockCommit);
+        assert_eq!(failure.error().operation(), Errno::NOMEM);
+        assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
+        let owner = failure.into_owner().expect("failed cleanup retains its claim");
+        fault.set(fault::Plan::disabled());
+        match owner {
+            OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
+            OsAlignedPageOwner::Published(_) => panic!("block rollback cannot publish a page"),
+        }
     }
 }

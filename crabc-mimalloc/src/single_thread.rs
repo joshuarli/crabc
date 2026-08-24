@@ -48,11 +48,11 @@ use crate::{aligned, alloc, support};
 use crate::bootstrap::{BootstrapError, DefaultSingleThreadBootstrap, DefaultSingleThreadSession};
 use crate::config::{
     ARENA_SLICE_SIZE, BIN_FULL, BIN_HUGE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
-    SMALL_SIZE_MAX,
+    SMALL_SIZE_MAX, WORD_SIZE,
 };
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
-use crate::os_page::{OsAlignedPageClaim, PublishedOsAlignedPage};
+use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage};
 use crate::page;
 use crate::page_map::PageMap;
 use crate::size_class;
@@ -112,6 +112,10 @@ pub(crate) struct SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     requested_arena: ArenaId,
     page_map: &'map PageMap,
     thread_sequence: usize,
+    // At most one OS-aligned singleton can be detached but unreclaimed in
+    // this private lifecycle. Keeping its unique owner here makes a failed
+    // `munmap` retryable without inventing arena/page-map provenance.
+    pending_os_release: Option<OsAlignedPageOwner>,
 }
 
 impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
@@ -141,6 +145,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
             requested_arena,
             page_map,
             thread_sequence,
+            pending_os_release: None,
         })
     }
 
@@ -153,6 +158,10 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     /// `_mi_os_good_alloc_size` and a one-block singleton page. Aligned and
     /// interior-pointer allocation remain a separate lifecycle slice.
     pub(crate) fn allocate(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
+        // `mi_malloc_generic` normalizes a C zero request to one word before
+        // entering the ordinary size-class machinery. The returned block is
+        // distinct and freeable even though callers may not dereference it.
+        let request = request.max(WORD_SIZE);
         if !size_class::request_size_is_valid(request) {
             return None;
         }
@@ -624,6 +633,9 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         alignment: usize,
         zero: bool,
     ) -> Option<NonNull<u8>> {
+        if !self.retry_pending_os_release() {
+            return None;
+        }
         let config = self.page_map.memory_config();
         let block_size = config.good_alloc_size(request);
         if block_size == 0 || block_size < request {
@@ -1020,11 +1032,61 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         NonNull::new(block.as_ptr().wrapping_sub(adjustment))
     }
 
+    /// Retries the one detached OS mapping which could not be unmapped during
+    /// an earlier fresh rollback or terminal free.
+    fn retry_pending_os_release(&mut self) -> bool {
+        let Some(owner) = self.pending_os_release.take() else {
+            return true;
+        };
+        // SAFETY: a `Published` owner enters this slot only after its queue,
+        // page-map entries, aliases, and primary metadata were detached. A
+        // `Claim` owner is still private. Neither state has a live reader.
+        match unsafe { owner.release() } {
+            Ok(()) => true,
+            Err(failure) => {
+                self.park_pending_os_release(failure.into_owner());
+                false
+            }
+        }
+    }
+
+    /// Stores the only outstanding OS-aligned mapping release right.
+    ///
+    /// Every creation path retries this slot before it can claim a second OS
+    /// mapping, so two pending owners are an internal-state impossibility.
+    fn park_pending_os_release(&mut self, owner: OsAlignedPageOwner) {
+        assert!(
+            self.pending_os_release.is_none(),
+            "OS-aligned singleton release ownership must stay unique"
+        );
+        self.pending_os_release = Some(owner);
+    }
+
+    /// Releases an unpublished fresh claim or records it for retry on an
+    /// `unmap` failure. Parking preserves the mapping's exact ownership while
+    /// its already-rolled-back metadata remains private.
+    fn release_unpublished_claim_or_park(&mut self, claim: OsAlignedPageClaim) {
+        match claim.release() {
+            Ok(()) => {}
+            Err(failure) => {
+                self.park_pending_os_release(failure.into_owner());
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn has_pending_os_release(&self) -> bool {
+        self.pending_os_release.is_some()
+    }
+
     /// Collects source-retired regular pages. `force` releases every currently
     /// retired page in the tracked range; `false` decrements the normal
     /// retirement countdown. This intentionally does not visit the full queue:
     /// a local free transitions full pages back to their regular bin first.
     pub(crate) fn collect_retired(&mut self, force: bool) -> bool {
+        if !self.retry_pending_os_release() {
+            return false;
+        }
         let (minimum, maximum) = self.session.retired_bounds();
         if minimum >= BIN_FULL || minimum > maximum {
             self.session.reset_retired_bounds();
@@ -1119,27 +1181,41 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         block_size: usize,
         alignment: usize,
     ) -> Option<NonNull<Page>> {
+        // A failed earlier OS-aligned release owns the sole pending slot. It
+        // must be retried before claiming another mapping; ordinary arena
+        // pages intentionally do not depend on this token.
+        if !self.retry_pending_os_release() {
+            return None;
+        }
         let config = self.page_map.memory_config();
-        let claim = OsAlignedPageClaim::allocate(config, block_size, alignment).ok()?;
+        let claim = match OsAlignedPageClaim::allocate(config, block_size, alignment) {
+            Ok(claim) => claim,
+            Err(failure) => {
+                if let Some(owner) = failure.into_owner() {
+                    self.park_pending_os_release(owner);
+                }
+                return None;
+            }
+        };
         let layout = claim.layout();
         let metadata = match claim.metadata() {
             Some(metadata) => metadata,
             None => {
-                let _ = claim.release();
+                self.release_unpublished_claim_or_park(claim);
                 return None;
             }
         };
         let slice_start = match claim.slice_start() {
             Some(slice_start) => slice_start,
             None => {
-                let _ = claim.release();
+                self.release_unpublished_claim_or_park(claim);
                 return None;
             }
         };
         let memory = match claim.memory_id() {
             Ok(memory) => memory,
             Err(_) => {
-                let _ = claim.release();
+                self.release_unpublished_claim_or_park(claim);
                 return None;
             }
         };
@@ -1156,7 +1232,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         } {
             Some(page) => page,
             None => {
-                let _ = claim.release();
+                self.release_unpublished_claim_or_park(claim);
                 return None;
             }
         };
@@ -1243,7 +1319,7 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         if unsafe { self.session.retire_page(&mut *page.as_ptr()) }.is_none() {
             return;
         }
-        let _ = claim.release();
+        self.release_unpublished_claim_or_park(claim);
     }
 
     /// Performs the fresh-page half of `_mi_arenas_page_alloc` for an
@@ -1577,7 +1653,17 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
                 }
                 // SAFETY: `published` owns the unique raw release right and
                 // all map/alias/primary metadata predecessors now completed.
-                unsafe { published.reclaim() }.is_ok()
+                match unsafe { published.reclaim() } {
+                    Ok(()) => true,
+                    Err(failure) => {
+                        // The caller's block is already semantically free:
+                        // queue, map, aliases, and primary are detached. Keep
+                        // its sole raw mapping owner for collection/shutdown
+                        // retry and still report this local free as accepted.
+                        self.park_pending_os_release(failure.into_owner());
+                        true
+                    }
+                }
             }
         }
     }
@@ -1741,7 +1827,8 @@ mod tests {
         MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
         KIB, SMALL_MAX_OBJ_SIZE, MIB, WORD_SIZE,
     };
-    use crate::os::{MemoryConfig, PageSize};
+    use crate::os::{MemoryConfig, PageSize, fault};
+    use crabc_core::Errno;
     use core::ffi::c_void;
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
@@ -2362,12 +2449,33 @@ mod tests {
             let (requests, count) = small_boundaries();
             for request in requests[..count].iter().copied() {
                 let block = allocator.allocate(request, false).unwrap();
-                let direct = invariants::word_count(request).unwrap();
+                let direct = invariants::word_count(request.max(WORD_SIZE)).unwrap();
                 let mapped = unsafe { allocator.page_map.checked_lookup(block.as_ptr()) };
                 assert_eq!(allocator.direct_page(direct), Some(mapped));
                 // SAFETY: `block` is the exact current allocation for this
                 // direct-cache assertion.
                 unsafe { allocator.free(block).unwrap() };
+            }
+        });
+    }
+
+    #[test]
+    fn zero_request_normalizes_to_distinct_naturally_aligned_word_blocks() {
+        with_allocator(|allocator| {
+            let first = allocator.allocate(0, false).unwrap();
+            let second = allocator.allocate(0, false).unwrap();
+            assert_ne!(first, second);
+            assert_eq!(first.as_ptr().addr() % WORD_SIZE, 0);
+            assert_eq!(second.as_ptr().addr() % WORD_SIZE, 0);
+            // SAFETY: both blocks are current normalized word allocations.
+            assert_eq!(unsafe { allocator.usable_size(first) }, Some(WORD_SIZE));
+            assert_eq!(unsafe { allocator.usable_size(second) }, Some(WORD_SIZE));
+
+            // SAFETY: each zero-size request still owns one normalized word
+            // block and is returned exactly once.
+            unsafe {
+                allocator.free(first).unwrap();
+                allocator.free(second).unwrap();
             }
         });
     }
@@ -2575,6 +2683,72 @@ mod tests {
             assert_eq!(near_limit.as_ptr().addr() & (128 * MIB - 1), 0);
             unsafe { allocator.free(near_limit).unwrap() };
             assert!(allocator.allocate_aligned(7, 256 * MIB).is_none());
+        });
+    }
+
+    #[test]
+    fn os_aligned_reclaim_failure_parks_the_detached_owner_for_retry() {
+        let fault = fault::install(fault::Plan::disabled());
+        with_allocator(|allocator| {
+            let block = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            // SAFETY: this is the sole live block in the OS singleton. The
+            // terminal release detaches all metadata before the injected
+            // reclaim error parks its unique mapping owner.
+            unsafe { allocator.free(block).unwrap() };
+            assert!(allocator.has_pending_os_release());
+            // The semantic free cleared lookup before parking, so the same
+            // pointer can no longer be accepted as a current allocation.
+            assert_eq!(unsafe { allocator.free(block) }, Err(FreeError::Unmapped));
+            // Reclaim must succeed before another OS-aligned claim can begin.
+            // Keep the injected `unmap` failure active for this allocation's
+            // mandatory pending-owner retry, while an arena allocation stays
+            // independent of the OS singleton release provenance.
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            assert!(allocator.allocate_aligned(7, 128 * KIB).is_none());
+            assert!(allocator.has_pending_os_release());
+            let arena_block = allocator.allocate(37, false).unwrap();
+            // SAFETY: this ordinary block is current and arena-owned.
+            unsafe { allocator.free(arena_block).unwrap() };
+            // Re-arm the same source `Unmap` seam to prove collection leaves
+            // the exact parked owner available while release failure persists.
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            assert!(!allocator.collect_retired(true));
+
+            fault.set(fault::Plan::disabled());
+            assert!(allocator.collect_retired(true));
+            assert!(!allocator.has_pending_os_release());
+        });
+    }
+
+    #[test]
+    fn failed_os_claim_commit_cleanup_parks_the_unpublished_owner_for_retry() {
+        let fault = fault::install(fault::Plan::disabled());
+        with_allocator(|allocator| {
+            // The paired seam first rejects metadata commit, then rejects the
+            // claim's required rollback unmap. The failure must return no
+            // allocation while retaining the exact unpublished mapping owner.
+            fault.set(fault::Plan::at_pair(
+                fault::Point::Commit,
+                1,
+                fault::Point::Unmap,
+                1,
+                Errno::NOMEM,
+            ));
+            assert!(allocator.allocate_aligned(7, 128 * KIB).is_none());
+            assert!(allocator.has_pending_os_release());
+
+            // A still-failing retry blocks only another OS singleton claim;
+            // arena allocation does not share that release owner.
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            assert!(allocator.allocate_aligned(7, 128 * KIB).is_none());
+            let arena_block = allocator.allocate(37, false).unwrap();
+            // SAFETY: `arena_block` is a distinct live arena allocation.
+            unsafe { allocator.free(arena_block).unwrap() };
+
+            fault.set(fault::Plan::disabled());
+            assert!(allocator.collect_retired(true));
+            assert!(!allocator.has_pending_os_release());
         });
     }
 

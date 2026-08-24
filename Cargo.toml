@@ -1,5 +1,12 @@
 [workspace]
-members = ["ldso", "libc", "crabc-core", "crabc-rs", "crabc-mimalloc"]
+members = [
+    "ldso",
+    "libc",
+    "crabc-core",
+    "crabc-rs",
+    "crabc-mimalloc",
+    "compat/allocator/test-adapter",
+]
 resolver = "2"
 
 [workspace.package]

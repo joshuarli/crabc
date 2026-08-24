@@ -20,7 +20,10 @@ and singleton allocation, exact generic candidate/full retention, local free,
 retirement, full-span unregister-before-release, checked counted allocation,
 ordinary and aligned reallocation, live aligned/offset-aligned allocation,
 separately owned OS-aligned singleton mappings below 256 MiB, and failure
-rollback. It is not a public allocator API and makes no
+rollback with allocation-free retry ownership after terminal unmap failure. A
+standalone test-only package exposes 16 `crabc_test_*` C symbols around one
+creating-thread context; it exports neither standard allocation names nor
+`mi_*` names. It is not a public allocator API and makes no
 allocator-readiness or whole-port parity claim. Its fixed-capacity `cfg(miri)`
 model covers current mapping and page-map ownership. The pinned image does not
 currently contain Miri, so forced-`cfg(miri)` execution is smoke evidence only
@@ -55,23 +58,29 @@ records a separate 51-key exact-C baseline for page-kind, calloc, realloc,
 aligned/offset-aligned, usable-size, preservation, and invalid-size OOM
 behavior. The same library run emits an independent 51-key Rust record and
 requires exact equality with that pinned C baseline. This proves the bounded
-single-thread engine's fundamental operation slice; it is not yet a public C
-adapter, production process-lifecycle, or whole-allocator parity claim. A
+single-thread engine's fundamental operation slice; it is not a production C
+adapter, process lifecycle, or whole-allocator parity claim. A
 default-off `test-adapter` feature now owns one allocation-backed, creating-
 thread-only context with root-last initialization, exact outstanding-block
 accounting, and explicit retryable page-map/arena teardown. It exists only to
-support the pending prefixed C test adapter and is not a production allocator
-API. The gate also
+support the standalone prefixed C evidence adapter and is not a production
+allocator API. The gate also
 traverses Cargo metadata for the
 fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside
 the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
 only in `Cargo.lock` do not satisfy or fail that selected-graph judge.
 
-`allocator --full` and both performance modes deliberately return exit status
-3 with an `UNMET MILESTONE` explanation until their real Rust adapter,
-differential, stress, integration, and comparison lanes exist. That explicit
-failure is not a skip and must not be converted into a successful placeholder.
+`allocator --full` extends that gate by building and auditing the standalone
+static and shared test adapter, including its exact 16-symbol export boundary,
+native link tail, and dynamic dependencies. It applies the reviewed patch to
+the hash-pinned upstream `test/test-api.c` without checking in a source fork,
+then runs both the existing crabc allocator fixture and 33 selected upstream
+API checks. After that passing Milestone 4 adapter lane it deliberately returns
+exit status 3 with an `UNMET MILESTONE` explanation until Milestone 5 supplies
+remote free, abandonment/adoption, thread/TLS lifecycle, Loom protocols, and
+pthread stress. Both performance modes likewise remain explicitly unavailable;
+these status-3 results are not skips and must not become successful placeholders.
 
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
@@ -94,6 +103,9 @@ snapshot after review; the normal gate never updates its own baseline.
 | --- | --- |
 | `api-v3.5.0.json` | Deterministic, source-audited public-header inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, and C++ conveniences; every item records its Linux/AArch64 classification, reason, profile, C-oracle release-symbol disposition, and crabc-libc export policy. |
 | `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
+| `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and native link contract for pinned upstream `test-api.c`. |
+| `adapted/test-api-m4.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
+| `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `port-map.toml` | Source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. |
 | `ratchet-v3.5.0.json` | Reviewed inventory hashes, counts, and non-regression baseline. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences. |

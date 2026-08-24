@@ -13,8 +13,8 @@ name = "crabc_mimalloc"
 
 [features]
 default = []
-# Private, allocation-backed process context used only by the future prefixed
-# C adapter's tests. Production builds retain the allocation-free engine.
+# Private, allocation-backed process context used only by the standalone
+# prefixed C adapter's tests. Production builds retain the allocation-free engine.
 test-adapter = []
 
 [dependencies]

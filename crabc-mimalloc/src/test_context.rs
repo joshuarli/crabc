@@ -112,8 +112,8 @@ enum ShutdownStage {
     Complete,
 }
 
-/// One feature-gated, single-thread process context for the future prefixed
-/// test adapter.
+/// One feature-gated, single-thread process context for the standalone
+/// prefixed test adapter.
 ///
 /// The context owns no global state, TLS slot, remote-free path, public malloc
 /// symbol, or errno.  It is intentionally bounded to operations accepted by

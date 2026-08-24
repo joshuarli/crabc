@@ -784,7 +784,11 @@ impl Page {
         // SAFETY: the preceding raw write initialized a valid Page value at
         // `metadata`; exclusive caller ownership permits this mutable borrow.
         let page = unsafe { metadata.as_mut() };
-        debug_assert!(page.publish_fresh_exclusive(
+        // This publication mutates every fresh-page field and is therefore a
+        // required release transition, not a debug-only invariant check.
+        // Keeping its boolean result explicit also preserves the raw entry
+        // point's checked failure boundary in every optimization profile.
+        if !page.publish_fresh_exclusive(
             theap,
             heap,
             thread_id,
@@ -794,7 +798,9 @@ impl Page {
             slice_pcommitted,
             free_is_zero,
             memid,
-        ));
+        ) {
+            return None;
+        }
         Some(metadata)
     }
 
@@ -1383,7 +1389,7 @@ mod tests {
     extern crate std;
 
     use super::*;
-    use core::mem::{align_of, offset_of, size_of};
+    use core::mem::{align_of, offset_of, size_of, MaybeUninit};
 
     #[test]
     fn oracle_layout_probe_emits_machine_record() {
@@ -1779,6 +1785,47 @@ mod tests {
         assert!(page.next.is_null());
         assert!(page.prev.is_null());
         assert_eq!(page.memid().kind(), MemoryKind::None);
+    }
+
+    #[test]
+    fn raw_fresh_page_publication_performs_its_transition_in_every_profile() {
+        let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_exclusive(thread_id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+
+        let mut storage = MaybeUninit::<Page>::uninit();
+        let metadata = NonNull::from(&mut storage).cast::<Page>();
+        // SAFETY: `storage` is aligned, writable raw page metadata with no
+        // observer. The tested boundary initializes its full Page image.
+        let page = unsafe {
+            Page::publish_fresh_exclusive_at(
+                metadata,
+                &mut theap,
+                &mut heap,
+                thread_id,
+                16,
+                128,
+                32,
+                0,
+                false,
+                MemoryId::none(),
+            )
+        }
+        .expect("valid raw metadata publication");
+        // SAFETY: successful publication initialized this exact Page image.
+        let page = unsafe { page.as_ref() };
+        assert_eq!(page.block_size(), 16);
+        assert_eq!(page.page_offset(), 128);
+        assert_eq!(page.reserved(), 32);
+        assert_eq!(page.theap(), core::ptr::from_mut(&mut theap));
+        assert_eq!(page.heap(), core::ptr::from_mut(&mut heap));
+        assert_eq!(
+            page.xthread_id.load(core::sync::atomic::Ordering::Acquire),
+            thread_id.get(),
+        );
     }
 
     #[test]

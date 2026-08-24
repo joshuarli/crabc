@@ -106,6 +106,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crabc-mimalloc-test-adapter"
+version = "0.3.0"
+dependencies = [
+ "crabc-mimalloc",
+]
+
+[[package]]
 name = "crabc-rs"
 version = "0.3.0"
 dependencies = [

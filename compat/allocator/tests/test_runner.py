@@ -457,6 +457,70 @@ test result: ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
         with self.assertRaisesRegex(RUNNER.HarnessError, "Rust allocator test summary"):
             RUNNER.parse_rust_test_count("test result: FAILED. 67 passed; 1 failed\n")
 
+    def test_upstream_api_summary_parser_requires_one_zero_failure_summary(self) -> None:
+        output = """
+malloc_aligned5: usable size: 8192.
+
+---------------------------------------------
+succeeded: 34
+failed   : 0
+"""
+        self.assertEqual(
+            RUNNER.parse_upstream_api_test_summary(output),
+            {"failed": 0, "succeeded": 34},
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "reported 1 failure"):
+            RUNNER.parse_upstream_api_test_summary("succeeded: 33\nfailed   : 1\n")
+        with self.assertRaisesRegex(RUNNER.HarnessError, "absent or ambiguous"):
+            RUNNER.parse_upstream_api_test_summary(
+                "succeeded: 34\nfailed   : 0\nsucceeded: 34\nfailed   : 0\n"
+            )
+
+    def test_adapter_symbol_contract_requires_exact_prefixed_exports(self) -> None:
+        expected = [
+            "crabc_test_free",
+            "crabc_test_init",
+            "crabc_test_malloc",
+        ]
+        self.assertEqual(
+            RUNNER.validate_adapter_dynamic_symbols(
+                ["_init", *expected, "rust_eh_personality"], expected
+            ),
+            {"exported_symbol_count": 3, "symbols": expected},
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "missing adapter symbols"):
+            RUNNER.validate_adapter_dynamic_symbols(expected[:-1], expected)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unexpected adapter symbols"):
+            RUNNER.validate_adapter_dynamic_symbols(
+                [*expected, "crabc_test_unreviewed"], expected
+            )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "forbidden allocator exports"):
+            RUNNER.validate_adapter_dynamic_symbols([*expected, "malloc", "mi_malloc"], expected)
+
+    def test_adapter_header_inventory_extracts_only_function_declarations(self) -> None:
+        header = """
+int crabc_test_init(void);
+void *crabc_test_malloc(size_t size);
+#define mi_malloc(size) crabc_test_malloc((size))
+#define CRABC_MIMALLOC_TEST_ADAPTER_H
+"""
+        self.assertEqual(
+            RUNNER.adapter_header_function_names(header),
+            ["crabc_test_init", "crabc_test_malloc"],
+        )
+
+    def test_native_static_library_parser_preserves_rustc_link_order(self) -> None:
+        output = """
+   Compiling crabc-mimalloc-test-adapter v0.3.0
+note: native-static-libs: -lgcc_s -lc
+    Finished `release` profile
+"""
+        self.assertEqual(RUNNER.parse_native_static_libraries(output), ["-lgcc_s", "-lc"])
+        with self.assertRaisesRegex(RUNNER.HarnessError, "absent or ambiguous"):
+            RUNNER.parse_native_static_libraries("Finished release\n")
+        with self.assertRaisesRegex(RUNNER.HarnessError, "invalid native static library"):
+            RUNNER.parse_native_static_libraries("native-static-libs: -lgcc_s /ambient/libbad.a\n")
+
     def test_rust_layout_comparison_names_missing_and_mismatched_values(self) -> None:
         c_layout = {
             "pointer.size": 8,
@@ -517,6 +581,33 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(inventory["summary"]["test_support_file_count"], 3)
         self.assertEqual(inventory["summary"]["total_inventory_file_count"], 16)
 
+    def test_adapted_api_fixture_contract_is_exact_and_reviewed(self) -> None:
+        contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
+        summary = RUNNER.validate_adapted_test_contract(contract, RUNNER.load_pin(), header)
+        self.assertEqual(
+            summary,
+            {
+                "expected_adapter_symbol_count": 16,
+                "omitted_test_count": 21,
+                "selected_test_count": 33,
+            },
+        )
+
+    def test_adapted_api_fixture_rejects_unexplained_omission_and_symbol_drift(self) -> None:
+        contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        header = RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8")
+        contract["omitted_tests"][0]["reason"] = ""
+        with self.assertRaisesRegex(RUNNER.HarnessError, "invalid omitted test"):
+            RUNNER.validate_adapted_test_contract(contract, RUNNER.load_pin(), header)
+
+        contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        contract["expected_adapter_symbols"] = sorted(
+            [*contract["expected_adapter_symbols"], "crabc_test_unreviewed"]
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "header symbol contract"):
+            RUNNER.validate_adapted_test_contract(contract, RUNNER.load_pin(), header)
+
     def test_checked_in_api_inventory_has_audited_linux_aarch64_boundaries(self) -> None:
         inventory = RUNNER.read_json(RUNNER.API_CONTRACT)
         self.assertEqual(inventory["format"], 2)
@@ -554,12 +645,13 @@ class ContractTests(unittest.TestCase):
 
     def test_full_and_performance_modes_have_precise_unmet_milestones(self) -> None:
         full = (
-            "allocator --full is unavailable: Milestone 4 must provide the prefixed Rust test C API adapter before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
+            "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must provide remote free, abandonment/adoption, thread/TLS lifecycle, Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
         )
         performance = (
             "allocator performance is unavailable: Milestone 9 requires comparable C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; the current private one-thread engine is not a benchmark boundary."
         )
-        self.assertIn("Milestone 4", full)
+        self.assertIn("passing Milestone 4 adapter lane", full)
+        self.assertIn("Milestone 5", full)
         self.assertIn("Milestone 9", performance)
 
     def test_ratchet_rejects_a_true_status_moved_to_another_item(self) -> None:

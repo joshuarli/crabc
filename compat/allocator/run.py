@@ -39,6 +39,10 @@ CACHE = ALLOCATOR_ROOT / ".cache"
 REPORT_ROOT = ROOT / "compat/reports/allocator"
 API_CONTRACT = ALLOCATOR_ROOT / "api-v3.5.0.json"
 UPSTREAM_TEST_CONTRACT = ALLOCATOR_ROOT / "upstream-tests-v3.5.0.json"
+ADAPTED_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-v3.5.0.json"
+TEST_ADAPTER_ROOT = ALLOCATOR_ROOT / "test-adapter"
+TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
+TEST_ADAPTER_FIXTURE = TEST_ADAPTER_ROOT / "allocator-fixture-wrapper.c"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 
@@ -925,6 +929,219 @@ def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
     return normalized
 
 
+def validate_adapted_test_contract(
+    contract: Mapping[str, Any], pin: Mapping[str, str], adapter_header: str
+) -> dict[str, int]:
+    """Validate the reviewed M4 patch, selection, and private ABI contract."""
+
+    if contract.get("format") != 1 or contract.get("schema") != "crabc-mimalloc-adapted-test-api":
+        raise HarnessError("unsupported adapted allocator test contract")
+    if contract.get("milestone") != "M4" or contract.get("fixture_source") != "test/test-api.c":
+        raise HarnessError("adapted allocator contract must name the M4 test/test-api.c fixture")
+
+    upstream = contract.get("upstream")
+    if not isinstance(upstream, dict):
+        raise HarnessError("adapted allocator contract lacks upstream identity")
+    expected_upstream = {
+        "archive_root": pin["archive_root"],
+        "archive_sha256": pin["sha256"],
+        "archive_source": pin["source"],
+        "repository": pin["repository"],
+        "revision": pin["revision"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "version": pin["version"],
+    }
+    for key, expected in expected_upstream.items():
+        if upstream.get(key) != expected:
+            raise HarnessError(f"adapted allocator upstream identity mismatch: {key}")
+    if upstream.get("project") != "microsoft/mimalloc" or upstream.get("archive_path") != relative(archive_path(pin)):
+        raise HarnessError("adapted allocator upstream project/archive path changed")
+
+    source_hashes = contract.get("source_hashes")
+    if not isinstance(source_hashes, dict) or set(source_hashes) != {
+        "test/test-api.c",
+        "test/testhelper.h",
+    }:
+        raise HarnessError("adapted allocator source-hash set changed")
+    if not all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in source_hashes.values()):
+        raise HarnessError("adapted allocator source hash is invalid")
+
+    patch = contract.get("patch")
+    adapted = contract.get("adapted_source")
+    if not isinstance(patch, dict) or patch.get("path") != "compat/allocator/adapted/test-api-m4.patch":
+        raise HarnessError("adapted allocator patch path changed")
+    if not isinstance(adapted, dict) or adapted.get("path") != "test/test-api.c":
+        raise HarnessError("adapted allocator output path changed")
+    for label, value in (
+        ("patch", patch.get("sha256")),
+        ("adapted source", adapted.get("sha256")),
+    ):
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise HarnessError(f"adapted allocator {label} hash is invalid")
+
+    header_contract = contract.get("adapter_header")
+    if not isinstance(header_contract, dict) or header_contract.get("include_spelling") != TEST_ADAPTER_HEADER.name:
+        raise HarnessError("adapted allocator header spelling changed")
+    if header_contract.get("observed_checkout_path") != relative(TEST_ADAPTER_HEADER):
+        raise HarnessError("adapted allocator header path changed")
+    expected_symbols = contract.get("expected_adapter_symbols")
+    if (
+        not isinstance(expected_symbols, list)
+        or not expected_symbols
+        or not all(isinstance(name, str) for name in expected_symbols)
+        or expected_symbols != sorted(set(expected_symbols))
+    ):
+        raise HarnessError("adapted allocator expected symbol list is invalid")
+    if adapter_header_function_names(adapter_header) != expected_symbols:
+        raise HarnessError("adapted allocator header symbol contract differs from the manifest")
+
+    required_symbols = contract.get("required_prefixed_adapter_symbols")
+    if not isinstance(required_symbols, list) or not required_symbols:
+        raise HarnessError("adapted allocator required symbol mapping is absent")
+    for index, item in enumerate(required_symbols):
+        if not isinstance(item, dict) or not all(
+            isinstance(item.get(key), str) and item.get(key)
+            for key in ("upstream_spelling", "prefixed_symbol", "signature")
+        ):
+            raise HarnessError(f"adapted allocator required symbol mapping {index} is invalid")
+        if item["prefixed_symbol"] not in expected_symbols or not item["upstream_spelling"].startswith("mi_"):
+            raise HarnessError(f"adapted allocator required symbol mapping {index} is unreviewed")
+
+    def reviewed_tests(field: str, required_fields: Sequence[str]) -> list[Mapping[str, Any]]:
+        raw = contract.get(field)
+        if not isinstance(raw, list) or not raw:
+            raise HarnessError(f"adapted allocator {field} is absent")
+        names: set[str] = set()
+        normalized: list[Mapping[str, Any]] = []
+        singular = "selected" if field == "selected_tests" else "omitted"
+        for index, item in enumerate(raw):
+            if not isinstance(item, dict) or not all(
+                isinstance(item.get(key), str) and bool(item.get(key)) for key in required_fields
+            ):
+                raise HarnessError(f"invalid {singular} test at index {index}")
+            name = item["name"]
+            if name in names:
+                raise HarnessError(f"adapted allocator duplicates {singular} test: {name}")
+            names.add(name)
+            normalized.append(item)
+        return normalized
+
+    selected = reviewed_tests("selected_tests", ("name", "source_test", "category"))
+    omitted = reviewed_tests("omitted_tests", ("name", "source_test", "reason", "milestone"))
+    overlap = sorted({item["name"] for item in selected}.intersection(item["name"] for item in omitted))
+    if overlap:
+        raise HarnessError("adapted allocator tests are both selected and omitted: " + ", ".join(overlap))
+
+    first = contract.get("required_first_test")
+    if not isinstance(first, dict) or first.get("name") != "zero_aligned_first":
+        raise HarnessError("adapted allocator first-test contract changed")
+    if first.get("name") not in {item["name"] for item in selected}:
+        raise HarnessError("adapted allocator first test is not selected")
+    if first.get("invocation") != 'CHECK("zero_aligned_first", test_zero_aligned_first());':
+        raise HarnessError("adapted allocator first-test invocation changed")
+    for field in (
+        "assertions",
+        "required_init_assertions",
+        "required_summary_assertions",
+        "required_shutdown_assertions",
+    ):
+        values = first.get(field) if field == "assertions" else contract.get(field)
+        if not isinstance(values, list) or not values or not all(isinstance(value, str) and value for value in values):
+            raise HarnessError(f"adapted allocator {field} is invalid")
+
+    compile_requirements = contract.get("compile_requirements")
+    if not isinstance(compile_requirements, dict):
+        raise HarnessError("adapted allocator compile requirements are absent")
+    expected_compile = {
+        "adapter_feature": "test-adapter",
+        "expected_dynamic_dependencies": ["libc.musl-aarch64.so.1", "libgcc_s.so.1"],
+        "language": "C11",
+        "native_library_search_paths": ["/usr/lib"],
+        "native_static_libs": ["-lgcc_s", "-lc"],
+        "required_header": TEST_ADAPTER_HEADER.name,
+    }
+    for key, expected in expected_compile.items():
+        if compile_requirements.get(key) != expected:
+            raise HarnessError(f"adapted allocator compile requirement changed: {key}")
+
+    verification = contract.get("verification")
+    if not isinstance(verification, dict):
+        raise HarnessError("adapted allocator verification record is absent")
+    for key in ("patch_applies_cleanly", "patch_round_trip_stable", "adapted_source_sha256_verified", "header_compile_verified"):
+        if verification.get(key) is not True:
+            raise HarnessError(f"adapted allocator verification is not true: {key}")
+    if verification.get("unsupported_raw_mi_references_found") != []:
+        raise HarnessError("adapted allocator fixture retains unsupported raw mi_* references")
+
+    return {
+        "expected_adapter_symbol_count": len(expected_symbols),
+        "omitted_test_count": len(omitted),
+        "selected_test_count": len(selected),
+    }
+
+
+def apply_and_verify_adapted_test_patch(
+    source: Path, contract: Mapping[str, Any], patch_tool: str
+) -> dict[str, Any]:
+    """Apply the reviewed patch to an ephemeral verified upstream tree."""
+
+    source_hashes = contract["source_hashes"]
+    assert isinstance(source_hashes, dict)
+    for relative_source, expected_hash in source_hashes.items():
+        source_path = source / relative_source
+        if not source_path.is_file() or sha256_file(source_path) != expected_hash:
+            raise HarnessError(f"adapted allocator source identity mismatch: {relative_source}")
+
+    patch_contract = contract["patch"]
+    assert isinstance(patch_contract, dict)
+    patch_path = ROOT / str(patch_contract["path"])
+    if not patch_path.is_file() or sha256_file(patch_path) != patch_contract["sha256"]:
+        raise HarnessError("adapted allocator patch identity mismatch")
+    apply_record = command_record(
+        (patch_tool, "-p1", "-f", "-i", str(patch_path)),
+        cwd=source,
+    )
+    require_success(apply_record, "adapted upstream API patch")
+
+    adapted_contract = contract["adapted_source"]
+    assert isinstance(adapted_contract, dict)
+    adapted_path = source / str(adapted_contract["path"])
+    if not adapted_path.is_file() or sha256_file(adapted_path) != adapted_contract["sha256"]:
+        raise HarnessError("adapted upstream API source differs from the reviewed patch result")
+    adapted_text = adapted_path.read_text(encoding="utf-8")
+    include = f'#include "{TEST_ADAPTER_HEADER.name}"'
+    if adapted_text.count(include) != 1:
+        raise HarnessError("adapted upstream API source has an unexpected adapter include")
+    selected = contract["selected_tests"]
+    assert isinstance(selected, list)
+    expected_names = [item["name"] for item in selected]
+    observed_names = re.findall(r'\bCHECK(?:_BODY)?\("([^"]+)"', adapted_text)
+    if observed_names != expected_names:
+        raise HarnessError("adapted upstream API selected CHECK sequence differs from the manifest")
+    first_invocation = contract["required_first_test"]["invocation"]
+    init_index = adapted_text.find("crabc_test_init()")
+    first_index = adapted_text.find(first_invocation)
+    if init_index < 0 or first_index <= init_index:
+        raise HarnessError("adapted upstream API first allocation does not follow initialization")
+    if adapted_text.count("print_test_summary()") != 1 or adapted_text.count("crabc_test_shutdown()") != 1:
+        raise HarnessError("adapted upstream API summary/shutdown sequence changed")
+    observed_mi_calls = sorted(set(re.findall(r"\b(mi_[A-Za-z0-9_]+)\s*\(", adapted_text)))
+    verification = contract["verification"]
+    assert isinstance(verification, dict)
+    if observed_mi_calls != verification.get("raw_mi_references_checked"):
+        raise HarnessError("adapted upstream API mi_* source surface differs from the manifest")
+    return {
+        "adapted_source": {
+            "bytes": adapted_path.stat().st_size,
+            "path": str(adapted_contract["path"]),
+            "sha256": sha256_file(adapted_path),
+        },
+        "apply_command": apply_record["command"],
+        "selected_test_count": len(observed_names),
+    }
+
+
 def archive_path(pin: Mapping[str, str]) -> Path:
     return CACHE / f"mimalloc-{pin['version']}.tar.gz"
 
@@ -1604,6 +1821,8 @@ def ratchet_measurement_regressions(
 
     regressions: list[str] = []
     for key in (
+        "adapted_omitted_test_count",
+        "adapted_selected_test_count",
         "api_total_item_count",
         "configuration_profile_count",
         "upstream_test_source_count",
@@ -1611,6 +1830,10 @@ def ratchet_measurement_regressions(
     ):
         old_value = baseline.get(key)
         new_value = current.get(key)
+        if old_value is None and new_value is None:
+            continue
+        if key.startswith("adapted_") and old_value is None and type(new_value) is int:
+            continue
         if type(old_value) is not int or type(new_value) is not int or new_value < old_value:
             regressions.append(key)
 
@@ -1635,7 +1858,11 @@ def file_digest(path: Path) -> str:
 def ratchet_payload(port_map: Mapping[str, Any]) -> dict[str, Any]:
     api = read_json(API_CONTRACT)
     tests = read_json(UPSTREAM_TEST_CONTRACT)
+    adapted_tests = read_json(ADAPTED_TEST_CONTRACT)
     return {
+        "adapted_omitted_test_count": len(adapted_tests["omitted_tests"]),
+        "adapted_selected_test_count": len(adapted_tests["selected_tests"]),
+        "adapted_test_contract_sha256": file_digest(ADAPTED_TEST_CONTRACT),
         "api_contract_sha256": file_digest(API_CONTRACT),
         "api_total_item_count": api["summary"]["total_item_count"],
         "configuration_profile_count": len(CONFIGURATION_PROFILES),
@@ -1683,7 +1910,12 @@ def check_ratchet(port_map: Mapping[str, Any]) -> None:
             "allocator port-map true status regressed or lacks an itemized baseline: "
             + ", ".join(regressions)
         )
-    for key in ("api_contract_sha256", "port_map_sha256", "upstream_test_contract_sha256"):
+    for key in (
+        "adapted_test_contract_sha256",
+        "api_contract_sha256",
+        "port_map_sha256",
+        "upstream_test_contract_sha256",
+    ):
         if current[key] != baseline.get(key):
             raise HarnessError(f"allocator ratchet input changed: {key}; snapshot and review explicitly")
 
@@ -1840,6 +2072,36 @@ def parse_rust_test_count(output: str) -> int:
     return int(matches[0])
 
 
+def parse_upstream_api_test_summary(output: str) -> dict[str, int]:
+    """Parse the single terminal summary emitted by pinned `testhelper.h`."""
+
+    matches = re.findall(
+        r"(?m)^succeeded:\s*([0-9]+)\s*$\n^failed\s*:\s*([0-9]+)\s*$",
+        output,
+    )
+    if len(matches) != 1:
+        raise HarnessError("adapted upstream API test summary is absent or ambiguous")
+    succeeded, failed = (int(value) for value in matches[0])
+    if failed != 0:
+        noun = "failure" if failed == 1 else "failures"
+        raise HarnessError(f"adapted upstream API test reported {failed} {noun}")
+    if succeeded == 0:
+        raise HarnessError("adapted upstream API test reported no successful checks")
+    return {"failed": failed, "succeeded": succeeded}
+
+
+def parse_native_static_libraries(output: str) -> list[str]:
+    """Retain rustc's exact ordered native link tail for the static adapter."""
+
+    matches = re.findall(r"(?m)^\s*(?:note:\s*)?native-static-libs:\s*(.*?)\s*$", output)
+    if len(matches) != 1:
+        raise HarnessError("Rust adapter native-static-libs record is absent or ambiguous")
+    libraries = matches[0].split()
+    if not libraries or any(not re.fullmatch(r"-l[A-Za-z0-9_.+-]+", item) for item in libraries):
+        raise HarnessError("Rust adapter has an invalid native static library record")
+    return libraries
+
+
 def compare_configuration_layout(
     c_layout: Mapping[str, int], rust_layout: Mapping[str, int]
 ) -> int:
@@ -1933,7 +2195,7 @@ def compare_fundamental_trace(
     return {"compared_value_count": len(rust_trace), "status": "matched"}
 
 
-def dynamic_symbols(readelf: str, artifact: Path) -> list[str]:
+def defined_dynamic_symbols(readelf: str, artifact: Path) -> list[str]:
     record = command_record((readelf, "--wide", "--dyn-syms", str(artifact)), cwd=ROOT)
     require_success(record, "dynamic symbol inventory")
     symbols: list[str] = []
@@ -1945,9 +2207,93 @@ def dynamic_symbols(readelf: str, artifact: Path) -> list[str]:
         binding = fields[4]
         visibility = fields[5]
         section = fields[6]
-        if name.startswith("mi_") and binding in {"GLOBAL", "WEAK"} and visibility == "DEFAULT" and section != "UND":
+        if binding in {"GLOBAL", "WEAK"} and visibility == "DEFAULT" and section != "UND":
             symbols.append(name)
     return sorted(set(symbols))
+
+
+def dynamic_symbols(readelf: str, artifact: Path) -> list[str]:
+    return [name for name in defined_dynamic_symbols(readelf, artifact) if name.startswith("mi_")]
+
+
+def archive_defined_symbols(nm: str, artifact: Path) -> list[str]:
+    record = command_record((nm, "-g", "-U", str(artifact)), cwd=ROOT)
+    require_success(record, "static archive symbol inventory")
+    symbols: list[str] = []
+    for line in str(record["stdout"]).splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and not fields[-1].endswith(":"):
+            symbols.append(fields[-1])
+    return sorted(set(symbols))
+
+
+def dynamic_dependencies(readelf: str, artifact: Path) -> list[str]:
+    record = command_record((readelf, "--wide", "--dynamic", str(artifact)), cwd=ROOT)
+    require_success(record, "adapter dynamic dependency inventory")
+    return sorted(set(re.findall(r"Shared library: \[([^\]]+)\]", str(record["stdout"]))))
+
+
+FORBIDDEN_ADAPTER_ALLOCATOR_EXPORTS = frozenset(
+    {
+        "aligned_alloc",
+        "calloc",
+        "cfree",
+        "free",
+        "malloc",
+        "malloc_usable_size",
+        "memalign",
+        "posix_memalign",
+        "pvalloc",
+        "realloc",
+        "reallocarray",
+        "valloc",
+    }
+)
+ADAPTER_SYMBOL_PREFIX = "crabc_test_"
+
+
+def adapter_header_function_names(header: str) -> list[str]:
+    """Inventory the prefixed declarations in the private adapter header."""
+
+    names = re.findall(
+        rf"(?m)^[^#\n;]*\b({re.escape(ADAPTER_SYMBOL_PREFIX)}[A-Za-z0-9_]+)\s*\([^;{{]*\)\s*;",
+        header,
+    )
+    return sorted(set(names))
+
+
+def validate_adapter_dynamic_symbols(
+    symbols: Sequence[str], expected_symbols: Sequence[str]
+) -> dict[str, Any]:
+    """Require the test-only cdylib to expose exactly its prefixed C surface."""
+
+    expected = sorted(set(expected_symbols))
+    if len(expected) != len(expected_symbols) or not expected:
+        raise HarnessError("adapter symbol contract must be non-empty and duplicate-free")
+    invalid_expected = [
+        name for name in expected if not name.startswith(ADAPTER_SYMBOL_PREFIX)
+    ]
+    if invalid_expected:
+        raise HarnessError(
+            "adapter symbol contract contains non-prefixed names: "
+            + ", ".join(invalid_expected)
+        )
+    defined = set(symbols)
+    forbidden = sorted(
+        name
+        for name in defined
+        if name.startswith("mi_") or name in FORBIDDEN_ADAPTER_ALLOCATOR_EXPORTS
+    )
+    if forbidden:
+        raise HarnessError("adapter has forbidden allocator exports: " + ", ".join(forbidden))
+    actual = sorted(name for name in defined if name.startswith(ADAPTER_SYMBOL_PREFIX))
+    missing = sorted(set(expected).difference(actual))
+    unexpected = sorted(set(actual).difference(expected))
+    if missing:
+        raise HarnessError("missing adapter symbols: " + ", ".join(missing))
+    if unexpected:
+        raise HarnessError("unexpected adapter symbols: " + ", ".join(unexpected))
+    return {"exported_symbol_count": len(actual), "symbols": actual}
 
 
 def validate_release_symbol_contract(
@@ -2433,6 +2779,205 @@ def integration_provenance() -> dict[str, str]:
     }
 
 
+def build_test_adapter(
+    readelf: str,
+    nm: str,
+    contract: Mapping[str, Any],
+) -> tuple[Path, list[str], dict[str, Any]]:
+    """Build and audit the test-only prefixed Rust staticlib/cdylib pair."""
+
+    artifact_root = REPORT_ROOT / "test-adapter"
+    cargo_target = artifact_root / "cargo-target"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    clean_command = [
+        "cargo",
+        "clean",
+        "--package",
+        "crabc-mimalloc-test-adapter",
+        "--target",
+        PRODUCTION_RUST_TARGET,
+        "--release",
+        "--target-dir",
+        str(cargo_target),
+    ]
+    clean_record = command_record(clean_command, cwd=ROOT)
+    require_success(clean_record, "Rust test adapter clean build boundary")
+
+    test_command = [
+        "cargo",
+        "test",
+        "--locked",
+        "--package",
+        "crabc-mimalloc-test-adapter",
+        "--features",
+        "test-adapter",
+        "--target",
+        PRODUCTION_RUST_TARGET,
+        "--release",
+        "--target-dir",
+        str(cargo_target),
+        "--lib",
+        "--",
+        "--test-threads=1",
+    ]
+    test_record = command_record(test_command, cwd=ROOT)
+    require_success(test_record, "Rust test adapter unit suite")
+    test_output = str(test_record["stdout"]) + "\n" + str(test_record["stderr"])
+
+    rustc_command = [
+        "cargo",
+        "rustc",
+        "--locked",
+        "--package",
+        "crabc-mimalloc-test-adapter",
+        "--features",
+        "test-adapter",
+        "--target",
+        PRODUCTION_RUST_TARGET,
+        "--release",
+        "--target-dir",
+        str(cargo_target),
+        "--",
+        "--print=native-static-libs",
+    ]
+    rustc_record = command_record(rustc_command, cwd=ROOT)
+    require_success(rustc_record, "Rust test adapter staticlib/cdylib build")
+    native_libraries = parse_native_static_libraries(
+        str(rustc_record["stdout"]) + "\n" + str(rustc_record["stderr"])
+    )
+    compile_requirements = contract["compile_requirements"]
+    assert isinstance(compile_requirements, dict)
+    native_search_paths = compile_requirements["native_library_search_paths"]
+    assert isinstance(native_search_paths, list)
+    if native_libraries != compile_requirements["native_static_libs"]:
+        raise HarnessError("Rust test adapter native static library order differs from the manifest")
+
+    release_root = cargo_target / PRODUCTION_RUST_TARGET / "release"
+    static_library = release_root / "libcrabc_mimalloc_test_adapter.a"
+    shared_library = release_root / "libcrabc_mimalloc_test_adapter.so"
+    expected_symbols = contract["expected_adapter_symbols"]
+    assert isinstance(expected_symbols, list)
+    shared_symbols = validate_adapter_dynamic_symbols(
+        defined_dynamic_symbols(readelf, shared_library), expected_symbols
+    )
+    archive_symbols = validate_adapter_dynamic_symbols(
+        archive_defined_symbols(nm, static_library), expected_symbols
+    )
+    needed = dynamic_dependencies(readelf, shared_library)
+    if needed != compile_requirements["expected_dynamic_dependencies"]:
+        raise HarnessError("Rust test adapter dynamic dependency set differs from the manifest")
+
+    return static_library, native_libraries, {
+        "archive": artifact_record(static_library),
+        "archive_symbols": archive_symbols,
+        "clean_command": clean_command,
+        "dynamic_dependencies": needed,
+        "native_library_search_paths": native_search_paths,
+        "native_static_libraries": native_libraries,
+        "rustc_command": rustc_command,
+        "shared_library": artifact_record(shared_library),
+        "shared_symbols": shared_symbols,
+        "unit_test_command": test_command,
+        "unit_test_count": parse_rust_test_count(test_output),
+    }
+
+
+def run_test_adapter_fixtures(
+    compiler: str,
+    source: Path,
+    static_library: Path,
+    native_libraries: Sequence[str],
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run the existing allocator fixture and selected upstream API checks."""
+
+    artifact_root = REPORT_ROOT / "test-adapter"
+    compile_requirements = contract["compile_requirements"]
+    assert isinstance(compile_requirements, dict)
+    native_search_paths = compile_requirements["native_library_search_paths"]
+    assert isinstance(native_search_paths, list)
+    native_search_flags = [f"-L{path}" for path in native_search_paths]
+    fixture_binary = artifact_root / "allocator-fixture-rust"
+    fixture_command = [
+        compiler,
+        "-std=c11",
+        "-O2",
+        "-fPIE",
+        "-pie",
+        "-ftls-model=initial-exec",
+        "-pthread",
+        "-I",
+        str(TEST_ADAPTER_ROOT),
+        str(TEST_ADAPTER_FIXTURE),
+        str(static_library),
+        *native_search_flags,
+        *native_libraries,
+        "-o",
+        str(fixture_binary),
+    ]
+    fixture_build = command_record(fixture_command, cwd=ROOT)
+    require_success(fixture_build, "existing allocator fixture against Rust adapter")
+    fixture_run = command_record((str(fixture_binary),), cwd=ROOT)
+    if fixture_run["status"] != 0 or fixture_run["stdout"] != "allocator ok\n":
+        raise HarnessError(
+            "existing allocator fixture failed against Rust adapter: "
+            f"status={fixture_run['status']} stdout={fixture_run['stdout']!r} "
+            f"stderr={fixture_run['stderr']!r}"
+        )
+
+    adapted_binary = artifact_root / "upstream-test-api-m4-rust"
+    adapted_source = source / str(contract["adapted_source"]["path"])
+    adapted_command = [
+        compiler,
+        "-std=c11",
+        "-O2",
+        "-fPIE",
+        "-pie",
+        "-ftls-model=initial-exec",
+        "-pthread",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "test"),
+        "-I",
+        str(TEST_ADAPTER_ROOT),
+        str(adapted_source),
+        str(static_library),
+        *native_search_flags,
+        *native_libraries,
+        "-o",
+        str(adapted_binary),
+    ]
+    adapted_build = command_record(adapted_command, cwd=source)
+    require_success(adapted_build, "adapted upstream API fixture against Rust adapter")
+    adapted_run = command_record((str(adapted_binary),), cwd=source)
+    require_success(adapted_run, "adapted upstream API fixture")
+    summary = parse_upstream_api_test_summary(
+        str(adapted_run["stdout"]) + "\n" + str(adapted_run["stderr"])
+    )
+    selected = contract["selected_tests"]
+    assert isinstance(selected, list)
+    if summary["succeeded"] != len(selected):
+        raise HarnessError(
+            "adapted upstream API summary count differs from the reviewed selection"
+        )
+
+    return {
+        "adapted_upstream_api": {
+            "artifact": artifact_record(adapted_binary),
+            "build_command": adapted_command,
+            "run_command": [str(adapted_binary)],
+            "summary": summary,
+        },
+        "existing_allocator_fixture": {
+            "artifact": artifact_record(fixture_binary),
+            "build_command": fixture_command,
+            "run_command": [str(fixture_binary)],
+            "stdout": str(fixture_run["stdout"]),
+        },
+    }
+
+
 def milestone0_report(pin: Mapping[str, str], archive: Path, source: Path, profiles: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "c_oracle": {
@@ -2457,7 +3002,13 @@ def milestone0_report(pin: Mapping[str, str], archive: Path, source: Path, profi
     }
 
 
-def run_milestone0(*, offline: bool, generate_contracts: bool, check_only: bool) -> dict[str, Any]:
+def run_milestone0(
+    *,
+    offline: bool,
+    generate_contracts: bool,
+    check_only: bool,
+    include_test_adapter: bool = False,
+) -> dict[str, Any]:
     pin = load_pin()
     archive = fetch_archive(pin, offline)
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
@@ -2467,10 +3018,23 @@ def run_milestone0(*, offline: bool, generate_contracts: bool, check_only: bool)
             write_contracts(contracts)
         else:
             check_contracts(contracts)
+        adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
+        adapted_summary = validate_adapted_test_contract(
+            adapted_contract,
+            pin,
+            TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+        )
+        adapted_patch = apply_and_verify_adapted_test_patch(
+            source,
+            adapted_contract,
+            require_tool("patch"),
+        )
         port_map = load_port_map()
         check_ratchet(port_map)
         if check_only:
             return {
+                "adapted_test_contract": adapted_summary,
+                "adapted_test_patch": adapted_patch,
                 "contracts": {relative(path): payload["summary"] for path, payload in contracts.items()},
                 "port_map": port_map_counts(port_map),
                 "status": "checked",
@@ -2500,6 +3064,25 @@ def run_milestone0(*, offline: bool, generate_contracts: bool, check_only: bool)
         report["production_dependency_graph"] = dependency_graph
         report["release_symbol_contract"] = release_symbol_contract
         report["rust_release_layout"] = rust_layout
+        report["adapted_test_contract"] = adapted_summary
+        report["adapted_test_patch"] = adapted_patch
+        if include_test_adapter:
+            nm = require_tool("nm")
+            static_library, native_libraries, adapter_build = build_test_adapter(
+                readelf,
+                nm,
+                adapted_contract,
+            )
+            report["m4_test_adapter"] = {
+                "build": adapter_build,
+                "fixtures": run_test_adapter_fixtures(
+                    compiler,
+                    source,
+                    static_library,
+                    native_libraries,
+                    adapted_contract,
+                ),
+            }
         write_json(REPORT_ROOT / "latest.json", report)
         return report
 
@@ -2543,13 +3126,22 @@ def main() -> int:
             print(RATCHET)
             return 0
         if arguments.check:
-            result = run_milestone0(offline=arguments.offline, generate_contracts=False, check_only=True)
+            result = run_milestone0(
+                offline=arguments.offline,
+                generate_contracts=False,
+                check_only=True,
+            )
             print(json.dumps(result, sort_keys=True))
             return 0
-        run_milestone0(offline=arguments.offline, generate_contracts=False, check_only=False)
+        run_milestone0(
+            offline=arguments.offline,
+            generate_contracts=False,
+            check_only=False,
+            include_test_adapter=arguments.full,
+        )
         if arguments.full:
             raise MilestoneUnavailable(
-                "allocator --full is unavailable: Milestone 4 must provide the prefixed Rust test C API adapter before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
+                "allocator --full remains unavailable after the passing Milestone 4 adapter lane: Milestone 5 must provide remote free, abandonment/adoption, thread/TLS lifecycle, Loom protocols, and pthread stress before later backend, fork, and corpus lanes can run."
             )
         if arguments.perf_smoke or arguments.perf_full:
             raise MilestoneUnavailable(

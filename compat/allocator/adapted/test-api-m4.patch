@@ -1,0 +1,496 @@
+--- a/test/test-api.c
++++ b/test/test-api.c
+@@ -28,32 +28,16 @@
+ #include <stdint.h>
+ #include <errno.h>
+ 
+-#ifdef __cplusplus
+-#include <vector>
+-#endif
++#include <stddef.h>
++#include <stdio.h>
++#include <string.h>
+ 
+-#include "mimalloc.h"
+-// #include "mimalloc/internal.h"
+ #include "mimalloc/types.h" // for MI_DEBUG and MI_PAGE_MAX_OVERALLOC_ALIGN
++#include "crabc-mimalloc-test-adapter.h"
+ 
+ #include "testhelper.h"
+ 
+ 
+-// ---------------------------------------------------------------------------
+-// Test functions
+-// ---------------------------------------------------------------------------
+-bool test_theap1(void);
+-bool test_theap2(void);
+-bool test_theap_arena_destroy(void);
+-bool test_theap_arena_delete(void);
+-bool test_stl_allocator1(void);
+-bool test_stl_allocator2(void);
+-
+-bool test_stl_theap_allocator1(void);
+-bool test_stl_theap_allocator2(void);
+-bool test_stl_theap_allocator3(void);
+-bool test_stl_theap_allocator4(void);
+-
+ static bool test_zero_aligned_first(void);
+ 
+ static bool mem_has_vals(const uint8_t* p, size_t size, uint8_t val) {
+@@ -66,33 +50,18 @@
+ static bool mem_is_zero(const void* p, size_t size) {
+   return mem_has_vals((const uint8_t*)p,size,0);
+ }
+-
+ // ---------------------------------------------------------------------------
+ // Main testing
+ // ---------------------------------------------------------------------------
+ int main(void) {
+-  mi_option_disable(mi_option_verbose);
+-
+-  #if 1
+-  #if defined(__cplusplus) && !defined(_MSC_VER)
+-  CHECK_BODY("c++ new-handler") {
+-    std::set_new_handler([]{ throw std::bad_alloc(); });
+-    void* p = mi_new_nothrow(SIZE_MAX/2);
+-    result = (p==NULL);
++  if (crabc_test_init() != 0) {
++    fprintf(stderr, "crabc_test_init failed\n");
++    return 1;
+   }
+-  CHECK_BODY("c++ new handler2") {
+-    try {
+-      void* p = mi_new_n(SIZE_MAX/2, 4);
+-      (void)(p);
+-      result = false;
+-    }
+-    catch(std::bad_alloc) {
+-      result = true;
+-    }
+-  }
+-  #endif
+-  #endif
+ 
++  // This is intentionally the first engine call on the creating thread.
++  CHECK("zero_aligned_first", test_zero_aligned_first());
++
+   // ---------------------------------------------------
+   // Malloc
+   // ---------------------------------------------------
+@@ -108,35 +77,16 @@
+   CHECK_BODY("malloc-free-null") {
+     mi_free(NULL);
+   };
+-  #if MI_INTPTR_BITS > 32
+-  CHECK_BODY("malloc-free-invalid-low") {
+-    mi_cfree((void*)(MI_ZU(0x0000000003990080))); // issue #1087
+-  };
+-  #endif
+   CHECK_BODY("calloc-overflow") {
+-    // use (size_t)&mi_calloc to get some number without triggering compiler warnings
+-    result = (mi_calloc((size_t)&mi_calloc,SIZE_MAX/1000) == NULL);
++    // Use the prefixed adapter address to derive an overflowing count.
++    result = (mi_calloc((size_t)&crabc_test_calloc,SIZE_MAX/1000) == NULL);
+   };
+-  CHECK_BODY("malloc-large") {   // see PR #544.
+-    void* p = mi_malloc(67108872);
+-    mi_free(p);
+-  };
+-  
+   CHECK_BODY("calloc0") {
+     void* p = mi_calloc(0,1000);
+     const size_t usable = mi_usable_size(p);    
+     result = (usable <= 16);
+     mi_free(p);
+   };
+-  
+-  CHECK_BODY("mi_urealloc_invalid") {
+-    void* p = mi_malloc(64);
+-    size_t pre, post;
+-    void* q = mi_urealloc((char*)p + 3, 32, &pre, &post);
+-    mi_free(p);
+-    result = (q==NULL || q==(uint8_t*)p+3);
+-  }
+-  
+   // ---------------------------------------------------
+   // Extended
+   // ---------------------------------------------------
+@@ -200,25 +150,6 @@
+     fprintf(stderr, "malloc_aligned5: usable size: %zi.  ", usable);
+     mi_free(p);
+   };
+-  /*
+-  CHECK_BODY("malloc-aligned6") {
+-    bool ok = true;
+-    for (size_t align = 1; align <= MI_PAGE_MAX_OVERALLOC_ALIGN && ok; align *= 2) {
+-      void* ps[8];
+-      for (int i = 0; i < 8 && ok; i++) {
+-        ps[i] = mi_malloc_aligned(align*13  // size
+-                                 , align);
+-        if (ps[i] == NULL || (uintptr_t)(ps[i]) % align != 0) {
+-          ok = false;
+-        }
+-      }
+-      for (int i = 0; i < 8 && ok; i++) {
+-        mi_free(ps[i]);
+-      }
+-    }
+-    result = ok;
+-  };
+-  */
+   CHECK_BODY("malloc-aligned7") {
+     void* p = mi_malloc_aligned(1024,MI_PAGE_MAX_OVERALLOC_ALIGN);
+     mi_free(p);
+@@ -281,12 +212,6 @@
+     }
+     result = ok;
+   }
+-  //CHECK_BODY("malloc_aligned11") {
+-  //  mi_theap_t* theap = mi_theap_new();
+-  //  void* p = mi_theap_malloc_aligned(theap, 33554426, 8);
+-  //  result = mi_theap_contains_block(theap, p);
+-  //  mi_theap_destroy(theap);
+-  //}
+   CHECK_BODY("mimalloc-aligned12") {
+     void* p = mi_malloc_aligned(0x100, 0x100);
+     result = (((uintptr_t)p % 0x100) == 0); // #602
+@@ -304,13 +229,7 @@
+         }
+         for(int i = 0; i < 10 && ok; i++) {
+           mi_free(p[i]);
+-        }
+-        /*
+-        if (ok && align <= size && ((size + MI_PADDING_SIZE) & (align-1)) == 0) {
+-          size_t bsize = mi_good_size(size);
+-          ok = (align <= bsize && (bsize & (align-1)) == 0);
+         }
+-        */
+       }
+     }
+     result = ok;
+@@ -361,319 +280,42 @@
+     result = mem_is_zero((uint8_t*)ptr + n/2, n/2);    
++    mi_free(ptr);  // the bounded adapter requires explicit terminal teardown
+   }
+ 
+   // ---------------------------------------------------
+   // Reallocation
+   // ---------------------------------------------------
+   CHECK_BODY("realloc-null") {
+     void* p = mi_realloc(NULL,4);
+     result = (p != NULL);
+     mi_free(p);
+   };
+ 
+   CHECK_BODY("realloc-null-sizezero") {
+     void* p = mi_realloc(NULL,0);  // <https://en.cppreference.com/w/c/memory/realloc> "If ptr is NULL, the behavior is the same as calling malloc(new_size)."
+     result = (p != NULL);
+     mi_free(p);
+   };
+ 
+   CHECK_BODY("realloc-sizezero") {
+     void* p = mi_malloc(4);
+     void* q = mi_realloc(p, 0);
+     result = (q != NULL);
+     mi_free(q);
+   };
+ 
+   CHECK_BODY("reallocarray-null-sizezero") {
+     void* p = mi_reallocarray(NULL,0,16);  // issue #574
+     result = (p != NULL && errno == 0);
+     mi_free(p);
+   };
+-
+-  CHECK_BODY("realloc-guarded") {      // issue #1304
+- 	  void* shared_ptr = NULL;
+-    for (int iterations = 0; iterations < 64; ++iterations) {
+-      for (int i = 0; i < 1024; ++i) {
+-        shared_ptr = mi_realloc(shared_ptr, i * 64);
+-      }
+-    }
++  const int test_failures = print_test_summary();
++  const int shutdown_status = crabc_test_shutdown();
++  if (shutdown_status != 0) {
++    fprintf(stderr, "crabc_test_shutdown failed: %d\n", shutdown_status);
+   }
+-
+-  // ---------------------------------------------------
+-  // Small allocations
+-  // ---------------------------------------------------
+-  CHECK_BODY("free_small1") {
+-    for(size_t n = 1; n < MI_SMALL_SIZE_MAX; n *=2) {
+-      const size_t size = n*sizeof(int);
+-      int* p = (int*)mi_zalloc(size);
+-      p[n-1] = 42;
+-      mi_free_size(p,size);
+-    }
+-  }
+-
+-  CHECK_BODY("free_small2") {
+-    for(size_t n = 1; n < MI_SMALL_SIZE_MAX; n *=2) {
+-      const size_t size = n*sizeof(int);
+-      int* p = (int*)mi_zalloc(size);
+-      p[n-1] = 42;
+-      p = (int*)mi_rezalloc(p, size + MI_SMALL_SIZE_MAX);
+-      mi_free_size(p,size + MI_SMALL_SIZE_MAX);
+-    }
+-  }
+-  
+-
+-  // ---------------------------------------------------
+-  // Returned block sizes
+-  // ---------------------------------------------------
+-  CHECK_BODY("umalloc1") {
+-    for(size_t size = 1; size <= 32*MI_MiB; size *= 2 ) {
+-      size_t bsize;
+-      void* p = mi_umalloc(size,&bsize);
+-      assert(bsize >= size);
+-      size_t pre_size;
+-      size_t post_size;
+-      p = mi_urealloc(p, size + 1024, &pre_size, &post_size);
+-      assert(pre_size == bsize);
+-      assert(post_size >= size + 1024);
+-      size_t fsize;
+-      mi_ufree(p,&fsize);
+-      assert(fsize == post_size);
+-    }
+-  }
+-
+-  #if (MI_INTPTR_SIZE > 4)
+-  CHECK_BODY("arena_reserve") {
+-    result = (0==mi_reserve_os_memory(16*MI_GiB,false,true));
+-  }
+-  #endif
+-
+-  // ---------------------------------------------------
+-  // Heaps
+-  // ---------------------------------------------------
+-
+-  CHECK_BODY("heap-os1") {
+-    // @zoxc opus bug #2.
+-    mi_heap_t* h = mi_heap_new();
+-    void* p = mi_heap_malloc_aligned(h, 1<<20, 2<<20);   // forced OS allocation
+-    mi_heap_delete(h);
+-    mi_free(p);                                          // SIGSEGV
+-  }
+-
+-  CHECK_BODY("heap-os2") {
+-    // @zoxc opus bug #3.
+-    mi_collect(true);
+-    mi_stats_t_decl(stats0); 
+-    mi_stats_get(&stats0);
+-
+-    mi_heap_t* h = mi_heap_new();
+-    long failed = 0;      
+-    for(int i = 0; i < 10; i++) {
+-      int* p = (int*)mi_heap_malloc_aligned(h, 1<<20, 2<<20);   // forced OS allocation
+-      if (p==NULL) {
+-        failed++;
+-      }
+-      else {
+-        p[0] = 42;
+-      }
+-    }
+-    mi_heap_destroy(h);
+-
+-    mi_collect(true);
+-    mi_stats_t_decl(stats1); 
+-    mi_stats_get(&stats1);    
+-    result = (stats0.pages.current == stats1.pages.current);    
+-    if (!result) {
+-      fprintf(stderr, "heap-os2: pages: %ld != %ld (failed: %ld)\n", (long)stats0.pages.current, (long)stats1.pages.current, failed);
+-    }
+-  }
+-
+-  #define NHEAPS (1000)
+-  CHECK_BODY("heap-many") {    // check creating many heaps and threadlocals, see issue #1358
+-    mi_heap_t* heaps[NHEAPS];
+-    for (size_t i = 0; i < NHEAPS; i++) {
+-      heaps[i] = mi_heap_new();
+-      if (heaps[i] == NULL) { result = false; break; };
+-      if (mi_heap_malloc(heaps[i], 32) == NULL) { result = false; break; }
+-    }
+-    for (size_t i = 0; i < NHEAPS; i++) {
+-      mi_heap_destroy(heaps[i]);
+-    }  
+-  }
+-
+-  //CHECK("theap_destroy", test_theap1());
+-  //CHECK("theap_delete", test_theap2());
+-  //CHECK("theap_arena_destroy", test_theap_arena_destroy());
+-  //CHECK("theap_arena_delete", test_theap_arena_delete());
+-
+-  
+-  // ---------------------------------------------------
+-  // Threads
+-  // ---------------------------------------------------
+-  CHECK_BODY("zero_aligned_first") {
+-    result = mi_run_on_thread(&test_zero_aligned_first);
+-  }
+-  
+-  //mi_stats_print(NULL);
+-
+-  // ---------------------------------------------------
+-  // various
+-  // ---------------------------------------------------
+-  #if !defined(MI_TRACK_ASAN)   // realpath may leak with ASAN enabled (as the ASAN allocator intercepts it)
+-  CHECK_BODY("realpath") {
+-    char* s = mi_realpath( ".", NULL );
+-    // printf("realpath: %s\n",s);
+-    mi_free(s);
+-  };
+-  #endif
+-
+-  CHECK("stl_allocator1", test_stl_allocator1());
+-  CHECK("stl_allocator2", test_stl_allocator2());
+-
+-	//CHECK("stl_theap_allocator1", test_stl_theap_allocator1());
+-	//CHECK("stl_theap_allocator2", test_stl_theap_allocator2());
+-	//CHECK("stl_theap_allocator3", test_stl_theap_allocator3());
+-	//CHECK("stl_theap_allocator4", test_stl_theap_allocator4());
+-
+-  // ---------------------------------------------------
+-  // Done
+-  // ---------------------------------------------------[]
+-  return print_test_summary();
++  return (test_failures == 0 && shutdown_status == 0) ? 0 : 1;
+ }
+ 
+-// ---------------------------------------------------
+-// Larger test functions
+-// ---------------------------------------------------
+-
+-/*
+-bool test_theap1(void) {
+-  mi_theap_t* theap = mi_theap_new();
+-  int* p1 = mi_theap_malloc_tp(theap,int);
+-  int* p2 = mi_theap_malloc_tp(theap,int);
+-  *p1 = *p2 = 43;
+-  mi_theap_destroy(theap);
+-  return true;
+-}
+-
+-bool test_theap2(void) {
+-  mi_theap_t* theap = mi_theap_new();
+-  int* p1 = mi_theap_malloc_tp(theap,int);
+-  int* p2 = mi_theap_malloc_tp(theap,int);
+-  mi_theap_delete(theap);
+-  *p1 = 42;
+-  mi_free(p1);
+-  mi_free(p2);
+-  return true;
+-}
+-
+-bool test_theap_arena_destroy(void) {
+-  mi_arena_id_t arena_id = NULL;
+-  if (mi_reserve_os_memory_ex(64 * 1024 * 1024, true, false, true, &arena_id) != 0) {
+-    return false;
+-  }
+-  mi_theap_t* theap = mi_theap_new_ex(0, true, arena_id);
+-  if (theap == NULL) {
+-    return false;
+-  }
+-  mi_theap_destroy(theap);
+-  return true;
+-}
+-
+-bool test_theap_arena_delete(void) {
+-  mi_arena_id_t arena_id = NULL;
+-  if (mi_reserve_os_memory_ex(64 * 1024 * 1024, true, false, true, &arena_id) != 0) {
+-    return false;
+-  }
+-  mi_theap_t* theap = mi_theap_new_ex(0, true, arena_id);
+-  if (theap == NULL) {
+-    return false;
+-  }
+-  mi_theap_delete(theap);
+-  return true;
+-}
+-*/
+-bool test_stl_allocator1(void) {
+-#ifdef __cplusplus
+-  std::vector<int, mi_stl_allocator<int> > vec;
+-  vec.push_back(1);
+-  vec.pop_back();
+-  return vec.size() == 0;
+-#else
+-  return true;
+-#endif
+-}
+-
+-struct some_struct  { int i; int j; double z; };
+-
+-bool test_stl_allocator2(void) {
+-#ifdef __cplusplus
+-  std::vector<some_struct, mi_stl_allocator<some_struct> > vec;
+-  vec.push_back(some_struct());
+-  vec.pop_back();
+-  return vec.size() == 0;
+-#else
+-  return true;
+-#endif
+-}
+-
+-/*
+-bool test_stl_theap_allocator1(void) {
+-#ifdef __cplusplus
+-  std::vector<some_struct, mi_theap_stl_allocator<some_struct> > vec;
+-  vec.push_back(some_struct());
+-  vec.pop_back();
+-  return vec.size() == 0;
+-#else
+-  return true;
+-#endif
+-}
+-
+-bool test_stl_theap_allocator2(void) {
+-#ifdef __cplusplus
+-  std::vector<some_struct, mi_theap_destroy_stl_allocator<some_struct> > vec;
+-  vec.push_back(some_struct());
+-  vec.pop_back();
+-  return vec.size() == 0;
+-#else
+-  return true;
+-#endif
+-}
+-
+-bool test_stl_theap_allocator3(void) {
+-#ifdef __cplusplus
+-	mi_theap_t* theap = mi_theap_new();
+-	bool good = false;
+-	{
+-		mi_theap_stl_allocator<some_struct> myAlloc(theap);
+-		std::vector<some_struct, mi_theap_stl_allocator<some_struct> > vec(myAlloc);
+-		vec.push_back(some_struct());
+-		vec.pop_back();
+-		good = vec.size() == 0;
+-	}
+-	mi_theap_delete(theap);
+-  return good;
+-#else
+-  return true;
+-#endif
+-}
+-
+-bool test_stl_theap_allocator4(void) {
+-#ifdef __cplusplus
+-	mi_theap_t* theap = mi_theap_new();
+-	bool good = false;
+-	{
+-		mi_theap_destroy_stl_allocator<some_struct> myAlloc(theap);
+-		std::vector<some_struct, mi_theap_destroy_stl_allocator<some_struct> > vec(myAlloc);
+-		vec.push_back(some_struct());
+-		vec.pop_back();
+-		good = vec.size() == 0;
+-	}
+-	mi_theap_destroy(theap);
+-  return good;
+-#else
+-  return true;
+-#endif
+-}
+-*/
+-
+ // ---------------------------------------------------------------------------
+ // Test a zero size aligned allocation as the very first allocation of a fresh thread.
+ // ---------------------------------------------------------------------------

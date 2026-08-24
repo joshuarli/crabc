@@ -13,15 +13,20 @@ The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free
 small, medium, large, singleton, aligned, and offset-aligned blocks from a
 caller-managed external arena and page map. Large alignments use separately
-owned OS singleton mappings below the source's 256 MiB metadata limit. The
+owned OS singleton mappings below the source's 256 MiB metadata limit, with
+allocation-free retry ownership when an injected terminal unmap fails. The
 slice includes checked counted allocation, full-page retention, retirement,
 unregister-before-release, and injected rollback. The ordinary allocator gate
 matches 447 Rust-owned layout/configuration values, 378 address-independent
 small-allocation trace values, and 51 fundamental-operation values against
-exact pinned C v3.5.0. This is not a production backend or readiness claim;
-the prefixed C test adapter, process/TLS and remote-free lifecycle, libc
-integration, stress, full upstream tests, and performance promotion gates
-remain open.
+exact pinned C v3.5.0. A standalone default-off test package now exports 16
+strictly prefixed `crabc_test_*` symbols, passes the existing crabc allocator
+fixture, and passes 33 reviewed checks from pinned upstream `test-api.c` in an
+explicit creating-thread lifecycle. It exports no `malloc`, `mi_*`, or other
+production allocator symbol. This is not a production backend or readiness
+claim; arena purge scheduling, process/TLS and remote-free lifecycle, libc
+integration, stress, the remaining upstream suites, and performance promotion
+gates remain open.
 
 Future acceptance contracts are deliberately specific:
 

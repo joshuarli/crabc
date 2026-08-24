@@ -1230,6 +1230,21 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/os.c"
+name = "retryable-os-singleton-release-and-rollback-ownership"
+source_region = "explicit mapping release, failed commit rollback, and OS-aligned singleton terminal reclamation"
+rust_module = "crabc_mimalloc::os, crabc_mimalloc::os_page, and crabc_mimalloc::single_thread"
+rust_item = "OsAlignedPageOwner/OsAlignedPageReleaseFailure plus SingleThreadAllocator pending_os_release retry"
+intentional_difference = "The one-thread engine stores one allocation-free pending owner instead of entering the later concurrent arena/process reclamation protocol. A detached block is semantically free while failed munmap ownership remains retryable; later OS claims and collection retry it without blocking ordinary arena allocation."
+tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs", "crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/single_thread.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/alloc.c"
 name = "explicit-default-theap-fundamental-operation-record"
 source_region = "address-independent page-kind, calloc, realloc, aligned/offset-aligned, usable-size, preservation, and invalid-size failure observations"
@@ -1253,6 +1268,21 @@ rust_item = "TestAllocatorContext and its typed allocation, pointer, free, initi
 intentional_difference = "This default-off evidence context uses stable alloc-backed control owners and an explicit creating-thread-only capability. It is not mimalloc global state, TLS, a production process singleton, a libc backend, or a remote-free path."
 tests = ["crabc-mimalloc/src/test_context.rs"]
 exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/alloc.c"
+name = "prefixed-one-thread-c-test-adapter-and-selected-upstream-api-fixture"
+source_region = "zero-size normalization and selected malloc/calloc/realloc/aligned/usable-size valid-program API behavior from pinned test/test-api.c"
+rust_module = "crabc_mimalloc::test_context and crabc-mimalloc-test-adapter"
+rust_item = "the default-off test-adapter feature, 16-symbol crabc_test_* staticlib/cdylib, existing allocator fixture wrapper, and reviewed 33-test upstream patch"
+intentional_difference = "This is a test-only creating-thread ABI with source-mapped mi_* spellings, not crabc-libc or mimalloc ELF compatibility. Its recorded patch omits every unsupported upstream test with an exact reason; process/TLS, remote free, heap/theap, arenas, options, guarded modes, and C++ remain later slices."
+tests = ["crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/test_context.rs", "compat/allocator/test-adapter/src/lib.rs", "compat/allocator/test-adapter/allocator-fixture-wrapper.c", "compat/allocator/adapted/test-api-m4.patch", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = true
 implemented = true
 unit_verified = true
 differential_verified = false

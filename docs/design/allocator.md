@@ -41,16 +41,23 @@ differential record covers page-kind selection, checked calloc, ordinary
 reallocation, aligned and offset-aligned allocation, usable size, preservation,
 and invalid-size failure. Those operations are live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
-64 KiB and below the 256 MiB metadata limit. This is bounded engine evidence,
-not an exported allocator: the crate still has no production public operation, libc
-integration, process/TLS lifecycle, remote free, purge scheduling, thread
-teardown, fork protocol, or backend selection.
+64 KiB and below the 256 MiB metadata limit. Failed terminal unmaps retain one
+exact allocation-free owner for later collection or allocation-boundary retry.
+This is bounded engine evidence, not an exported production allocator: the
+crate still has no production public operation, libc integration, process/TLS
+lifecycle, remote free, purge scheduling, thread teardown, fork protocol, or
+backend selection.
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
-context for the future prefixed C evidence adapter. Its stable boxed control
+context for the standalone prefixed C evidence adapter. Its stable boxed control
 owners, root-last publication, exact outstanding-block count, and staged
 page-map/arena teardown are test harness machinery, not a production process
-singleton or libc integration path.
+singleton or libc integration path. The separate
+`compat/allocator/test-adapter` package exports exactly 16 `crabc_test_*`
+symbols and no standard allocation or `mi_*` symbols. The full evidence lane
+uses it for the existing crabc allocator fixture and 33 reviewed checks from
+the hash-pinned upstream `test/test-api.c`; the applied patch and every omission
+are checked-in contracts rather than a copied upstream source fork.
 A fixed-capacity `cfg(miri)` mapping model exercises current
 VM ownership and page-map transitions without broadening production support;
 the pinned toolchain does not currently install Miri itself. No allocator
