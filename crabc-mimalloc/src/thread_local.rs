@@ -10,9 +10,10 @@
 // free-index claim/release protocol. A current-thread lifecycle owner now
 // uses the process-static metadata allocator for the source-shaped regular
 // flexible backing, exact expansion, root publication, and bounded regular
-// teardown. The registry itself remains caller-owned; process initialization,
-// TLD/theap attachment, and actual libc/pthread lifecycle hooks remain
-// separate work.
+// teardown. The registry here remains caller-owned substrate; the distinct
+// process-global allocator-owned source bitmap and linear lease live in
+// `owned_tls_key_registry`. Process initialization, TLD/theap attachment, and
+// actual libc/pthread lifecycle hooks remain separate work.
 
 //! Dynamic versioned-thread-local slot and global-key substrate.
 
@@ -37,10 +38,12 @@ use crate::types::LiveThreadId;
 /// The sole production target is AArch64, so a key is one 64-bit word with a
 /// 16-bit index and a 48-bit version. This is an encoding fact, not a chosen
 /// limit for a future registry's metadata allocation strategy.
-const TLS_INDEX_BITS: u32 = 16;
+pub(crate) const TLS_INDEX_BITS: u32 = 16;
 const TLS_VERSION_BITS: u32 = 64 - TLS_INDEX_BITS;
-const TLS_INDEX_MASK: u64 = (1_u64 << TLS_INDEX_BITS) - 1;
-const TLS_VERSION_MAX: u64 = (1_u64 << TLS_VERSION_BITS) - 1;
+pub(crate) const TLS_INDEX_MASK: u64 = (1_u64 << TLS_INDEX_BITS) - 1;
+pub(crate) const TLS_VERSION_MAX: u64 = (1_u64 << TLS_VERSION_BITS) - 1;
+/// `mi_thread_local_key_fast`: reserved outside the regular key registry.
+pub(crate) const TLS_FAST_KEY_RAW: u64 = 1;
 
 const _: [(); 64] = [(); usize::BITS as usize];
 
@@ -110,15 +113,29 @@ impl ThreadLocalKey {
 /// The registry holds its private lock while it advances this state. Keeping
 /// the transition separate makes the source's process-global generation rule
 /// auditable independently of the caller-owned bitmap storage.
-struct ThreadLocalKeyVersions {
+pub(crate) struct ThreadLocalKeyVersions {
     last_claimed: u64,
 }
 
 impl ThreadLocalKeyVersions {
     /// Creates the source's initially zero global version state.
     #[inline]
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self { last_claimed: 0 }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn last_claimed(&self) -> u64 {
+        self.last_claimed
+    }
+
+    /// Test-only seam for the source's exact pre-increment wrap boundary.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn set_last_claimed_for_test(&mut self, version: u64) {
+        debug_assert!(version < TLS_VERSION_MAX);
+        self.last_claimed = version;
     }
 
     /// Issues the next generation for one index selected by the registry.
@@ -129,7 +146,7 @@ impl ThreadLocalKeyVersions {
     /// encodable version can be decoded and constructed but is not issued by
     /// this advancement path.
     #[inline]
-    fn claim(&mut self, index: ThreadLocalSlotIndex) -> ThreadLocalKey {
+    pub(crate) fn claim(&mut self, index: ThreadLocalSlotIndex) -> ThreadLocalKey {
         self.last_claimed += 1;
         if self.last_claimed >= TLS_VERSION_MAX {
             self.last_claimed = 1;
@@ -147,13 +164,14 @@ impl ThreadLocalKeyVersions {
 // `mi_thread_local_create_expand` grows the source free-key bitmap by 1024
 // bits at a time. The bitmap itself uses 512-bit cache-aligned chunks, so one
 // expansion has sixteen 64-bit fields and spans two source bitmap chunks.
-const TLS_REGISTRY_EXPANSION_BITS: usize = 1024;
+pub(crate) const TLS_REGISTRY_EXPANSION_BITS: usize = 1024;
 const TLS_REGISTRY_WORD_BITS: usize = usize::BITS as usize;
 const TLS_REGISTRY_WORDS_PER_BLOCK: usize =
     TLS_REGISTRY_EXPANSION_BITS / TLS_REGISTRY_WORD_BITS;
 // The source rejects a 64th expansion because 64 * 1024 is greater than the
 // 16-bit `MI_TLS_IDX_MAX` (65,535). Its largest reachable bitmap is 64,512.
-const TLS_REGISTRY_MAX_BLOCKS: usize = TLS_INDEX_MASK as usize / TLS_REGISTRY_EXPANSION_BITS;
+pub(crate) const TLS_REGISTRY_MAX_BLOCKS: usize =
+    TLS_INDEX_MASK as usize / TLS_REGISTRY_EXPANSION_BITS;
 
 const _: [(); 64] = [(); TLS_REGISTRY_WORD_BITS];
 const _: [(); 16] = [(); TLS_REGISTRY_WORDS_PER_BLOCK];

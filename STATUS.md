@@ -38,8 +38,10 @@ cross-thread free, with deterministic retryable and retained initialization
 failure states. It neither attaches a live TLD/theap nor implements the
 source's null/needs-no-free/non-Malloc release paths. This is not a production
 backend or readiness claim. Milestone 5 currently includes the exact AArch64
-16-bit-index/48-bit-generation TLS key and caller-owned slot contract; five
-private compiler-TLS roots with direct `TPIDR_EL0` identity; live-owner and
+16-bit-index/48-bit-generation TLS key and caller-owned slot contract, its
+older caller-storage registry substrate, and one allocator-owned process-global
+regular-key registry; five private compiler-TLS roots with direct `TPIDR_EL0`
+identity; live-owner and
 abandoned-page remote-free head transitions; a one-page mapped/unmapped
 abandonment/adoption protocol with failed-reader bitmap restoration and
 clear-once-set quiescence; an unsafe current-thread-only regular TLS backing
@@ -49,7 +51,20 @@ flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
 null teardown. It leaves fast/default/cached roots alone and becomes terminal
 after an internal metadata error whose consumption cannot be distinguished,
-rather than claiming a false retry capability. Separately, `subproc.rs` holds
+rather than claiming a false retry capability. The allocator-owned registry
+uses the selected main subprocess's aligned Malloc metadata route for one
+retained typed bitmap image (plus one temporary replacement while locked),
+grows by 1,024 bits through the 64,512-bit/63-block source ceiling, and keeps
+`BitmapView` transient under its private registry lock. Ordinary claim uses
+`tseq = 0`, advances generation
+only after a one-bit claim, and copy growth preserves old claims before marking
+only the appended range free. Linear leases require explicit release; bounded
+shutdown refuses live leases and late access without writing compiler TLS or
+attaching a key to a thread. Allocation failure before commit preserves state;
+typed-image invariant or post-commit ownership ambiguity terminally poisons
+with retained process-static ownership. This is not the source's full process
+shutdown, fast-key management, or key-to-thread integration. Separately,
+`subproc.rs` holds
 one bounded process-static main-subprocess identity: only relaxed
 `thread_total_count`, relaxed live `thread_count`, and the real first static
 TLD slot—not full `mi_subproc_t`, its heaps/arenas/stats, or a process-init
@@ -95,7 +110,7 @@ terminal invalid-owner state that retains process-static storage and its live
 registration rather than retrying or claiming completed teardown. The
 represented `Heap` ends at the source `memid`; its abandoned/arena regions are
 valid zero/deferred fields, not a full C-size or heap API claim. Dynamic
-TLD/Theap, allocator-backed key registry, cached-root refcounting, remote-free
+TLD/Theap, registry-to-thread integration, cached-root refcounting, remote-free
 routing, page routing or abandonment integration, full heap/Theap/arena/
 subprocess APIs, pthread/fork/process shutdown, stats/options/callbacks, and
 public ABI remain open.

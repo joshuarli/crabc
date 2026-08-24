@@ -52,6 +52,7 @@ mod main_theap;
 mod meta;
 mod once;
 mod os_page;
+mod owned_tls_key_registry;
 #[cfg(miri)]
 #[path = "os_host_model.rs"]
 mod os;

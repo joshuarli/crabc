@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 68,
-    "item_count": 64,
+    "implemented": 69,
+    "item_count": 65,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 68
+    "unit_verified": 69
   },
-  "port_map_sha256": "643634de9c9c413c2db562d4aa9374eab9550964596583db19b2156e88f3593d",
+  "port_map_sha256": "7aad6d2d9adcb4c329d876c0a7003f14b90058ebe4de6864f947c2fc31ecc063",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -280,6 +280,10 @@
       "differential_verified"
     ],
     "item:src/threadlocal.c:aarch64-versioned-key-and-caller-owned-slot-substrate": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/threadlocal.c:allocator-owned-process-global-regular-tls-key-registry": [
       "implemented",
       "unit_verified"
     ],

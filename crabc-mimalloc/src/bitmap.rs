@@ -20,8 +20,10 @@
 // clear-once-set reader quiescence), plus `src/bitmap.c:1583-1784,
 // 1794-1997` (binned initialization, size bins, two-level claims, and exact
 // multi-chunk rollback). This slice intentionally excludes general visitors,
-// callbacks, statistics-counter integration, and allocator-backed bitmap
-// metadata.
+// callbacks, and statistics-counter integration. The allocator-owned dynamic
+// TLS registry projects its typed metadata capability only transiently through
+// the ordinary lowest-bit claim path below; it does not add a general bitmap
+// metadata ownership API.
 
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
@@ -942,6 +944,64 @@ impl<'storage> BitmapView<'storage> {
         })
     }
 
+    /// Initializes a fresh allocator-provided all-zero bitmap image.
+    ///
+    /// This gives the allocator-owned TLS-key registry a named fresh-image
+    /// path distinct from [`Self::publish_preserved`]. It deliberately cannot
+    /// be used for a copied expansion image: that path has live nonzero bits
+    /// and must retain them through the preserved publication operation.
+    ///
+    /// # Safety
+    ///
+    /// The `initialize` all-zero storage and exclusive-publication contract
+    /// applies exactly as documented above.
+    #[inline]
+    pub(crate) unsafe fn initialize_zeroed(
+        storage: *mut u8,
+        storage_byte_count: usize,
+        layout: BitmapLayout,
+    ) -> Option<Self> {
+        // SAFETY: this narrow name exposes only the fresh all-zero branch of
+        // the fully documented generic constructor.
+        unsafe { Self::initialize(storage, storage_byte_count, layout, true) }
+    }
+
+    /// Publishes a copied nonzero bitmap image for a larger exact layout.
+    ///
+    /// This is the narrow `mi_bitmap_init(..., already_zero = true)` branch
+    /// used by `mi_thread_local_create_expand`: the caller copied a valid
+    /// smaller image into fresh zeroed storage, so clearing the whole larger
+    /// layout would destroy live claims. It only Release-publishes the new
+    /// count; the caller then marks the appended range available.
+    ///
+    /// # Safety
+    ///
+    /// `storage` must be BCHUNK-aligned and writable for this exact layout,
+    /// with a copied initialized prefix and zeroed appended bytes. It must
+    /// remain exclusively inaccessible until appended-range setup completes.
+    #[inline]
+    pub(crate) unsafe fn publish_preserved(
+        storage: *mut u8,
+        storage_byte_count: usize,
+        layout: BitmapLayout,
+    ) -> Option<Self> {
+        if storage.is_null()
+            || (storage as usize) % BCHUNK_SIZE != 0
+            || storage_byte_count != layout.byte_size()
+        {
+            return None;
+        }
+        let prefix = storage.cast::<BitmapPrefix>();
+        // The copied prefix/chunks and zeroed tail precede this exact source
+        // initialization predicate.
+        unsafe { word_store_release(&(*prefix).chunk_count, layout.chunk_count) };
+        Some(Self {
+            storage: unsafe { NonNull::new_unchecked(storage) },
+            layout,
+            _storage: PhantomData,
+        })
+    }
+
     /// Attaches to a bitmap image initialized for this exact dynamic layout.
     ///
     /// # Safety
@@ -1232,6 +1292,35 @@ impl<'storage> BitmapView<'storage> {
     pub(crate) fn is_all_clear(&self) -> bool {
         // A checked layout always has a positive maximum bit count.
         self.is_clear_range(0, self.max_bits()).unwrap_or(false)
+    }
+
+    /// Finds and atomically claims the lowest available bit through ordinary
+    /// `mi_bitmap_find(..., tseq = 0, n = 1)` traversal.
+    ///
+    /// It does not raw-scan bitmap words: every candidate comes from the
+    /// conservative chunk map, the source one-bit AcqRel claim is used, and a
+    /// drained candidate repairs that map before search continues.
+    #[inline]
+    pub(crate) fn try_find_and_claim_lowest(&self) -> Option<usize> {
+        let field_count = (self.chunk_count() + BFIELD_BITS - 1) / BFIELD_BITS;
+        for field_index in 0..field_count {
+            let mut candidates = word_load_relaxed(self.chunkmap().field(field_index));
+            while candidates != 0 {
+                let candidate = ctz(candidates);
+                candidates &= candidates.wrapping_sub(1);
+                let chunk_index = field_index * BFIELD_BITS + candidate;
+                if chunk_index >= self.chunk_count() {
+                    // Checked Rust ignores a stale map bit instead of naming
+                    // storage beyond this dynamic image.
+                    continue;
+                }
+                if let Some(bit) = self.chunk(chunk_index).try_claim_one() {
+                    return Some(chunk_index * BCHUNK_BITS + bit);
+                }
+                let _ = self.chunkmap_try_clear(chunk_index);
+            }
+        }
+        None
     }
 
     /// Finds one set bit using the source's abandoned-page reader order,
@@ -2295,6 +2384,97 @@ mod tests {
         assert!(bitmap.chunkmap().is_set_run(0, 2));
         assert_eq!(bitmap.clear_range(0, BCHUNK_BITS * 2), Some(true));
         assert!(bitmap.is_all_clear());
+    }
+
+    #[test]
+    fn preserved_publication_keeps_a_nonzero_prefix_and_ordinary_lowest_claim_repairs_chunkmap() {
+        let old_layout = BitmapLayout::for_bit_count(BCHUNK_BITS * 2).unwrap();
+        let expanded_layout = BitmapLayout::for_bit_count(BCHUNK_BITS * 3).unwrap();
+        let mut old_storage = BitmapTestStorage::uninit();
+        let mut old = unsafe {
+            BitmapView::initialize(
+                old_storage.bytes.as_mut_ptr().cast(),
+                old_layout.byte_size(),
+                old_layout,
+                false,
+            )
+            .unwrap()
+        };
+        // SAFETY: this test owns the unshared initial image and records two
+        // available old-prefix bits before copying it into the larger image.
+        unsafe { old.unsafe_set_range_local(7, 1).unwrap() };
+        unsafe { old.unsafe_set_range_local(BCHUNK_BITS + 3, 1).unwrap() };
+        drop(old);
+
+        let mut expanded_storage = BitmapTestStorage::uninit();
+        // SAFETY: `expanded_storage` is aligned private storage for exactly
+        // the larger image; zeroing its appended range precedes the source
+        // copied-prefix publication branch.
+        unsafe {
+            core::ptr::write_bytes(
+                expanded_storage.bytes.as_mut_ptr().cast::<u8>(),
+                0,
+                expanded_layout.byte_size(),
+            );
+            core::ptr::copy_nonoverlapping(
+                old_storage.bytes.as_ptr().cast::<u8>(),
+                expanded_storage.bytes.as_mut_ptr().cast::<u8>(),
+                old_layout.byte_size(),
+            );
+        }
+        let mut expanded = unsafe {
+            BitmapView::publish_preserved(
+                expanded_storage.bytes.as_mut_ptr().cast(),
+                expanded_layout.byte_size(),
+                expanded_layout,
+            )
+            .unwrap()
+        };
+        assert_eq!(expanded.is_set_range(7, 1), Some(true));
+        assert_eq!(expanded.is_set_range(BCHUNK_BITS + 3, 1), Some(true));
+        assert_eq!(
+            expanded.is_clear_range(old_layout.max_bits(), BCHUNK_BITS),
+            Some(true),
+            "preserved publication leaves the appended chunk clear until its source free-bit setup"
+        );
+        // SAFETY: this test still has exclusive access while it models the
+        // registry's appended-only free transition.
+        unsafe {
+            expanded
+                .unsafe_set_range_local(old_layout.max_bits(), BCHUNK_BITS)
+                .unwrap()
+        };
+        assert_eq!(expanded.try_find_and_claim_lowest(), Some(7));
+
+        let one_chunk = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
+        let mut repair_storage = BitmapTestStorage::uninit();
+        let mut repair = unsafe {
+            BitmapView::initialize(
+                repair_storage.bytes.as_mut_ptr().cast(),
+                one_chunk.byte_size(),
+                one_chunk,
+                false,
+            )
+            .unwrap()
+        };
+        // SAFETY: this local setup creates one conservative map candidate.
+        unsafe { repair.unsafe_set_range_local(0, BCHUNK_BITS).unwrap() };
+        assert!(repair.chunkmap().is_set_run(0, 1));
+        // Deliberately leave the map conservative/stale while draining only
+        // the data chunk. This is the ordinary find path's repair condition.
+        assert!(repair
+            .chunk(0)
+            .clear_run(0, BCHUNK_BITS)
+            .expect("the complete checked source chunk is clearable")
+            .all_transitioned());
+        assert!(repair.chunkmap().is_set_run(0, 1));
+        assert_eq!(repair.try_find_and_claim_lowest(), None);
+        assert!(repair.chunkmap().is_clear_run(0, 1));
+
+        // SAFETY: still exclusive test storage; a new regular bit must be
+        // selected by the ordinary low-to-high source traversal.
+        unsafe { repair.unsafe_set_range_local(17, 1).unwrap() };
+        assert_eq!(repair.try_find_and_claim_lowest(), Some(17));
     }
 
     #[test]

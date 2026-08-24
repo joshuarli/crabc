@@ -41,6 +41,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 use crabc_core::Errno;
 
 use crate::arena::{manage_external_in_place, ArenaId, ArenaRegistry, ArenaView};
+use crate::bitmap::{BCHUNK_SIZE, BitmapLayout, BitmapView};
 use crate::bootstrap::{BootstrapError, ExclusiveTheapBootstrap};
 use crate::compiler_tls::DynamicThreadLocalBacking;
 use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, MAX_VABITS};
@@ -50,7 +51,7 @@ use crate::page_map::PageMap;
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::size_class;
 use crate::types::{
-    LiveThreadId, MemoryId, Page, ThreadLocalData, ThreadSequence,
+    LiveThreadId, MemoryId, MemoryKind, Page, ThreadLocalData, ThreadSequence,
 };
 use crate::subproc::MainSubprocess;
 
@@ -75,6 +76,21 @@ enum MetaAllocationOrigin {
     DirectZeroed,
     AlignedZeroed,
     Replacement,
+}
+
+/// The one-way lifecycle of an aligned metadata allocation when, and only
+/// when, it is projected as the allocator-owned regular TLS-key bitmap.
+///
+/// This state is deliberately independent from [`MetaAllocationOrigin`]. The
+/// origin proves that the allocation started as an aligned zero image; this
+/// state proves whether that particular image was initialized directly,
+/// copied from an already-published prefix, or made observable as a bitmap.
+/// Non-bitmap metadata never consults this field.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BitmapImageState {
+    Fresh,
+    CopiedPrefix,
+    Published,
 }
 
 /// One private metadata allocation error.
@@ -120,6 +136,17 @@ pub(crate) enum MetaError {
     Free(FreeError),
 }
 
+/// Rejection from one typed allocator-owned ordinary-bitmap projection.
+///
+/// A dynamic bitmap stays owned by its [`MetaAllocation`] capability; this
+/// boundary prevents a caller from falling back to raw ownership when image
+/// size, alignment, provenance, or detached-owner identity is wrong.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MetaBitmapProjectionError {
+    ForeignOwner,
+    InvalidImage,
+}
+
 /// One non-Copy, provenance-bearing metadata allocation capability.
 ///
 /// Moving this value transfers its one private release capability. It may be
@@ -140,6 +167,7 @@ pub(crate) struct MetaAllocation<'owner> {
     owner: NonNull<MetaAllocator>,
     state: AtomicU8,
     origin: MetaAllocationOrigin,
+    bitmap_image_state: BitmapImageState,
     thread_local_data_initialized: bool,
     _owner: PhantomData<Pin<&'owner MetaAllocator>>,
 }
@@ -165,6 +193,7 @@ impl<'owner> MetaAllocation<'owner> {
             owner: NonNull::from(owner.get_ref()),
             state: AtomicU8::new(ALLOCATION_LIVE),
             origin,
+            bitmap_image_state: BitmapImageState::Fresh,
             thread_local_data_initialized: false,
             _owner: PhantomData,
         }
@@ -196,6 +225,106 @@ impl<'owner> MetaAllocation<'owner> {
             && self.memory.is_pinned() == memory.is_pinned()
             && self.memory.initially_committed() == memory.initially_committed()
             && self.memory.initially_zero() == memory.initially_zero()
+    }
+
+    /// Calls `operation` with a transient typed view of this initialized
+    /// allocator-owned ordinary bitmap. The view cannot escape the retained
+    /// metadata capability or become separately stored ownership.
+    #[inline]
+    pub(crate) fn with_bitmap_view<R>(
+        &self,
+        owner: Pin<&MetaAllocator>,
+        layout: BitmapLayout,
+        operation: impl FnOnce(&BitmapView<'_>) -> R,
+    ) -> Result<R, MetaBitmapProjectionError> {
+        self.validate_bitmap_image(owner, layout)?;
+        self.require_bitmap_image_state(BitmapImageState::Published)?;
+        // SAFETY: validation proves the exact typed capability extent,
+        // BCHUNK alignment, Malloc provenance, live owner identity, and
+        // Release-published layout. The registry's outer lock excludes a
+        // competing image replacement for this capability.
+        let view = unsafe { BitmapView::attach(self.pointer.as_ptr(), self.requested_size, layout) }
+            .ok_or(MetaBitmapProjectionError::InvalidImage)?;
+        Ok(operation(&view))
+    }
+
+    /// Initializes one fresh aligned-zeroed allocation as an ordinary bitmap
+    /// and exposes it only for the duration of `operation`.
+    #[inline]
+    pub(crate) fn initialize_zeroed_bitmap<R>(
+        &mut self,
+        owner: Pin<&MetaAllocator>,
+        layout: BitmapLayout,
+        operation: impl FnOnce(&mut BitmapView<'_>) -> R,
+    ) -> Result<R, MetaBitmapProjectionError> {
+        self.validate_bitmap_image(owner, layout)?;
+        self.require_bitmap_image_state(BitmapImageState::Fresh)?;
+        // SAFETY: aligned metadata zalloc supplied the exact all-zero image;
+        // the unique capability and outer registry lock establish the source
+        // initialization exclusivity before any view can be attached.
+        let mut view = unsafe {
+            BitmapView::initialize_zeroed(self.pointer.as_ptr(), self.requested_size, layout)
+        }
+        .ok_or(MetaBitmapProjectionError::InvalidImage)?;
+        // The complete zero image and its Release-published chunk count now
+        // exist before the callback can obtain the transient view.
+        self.bitmap_image_state = BitmapImageState::Published;
+        Ok(operation(&mut view))
+    }
+
+    /// Publishes a copied bitmap image without clearing its old prefix, then
+    /// exposes it only for appended-range setup.
+    #[inline]
+    pub(crate) fn publish_preserved_bitmap<R>(
+        &mut self,
+        owner: Pin<&MetaAllocator>,
+        layout: BitmapLayout,
+        operation: impl FnOnce(&mut BitmapView<'_>) -> R,
+    ) -> Result<R, MetaBitmapProjectionError> {
+        self.validate_bitmap_image(owner, layout)?;
+        self.require_bitmap_image_state(BitmapImageState::CopiedPrefix)?;
+        // SAFETY: the registry copied exactly the old image into fresh zeroed
+        // storage while holding its outer lock. This source branch only
+        // publishes the larger count.
+        let mut view = unsafe {
+            BitmapView::publish_preserved(self.pointer.as_ptr(), self.requested_size, layout)
+        }
+        .ok_or(MetaBitmapProjectionError::InvalidImage)?;
+        // Only the copied prefix branch may publish a nonzero image, and it
+        // becomes observable before the appended-range callback runs.
+        self.bitmap_image_state = BitmapImageState::Published;
+        Ok(operation(&mut view))
+    }
+
+    /// Copies exactly one published bitmap image into this fresh aligned-zeroed
+    /// capability without reconstructing ownership from either raw pointer.
+    #[inline]
+    pub(crate) fn copy_bitmap_image_from(
+        &mut self,
+        owner: Pin<&MetaAllocator>,
+        target_layout: BitmapLayout,
+        source: &MetaAllocation<'owner>,
+        source_layout: BitmapLayout,
+    ) -> Result<(), MetaBitmapProjectionError> {
+        self.validate_bitmap_image(owner, target_layout)?;
+        self.require_bitmap_image_state(BitmapImageState::Fresh)?;
+        source.with_bitmap_view(owner, source_layout, |_| ())?;
+        if source_layout.byte_size() > self.requested_size {
+            return Err(MetaBitmapProjectionError::InvalidImage);
+        }
+        // SAFETY: both exact typed capabilities have validated distinct
+        // Malloc provenance. The replacement is fresh and cannot overlap the
+        // live source allocation; the registry lock excludes mutation during
+        // this source-sized byte copy.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                source.pointer.as_ptr(),
+                self.pointer.as_ptr(),
+                source_layout.byte_size(),
+            );
+        }
+        self.bitmap_image_state = BitmapImageState::CopiedPrefix;
+        Ok(())
     }
 
     /// Projects this capability as the one source-shaped dynamic TLS backing.
@@ -360,6 +489,38 @@ impl<'owner> MetaAllocation<'owner> {
             && memory.size == self.requested_size
             && self.memory.size() == Some(self.requested_size)
     }
+
+    #[inline]
+    fn validate_bitmap_image(
+        &self,
+        owner: Pin<&MetaAllocator>,
+        layout: BitmapLayout,
+    ) -> Result<(), MetaBitmapProjectionError> {
+        if !self.belongs_to(owner) {
+            return Err(MetaBitmapProjectionError::ForeignOwner);
+        }
+        if self.state.load(Ordering::Acquire) != ALLOCATION_LIVE
+            || self.origin != MetaAllocationOrigin::AlignedZeroed
+            || self.requested_size != layout.byte_size()
+            || self.pointer.as_ptr().addr() % BCHUNK_SIZE != 0
+            || self.memory.kind() != MemoryKind::Malloc
+            || !self.has_consistent_malloc_provenance()
+        {
+            return Err(MetaBitmapProjectionError::InvalidImage);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn require_bitmap_image_state(
+        &self,
+        expected: BitmapImageState,
+    ) -> Result<(), MetaBitmapProjectionError> {
+        if self.bitmap_image_state != expected {
+            return Err(MetaBitmapProjectionError::InvalidImage);
+        }
+        Ok(())
+    }
 }
 
 /// One statically bootstrappable, process-lived metadata owner.
@@ -470,11 +631,30 @@ impl MetaAllocator {
         size: usize,
         alignment: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
+        self.zalloc_aligned_for_main_subprocess(
+            config,
+            MainSubprocess::global(),
+            size,
+            alignment,
+        )
+    }
+
+    /// Allocates zeroed aligned metadata for the selected process-main
+    /// identity. The process-global TLS-key registry uses this exact route so
+    /// its bitmap stays allocator metadata owned by the main subprocess even
+    /// if future callers acquire keys while attached somewhere else.
+    pub(crate) fn zalloc_aligned_for_main_subprocess(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        size: usize,
+        alignment: usize,
+    ) -> Result<MetaAllocation<'static>, MetaError> {
         if !size_class::alignment_is_valid(alignment) {
             return Err(MetaError::InvalidAlignment);
         }
         let mut entry = self.enter()?;
-        entry.ensure_ready(config, MainSubprocess::global())?;
+        entry.ensure_ready(config, subprocess)?;
         let pointer = entry
             .allocator()
             .allocate_aligned_zeroed(size, alignment)
@@ -926,6 +1106,124 @@ mod tests {
         assert!(allocator.free(&mut block).is_ok());
         let mut aligned = aligned;
         assert!(allocator.free(&mut aligned).is_ok());
+    }
+
+    #[test]
+    fn selected_aligned_main_metadata_projects_only_an_exact_transient_bitmap_image() {
+        let allocator = static_allocator();
+        let subprocess = MainSubprocess::test_static_owner();
+        let layout = BitmapLayout::for_bit_count(1024).unwrap();
+        let wrong_layout = BitmapLayout::for_bit_count(512).unwrap();
+        let mut image = allocator
+            .zalloc_aligned_for_main_subprocess(
+                config(),
+                subprocess,
+                layout.byte_size(),
+                BCHUNK_SIZE,
+            )
+            .expect("the selected-main aligned bitmap allocation succeeds");
+
+        assert_eq!(image.pointer().as_ptr().addr() % BCHUNK_SIZE, 0);
+        assert_eq!(image.memory_id().kind(), MemoryKind::Malloc);
+        assert!(allocator
+            .get_ref()
+            .registry
+            .is_bound_to_subprocess(subprocess.as_ptr()));
+        assert_eq!(
+            image.initialize_zeroed_bitmap(allocator, wrong_layout, |_| ()),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a projection cannot name fewer bytes than the retained typed image"
+        );
+        assert_eq!(
+            image
+                .initialize_zeroed_bitmap(allocator, layout, |view| unsafe {
+                    view.unsafe_set_range_local(0, 1)
+                })
+                .expect("the exact zeroed image initializes"),
+            Some(())
+        );
+        assert_eq!(
+            image
+                .with_bitmap_view(allocator, layout, |view| view.try_find_and_claim_lowest())
+                .expect("the bitmap view is a transient exact projection"),
+            Some(0)
+        );
+        let foreign = static_allocator();
+        assert_eq!(
+            image.with_bitmap_view(foreign, layout, |_| ()),
+            Err(MetaBitmapProjectionError::ForeignOwner)
+        );
+        allocator.free(&mut image).unwrap();
+    }
+
+    #[test]
+    fn bitmap_image_lifecycle_rejects_out_of_order_or_duplicate_projection() {
+        let allocator = static_allocator();
+        let subprocess = MainSubprocess::test_static_owner();
+        let layout = BitmapLayout::for_bit_count(1024).unwrap();
+        let mut source = allocator
+            .zalloc_aligned_for_main_subprocess(
+                config(),
+                subprocess,
+                layout.byte_size(),
+                BCHUNK_SIZE,
+            )
+            .expect("the source image allocation succeeds");
+        let mut target = allocator
+            .zalloc_aligned_for_main_subprocess(
+                config(),
+                subprocess,
+                layout.byte_size(),
+                BCHUNK_SIZE,
+            )
+            .expect("the replacement image allocation succeeds");
+
+        assert_eq!(
+            target.with_bitmap_view(allocator, layout, |_| ()),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a fresh typed image is not observable before initialization"
+        );
+        assert_eq!(
+            target.publish_preserved_bitmap(allocator, layout, |_| ()),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a fresh image cannot publish without an exact copied prefix"
+        );
+        assert_eq!(
+            source.initialize_zeroed_bitmap(allocator, layout, |_| ()),
+            Ok(())
+        );
+        assert_eq!(
+            source.initialize_zeroed_bitmap(allocator, layout, |_| ()),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a direct zero initializer cannot overwrite a published image"
+        );
+
+        assert_eq!(
+            target.copy_bitmap_image_from(allocator, layout, &source, layout),
+            Ok(())
+        );
+        assert_eq!(
+            target.copy_bitmap_image_from(allocator, layout, &source, layout),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a copied replacement cannot copy a second prefix"
+        );
+        assert_eq!(
+            target.with_bitmap_view(allocator, layout, |_| ()),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a copied prefix is not observable before its Release publication"
+        );
+        assert_eq!(
+            target.publish_preserved_bitmap(allocator, layout, |_| ()),
+            Ok(())
+        );
+        assert_eq!(
+            target.publish_preserved_bitmap(allocator, layout, |_| ()),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a published replacement cannot publish twice"
+        );
+
+        allocator.free(&mut source).unwrap();
+        allocator.free(&mut target).unwrap();
     }
 
     #[test]

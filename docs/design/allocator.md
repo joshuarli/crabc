@@ -80,9 +80,10 @@ This is bounded engine evidence, not an exported production allocator: the
 crate still has no production public operation, libc integration, process/TLS
 lifecycle, integrated remote-free routing, thread teardown, fork protocol, or
 backend selection. The present Milestone 5 foundations are intentionally
-narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, a
-lock-serialized global key registry over caller-owned source-sized bitmap
-blocks, five private compiler-TLS roots with direct `TPIDR_EL0` identity,
+narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, the
+older lock-serialized caller-storage registry substrate, and one distinct
+allocator-owned process-global regular-key registry, five private compiler-TLS
+roots with direct `TPIDR_EL0` identity,
 low-bit atomic remote publication and owner collection, a bounded one-page
 abandonment/adoption protocol, a current-thread-only regular TLS backing owner,
 and one ticket-zero process-static main heap/default-Theap attachment. That
@@ -100,8 +101,28 @@ internal metadata free or replacement reports an ownership-consumption
 ambiguous error, the owner clears that root and becomes terminal rather than
 inventing a retryable capability. No valid-program C semantic difference is
 claimed from that internal error limitation. The backing owner does not provide
-the source's TLD/theap attachment, allocator-backed global key registry,
+the source's TLD/theap attachment, key-to-current-thread backing integration,
 process or pthread teardown hook, or production ELF integration.
+
+`owned_tls_key_registry.rs` ports the separate process-global regular-key
+bitmap from `src/threadlocal.c:221-315`. It is allocator metadata, not
+compiler TLS, and never writes `DYNAMIC_BACKING_ROOT`. Its private lock
+serializes the 16-bit-index/48-bit-generation stream and retains each bitmap
+as one typed `MetaAllocation`; a `BitmapView` exists only within a locked
+operation. The first image is 1,024 bits (256 bytes), every growth appends
+exactly 1,024 bits, and 63 growth-block allocations reach the 64,512-bit source ceiling before a
+64th allocation is rejected. Every image uses the selected main subprocess's
+aligned Malloc metadata route. Claim follows ordinary `tseq = 0` low-to-high
+chunk-map traversal and advances generation only after the one-bit claim. Copy
+growth preserves the old image, Release-publishes the larger count without
+clearing that prefix, then marks only the append free. The linear lease requires
+explicit release; drop deliberately does not return a key. Bounded shutdown
+rejects live leases and late claim/release, but is not `_mi_thread_locals_done`,
+fast-key deletion, current-thread slot attachment, or process shutdown. The
+fixed lock order is registry then `MetaAllocator`. Typed-image invariant or
+ownership-ambiguous post-commit-free failures poison and retain process-static
+ownership; allocation failures before commit preserve the old image and
+generation.
 
 `subproc.rs` now represents the deliberately small process-static identity of
 `mi_process_subproc_main`: it owns only the relaxed source
@@ -170,7 +191,7 @@ storage/live registration remain rather than claiming teardown. This slice
 does not implement source heap-busy retry.
 `PrivateLock` preserves the TLD field's private-lock meaning but is not a
 byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made. Dynamic
-TLD/Theap allocation, cached-root refcounting, allocator-backed key registry,
+TLD/Theap allocation, cached-root refcounting, registry-to-thread attachment,
 remote-free/page routing or abandonment integration, full heap/Theap/arena/
 subprocess APIs, pthread/process hooks, fork repair, process shutdown, and
 general lock destruction remain outside this slice.

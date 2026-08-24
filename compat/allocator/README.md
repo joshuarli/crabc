@@ -33,7 +33,7 @@ dynamic TLS backing: it retains the typed Malloc capability, follows the
 source 16/double/+1024/least-index/65535 growth rule, publishes a fully
 initialized flexible header before the dynamic root, validates live header
 provenance, and frees before clearing only that root. It deliberately has no
-TLD/theap attachment, allocator-backed global key registry, or actual
+TLD/theap attachment, key-to-current-thread registry integration, or actual
 process/pthread lifecycle hook; an internal consumption-ambiguous metadata
 error clears the root and terminally poisons the owner instead of offering an
 unjustified retry capability. A second unsafe current-thread-only owner now
@@ -50,7 +50,20 @@ metadata path remains **subprocess-attached, no-theap**. Process bootstrap must
 explicitly choose whether this generic owner or `main_theap.rs` owns that
 `MainSubprocess` ticket zero; generic-first consumption makes later static
 attachment terminally reject, and shared process-init selection authority is
-deferred. The static branch attaches that exact TLD to cache-aligned,
+deferred. A distinct process-global `OwnedThreadLocalKeyRegistry` now owns the
+regular-key source bitmap from `src/threadlocal.c:221-315`. It fixes the main
+subprocess identity on first claim, retains exactly one current typed aligned
+`MetaAllocation`, replaced per 1,024-bit growth step, and projects
+`BitmapView` only while its registry lock is held. Its ordinary `tseq = 0`
+claim repairs conservative chunk-map state, expansion preserves a nonzero
+prefix, and only the appended range is then marked free. The
+63-block/64,512-bit ceiling prevents a 64th allocation. A non-Copy
+lease requires explicit release; bounded shutdown rejects live leases and late
+operations. It neither installs compiler TLS nor attaches a key to a
+current-thread backing. Typed-image invariant and ownership-ambiguous
+post-commit failures poison with retained process-static ownership; allocation
+failure before commit preserves the old image/generation. The static branch
+attaches that exact TLD to cache-aligned,
 address-stable `Heap` and default `Theap` slots within one process-static
 owner. It preflights the immutable empty dynamic root plus empty default/cached
 and null fast roots before consuming the ticket; does not touch metadata or
@@ -73,8 +86,9 @@ invalidates and quiesces the TLD, then releases its live count and terminally
 retires static TLD storage. A fallible private lock/list boundary after root
 reset is also terminal invalid-owner handling, retaining storage and
 registration rather than claiming teardown; source heap-busy retry remains
-absent. Dynamic TLD/Theap allocation, cached-root refcounts, allocator-backed
-key registry, page routing/abandonment integration, pthread/process hooks,
+absent. Dynamic TLD/Theap allocation, cached-root refcounts,
+registry-to-thread attachment, page routing/abandonment integration,
+pthread/process hooks,
 complete subprocess layout/lifecycle, and C pthread-mutex layout claims
 remain absent. A
 private explicit single-thread slice now binds a pinned default theap to a
@@ -88,8 +102,9 @@ frozen-default external-arena purge slice schedules unpinned releases for four
 seconds, claims free-bitmap ownership during forced non-owning decommit, skips
 pinned backing, and preserves both external mapping ownership and immediate
 retry state on failure. The other bounded Milestone 5 substrates are also present:
-the AArch64 versioned TLS key, caller-owned slot, and locked global-key registry
-contract; the private compiler-TLS roots; the source low-bit
+the AArch64 versioned TLS key, caller-owned slot, caller-storage registry
+substrate, and allocator-owned process-global regular-key registry; the
+private compiler-TLS roots; the source low-bit
 live/abandoned-page remote-free head transitions;
 and one queue-detached, stable page's mapped/unmapped abandonment/adoption
 protocol, including failed-reader restoration and clear-once-set quiescence.
@@ -283,7 +298,8 @@ investigated only under the design-note, differential, and performance rule in
 
 [`known-differences.md`](known-differences.md) is the single durable register
 for accepted or pending Rust/C differences. A missing entry is not permission
-to deviate. The register currently records no differences. The bounded small-
-allocation slice has exact logical-trace parity, but its deliberately absent
-lifecycle and API regions are incomplete scope rather than claimed
-differences.
+to deviate. The register currently records private invalid-owner/lifecycle
+boundaries and the degraded-entropy substitution, but no ordinary allocation-
+trace difference. The bounded small-allocation slice has exact logical-trace
+parity; its deliberately absent lifecycle and API regions are incomplete scope
+rather than claimed differences.

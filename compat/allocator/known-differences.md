@@ -26,6 +26,41 @@ capability that could name freed storage. This state is not a valid C-program
 observable difference and has no C differential entry; a richer metadata-free
 result may refine it only when it can prove retained ownership.
 
+### `CRABC-MI-OWNED-TLS-KEY-REGISTRY-INVALID-OWNER` — accepted private terminal boundary
+
+- **Upstream/Rust:** `src/threadlocal.c:221-315`, especially
+  `mi_thread_local_create_expand` / `_mi_thread_locals_done`, and
+  `owned_tls_key_registry::OwnedThreadLocalKeyRegistry` with its typed bitmap
+  boundary in `meta.rs`.
+- **Category:** private invalid-owner and incomplete-process-shutdown handling
+  only. It has no C ABI surface or valid allocation-trace differential entry.
+- **Difference:** the bounded process-global registry uses fallible private
+  locks, typed-image validation, and linear `MetaAllocation` release where C
+  exposes no equivalent error. A failed allocation before replacement commit
+  is retryable and preserves the old image/generation exactly. By contrast, an
+  impossible published-image/provenance projection, absent appended-range
+  result, or error after new-image commit while freeing the old capability is
+  terminal: the registry becomes poisoned and retains its process-static typed
+  state rather than reinterpreting uncertain ownership. Its explicit shutdown
+  also rejects live leases and late release/claim; it does not claim the
+  source's complete `_mi_thread_locals_done`, fast-key deletion, lock
+  destruction, or process shutdown wiring.
+- **Evidence:**
+  `owned_tls_key_registry::tests::failed_first_or_expansion_allocation_preserves_bitmap_and_generation`
+  proves pre-commit preservation;
+  `shutdown_requires_quiescence_then_rejects_late_claim_and_release_without_bitmap_access`
+  proves the bounded shutdown gate; and
+  `meta::tests::selected_aligned_main_metadata_projects_only_an_exact_transient_bitmap_image`
+  proves exact typed projection/foreign-owner rejection. The focused registry
+  suite also proves the selected-main 1,024-bit image, 63-block ceiling,
+  concurrency, and explicit lease behavior. Exact C comparison is inapplicable
+  to impossible private-lock/provenance failures.
+- **Decision/removal:** accepted until a full process initialization/shutdown
+  and key-to-thread attachment lifecycle can distinguish every release outcome
+  without retrying ambiguous ownership. It does not authorize raw capability
+  reconstruction, persistent bitmap views, lock stealing, silent `Drop`
+  release, or a false live-lease decrement.
+
 ### `CRABC-MI-MAIN-STATIC-LOCK-POISON` — accepted invalid-owner teardown boundary
 
 - **Upstream/Rust:** `src/theap.c:_mi_tld_detach_theaps` and
