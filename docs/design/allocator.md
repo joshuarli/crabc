@@ -42,9 +42,15 @@ reallocation, aligned and offset-aligned allocation, usable size, preservation,
 and invalid-size failure. Those operations are live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
 64 KiB and below the 256 MiB metadata limit. This is bounded engine evidence,
-not an exported allocator: the crate still has no public operation, libc
+not an exported allocator: the crate still has no production public operation, libc
 integration, process/TLS lifecycle, remote free, purge scheduling, thread
 teardown, fork protocol, or backend selection.
+A default-off `test-adapter` feature is the sole exception to that public-
+operation statement: it provides an allocation-backed, creating-thread-only
+context for the future prefixed C evidence adapter. Its stable boxed control
+owners, root-last publication, exact outstanding-block count, and staged
+page-map/arena teardown are test harness machinery, not a production process
+singleton or libc integration path.
 A fixed-capacity `cfg(miri)` mapping model exercises current
 VM ownership and page-map transitions without broadening production support;
 the pinned toolchain does not currently install Miri itself. No allocator

@@ -1243,3 +1243,18 @@ unit_verified = true
 differential_verified = true
 stress_verified = false
 performance_qualified = false
+
+[[item]]
+upstream = "src/init.c"
+name = "feature-gated-one-thread-test-process-context"
+source_region = "process memory configuration, page-map/root publication, external-arena ownership, default-theap activation, and ordered collection/teardown boundaries"
+rust_module = "crabc_mimalloc::test_context"
+rust_item = "TestAllocatorContext and its typed allocation, pointer, free, initialization, outstanding-count, and retryable shutdown contracts"
+intentional_difference = "This default-off evidence context uses stable alloc-backed control owners and an explicit creating-thread-only capability. It is not mimalloc global state, TLS, a production process singleton, a libc backend, or a remote-free path."
+tests = ["crabc-mimalloc/src/test_context.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false

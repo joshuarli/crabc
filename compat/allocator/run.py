@@ -1443,7 +1443,7 @@ def build_test_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]
         kind = "test-source" if path.suffix in {".c", ".cc", ".cpp"} else "test-support"
         items.append(
             {
-                "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+                "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
                 "kind": kind,
                 "path": name,
                 "sha256": sha256_file(path),
@@ -2549,7 +2549,7 @@ def main() -> int:
         run_milestone0(offline=arguments.offline, generate_contracts=False, check_only=False)
         if arguments.full:
             raise MilestoneUnavailable(
-                "allocator --full is unavailable: Milestone 4 must provide the Rust test C API adapter and process-owned allocator context before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
+                "allocator --full is unavailable: Milestone 4 must provide the prefixed Rust test C API adapter before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
             )
         if arguments.perf_smoke or arguments.perf_full:
             raise MilestoneUnavailable(

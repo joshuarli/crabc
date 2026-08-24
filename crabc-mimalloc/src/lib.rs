@@ -6,13 +6,17 @@
 //! and singleton pages, checked counted allocation, ordinary reallocation,
 //! arena-bounded aligned operations, and the separately owned OS-aligned
 //! singleton path below the metadata-alignment limit. The crate deliberately
-//! exposes no public allocator API or process/TLS lifecycle yet; remote free,
-//! teardown, and integration remain incomplete.
+//! exposes no production allocator API or process/TLS lifecycle yet; a
+//! default-off test-adapter feature owns the only public operation context.
+//! Remote free, production teardown, and integration remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
 //! `crabc-libc`; this crate must not depend on it.
 
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
+
+#[cfg(feature = "test-adapter")]
+extern crate alloc as rust_alloc;
 
 // This is the sole production platform. `cfg(miri)` selects a private test
 // instrument only: it never makes a non-Linux/AArch64 target supported by the
@@ -52,4 +56,12 @@ mod random;
 mod size_class;
 mod single_thread;
 mod support;
+#[cfg(feature = "test-adapter")]
+mod test_context;
 mod types;
+
+#[cfg(feature = "test-adapter")]
+pub use test_context::{
+    TestAllocatorContext, TestContextAllocationError, TestContextFreeError,
+    TestContextInitError, TestContextPointerError, TestContextShutdownError,
+};

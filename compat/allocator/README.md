@@ -56,7 +56,12 @@ aligned/offset-aligned, usable-size, preservation, and invalid-size OOM
 behavior. The same library run emits an independent 51-key Rust record and
 requires exact equality with that pinned C baseline. This proves the bounded
 single-thread engine's fundamental operation slice; it is not yet a public C
-adapter, process-lifecycle, or whole-allocator parity claim. The gate also
+adapter, production process-lifecycle, or whole-allocator parity claim. A
+default-off `test-adapter` feature now owns one allocation-backed, creating-
+thread-only context with root-last initialization, exact outstanding-block
+accounting, and explicit retryable page-map/arena teardown. It exists only to
+support the pending prefixed C test adapter and is not a production allocator
+API. The gate also
 traverses Cargo metadata for the
 fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside

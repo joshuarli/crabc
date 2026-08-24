@@ -19,7 +19,7 @@ unregister-before-release, and injected rollback. The ordinary allocator gate
 matches 447 Rust-owned layout/configuration values, 378 address-independent
 small-allocation trace values, and 51 fundamental-operation values against
 exact pinned C v3.5.0. This is not a production backend or readiness claim;
-the process-owned C test adapter, process/TLS and remote-free lifecycle, libc
+the prefixed C test adapter, process/TLS and remote-free lifecycle, libc
 integration, stress, full upstream tests, and performance promotion gates
 remain open.
 

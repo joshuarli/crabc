@@ -10,112 +10,112 @@
   },
   "tests": [
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/main-override-dep.cpp",
       "sha256": "1e7aa89a6fc3b33f5bbce16e807b0ce9b6fe86a09871bb0042988617833e1da3",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-support",
       "path": "test/main-override-dep.h",
       "sha256": "61b05bb4ab4729ba85896acd810b072050fbfb0f9a001a1cfad2e457d25d6566",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/main-override-static.c",
       "sha256": "36bdce42e530d4248dac1beeea26f655b8076e59745f2ce62f0730298aeb1294",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/main-override.c",
       "sha256": "c624450c29d5a847540bc7dd9e0c3d729468ce155801a45b9d0fd6efd67ce624",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/main-override.cpp",
       "sha256": "1c181934f375e04f215cbcc2bf0650d649e26053842c5d23ccd0e03be9bb0dfd",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/main-static-dep.cpp",
       "sha256": "c8aa4aa2e781f9b823419b1f5f58b2f56001d3461dbe0b6ab1bdaebc2e479881",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-support",
       "path": "test/main-static-dep.h",
       "sha256": "bd2acbaa7461aee7ec8d4b90d29c5f66534307bd2afd8289116433216724af5c",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/main-static.cpp",
       "sha256": "7d9af1b69b76d2c0571d1c68403ad26271f48acc4f306ff4f31b877c351029d4",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/main.c",
       "sha256": "05b83f39aac6f5d502d667c8960551dcf5d875d55994119373d2b62a324d07a0",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/test-api-fill.c",
       "sha256": "b90ed6ef1ba28f4621d075ad91c975f3720cc3713edb0f64532749ccf04f90eb",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/test-api.c",
       "sha256": "85a31dd69a5f53697c093716e03778af7db077b32f78f7436dc8eacc8bb687b1",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/test-stress-heaps.c",
       "sha256": "0461dbb58b5a9962572ca555aca58438f88ea8855632b442ee079acd5b4abbf6",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/test-stress-subprocs.c",
       "sha256": "baf06a16d12b150700dd5faee0d045673cee18b032a05bd80cbc1953796f5d42",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/test-stress.c",
       "sha256": "e2bed5f2be12239b1fa696dafffda384d19140cb50a6ee2f6e096f70934d73df",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-source",
       "path": "test/test-wrong.c",
       "sha256": "9b0797a19e14e3801410a28d3b3c6c9e689316f9e90e02e75e20f3b3ce8ba028",
       "status": "blocked-milestone-4"
     },
     {
-      "blocked_by": "Milestone 4: the Rust test C API adapter and process-owned allocator context are not implemented.",
+      "blocked_by": "Milestone 4: the prefixed Rust test C API adapter is not implemented.",
       "kind": "test-support",
       "path": "test/testhelper.h",
       "sha256": "ab1421bf38c423c38ed3e91c2e803d2bda6cac4335d4f90a8e3555083350e681",

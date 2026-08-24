@@ -554,7 +554,7 @@ class ContractTests(unittest.TestCase):
 
     def test_full_and_performance_modes_have_precise_unmet_milestones(self) -> None:
         full = (
-            "allocator --full is unavailable: Milestone 4 must provide the Rust test C API adapter and process-owned allocator context before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
+            "allocator --full is unavailable: Milestone 4 must provide the prefixed Rust test C API adapter before upstream tests, stress, backend matrix, fork/TLS, and corpus lanes can run."
         )
         performance = (
             "allocator performance is unavailable: Milestone 9 requires comparable C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; the current private one-thread engine is not a benchmark boundary."
