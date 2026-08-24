@@ -30,7 +30,11 @@ It is also a deliberate scope reversal. The current durable project guidance exp
 I would lock in these decisions:
 
 1. Name the crate **`crabc-mimalloc`**, not `crabc-alloc`. The provenance and compatibility target should be obvious.
-2. Make it `#![no_std]`, with no `alloc`, no libc dependency, no native build script, and ideally only `crabc-core` as a production dependency.
+2. Make it `#![no_std]`, with no `alloc`, no libc dependency or native build
+   script, and exactly the approved focused direct production dependencies
+   `crabc-core`, `chacha20`, and `zeroize` unless a later reviewable dependency
+   decision changes that graph. Never hand-roll a crypto or PRNG core to avoid
+   one of those focused dependencies.
 3. Keep the current C implementation as a mandatory differential oracle and selectable shadow backend until the promotion gates pass.
 4. Keep the POSIX/musl C contract in `crabc-libc`; keep the allocator engine errno-free.
 5. Separate “ready to back crabc’s `malloc` family” from “all platform-applicable `mi_*` extended APIs are complete.” Track both, but do not confuse them.
