@@ -43,15 +43,40 @@ choosing storage; ticket zero uses the real static main-TLD branch without
 touching metadata, while later tickets use an exact fresh direct-zeroed
 metadata capability. Only the fully initialized TLD converts its ticket into a
 live-count lease, so a metadata failure still consumes the sequence but does
-not leak a live count. The TLD records direct `TPIDR_EL0`, Linux NUMA, the
-exact Unix non-threadpool result, the same main-subprocess pointer as detached
-metadata bootstrap state, and a null theap list. Its source-ordered teardown
-decrements the live count, invalidates the thread ID, proves the private lock
-quiescent, then retires the static slot or frees metadata; busy/ambiguous
-failures poison the owner. This is **subprocess-attached, no-theap**, not full
-`mi_tld_create`/`mi_tld_free`: Theap list attachment, default/cached/fast TLS
-publication, pthread/process hooks, complete subprocess layout/lifecycle, and
-C pthread-mutex layout claims remain absent. A
+not leak a live count. The generic TLD checkpoint records direct `TPIDR_EL0`,
+Linux NUMA, the exact Unix non-threadpool result, the same main-subprocess
+pointer as detached metadata bootstrap state, and a null theap list. Its
+metadata path remains **subprocess-attached, no-theap**. Process bootstrap must
+explicitly choose whether this generic owner or `main_theap.rs` owns that
+`MainSubprocess` ticket zero; generic-first consumption makes later static
+attachment terminally reject, and shared process-init selection authority is
+deferred. The static branch attaches that exact TLD to cache-aligned,
+address-stable `Heap` and default `Theap` slots within one process-static
+owner. It preflights the immutable empty dynamic root plus empty default/cached
+and null fast roots before consuming the ticket; does not touch metadata or
+mapping; uses kind-only `_mi_memid_create(MI_MEM_STATIC)` provenance for the
+main heap and concrete static image memids for its TLD/Theap; links TLD then
+heap lists; and publishes the default root before the fast root. Cached stays
+empty and dynamic stays the immutable empty image. A busy freshly owned
+TLD/heap-list attach, later attachment error, or post-mutation private unlock
+error terminally retains static TLD storage/live registration and returns no
+teardown owner; the injected pre-publication TLD-list failure leaves roots
+pristine. Those errors require invalid concurrency or a kernel/private-lock
+failure outside the valid one-owner contract; C locks do not return them.
+After exact root ownership validation, bounded teardown requires zero pages as
+a Rust pre-mutation invariant, so a page-count rejection preserves every live
+root/list/image/registration. Once that check passes, `_mi_thread_done`
+(`src/init.c:448-481`) clears fast before `mi_thread_theaps_done` resets
+default/cached and detaches: the valid path is fast, then default/cached, then
+heap/TLD lists (Release-clearing `theap.heap`). It clears terminal Theap state,
+invalidates and quiesces the TLD, then releases its live count and terminally
+retires static TLD storage. A fallible private lock/list boundary after root
+reset is also terminal invalid-owner handling, retaining storage and
+registration rather than claiming teardown; source heap-busy retry remains
+absent. Dynamic TLD/Theap allocation, cached-root refcounts, allocator-backed
+key registry, page routing/abandonment integration, pthread/process hooks,
+complete subprocess layout/lifecycle, and C pthread-mutex layout claims
+remain absent. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,
@@ -62,7 +87,7 @@ rollback with allocation-free retry ownership after terminal unmap failure. A
 frozen-default external-arena purge slice schedules unpinned releases for four
 seconds, claims free-bitmap ownership during forced non-owning decommit, skips
 pinned backing, and preserves both external mapping ownership and immediate
-retry state on failure. Four bounded Milestone 5 substrates are also present:
+retry state on failure. The other bounded Milestone 5 substrates are also present:
 the AArch64 versioned TLS key, caller-owned slot, and locked global-key registry
 contract; the private compiler-TLS roots; the source low-bit
 live/abandoned-page remote-free head transitions;

@@ -225,6 +225,23 @@ impl TheapRandomImage {
         child.refill();
     }
 
+    /// Copies the source local `mi_random_ctx_t head_random` snapshot used by
+    /// `_mi_theap_init` before it splits a newly linked theap.
+    ///
+    /// The C implementation copies this complete fixed image while holding
+    /// the TLD list lock, then mutates the local copy outside the lock. This
+    /// is not a second PRNG state representation: the returned value is the
+    /// same source image and its `Drop` clears that temporary on scope exit.
+    #[inline]
+    pub(crate) fn snapshot_for_split(&self) -> Self {
+        Self {
+            input: self.input,
+            output: self.output,
+            output_available: self.output_available,
+            weak: self.weak,
+        }
+    }
+
     /// Clears all source state before an owning metadata allocation is
     /// released. Manual metadata release does not run Rust `Drop`, so a future
     /// theap/TLD teardown owner must call this before handing its image back.

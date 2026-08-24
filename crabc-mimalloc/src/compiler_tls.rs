@@ -10,7 +10,8 @@
 // This bounded slice supplies source-shaped compiler-TLS roots, the regular
 // dynamic flexible header, and allocation-free root access. `thread_local`
 // owns the current-thread regular backing allocation, growth, and teardown;
-// theap publication/refcounting, process initialization, libc/pthread hooks,
+// `main_theap` alone uses default/fast publication for ticket zero. Dynamic
+// Theap publication/refcounting, process initialization, libc/pthread hooks,
 // and full thread lifecycle integration remain separate work.
 
 //! Private Linux/AArch64 compiler-TLS roots.
@@ -263,6 +264,41 @@ pub(crate) fn cached_theap() -> NonNull<Theap> {
 pub(crate) fn set_cached_theap(theap: NonNull<Theap>) {
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.
     unsafe { CACHED_THEAP_ROOT = theap.as_ptr() };
+}
+
+/// Checks the exact untouched compiler-TLS root state required before the
+/// process-static ticket-zero TLD/theap transition may consume a sequence.
+///
+/// The dynamic root deliberately remains the immutable count-zero source
+/// image. A null post-teardown root is not interchangeable with that image,
+/// and a nonempty backing/fast/default/cached root could retain an alias to a
+/// different lifecycle. Callers must reject this state before issuing a
+/// `thread_total_count` ticket.
+#[inline(always)]
+pub(crate) fn roots_are_pristine_for_main_static_attachment() -> bool {
+    matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
+        && fast_slot_peek().is_none()
+        && core::ptr::eq(default_theap().as_ptr(), empty_default_theap_ptr())
+        && core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr())
+}
+
+/// Clears only the roots owned by the bounded static default-theap lifecycle.
+///
+/// This preserves the source split between `mi_thread_theaps_done` and
+/// `_mi_thread_locals_thread_done`: fast is cleared, default and cached are
+/// restored to the immutable empty theap, while the untouched count-zero
+/// dynamic backing remains installed. Do not replace this with
+/// [`reset_for_thread_teardown`], which would incorrectly turn that empty
+/// dynamic source image into null.
+#[inline(always)]
+pub(crate) fn clear_main_static_attachment_roots() {
+    set_fast_slot(None);
+    // SAFETY: the current-thread attachment owner has already checked the
+    // root identity and is now executing its explicit teardown path.
+    unsafe {
+        DEFAULT_THEAP_ROOT = empty_default_theap_ptr();
+        CACHED_THEAP_ROOT = empty_default_theap_ptr();
+    }
 }
 
 /// Returns the selected Linux/AArch64 source identity for this thread.

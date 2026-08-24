@@ -26,11 +26,13 @@ nonallocating support kernels. Its allocator-owned random state is the exact
 `mi_random_ctx_t` image stored directly in `Theap::random`; it preserves the
 pinned original-ChaCha state and output contract through the audited RustCrypto
 primitive, direct entropy lifecycle, and a documented degraded entropy path.
-A bounded current-thread TLD checkpoint now attaches each private TLD to one
-process-main identity, but Theap attachment and all compiler-TLS publication
-remain unfinished slices. The recursive allocation-free once protocol is
-present as a coordination primitive, but no general process initialization
-state machine is claimed.
+A bounded current-thread TLD checkpoint attaches each private TLD to one
+process-main identity. Its generic metadata branch remains no-theap, while
+`main_theap.rs` consumes only ticket zero into one private process-static main
+heap/default-Theap attachment and publishes its compiler-TLS default then fast
+roots. The recursive allocation-free once protocol is present as a
+coordination primitive, but no general process initialization state machine is
+claimed.
 
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
 present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal
@@ -82,8 +84,9 @@ narrower: exact AArch64 versioned TLS keys, caller-owned per-thread slots, a
 lock-serialized global key registry over caller-owned source-sized bitmap
 blocks, five private compiler-TLS roots with direct `TPIDR_EL0` identity,
 low-bit atomic remote publication and owner collection, a bounded one-page
-abandonment/adoption protocol, and a current-thread-only regular TLS backing
-owner. That owner has an explicitly unsafe lifecycle boundary: its caller must
+abandonment/adoption protocol, a current-thread-only regular TLS backing owner,
+and one ticket-zero process-static main heap/default-Theap attachment. That
+backing owner has an explicitly unsafe lifecycle boundary: its caller must
 exclusively own the current `TPIDR_EL0` TLS lifecycle. It obtains a zeroed
 `mi_thread_locals_t`-shaped flexible image from `MetaAllocator`, starts at 16
 slots, doubles below 1024, adds 1024 at and above 1024, honors the least-index
@@ -115,23 +118,62 @@ source sequence but never increments the live count. Only a fully initialized
 TLD can consume its ticket into a non-dropping registration lease, whose
 explicit consuming release performs exactly one live-count decrement.
 
-`ThreadLocalDataOwner` now receives that ticket internally rather than taking a
+`ThreadLocalDataOwner` receives that ticket internally rather than taking a
 caller-supplied sequence. Its full source-ordered TLD image names the same
 process-main identity as the detached metadata heap/TLD/theap bootstrap and
-its pre-publication-bound arena registry,
-records direct `TPIDR_EL0`, Linux NUMA, the pinned Unix
-`is_in_threadpool = false` result, an initialized private lock, and a null
-theap-list pointer. This is precisely **subprocess-attached, no-theap**:
-there is one process registration, but no Theap list/default/cached/fast TLS
-publication or live heap attachment. Teardown follows the bounded source
-order—release the registration, invalidate `thread_id`, prove the private lock
-quiescent, then retire static storage or free metadata. A busy private lock or
-consumption-ambiguous metadata-free error terminally poisons the owner rather
-than inventing retryable ownership. `PrivateLock` preserves the TLD field's
-private-lock meaning but is not a byte-identical pthread mutex, so no C
-`sizeof(mi_tld_t)` claim is made. Full `mi_tld_create`/`mi_tld_free`, theap
-list attachment, compiler-TLS publication, pthread/process hooks, and general
-lock destruction remain outside this slice.
+its pre-publication-bound arena registry, records direct `TPIDR_EL0`, Linux
+NUMA, the pinned Unix `is_in_threadpool = false` result, an initialized private
+lock, and initially a null theap-list pointer. This generic owner is precisely
+**subprocess-attached, no-theap**. Process bootstrap must choose it or
+`MainStaticTheapAttachment` as the owner of that `MainSubprocess`'s ticket
+zero: a generic owner can consume ticket zero first, after which static
+attachment terminally rejects. Shared process-init selection authority is
+explicitly deferred. `MainStaticTheapAttachment` is the sole static exception:
+after dynamic-empty/fast-null/default-empty/cached-empty root preflight, it
+consumes that process-static ticket-zero TLD. Its one process-static owner has
+cache-aligned, address-stable `Heap` and `Theap` field slots, not separate Rust
+statics. The main `Heap` follows `mi_heap_main_init_once` with kind-only
+`_mi_memid_create(MI_MEM_STATIC)` provenance (zero union/flags); concrete
+pinned/committed static image memids remain for the TLD and Theap. It then
+preserves `_mi_theap_init` order: empty-image copy, TLD/refcount/subprocess,
+normal live options, locked TLD-list attachment and random/cookie setup,
+Release heap publication, and locked heap-list attachment. It publishes the
+default root followed by fast; cached and dynamic remain their immutable empty
+roots. The represented `Heap` stops after its source `memid`, retaining only
+valid zero/deferred abandoned and arena regions; it is neither a full C size
+assertion nor a public heap API.
+
+A busy freshly owned TLD/heap list, a subsequent list-attachment error, or a
+post-mutation private unlock error is terminal initialization-invalid-owner
+handling: the static TLD/live registration and process-static storage remain,
+no teardown owner is returned, and a TLD-list failure before root publication
+leaves every root pristine. These failures require invalid concurrency or a
+kernel/private-lock failure outside the valid one-owner contract; C locks do
+not return them.
+
+After exact root ownership validation, static teardown requires
+`page_count == 0` as a Rust pre-mutation invariant; a nonzero count poisons but
+preserves every live root, list, image, and registration. Once that check
+passes, `_mi_thread_done` (`src/init.c:448-481`) calls
+`_mi_thread_locals_thread_done` before `mi_thread_theaps_done`, so the valid
+count-zero/no-pages path is fast-root clear, then default/cached reset, then
+the heap/TLD detach. It leaves the untouched count-zero dynamic image
+installed, detaches the heap list under the outer TLD lock before
+Release-clearing `theap.heap`, then detaches the TLD list and clears
+links/TLD/random/cookie/subprocess. It invalidates the TLD, proves its lock
+quiescent, releases the live registration, and terminally retires the static
+TLD slot. Root mismatch and pre-root page failure preserve their foreign/live
+roots. Conversely, fallible private lock/list boundaries after root reset are
+terminal invalid-owner states; a post-mutation unlock error likewise requires
+invalid concurrency or a kernel/private-lock failure, and process-static
+storage/live registration remain rather than claiming teardown. This slice
+does not implement source heap-busy retry.
+`PrivateLock` preserves the TLD field's private-lock meaning but is not a
+byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made. Dynamic
+TLD/Theap allocation, cached-root refcounting, allocator-backed key registry,
+remote-free/page routing or abandonment integration, full heap/Theap/arena/
+subprocess APIs, pthread/process hooks, fork repair, process shutdown, and
+general lock destruction remain outside this slice.
 
 The abandonment/adoption protocol preserves mapped versus unmapped source
 classification, publishes the abandoned bitmap before

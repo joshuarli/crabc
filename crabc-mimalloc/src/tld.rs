@@ -112,7 +112,13 @@ impl ThreadLocalDataOwner {
     /// # Safety
     ///
     /// The caller must provide the exclusive lifecycle for this thread's
-    /// TLD. In particular, it must not construct a second live
+    /// TLD and intentionally choose this generic branch as the process
+    /// bootstrap owner of `MainSubprocess` ticket zero. If the process-static
+    /// default-Theap attachment is required, the caller must instead invoke
+    /// [`crate::main_theap::MainStaticTheapAttachment::begin`] first; this
+    /// generic owner can otherwise consume ticket zero before that static
+    /// path. No shared process-init selection authority exists in this slice.
+    /// In particular, it must not construct a second live
     /// `ThreadLocalDataOwner` for the same thread, move this owner to another
     /// thread, externally publish or retain a raw pointer to the returned
     /// TLD, or permit any concurrent reference while `teardown` may
@@ -203,7 +209,7 @@ impl ThreadLocalDataOwner {
     /// obligations as [`Self::begin`]. `metadata` must remain a unique
     /// process-lived metadata owner for every allocation it returns.
     #[cfg(test)]
-    unsafe fn begin_with_test_metadata(
+    pub(crate) unsafe fn begin_with_test_metadata(
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,
         config: MemoryConfig,

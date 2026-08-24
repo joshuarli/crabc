@@ -6,11 +6,12 @@
 //! and singleton pages, checked counted allocation, ordinary reallocation,
 //! arena-bounded aligned operations, and the separately owned OS-aligned
 //! singleton path below the metadata-alignment limit. The crate deliberately
-//! exposes no production allocator API or process/TLS lifecycle yet; a
-//! default-off test-adapter feature owns the only public operation context.
-//! Remote-free and one-page abandonment protocols are present as bounded
-//! substrates; allocation routing, production thread/TLS teardown, terminal
-//! abandoned-page release, and integration remain incomplete.
+//! exposes no production allocator API; a default-off test-adapter feature
+//! owns the only public operation context. One private ticket-zero static TLD
+//! can attach a process-static main heap/default Theap, but dynamic TLS/Theap,
+//! production thread/process teardown, and integration remain incomplete.
+//! Remote-free and one-page abandonment protocols are bounded substrates;
+//! allocation routing and terminal abandoned-page release remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
 //! `crabc-libc`; this crate must not depend on it.
 
@@ -47,6 +48,7 @@ mod compiler_tls;
 mod free_list;
 mod invariants;
 mod lock;
+mod main_theap;
 mod meta;
 mod once;
 mod os_page;

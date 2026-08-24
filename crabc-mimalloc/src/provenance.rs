@@ -171,15 +171,18 @@ mod tests {
     }
 
     #[test]
-    fn memory_ids_preserve_kind_specific_size_and_static_pinning() {
-        let static_id = MemoryId::static_empty();
+    fn memory_ids_preserve_kind_specific_static_construction() {
+        let static_id = MemoryId::static_kind_only();
         assert_eq!(static_id.kind(), MemoryKind::Static);
         assert!(static_id.needs_no_free());
-        assert!(static_id.is_pinned());
-        assert!(static_id.initially_committed());
+        assert!(!static_id.is_pinned());
+        assert!(!static_id.initially_committed());
         assert!(!static_id.initially_zero());
         assert_eq!(static_id.size(), Some(0));
-        assert_eq!(static_id.static_memory().unwrap().base, core::ptr::null_mut());
+        let static_memory = static_id.static_memory().unwrap();
+        assert_eq!(static_memory.base, core::ptr::null_mut());
+        assert_eq!(static_memory.size, 0);
+        assert_eq!(MemoryId::static_empty().kind(), MemoryKind::Static);
 
         let mut static_bytes = [0u8; 3];
         let static_image = MemoryId::static_allocation(static_bytes.as_mut_ptr(), static_bytes.len());

@@ -22,19 +22,21 @@
 // `ThreadLocalData` preserves all source field ordering and meaning, but its
 // lock is the documented private-futex boundary rather than a pthread ABI
 // object. The bounded process-main identity and its TLD ticket/count contract
-// are represented separately in `subproc.rs`; complete subprocess, TLD-theap
-// attachment/list, lock, and statistics lifecycle remain absent. No code may
-// treat a Rust type here as `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`, or
-// `sizeof(mi_theap_t)`.
+// are represented separately in `subproc.rs`. `main_theap.rs` attaches only
+// the ticket-zero static TLD to one static main heap/default Theap; dynamic
+// attachment, complete subprocess/list/lock/statistics lifecycle, and all C
+// ABI-size claims remain absent. No code may treat a Rust type here as
+// `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`, or `sizeof(mi_theap_t)`.
 
 use core::ffi::c_void;
 use core::mem::{align_of, size_of};
 use core::num::NonZeroUsize;
 use core::ptr::{NonNull, null_mut};
-use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize};
+use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize, Ordering};
 
 use crate::config::{
-    BIN_COUNT, BIN_FULL, LARGE_MAX_OBJ_WSIZE, PAGES_DIRECT, WORD_SIZE,
+    BIN_COUNT, BIN_FULL, LARGE_MAX_OBJ_WSIZE, MAX_ARENAS, PAGES_DIRECT,
+    WORD_SIZE,
 };
 use crate::lock::PrivateLock;
 use crate::random::TheapRandomImage;
@@ -146,16 +148,32 @@ impl TheapOwner {
     }
 }
 
-/// Prefix of `mi_heap_t` through its `subproc` member.
+/// Source-ordered prefix of `mi_heap_t` through `memid`.
 ///
-/// The exclusive bootstrap does not create, enumerate, or destroy heaps. It
-/// owns one caller-pinned image solely so pages and the default theap can hold
-/// the source-shaped heap pointer. A detached metadata bootstrap names the
-/// bounded main-subprocess identity; heap lists and all other subprocess
-/// lifecycle remain outside this prefix.
+/// The process-static main attachment needs the selected normal-release heap
+/// fields through its theap list lock.  The source abandoned-page, arena-page,
+/// and lock regions are kept as valid zero/deferred state so their later
+/// lifecycle can extend this one image without reordering the prefix.  The
+/// trailing `mi_stats_t` is deliberately absent: statistics needs its own
+/// source merge and subprocess accounting contract, so this remains neither a
+/// complete `mi_heap_t` layout claim nor a first-class heap API.
 #[repr(C)]
 pub(crate) struct Heap {
     subprocess: *mut MainSubprocess,
+    heap_seq: usize,
+    next: *mut Heap,
+    prev: *mut Heap,
+    theap_slot: usize,
+    exclusive_arena: *mut Arena,
+    numa_node: i32,
+    theaps: *mut Theap,
+    theaps_lock: PrivateLock,
+    abandoned_count: [AtomicUsize; BIN_COUNT],
+    os_abandoned_pages: *mut Page,
+    os_abandoned_pages_lock: PrivateLock,
+    arena_pages: [AtomicPtr<ArenaPages>; MAX_ARENAS],
+    arena_pages_lock: PrivateLock,
+    memid: MemoryId,
 }
 
 impl Heap {
@@ -163,7 +181,57 @@ impl Heap {
     pub(crate) const fn bootstrap_empty() -> Self {
         Self {
             subprocess: null_mut(),
+            heap_seq: 0,
+            next: null_mut(),
+            prev: null_mut(),
+            theap_slot: 0,
+            exclusive_arena: null_mut(),
+            numa_node: 0,
+            theaps: null_mut(),
+            theaps_lock: PrivateLock::new(),
+            abandoned_count: [const { AtomicUsize::new(0) }; BIN_COUNT],
+            os_abandoned_pages: null_mut(),
+            os_abandoned_pages_lock: PrivateLock::new(),
+            arena_pages: [const { AtomicPtr::new(null_mut()) }; MAX_ARENAS],
+            arena_pages_lock: PrivateLock::new(),
+            memid: MemoryId::none(),
         }
+    }
+
+    /// Initializes the statically allocated main heap fields used before the
+    /// future heap/subprocess list and arena lifecycle exists.
+    ///
+    /// This is the selected source `_mi_heap_init` main-heap shape: fast key
+    /// one, main subprocess, first (zero) heap sequence, no exclusive arena,
+    /// no NUMA affinity, empty theap list, and valid private list locks.  The
+    /// source's abandoned-page and arena-page regions stay zeroed and are not
+    /// a claim that their routing/lifetime protocols are implemented.
+    #[inline]
+    pub(crate) fn initialize_main_static(
+        &mut self,
+        subprocess: &'static MainSubprocess,
+        memid: MemoryId,
+    ) {
+        debug_assert!(self.subprocess.is_null());
+        debug_assert!(self.theaps.is_null());
+        self.subprocess = subprocess.as_ptr();
+        // `mi_atomic_increment_relaxed` returns the previous source count;
+        // the one process-static main heap observes its initial value zero.
+        self.heap_seq = 0;
+        self.next = null_mut();
+        self.prev = null_mut();
+        // `internal.h:mi_thread_local_key_fast` is the fixed key value one.
+        self.theap_slot = 1;
+        self.exclusive_arena = null_mut();
+        self.numa_node = -1;
+        self.theaps = null_mut();
+        self.theaps_lock = PrivateLock::new();
+        self.abandoned_count = [const { AtomicUsize::new(0) }; BIN_COUNT];
+        self.os_abandoned_pages = null_mut();
+        self.os_abandoned_pages_lock = PrivateLock::new();
+        self.arena_pages = [const { AtomicPtr::new(null_mut()) }; MAX_ARENAS];
+        self.arena_pages_lock = PrivateLock::new();
+        self.memid = memid;
     }
 
     /// Binds this source prefix to the one bounded process-main identity.
@@ -177,11 +245,117 @@ impl Heap {
         self.subprocess = subprocess.as_ptr();
     }
 
+    #[inline]
+    fn attach_theap_after_heap_publication(
+        &mut self,
+        theap: *mut Theap,
+    ) -> Result<(), HeapTheapListError> {
+        // The one process-static attachment owns a freshly initialized,
+        // otherwise-uncontended heap list. A busy result is therefore an
+        // invalid-owner initialization boundary, not a reason to block before
+        // returning a capability that could explain the alias.
+        let guard = self
+            .theaps_lock
+            .try_lock()
+            .ok_or(HeapTheapListError::Busy)?;
+        // SAFETY: the main attachment owns `theap`, keeps it address-stable,
+        // and invokes this only after its Release heap publication.  The lock
+        // serializes the source intrusive heap-list update.
+        unsafe {
+            let head = self.theaps;
+            (*theap).hprev = null_mut();
+            (*theap).hnext = head;
+            if !head.is_null() {
+                (*head).hprev = theap;
+            }
+            self.theaps = theap;
+        }
+        guard.unlock().map_err(HeapTheapListError::Lock)
+    }
+
+    #[inline]
+    fn detach_one_theap_under_tld_lock(
+        &mut self,
+        theap: *mut Theap,
+    ) -> Result<(), HeapTheapListError> {
+        // The static owner has already reset its owned TLS roots in the
+        // source teardown order. A busy/private-lock or membership failure is
+        // therefore an invalid-owner terminal state: do not retry, steal the
+        // lock, or imply that its process-static storage was retired.
+        let guard = self.theaps_lock.try_lock().ok_or(HeapTheapListError::Busy)?;
+        // SAFETY: the caller holds the associated TLD list lock and owns the
+        // one static theap.  The heap lock completes the source two-list
+        // detachment discipline before this method clears the Release heap
+        // publication.
+        unsafe {
+            if (*theap).hprev.is_null() && self.theaps != theap {
+                let _ = guard.unlock();
+                return Err(HeapTheapListError::Membership);
+            }
+            if !(*theap).hnext.is_null() {
+                (*(*theap).hnext).hprev = (*theap).hprev;
+            }
+            if !(*theap).hprev.is_null() {
+                (*(*theap).hprev).hnext = (*theap).hnext;
+            } else {
+                self.theaps = (*theap).hnext;
+            }
+            (*theap).hnext = null_mut();
+            (*theap).hprev = null_mut();
+            (*theap).heap.store(null_mut(), Ordering::Release);
+        }
+        guard.unlock().map_err(HeapTheapListError::Lock)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_main_static_fields(&self) -> HeapMainStaticFields {
+        HeapMainStaticFields {
+            heap_seq: self.heap_seq,
+            theap_slot: self.theap_slot,
+            numa_node: self.numa_node,
+            has_exclusive_arena: !self.exclusive_arena.is_null(),
+            theaps_empty: self.theaps.is_null(),
+            memid: self.memid,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_theap_head_is(&self, theap: *mut Theap) -> bool {
+        self.theaps == theap
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_inject_busy_theaps_lock(&self) {
+        self.theaps_lock.test_inject_busy();
+    }
+
     #[cfg(test)]
     #[inline]
     pub(crate) fn is_bound_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
         core::ptr::eq(self.subprocess, subprocess.as_ptr())
     }
+}
+
+/// A failure while manipulating the private source heap-theap list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeapTheapListError {
+    Busy,
+    Membership,
+    Lock(crabc_core::Errno),
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) struct HeapMainStaticFields {
+    pub(crate) heap_seq: usize,
+    pub(crate) theap_slot: usize,
+    pub(crate) numa_node: i32,
+    pub(crate) has_exclusive_arena: bool,
+    pub(crate) theaps_empty: bool,
+    pub(crate) memid: MemoryId,
 }
 
 /// Source-ordered `mi_tld_t` fields.
@@ -190,8 +364,9 @@ impl Heap {
 /// this is not a byte-for-byte C ABI claim: [`PrivateLock`] is the allocator's
 /// audited Linux futex boundary, not the upstream pthread-mutex object. The
 /// detached bootstrap and the bounded current-thread metadata owner are the
-/// only constructors. The latter is subprocess-attached but has no theap
-/// list or compiler-TLS publication, and cannot stand in for a complete
+/// generic constructors. `main_theap.rs` consumes only the first static
+/// owner, adding one static Theap/list/compiler-TLS attachment after this
+/// exact TLD image is initialized. Neither branch is a complete
 /// `mi_tld_create`/thread lifecycle.
 #[repr(C)]
 pub(crate) struct ThreadLocalData {
@@ -289,6 +464,12 @@ impl ThreadLocalData {
     #[inline]
     pub(crate) fn test_inject_busy_theaps_lock(&self) {
         self.theaps_lock.test_inject_busy();
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_theap_head_is(&self, theap: *mut Theap) -> bool {
+        self.theaps == theap
     }
 
     /// Records a live identity on caller-pinned/static bootstrap storage.
@@ -428,10 +609,12 @@ impl ThreadLocalData {
     /// Establishes the private-lock quiescence required before source-static
     /// retirement or metadata release.
     ///
-    /// The owning `ThreadLocalDataOwner` is `!Send`, has no published theap
-    /// list, and requires no concurrent raw references, guards, or waiters.
-    /// A busy lock therefore records a violated owner contract rather than
-    /// waiting during teardown and pretending to provide pthread destruction.
+    /// The owning `ThreadLocalDataOwner` is `!Send`; its ordinary path has no
+    /// published theap list, while the ticket-zero static attachment reaches
+    /// this point only after detaching its one list entry. Both require no
+    /// concurrent raw references, guards, or waiters. A busy lock therefore
+    /// records a violated owner contract rather than waiting during teardown
+    /// and pretending to provide pthread destruction.
     #[inline]
     pub(crate) fn quiesce_theap_list_lock_for_teardown(
         &self,
@@ -443,10 +626,140 @@ impl ThreadLocalData {
         guard.unlock().map_err(ThreadLocalDataQuiesceError::Lock)
     }
 
+    /// Pushes one fully prepared theap on the source current-TLD list.
+    ///
+    /// `Theap::initialize_main_static` owns the complete `_mi_theap_init`
+    /// sequence and calls this after it has installed the TLD/subprocess
+    /// fields but before random/cookie generation and Release heap
+    /// publication. If there is an existing head, this returns the local
+    /// random-image snapshot made *while the list lock is held*, exactly as
+    /// the C `head_random` local does.
+    #[inline]
+    fn attach_one_theap(
+        &mut self,
+        theap: *mut Theap,
+    ) -> Result<Option<TheapRandomImage>, ThreadLocalTheapListError> {
+        // The ticket-zero static path reaches a fresh, unaliased TLD list.
+        // A busy lock is invalid-owner initialization state rather than a
+        // waitable source condition: no attachment owner exists yet to retain
+        // or explain that alias if initialization later fails.
+        let guard = self
+            .theaps_lock
+            .try_lock()
+            .ok_or(ThreadLocalTheapListError::Busy)?;
+        let head = self.theaps;
+        // SAFETY: the caller retains the only mutable authority for an
+        // address-stable theap. The lock serializes this source intrusive
+        // list update with later heap/TLD lifecycle work.
+        let head_random = unsafe {
+            (*theap).tprev = null_mut();
+            (*theap).tnext = head;
+            let head_random = if !head.is_null() {
+                (*head).tprev = theap;
+                Some((*head).random.snapshot_for_split())
+            } else {
+                None
+            };
+            self.theaps = theap;
+            head_random
+        };
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
+        Ok(head_random)
+    }
+
+    /// Performs the source `_mi_tld_detach_theaps` heap-list half for the
+    /// one bounded main static theap. The outer TLD lock is held first; the
+    /// fresh main heap must be immediately try-lockable or the owner becomes
+    /// terminally poisoned rather than waiting while a violated alias exists.
+    /// The caller has already reset its owned TLS roots in source order, so a
+    /// later lock/list error is explicitly not retryable or a completed
+    /// teardown claim.
+    #[inline]
+    pub(crate) fn detach_one_theap_from_heap(
+        &mut self,
+        heap: &mut Heap,
+        theap: *mut Theap,
+    ) -> Result<(), ThreadLocalTheapListError> {
+        let self_pointer = core::ptr::from_mut(self);
+        let guard = self
+            .theaps_lock
+            .lock()
+            .map_err(ThreadLocalTheapListError::Lock)?;
+        // SAFETY: the attachment owner has verified the exact current TLD
+        // identity. This check precedes the heap mutation so a corrupt or
+        // aliased list never receives a partial detach transition.
+        let valid_member = unsafe {
+            self.theaps == theap
+                && (*theap).tprev.is_null()
+                && core::ptr::eq((*theap).tld, self_pointer)
+        };
+        if !valid_member {
+            let _ = guard.unlock();
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+        heap.detach_one_theap_under_tld_lock(theap)
+            .map_err(ThreadLocalTheapListError::Heap)?;
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)
+    }
+
+    /// Clears the source TLD-list links after the heap-list pass has
+    /// Release-cleared `theap->heap`.
+    #[inline]
+    pub(crate) fn detach_one_theap_from_tld(
+        &mut self,
+        theap: *mut Theap,
+    ) -> Result<(), ThreadLocalTheapListError> {
+        let self_pointer = core::ptr::from_mut(self);
+        let guard = self
+            .theaps_lock
+            .lock()
+            .map_err(ThreadLocalTheapListError::Lock)?;
+        // SAFETY: the source heap-list pass has detached the only bounded
+        // static theap and cleared its initialized predicate. This second
+        // TLD-locked pass mirrors `mi_thread_theaps_done` before TLD release.
+        let valid_member = unsafe {
+            self.theaps == theap
+                && (*theap).tprev.is_null()
+                && (*theap).heap.load(Ordering::Acquire).is_null()
+                && core::ptr::eq((*theap).tld, self_pointer)
+        };
+        if !valid_member {
+            let _ = guard.unlock();
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+        unsafe {
+            self.theaps = (*theap).tnext;
+            if !(*theap).tnext.is_null() {
+                (*(*theap).tnext).tprev = null_mut();
+            }
+            (*theap).tnext = null_mut();
+            (*theap).tprev = null_mut();
+            (*theap).tld = null_mut();
+        }
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)
+    }
+
+    /// Invalidates a fully detached live TLD just before its registration is
+    /// released and its process-static storage is terminally retired.
+    #[inline]
+    pub(crate) fn invalidate_attached_theap_for_teardown(&mut self) {
+        debug_assert!(self.theaps.is_null());
+        self.thread_id = usize::MAX;
+    }
+
     #[inline]
     fn matches_owner(&self, owner: TheapOwner) -> bool {
         self.thread_id == owner.thread_id()
     }
+}
+
+/// A failure while manipulating one source `mi_tld_t::theaps` list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadLocalTheapListError {
+    Busy,
+    Membership,
+    Heap(HeapTheapListError),
+    Lock(crabc_core::Errno),
 }
 
 /// A private TLD lock was not quiescent at its explicit lifecycle boundary.
@@ -636,14 +949,25 @@ impl MemoryId {
         }
     }
 
-    /// The static all-zero source initializer used by unrelated empty images.
+    /// Creates exactly `_mi_memid_create(MI_MEM_STATIC)`: a zero union and
+    /// zero flags with only the source memory kind set.
     ///
-    /// This intentionally remains a null, zero-size image; concrete static
-    /// allocations such as `mi_process_tld_main` must use
+    /// `mi_heap_main_init_once` uses this kind-only provenance for the static
+    /// process heap. It deliberately does not claim concrete image extent,
+    /// pinning, or initial commitment; `_mi_memid_create_static` is separate.
+    #[inline]
+    pub(crate) const fn static_kind_only() -> Self {
+        Self::empty_with_kind(MemoryKind::Static)
+    }
+
+    /// The static null/zero-extent source image used by unrelated empty images.
+    ///
+    /// This intentionally remains the kind-only null/zero image; concrete
+    /// static allocations such as `mi_process_tld_main` must use
     /// [`Self::static_allocation`].
     #[inline]
     pub(crate) const fn static_empty() -> Self {
-        Self::static_allocation(null_mut(), 0)
+        Self::static_kind_only()
     }
 
     #[inline]
@@ -691,13 +1015,16 @@ impl MemoryId {
         }
     }
 
-    /// Returns the `mem.malloc` base/size recorded for a concrete
-    /// `MI_MEM_STATIC` image.
+    /// Returns the `mem.malloc` base/size union arm for `MI_MEM_STATIC`.
+    ///
+    /// A kind-only `_mi_memid_create(MI_MEM_STATIC)` image returns its zero
+    /// union, while `_mi_memid_create_static` records concrete image extent.
     #[inline]
     pub(crate) fn static_memory(&self) -> Option<MallocMemory> {
         if self.kind == MemoryKind::Static {
-            // SAFETY: both static constructors initialize the `malloc` union
-            // member, matching `_mi_memid_create_static` exactly.
+            // SAFETY: a zero `os` union arm has the same all-zero bit pattern
+            // as `MallocMemory { null, 0 }`; concrete static allocation uses
+            // the malloc arm directly.
             Some(unsafe { self.info.malloc })
         } else {
             None
@@ -1933,6 +2260,113 @@ impl Theap {
         }
     }
 
+    /// Installs the concrete static allocation provenance that source
+    /// `_mi_thread_init_with_heap` records before `_mi_theap_init` copies the
+    /// empty image. The following initializer saves and restores this value.
+    #[inline]
+    pub(crate) fn set_main_static_memid(&mut self, memid: MemoryId) -> bool {
+        if self.is_initialized()
+            || memid.kind() != MemoryKind::Static
+            || !memid.is_pinned()
+            || !memid.initially_committed()
+        {
+            return false;
+        }
+        self.memid = memid;
+        true
+    }
+
+    /// Initializes the process-static first live theap with the exact
+    /// `_mi_theap_init` publication ordering relevant to this bounded slice.
+    ///
+    /// The caller gives this final address-stable source static image its
+    /// concrete `MI_MEM_STATIC` provenance before entering. The method saves
+    /// that provenance, copies the immutable empty image, restores `memid`,
+    /// links the TLD list, initializes RustCrypto-backed random/cookie state,
+    /// and only then Release-publishes `heap` before linking the heap list.
+    /// The absent stats/guarded/options framework is intentionally not
+    /// fabricated: the frozen normal-release option values below are the
+    /// exact live values reached by this source path. A busy fresh-list lock
+    /// or a post-mutation unlock/heap-list error has no valid source recovery:
+    /// the caller records terminal initialization-invalid-owner state with the
+    /// static TLD/live registration retained and no returned teardown owner.
+    #[inline]
+    pub(crate) fn initialize_main_static(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+    ) -> Result<(), TheapMainStaticInitError> {
+        if self.is_initialized()
+            || !tld.is_subprocess_attached_no_theap()
+            || !tld.matches_owner(TheapOwner::Live(
+                LiveThreadId::new(tld.thread_id()).ok_or(TheapMainStaticInitError::InvalidInput)?,
+            ))
+            || heap.subprocess.is_null()
+            || !core::ptr::eq(heap.subprocess, tld.subprocess)
+        {
+            return Err(TheapMainStaticInitError::InvalidInput);
+        }
+
+        // `_mi_theap_init` first preserves the concrete allocation provenance
+        // supplied by `_mi_theap_alloc`, copies `_mi_theap_empty`, then puts
+        // that provenance back. `replace` is the Rust ownership equivalent of
+        // the aligned source copy; the old inert random image is zeroized by
+        // its bounded Drop rather than silently retained in static storage.
+        let memid = self.memid;
+        let replaced = core::mem::replace(self, Self::empty());
+        drop(replaced);
+        self.memid = memid;
+        self.tld = core::ptr::from_mut(tld);
+        self.refcount.store(1, Ordering::Release);
+        self.subproc.store(heap.subprocess, Ordering::Release);
+
+        // `mi_theap_options_init` under the frozen default-release profile:
+        // `page_reclaim_on_free >= 0`, `page_full_retain == 2`, and a live
+        // TLD rather than the detached metadata identity.
+        self.allow_page_reclaim = true;
+        self.allow_page_abandon = true;
+        self.page_full_retain = 2;
+        self.is_detached = false;
+
+        let self_pointer = core::ptr::from_mut(self);
+        let head_random = tld
+            .attach_one_theap(self_pointer)
+            .map_err(TheapMainStaticInitError::ThreadList)?;
+        if let Some(mut head_random) = head_random {
+            head_random.split_into(&mut self.random);
+        } else {
+            self.random.initialize();
+        }
+        self.cookie = self.random.next() as usize | 1;
+
+        // This Release write is the exact initialized predicate. It must stay
+        // after list/random/cookie setup and before the heap-list operation.
+        self.heap.store(core::ptr::from_mut(heap), Ordering::Release);
+        heap.attach_theap_after_heap_publication(self_pointer)
+            .map_err(TheapMainStaticInitError::HeapList)
+    }
+
+    /// Clears the remaining terminal static-theap state after both intrusive
+    /// lists are detached. Static provenance suppresses source metadata free,
+    /// but Rust's manual static-storage lifecycle must still clear the random
+    /// image because no `Drop` runs when the static slot is retired.
+    #[inline]
+    pub(crate) fn clear_main_static_after_detach(&mut self) -> bool {
+        if !self.heap.load(Ordering::Acquire).is_null()
+            || !self.tld.is_null()
+            || !self.tnext.is_null()
+            || !self.tprev.is_null()
+            || !self.hnext.is_null()
+            || !self.hprev.is_null()
+        {
+            return false;
+        }
+        self.random.clear();
+        self.cookie = 0;
+        self.subproc.store(null_mut(), Ordering::Release);
+        true
+    }
+
     /// Binds the empty source image to the one pinned default heap/TLD pair.
     ///
     /// The caller must first attach `tld` to a valid [`LiveThreadId`] and must
@@ -2031,6 +2465,23 @@ impl Theap {
     #[inline]
     pub(crate) fn heap(&self) -> *mut Heap {
         self.heap.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_main_static_fields(&self) -> TheapMainStaticFields {
+        TheapMainStaticFields {
+            initialized: self.is_initialized(),
+            refcount: self.refcount(),
+            cookie_is_odd: self.cookie & 1 == 1,
+            random_initialized: self.random.is_initialized(),
+            random_weak: self.random.is_weak(),
+            page_full_retain: self.page_full_retain,
+            allows_page_reclaim: self.allow_page_reclaim,
+            allows_page_abandon: self.allow_page_abandon,
+            detached: self.is_detached,
+            memid: self.memid,
+        }
     }
 
     #[cfg(test)]
@@ -2147,6 +2598,29 @@ impl Theap {
     }
 }
 
+/// A failed bounded `_mi_theap_init` transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TheapMainStaticInitError {
+    InvalidInput,
+    ThreadList(ThreadLocalTheapListError),
+    HeapList(HeapTheapListError),
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub(crate) struct TheapMainStaticFields {
+    pub(crate) initialized: bool,
+    pub(crate) refcount: usize,
+    pub(crate) cookie_is_odd: bool,
+    pub(crate) random_initialized: bool,
+    pub(crate) random_weak: bool,
+    pub(crate) page_full_retain: isize,
+    pub(crate) allows_page_reclaim: bool,
+    pub(crate) allows_page_abandon: bool,
+    pub(crate) detached: bool,
+    pub(crate) memid: MemoryId,
+}
+
 const _: [(); 4] = [(); size_of::<MemoryKind>()];
 const _: [(); 16] = [(); size_of::<MemoryInfo>()];
 const _: [(); 8] = [(); align_of::<MemoryInfo>()];
@@ -2160,8 +2634,9 @@ const _: [(); 8] = [(); size_of::<Block>()];
 const _: [(); 32] = [(); size_of::<PageQueue>()];
 const _: [(); 128] = [(); size_of::<Page>()];
 const _: [(); 8] = [(); align_of::<Page>()];
-const _: [(); 8] = [(); size_of::<Heap>()];
-const _: [(); 8] = [(); align_of::<Heap>()];
+// `Heap` stops at the source `memid` field and uses allocator-private futex
+// locks in place of pthread ABI objects. Its size is intentionally not a C
+// layout assertion.
 const _: [(); 136] = [(); size_of::<TheapRandomImage>()];
 const _: [(); 4] = [(); align_of::<TheapRandomImage>()];
 const _: [(); 3736] = [(); size_of::<Theap>()];
@@ -2480,8 +2955,6 @@ mod tests {
     fn represented_theap_prefix_keeps_the_pinned_field_offsets() {
         // These are offsets in the actual C `mi_theap_t`; this Rust prefix
         // stops at the same `memid` end boundary before absent `mi_stats_t`.
-        assert_eq!(size_of::<Heap>(), 8);
-        assert_eq!(align_of::<Heap>(), 8);
         assert_eq!(size_of::<TheapRandomImage>(), 136);
         assert_eq!(offset_of!(Theap, pages_free_direct), 0);
         assert_eq!(offset_of!(Theap, tld), PAGES_DIRECT * size_of::<*mut Page>());
