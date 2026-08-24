@@ -384,6 +384,32 @@ pub(super) struct PageFreeListState<'a> {
     pub(super) free_is_zero: &'a mut bool,
 }
 
+/// Narrow producer projection for the source remote-free protocol.
+///
+/// The pointers name precisely the two atomic source fields a remote producer
+/// may inspect. No `Page` reference is retained or manufactured: a producer
+/// has no permission to read `theap`, `local_free`, `used`, or any other
+/// non-atomic field, and it may only preserve—not claim—the low owner bit of
+/// `xthread_free` while the surrounding lifecycle keeps the page associated.
+pub(super) struct PageRemoteFreeProducerState {
+    pub(super) xthread_id: NonNull<AtomicUsize>,
+    pub(super) xthread_free: NonNull<AtomicUsize>,
+}
+
+/// Narrow owner-only projection for remote-list collection.
+///
+/// The owner may touch `local_free` and `used` only after its AcqRel CAS has
+/// detached the remote head. These are raw field pointers rather than a
+/// `&mut Page`, so producers can retain disjoint atomic-field pointers without
+/// creating a concurrent whole-page alias. The caller supplies the lifetime,
+/// non-abandonment, and no-release proof for every pointer.
+pub(super) struct PageRemoteFreeOwnerState {
+    pub(super) xthread_free: NonNull<AtomicUsize>,
+    pub(super) local_free: NonNull<*mut Block>,
+    pub(super) used: NonNull<usize>,
+    pub(super) capacity: u16,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PageKind {
@@ -992,6 +1018,90 @@ impl Page {
         self.retire_expire = retire_expire;
     }
 
+    /// Projects only the source atomic fields that a remote producer may use.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name stable initialized metadata that remains live while a
+    /// returned producer state can be used. The caller must prohibit page
+    /// abandonment, detachment, retirement, reuse, and release, but remote
+    /// producer code itself must not inspect any non-atomic page field.
+    #[inline]
+    pub(super) unsafe fn remote_free_producer_state_at(
+        page: NonNull<Self>,
+    ) -> PageRemoteFreeProducerState {
+        let page = page.as_ptr();
+        // SAFETY: the caller proves initialized stable page metadata. These
+        // derive raw pointers to the exact atomic subobjects without creating
+        // a `Page` reference or reading a non-atomic field.
+        let xthread_id = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_id)) };
+        let xthread_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_free)) };
+        PageRemoteFreeProducerState {
+            xthread_id,
+            xthread_free,
+        }
+    }
+
+    /// Projects the source fields used by the owner after remote-list detach.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name one live initialized page. The caller must be its
+    /// sole owner for every non-atomic field and must keep it associated with
+    /// a live theap, without abandonment, detachment, retirement, reuse, or
+    /// release, until this owner operation completes. Other threads may hold
+    /// only the disjoint atomic producer state from
+    /// [`Self::remote_free_producer_state_at`]. In particular, the page's
+    /// `xthread_free` low owner bit must currently be set; this method
+    /// acquire-validates it before reading any owner-only ordinary field.
+    #[inline]
+    pub(super) unsafe fn remote_free_owner_state_at(
+        page: NonNull<Self>,
+    ) -> Option<PageRemoteFreeOwnerState> {
+        let page = page.as_ptr();
+        // SAFETY: the caller proves initialized stable metadata. This creates
+        // a direct reference to the atomic subobject only, before inspecting
+        // an owner-only ordinary field.
+        let xthread_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_free)) };
+        // SAFETY: `xthread_free` names the initialized atomic field above.
+        if unsafe { xthread_free.as_ref() }
+            .load(core::sync::atomic::Ordering::Acquire)
+            & 1
+            == 0
+        {
+            return None;
+        }
+        // SAFETY: the caller proves the page is initialized and the owner has
+        // exclusive permission for ordinary fields after the acquire owner-bit
+        // validation above. This reads the owner-only `theap` field; producer
+        // code never performs this access.
+        if unsafe { (*page).theap }.is_null() {
+            return None;
+        }
+        // SAFETY: as above, these are direct pointers to initialized page
+        // fields; no whole-page reference is formed.
+        let xthread_id = unsafe { &*core::ptr::addr_of!((*page).xthread_id) };
+        let thread_id = xthread_id.load(core::sync::atomic::Ordering::Acquire) & !PAGE_FLAG_MASK;
+        if thread_id == THREAD_ID_ABANDONED
+            || thread_id == THREAD_ID_ABANDONED_MAPPED
+            || thread_id == THREAD_ID_DETACHED
+        {
+            return None;
+        }
+        // SAFETY: the same initialized-page proof allows these owner-only
+        // field pointers. They are not dereferenced until after list detach.
+        let local_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free)) };
+        let used = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) };
+        Some(PageRemoteFreeOwnerState {
+            xthread_free,
+            local_free,
+            used,
+            // SAFETY: capacity is immutable while the page is live in this
+            // bounded slice and belongs to the exclusive owner contract.
+            capacity: unsafe { (*page).capacity },
+        })
+    }
+
     /// Projects exactly the local free-list fields used by the single-thread
     /// source path.
     ///
@@ -1034,6 +1144,77 @@ impl Page {
             used: &mut self.used,
             free_is_zero: &mut self.free_is_zero,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_free_test_page(capacity: u16, used: usize) -> Self {
+        assert!(used <= capacity as usize);
+        let mut page = Self::empty();
+        page.capacity = capacity;
+        page.reserved = capacity;
+        page.block_size = core::mem::size_of::<Block>();
+        // This is an address sentinel used only by remote-free protocol unit
+        // tests. It is never dereferenced: production association must use a
+        // pinned live `Theap` through `associate_exclusive`.
+        page.theap = NonNull::<Theap>::dangling().as_ptr();
+        page.xthread_id.store(12, core::sync::atomic::Ordering::Relaxed);
+        page.xthread_free.store(1, core::sync::atomic::Ordering::Release);
+        page.used = used;
+        page
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_free_test_unassociated() -> Self {
+        Self::empty()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_free_test_mark_abandoned(&mut self) {
+        // `src/page.c:_mi_page_abandon` can retain the old theap pointer for
+        // later reclaim, so this test changes only the atomic page identity.
+        // A bounded owner-associated remote free must still reject it.
+        self.xthread_id
+            .store(THREAD_ID_ABANDONED, core::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_free_test_set_local_free(&mut self, local_free: *mut Block) {
+        self.local_free = local_free;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_free_test_head(&self) -> ThreadFree {
+        self.xthread_free.load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn remote_free_test_used(&self) -> usize {
+        self.used
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_free_test_local_chain(&self) -> [*mut u8; 3] {
+        // SAFETY: the remote-free test fixture writes these exact three
+        // unencoded links before inspecting them under sole ownership.
+        unsafe {
+            let first = self.local_free.cast::<u8>();
+            let second = core::ptr::read(first.cast::<*mut u8>());
+            let third = core::ptr::read(second.cast::<*mut u8>());
+            [first, second, third]
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_free_test_local_chain_len(&self, maximum: usize) -> usize {
+        let mut count = 0;
+        let mut current = self.local_free.cast::<u8>();
+        while !current.is_null() && count < maximum {
+            count += 1;
+            // SAFETY: callers use this only after a successful collection of
+            // test-owned unencoded blocks, each of which initialized its link.
+            current = unsafe { core::ptr::read(current.cast::<*mut u8>()) };
+        }
+        count
     }
 
     #[inline]

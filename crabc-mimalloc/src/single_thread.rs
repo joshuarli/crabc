@@ -1079,10 +1079,12 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         self.pending_os_release.is_some()
     }
 
-    /// Collects source-retired regular pages. `force` releases every currently
-    /// retired page in the tracked range; `false` decrements the normal
-    /// retirement countdown. This intentionally does not visit the full queue:
-    /// a local free transitions full pages back to their regular bin first.
+    /// Collects source-retired regular pages and one external-arena purge pass.
+    /// `force` releases every currently retired page in the tracked range and
+    /// forces any scheduled unpinned arena decommit; `false` decrements the
+    /// normal retirement countdown and observes the pinned 4-second arena
+    /// expiry. This intentionally does not visit the full queue: a local free
+    /// transitions full pages back to their regular bin first.
     pub(crate) fn collect_retired(&mut self, force: bool) -> bool {
         if !self.retry_pending_os_release() {
             return false;
@@ -1090,7 +1092,9 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
         let (minimum, maximum) = self.session.retired_bounds();
         if minimum >= BIN_FULL || minimum > maximum {
             self.session.reset_retired_bounds();
-            return true;
+            return self
+                .arena
+                .collect_scheduled_purge(self.page_map.memory_config().page_size(), force);
         }
 
         self.session.reset_retired_bounds();
@@ -1125,7 +1129,8 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
                 page = next;
             }
         }
-        true
+        self.arena
+            .collect_scheduled_purge(self.page_map.memory_config().page_size(), force)
     }
 
     #[cfg(test)]
@@ -1827,7 +1832,7 @@ mod tests {
         MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
         KIB, SMALL_MAX_OBJ_SIZE, MIB, WORD_SIZE,
     };
-    use crate::os::{MemoryConfig, PageSize, fault};
+    use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, fault};
     use crabc_core::Errno;
     use core::ffi::c_void;
     use core::ptr::null_mut;
@@ -1943,6 +1948,61 @@ mod tests {
         // SAFETY: force collection removed every page-map entry and all local
         // users before the explicit page-map destruction boundary.
         unsafe { page_map.destroy() }.unwrap();
+    }
+
+    fn with_unpinned_mapping_allocator(
+        test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>, &mut Mapping),
+    ) {
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(),
+            1024 * 1024,
+            false,
+            false,
+        );
+        let mut mapping = Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Committed,
+        )
+        .unwrap();
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                mapping.base().unwrap(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                mapping.initially_committed(),
+                false,
+                mapping.initially_zero(),
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let mut page_map = PageMap::initialize(config, 0, true).unwrap();
+        let bootstrap = DefaultSingleThreadBootstrap::new();
+        let mut bootstrap = core::pin::pin!(bootstrap);
+        let mut allocator = SingleThreadAllocator::activate(
+            bootstrap.as_mut(),
+            LiveThreadId::new(12).unwrap(),
+            arena,
+            ArenaId::none(),
+            &mut page_map,
+            0,
+        )
+        .unwrap();
+
+        test(&mut allocator, &mut mapping);
+        assert!(allocator.collect_retired(true));
+        drop(allocator);
+        // SAFETY: force collection has removed every published page-map entry
+        // before the source-plain map is explicitly dismantled.
+        unsafe { page_map.destroy() }.unwrap();
+        mapping.unmap().unwrap();
     }
 
     fn append_unique(requests: &mut [usize], count: &mut usize, request: usize) {
@@ -2144,6 +2204,80 @@ mod tests {
             assert_eq!(reused.slice_index(), slice_index);
             assert!(reused.release());
         });
+    }
+
+    #[test]
+    fn forced_unpinned_arena_decommit_failure_keeps_retry_state_and_external_mapping() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        with_unpinned_mapping_allocator(|allocator, mapping| {
+            let block = allocator.allocate(37, false).unwrap();
+            let slice_index = {
+                // SAFETY: `block` is current, so its page-map entry and page
+                // metadata remain live until the immediately following free.
+                let page = unsafe { allocator.page_map.checked_lookup(block.as_ptr()) };
+                assert!(!page.is_null());
+                // SAFETY: the map registration owns this metadata while the
+                // current block stays live.
+                unsafe { (*page).memid().arena_memory().unwrap().slice_index as usize }
+            };
+            // SAFETY: `block` is the single current allocation in this test.
+            unsafe { allocator.free(block).unwrap() };
+
+            // Forced page retirement schedules then claims the exact free
+            // slice. The injected default `purge_decommits=1` failure must
+            // restore availability but retain the retry bit for collection.
+            assert!(!allocator.collect_retired(true));
+            let arena_memory = unsafe { allocator.page_map.checked_lookup(block.as_ptr()) };
+            assert!(arena_memory.is_null());
+            assert_eq!(
+                unsafe { allocator.arena.slices_free() }
+                    .unwrap()
+                    .is_set_range(slice_index, 1),
+                Some(true),
+            );
+            assert_eq!(
+                unsafe { allocator.arena.slices_purge() }
+                    .unwrap()
+                    .is_set_range(slice_index, 1),
+                Some(true),
+            );
+            assert!(mapping.base().is_ok(), "arena purge must not unmap external backing");
+
+            // A completed failed purge no longer owns this range, so a fresh
+            // page may claim it. The stale retry bit stays scheduled until the
+            // next free/collection transition safely owns the range again.
+            let retry = allocator.allocate(37, false).unwrap();
+            // SAFETY: `retry` is a distinct current allocation from this test
+            // allocator and is returned exactly once.
+            unsafe { allocator.free(retry).unwrap() };
+            assert!(allocator.collect_retired(true));
+            assert_eq!(
+                unsafe { allocator.arena.slices_purge() }
+                    .unwrap()
+                    .is_clear_range(slice_index, 1),
+                Some(true),
+            );
+            assert!(mapping.base().is_ok(), "only context teardown may unmap backing");
+        });
+        assert!(fault.observed() >= 1);
+    }
+
+    #[test]
+    fn forced_pinned_external_arena_skips_default_decommit() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        with_allocator(|allocator| {
+            let block = allocator.allocate(37, false).unwrap();
+            // SAFETY: the test owns this one live block and returns it once.
+            unsafe { allocator.free(block).unwrap() };
+            assert!(allocator.collect_retired(true));
+            assert_eq!(
+                unsafe { allocator.arena.slices_purge() }
+                    .unwrap()
+                    .is_clear_range(allocator.arena.arena().info_slices, 1),
+                Some(true),
+            );
+        });
+        assert_eq!(fault.observed(), 0);
     }
 
     #[test]

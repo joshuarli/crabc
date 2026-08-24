@@ -21,6 +21,14 @@ retirement, full-span unregister-before-release, checked counted allocation,
 ordinary and aligned reallocation, live aligned/offset-aligned allocation,
 separately owned OS-aligned singleton mappings below 256 MiB, and failure
 rollback with allocation-free retry ownership after terminal unmap failure. A
+frozen-default external-arena purge slice schedules unpinned releases for four
+seconds, claims free-bitmap ownership during forced non-owning decommit, skips
+pinned backing, and preserves both external mapping ownership and immediate
+retry state on failure. Two bounded Milestone 5 substrates are also present:
+the AArch64 versioned TLS key/caller-owned slot contract and the source low-bit
+live-page remote-free publication/owner-collection protocol. They are not yet
+wired into allocation/free, abandonment, compiler TLS, process, thread,
+teardown, or page-release lifecycle. A
 standalone test-only package exposes 16 `crabc_test_*` C symbols around one
 creating-thread context; it exports neither standard allocation names nor
 `mi_*` names. It is not a public allocator API and makes no
@@ -78,9 +86,11 @@ the hash-pinned upstream `test/test-api.c` without checking in a source fork,
 then runs both the existing crabc allocator fixture and 33 selected upstream
 API checks. After that passing Milestone 4 adapter lane it deliberately returns
 exit status 3 with an `UNMET MILESTONE` explanation until Milestone 5 supplies
-remote free, abandonment/adoption, thread/TLS lifecycle, Loom protocols, and
-pthread stress. Both performance modes likewise remain explicitly unavailable;
-these status-3 results are not skips and must not become successful placeholders.
+integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle,
+Loom protocols, and pthread stress. The bounded live-page remote protocol and
+caller-owned TLS slot substrate do not satisfy that lifecycle gate. Both
+performance modes likewise remain explicitly unavailable; these status-3
+results are not skips and must not become successful placeholders.
 
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:

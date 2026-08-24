@@ -43,10 +43,20 @@ and invalid-size failure. Those operations are live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
 64 KiB and below the 256 MiB metadata limit. Failed terminal unmaps retain one
 exact allocation-free owner for later collection or allocation-boundary retry.
+For unpinned external arenas, slice release now schedules the pinned default
+four-second purge delay before reuse. Forced collection owns the free-bitmap
+range while applying the source `purge_decommits=1` non-owning decommit; pinned
+backing skips the path, decommit failure restores availability plus immediate
+retry state, and only the external owner may unmap the complete mapping.
 This is bounded engine evidence, not an exported production allocator: the
 crate still has no production public operation, libc integration, process/TLS
-lifecycle, remote free, purge scheduling, thread teardown, fork protocol, or
-backend selection.
+lifecycle, integrated remote-free routing, abandonment/adoption, thread
+teardown, fork protocol, or backend selection. The present Milestone 5
+foundations are intentionally narrower: exact AArch64 versioned TLS key and
+caller-owned slot semantics, plus low-bit atomic remote publication and owner
+collection for a pinned live owner-associated page. They do not install
+compiler TLS or permit abandonment, retirement, or page release while a remote
+producer exists.
 A default-off `test-adapter` feature is the sole exception to that public-
 operation statement: it provides an allocation-backed, creating-thread-only
 context for the standalone prefixed C evidence adapter. Its stable boxed control

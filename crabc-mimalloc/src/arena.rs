@@ -10,12 +10,14 @@
 // sizing), `src/arena.c:240-335` (single-arena slice claims,
 // committed/dirty/zero observations, and commit rollback),
 // `src/arena.c:911-947` (aligned page metadata selection and commitment),
-// `src/arena.c:1433-1490` (arena slice release), and
+// `src/arena.c:1433-1490` (arena slice release),
+// `src/arena.c:2238-2409` (default delayed arena purge scheduling and forced
+// collection), and
 // `src/arena.c:1676-1917` (in-place arena initialization, metadata
 // reservation, external-region alignment, and 16-GiB splitting).
 // This substrate deliberately stops before arena iteration/search across the
 // registry, per-heap `arena_pages` ownership, fresh-page lifecycle and page
-// map registration, purge lifecycle, theap/TLS state, NUMA option lookup,
+// map registration, theap/TLS state, NUMA option lookup,
 // statistics, and allocator-backed metadata.
 
 use core::ffi::c_void;
@@ -25,6 +27,7 @@ use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicI64, AtomicPtr};
 
 use crate::atomic::{
+    i64_cas_strong_acq_rel, i64_load_relaxed, i64_store_release,
     pointer_cas_strong_release, pointer_load_acquire, word_cas_strong_release,
     word_load_relaxed, AtomicWord,
 };
@@ -36,10 +39,18 @@ use crate::config::{
     BCHUNK_BITS, BITMAP_MAX_BIT_COUNT, MAX_ARENAS, PAGE_META_ALIGNED_COUNT,
 };
 use crate::invariants;
-use crate::os::PageSize;
+use crate::os::{self, DecommitOutcome, PageSize};
 use crate::types::{
     Arena, ArenaPages, CommitFunction, MemoryId, Page, Subprocess,
 };
+
+// Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
+// an arena-local delay because the one-thread slice has no source subprocess
+// global-expiry owner or registry iteration policy yet.
+const DEFAULT_PURGE_DELAY_MILLISECONDS: i64 = 1_000;
+const DEFAULT_ARENA_PURGE_MULTIPLIER: i64 = 4;
+const DEFAULT_ARENA_PURGE_DELAY_MILLISECONDS: i64 =
+    DEFAULT_PURGE_DELAY_MILLISECONDS * DEFAULT_ARENA_PURGE_MULTIPLIER;
 
 /// Opaque public-source arena identity. Only parent arenas can become IDs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -642,9 +653,10 @@ impl ArenaSliceClaim<'_> {
 
 /// Returns an arena-backed source span to `slices_free`.
 ///
-/// This is the arena branch of `_mi_arenas_free`, before its deliberately
-/// absent purge scheduling. It is separate from [`ArenaSliceClaim::release`]
-/// because the later page lifecycle stores only `MemoryId` in `Page`.
+/// This is the arena branch of `_mi_arenas_free`, including the frozen-default
+/// deferred decommit schedule before the span returns to `slices_free`. It is
+/// separate from [`ArenaSliceClaim::release`] because the later page lifecycle
+/// stores only `MemoryId` in `Page`.
 ///
 /// # Safety
 ///
@@ -675,7 +687,41 @@ pub(crate) unsafe fn release_arena_slices(memory: MemoryId) -> bool {
     }) else {
         return false;
     };
+    if !schedule_arena_purge(arena, slice_index, slice_count) {
+        return false;
+    }
     free.set_range(slice_index, slice_count) == Some(true)
+}
+
+/// Ports `mi_arena_schedule_purge` for the frozen default option image.
+///
+/// Normal anonymous external backing is unpinned and therefore schedules the
+/// default 4-second delayed `purge_decommits=1` path. Pinned backing keeps the
+/// source's strict skip. The source clock has no failure return; this port
+/// cannot make optional purge scheduling a terminal ownership transition:
+/// if the direct clock fails or the delay cannot be represented, the caller
+/// returns the slice to the free bitmap without scheduling a purge.
+fn schedule_arena_purge(arena: &Arena, slice_index: usize, slice_count: usize) -> bool {
+    if arena.memid.is_pinned() {
+        return true;
+    }
+    let Some(layout) = BitmapLayout::for_bit_count(arena.slice_count) else {
+        return false;
+    };
+    let Some(purge) = (unsafe {
+        BitmapView::attach(arena.slices_purge, layout.byte_size(), layout)
+    }) else {
+        return false;
+    };
+    let Ok(now) = os::monotonic_milliseconds() else {
+        return true;
+    };
+    let Some(expire) = now.checked_add(DEFAULT_ARENA_PURGE_DELAY_MILLISECONDS) else {
+        return true;
+    };
+    let mut expected = 0;
+    let _ = i64_cas_strong_acq_rel(&arena.purge_expire, &mut expected, expire);
+    purge.set_range(slice_index, slice_count).is_some()
 }
 
 #[inline]
@@ -1080,6 +1126,207 @@ impl<'arena> ArenaView<'arena> {
         unsafe { self.ordinary_bitmap(self.arena().slices_purge) }
     }
 
+    /// Forces or observes the default delayed arena decommit schedule.
+    ///
+    /// This is the one-arena, one-thread subset of `_mi_arenas_collect`: a
+    /// forced collection ignores the 4-second expiry, while non-forced
+    /// collection leaves not-yet-expired work alone. Each scheduled run first
+    /// removes its `slices_purge` bits, then temporarily claims `slices_free`;
+    /// this preserves the source rule that allocation cannot reuse bytes while
+    /// the purge owns them. A direct decommit error restores free availability,
+    /// records the same purge bits, and makes retry immediately eligible.
+    pub(crate) fn collect_scheduled_purge(&self, page_size: PageSize, force: bool) -> bool {
+        let arena = self.arena();
+        if arena.memid.is_pinned() {
+            return true;
+        }
+        let expire = i64_load_relaxed(&arena.purge_expire);
+        if expire == 0 {
+            return true;
+        }
+        if !force {
+            let Ok(now) = os::monotonic_milliseconds() else {
+                return false;
+            };
+            if expire > now {
+                return true;
+            }
+        }
+
+        // Source clears the arena expiry before atomically visiting scheduled
+        // ranges, so a concurrent later release belongs to the next pass.
+        // This bounded lifecycle has one thread but preserves that state edge.
+        i64_store_release(&arena.purge_expire, 0);
+        let mut slice_index = arena.info_slices;
+        while slice_index < arena.slice_count {
+            let Some(purge) = (unsafe { self.slices_purge() }) else {
+                return false;
+            };
+            let Some(is_scheduled) = purge.is_set_range(slice_index, 1) else {
+                return false;
+            };
+            if !is_scheduled {
+                slice_index += 1;
+                continue;
+            }
+
+            // `_mi_bitmap_forall_setc_rangesn` visits at most one bchunk at a
+            // time. Preserve that grouping before the source fallback tries
+            // individual slices if a concurrent allocation blocks the full run.
+            let remaining_in_chunk = BCHUNK_BITS - (slice_index % BCHUNK_BITS);
+            let maximum = core::cmp::min(remaining_in_chunk, arena.slice_count - slice_index);
+            let mut slice_count = 1usize;
+            while slice_count < maximum {
+                let Some(next_scheduled) = purge.is_set_range(slice_index + slice_count, 1)
+                else {
+                    return false;
+                };
+                if !next_scheduled {
+                    break;
+                }
+                slice_count += 1;
+            }
+            if purge.clear_range(slice_index, slice_count) != Some(true) {
+                return false;
+            }
+            if !self.purge_scheduled_range(page_size, slice_index, slice_count) {
+                return false;
+            }
+            slice_index += slice_count;
+        }
+        true
+    }
+
+    /// Attempts the source full-range purge claim, then retries individual
+    /// slices when one allocation prevents the contiguous claim.
+    fn purge_scheduled_range(
+        &self,
+        page_size: PageSize,
+        slice_index: usize,
+        slice_count: usize,
+    ) -> bool {
+        let Some(free) = (unsafe { self.slices_free() }) else {
+            return false;
+        };
+        match free.try_clear_within_chunk(slice_index, slice_count) {
+            Some(true) => self.purge_owned_range(page_size, slice_index, slice_count),
+            Some(false) => {
+                for offset in 0..slice_count {
+                    if !self.purge_scheduled_slice(page_size, slice_index + offset) {
+                        // The source visitor would continue after a failed
+                        // individual claim. Our explicit OS error instead
+                        // ends this collection so its retry result stays
+                        // observable; restore the as-yet-unvisited scheduled
+                        // suffix rather than silently losing that work.
+                        let remaining_start = slice_index + offset + 1;
+                        let remaining_count = slice_count - offset - 1;
+                        if remaining_count != 0 {
+                            let rescheduled = unsafe { self.slices_purge() }
+                                .and_then(|purge| {
+                                    purge.set_range(remaining_start, remaining_count)
+                                })
+                                .is_some();
+                            if rescheduled {
+                                i64_store_release(&self.arena().purge_expire, 1);
+                            }
+                        }
+                        return false;
+                    }
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Processes one scheduled slice after a full-range free-bitmap claim did
+    /// not succeed. A false free claim means allocation won the race and the
+    /// source-cleared purge bit must stay clear; a successful claim has the
+    /// normal retryable decommit ownership transition.
+    fn purge_scheduled_slice(&self, page_size: PageSize, slice_index: usize) -> bool {
+        let Some(free) = (unsafe { self.slices_free() }) else {
+            return false;
+        };
+        match free.try_clear_within_chunk(slice_index, 1) {
+            Some(true) => self.purge_owned_range(page_size, slice_index, 1),
+            Some(false) => true,
+            None => false,
+        }
+    }
+
+    /// Purges an arena range already removed from `slices_free`, then restores
+    /// availability. This retains the distinct external backing ownership: it
+    /// invokes only the non-owning source decommit primitive and never unmaps.
+    fn purge_owned_range(
+        &self,
+        page_size: PageSize,
+        slice_index: usize,
+        slice_count: usize,
+    ) -> bool {
+        let arena = self.arena();
+        let Some(size) = invariants::size_of_slices(slice_count) else {
+            return self.restore_failed_purge(slice_index, slice_count);
+        };
+        let Some(start) = self.slice_start(slice_index) else {
+            return self.restore_failed_purge(slice_index, slice_count);
+        };
+        let Some(committed) = (unsafe { self.slices_committed() }) else {
+            return self.restore_failed_purge(slice_index, slice_count);
+        };
+        let Some(committed_transition) = committed.set_range(slice_index, slice_count) else {
+            return self.restore_failed_purge(slice_index, slice_count);
+        };
+        let all_committed = committed_transition.already_set() == slice_count;
+        let needs_recommit = match arena.commit_function {
+            Some(commit) => {
+                // SAFETY: external arena initialization recorded this hook and
+                // argument for the exact live backing span. `slices_free` is
+                // clear for this range, giving the hook exclusive ownership.
+                unsafe {
+                    commit(
+                        false,
+                        start,
+                        size,
+                        core::ptr::null_mut(),
+                        arena.commit_function_argument,
+                    )
+                }
+            }
+            None => match unsafe { os::decommit_arena_range(page_size, start, size) } {
+                Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) | Ok(None) => false,
+                Err(_) => return self.restore_failed_purge(slice_index, slice_count),
+            },
+        };
+        if (needs_recommit || !all_committed)
+            && committed.clear_range(slice_index, slice_count) != Some(true)
+        {
+            return self.restore_failed_purge(slice_index, slice_count);
+        }
+        let Some(free) = (unsafe { self.slices_free() }) else {
+            return self.restore_failed_purge(slice_index, slice_count);
+        };
+        free.set_range(slice_index, slice_count) == Some(true)
+    }
+
+    /// Restores allocator availability after an injected/default decommit
+    /// failure and records the exact span for a later forced collection. The
+    /// retry expiry is deliberately immediate: the error itself already made
+    /// the current collection observable as failed, so delaying an explicit
+    /// retry would invent policy absent from the source error path.
+    fn restore_failed_purge(&self, slice_index: usize, slice_count: usize) -> bool {
+        let arena = self.arena();
+        let restored = unsafe { self.slices_free() }
+            .and_then(|free| free.set_range(slice_index, slice_count))
+            == Some(true);
+        let rescheduled = unsafe { self.slices_purge() }
+            .and_then(|purge| purge.set_range(slice_index, slice_count))
+            .is_some();
+        if restored && rescheduled {
+            i64_store_release(&arena.purge_expire, 1);
+        }
+        false
+    }
+
     pub(crate) unsafe fn pages(&self) -> Option<BitmapView<'arena>> {
         unsafe { self.ordinary_bitmap(self.arena().pages_main.pages) }
     }
@@ -1448,5 +1695,159 @@ mod tests {
         );
         assert!(claim.release());
         assert_eq!(script.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn unpinned_slice_release_schedules_the_default_delayed_decommit_before_reuse() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .unwrap();
+        let slice_index = claim.slice_index();
+
+        assert!(claim.release());
+
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(purge.is_set_range(slice_index, 1), Some(true));
+        assert_eq!(free.is_set_range(slice_index, 1), Some(true));
+        assert!(view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn clock_failure_skips_optional_purge_without_losing_the_released_slice() {
+        let _fault = crate::os::fault::install(crate::os::fault::Plan::at(
+            crate::os::fault::Point::Clock,
+            1,
+            crabc_core::Errno::NOMEM,
+        ));
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .unwrap();
+        let slice_index = claim.slice_index();
+
+        assert!(claim.release());
+
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(free.is_set_range(slice_index, 1), Some(true));
+        assert_eq!(purge.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+    }
+
+    #[test]
+    fn pinned_slice_release_skips_purge_scheduling() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                true,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .unwrap();
+        let slice_index = claim.slice_index();
+
+        assert!(claim.release());
+
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        assert_eq!(purge.is_clear_range(slice_index, 1), Some(true));
+        assert_eq!(
+            view.arena().purge_expire.load(core::sync::atomic::Ordering::Acquire),
+            0,
+        );
+    }
+
+    #[test]
+    fn purge_owned_slice_cannot_be_claimed_for_allocation() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                false,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let slice_index = view.arena().info_slices;
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+
+        // This is the collector's source `mi_bbitmap_try_clearNC` ownership
+        // state between clearing the scheduled bit and returning availability.
+        assert_eq!(free.try_clear_within_chunk(slice_index, 1), Some(true));
+        assert!(purge.set_range(slice_index, 1).is_some());
+        let other_claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .unwrap();
+        assert_ne!(other_claim.slice_index(), slice_index);
+        assert!(other_claim.release());
+
+        assert_eq!(purge.clear_range(slice_index, 1), Some(true));
+        assert_eq!(free.set_range(slice_index, 1), Some(true));
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .unwrap();
+        assert_eq!(claim.slice_index(), slice_index);
+        assert!(claim.release());
     }
 }

@@ -53,11 +53,13 @@ mod page;
 mod page_map;
 mod provenance;
 mod random;
+mod remote_free;
 mod size_class;
 mod single_thread;
 mod support;
 #[cfg(feature = "test-adapter")]
 mod test_context;
+mod thread_local;
 mod types;
 
 #[cfg(feature = "test-adapter")]

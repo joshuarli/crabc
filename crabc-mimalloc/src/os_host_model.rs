@@ -41,6 +41,17 @@ impl PageSize {
     }
 }
 
+/// Returns the fixed pre-expiry instant for the Miri-only arena-purge model.
+///
+/// The host model deliberately has no process clock. Keeping the value at
+/// zero preserves the source distinction between a scheduled 4-second purge
+/// and a forced collection, without turning test instrumentation into an OS
+/// scheduling backend.
+#[inline]
+pub(crate) fn monotonic_milliseconds() -> Result<i64> {
+    Ok(0)
+}
+
 /// The allocation-free fragment of process-start information used here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StartupInput {
@@ -177,6 +188,34 @@ pub(crate) enum CommitOutcome {
 pub(crate) enum DecommitOutcome {
     /// The range may be reused without a recommit transition.
     DoesNotNeedRecommit,
+}
+
+/// Applies the pinned default arena-purge decommit to one non-owning span.
+///
+/// This mirrors the production `purge_decommits=1` operation while leaving
+/// the external [`Mapping`] owner alive. The model represents Linux's
+/// zero-refault outcome by clearing the contained static bytes; it does not
+/// release the hosting slot or alter mapping ownership.
+///
+/// # Safety
+///
+/// `address..address + length` must remain within one live host-model mapping
+/// and may not have live Rust references across this raw transition. The
+/// supplied page size must describe that mapping.
+#[inline]
+pub(crate) unsafe fn decommit_arena_range(
+    page_size: PageSize,
+    address: *mut u8,
+    length: usize,
+) -> Result<Option<DecommitOutcome>> {
+    let Some((address, length)) = contained_unowned_page_range(page_size, address, length)? else {
+        return Ok(None);
+    };
+    fault_before(FaultPoint::Decommit)?;
+    // SAFETY: the caller proves this contained range lies in its live static
+    // model mapping. Clearing it selects one Linux-permitted refault result.
+    unsafe { core::ptr::write_bytes(address, 0, length) };
+    Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
 }
 
 // The model owns no dynamic memory. Sixteen 64-KiB slots model ordinary maps
@@ -535,6 +574,33 @@ enum PageAlignment {
     Covering,
     /// Retain only full pages, like reset/decommit/protect in `src/os.c`.
     Contained,
+}
+
+/// Computes the source-conservative full-page subrange of one non-owning
+/// external span. The unsafe caller of [`decommit_arena_range`] supplies the
+/// backing-slot proof that a `Mapping` value would otherwise retain.
+fn contained_unowned_page_range(
+    page_size: PageSize,
+    address: *mut u8,
+    length: usize,
+) -> Result<Option<(*mut u8, usize)>> {
+    if address.is_null() {
+        return Err(Errno::INVAL);
+    }
+    if length == 0 {
+        return Ok(None);
+    }
+    let start_address = address.addr();
+    let end_address = start_address.checked_add(length).ok_or(Errno::INVAL)?;
+    let page_size = page_size.bytes();
+    let start = invariants::align_up(start_address, page_size).ok_or(Errno::INVAL)?;
+    let end = invariants::align_down(end_address, page_size).ok_or(Errno::INVAL)?;
+    if end <= start {
+        return Ok(None);
+    }
+    let offset = start.checked_sub(start_address).ok_or(Errno::INVAL)?;
+    let range_length = end.checked_sub(start).ok_or(Errno::INVAL)?;
+    Ok(Some((address.wrapping_add(offset), range_length)))
 }
 
 #[inline]

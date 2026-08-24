@@ -6,7 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/prim.h`,
 // `src/prim/prim.c`, `src/prim/unix/prim.c`, and the raw page-alignment and
-// memory-transition portions of `src/os.c`.
+// memory-transition portions of `src/os.c`, including `src/os.c:655-680`'s
+// default `purge_decommits` branch for non-owning arena spans.
 
 //! Private, allocation-free Linux virtual-memory primitives for the allocator
 //! engine.
@@ -307,6 +308,40 @@ pub(crate) enum CommitOutcome {
 pub(crate) enum DecommitOutcome {
     /// The range may be reused without a recommit transition.
     DoesNotNeedRecommit,
+}
+
+/// Applies the pinned default arena-purge decommit to one non-owning span.
+///
+/// This is the `purge_decommits=1` arm of `_mi_os_purge_ex` used by
+/// `mi_arena_purge`.  An arena intentionally retains only its external-memory
+/// provenance, not the [`Mapping`] owner which must later unmap the complete
+/// backing allocation.  Keeping this operation non-owning makes that boundary
+/// explicit: it can discard physical contents but can neither shorten nor
+/// release the external map. The separate [`FaultPoint::Purge`] seam belongs
+/// to the alternate reset policy when `purge_decommits` is disabled; the
+/// frozen default reaches only [`FaultPoint::Decommit`] here.
+///
+/// # Safety
+///
+/// `address..address + length` must remain within one live writable Linux
+/// mapping for this call.  It must remain live and inaccessible through Rust
+/// references while `MADV_DONTNEED` can discard its contents. `page_size`
+/// must be the mapping's actual Linux base page size.
+#[inline]
+pub(crate) unsafe fn decommit_arena_range(
+    page_size: PageSize,
+    address: *mut u8,
+    length: usize,
+) -> Result<Option<DecommitOutcome>> {
+    let Some((address, length)) = contained_unowned_page_range(page_size, address, length)? else {
+        return Ok(None);
+    };
+    fault_before(FaultPoint::Decommit)?;
+    // SAFETY: the caller proves that the conservatively page-contained range
+    // stays within its live external mapping and carries no Rust references
+    // across this raw Linux advisory.
+    unsafe { crabc_core::mm::madvise_raw(address, length, MADV_DONTNEED) }?;
+    Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
 }
 
 /// One private anonymous mapping with an explicit, non-RAII release edge.
@@ -707,6 +742,37 @@ enum PageAlignment {
     Covering,
     /// Retain only full pages, like reset/decommit/protect in `src/os.c`.
     Contained,
+}
+
+/// Selects the complete base pages contained by one non-owning external span.
+///
+/// Unlike [`Mapping::page_range`], this cannot prove the input is within a
+/// particular `Mapping` value because that value remains with the external
+/// backing owner. The unsafe caller contract of [`decommit_arena_range`]
+/// supplies that proof; this helper only preserves the source's conservative
+/// page-alignment calculation and checked arithmetic.
+fn contained_unowned_page_range(
+    page_size: PageSize,
+    address: *mut u8,
+    length: usize,
+) -> Result<Option<(*mut u8, usize)>> {
+    if address.is_null() {
+        return Err(Errno::INVAL);
+    }
+    if length == 0 {
+        return Ok(None);
+    }
+    let start_address = address.addr();
+    let end_address = start_address.checked_add(length).ok_or(Errno::INVAL)?;
+    let page_size = page_size.bytes();
+    let start = invariants::align_up(start_address, page_size).ok_or(Errno::INVAL)?;
+    let end = invariants::align_down(end_address, page_size).ok_or(Errno::INVAL)?;
+    if end <= start {
+        return Ok(None);
+    }
+    let offset = start.checked_sub(start_address).ok_or(Errno::INVAL)?;
+    let range_length = end.checked_sub(start).ok_or(Errno::INVAL)?;
+    Ok(Some((address.wrapping_add(offset), range_length)))
 }
 
 #[inline]

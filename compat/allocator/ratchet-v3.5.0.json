@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 57,
-    "item_count": 54,
+    "implemented": 60,
+    "item_count": 57,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 57
+    "unit_verified": 60
   },
-  "port_map_sha256": "7cae97117534193cbb7f5197d6006128ce60f1ae861645b2f56b03f280f23625",
+  "port_map_sha256": "f289ea2037b7473d33e809c1d96ccffcc5604ce75661de12b157a5ae85604cb3",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -130,6 +130,10 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/arena.c:default-delayed-external-arena-purge": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/arena.c:external-arena-contiguous-claim-page-metadata-and-release": [
       "implemented",
       "unit_verified"
@@ -155,6 +159,10 @@
       "unit_verified"
     ],
     "item:src/bitmap.h:mi_bitmap_t-dynamic-layout": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/free.c:live-owner-remote-free-push-and-collection-protocol": [
       "implemented",
       "unit_verified"
     ],
@@ -246,6 +254,10 @@
       "implemented",
       "unit_verified",
       "differential_verified"
+    ],
+    "item:src/threadlocal.c:aarch64-versioned-key-and-caller-owned-slot-substrate": [
+      "implemented",
+      "unit_verified"
     ],
     "unit:include/mimalloc-stats.h": [],
     "unit:include/mimalloc.h": [],
