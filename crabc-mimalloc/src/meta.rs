@@ -36,7 +36,7 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::mem::{MaybeUninit, align_of, size_of};
 use core::pin::Pin;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crabc_core::Errno;
 
@@ -52,6 +52,7 @@ use crate::size_class;
 use crate::types::{
     LiveThreadId, MemoryId, Page, ThreadLocalData, ThreadSequence,
 };
+use crate::subproc::MainSubprocess;
 
 const COLD: u8 = 0;
 const READY: u8 = 1;
@@ -93,6 +94,10 @@ pub(crate) enum MetaError {
     /// The supplied immutable OS-memory observations differ from the values
     /// that created the process-lived metadata arena and page map.
     ConfigurationMismatch,
+    /// This metadata owner was initialized for a different bounded
+    /// process-main identity. One owner may not silently serve two
+    /// subprocesses in this slice.
+    SubprocessMismatch,
     /// A prior initialization cleanup could not release a partially owned
     /// mapping, so retrying would overwrite live process state.
     InitializationRetained,
@@ -220,7 +225,7 @@ impl<'owner> MetaAllocation<'owner> {
     }
 
     /// Initializes this direct-zeroed capability as one complete
-    /// source-ordered `mi_tld_t`.
+    /// source-ordered, subprocess-attached/no-theap `mi_tld_t`.
     ///
     /// The bounded TLD lifecycle has no generic metadata cast: it may only
     /// initialize exactly one aligned [`ThreadLocalData`] request from the
@@ -231,11 +236,12 @@ impl<'owner> MetaAllocation<'owner> {
     /// `sizeof(mi_tld_t)` ABI identity. Replacements and aligned requests are
     /// rejected before a TLD reference can form.
     #[inline]
-    pub(crate) fn initialize_thread_local_data_unattached(
+    pub(crate) fn initialize_thread_local_data_subprocess_attached_no_theap(
         &mut self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node: i32,
+        subprocess: &'static MainSubprocess,
     ) -> bool {
         if self.origin != MetaAllocationOrigin::DirectZeroed
             || self.thread_local_data_initialized
@@ -256,7 +262,13 @@ impl<'owner> MetaAllocation<'owner> {
         // writes every source-ordered field before publishing the initialized
         // projection below.
         unsafe {
-            tld.initialize_unattached(thread_id, thread_sequence, numa_node, self.memory);
+            tld.initialize_subprocess_attached_no_theap(
+                thread_id,
+                thread_sequence,
+                numa_node,
+                subprocess,
+                self.memory,
+            );
         }
         self.thread_local_data_initialized = true;
         true
@@ -264,7 +276,7 @@ impl<'owner> MetaAllocation<'owner> {
 
     /// Projects an already initialized bounded `mi_tld_t` image.
     ///
-    /// Only [`Self::initialize_thread_local_data_unattached`] can set this
+    /// Only [`Self::initialize_thread_local_data_subprocess_attached_no_theap`] can set this
     /// marker, and it rejects replacement/non-zero metadata routes. The
     /// projection therefore cannot accidentally form a TLD reference over a
     /// `rezalloc` image or arbitrary metadata bytes.
@@ -280,6 +292,36 @@ impl<'owner> MetaAllocation<'owner> {
         // complete write above, and this unique capability keeps the typed
         // image live.
         Some(unsafe { &mut *self.pointer.as_ptr().cast::<ThreadLocalData>() })
+    }
+
+    /// Returns the TLD immediately after this capability's successful typed
+    /// initialization.
+    ///
+    /// This deliberately has no fallible projection: the same exclusive
+    /// capability just established every predicate checked by
+    /// [`Self::thread_local_data_mut`], and no code can mutate its private
+    /// origin, request size, pointer, or initialized marker in between. The
+    /// private TLD constructor uses it to make ticket-to-lease activation
+    /// structurally paired with a completed image rather than an error path
+    /// that could orphan a metadata capability.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have received `true` from
+    /// [`Self::initialize_thread_local_data_subprocess_attached_no_theap`]
+    /// on this exact, still-exclusively-borrowed capability immediately before
+    /// this call. No safe caller may manufacture a typed TLD from arbitrary
+    /// metadata bytes.
+    #[inline]
+    pub(crate) unsafe fn newly_initialized_thread_local_data_mut(&mut self) -> &mut ThreadLocalData {
+        debug_assert!(self.thread_local_data_initialized);
+        debug_assert_eq!(self.requested_size, size_of::<ThreadLocalData>());
+        debug_assert_eq!(self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>(), 0);
+        // SAFETY: the caller's explicit contract establishes that the
+        // successful typed initializer immediately before this call wrote a
+        // complete TLD at this exact checked pointer; the unique `&mut
+        // MetaAllocation` excludes another mutable projection.
+        unsafe { &mut *self.pointer.as_ptr().cast::<ThreadLocalData>() }
     }
 
     #[inline]
@@ -337,6 +379,7 @@ pub(crate) struct MetaAllocator {
     page_map: UnsafeCell<MaybeUninit<PageMap>>,
     bootstrap: UnsafeCell<MaybeUninit<ExclusiveTheapBootstrap>>,
     allocator: UnsafeCell<MaybeUninit<SingleThreadAllocator<'static, 'static, 'static>>>,
+    subprocess: AtomicPtr<MainSubprocess>,
     registry: ArenaRegistry,
     _pin: PhantomPinned,
 }
@@ -359,6 +402,7 @@ impl MetaAllocator {
             page_map: UnsafeCell::new(MaybeUninit::uninit()),
             bootstrap: UnsafeCell::new(MaybeUninit::uninit()),
             allocator: UnsafeCell::new(MaybeUninit::uninit()),
+            subprocess: AtomicPtr::new(core::ptr::null_mut()),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             _pin: PhantomPinned,
         }
@@ -392,8 +436,21 @@ impl MetaAllocator {
         config: MemoryConfig,
         size: usize,
     ) -> Result<MetaAllocation<'static>, MetaError> {
+        self.zalloc_for_main_subprocess(config, MainSubprocess::global(), size)
+    }
+
+    /// Allocates zeroed metadata for one already selected process-main
+    /// identity. `ThreadLocalDataOwner` calls this only after its source
+    /// total-thread ticket is issued; an initialization/map failure therefore
+    /// cannot roll that sequence back or create a live-count lease.
+    pub(crate) fn zalloc_for_main_subprocess(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        size: usize,
+    ) -> Result<MetaAllocation<'static>, MetaError> {
         let mut entry = self.enter()?;
-        entry.ensure_ready(config)?;
+        entry.ensure_ready(config, subprocess)?;
         let pointer = entry
             .allocator()
             .allocate_zeroed(size)
@@ -417,7 +474,7 @@ impl MetaAllocator {
             return Err(MetaError::InvalidAlignment);
         }
         let mut entry = self.enter()?;
-        entry.ensure_ready(config)?;
+        entry.ensure_ready(config, MainSubprocess::global())?;
         let pointer = entry
             .allocator()
             .allocate_aligned_zeroed(size, alignment)
@@ -452,7 +509,7 @@ impl MetaAllocator {
 
         let (replacement, copy_size) = {
             let mut entry = self.enter()?;
-            entry.ensure_ready(config)?;
+            entry.ensure_ready(config, MainSubprocess::global())?;
             if !old.claim(ALLOCATION_LIVE, ALLOCATION_MOVING)
                 || !old.has_consistent_malloc_provenance()
             {
@@ -588,6 +645,7 @@ impl MetaAllocator {
         self: Pin<&'static Self>,
         entry: &mut MetaEntry,
         config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
         let page_map = match PageMap::initialize(config, MAX_VABITS, false) {
@@ -597,6 +655,27 @@ impl MetaAllocator {
         // SAFETY: `entry` owns the sole initialization lock and COLD prevents
         // any reader from projecting this final static slot.
         unsafe { (*this.page_map.get()).write(page_map) };
+        // SAFETY: `entry` holds the metadata owner's private initialization
+        // lock, and COLD means no arena was written or published. This is the
+        // unique pre-publication transition for the process-long registry
+        // identity; no concurrent insert can observe or race this count-zero
+        // state.
+        if !unsafe {
+            this.registry
+                .bind_subprocess_before_publication(subprocess.as_ptr())
+        } {
+            // A COLD metadata owner can reach this only after a prior failed
+            // initialization bound a different process-main identity. Never
+            // construct an arena under a second identity; release the private
+            // page map if possible and leave a retained failure otherwise.
+            return match unsafe { (&mut *this.page_map.get()).assume_init_mut().destroy() } {
+                Ok(()) => Err(MetaError::SubprocessMismatch),
+                Err(_) => {
+                    this.status.store(FAILED, Ordering::Release);
+                    Err(MetaError::InitializationRetained)
+                }
+            };
+        }
 
         let mapping = match Mapping::map_aligned_for_allocator(
             config,
@@ -653,6 +732,7 @@ impl MetaAllocator {
         let page_map = unsafe { (&mut *this.page_map.get()).assume_init_mut() };
         let allocator = match SingleThreadAllocator::activate_detached(
             bootstrap,
+            subprocess,
             arena,
             ArenaId::none(),
             page_map,
@@ -668,6 +748,7 @@ impl MetaAllocator {
         // final static slot. No operation can observe it before READY.
         unsafe { (*this.allocator.get()).write(allocator) };
         unsafe { (*this.config.get()).write(config) };
+        this.subprocess.store(subprocess.as_ptr(), Ordering::Release);
         this.status.store(READY, Ordering::Release);
         let _ = entry;
         Ok(())
@@ -712,19 +793,33 @@ struct MetaEntry {
 }
 
 impl MetaEntry {
-    fn ensure_ready(&mut self, config: MemoryConfig) -> Result<(), MetaError> {
+    fn ensure_ready(
+        &mut self,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
         match self.status() {
             READY => {
                 // SAFETY: READY release-publishes this initialized immutable
                 // configuration before any later lock holder can read it.
                 let stored = unsafe { self.owner.get_ref().config.get().read().assume_init() };
-                if stored == config {
+                if stored == config
+                    && core::ptr::eq(
+                        self.owner
+                            .get_ref()
+                            .subprocess
+                            .load(Ordering::Acquire),
+                        subprocess.as_ptr(),
+                    )
+                {
                     Ok(())
+                } else if stored == config {
+                    Err(MetaError::SubprocessMismatch)
                 } else {
                     Err(MetaError::ConfigurationMismatch)
                 }
             }
-            COLD => self.owner.initialize(self, config),
+            COLD => self.owner.initialize(self, config, subprocess),
             FAILED => Err(MetaError::InitializationRetained),
             _ => Err(MetaError::InitializationRetained),
         }
@@ -834,6 +929,30 @@ mod tests {
     }
 
     #[test]
+    fn detached_metadata_bootstrap_uses_its_selected_main_subprocess_identity() {
+        let allocator = static_allocator();
+        let subprocess = MainSubprocess::test_static_owner();
+        let mut block = allocator
+            .zalloc_for_main_subprocess(config(), subprocess, 8)
+            .expect("the detached metadata owner initializes for this main identity");
+        let bootstrap = unsafe { (&*allocator.get_ref().bootstrap.get()).assume_init_ref() };
+
+        assert!(bootstrap.is_detached_for_main_subprocess(subprocess));
+        assert!(allocator
+            .get_ref()
+            .registry
+            .is_bound_to_subprocess(subprocess.as_ptr()));
+        let arena = unsafe { allocator.get_ref().registry.arena_at(0) }
+            .expect("the detached metadata arena is published");
+        assert!(core::ptr::eq(arena.subprocess, subprocess.as_ptr()));
+        assert!(matches!(
+            allocator.zalloc(config(), 8),
+            Err(MetaError::SubprocessMismatch)
+        ), "one bounded metadata owner cannot name two process-main identities");
+        allocator.free(&mut block).unwrap();
+    }
+
+    #[test]
     fn typed_tld_initialization_rejects_aligned_and_replacement_origins() {
         let allocator = static_allocator();
         let thread = LiveThreadId::new(crate::os::thread_pointer_identity())
@@ -844,7 +963,12 @@ mod tests {
         let mut aligned = allocator
             .zalloc_aligned(config(), tld_size, 4096)
             .expect("the aligned metadata request succeeds");
-        assert!(!aligned.initialize_thread_local_data_unattached(thread, sequence, 0));
+        assert!(!aligned.initialize_thread_local_data_subprocess_attached_no_theap(
+            thread,
+            sequence,
+            0,
+            MainSubprocess::global(),
+        ));
         assert!(aligned.thread_local_data_mut().is_none());
         allocator.free(&mut aligned).unwrap();
 
@@ -852,7 +976,12 @@ mod tests {
         let mut replacement = allocator
             .rezalloc(config(), Some(&mut old), tld_size)
             .expect("the replacement request succeeds");
-        assert!(!replacement.initialize_thread_local_data_unattached(thread, sequence, 0));
+        assert!(!replacement.initialize_thread_local_data_subprocess_attached_no_theap(
+            thread,
+            sequence,
+            0,
+            MainSubprocess::global(),
+        ));
         assert!(replacement.thread_local_data_mut().is_none());
         allocator.free(&mut replacement).unwrap();
     }

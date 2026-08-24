@@ -13,7 +13,9 @@
 //
 // This is deliberately only an allocation-free, exclusive single-thread
 // bootstrap. It has no compiler TLS slot, pthread key, first-class heap,
-// subprocess, random, remote-free, teardown, or concurrent-init lifecycle.
+// random, remote-free, teardown, or concurrent-init lifecycle. Its detached
+// metadata image now records the bounded main-subprocess identity only; this
+// remains distinct from a live TLD/theap attachment or subprocess lifecycle.
 
 use core::marker::{PhantomData, PhantomPinned};
 use core::pin::Pin;
@@ -23,6 +25,7 @@ use crate::types::{
     Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner,
     ThreadLocalData,
 };
+use crate::subproc::MainSubprocess;
 
 // `Theap` contains raw pointers and must not be shared for mutation. This
 // wrapper exposes only `&Theap` for the immutable source `_mi_theap_empty`
@@ -107,6 +110,19 @@ impl ExclusiveTheapBootstrap {
         }
     }
 
+    /// Test-only proof that every detached bootstrap image names one selected
+    /// bounded process-main subprocess identity.
+    #[cfg(test)]
+    pub(crate) fn is_detached_for_main_subprocess(
+        &self,
+        subprocess: &MainSubprocess,
+    ) -> bool {
+        self.heap.is_bound_to_main_subprocess(subprocess)
+            && self.tld.is_attached_to_main_subprocess(subprocess)
+            && self.tld.numa_node() == -1
+            && self.theap.is_bound_to_main_subprocess(subprocess)
+    }
+
     /// Attaches and publishes a live-thread theap after this image is pinned.
     ///
     /// This is the bounded source order from `_mi_thread_init_with_heap` and
@@ -117,7 +133,7 @@ impl ExclusiveTheapBootstrap {
         self: Pin<&mut Self>,
         thread_id: LiveThreadId,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
-        self.activate_owner(TheapOwner::Live(thread_id))
+        self.activate_owner(TheapOwner::Live(thread_id), None)
     }
 
     /// Activates the source detached metadata-theap form.
@@ -128,12 +144,24 @@ impl ExclusiveTheapBootstrap {
     pub(crate) fn activate_detached(
         self: Pin<&mut Self>,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
-        self.activate_owner(TheapOwner::Detached)
+        self.activate_detached_for_main_subprocess(MainSubprocess::global())
+    }
+
+    /// Activates a detached metadata-theap form tied to one process-main
+    /// identity. `MetaAllocator` chooses this identity before it publishes
+    /// detached allocator state, so its heap, TLD, and theap agree on the
+    /// same bounded source `subproc` pointer.
+    pub(crate) fn activate_detached_for_main_subprocess(
+        self: Pin<&mut Self>,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
+        self.activate_owner(TheapOwner::Detached, Some(subprocess))
     }
 
     fn activate_owner(
         self: Pin<&mut Self>,
         owner: TheapOwner,
+        detached_subprocess: Option<&'static MainSubprocess>,
     ) -> Result<ExclusiveTheapSession<'_>, BootstrapError> {
         // SAFETY: `Self` is !Unpin and this method never moves a field. The
         // newly stored self-referential raw pointers target the pinned `heap`
@@ -146,6 +174,9 @@ impl ExclusiveTheapBootstrap {
 
         if let TheapOwner::Live(thread_id) = owner {
             state.tld.attach_bootstrap_exclusive(thread_id);
+        } else if let Some(subprocess) = detached_subprocess {
+            state.heap.bind_main_subprocess(subprocess);
+            state.tld.attach_detached_main_subprocess(subprocess);
         }
         let bound = match owner {
             TheapOwner::Live(_) => state
@@ -447,9 +478,10 @@ mod tests {
     fn detached_activation_keeps_the_source_detached_identity_and_forbids_abandonment() {
         let bootstrap = ExclusiveTheapBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
+        let subprocess = MainSubprocess::test_static_owner();
         let session = bootstrap
             .as_mut()
-            .activate_detached()
+            .activate_detached_for_main_subprocess(subprocess)
             .expect("a detached source bootstrap activates once");
         let state = session.state.as_ref().get_ref();
         let theap = session.theap();
@@ -458,6 +490,10 @@ mod tests {
         assert_eq!(state.active_thread(), None);
         assert!(theap.is_initialized());
         assert!(theap.is_detached());
+        assert!(state.heap.is_bound_to_main_subprocess(subprocess));
+        assert!(state.tld.is_attached_to_main_subprocess(subprocess));
+        assert!(theap.is_bound_to_main_subprocess(subprocess));
+        assert_eq!(state.tld.numa_node(), -1);
         assert_eq!(theap.refcount(), 1);
         assert_eq!(theap.page_full_retain(), 2);
         assert!(!theap.allows_page_abandon());

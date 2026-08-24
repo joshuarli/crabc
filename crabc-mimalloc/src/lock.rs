@@ -59,6 +59,18 @@ impl PrivateLock {
             .map(|_| self.guard())
     }
 
+    /// Injects a held state without manufacturing a guard or borrowing the
+    /// protected owner across its teardown transition.
+    ///
+    /// This is solely a lifecycle-failure test hook. It deliberately leaves
+    /// the lock state busy so the terminally poisoned owner cannot reclaim or
+    /// reuse the backing TLD image; production code cannot call it.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_inject_busy(&self) {
+        self.state.store(LOCKED, Ordering::Relaxed);
+    }
+
     /// Acquires the lock, blocking when another thread holds it.
     ///
     /// A successful acquire is an Acquire operation. The dropping guard's

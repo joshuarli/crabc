@@ -16,8 +16,9 @@ calloc, realloc, aligned/offset-aligned, usable-size, preservation, and failure
 slice. This includes live arena-backed alignment through 64 KiB and separately
 owned OS-aligned singleton mappings below 256 MiB. The lifecycle is not
 exported and does not imply parity for the absent process/TLS, remote-free,
-teardown, purge, or public-API regions. The private regular-TLS and unattached
-TLD owners record one internal recovery limitation in the source map:
+teardown, purge, or public-API regions. The private regular-TLS and
+subprocess-attached/no-theap TLD owners record one internal recovery limitation
+in the source map:
 `MetaAllocator::free` may report an error after consuming a capability. The
 regular owner clears its dynamic root, while the TLD owner has already
 invalidated `thread_id`; each terminally poisons rather than retaining a

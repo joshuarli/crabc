@@ -59,6 +59,7 @@ use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedP
 use crate::page;
 use crate::page_map::PageMap;
 use crate::size_class;
+use crate::subproc::MainSubprocess;
 use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, Page, PageKind, Theap};
 use crate::types::page_queue::{
     page_is_in_full, page_queue_enqueue_from_full_metadata,
@@ -158,12 +159,13 @@ impl<'bootstrap, 'arena, 'map> SingleThreadAllocator<'bootstrap, 'arena, 'map> {
     /// remote-free-capable allocator instance.
     pub(crate) fn activate_detached(
         bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
+        subprocess: &'static MainSubprocess,
         arena: ArenaView<'arena>,
         requested_arena: ArenaId,
         page_map: &'map mut PageMap,
         thread_sequence: usize,
     ) -> Result<Self, BootstrapError> {
-        let session = bootstrap.activate_detached()?;
+        let session = bootstrap.activate_detached_for_main_subprocess(subprocess)?;
         Ok(Self {
             session,
             arena,

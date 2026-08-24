@@ -24,7 +24,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of};
 use core::ptr::{null_mut, NonNull};
-use core::sync::atomic::{AtomicI64, AtomicPtr};
+use core::sync::atomic::{AtomicI64, AtomicPtr, Ordering};
 
 use crate::atomic::{
     i64_cas_strong_acq_rel, i64_load_relaxed, i64_store_release,
@@ -133,20 +133,21 @@ pub(crate) unsafe fn memory_is_suitable(memory: MemoryId, requested: ArenaId) ->
 
 /// Fixed-capacity source registry with Release publication and Acquire lookup.
 pub(crate) struct ArenaRegistry {
-    subprocess: *mut Subprocess,
+    subprocess: AtomicPtr<Subprocess>,
     count: AtomicWord,
     arenas: [AtomicPtr<Arena>; MAX_ARENAS],
 }
 
 // SAFETY: every slot is independently atomically published. The subprocess
-// pointer is an immutable opaque identity and is never dereferenced here.
+// pointer is selected once before registry publication, then only read as an
+// immutable opaque identity and never dereferenced here.
 unsafe impl Send for ArenaRegistry {}
 unsafe impl Sync for ArenaRegistry {}
 
 impl ArenaRegistry {
     pub(crate) const fn new(subprocess: *mut Subprocess) -> Self {
         Self {
-            subprocess,
+            subprocess: AtomicPtr::new(subprocess),
             count: AtomicWord::new(0),
             arenas: [const { AtomicPtr::new(null_mut()) }; MAX_ARENAS],
         }
@@ -158,8 +159,54 @@ impl ArenaRegistry {
     }
 
     #[inline]
-    pub(crate) const fn subprocess(&self) -> *mut Subprocess {
-        self.subprocess
+    pub(crate) fn subprocess(&self) -> *mut Subprocess {
+        self.subprocess.load(Ordering::Acquire)
+    }
+
+    /// Selects the one source subprocess identity before any arena becomes
+    /// visible through this registry.
+    ///
+    /// A same-identity retry is permitted only while the registry is still
+    /// empty. Rebinding a populated registry would make its arena and bitmap
+    /// pointers name a different subprocess, so it is rejected even if the
+    /// address matches.
+    ///
+    /// # Safety
+    ///
+    /// The caller must hold the one-time initialization authority for this
+    /// registry: no concurrent `insert` or arena publication may occur until
+    /// this call returns. In particular, observing `count == 0` here is not a
+    /// synchronization protocol with `insert`; it is a pre-publication
+    /// invariant supplied by the caller. `subprocess` must be the process-long
+    /// identity that every subsequently inserted arena names.
+    #[inline]
+    pub(crate) unsafe fn bind_subprocess_before_publication(
+        &self,
+        subprocess: *mut Subprocess,
+    ) -> bool {
+        if subprocess.is_null() || self.count() != 0 {
+            return false;
+        }
+        let expected = core::ptr::null_mut();
+        if self
+            .subprocess
+            .compare_exchange(
+                expected,
+                subprocess,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            return true;
+        }
+        let found = self.subprocess.load(Ordering::Acquire);
+        core::ptr::eq(found, subprocess)
+    }
+
+    #[inline]
+    pub(crate) fn is_bound_to_subprocess(&self, subprocess: *mut Subprocess) -> bool {
+        core::ptr::eq(self.subprocess(), subprocess)
     }
 
     /// Acquire-loads one previously allocated registry slot.

@@ -244,10 +244,10 @@ performance_qualified = false
 [[unit]]
 upstream = "src/init.c"
 source_region = "process bootstrap and initialization state machine"
-rust_module = "crabc_mimalloc::bootstrap, crabc_mimalloc::meta, crabc_mimalloc::tld, and crabc_mimalloc::types"
-rust_item = "partial: empty bootstrap images, one caller-pinned exclusive default-theap activation, and a metadata-owned current-thread unattached TLD initialization/invalidation/release checkpoint"
-intentional_difference = "The global/process once state machine, TLS publication, main subprocess, source counter ownership, process-main static TLD, TLD/theap list attachment, full teardown, and fork repair remain absent. ThreadLocalData's private futex lock preserves source field meaning but is not the upstream pthread-lock ABI."
-tests = ["crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/tld.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
+rust_module = "crabc_mimalloc::bootstrap, crabc_mimalloc::meta, crabc_mimalloc::subproc, crabc_mimalloc::tld, and crabc_mimalloc::types"
+rust_item = "partial: empty bootstrap images, one caller-pinned exclusive default-theap activation, bounded main-subprocess counters/static first-TLD storage, and a subprocess-attached/no-theap current-thread TLD initialization/invalidation/release checkpoint"
+intentional_difference = "The global/process once state machine, compiler-TLS publication, general subprocess layout/lifecycle, TLD/theap list attachment, live theap attachment, fork repair, and full pthread lock destruction remain absent. The bounded main identity owns only the source relaxed total/live counters and static first-TLD branch. ThreadLocalData's private futex lock preserves source field meaning but is not the upstream pthread-lock ABI."
+tests = ["crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/tld.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
 implemented = false
 unit_verified = false
@@ -383,11 +383,11 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/subproc.c"
-source_region = "subprocess state and lifecycle"
-rust_module = "crabc_mimalloc::subproc"
-rust_item = "unimplemented"
-intentional_difference = ""
-tests = []
+source_region = "process-main subprocess identity and TLD registration subset"
+rust_module = "crabc_mimalloc::subproc, crabc_mimalloc::meta, crabc_mimalloc::tld, and crabc_mimalloc::types"
+rust_item = "partial: one process-static main identity, relaxed total/live thread counters, static first-TLD slot, and same-identity detached metadata bootstrap"
+intentional_difference = "This is not a `mi_subproc_t` layout or lifecycle port: subprocess lists, heaps, arenas, stats, destruction, fork repair, and public subprocess APIs remain absent. The source counters exist only for the private static-first/current-thread no-theap TLD checkpoint."
+tests = ["crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/tld.rs"]
 exported = false
 implemented = false
 unit_verified = false
@@ -1051,12 +1051,15 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/init.c"
+# Stable ratchet key retained from the pre-registration checkpoint. Its old
+# "unattached" spelling is not a current lifecycle term: the mapped slice
+# below is subprocess-attached/no-theap.
 name = "current-thread-unattached-tld-metadata-lifecycle"
-source_region = "mi_tld_init, mi_tld_create, and mi_tld_free (236-282), with mi_tld_s field order from include/mimalloc/types.h:690-701 and the exact Unix false threadpool observation from src/prim/unix/prim.c:1059-1061"
-rust_module = "crabc_mimalloc::types, crabc_mimalloc::meta, and crabc_mimalloc::tld"
-rust_item = "ThreadSequence/ThreadLocalData, MetaAllocation direct-zeroed typed TLD initialization, and ThreadLocalDataOwner unsafe current-TPIDR lifecycle"
-intentional_difference = "This checkpoint owns only an unconnected current-thread metadata TLD: sequence is an explicit source-issued old thread_total_count value, NUMA uses the existing Linux primitive, subprocess and theap-list fields stay null, and no TLD/default/cached/fast root is published. PrivateLock replaces the source pthread lock, preserving field order/meaning but not C sizeof. Teardown invalidates the ID then attempts metadata free; it cannot decrement an unowned subprocess count or claim full lock/thread lifecycle. A consumption-ambiguous metadata-free error terminally poisons the owner instead of inventing retryable ownership. A later audited owner-controlled Unattached -> Attached -> Detached transition remains open."
-tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/tld.rs"]
+source_region = "mi_process_subproc_main identity/context from src/subproc.c:12-15,95-101; relaxed counter fields from include/mimalloc/types.h:651-680 and TLD fields from include/mimalloc/types.h:690-701; mi_process_tld_main plus mi_tld_init, mi_tld_create, and mi_tld_free from src/init.c:155-157,236-282; and the exact Unix false threadpool observation from src/prim/unix/prim.c:1059-1061"
+rust_module = "crabc_mimalloc::subproc, crabc_mimalloc::types, crabc_mimalloc::meta, and crabc_mimalloc::tld"
+rust_item = "MainSubprocess, ThreadRegistrationTicket/ThreadRegistrationLease, cache-aligned static MainStaticThreadLocalData, ThreadSequence/ThreadLocalData, typed direct-zeroed metadata initialization, and ThreadLocalDataOwner unsafe current-TPIDR lifecycle"
+intentional_difference = "This checkpoint ports only the process-main identity plus relaxed source total/live counters. A ticket receives the old total-count value before storage selection; ticket zero atomically completes and registers cache-aligned static TLD storage with exact Static provenance including its own base and full Rust ThreadLocalData image size, later tickets request typed metadata, and only a completed image obtains a live-count lease. TLDs name the main identity but retain a null theap list and publish no default/cached/fast/compiler-TLS root. Teardown releases the live count, invalidates the ID, proves the private lock quiescent, then retires static storage or frees metadata; busy/consumption-ambiguous outcomes poison. PrivateLock replaces the source pthread lock, preserving field meaning but not C sizeof. Complete mi_subproc_t layout/lifecycle, Theap list attachment, live heap attachment, pthread/process hooks, lock destruction, and fork repair remain absent."
+tests = ["crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/tld.rs"]
 exported = false
 implemented = true
 unit_verified = true
@@ -1158,10 +1161,10 @@ performance_qualified = false
 upstream = "src/subproc.c"
 name = "detached-malloc-metadata-theap-checkpoint"
 source_region = "_mi_meta_zalloc, _mi_meta_zalloc_aligned, _mi_meta_rezalloc, the successful MI_MEM_MALLOC branch of _mi_meta_free, and _mi_meta_is_meta_page (lines 19-88)"
-rust_module = "crabc_mimalloc::meta"
-rust_item = "process-static MetaAllocator/MetaAllocation with direct-OS page-map and external-arena bootstrap, detached ExclusiveTheapBootstrap, PrivateLock serialization, and owner-bound Malloc provenance"
-intentional_difference = "This is only the detached metadata-theap checkpoint. It accepts process-static owner-bound successful Malloc capabilities; the source null/needs-no-free and non-Malloc _mi_arenas_free branches, subprocess state/destruction, default heap deletion, arena-pages metadata/stats, and full process lifecycle remain absent. The source _mi_meta_rezalloc lock-release-before-copy/free ordering is retained."
-tests = ["crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/provenance.rs"]
+rust_module = "crabc_mimalloc::meta, crabc_mimalloc::bootstrap, crabc_mimalloc::subproc, and crabc_mimalloc::types"
+rust_item = "process-static MetaAllocator/MetaAllocation with direct-OS page-map and external-arena bootstrap, detached ExclusiveTheapBootstrap, pre-publication-bound registry/published-arena identity, PrivateLock serialization, and owner-bound Malloc provenance"
+intentional_difference = "This is only the detached metadata-theap checkpoint. It accepts process-static owner-bound successful Malloc capabilities and names the same bounded main identity as later TLDs across its detached bootstrap, arena registry, and published arena; the source null/needs-no-free and non-Malloc _mi_arenas_free branches, complete subprocess state/destruction, default heap deletion, arena-pages metadata/stats, and full process lifecycle remain absent. The source _mi_meta_rezalloc lock-release-before-copy/free ordering is retained."
+tests = ["crabc-mimalloc/src/meta.rs", "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/provenance.rs"]
 exported = false
 implemented = true
 unit_verified = true

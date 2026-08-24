@@ -50,19 +50,25 @@ free-before-dynamic-root-null teardown. It leaves fast/default/cached roots
 alone and becomes terminal after an internal metadata error whose consumption
 cannot be distinguished, rather than claiming a false retry capability. It has
 no TLD/theap attachment, global allocator-backed key registry, pthread or
-process lifecycle hook, or production ELF integration. Separately, an unsafe
-current-thread TLD owner now retains one full source-ordered `mi_tld_t`-shaped
-direct-zeroed metadata allocation. Its sequence is supplied as the old value
-from a future source-shaped total-thread counter rather than invented here; it
-records direct `TPIDR_EL0`, Linux NUMA, the exact Unix non-threadpool result,
-an initialized private lock, null subprocess/theap-list fields, and exact
-Malloc provenance. It exposes only the unattached checkpoint: no subprocess
-count, process-main static TLD, theap/default/cached/fast root, list
-attachment, pthread/process hook, or C pthread-mutex size claim. Its teardown
-invalidates the TLD identity before attempting metadata free and terminally
-poisons on an internal consumption-ambiguous error. An audited future owner
-may connect `Unattached -> Attached -> Detached`; no such transition exists
-yet. Separately, the exact source-layout `mi_random_ctx_t` image now lives
+process lifecycle hook, or production ELF integration. Separately,
+`subproc.rs` now holds one bounded process-static main-subprocess identity:
+only relaxed `thread_total_count`, relaxed live `thread_count`, and the real
+first static TLD slot—not full `mi_subproc_t`, its heaps/arenas/stats, or a
+process-init API. The unsafe current-thread TLD owner issues its own old
+counter-value ticket before it chooses storage: ticket zero uses the static
+`MemoryKind::Static` source branch without metadata, while later tickets use
+the typed direct-zeroed metadata route. Metadata failure consumes a sequence
+but never a live registration. A completed TLD alone consumes its ticket into
+an explicit non-dropping lease; teardown decrements live count, invalidates its
+ID, proves the private list lock quiescent, then retires static storage or
+frees metadata. The image records the same main identity as detached metadata
+bootstrap state and its selected arena registry/published arena, direct
+`TPIDR_EL0`, Linux NUMA, the exact Unix non-threadpool
+result, null theap list, and exact provenance. It is **subprocess-attached,
+no-theap**, not a Theap/default/cached/fast TLS publication, list attachment,
+pthread/process hook, full lock destructor, or C pthread-mutex size claim.
+Busy-lock and consumption-ambiguous metadata-free outcomes are terminally
+poisoned. Separately, the exact source-layout `mi_random_ctx_t` image now lives
 directly in `Theap::random`: it preserves source input/output word order,
 counter carries, consumed-output clearing, direct random-field-address nonce
 identity, and in-place split. It calls direct Linux `getrandom` and continues

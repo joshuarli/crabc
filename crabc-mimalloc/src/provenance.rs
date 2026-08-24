@@ -179,6 +179,18 @@ mod tests {
         assert!(static_id.initially_committed());
         assert!(!static_id.initially_zero());
         assert_eq!(static_id.size(), Some(0));
+        assert_eq!(static_id.static_memory().unwrap().base, core::ptr::null_mut());
+
+        let mut static_bytes = [0u8; 3];
+        let static_image = MemoryId::static_allocation(static_bytes.as_mut_ptr(), static_bytes.len());
+        assert_eq!(static_image.kind(), MemoryKind::Static);
+        assert!(static_image.needs_no_free());
+        assert!(static_image.is_pinned());
+        assert!(static_image.initially_committed());
+        assert_eq!(static_image.size(), Some(0));
+        let static_memory = static_image.static_memory().unwrap();
+        assert_eq!(static_memory.base, static_bytes.as_mut_ptr());
+        assert_eq!(static_memory.size, static_bytes.len());
 
         let mut bytes = [0u8; 1];
         let os_id = MemoryId::os(bytes.as_mut_ptr(), 8192, false, true, false);

@@ -24,9 +24,10 @@ process-static private metadata owner now ports the successful detached-Malloc
 paths in `src/subproc.c:19-88`: it directly maps its page map and external
 arena before publishing one detached theap, never touches compiler-TLS roots,
 and uses a must-use owner-bound capability for source-ordered replacement and
-serialized cross-thread release. This remains only the M2 prerequisite:
-null/needs-no-free/non-Malloc release, subprocess lifecycle, live TLD/theap
-attachment, and public allocation routing are not claimed. A narrow unsafe
+serialized cross-thread release. Its detached heap/TLD/theap and its
+pre-publication-bound registry/published arena name the same deliberately
+bounded process-main identity as the current-thread TLD checkpoint; it does
+not claim general subprocess destruction or public allocation routing. A narrow unsafe
 current-thread-only owner now uses that metadata prerequisite for regular
 dynamic TLS backing: it retains the typed Malloc capability, follows the
 source 16/double/+1024/least-index/65535 growth rule, publishes a fully
@@ -35,19 +36,22 @@ provenance, and frees before clearing only that root. It deliberately has no
 TLD/theap attachment, allocator-backed global key registry, or actual
 process/pthread lifecycle hook; an internal consumption-ambiguous metadata
 error clears the root and terminally poisons the owner instead of offering an
-unjustified retry capability. A
-second unsafe current-thread-only owner now allocates one full
-source-ordered `mi_tld_t` image through the same metadata allocator. It takes
-the old source total-thread-count value explicitly rather than inventing a
-process counter, records direct `TPIDR_EL0`, Linux NUMA, and the exact Unix
-non-threadpool result, and keeps subprocess and theap-list fields null. Its
-typed projection accepts only a fresh direct zeroed metadata request; teardown
-invalidates the thread ID before attempting free and terminally poisons on a
-consumption-ambiguous error. This is an unattached checkpoint, not full
-`mi_tld_create`/`mi_tld_free`: no subprocess accounting, list attachment,
-theap/default/cached/fast TLS publication, pthread/process hook, or C
-pthread-mutex layout claim exists. A later audited owner may connect the
-explicit `Unattached -> Attached -> Detached` state transition. A
+unjustified retry capability. A second unsafe current-thread-only owner now
+creates one full source-ordered `mi_tld_t` image with `subproc.rs`'s bounded
+process-main owner. It issues the old relaxed total-thread-count ticket before
+choosing storage; ticket zero uses the real static main-TLD branch without
+touching metadata, while later tickets use an exact fresh direct-zeroed
+metadata capability. Only the fully initialized TLD converts its ticket into a
+live-count lease, so a metadata failure still consumes the sequence but does
+not leak a live count. The TLD records direct `TPIDR_EL0`, Linux NUMA, the
+exact Unix non-threadpool result, the same main-subprocess pointer as detached
+metadata bootstrap state, and a null theap list. Its source-ordered teardown
+decrements the live count, invalidates the thread ID, proves the private lock
+quiescent, then retires the static slot or frees metadata; busy/ambiguous
+failures poison the owner. This is **subprocess-attached, no-theap**, not full
+`mi_tld_create`/`mi_tld_free`: Theap list attachment, default/cached/fast TLS
+publication, pthread/process hooks, complete subprocess layout/lifecycle, and
+C pthread-mutex layout claims remain absent. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,

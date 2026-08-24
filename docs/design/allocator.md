@@ -26,10 +26,11 @@ nonallocating support kernels. Its allocator-owned random state is the exact
 `mi_random_ctx_t` image stored directly in `Theap::random`; it preserves the
 pinned original-ChaCha state and output contract through the audited RustCrypto
 primitive, direct entropy lifecycle, and a documented degraded entropy path.
-Theap/TLD attachment, publication, and teardown wiring remain unfinished
-slices. The recursive allocation-free once protocol is present as a
-coordination primitive, but no process initialization state machine is yet
-claimed.
+A bounded current-thread TLD checkpoint now attaches each private TLD to one
+process-main identity, but Theap attachment and all compiler-TLS publication
+remain unfinished slices. The recursive allocation-free once protocol is
+present as a coordination primitive, but no general process initialization
+state machine is claimed.
 
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
 present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal
@@ -37,12 +38,15 @@ operations require `Pin<&'static MetaAllocator>`, validate the current live
 AArch64 thread-pointer identity before taking a nonrecursive `PrivateLock`,
 then lazily build a direct-OS page map and aligned external arena in their
 final static slots before Release-publishing a detached `ExclusiveTheap`.
+Before that arena is published, the metadata owner selects the same bounded
+main-subprocess identity for its arena registry, so its registry and published
+arena agree with the detached heap/TLD/theap image.
 The ordinary page lifecycle supplies the first and later metadata blocks; no
 `alloc`, libc, public pthread API, compiler-TLS root, separate metadata slab,
 or mmap-per-block path participates. Its must-use, non-Copy
 `MetaAllocation<'owner>` capability records the static owner address, requested
 size, and `MemoryId::Malloc` provenance. The bounded regular-TLS and
-unattached-TLD owners retain and move that capability as a field, never
+subprocess-attached/no-theap TLD owners retain and move that capability as a field, never
 reconstruct it from the raw pointer. The checkpoint retains the source allocation-under-lock,
 unlock-before-copy/free `rezalloc` ordering and serializes cross-thread free,
 but it intentionally covers only successful Malloc capabilities: null,
@@ -96,23 +100,38 @@ claimed from that internal error limitation. The backing owner does not provide
 the source's TLD/theap attachment, allocator-backed global key registry,
 process or pthread teardown hook, or production ELF integration.
 
-A separate unsafe `ThreadLocalDataOwner` now owns one full source-ordered
-`mi_tld_t`-shaped metadata image for its exact current `TPIDR_EL0` identity.
-It accepts a `ThreadSequence` supplied by the future process owner—the old
-value of the source relaxed `thread_total_count` increment—rather than
-inventing an unconnected global counter. It records the existing Linux NUMA
-observation, the pinned Unix `is_in_threadpool = false` result, initialized
-private lock, null subprocess/theap-list pointers, and exact Malloc `memid`.
-The typed capability can initialize this image only from a fresh direct zeroed
-metadata request, never a replacement or aligned request. Its bounded teardown
-invalidates `thread_id` before attempting metadata free and becomes terminal
-on a consumption-ambiguous error. This is not full `mi_tld_create` or
-`mi_tld_free`: it has no subprocess count, main static TLD, list attachment,
-compiler-TLS publication, pthread/process hook, or general lock destructor.
-`PrivateLock` preserves the TLD field's private-lock meaning but is not a
-byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made. A
-later audited owner-controlled `Unattached -> Attached -> Detached` transition
-may connect it to theap lifecycle; this checkpoint exposes only `Unattached`.
+`subproc.rs` now represents the deliberately small process-static identity of
+`mi_process_subproc_main`: it owns only the relaxed source
+`thread_total_count` sequence, relaxed live `thread_count`, and the real
+static `mi_process_tld_main` slot. It is explicitly not a Rust layout claim
+for full `mi_subproc_t`; subprocess lists, heaps, arenas, statistics, and M6
+subprocess APIs remain absent. A linear non-Send ticket records the old value
+from `thread_total_count.fetch_add(Relaxed)` before any static/metadata storage
+choice. Ticket zero initializes the actual `MemoryKind::Static` TLD slot with
+its own source base and `size_of::<ThreadLocalData>()` image size, without
+touching `MetaAllocator`; later tickets use the existing fresh
+direct-zeroed metadata route. An allocation failure therefore consumes its
+source sequence but never increments the live count. Only a fully initialized
+TLD can consume its ticket into a non-dropping registration lease, whose
+explicit consuming release performs exactly one live-count decrement.
+
+`ThreadLocalDataOwner` now receives that ticket internally rather than taking a
+caller-supplied sequence. Its full source-ordered TLD image names the same
+process-main identity as the detached metadata heap/TLD/theap bootstrap and
+its pre-publication-bound arena registry,
+records direct `TPIDR_EL0`, Linux NUMA, the pinned Unix
+`is_in_threadpool = false` result, an initialized private lock, and a null
+theap-list pointer. This is precisely **subprocess-attached, no-theap**:
+there is one process registration, but no Theap list/default/cached/fast TLS
+publication or live heap attachment. Teardown follows the bounded source
+order—release the registration, invalidate `thread_id`, prove the private lock
+quiescent, then retire static storage or free metadata. A busy private lock or
+consumption-ambiguous metadata-free error terminally poisons the owner rather
+than inventing retryable ownership. `PrivateLock` preserves the TLD field's
+private-lock meaning but is not a byte-identical pthread mutex, so no C
+`sizeof(mi_tld_t)` claim is made. Full `mi_tld_create`/`mi_tld_free`, theap
+list attachment, compiler-TLS publication, pthread/process hooks, and general
+lock destruction remain outside this slice.
 
 The abandonment/adoption protocol preserves mapped versus unmapped source
 classification, publishes the abandoned bitmap before

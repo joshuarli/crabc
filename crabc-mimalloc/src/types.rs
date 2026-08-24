@@ -8,8 +8,9 @@
 // (`MemoryKind`, memory-ID layout, `Block`, page flags, and `Page`),
 // `include/mimalloc/types.h:499-598` (the default-theap prefix, including
 // `mi_page_queue_t`, `mi_random_ctx_t`, and `mi_theap_t` through `memid`),
-// `include/mimalloc/types.h:618-701` (the heap prefix and complete
-// source-ordered TLD fields), `include/mimalloc/types.h:608-758`
+// `include/mimalloc/types.h:618-680` (the heap prefix),
+// `include/mimalloc/types.h:690-701` (complete source-ordered TLD fields),
+// `include/mimalloc/types.h:608-758`
 // (arena-page and arena metadata layouts), `src/init.c:15-145` (the
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
 // empty-theap initializers), `src/arena.c:1023-1095` (fresh-page metadata
@@ -20,9 +21,11 @@
 // `Heap` and `Theap` below are exact source-layout *prefixes* only.
 // `ThreadLocalData` preserves all source field ordering and meaning, but its
 // lock is the documented private-futex boundary rather than a pthread ABI
-// object. The remaining heap, subprocess, TLD attachment/list, lock, and
-// statistics lifecycle is deliberately absent; no code may treat a Rust type
-// here as `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`, or `sizeof(mi_theap_t)`.
+// object. The bounded process-main identity and its TLD ticket/count contract
+// are represented separately in `subproc.rs`; complete subprocess, TLD-theap
+// attachment/list, lock, and statistics lifecycle remain absent. No code may
+// treat a Rust type here as `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`, or
+// `sizeof(mi_theap_t)`.
 
 use core::ffi::c_void;
 use core::mem::{align_of, size_of};
@@ -35,10 +38,15 @@ use crate::config::{
 };
 use crate::lock::PrivateLock;
 use crate::random::TheapRandomImage;
+use crate::subproc::MainSubprocess;
 
 pub(crate) type ThreadId = usize;
 pub(crate) type ThreadFree = usize;
 pub(crate) type PageFlags = usize;
+/// Compatibility spelling for source fields that carry the bounded
+/// process-main identity. This is deliberately not a complete `mi_subproc_t`
+/// layout; see [`MainSubprocess`] for the represented fields.
+pub(crate) type Subprocess = MainSubprocess;
 
 pub(crate) const PAGE_IN_FULL_QUEUE: PageFlags = 0x01;
 pub(crate) const PAGE_HAS_INTERIOR_POINTERS: PageFlags = 0x02;
@@ -85,11 +93,11 @@ impl LiveThreadId {
 /// One source-issued `mi_tld_t::thread_seq` value.
 ///
 /// `src/init.c:mi_tld_create` obtains this value from the previous result of
-/// its relaxed `subproc->thread_total_count` increment. The process/subprocess
-/// owner that owns that counter does not exist in this bounded slice, so this
-/// type deliberately records a supplied value without creating a second
-/// process-global sequence source. Future process initialization must pass the
-/// exact old counter value through [`Self::from_previous_total_count`].
+/// its relaxed `subproc->thread_total_count` increment. The bounded
+/// [`crate::subproc::MainSubprocess`] owns that increment and turns the old
+/// value into a linear registration ticket; this transparent value type
+/// records the source field inside `ThreadLocalData` without becoming a second
+/// sequence source.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ThreadSequence(usize);
@@ -138,18 +146,16 @@ impl TheapOwner {
     }
 }
 
-/// Opaque because the subprocess lifecycle is outside the bootstrap slice.
-pub(crate) enum Subprocess {}
-
 /// Prefix of `mi_heap_t` through its `subproc` member.
 ///
 /// The exclusive bootstrap does not create, enumerate, or destroy heaps. It
 /// owns one caller-pinned image solely so pages and the default theap can hold
-/// the source-shaped heap pointer. Its null subprocess pointer records that
-/// subprocess lifecycle is not part of this slice.
+/// the source-shaped heap pointer. A detached metadata bootstrap names the
+/// bounded main-subprocess identity; heap lists and all other subprocess
+/// lifecycle remain outside this prefix.
 #[repr(C)]
 pub(crate) struct Heap {
-    subprocess: *mut Subprocess,
+    subprocess: *mut MainSubprocess,
 }
 
 impl Heap {
@@ -159,6 +165,23 @@ impl Heap {
             subprocess: null_mut(),
         }
     }
+
+    /// Binds this source prefix to the one bounded process-main identity.
+    ///
+    /// Only `ExclusiveTheapBootstrap` calls this while its heap is still
+    /// inactive and address-stable; no heap-list or subprocess API follows
+    /// from the stored pointer.
+    #[inline]
+    pub(crate) fn bind_main_subprocess(&mut self, subprocess: &'static MainSubprocess) {
+        debug_assert!(self.subprocess.is_null());
+        self.subprocess = subprocess.as_ptr();
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn is_bound_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
+        core::ptr::eq(self.subprocess, subprocess.as_ptr())
+    }
 }
 
 /// Source-ordered `mi_tld_t` fields.
@@ -167,15 +190,15 @@ impl Heap {
 /// this is not a byte-for-byte C ABI claim: [`PrivateLock`] is the allocator's
 /// audited Linux futex boundary, not the upstream pthread-mutex object. The
 /// detached bootstrap and the bounded current-thread metadata owner are the
-/// only constructors. The latter remains explicitly unattached: it publishes
-/// neither a subprocess nor a theap list, and cannot stand in for a complete
-/// `mi_tld_create` lifecycle.
+/// only constructors. The latter is subprocess-attached but has no theap
+/// list or compiler-TLS publication, and cannot stand in for a complete
+/// `mi_tld_create`/thread lifecycle.
 #[repr(C)]
 pub(crate) struct ThreadLocalData {
     thread_id: ThreadId,
     thread_seq: usize,
     numa_node: i32,
-    subprocess: *mut Subprocess,
+    subprocess: *mut MainSubprocess,
     theaps: *mut Theap,
     theaps_lock: PrivateLock,
     recurse: bool,
@@ -216,11 +239,19 @@ impl ThreadLocalData {
         self.numa_node
     }
 
-    /// Returns whether this TLD is deliberately outside the unported
-    /// subprocess/theap lifecycle.
+    /// Returns whether this bounded TLD names a subprocess but no theap list.
+    ///
+    /// This is the precise checkpoint after `mi_tld_init`: its source
+    /// subprocess pointer and live-count lease exist, but theap allocation,
+    /// list attachment, and compiler-TLS publication are deliberately absent.
     #[inline]
-    pub(crate) const fn is_unattached(&self) -> bool {
-        self.subprocess.is_null() && self.theaps.is_null()
+    pub(crate) const fn is_subprocess_attached_no_theap(&self) -> bool {
+        !self.subprocess.is_null() && self.theaps.is_null()
+    }
+
+    #[inline]
+    pub(crate) fn is_attached_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
+        core::ptr::eq(self.subprocess, subprocess.as_ptr())
     }
 
     /// Returns whether a deferred callback is currently recursing.
@@ -249,6 +280,17 @@ impl ThreadLocalData {
         self.theaps_lock.try_lock().is_some()
     }
 
+    /// Injects a private theap-list lock violation without retaining a guard
+    /// or TLD reference across `ThreadLocalDataOwner::teardown`.
+    ///
+    /// Normal lifecycle tests must never use this: a valid owner reaches
+    /// teardown with no guards or waiters.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_inject_busy_theaps_lock(&self) {
+        self.theaps_lock.test_inject_busy();
+    }
+
     /// Records a live identity on caller-pinned/static bootstrap storage.
     ///
     /// This is the allocation-free bootstrap-only identity update used by
@@ -260,8 +302,28 @@ impl ThreadLocalData {
         self.thread_id = thread_id.get();
     }
 
-    /// Initializes the complete, unattached result of the bounded
-    /// `mi_tld_create` adaptation.
+    /// Initializes the source detached metadata-TLD portion after the bounded
+    /// main subprocess identity exists.
+    ///
+    /// This is `mi_tld_init`'s detached branch: it names the same main
+    /// subprocess as the process heap and metadata theap, retains sequence
+    /// zero, and stores the source detached NUMA sentinel. It is not a live
+    /// thread registration and therefore does not affect either counter.
+    #[inline]
+    pub(crate) fn attach_detached_main_subprocess(&mut self, subprocess: &'static MainSubprocess) {
+        debug_assert_eq!(self.thread_id, THREAD_ID_DETACHED);
+        self.thread_seq = 0;
+        self.numa_node = -1;
+        self.subprocess = subprocess.as_ptr();
+        self.theaps = null_mut();
+        self.theaps_lock = PrivateLock::new();
+        self.recurse = false;
+        self.is_in_threadpool = false;
+        self.memid = MemoryId::static_empty();
+    }
+
+    /// Initializes the complete subprocess-attached/no-theap result of the
+    /// bounded `mi_tld_create` adaptation.
     ///
     /// # Safety
     ///
@@ -270,68 +332,128 @@ impl ThreadLocalData {
     /// exist there. `memid` must describe that exact allocation. The caller
     /// must keep the allocation live until the source-ordered invalidation and
     /// metadata release transition completes.
-    pub(crate) unsafe fn initialize_unattached(
+    pub(crate) unsafe fn initialize_subprocess_attached_no_theap(
         &mut self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
         numa_node: i32,
+        subprocess: &'static MainSubprocess,
         memid: MemoryId,
     ) {
-        // SAFETY: the caller proves this fresh-zeroed metadata image is
-        // uniquely owned. Writing the complete source-ordered image replaces
-        // its valid zero representation before any observer can receive a
-        // reference.
+        // SAFETY: forwarded unchanged; `self` is the caller's exclusive
+        // valid image and receives a complete source-ordered replacement.
         unsafe {
-            core::ptr::write(
-                self,
-                Self {
-                    thread_id: thread_id.get(),
-                    thread_seq: thread_sequence.get(),
-                    numa_node,
-                    subprocess: null_mut(),
-                    theaps: null_mut(),
-                    theaps_lock: PrivateLock::new(),
-                    recurse: false,
-                    // `src/prim/unix/prim.c` returns false exactly.
-                    is_in_threadpool: false,
-                    memid,
-                },
+            Self::write_subprocess_attached_no_theap_at(
+                core::ptr::from_mut(self),
+                thread_id,
+                thread_sequence,
+                numa_node,
+                subprocess,
+                memid,
             );
+        }
+    }
+
+    /// Writes one complete subprocess-attached/no-theap TLD image into raw
+    /// storage without first forming a reference to that storage.
+    ///
+    /// The process-static main-TLD branch begins as `MaybeUninit`, unlike the
+    /// metadata branch's known valid all-zero representation. Keeping this
+    /// raw initialization boundary avoids manufacturing `&mut ThreadLocalData`
+    /// before every field has been initialized.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be aligned writable storage for exactly one TLD and
+    /// exclusively available. If it already contains a TLD value, its owner
+    /// must permit replacement without running `Drop` (the represented TLD is
+    /// intentionally non-dropping). No observer may access the destination
+    /// until this complete image has been published by its owner.
+    #[inline]
+    pub(crate) unsafe fn write_subprocess_attached_no_theap_at(
+        destination: *mut Self,
+        thread_id: LiveThreadId,
+        thread_sequence: ThreadSequence,
+        numa_node: i32,
+        subprocess: &'static MainSubprocess,
+        memid: MemoryId,
+    ) {
+        // SAFETY: the caller proves exclusive aligned storage and no observer
+        // can reach it before the complete image is installed.
+        unsafe {
+            destination.write(Self {
+                thread_id: thread_id.get(),
+                thread_seq: thread_sequence.get(),
+                numa_node,
+                subprocess: subprocess.as_ptr(),
+                theaps: null_mut(),
+                theaps_lock: PrivateLock::new(),
+                recurse: false,
+                // `src/prim/unix/prim.c` returns false exactly.
+                is_in_threadpool: false,
+                memid,
+            });
         }
     }
 
     /// Checks the complete bounded TLD invariant before its owner exposes it.
     #[inline]
-    pub(crate) fn matches_unattached_lifecycle(
+    pub(crate) fn matches_subprocess_attached_no_theap_lifecycle(
         &self,
         thread_id: LiveThreadId,
         thread_sequence: ThreadSequence,
+        subprocess: &MainSubprocess,
     ) -> bool {
         self.thread_id == thread_id.get()
             && self.thread_seq == thread_sequence.get()
-            && self.is_unattached()
+            && self.is_subprocess_attached_no_theap()
+            && self.is_attached_to_main_subprocess(subprocess)
             && !self.recurse
             // This is the pinned Unix primitive result, not a guessed policy.
             && !self.is_in_threadpool
     }
 
-    /// Executes the `mi_tld_free` identity invalidation before the bounded
-    /// metadata release attempt.
+    /// Executes the `mi_tld_free` identity invalidation after its owner has
+    /// released the corresponding subprocess live-count lease.
     ///
-    /// The full source also decrements `subproc->thread_count` and destroys
-    /// the pthread lock. This owner is explicitly unattached, so it cannot
-    /// truthfully perform either operation; its unique no-waiter lifecycle
-    /// instead makes the private lock ready for mapping release.
+    /// The source next destroys the TLD lock. The project-private futex lock
+    /// has no destructor, so its owner proves quiescence separately before a
+    /// metadata image is released or the static image is retired.
     #[inline]
-    pub(crate) fn invalidate_unattached_for_teardown(&mut self) {
-        debug_assert!(self.is_unattached());
+    pub(crate) fn invalidate_subprocess_attached_no_theap_for_teardown(&mut self) {
+        debug_assert!(self.is_subprocess_attached_no_theap());
         self.thread_id = usize::MAX;
+    }
+
+    /// Establishes the private-lock quiescence required before source-static
+    /// retirement or metadata release.
+    ///
+    /// The owning `ThreadLocalDataOwner` is `!Send`, has no published theap
+    /// list, and requires no concurrent raw references, guards, or waiters.
+    /// A busy lock therefore records a violated owner contract rather than
+    /// waiting during teardown and pretending to provide pthread destruction.
+    #[inline]
+    pub(crate) fn quiesce_theap_list_lock_for_teardown(
+        &self,
+    ) -> Result<(), ThreadLocalDataQuiesceError> {
+        let guard = self
+            .theaps_lock
+            .try_lock()
+            .ok_or(ThreadLocalDataQuiesceError::Busy)?;
+        guard.unlock().map_err(ThreadLocalDataQuiesceError::Lock)
     }
 
     #[inline]
     fn matches_owner(&self, owner: TheapOwner) -> bool {
         self.thread_id == owner.thread_id()
     }
+}
+
+/// A private TLD lock was not quiescent at its explicit lifecycle boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadLocalDataQuiesceError {
+    Busy,
+    Lock(crabc_core::Errno),
 }
 
 #[repr(C)]
@@ -442,7 +564,10 @@ impl MemoryId {
     ) -> Self {
         Self {
             info: MemoryInfo {
-                os: OsMemory { base, size },
+                // `_mi_memid_create_static` deliberately records concrete
+                // static-image extent through the source `mem.malloc` union
+                // member, even though its memory kind is `MI_MEM_STATIC`.
+                malloc: MallocMemory { base, size },
             },
             kind: MemoryKind::External,
             is_pinned,
@@ -488,20 +613,37 @@ impl MemoryId {
         })
     }
 
+    /// Records `MI_MEM_STATIC` provenance for one concrete static image.
+    ///
+    /// `internal.h:_mi_memid_create_static` preserves the image's actual base
+    /// and size while marking it pinned and committed. This is distinct from
+    /// [`Self::static_empty`], which remains the source's reusable null/zero
+    /// static initializer for unrelated empty images.
     #[inline]
-    pub(crate) const fn static_empty() -> Self {
+    pub(crate) const fn static_allocation(base: *mut u8, size: usize) -> Self {
         Self {
             info: MemoryInfo {
-                os: OsMemory {
-                    base: null_mut(),
-                    size: 0,
-                },
+                // `_mi_memid_create_static` records its provenance in the
+                // `mem.malloc` union arm even though `MI_MEM_STATIC` is
+                // pinned/committed and `_mi_memid_size` deliberately reports
+                // zero for it.
+                malloc: MallocMemory { base, size },
             },
             kind: MemoryKind::Static,
             is_pinned: true,
             initially_committed: true,
             initially_zero: false,
         }
+    }
+
+    /// The static all-zero source initializer used by unrelated empty images.
+    ///
+    /// This intentionally remains a null, zero-size image; concrete static
+    /// allocations such as `mi_process_tld_main` must use
+    /// [`Self::static_allocation`].
+    #[inline]
+    pub(crate) const fn static_empty() -> Self {
+        Self::static_allocation(null_mut(), 0)
     }
 
     #[inline]
@@ -544,6 +686,19 @@ impl MemoryId {
                 | MemoryKind::OsRemap
         ) {
             Some(unsafe { self.info.os })
+        } else {
+            None
+        }
+    }
+
+    /// Returns the `mem.malloc` base/size recorded for a concrete
+    /// `MI_MEM_STATIC` image.
+    #[inline]
+    pub(crate) fn static_memory(&self) -> Option<MallocMemory> {
+        if self.kind == MemoryKind::Static {
+            // SAFETY: both static constructors initialize the `malloc` union
+            // member, matching `_mi_memid_create_static` exactly.
+            Some(unsafe { self.info.malloc })
         } else {
             None
         }
@@ -1876,6 +2031,15 @@ impl Theap {
     #[inline]
     pub(crate) fn heap(&self) -> *mut Heap {
         self.heap.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn is_bound_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
+        core::ptr::eq(
+            self.subproc.load(core::sync::atomic::Ordering::Acquire),
+            subprocess.as_ptr(),
+        )
     }
 
     #[inline]

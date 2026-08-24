@@ -62,6 +62,7 @@ mod random;
 mod remote_free;
 mod size_class;
 mod single_thread;
+mod subproc;
 mod support;
 #[cfg(feature = "test-adapter")]
 mod test_context;
