@@ -263,22 +263,33 @@ heap-local-bit-clear order. `ArenaView::pages_main` remains untouched by a
 dynamic page. Empty teardown removes that exact slot before freeing the typed
 image; a nonempty image is a wholly pre-mutation rejection. Allocation failure
 before publication leaves the slot null and retryable. Lock/unlock/free
-ambiguity after mutation terminally retains the known owner state. The only
-abandoned-bin operation is a test-only disjointness witness; abandonment
-movement, multiple arena images, and general heap destruction remain deferred.
+ambiguity after mutation terminally retains the known owner state. A consuming
+`DynamicMappedPageHandoff` now ports one mapped regular arena-page handoff:
+after false-force collection it removes the exact regular queue member and
+page count, installs abandoned identity, Release-publishes its one heap-local
+abandoned bit, increments `Heap::abandoned_count[bin]`, and unowns it. Only
+the same token can claim that exact bit, decrement the count before the
+source abandoned then live-owner collections, and append the page back to the
+same Theap queue. Forgetting or post-claim failure retains the engine rather
+than exposing normal free/allocation. Full, singleton/huge, non-arena,
+foreign, and ordinary abandoning-session pages remain rejected; abandoned
+free/reabandon, terminal release/reuse, multiple arena images, and general
+heap destruction remain deferred.
 
 `PrivateLock` preserves the TLD field's private-lock meaning but is not a
 byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made.
 General cached-root switching/reference ownership, general remote-free/page
-routing or abandonment integration, full heap/Theap/arena/subprocess APIs,
+routing or abandonment integration beyond that one handoff, full
+heap/Theap/arena/subprocess APIs,
 pthread/process hooks, fork repair, process shutdown, and general lock
 destruction remain outside this slice.
 
 The abandonment/adoption protocol preserves mapped versus unmapped source
-classification, publishes the abandoned bitmap before
-releasing ownership, restores a failed reader's bit, waits for reader
-quiescence before unabandoning, and reassociates a claimed page before remote
-collection. It requires queue-detached, address-stable page/arena/theap
+classification, publishes the abandoned bitmap/count before releasing
+ownership, restores a failed reader's bit, waits for reader quiescence before
+unabandoning, drains after source bitmap claim while still abandoned, then
+reassociates a claimed page and performs the live-owner collection before
+queue insertion. It requires queue-detached, address-stable page/arena/theap
 metadata and intentionally does not release or reuse the page. A test-only
 Loom model executes the live-owner remote-head publication/detach loops and
 the abandoned owner-claim/unown races under bounded schedules; deterministic

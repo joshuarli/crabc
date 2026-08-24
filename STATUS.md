@@ -163,8 +163,10 @@ arena slot and is used for fresh/rollback/release page bits. It remains
 disjoint from the arena's `pages_main`. Empty attachment
 teardown removes the exact slot before freeing it, while a nonempty image is a
 pre-mutation rejection and post-mutation lock/free ambiguity terminally
-retains owner state. This is not abandonment movement, multi-arena dynamic
-heap support, or general heap destruction.
+retains owner state. One consuming same-owner handoff now moves a mapped
+regular dynamic arena page through its heap-local abandoned bitmap/count and
+reclaims it back to that engine; abandoned free/reabandon, terminal reuse,
+multi-arena dynamic heap support, and general heap destruction remain absent.
 
 Separately, the exact source-layout `mi_random_ctx_t` image now lives directly
 in `Theap::random`: it preserves source input/output word order, counter
@@ -184,10 +186,10 @@ schedules execute the shared live-owner and abandoned owner-claim/unown head
 transitions. The compiler-TLS evidence proves private initial-exec AArch64 code
 generation in a dedicated crate probe and proves that the pinned compiler
 default would instead emit TLSDESC; public runtime integration must still apply
-the required per-crate model and audit the final linked ELF. The abandonment
-protocol requires stable, queue-detached metadata and deliberately performs no
-terminal page release or reuse; it is not part of the bounded dynamic page
-engine. General allocation routing, actual process/thread lifecycle hooks,
+the required per-crate model and audit the final linked ELF. The bounded
+dynamic engine consumes one stable, queue-detached mapped regular handoff and
+deliberately performs no abandoned free, reabandon, terminal page release, or
+reuse. General allocation routing, actual process/thread lifecycle hooks,
 full teardown, and reusable abandoned-page lifetime remain absent.
 Process state, general allocator TLS lifecycle, general dynamic heap/Theap
 attachment and remote-free routing, complete concurrency modeling and stress,

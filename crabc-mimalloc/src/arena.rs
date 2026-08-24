@@ -13,14 +13,17 @@
 // committed/dirty/zero observations, and commit rollback),
 // `src/arena.c:911-947` (aligned page metadata selection and commitment),
 // `src/arena.c:1433-1490` (arena slice release),
+// `src/arena.c:725-778,1304-1355` (mapped abandoned-page bitmap/count
+// publication, claim, and quiescent clear),
 // `src/arena.c:2238-2409` (default delayed arena purge scheduling and forced
 // collection), and
 // `src/arena.c:1676-1917` (in-place arena initialization, metadata
 // reservation, external-region alignment, and 16-GiB splitting).
 // This substrate deliberately stops before arena iteration/search across the
 // registry-wide arena search, fresh page routing beyond the one bounded
-// heap-local `arena_pages` owner, theap/TLS state, NUMA option lookup,
-// statistics, and allocator-backed metadata.
+// heap-local `arena_pages` owner and its exact mapped-regular handoff,
+// theap/TLS state, NUMA option lookup, statistics, and allocator-backed
+// metadata.
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
@@ -33,6 +36,7 @@ use crate::atomic::{
     pointer_cas_strong_release, pointer_load_acquire, word_cas_strong_release,
     word_load_relaxed, AtomicWord,
 };
+use crate::abandoned::{MappedAbandonedClaim, MappedAbandonedPages};
 use crate::bitmap::{
     AbandonedBitmapClaim, BinnedBitmapLayout, BinnedBitmapView, BitmapLayout,
     BitmapView, BCHUNK_SIZE,
@@ -370,8 +374,9 @@ enum DynamicArenaPagesOwnerState {
 /// non-main heap, then stores it in `heap->arena_pages[arena_idx]` under the
 /// private lock. This owner keeps the aligned `MetaAllocation` capability and
 /// never aliases the arena's process-main `pages_main` / `pages_abandoned`
-/// bitmaps. It intentionally does not implement abandonment movement,
-/// multiple-arena ownership, or the full source heap destruction protocol.
+/// bitmaps. Its exact-page capability serves one consuming mapped-regular
+/// handoff; general abandonment movement, multiple-arena ownership, and the
+/// full source heap destruction protocol remain absent.
 #[must_use = "dynamic arena-pages metadata must remain with its dynamic Heap owner"]
 pub(crate) struct DynamicArenaPagesOwner {
     metadata: core::pin::Pin<&'static MetaAllocator>,
@@ -520,36 +525,26 @@ impl DynamicArenaPagesOwner {
         self.state == DynamicArenaPagesOwnerState::Published && self.is_empty()
     }
 
-    /// Test-only disjointness witness for one heap-local abandoned-bin bitmap.
-    ///
-    /// No production abandonment identity/capability exists in this slice, so
-    /// exposing a safe setter here would manufacture an invalid owned-page
-    /// state. The abandonment implementation must replace this with its
-    /// source-valid abandoned-mapped publication boundary.
-    #[cfg(test)]
-    pub(crate) fn set_abandoned_page(&self, bin: usize, memory: MemoryId) -> bool {
-        let Some(index) = self.slice_index(memory) else {
-            return false;
-        };
-        self.with_abandoned(bin, |pages| pages.set_range(index, 1))
-            .is_some_and(|transition| transition.is_some_and(|run| run.all_transitioned()))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn clear_abandoned_page(&self, bin: usize, memory: MemoryId) -> bool {
-        let Some(index) = self.slice_index(memory) else {
-            return false;
-        };
-        self.with_abandoned(bin, |pages| pages.clear_range(index, 1)) == Some(Some(true))
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn abandoned_page_is_set(&self, bin: usize, memory: MemoryId) -> bool {
-        let Some(index) = self.slice_index(memory) else {
-            return false;
-        };
-        self.with_abandoned(bin, |pages| pages.is_clear_range(index, 1)) == Some(Some(false))
+    /// Forms the sole production capability allowed to publish one dynamic
+    /// `pages_abandoned[bin]` bit. Its constructor requires the exact source
+    /// arena, an already page-map-published ordinary slice, and a mapped
+    /// regular bin; it cannot manufacture an abandoned identity for an
+    /// arbitrary `MemoryId`.
+    pub(crate) fn mapped_abandoned_page(
+        &self,
+        arena: &ArenaView<'_>,
+        bin: usize,
+        memory: MemoryId,
+    ) -> Option<DynamicArenaMappedAbandonedPage<'_>> {
+        if !self.is_for_arena(arena) || bin >= ARENA_BIN_COUNT || !self.page_is_set(memory) {
+            return None;
+        }
+        Some(DynamicArenaMappedAbandonedPage {
+            owner: self,
+            bin,
+            memory,
+            slice_index: self.slice_index(memory)?,
+        })
     }
 
     /// Removes this exact Heap slot and frees its retained capability only
@@ -648,10 +643,123 @@ impl DynamicArenaPagesOwner {
             })
     }
 
+    #[inline]
+    fn increment_abandoned_count(&self, bin: usize) {
+        // SAFETY: this owner is created for exactly one pinned Heap and no
+        // capability can retarget that raw identity.
+        unsafe { self.heap.as_ref() }.increment_abandoned_count(bin);
+    }
+
+    #[inline]
+    fn decrement_abandoned_count(&self, bin: usize) -> bool {
+        // SAFETY: successful bitmap claim/clear consumes one prior publish
+        // in this exact owner/bin pair.
+        unsafe { self.heap.as_ref() }.decrement_abandoned_count(bin)
+    }
+
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_image(&self) -> Option<(NonNull<ArenaPages>, ArenaPagesLayout, MemoryId)> {
         Some((self.header_pointer()?, self.layout, self.allocation.as_ref()?.memory_id()))
+    }
+}
+
+/// One exact mapped regular dynamic page that may be published to its one
+/// `pages_abandoned[bin]` position after `abandoned.rs` installed the matching
+/// source page identity. This is intentionally not constructible from a raw
+/// bitmap or caller-provided slice number.
+pub(crate) struct DynamicArenaMappedAbandonedPage<'owner> {
+    owner: &'owner DynamicArenaPagesOwner,
+    bin: usize,
+    memory: MemoryId,
+    slice_index: usize,
+}
+
+impl MappedAbandonedPages for DynamicArenaMappedAbandonedPage<'_> {
+    #[inline]
+    fn bin(&self) -> usize { self.bin }
+
+    #[inline]
+    fn page_slice_index(&self, memory: MemoryId) -> Option<usize> {
+        let left = memory.arena_memory()?;
+        let right = self.memory.arena_memory()?;
+        (left.arena == right.arena
+            && left.slice_index == right.slice_index
+            && left.slice_count == right.slice_count)
+            .then_some(self.slice_index)
+    }
+
+    #[inline]
+    fn is_clear(&self, slice_index: usize) -> bool {
+        slice_index == self.slice_index
+            && self
+                .owner
+                .with_abandoned(self.bin, |pages| pages.is_clear_range(slice_index, 1))
+                == Some(Some(true))
+    }
+
+    #[inline]
+    fn publish(&self, slice_index: usize) -> bool {
+        if slice_index != self.slice_index {
+            return false;
+        }
+        let published = self.owner
+            .with_abandoned(self.bin, |pages| pages.set_range(slice_index, 1))
+            .is_some_and(|transition| transition.is_some_and(|run| run.all_transitioned()));
+        if published {
+            self.owner.increment_abandoned_count(self.bin);
+        }
+        published
+    }
+
+    #[inline]
+    fn try_claim<F>(&self, thread_sequence: usize, claim: F) -> MappedAbandonedClaim
+    where
+        F: FnMut(usize) -> AbandonedBitmapClaim,
+    {
+        let claimed = self.owner
+            .with_abandoned(self.bin, |pages| {
+                let mut claim = claim;
+                pages.try_find_and_claim_abandoned(thread_sequence, |slice_index| {
+                    if slice_index == self.slice_index {
+                        claim(slice_index)
+                    } else {
+                        AbandonedBitmapClaim::KeepSet
+                    }
+                })
+            });
+        let Some(claimed) = claimed else {
+            return MappedAbandonedClaim::None;
+        };
+        let Some(slice_index) = claimed else {
+            return MappedAbandonedClaim::None;
+        };
+        {
+            let decremented = self.owner.decrement_abandoned_count(self.bin);
+            if !decremented {
+                return MappedAbandonedClaim::CountDecrementFailed(slice_index);
+            }
+        }
+        MappedAbandonedClaim::Claimed(slice_index)
+    }
+
+    #[inline]
+    fn clear_once_set(&self, slice_index: usize) -> bool {
+        slice_index == self.slice_index
+            && self
+                .owner
+                .with_abandoned(self.bin, |pages| pages.clear_once_set(slice_index))
+                == Some(Some(()))
+    }
+
+    #[inline]
+    fn decrement_after_identity_clear(&self) -> bool {
+        let decremented = self.owner.decrement_abandoned_count(self.bin);
+        debug_assert!(
+            decremented,
+            "mapped unabandon must consume its paired heap count"
+        );
+        decremented
     }
 }
 
@@ -1359,9 +1467,9 @@ pub(crate) struct ArenaView<'arena> {
 ///
 /// This capability binds the bitmap to its source arena and size-class bin.
 /// The abandonment substrate uses it to prevent a caller from publishing a
-/// page into an arbitrary ordinary bitmap; it does not represent dynamic
-/// per-heap `mi_arena_pages_t` allocation, which still belongs to the later
-/// heap/theap lifecycle slice.
+/// page into an arbitrary ordinary bitmap. This accessor is main-heap only;
+/// a dynamic Heap instead receives the separate purpose-bound
+/// `DynamicArenaMappedAbandonedPage` capability for one exact mapped page.
 pub(crate) struct ArenaAbandonedPages<'arena> {
     arena: NonNull<Arena>,
     bin: usize,
@@ -1380,6 +1488,11 @@ impl ArenaAbandonedPages<'_> {
         }
         let index = memory.slice_index as usize;
         (index < self.bitmap.max_bits()).then_some(index)
+    }
+
+    #[inline]
+    pub(crate) fn bitmap_is_clear(&self, slice_index: usize) -> bool {
+        self.bitmap.is_clear_range(slice_index, 1) == Some(true)
     }
 
     #[inline]

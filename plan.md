@@ -1,5 +1,24 @@
 The crucial framing is: **do not design a new allocator**. Produce a provenance-preserving, semantically faithful Rust port of a fixed upstream mimalloc v3 release, then optimize only where measurement shows the Rust translation diverges. The objective is to remove the C allocator from the production dependency graph while retaining mimalloc’s design, behavior, and performance—not to create “mimalloc-inspired” machinery.
 
+## Handoff — 2026-08-24
+
+The current checkpoint completes the dependency/crypto boundary, dynamic
+Theap-to-page-engine binding, private dynamic arena-pages ownership, and one
+consuming same-owner mapped regular-page abandon/adopt handoff. The handoff
+keeps exact heap-local bitmap/count accounting and performs the source's
+abandoned-owner then live-owner collections before requeueing. General
+abandoned free/reabandon, terminal release/reuse, multiple dynamic arenas,
+pthread/TLS teardown hooks, fork repair, public libc backend integration,
+performance qualification, and default promotion remain unfinished.
+
+Checkpoint evidence is green: `./scripts/dev.sh test -p crabc-mimalloc`
+(310 tests), allocator offline contract/ratchet checking,
+`./scripts/dev.sh structure`, the 39 allocator-runner unit tests, and
+`./scripts/dev.sh allocator --quick` (report:
+`compat/reports/allocator/latest.json`). A final read-only re-review was
+interrupted for this wind-down; resume by reviewing this checkpoint before
+starting general abandoned free/reabandon.
+
 The current upstream baseline should be **mimalloc v3.5.0**, released August 19, 2026, at tag commit `18b08671c9302247bfb682286e6bf3cc1773f801`. Upstream marks v3 as its recommended current design. Pin that exact commit and archive hash; never track `main`. ([GitHub][1])
 
 This is significantly more substantial than porting mimalloc v2. In v3, first-class heaps are backed by per-thread “theaps,” and the allocator has substantial page-map, arena, subprocess, thread-local, remote-free, and lifecycle machinery. That architecture is precisely what should be preserved rather than simplified prematurely. ([Microsoft GitHub][2])

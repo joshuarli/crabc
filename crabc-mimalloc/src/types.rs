@@ -309,6 +309,44 @@ impl Heap {
             && self.memid.kind() == MemoryKind::None
     }
 
+    /// Exact Relaxed source `heap->abandoned_count[bin]` increment after a
+    /// dynamic mapped-abandoned bit becomes visible.
+    #[inline]
+    pub(crate) fn increment_abandoned_count(&self, bin: usize) {
+        if bin < BIN_COUNT {
+            self.abandoned_count[bin].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Exact Relaxed mapped-bit claim/unabandon decrement. A zero counter is
+    /// an invalid owner pairing and remains untouched rather than wrapping.
+    #[inline]
+    pub(crate) fn decrement_abandoned_count(&self, bin: usize) -> bool {
+        if bin >= BIN_COUNT {
+            return false;
+        }
+        let count = &self.abandoned_count[bin];
+        let mut current = count.load(Ordering::Relaxed);
+        while current != 0 {
+            match count.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+        false
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn abandoned_count(&self, bin: usize) -> Option<usize> {
+        (bin < BIN_COUNT).then(|| self.abandoned_count[bin].load(Ordering::Relaxed))
+    }
+
     /// Acquire-loads one private source `heap->arena_pages[arena]` slot.
     #[inline]
     pub(crate) fn dynamic_arena_pages_at(&self, arena_index: usize) -> Option<NonNull<ArenaPages>> {

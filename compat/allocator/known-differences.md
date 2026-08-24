@@ -46,7 +46,8 @@ result may refine it only when it can prove retained ownership.
   `Send`/`!Sync` token holds the exclusive allocator borrow while a scoped
   worker may only publish the canonical block or cancel to the original client
   pointer. Detached sessions, a producer registry, concurrent queue
-  collection, abandonment integration, owner exit, pthread lifecycle, and
+  collection, abandonment integration beyond one consuming dynamic mapped
+  regular handoff, owner exit, pthread lifecycle, and
   general asynchronous/public free routing remain absent. The caller still
   proves join/quiescence before queue collection because existing queue helpers
   borrow page metadata. Unlike the infallible C collection calls, a Rust
@@ -227,8 +228,12 @@ result may refine it only when it can prove retained ownership.
   subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
   metadata image bound to the exact Heap and one arena slot. The ordinary page
   bitmap is disjoint from
-  `Arena::pages_main` for fresh/rollback/release; a test-only abandoned-bin
-  witness is not abandonment publication. Image allocation failure before
+  `Arena::pages_main` for fresh/rollback/release. One consuming same-owner
+  `DynamicMappedPageHandoff` additionally moves only a mapped regular arena
+  page through heap-local `pages_abandoned[bin]` and its paired
+  `Heap::abandoned_count`, then reclaims it through the same pinned engine.
+  It deliberately rejects full/singleton/huge/non-arena/foreign pages and
+  does not implement abandoned free/reabandon or terminal reuse. Image allocation failure before
   slot publication remains retryable; any post-slot private lock/unlock/free
   ambiguity retains the known terminal owner. A nonempty image is rejected
   before dynamic root/list/key mutation; multiple arenas and general heap
@@ -268,7 +273,7 @@ result may refine it only when it can prove retained ownership.
   exact list membership, ticket-zero refusal, and valid release order.
 - **Decision/removal:** accepted until a complete dynamic heap/Theap, general
   cached-root switching/reference, private-lock retry, public routing,
-  abandonment, pthread/process lifecycle, and allocator integration design can
+  general abandonment, pthread/process lifecycle, and allocator integration design can
   distinguish all failures and reach full source shutdown. It does not
   authorize pointer reconstruction,
   lock stealing, arbitrary predecessor restoration, implicit lease drop,

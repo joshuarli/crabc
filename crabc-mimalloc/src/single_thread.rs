@@ -20,7 +20,7 @@
 // 347-388` (natural/overallocated aligned allocation and aligned realloc),
 // `src/free.c:28-50,104-114,522-542` (local free, interior-base recovery,
 // and aligned usable size),
-// `src/page.c:150-242,374-388,460-522,708-1069` (remote/local free
+// `src/page.c:150-242,276-302,374-388,460-522,708-1069` (remote/local free
 // collection, non-abandoning post-enqueue full-page collection,
 // full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
@@ -38,7 +38,10 @@
 // arenas and a caller-initialized page map. This engine does not construct or
 // generalize TLS/Heap lifecycle; its narrow dynamic session instead borrows
 // one caller-pinned first-class Heap. There is no general lock-free remote-free
-// routing, page abandonment, OS arena reservation, or public API here. A bounded false-force collector runs in
+// routing, abandonment/free/reabandon routing, OS arena reservation, or public
+// API here. One consuming dynamic same-owner handoff covers only a mapped
+// regular arena page; it retains the engine until that exact page is adopted.
+// A bounded false-force collector runs in
 // the source regular candidate scan and in the non-abandoning full-page pass.
 // `RemoteFreeProducer` is one private linear, scoped route to create that
 // publication for an exact active non-huge regular or `BIN_FULL` allocation;
@@ -59,6 +62,7 @@ use core::marker::PhantomData;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
+use crate::abandoned::{self, AbandonError, AbandonResult, RetainedAdoptFailure};
 use crate::arena::{ArenaId, ArenaView, release_arena_slices};
 use crate::{aligned, alloc, support};
 use crate::bootstrap::{
@@ -77,11 +81,12 @@ use crate::page_map::PageMap;
 use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
-use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, Page, PageKind, Theap};
+use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, MemoryKind, Page, PageKind, Theap};
 use crate::types::page_queue::{
     page_is_in_full, page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
-    page_queue_move_to_front_metadata, page_queue_remove_metadata,
+    page_queue_move_to_front_metadata, page_queue_push_at_end_metadata,
+    page_queue_remove_metadata,
 };
 
 const RETIRE_CYCLES: u8 = 16;
@@ -317,6 +322,68 @@ pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
 pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
     PageAllocatorEngine<'arena, 'map, DynamicTheapPageSession<'attach, 'heap>>;
 
+/// One rejected pre-handoff observation. Every variant is checked before the
+/// source queue detach; the returned engine has not entered abandoned state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicMappedAbandonError {
+    Collection,
+    Unmapped,
+    ForeignPage,
+    NonArena,
+    FullOrSpecial,
+    NotActiveRegular,
+    MissingDynamicArenaPages,
+    EmptyAfterCollection,
+    Abandon(AbandonError),
+}
+
+/// A consuming dynamic mapped-abandon result. A caller that receives
+/// [`Self::Rejected`] regains its still-live engine; a post-detach source
+/// failure instead retains the engine inside [`Self::Terminal`] so normal
+/// allocation/free/finish cannot resume across an ambiguous owner boundary.
+#[must_use = "a mapped-abandon failure retains either the engine or a terminal handoff"]
+pub(crate) enum DynamicMappedAbandonFailure<'attach, 'heap, 'arena, 'map> {
+    Rejected {
+        engine: DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
+        error: DynamicMappedAbandonError,
+    },
+    Terminal {
+        handoff: DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>,
+        error: DynamicMappedAbandonError,
+    },
+}
+
+/// A dynamic exact-page handoff that owns the entire page engine while its
+/// page is mapped-abandoned. Forgetting it conservatively retains the engine,
+/// attachment, page map, arena image, bitmap bit, and page; it cannot reveal a
+/// normal allocator able to free or reuse abandoned state.
+#[must_use = "a mapped-abandoned page must be adopted or terminally retained"]
+pub(crate) struct DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map> {
+    engine: DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
+    page: NonNull<Page>,
+    bin: usize,
+    memory: MemoryId,
+    terminal: bool,
+}
+
+/// A claimed mapped page that could not finish reassociation. The page may
+/// hold the low owner bit and no bitmap bit, so only retained terminal storage
+/// is sound in this bounded slice.
+#[must_use = "a mapped-adoption failure retains the handoff capability"]
+pub(crate) enum DynamicMappedAdoptFailure<'attach, 'heap, 'arena, 'map> {
+    /// The map contained no currently claimable exact page. Ownership remains
+    /// mapped/unowned and the caller may retry only through this token.
+    Pending(DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>),
+    /// A post-claim source failure retained the exact claimed page.
+    Claimed {
+        handoff: DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>,
+        retained: RetainedAdoptFailure,
+    },
+    /// Queue reassociation could not complete after an ownership transition.
+    /// The token is terminal; normal engine access is intentionally absent.
+    Terminal(DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>),
+}
+
 impl<'bootstrap, 'arena, 'map>
     PageAllocatorEngine<'arena, 'map, ExclusiveTheapSession<'bootstrap>>
 {
@@ -415,6 +482,172 @@ impl<'attach, 'heap, 'arena, 'map>
         }
     }
 
+    /// Moves one live mapped regular dynamic page into its exact heap-local
+    /// abandoned bitmap. This consumes the engine: after source queue detach
+    /// the only way back to ordinary allocation/free is the returned linear
+    /// [`DynamicMappedPageHandoff`]'s same-owner adoption.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be one current allocation in this engine's matching live
+    /// regular page. It is not freed by this operation; every client alias
+    /// must remain live until the page is adopted again or the handoff is
+    /// terminally retained. No scoped remote producer may survive entry.
+    pub(crate) unsafe fn abandon_mapped_regular(
+        mut self,
+        block: NonNull<u8>,
+    ) -> Result<DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>, DynamicMappedAbandonFailure<'attach, 'heap, 'arena, 'map>> {
+        let reject = |engine, error| DynamicMappedAbandonFailure::Rejected { engine, error };
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            return Err(reject(self, DynamicMappedAbandonError::Collection));
+        }
+        // SAFETY: the consuming engine retains the exclusive PageMap borrow.
+        let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
+        let Some(page) = NonNull::new(page) else {
+            return Err(reject(self, DynamicMappedAbandonError::Unmapped));
+        };
+        // SAFETY: the page map keeps this metadata live while the engine owns
+        // the only ordinary queue/list mutation capability.
+        let page_ref = unsafe { page.as_ref() };
+        if !self.owns_page(page_ref) || page_ref.heap() != self.session.theap().heap() {
+            return Err(reject(self, DynamicMappedAbandonError::ForeignPage));
+        }
+        let memory = page_ref.memid();
+        if memory.kind() != MemoryKind::Arena {
+            return Err(reject(self, DynamicMappedAbandonError::NonArena));
+        }
+        let Some(bin) = size_class::bin(page_ref.block_size()) else {
+            return Err(reject(self, DynamicMappedAbandonError::FullOrSpecial));
+        };
+        if bin >= crate::config::ARENA_BIN_COUNT || page_is_in_full(page_ref) {
+            return Err(reject(self, DynamicMappedAbandonError::FullOrSpecial));
+        }
+        // `release_span` is also the exact mapped-arena geometry and full
+        // PageMap-span witness. Prove it before any queue/identity mutation;
+        // a leading-slice lookup alone could otherwise name stale or corrupt
+        // secondary map entries.
+        let exact_arena_span = match (
+            self.release_span(page.as_ptr()),
+            memory.arena_memory(),
+        ) {
+            (Some(ReleaseSpan::Arena { memory: span_memory, .. }), Some(expected)) => {
+                span_memory.arena_memory().is_some_and(|actual| {
+                    actual.arena == expected.arena
+                        && actual.slice_index == expected.slice_index
+                        && actual.slice_count == expected.slice_count
+                })
+            }
+            _ => false,
+        };
+        if !exact_arena_span {
+            return Err(reject(self, DynamicMappedAbandonError::Unmapped));
+        }
+        if !self.page_is_active_queue_member(bin, page) {
+            return Err(reject(self, DynamicMappedAbandonError::NotActiveRegular));
+        }
+        let Some(canonical_block) = self.canonical_block_start(page_ref, block) else {
+            return Err(reject(self, DynamicMappedAbandonError::NotActiveRegular));
+        };
+        // SAFETY: all immutable facts derived from `page_ref` above are now
+        // copied. This temporary whole-page projection performs only local
+        // geometry validation and ends before later raw/session mutation.
+        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
+            Err(error) => Err(error),
+        };
+        if preflight.is_err() {
+            return Err(reject(self, DynamicMappedAbandonError::NotActiveRegular));
+        }
+        if self
+            .session
+            .mapped_abandoned_page(&self.arena, bin, memory)
+            .is_none()
+        {
+            return Err(reject(self, DynamicMappedAbandonError::MissingDynamicArenaPages));
+        }
+
+        // `_mi_page_abandon` force-collects before queue removal. This exact
+        // dynamic handoff accepts no outstanding producer, so a successful
+        // collection cannot newly make the page empty through a later token.
+        if let Err(error) = self.page_free_collect_false(page) {
+            self.retain_page_collect_poison(page, error, None);
+            return Err(reject(self, DynamicMappedAbandonError::Collection));
+        }
+        // SAFETY: collection completed while the page remains queue-linked;
+        // this reads the owner-local count under the exclusive engine.
+        if unsafe { page.as_ref().used() } == 0 {
+            return Err(reject(self, DynamicMappedAbandonError::EmptyAfterCollection));
+        }
+
+        let queue = match self.session.queue_mut(bin) {
+            Some(queue) => queue as *mut _,
+            None => return Err(reject(self, DynamicMappedAbandonError::NotActiveRegular)),
+        };
+        // SAFETY: exact membership was proven before collection and no
+        // producer token can coexist with this consuming engine operation.
+        unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        if !self.session.note_page_removed() {
+            let handoff = DynamicMappedPageHandoff {
+                engine: self,
+                page,
+                bin,
+                memory,
+                terminal: true,
+            };
+            return Err(DynamicMappedAbandonFailure::Terminal {
+                handoff,
+                error: DynamicMappedAbandonError::NotActiveRegular,
+            });
+        }
+        self.update_direct_cache(bin);
+        let abandoned = {
+            let map = self
+                .session
+                .mapped_abandoned_page(&self.arena, bin, memory)
+                .expect("prevalidated dynamic mapped page remains owner-bound");
+            // SAFETY: exact source order is collection, queue detach, then
+            // identity/bitmap/count/unown. The capability fixes arena/bin/slice.
+            unsafe { abandoned::abandon_after_collect(page, Some(&map)) }
+        };
+        match abandoned {
+            Ok(AbandonResult::UnownedMapped) => Ok(DynamicMappedPageHandoff {
+                engine: self,
+                page,
+                bin,
+                memory,
+                terminal: false,
+            }),
+            Ok(result) => {
+                let error = match result {
+                    AbandonResult::Empty => DynamicMappedAbandonError::EmptyAfterCollection,
+                    AbandonResult::UnownedUnmapped => DynamicMappedAbandonError::FullOrSpecial,
+                    AbandonResult::UnownedMapped => unreachable!(),
+                };
+                let handoff = DynamicMappedPageHandoff {
+                    engine: self,
+                    page,
+                    bin,
+                    memory,
+                    terminal: true,
+                };
+                Err(DynamicMappedAbandonFailure::Terminal { handoff, error })
+            }
+            Err(error) => {
+                let handoff = DynamicMappedPageHandoff {
+                    engine: self,
+                    page,
+                    bin,
+                    memory,
+                    terminal: true,
+                };
+                Err(DynamicMappedAbandonFailure::Terminal {
+                    handoff,
+                    error: DynamicMappedAbandonError::Abandon(error),
+                })
+            }
+        }
+    }
+
     /// Test-only non-mutating attachment preflight. This deliberately cannot
     /// call teardown while the engine owns the dynamic page session.
     #[cfg(test)]
@@ -448,19 +681,158 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 
     #[cfg(test)]
-    pub(crate) fn test_dynamic_abandoned_witness(&self, bin: usize, memory: MemoryId) -> bool {
-        let Some(arena_memory) = memory.arena_memory() else {
+    pub(crate) fn test_dynamic_abandoned_page_is_clear(
+        &self,
+        bin: usize,
+        memory: MemoryId,
+    ) -> bool {
+        let Some(slice) = memory.arena_memory().map(|memory| memory.slice_index as usize) else {
             return false;
         };
-        if !self
-            .session
-            .test_set_and_clear_dynamic_abandoned_witness(bin, memory)
-        {
-            return false;
+        self.session
+            .mapped_abandoned_page(&self.arena, bin, memory)
+            .is_some_and(|map| crate::abandoned::MappedAbandonedPages::is_clear(&map, slice))
+    }
+
+}
+
+impl<'attach, 'heap, 'arena, 'map>
+    DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>
+{
+    /// Reclaims this exact dynamic mapped page into the same pinned Theap and
+    /// appends it to its original regular queue. It consumes the token so
+    /// normal engine access becomes available only after source reassociation,
+    /// second live-owner collection, queue insertion, direct-cache update,
+    /// and page-count restoration have all completed.
+    pub(crate) fn adopt(
+        mut self,
+    ) -> Result<
+        DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
+        DynamicMappedAdoptFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        if self.terminal {
+            return Err(DynamicMappedAdoptFailure::Terminal(self));
         }
-        self.arena
-            .abandoned_pages(bin)
-            .is_some_and(|pages| !pages.is_published(arena_memory.slice_index as usize))
+        let target_theap = NonNull::from(self.engine.session.theap());
+        let Some(target_thread) = self.engine.session.thread_id() else {
+            self.terminal = true;
+            return Err(DynamicMappedAdoptFailure::Terminal(self));
+        };
+        let expected_slice = match self.memory.arena_memory() {
+            Some(memory) => memory.slice_index as usize,
+            None => {
+                self.terminal = true;
+                return Err(DynamicMappedAdoptFailure::Terminal(self));
+            }
+        };
+        let result = {
+            let Some(map) = self.engine.session.mapped_abandoned_page(
+                &self.engine.arena,
+                self.bin,
+                self.memory,
+            ) else {
+                self.terminal = true;
+                return Err(DynamicMappedAdoptFailure::Terminal(self));
+            };
+            let arena = &self.engine.arena;
+            let page_map = self.engine.page_map;
+            // SAFETY: the token owns the entire engine, so the source page,
+            // arena image, PageMap entry, and target Theap remain live. The
+            // purpose-bound map restricts bitmap claim to this exact slice.
+            unsafe {
+                abandoned::try_adopt_retained(
+                    &map,
+                    self.engine.thread_sequence,
+                    target_theap,
+                    target_thread,
+                    |slice_index| {
+                        if slice_index != expected_slice {
+                            return None;
+                        }
+                        let start = arena.slice_start(slice_index)?;
+                        let resolved = NonNull::new(page_map.checked_lookup(start))?;
+                        // A bitmap bit can name only this token's stable
+                        // page. Reject before the source low-owner claim; a
+                        // foreign map entry must remain untouched.
+                        (resolved == self.page).then_some(resolved)
+                    },
+                )
+            }
+        };
+        let adopted = match result {
+            Ok(Some(adopted)) if adopted.page() == self.page => adopted,
+            Ok(None) => return Err(DynamicMappedAdoptFailure::Pending(self)),
+            Ok(Some(_)) => {
+                self.terminal = true;
+                return Err(DynamicMappedAdoptFailure::Terminal(self));
+            }
+            Err(retained) => {
+                self.terminal = true;
+                return Err(DynamicMappedAdoptFailure::Claimed {
+                    handoff: self,
+                    retained,
+                });
+            }
+        };
+        let queue = match self.engine.session.queue_mut(self.bin) {
+            Some(queue) => queue as *mut _,
+            None => {
+                self.terminal = true;
+                return Err(DynamicMappedAdoptFailure::Terminal(self));
+            }
+        };
+        // SAFETY: `try_adopt_retained` completed reassociation for this exact
+        // detached page, and this token still owns the sole queue mutation.
+        unsafe { page_queue_push_at_end_metadata(&mut *queue, adopted.page().as_ptr()) };
+        self.engine.session.note_page_added();
+        self.engine.update_direct_cache(self.bin);
+        Ok(self.engine)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn page(&self) -> NonNull<Page> { self.page }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_count(&self) -> usize {
+        self.engine.session.theap().page_count()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
+        let heap = self.engine.session.theap().heap();
+        // SAFETY: the token owns the complete engine/session and preserves
+        // its caller-pinned Heap until it is adopted or terminally retained.
+        unsafe { heap.as_ref() }?.abandoned_count(self.bin)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_bin(&self) -> usize { self.bin }
+
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_abandoned_page_is_set(&self) -> bool {
+        let Some(slice) = self.memory.arena_memory().map(|memory| memory.slice_index as usize) else {
+            return false;
+        };
+        self.engine
+            .session
+            .mapped_abandoned_page(&self.engine.arena, self.bin, self.memory)
+            .is_some_and(|map| !crate::abandoned::MappedAbandonedPages::is_clear(&map, slice))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_main_arena_page_is_clear(&self) -> bool {
+        let Some(memory) = self.memory.arena_memory() else {
+            return false;
+        };
+        // SAFETY: token ownership retains its registry-published arena view;
+        // this is a read-only disjointness witness.
+        unsafe { self.engine.arena.pages() }
+            .and_then(|pages| pages.is_clear_range(memory.slice_index as usize, 1))
+            == Some(true)
     }
 }
 

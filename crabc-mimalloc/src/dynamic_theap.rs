@@ -39,7 +39,8 @@ use crate::compiler_tls::{
     cached_theap, current_thread_identity, default_theap, fast_slot_peek, set_cached_theap,
 };
 use crate::arena::{
-    ArenaView, DynamicArenaPagesOwner, DynamicArenaPagesOwnerCreateError,
+    ArenaView, DynamicArenaMappedAbandonedPage,
+    DynamicArenaPagesOwner, DynamicArenaPagesOwnerCreateError,
     DynamicArenaPagesOwnerError,
 };
 use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
@@ -1073,6 +1074,22 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
             .expect("a validated borrowed dynamic page session retains its typed Theap")
     }
 
+    /// Selects exactly one heap-local dynamic abandoned-map slot only while
+    /// this borrowed session still proves its attached current-thread state.
+    /// The returned capability cannot name a different Heap, arena, bin, or
+    /// ordinary slice.
+    pub(crate) fn mapped_abandoned_page(
+        &self,
+        arena: &ArenaView<'_>,
+        bin: usize,
+        memory: MemoryId,
+    ) -> Option<DynamicArenaMappedAbandonedPage<'_>> {
+        matches!(self.attachment.state, DynamicAttachmentState::Attached)
+            .then(|| self.attachment.arena_pages.as_ref())
+            .flatten()?
+            .mapped_abandoned_page(arena, bin, memory)
+    }
+
     /// Test-only non-mutating view of the attachment's teardown preflight.
     /// It never invokes teardown, clears a root, or detaches a list while the
     /// session owns the attachment borrow.
@@ -1091,19 +1108,6 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         Some((header, layout, image_memory, owner.page_is_set(memory)))
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_set_and_clear_dynamic_abandoned_witness(
-        &self,
-        bin: usize,
-        memory: MemoryId,
-    ) -> bool {
-        let Some(owner) = self.attachment.arena_pages.as_ref() else {
-            return false;
-        };
-        owner.set_abandoned_page(bin, memory)
-            && owner.abandoned_page_is_set(bin, memory)
-            && owner.clear_abandoned_page(bin, memory)
-    }
 }
 
 impl theap_page_session_sealed::Sealed for DynamicTheapPageSession<'_, '_> {}
@@ -1240,7 +1244,9 @@ mod tests {
     };
     use crate::os::{PageSize, fault};
     use crate::page_map::PageMap;
-    use crate::single_thread::DynamicTheapAllocator;
+    use crate::single_thread::{
+        DynamicMappedAbandonError, DynamicMappedAbandonFailure, DynamicTheapAllocator,
+    };
     use crate::tld::ThreadLocalDataOwner;
     use crate::types::MemoryKind;
     use core::ptr::null_mut;
@@ -1502,7 +1508,6 @@ mod tests {
                 allocator.test_dynamic_main_arena_page_is_clear(memory),
                 "dynamic page registration must not masquerade as pages_main"
             );
-            assert!(allocator.test_dynamic_abandoned_witness(0, memory));
             assert_eq!(
                 allocator.test_attachment_teardown_preflight(),
                 Err(DynamicTheapError::PageCountNonZero),
@@ -1510,6 +1515,123 @@ mod tests {
             );
             // SAFETY: `block` is this test's sole current allocation.
             unsafe { allocator.free(block) }.expect("the dynamic block frees locally");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_mapped_regular_page_handoff_publishes_then_reclaims_its_exact_heap_image() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(37, false)
+                .expect("real dynamic regular page allocation");
+            let page = unsafe { allocator.page_for_block(block) };
+            assert!(!page.is_null());
+            let original_theap = unsafe { (*page).theap() };
+
+            // SAFETY: `block` is the fixture's only current allocation and
+            // no producer token exists while the consuming handoff runs.
+            let handoff = match unsafe { allocator.abandon_mapped_regular(block) } {
+                Ok(handoff) => handoff,
+                Err(failure) => {
+                    // The regression must not drop an unexpected retained
+                    // owner and pretend fixture cleanup can safely continue.
+                    core::mem::forget(failure);
+                    panic!("a mapped regular dynamic page hands off source ownership");
+                }
+            };
+            let bin = handoff.test_bin();
+            assert_eq!(handoff.page().as_ptr(), page);
+            assert_eq!(handoff.test_page_count(), 0);
+            assert_eq!(handoff.test_abandoned_count(), Some(1));
+            assert!(handoff.test_dynamic_abandoned_page_is_set());
+            assert!(handoff.test_main_arena_page_is_clear());
+            assert_eq!(unsafe { (*page).theap() }, original_theap);
+
+            let mut allocator = match handoff.adopt() {
+                Ok(allocator) => allocator,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the exact heap-local abandoned bit reclaims to the same Theap");
+                }
+            };
+            assert_eq!(unsafe { (*page).theap() }, allocator.theap_identity());
+            // The bitmap claim decremented before the two source adoption
+            // collections, and push-at-end restored the source page count.
+            let heap = unsafe { &*allocator.theap_identity().cast::<Theap>() }.heap();
+            assert_eq!(
+                unsafe { heap.as_ref() }.and_then(|heap| heap.abandoned_count(bin)),
+                Some(0)
+            );
+            let memory = unsafe { (*page).memid() };
+            assert!(allocator.test_dynamic_abandoned_page_is_clear(bin, memory));
+
+            // SAFETY: adoption restored this exact original live allocation
+            // to the ordinary local-free lifecycle.
+            unsafe { allocator.free(block) }
+                .expect("the reclaimed dynamic page accepts its original local free");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_mapped_handoff_rejects_an_unmapped_pointer_before_state_mutation() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(37, false)
+                .expect("real dynamic regular page allocation");
+            let page = unsafe { allocator.page_for_block(block) };
+            assert!(!page.is_null());
+            let memory = unsafe { (*page).memid() };
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the dynamic fixture allocated a regular size class");
+
+            // SAFETY: the deliberately unmapped dangling address is not
+            // dereferenced; the consuming API must reject it at PageMap
+            // lookup and return the unchanged engine.
+            allocator = match unsafe {
+                allocator.abandon_mapped_regular(NonNull::<u8>::dangling())
+            } {
+                Err(DynamicMappedAbandonFailure::Rejected {
+                    engine,
+                    error: DynamicMappedAbandonError::Unmapped,
+                }) => engine,
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("an unmapped pointer cannot form an abandoned-page handoff");
+                }
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("an unmapped pointer must be a wholly pre-mutation rejection");
+                }
+            };
+            assert_eq!(unsafe { (*page).theap() }, allocator.theap_identity());
+            assert!(allocator.test_dynamic_abandoned_page_is_clear(bin, memory));
+
+            // SAFETY: rejection left the one real allocation live and owned
+            // by the ordinary dynamic engine.
+            unsafe { allocator.free(block) }
+                .expect("the pre-mutation rejection preserves normal local free");
             assert!(matches!(allocator.finish(), Ok(())));
             DynamicPageFixtureOutcome::TearDown
         });

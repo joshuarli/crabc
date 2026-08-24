@@ -107,7 +107,8 @@ consuming finish requires no pages, queues/direct entries, collection poison,
 or pending OS release, while unfinished Drop latches the attachment terminally
 and transfers any pending OS release owner into that retained attachment.
 This is bounded private routing, not general dynamic allocation or remote-free
-concurrency. General cached-root switching/reference ownership, abandonment,
+concurrency. General cached-root switching/reference ownership, abandonment
+beyond its one consuming mapped-regular handoff,
 pthread/process hooks, complete subprocess layout/lifecycle, and C
 pthread-mutex layout claims remain absent. A
 first dynamic arena page additionally creates a private
@@ -119,8 +120,12 @@ than `pages_main`, for fresh-page registration, rollback, and terminal release.
 A nonempty image rejects
 teardown before roots mutate; pre-publication allocation failure leaves no
 slot, while post-mutation lock/free ambiguity remains terminally retained.
-Its abandoned-bin touch is test-only disjointness evidence, not abandonment
-movement. The private explicit single-thread slice now binds a pinned default theap to a
+One consuming `DynamicMappedPageHandoff` now supplies the bounded mapped
+regular dynamic handoff: it removes one exact live regular queue page after
+false-force collection, publishes only the bound heap-local abandoned bit and
+count, and only same-token adoption may claim/reassociate/requeue it. It is
+not abandoned free/reabandon, terminal release/reuse, or general abandonment
+routing. The private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,
 retirement, full-span unregister-before-release, checked counted allocation,
@@ -235,7 +240,7 @@ the hash-pinned upstream `test/test-api.c` without checking in a source fork,
 then runs both the existing crabc allocator fixture and 33 selected upstream
 API checks. After that passing Milestone 4 adapter lane it deliberately returns
 exit status 3 with an `UNMET MILESTONE` explanation until Milestone 5 supplies
-integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle, the
+general integrated remote-free routing, abandonment/adoption, thread/TLS lifecycle, the
 remaining applicable Loom protocols, and pthread stress. The bounded page
 protocols and caller-owned TLS registry do not satisfy that lifecycle gate.
 Loom 0.7.2 is an exact, defaults-disabled dev-dependency: its allocation-backed
