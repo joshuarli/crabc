@@ -13,7 +13,9 @@
 // `include/mimalloc/types.h:608-758`
 // (arena-page and arena metadata layouts), `src/init.c:15-145` (the
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
-// empty-theap initializers), `src/arena.c:1023-1095` (fresh-page metadata
+// empty-theap initializers), `src/theap.c:236-306,357-369,414-449` (dynamic
+// Theap initialization, canonical cached reference pair, and list detach),
+// `src/arena.c:1023-1095` (fresh-page metadata
 // publication), `src/page.c:214-243,708-757` (false-force owner-local
 // collection and fresh-page local-state invariants),
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
@@ -2749,9 +2751,9 @@ impl Theap {
     }
 
     /// Clears the final live dynamic-Theap image before its exact retained
-    /// Malloc capability is released. The one regular slot was already
-    /// cleared, there is no cached reference in this slice, and both list
-    /// links must be detached before the refcount reaches its final zero.
+    /// Malloc capability is released. The regular slot and owner-only cached
+    /// reference were already cleared/released, and both list links must be
+    /// detached before the refcount reaches its final zero.
     #[inline]
     pub(crate) fn clear_dynamic_metadata_after_detach(&mut self) -> bool {
         if !self.heap.load(Ordering::Acquire).is_null()
@@ -2770,6 +2772,40 @@ impl Theap {
         self.refcount
             .fetch_sub(1, Ordering::AcqRel)
             == 1
+    }
+
+    /// Acquires the one cached-root reference for a live dynamic attachment.
+    ///
+    /// This is deliberately not a general Theap refcount API. The sole
+    /// `DynamicTheapAttachment` caller has just source-ordered the compiler
+    /// TLS cached-root store from the canonical empty Theap to this exact
+    /// Malloc-backed image, and retains exclusive current-thread/lifecycle
+    /// ownership until it reverses that store. The exact 1 -> 2 CAS turns a
+    /// violated owner/refcount invariant into a retained terminal state rather
+    /// than silently composing with an unknown reference.
+    #[inline]
+    pub(crate) fn acquire_dynamic_cached_reference(&self) -> bool {
+        self.memid.kind() == MemoryKind::Malloc
+            && self.is_initialized()
+            && self
+                .refcount
+                .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+    }
+
+    /// Releases the one cached-root reference of a dynamic attachment after
+    /// its source-ordered cached-root reset to the canonical static empty
+    /// image. This exact 2 -> 1 transition is the inverse of
+    /// [`Self::acquire_dynamic_cached_reference`]; any other count is an
+    /// invalid-owner state and must retain the allocated image terminally.
+    #[inline]
+    pub(crate) fn release_dynamic_cached_reference(&self) -> bool {
+        self.memid.kind() == MemoryKind::Malloc
+            && self.is_initialized()
+            && self
+                .refcount
+                .compare_exchange(2, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
     }
 
     /// Binds the empty source image to the one pinned default heap/TLD pair.

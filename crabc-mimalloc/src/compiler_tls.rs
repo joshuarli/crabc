@@ -6,13 +6,14 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/prim-tls.h:12-275`,
-// `src/prim/prim-tls.c:15-34,211-254`, and `src/threadlocal.c:23-214`.
+// `src/prim/prim-tls.c:15-34,211-252`, and `src/threadlocal.c:23-214`.
 // This bounded slice supplies source-shaped compiler-TLS roots, the regular
 // dynamic flexible header, and allocation-free root access. `thread_local`
 // owns the current-thread regular backing allocation, growth, and teardown;
-// `main_theap` alone uses default/fast publication for ticket zero. Dynamic
-// Theap publication/refcounting, process initialization, libc/pthread hooks,
-// and full thread lifecycle integration remain separate work.
+// `main_theap` alone uses default/fast publication for ticket zero, while
+// `dynamic_theap` owns one canonical-empty cached-root store/refcount pair.
+// General cached switching, process initialization, libc/pthread hooks, and
+// full thread lifecycle integration remain separate work.
 
 //! Private Linux/AArch64 compiler-TLS roots.
 //!
@@ -258,8 +259,9 @@ pub(crate) fn cached_theap() -> NonNull<Theap> {
 
 /// Installs a live cached theap for the calling thread.
 ///
-/// This is not yet upstream `_mi_theap_cached_set`: the later heap lifecycle
-/// must own the paired theap reference-count transition.
+/// This is the pointer-store half of upstream `_mi_theap_cached_set`.
+/// `DynamicTheapAttachment` owns the paired source-ordered reference-count
+/// transition; no generic caller may use this store as a refcount API.
 #[inline(always)]
 pub(crate) fn set_cached_theap(theap: NonNull<Theap>) {
     // SAFETY: each calling thread alone writes its compiler-TLS pointer root.

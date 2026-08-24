@@ -132,16 +132,20 @@ valid zero/deferred fields, not a full C-size or heap API claim.
 It atomically refuses ticket zero, then retains the caller-pinned first-class
 Heap, metadata TLD/live registration, typed Malloc Theap, dynamic backing, and
 linear regular-key lease. Dynamic `_mi_theap_init` completes TLD-list/random/
-cookie/Release-heap/heap-list order before publishing only the regular TLS
-slot; default, fast, and cached roots remain unchanged. No-page teardown clears
-that slot and backing before detaching lists and freeing metadata. Preflight
-root/list/page failures leave authority unchanged; a post-list-publication
-failure returns a retained poisoned owner. The one retryable exception is a
-pre-mutation key-release lock error after other teardown: it retains only the
-lease until `AwaitingKeyRelease` succeeds. Cached-root refcounting, remote-free
-routing, page routing or abandonment integration, full heap/Theap/arena/
-subprocess APIs, pthread/fork/process shutdown, stats/options/callbacks, and
-public ABI remain open.
+cookie/Release-heap/heap-list order, then publishes the regular TLS slot and
+the cached root from the canonical empty source image, with the exact dynamic
+Theap reference transition `1 -> 2`; default and fast remain unchanged. Begin
+rejects any other cached predecessor before ticket issuance. No-page teardown
+prevalidates that slot/root/refcount pair, clears the slot and backing, restores
+that exact canonical empty cached root with `2 -> 1`, then detaches lists and
+frees metadata. Root/list/page failures before mutation leave authority
+unchanged; an after-publication or after-root-reset private failure returns a
+retained poisoned owner with only known-valid capabilities. The one retryable
+exception is a pre-mutation key-release lock error after other teardown: it
+retains only the lease until `AwaitingKeyRelease` succeeds. General cached-root
+switching/refcount ownership, remote-free routing, page routing or abandonment
+integration, full heap/Theap/arena/subprocess APIs, pthread/fork/process
+shutdown, stats/options/callbacks, and public ABI remain open.
 
 Separately, the exact source-layout `mi_random_ctx_t` image now lives directly
 in `Theap::random`: it preserves source input/output word order, counter

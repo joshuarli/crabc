@@ -91,15 +91,17 @@ registration rather than claiming teardown; source heap-busy retry remains
 absent. `dynamic_theap.rs` now takes a nonzero ticket through an atomic
 later-ticket gate, then retains one `!Send` caller-pinned Heap, metadata TLD
 and registration, typed Malloc Theap, regular backing, and regular-key lease.
-It preserves dynamic `_mi_theap_init` through both lists before publishing only
-the regular slot; default/fast/cached stay unchanged. Its no-page teardown
-clears slot/backing before list detach and metadata release. Pre-publication
-OOM cleans up and rejects, whereas post-list-publication failure returns a
-retained poisoned owner. A pre-mutation key-release lock failure retains only
-the linear lease in `AwaitingKeyRelease` for retry. Cached-root refcounts,
-page routing/abandonment integration, pthread/process hooks,
-complete subprocess layout/lifecycle, and C pthread-mutex layout claims
-remain absent. A
+It preserves dynamic `_mi_theap_init` through both lists before publishing the
+regular slot, then sets the cached root only from the canonical empty image and
+acquires the paired `1 -> 2` dynamic Theap reference; default/fast stay
+unchanged. Its no-page teardown clears slot/backing, resets that cached root
+with `2 -> 1`, then detaches lists and releases metadata. Pre-publication OOM
+cleans up and rejects, whereas post-list-publication or post-root-reset failure
+returns a retained poisoned owner. A pre-mutation key-release lock failure
+retains only the linear lease in `AwaitingKeyRelease` for retry. General
+cached-root switching/reference ownership, page routing/abandonment
+integration, pthread/process hooks, complete subprocess layout/lifecycle, and
+C pthread-mutex layout claims remain absent. A
 private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,

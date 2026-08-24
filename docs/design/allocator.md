@@ -214,24 +214,29 @@ does not implement source heap-busy retry.
 it atomically refuses ticket zero rather than racing static process-main
 selection. It is `!Send`/`!Sync`, holds the caller-pinned Heap plus exact
 metadata TLD/live-registration/Theap/backing/key capabilities, and preserves
-dynamic `_mi_theap_init` through the TLD and heap lists before publishing only
-the regular-key slot. Default, fast, and cached roots remain unchanged. Its
-no-page preflight validates TPIDR identity, those unrelated roots, exact
-single-member lists, regular slot, and `page_count == 0` before mutation. Valid
-teardown clears the slot and dynamic backing before detach, Release-clears the
-Theap heap, releases the live TLD registration, then invalidates/quiesces and
-frees metadata before retiring the caller binding and key. Pre-publication OOM cleans up and rejects;
+dynamic `_mi_theap_init` through the TLD and heap lists before publishing the
+regular-key slot, then replaces only the canonical empty cached root and
+performs its owner-only `1 -> 2` Theap reference transition. Default and fast
+remain unchanged; a foreign or merely separately empty cached root rejects
+before ticket issuance. Its no-page preflight validates TPIDR identity,
+default/fast preservation, its exact cached pointer/refcount, single-member
+lists, regular slot, and `page_count == 0` before mutation. Valid teardown
+clears the slot and dynamic backing, restores that exact empty cached root and
+performs `2 -> 1`, then detaches, Release-clears the Theap heap, releases the
+live TLD registration, and invalidates/quiesces/frees metadata before retiring
+the caller binding and key. Pre-publication OOM cleans up and rejects;
 post-list-publication list/backing/free failures retain a poisoned owner and
 all still-valid capabilities. A pre-mutation key-release lock error is the
 sole retry state: `AwaitingKeyRelease` retries only that lease. This does not
-implement heap new/delete/destroy, cached references, routing, remote free,
-abandonment, pthread hooks, or process shutdown.
+implement heap new/delete/destroy, general cached-root switching/references,
+routing, remote free, abandonment, pthread hooks, or process shutdown.
 
 `PrivateLock` preserves the TLD field's private-lock meaning but is not a
 byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made.
-Cached-root refcounting, remote-free/page routing or abandonment integration,
-full heap/Theap/arena/subprocess APIs, pthread/process hooks, fork repair,
-process shutdown, and general lock destruction remain outside this slice.
+General cached-root switching/reference ownership, remote-free/page routing or
+abandonment integration, full heap/Theap/arena/subprocess APIs,
+pthread/process hooks, fork repair, process shutdown, and general lock
+destruction remain outside this slice.
 
 The abandonment/adoption protocol preserves mapped versus unmapped source
 classification, publishes the abandoned bitmap before

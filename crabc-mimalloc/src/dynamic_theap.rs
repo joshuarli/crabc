@@ -5,8 +5,8 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/threadlocal.c:23-214`,
-// `src/init.c:236-360,377-421,448-481`, `src/theap.c:236-449`,
-// `src/heap.c:37-100`, and `src/prim/prim-tls.c:211-250`.
+// `src/init.c:236-360,377-421,448-481`, `src/theap.c:236-306,357-369,414-449`,
+// `src/heap.c:60-100`, and `src/prim/prim-tls.c:211-229`.
 
 //! Private current-thread dynamic Theap attachment.
 //!
@@ -14,8 +14,10 @@
 //! one address-stable `Heap::bootstrap_empty()` image, this owner claims one
 //! regular TLS key, and it attaches one direct-zeroed metadata Theap to one
 //! later-ticket metadata TLD. It does not implement `mi_heap_new/delete`,
-//! subprocess heap lists/counters, cached-root switching, page routing,
-//! pthread hooks, or public allocation APIs.
+//! subprocess heap lists/counters, general cached-root switching, page routing,
+//! pthread hooks, or public allocation APIs. It does implement the one
+//! owner-only cached-Theap root/reference pair which follows regular-slot
+//! publication in `src/heap.c:_mi_heap_theap_get_or_init`.
 
 #[cfg(test)]
 extern crate std;
@@ -26,7 +28,7 @@ use core::pin::Pin;
 use core::ptr::NonNull;
 
 use crate::compiler_tls::{
-    cached_theap, current_thread_identity, default_theap, fast_slot_peek,
+    cached_theap, current_thread_identity, default_theap, fast_slot_peek, set_cached_theap,
 };
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
 use crate::owned_tls_key_registry::{
@@ -62,6 +64,7 @@ pub(crate) enum DynamicTheapError {
     TheapProjection,
     TheapInit(TheapDynamicInitError),
     RootOwnership,
+    CachedReference,
     SlotOwnership,
     ListOwnership,
     PageCountNonZero,
@@ -152,6 +155,26 @@ impl UnrelatedRoots {
             && fast_slot_peek() == self.fast
             && core::ptr::eq(cached_theap().as_ptr(), self.cached.as_ptr())
     }
+
+    /// The caller may not adopt an arbitrary cached predecessor. This narrow
+    /// slice begins only from the canonical empty source Theap, whose static
+    /// reference needs no paired metadata transition.
+    #[inline]
+    fn cached_is_canonical_empty(self) -> bool {
+        core::ptr::eq(
+            self.cached.as_ptr(),
+            crate::bootstrap::empty_default_theap() as *const Theap,
+        )
+    }
+
+    /// Default and fast remain unrelated roots throughout this dynamic
+    /// attachment. Cached changes are instead validated as this owner's
+    /// explicit store/refcount pair.
+    #[inline]
+    fn default_and_fast_still_match(self) -> bool {
+        core::ptr::eq(default_theap().as_ptr(), self.default.as_ptr())
+            && fast_slot_peek() == self.fast
+    }
 }
 
 /// The exact private owner of one current-thread regular-key Theap.
@@ -169,6 +192,7 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     tld: Option<DynamicAttachedThreadLocalData>,
     theap: Option<MetaAllocation<'static>>,
     roots: UnrelatedRoots,
+    cached_root_bound: bool,
     thread: crate::types::LiveThreadId,
     state: DynamicAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -229,6 +253,16 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let thread = current_thread_identity()
             .ok_or(DynamicTheapBeginError::Rejected(DynamicTheapError::InvalidCurrentThread))?;
         let roots = UnrelatedRoots::capture();
+        // Source `_mi_heap_theap_get_or_init` may replace the cached root only
+        // after a regular slot exists. This bounded owner intentionally has no
+        // generic predecessor/ref API, so a foreign—even empty-looking—root is
+        // rejected before the later-ticket TLD sequence or metadata backing
+        // can be consumed.
+        if !roots.cached_is_canonical_empty() {
+            return Err(DynamicTheapBeginError::Rejected(
+                DynamicTheapError::RootOwnership,
+            ));
+        }
         let tld = match unsafe {
             ThreadLocalDataOwner::begin_later_dynamic_attachment_with_metadata(
                 subprocess, metadata, config,
@@ -253,6 +287,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             tld: Some(tld),
             theap: None,
             roots,
+            cached_root_bound: false,
             thread,
             state: DynamicAttachmentState::Preparing,
             _not_send_or_sync: PhantomData,
@@ -361,6 +396,10 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         }
         self.backing = None;
 
+        if let Err(error) = self.restore_empty_cached_root_and_release(theap_pointer) {
+            return Err(self.poison(error));
+        }
+
         let detach_heap = match self.heap_and_tld_mut() {
             Ok((heap, tld)) => tld.detach_one_theap_from_heap(heap, theap_pointer),
             Err(error) => return Err(self.poison(error)),
@@ -450,12 +489,15 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             .as_mut()
             .expect("a successful regular-slot publication retains its key binding")
             .mark_slot_bound_after_publication();
+        let cached_theap = NonNull::new(theap_pointer.cast::<Theap>())
+            .ok_or(DynamicTheapError::TheapProjection)?;
+        self.publish_cached_root(cached_theap)?;
         Ok(())
     }
 
     fn prevalidate_teardown(&mut self) -> Result<(), DynamicTheapError> {
         self.ensure_attached_current()?;
-        if !self.roots.still_matches() {
+        if !self.roots.default_and_fast_still_match() {
             return Err(DynamicTheapError::RootOwnership);
         }
         let key = self.binding()?.key();
@@ -468,7 +510,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             .as_ref()
             .ok_or(DynamicTheapError::Poisoned)?
             .subprocess();
-        let (page_count, matches_thread, bound_to_subprocess) = {
+        let (page_count, refcount, matches_thread, bound_to_subprocess) = {
             let theap = self
                 .theap
                 .as_mut()
@@ -476,12 +518,19 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 .ok_or(DynamicTheapError::TheapProjection)?;
             (
                 theap.page_count(),
+                theap.refcount(),
                 theap.matches_thread(self.thread),
                 theap.is_bound_to_main_subprocess(subprocess),
             )
         };
         if page_count != 0 {
             return Err(DynamicTheapError::PageCountNonZero);
+        }
+        if !self.cached_root_bound || !core::ptr::eq(cached_theap().as_ptr(), theap_pointer) {
+            return Err(DynamicTheapError::RootOwnership);
+        }
+        if refcount != 2 {
+            return Err(DynamicTheapError::CachedReference);
         }
         let tld_member = match self.tld.as_mut() {
             Some(tld) => tld
@@ -510,6 +559,78 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             .map_err(DynamicTheapError::Backing)?;
         if value != theap_pointer.cast() {
             return Err(DynamicTheapError::SlotOwnership);
+        }
+        Ok(())
+    }
+
+    /// Stores this dynamically allocated Theap in the cached compiler-TLS
+    /// root and then acquires its owner-only reference, exactly as
+    /// `_mi_theap_cached_set` does. The only supported previous root is the
+    /// canonical empty source image captured before ticket issuance.
+    fn publish_cached_root(&mut self, theap: NonNull<Theap>) -> Result<(), DynamicTheapError> {
+        if self.cached_root_bound
+            || !self.roots.cached_is_canonical_empty()
+            || !core::ptr::eq(cached_theap().as_ptr(), self.roots.cached.as_ptr())
+        {
+            return Err(DynamicTheapError::RootOwnership);
+        }
+        let theap_image = self
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .ok_or(DynamicTheapError::TheapProjection)?;
+        if !core::ptr::eq(core::ptr::from_mut(theap_image), theap.as_ptr()) {
+            return Err(DynamicTheapError::TheapProjection);
+        }
+
+        // `_mi_theap_cached_set` stores the pointer before changing either
+        // reference count. The empty static predecessor has source no-free
+        // provenance, so its corresponding decrement is intentionally a no-op.
+        set_cached_theap(theap);
+        // This records pointer-root ownership, not a successful reference
+        // transition. A failed 1 -> 2 CAS has already left the raw root
+        // pointing at this retained terminal image and must never be described
+        // as an unbound cached root.
+        self.cached_root_bound = true;
+        if !theap_image.acquire_dynamic_cached_reference() {
+            return Err(DynamicTheapError::CachedReference);
+        }
+        Ok(())
+    }
+
+    /// Restores exactly the canonical empty cached root and releases this
+    /// attachment's paired cached reference. It runs after regular backing
+    /// teardown but before either source list detach, matching
+    /// `_mi_thread_locals_thread_done` followed by `mi_thread_theaps_done`.
+    fn restore_empty_cached_root_and_release(
+        &mut self,
+        theap_pointer: *mut Theap,
+    ) -> Result<(), DynamicTheapError> {
+        if !self.cached_root_bound
+            || !self.roots.cached_is_canonical_empty()
+            || !core::ptr::eq(cached_theap().as_ptr(), theap_pointer)
+        {
+            return Err(DynamicTheapError::RootOwnership);
+        }
+        let theap = self
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .ok_or(DynamicTheapError::TheapProjection)?;
+        if !core::ptr::eq(core::ptr::from_mut(theap), theap_pointer) {
+            return Err(DynamicTheapError::TheapProjection);
+        }
+
+        // This is the source cached-set store first, followed by the exact
+        // dynamic 2 -> 1 reference release. The static empty predecessor is
+        // never dynamically referenced by this owner.
+        set_cached_theap(self.roots.cached);
+        // As above, this tracks the raw pointer root. If the post-store CAS
+        // fails, the terminal attachment retains a detached cached reference,
+        // not a cached pointer to itself.
+        self.cached_root_bound = false;
+        if !theap.release_dynamic_cached_reference() {
+            return Err(DynamicTheapError::CachedReference);
         }
         Ok(())
     }
@@ -759,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn regular_slot_publication_keeps_default_fast_cached_roots_and_witnesses_theap_init_order() {
+    fn regular_slot_then_cached_publication_increments_the_dynamic_theap_reference() {
         thread::spawn(|| {
             let (subprocess, metadata, registry) = fixture();
             consume_static_ticket(subprocess, metadata);
@@ -771,7 +892,6 @@ mod tests {
             assert_ne!(key.raw(), crate::thread_local::TLS_FAST_KEY_RAW);
             assert_eq!(key.index().get(), 0);
             assert_eq!(key.version(), 1);
-            assert!(roots_before.still_matches());
             assert_ne!(dynamic_backing_peek(), dynamic_before);
 
             let theap_pointer = owner.theap_pointer().unwrap();
@@ -782,6 +902,9 @@ mod tests {
                 .get(key)
                 .expect("the retained backing projects its own regular slot");
             assert_eq!(slot, theap_pointer.cast());
+            assert_eq!(default_theap(), roots_before.default);
+            assert_eq!(fast_slot_peek(), roots_before.fast);
+            assert_eq!(cached_theap().as_ptr(), theap_pointer);
             assert!(owner.binding.as_ref().unwrap().slot_bound);
             assert_eq!(
                 owner
@@ -818,7 +941,7 @@ mod tests {
             // observes every preceding TLD/list/random/cookie field before
             // the Release heap publication.
             assert!(fields.initialized);
-            assert_eq!(fields.refcount, 1);
+            assert_eq!(fields.refcount, 2);
             assert!(fields.cookie_is_odd);
             assert!(fields.random_initialized);
             assert!(!fields.random_weak);
@@ -833,7 +956,9 @@ mod tests {
             owner.teardown().expect("the no-page regular attachment tears down");
             assert_eq!(subprocess.live_thread_count(), 0);
             assert!(dynamic_backing_peek().is_none());
-            assert!(roots_before.still_matches());
+            assert_eq!(default_theap(), roots_before.default);
+            assert_eq!(fast_slot_peek(), roots_before.fast);
+            assert_eq!(cached_theap(), roots_before.cached);
             assert!(owner.heap.as_ref().get_ref().test_main_static_fields().theaps_empty);
             assert_eq!(owner.teardown(), Err(DynamicTheapError::TornDown));
         })
@@ -859,7 +984,9 @@ mod tests {
                 .note_page_added();
             assert_eq!(owner.teardown(), Err(DynamicTheapError::PageCountNonZero));
             assert_eq!(owner.state, DynamicAttachmentState::Attached);
-            assert!(roots.still_matches());
+            assert_eq!(default_theap(), roots.default);
+            assert_eq!(fast_slot_peek(), roots.fast);
+            assert_eq!(cached_theap().as_ptr(), theap_pointer);
             assert_eq!(
                 owner.backing.as_mut().unwrap().get(key).unwrap(),
                 theap_pointer.cast(),
@@ -894,9 +1021,9 @@ mod tests {
             let (subprocess, metadata, registry) = fixture();
             consume_static_ticket(subprocess, metadata);
             let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
-            let roots = UnrelatedRoots::capture();
             let key = owner.key().unwrap();
             let slot = owner.backing.as_mut().unwrap().get(key).unwrap();
+            let theap_pointer = owner.theap_pointer().unwrap();
             let mut foreign = Theap::empty();
             let foreign_pointer = NonNull::from(&mut foreign);
             set_cached_theap(foreign_pointer);
@@ -904,14 +1031,93 @@ mod tests {
             assert_eq!(cached_theap(), foreign_pointer);
             assert_eq!(owner.state, DynamicAttachmentState::Attached);
             assert_eq!(owner.backing.as_mut().unwrap().get(key).unwrap(), slot);
+            assert_eq!(
+                owner
+                    .theap
+                    .as_mut()
+                    .unwrap()
+                    .dynamic_theap_mut()
+                    .unwrap()
+                    .refcount(),
+                2,
+                "a foreign cached root must not consume the attachment reference"
+            );
             assert_eq!(subprocess.live_thread_count(), 1);
-            // Restore precisely the captured unrelated root after proving the
-            // owner did not overwrite the foreign pointer.
-            set_cached_theap(roots.cached);
+            // Restore precisely this attachment's cached root after proving
+            // prevalidation did not overwrite the foreign pointer.
+            set_cached_theap(NonNull::new(theap_pointer).unwrap());
             owner.teardown().unwrap();
         })
         .join()
         .expect("foreign-root preflight test completes");
+    }
+
+    #[test]
+    fn cached_root_is_empty_and_reference_is_one_before_a_terminal_heap_detach_failure() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let roots_before = UnrelatedRoots::capture();
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let theap_pointer = owner.theap_pointer().unwrap();
+            owner.heap_mut().test_inject_busy_theaps_lock();
+
+            assert_eq!(
+                owner.teardown(),
+                Err(DynamicTheapError::TheapList(ThreadLocalTheapListError::Heap(
+                    crate::types::HeapTheapListError::Busy
+                )))
+            );
+
+            assert_eq!(owner.state, DynamicAttachmentState::Poisoned);
+            assert!(owner.backing.is_none(), "backing/root teardown precedes list detach");
+            assert!(!owner.binding.as_ref().unwrap().slot_bound);
+            assert!(!owner.cached_root_bound);
+            assert_eq!(registry.test_live_lease_count(), 1);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            assert!(dynamic_backing_peek().is_none());
+            assert_eq!(default_theap(), roots_before.default);
+            assert_eq!(fast_slot_peek(), roots_before.fast);
+            assert_eq!(
+                cached_theap(),
+                NonNull::from(crate::bootstrap::empty_default_theap()),
+                "cached reset happens before the failing source list detach"
+            );
+            assert_eq!(
+                owner
+                    .theap
+                    .as_mut()
+                    .unwrap()
+                    .dynamic_theap_mut()
+                    .unwrap()
+                    .refcount(),
+                1,
+                "the paired cached reference was released before detach"
+            );
+            assert!(owner.heap.as_ref().get_ref().has_exact_theap_member(theap_pointer));
+            assert!(owner
+                .tld
+                .as_mut()
+                .unwrap()
+                .current_mut()
+                .unwrap()
+                .has_exact_theap_member(theap_pointer));
+            assert!(owner
+                .theap
+                .as_mut()
+                .unwrap()
+                .dynamic_theap_mut()
+                .unwrap()
+                .is_initialized());
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+
+            // This injected invalid-owner state follows the root mutation and
+            // therefore has no source-valid recovery path. Keep all known
+            // capabilities alive for the isolated fixture.
+            core::mem::forget(owner);
+        })
+        .join()
+        .expect("cached reset precedes terminal detach failure");
     }
 
     #[test]
@@ -970,6 +1176,119 @@ mod tests {
         })
         .join()
         .expect("allocation failures leave no live dynamic attachment");
+    }
+
+    #[test]
+    fn foreign_cached_root_rejects_before_later_ticket_or_backing_allocation() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let dynamic_before = dynamic_backing_peek();
+            let total_before = subprocess.total_thread_count();
+            let live_before = subprocess.live_thread_count();
+            let mut foreign = Theap::empty();
+            let foreign_pointer = NonNull::from(&mut foreign);
+            set_cached_theap(foreign_pointer);
+
+            let result = unsafe {
+                DynamicTheapAttachment::begin_with_components(
+                    memory_config(),
+                    pinned_empty_heap(),
+                    subprocess,
+                    metadata,
+                    registry,
+                )
+            };
+            let total_after = subprocess.total_thread_count();
+            let live_after = subprocess.live_thread_count();
+            let rejected = match result {
+                Ok(mut owner) => {
+                    owner
+                        .teardown()
+                        .expect("the old behavior must clean its isolated fixture");
+                    false
+                }
+                Err(DynamicTheapBeginError::Retained { attachment, .. }) => {
+                    core::mem::forget(attachment);
+                    false
+                }
+                Err(DynamicTheapBeginError::Rejected(error)) => {
+                    error == DynamicTheapError::RootOwnership
+                }
+            };
+
+            assert!(rejected);
+            assert_eq!(total_after, total_before);
+            assert_eq!(live_after, live_before);
+            assert_eq!(dynamic_backing_peek(), dynamic_before);
+            assert_eq!(cached_theap(), foreign_pointer);
+            set_cached_theap(NonNull::from(crate::bootstrap::empty_default_theap()));
+        })
+        .join()
+        .expect("foreign cached-root preflight stays allocation-free");
+    }
+
+    #[test]
+    fn foreign_cached_root_rejects_before_ticket_zero_selection_or_allocation() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            assert_eq!(subprocess.total_thread_count(), 0);
+            assert_eq!(subprocess.live_thread_count(), 0);
+            let dynamic_before = dynamic_backing_peek();
+            let fault = fault::install(fault::Plan::any_nth(
+                1,
+                crabc_core::Errno::NOMEM,
+            ));
+            let mut foreign = Theap::empty();
+            let foreign_pointer = NonNull::from(&mut foreign);
+            set_cached_theap(foreign_pointer);
+
+            assert!(matches!(
+                unsafe {
+                    DynamicTheapAttachment::begin_with_components(
+                        memory_config(),
+                        pinned_empty_heap(),
+                        subprocess,
+                        metadata,
+                        registry,
+                    )
+                },
+                Err(DynamicTheapBeginError::Rejected(DynamicTheapError::RootOwnership))
+            ));
+            assert_eq!(subprocess.total_thread_count(), 0);
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(registry.test_live_lease_count(), 0);
+            assert_eq!(dynamic_backing_peek(), dynamic_before);
+            assert_eq!(cached_theap(), foreign_pointer);
+            assert_eq!(
+                fault.observed(),
+                0,
+                "the foreign cached-root gate precedes all OS-backed metadata work"
+            );
+
+            fault.set(fault::Plan::disabled());
+            set_cached_theap(NonNull::from(crate::bootstrap::empty_default_theap()));
+            assert!(matches!(
+                unsafe {
+                    DynamicTheapAttachment::begin_with_components(
+                        memory_config(),
+                        pinned_empty_heap(),
+                        subprocess,
+                        metadata,
+                        registry,
+                    )
+                },
+                Err(DynamicTheapBeginError::Rejected(
+                    DynamicTheapError::FirstTicketReserved
+                ))
+            ));
+            assert_eq!(subprocess.total_thread_count(), 0);
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(registry.test_live_lease_count(), 0);
+            assert_eq!(dynamic_backing_peek(), dynamic_before);
+        })
+        .join()
+        .expect("foreign cached-root ownership wins before ticket-zero selection");
     }
 
     #[test]

@@ -181,7 +181,8 @@ result may refine it only when it can prove retained ownership.
 ### `CRABC-MI-DYNAMIC-THEAP-INVALID-OWNER` — accepted private lifecycle boundary
 
 - **Upstream/Rust:** `src/threadlocal.c:23-214`, `src/init.c:236-360,377-421,448-481`,
-  `src/theap.c:236-449`, and `src/heap.c:37-100` / `dynamic_theap::DynamicTheapAttachment`.
+  `src/theap.c:236-306,357-369,414-449`, and `src/heap.c:60-100` /
+  `dynamic_theap::DynamicTheapAttachment`.
 - **Category:** private invalid-owner and incomplete dynamic-thread lifecycle
   handling only. It has no C ABI surface or valid allocation-trace
   differential entry.
@@ -189,17 +190,23 @@ result may refine it only when it can prove retained ownership.
   metadata capabilities where valid C initialization has uncontended locks and
   no equivalent capability errors. Before Theap/list publication, a backing,
   key, or Theap allocation failure tears down its empty backing/TLD state and
-  rejects without a live-count leak. After list publication, a lock/list,
-  backing, or metadata failure during begin retains the concrete poisoned owner
-  with every TLD registration, allocation, backing, binding, and lease
-  capability still present; it does not attempt a source-invented rollback.
-  During teardown, the dynamic TLD follows source order by releasing its live
-  count before identity invalidation and private-lock quiescence. An invalid
-  busy-lock outcome therefore retains the metadata capability but not a false
-  registration. A metadata free ambiguity retains only the capabilities still
-  known valid and never fabricates ownership of the consumed image. Teardown
-  mismatch and nonzero-page checks are pre-mutation. The one retryable outcome
-  is a
+  rejects without a live-count leak. Begin admits only the canonical empty
+  cached predecessor, then follows source regular-slot store, cached-root
+  store, and exact dynamic-Theap `1 -> 2` reference transition. A foreign
+  cached root is a pre-ticket rejection. After list publication, a lock/list,
+  backing, metadata, or cached-root/reference failure during begin retains the
+  concrete poisoned owner with every still-known TLD registration, allocation,
+  backing, binding, and lease capability; it does not attempt a source-invented
+  rollback. Teardown validates its cached pointer/refcount before mutation,
+  clears slot/backing, stores the canonical empty cached root, then transitions
+  `2 -> 1` before list detach. Thus an invalid busy heap-list outcome after
+  root reset retains the list/image/registration/key capabilities but has the
+  empty cached root and refcount one. During teardown, the dynamic TLD follows
+  source order by releasing its live count before identity invalidation and
+  private-lock quiescence. A metadata free ambiguity retains only the
+  capabilities still known valid and never fabricates ownership of the
+  consumed image. Teardown mismatch and nonzero-page checks are pre-mutation.
+  The one retryable outcome is a
   final regular-key release lock error after all other valid teardown work:
   `AwaitingKeyRelease` retains only the linear lease until that pre-mutation
   release succeeds. Safe typed metadata projections also reject released
@@ -207,6 +214,11 @@ result may refine it only when it can prove retained ownership.
 - **Evidence:**
   `dynamic_theap::tests::post_list_publication_backing_failure_returns_a_retained_poisoned_owner`
   proves retained post-publication authority;
+  `regular_slot_then_cached_publication_increments_the_dynamic_theap_reference`,
+  `foreign_cached_root_rejects_before_later_ticket_or_backing_allocation`, and
+  `cached_root_is_empty_and_reference_is_one_before_a_terminal_heap_detach_failure`
+  prove the canonical-predecessor, refcount, pre-ticket rejection, and
+  post-root-reset terminal ordering;
   `key_release_lock_failure_keeps_only_the_linear_lease_for_retry` proves the
   lone retryable release state; and
   `meta::tests::released_capability_cannot_project_any_safe_typed_image`
@@ -217,12 +229,12 @@ result may refine it only when it can prove retained ownership.
   The remaining dynamic attachment tests prove regular-slot
   publication, unrelated-root preservation, pre-mutation no-page rejection,
   exact list membership, ticket-zero refusal, and valid release order.
-- **Decision/removal:** accepted until a complete dynamic heap/Theap, cached
-  reference, private-lock retry, pthread/process lifecycle, and allocator
-  integration design can distinguish all failures and reach full source
-  shutdown. It does not authorize pointer reconstruction, lock stealing,
-  implicit lease drop, post-publication rollback, or a false registration/key
-  decrement.
+- **Decision/removal:** accepted until a complete dynamic heap/Theap, general
+  cached-root switching/reference, private-lock retry, pthread/process
+  lifecycle, and allocator integration design can distinguish all failures and
+  reach full source shutdown. It does not authorize pointer reconstruction,
+  lock stealing, arbitrary predecessor restoration, implicit lease drop,
+  post-publication rollback, or a false registration/key decrement.
 
 ### `CRABC-MI-RANDOM-WEAK-EXPANSION` — accepted degraded-entropy substitution
 
