@@ -6,28 +6,131 @@
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/types.h:288-456`
 // (`MemoryKind`, memory-ID layout, `Block`, page flags, and `Page`),
-// `include/mimalloc/types.h:499-557` (`PageKind` and `PageQueue`), and
-// `include/mimalloc/types.h:608-758` (arena-page and arena metadata layouts),
-// `src/init.c:15-80` (the empty-page and all 75 default queue initializers),
+// `include/mimalloc/types.h:499-598` (the default-theap prefix, including
+// `mi_page_queue_t`, `mi_random_ctx_t`, and `mi_theap_t` through `memid`),
+// `include/mimalloc/types.h:618-701` (the heap and TLD prefixes used by the
+// bootstrap-only ownership model), `include/mimalloc/types.h:608-758`
+// (arena-page and arena metadata layouts), `src/init.c:15-145` (the
+// empty-page, direct-page table, all 75 default queues, detached TLD, and
+// empty-theap initializers), `src/arena.c:1023-1095` (fresh-page metadata
+// publication), `src/page.c:708-757` (fresh-page local-state invariants),
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
 // are isolated in the `page_queue` child module below.
-// This module deliberately stops before heap, theap, TLD, subprocess, lock,
-// and statistics layouts: those require their complete lifecycle and atomic
-// contracts, and remain opaque rather than stubbed.
+// `Heap`, `ThreadLocalData`, and `Theap` below are exact source-layout
+// *prefixes* only. The included fields are the complete state used by the
+// allocation-free, exclusive single-thread bootstrap. The remaining heap,
+// TLD, subprocess, lock, and statistics lifecycle is deliberately absent;
+// no code may treat a prefix size as `sizeof(mi_heap_t)`, `sizeof(mi_tld_t)`,
+// or `sizeof(mi_theap_t)`.
 
 use core::ffi::c_void;
 use core::mem::{align_of, size_of};
-use core::ptr::null_mut;
+use core::num::NonZeroUsize;
+use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize};
 
 use crate::config::{
     BIN_COUNT, BIN_FULL, LARGE_MAX_OBJ_WSIZE, PAGES_DIRECT, WORD_SIZE,
 };
 
-pub(crate) enum Heap {}
+pub(crate) type ThreadId = usize;
+pub(crate) type ThreadFree = usize;
+pub(crate) type PageFlags = usize;
+
+pub(crate) const PAGE_IN_FULL_QUEUE: PageFlags = 0x01;
+pub(crate) const PAGE_HAS_INTERIOR_POINTERS: PageFlags = 0x02;
+pub(crate) const PAGE_FLAG_MASK: PageFlags = 0x03;
+pub(crate) const PAGE_FLAG_BITS: usize = 2;
+pub(crate) const THREAD_ID_ABANDONED: ThreadId = 0;
+pub(crate) const THREAD_ID_ABANDONED_MAPPED: ThreadId = 1 << PAGE_FLAG_BITS;
+pub(crate) const THREAD_ID_DETACHED: ThreadId = 2 << PAGE_FLAG_BITS;
+
+/// One valid non-detached `mi_threadid_t` for the exclusive bootstrap slice.
+///
+/// `src/prim/prim-tls.c:_mi_thread_id` reserves the low two bits for page
+/// flags. The source's detached and abandoned encodings occupy the other
+/// values below `3 << MI_PAGE_FLAG_BITS`; an attached default theap must not
+/// use any of them. This is an input contract supplied by the integrating
+/// runtime, not a thread-ID syscall or TLS mechanism.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LiveThreadId(NonZeroUsize);
+
+impl LiveThreadId {
+    #[inline]
+    pub(crate) const fn new(raw: ThreadId) -> Option<Self> {
+        if raw == THREAD_ID_ABANDONED
+            || raw == THREAD_ID_ABANDONED_MAPPED
+            || raw == THREAD_ID_DETACHED
+            || raw & PAGE_FLAG_MASK != 0
+        {
+            return None;
+        }
+
+        match NonZeroUsize::new(raw) {
+            Some(raw) => Some(Self(raw)),
+            None => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn get(self) -> ThreadId {
+        self.0.get()
+    }
+}
+
+/// Opaque because the subprocess lifecycle is outside the bootstrap slice.
 pub(crate) enum Subprocess {}
-pub(crate) enum Theap {}
+
+/// Prefix of `mi_heap_t` through its `subproc` member.
+///
+/// The exclusive bootstrap does not create, enumerate, or destroy heaps. It
+/// owns one caller-pinned image solely so pages and the default theap can hold
+/// the source-shaped heap pointer. Its null subprocess pointer records that
+/// subprocess lifecycle is not part of this slice.
+#[repr(C)]
+pub(crate) struct Heap {
+    subprocess: *mut Subprocess,
+}
+
+impl Heap {
+    #[inline]
+    pub(crate) const fn bootstrap_empty() -> Self {
+        Self {
+            subprocess: null_mut(),
+        }
+    }
+}
+
+/// Prefix of `mi_tld_t` through its thread identity.
+///
+/// Queue locks, theap lists, NUMA selection, and the rest of `mi_tld_t` need
+/// the omitted thread lifecycle. This prefix exists only to retain the exact
+/// pointer and identity relationship used by `mi_theap_t` during bootstrap.
+#[repr(C)]
+pub(crate) struct ThreadLocalData {
+    thread_id: ThreadId,
+}
+
+impl ThreadLocalData {
+    #[inline]
+    pub(crate) const fn detached() -> Self {
+        Self {
+            thread_id: THREAD_ID_DETACHED,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn thread_id(&self) -> ThreadId {
+        self.thread_id
+    }
+
+    #[inline]
+    pub(crate) fn attach_exclusive(&mut self, thread_id: LiveThreadId) {
+        self.thread_id = thread_id.get();
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -258,21 +361,27 @@ impl MemoryId {
 #[derive(Clone, Copy)]
 pub(crate) struct Encoded(pub(crate) usize);
 
-pub(crate) type ThreadId = usize;
-pub(crate) type ThreadFree = usize;
-pub(crate) type PageFlags = usize;
-
-pub(crate) const PAGE_IN_FULL_QUEUE: PageFlags = 0x01;
-pub(crate) const PAGE_HAS_INTERIOR_POINTERS: PageFlags = 0x02;
-pub(crate) const PAGE_FLAG_MASK: PageFlags = 0x03;
-pub(crate) const PAGE_FLAG_BITS: usize = 2;
-pub(crate) const THREAD_ID_ABANDONED: ThreadId = 0;
-pub(crate) const THREAD_ID_ABANDONED_MAPPED: ThreadId = 1 << PAGE_FLAG_BITS;
-pub(crate) const THREAD_ID_DETACHED: ThreadId = 2 << PAGE_FLAG_BITS;
-
 #[repr(C)]
 pub(crate) struct Block {
     next: Encoded,
+}
+
+/// Narrow mutable projection for the exclusive local free-list algorithms.
+///
+/// It deliberately omits ownership, queue links, thread-free state, and heap
+/// pointers. `free_list.rs` may update only the fields that the source local
+/// free-list routines own; queue and direct-cache transitions stay with the
+/// default-theap lifecycle.
+pub(super) struct PageFreeListState<'a> {
+    pub(super) area: NonNull<u8>,
+    pub(super) area_bytes: usize,
+    pub(super) block_size: usize,
+    pub(super) capacity: &'a mut u16,
+    pub(super) reserved: u16,
+    pub(super) free: &'a mut *mut Block,
+    pub(super) local_free: &'a mut *mut Block,
+    pub(super) used: &'a mut usize,
+    pub(super) free_is_zero: &'a mut bool,
 }
 
 #[repr(C)]
@@ -294,13 +403,38 @@ pub(crate) struct PageQueue {
 }
 
 impl PageQueue {
-    const fn empty(block_size: usize) -> Self {
+    pub(crate) const fn empty(block_size: usize) -> Self {
         Self {
             first: null_mut(),
             last: null_mut(),
             count: 0,
             block_size,
         }
+    }
+
+    #[inline]
+    pub(crate) const fn block_size(&self) -> usize {
+        self.block_size
+    }
+
+    #[inline]
+    pub(crate) const fn count(&self) -> usize {
+        self.count
+    }
+
+    #[inline]
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.first.is_null() && self.last.is_null() && self.count == 0
+    }
+
+    #[inline]
+    pub(crate) const fn first(&self) -> *mut Page {
+        self.first
+    }
+
+    #[inline]
+    pub(crate) const fn last(&self) -> *mut Page {
+        self.last
     }
 }
 
@@ -442,6 +576,352 @@ impl Page {
             memid: MemoryId::static_empty(),
         }
     }
+
+    /// Associates a newly initialized page with the caller's exclusive
+    /// default theap.
+    ///
+    /// This is the single-thread subset of
+    /// `internal.h:mi_page_set_theap`: the page has no remote-free producer,
+    /// so no flags need to survive a compare/exchange loop. `theap` and
+    /// `heap` must remain address-stable while the page can be observed; the
+    /// bootstrap owner enforces that by requiring pinning before it exposes
+    /// either address. The page metadata itself must likewise remain live and
+    /// exclusively mutable for the complete association.
+    pub(crate) fn associate_exclusive(
+        &mut self,
+        theap: &mut Theap,
+        heap: &mut Heap,
+        thread_id: LiveThreadId,
+    ) {
+        debug_assert!(theap.matches_thread(thread_id));
+        self.theap = core::ptr::from_mut(theap);
+        self.heap = core::ptr::from_mut(heap);
+        self.xthread_id.store(thread_id.get(), core::sync::atomic::Ordering::Release);
+        // The source's owner bit permits access to the non-atomic page fields.
+        // This exclusive slice has no remote-free transitions but begins with
+        // the same owned empty-list state.
+        self.xthread_free.store(1, core::sync::atomic::Ordering::Release);
+    }
+
+    /// Publishes a freshly acquired page into the exclusive local lifecycle.
+    ///
+    /// This is the source-defined partial initialization from
+    /// `arena.c:mi_arenas_page_alloc_fresh` followed by the reset invariants
+    /// checked in `page.c:_mi_page_init`; extending the local free list is a
+    /// separate operation. The pointed theap and heap must be the stable
+    /// fields of a pinned [`crate::bootstrap::DefaultSingleThreadBootstrap`].
+    /// `reserved` is the complete source-reserved block count and must be
+    /// nonzero. `page_offset` identifies the already-provisioned live block
+    /// area; this routine deliberately does not allocate, map, or validate it.
+    pub(crate) fn publish_fresh_exclusive(
+        &mut self,
+        theap: &mut Theap,
+        heap: &mut Heap,
+        thread_id: LiveThreadId,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> bool {
+        if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) {
+            return false;
+        }
+
+        self.free = null_mut();
+        self.used = 0;
+        self.local_free = null_mut();
+        self.block_size = block_size;
+        self.page_offset = page_offset;
+        self.capacity = 0;
+        self.reserved = reserved;
+        self.slice_pcommitted = slice_pcommitted;
+        self.retire_expire = 0;
+        self.free_is_zero = free_is_zero;
+        self.next = null_mut();
+        self.prev = null_mut();
+        self.memid = memid;
+        self.associate_exclusive(theap, heap, thread_id);
+        // `MI_PAGE_META_IS_ALIGNED` is enabled in the frozen profile. As in
+        // `arena.c`, publish the self map only after every ordinary page field
+        // and exclusive owner record is ready.
+        let self_pointer = core::ptr::from_mut(self);
+        self.self_
+            .store(self_pointer, core::sync::atomic::Ordering::Release);
+        true
+    }
+
+    #[inline]
+    const fn fresh_parameters_are_valid(block_size: usize, page_offset: usize, reserved: u16) -> bool {
+        block_size != 0 && page_offset != 0 && reserved != 0
+    }
+
+    /// Initializes potentially nonzero raw metadata and publishes a fresh
+    /// page into the exclusive local lifecycle.
+    ///
+    /// This is the only fresh-page entry point for newly committed arena
+    /// metadata. It writes [`Self::empty`] before creating a Rust reference,
+    /// matching `arena.c`'s explicit metadata zeroing rather than assuming the
+    /// OS mapping happened to contain a valid `Page` value.
+    ///
+    /// # Safety
+    ///
+    /// `metadata` must be aligned writable storage for exactly one `Page` and
+    /// must not currently hold a live Rust `Page`; no alias or page-map entry
+    /// may observe it while this method initializes it. The storage, the
+    /// supplied pinned theap/heap, and the complete page block area described
+    /// by `page_offset` and `reserved * block_size` must remain live and
+    /// exclusively owned through the local page lifecycle. All source page
+    /// geometry/provenance inputs must describe that existing memory. This
+    /// method maps no memory and does not validate a virtual-memory range.
+    pub(crate) unsafe fn publish_fresh_exclusive_at(
+        mut metadata: NonNull<Self>,
+        theap: &mut Theap,
+        heap: &mut Heap,
+        thread_id: LiveThreadId,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Self>> {
+        if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) {
+            return None;
+        }
+        // SAFETY: the caller proves that this aligned writable metadata does
+        // not contain a live `Page`, so initialization by raw write is valid.
+        unsafe { metadata.as_ptr().write(Self::empty()) };
+        // SAFETY: the preceding raw write initialized a valid Page value at
+        // `metadata`; exclusive caller ownership permits this mutable borrow.
+        let page = unsafe { metadata.as_mut() };
+        debug_assert!(page.publish_fresh_exclusive(
+            theap,
+            heap,
+            thread_id,
+            block_size,
+            page_offset,
+            reserved,
+            slice_pcommitted,
+            free_is_zero,
+            memid,
+        ));
+        Some(metadata)
+    }
+
+    /// Removes an exclusive-theap association before the page metadata is
+    /// reused. No remote free may be in flight.
+    pub(crate) fn disassociate_exclusive(&mut self) {
+        self.theap = null_mut();
+        self.xthread_id
+            .store(THREAD_ID_ABANDONED, core::sync::atomic::Ordering::Release);
+        self.xthread_free.store(0, core::sync::atomic::Ordering::Release);
+    }
+
+    /// Retires a fully free, queue-detached page before its mapping/provenance
+    /// is released, returning the source memory ID needed for that release.
+    ///
+    /// The caller must already have removed the page from its queue and direct
+    /// cache, decremented the owning theap page count, and established that no
+    /// remote free or observer exists. The caller must use the returned
+    /// provenance to unregister the raw page address before it releases the
+    /// backing mapping. This is the exclusive single-thread subset of
+    /// `page.c:_mi_page_free` plus the metadata reset performed by its arena
+    /// release path; it is not abandonment or cross-thread reclamation.
+    #[inline]
+    pub(crate) fn retire_exclusive(&mut self) -> Option<MemoryId> {
+        if self.used != 0 || !self.next.is_null() || !self.prev.is_null() {
+            return None;
+        }
+
+        let memid = self.memid;
+        self.self_
+            .store(null_mut(), core::sync::atomic::Ordering::Release);
+        self.xthread_id
+            .store(THREAD_ID_ABANDONED, core::sync::atomic::Ordering::Release);
+        self.xthread_free.store(0, core::sync::atomic::Ordering::Release);
+        self.free = null_mut();
+        self.local_free = null_mut();
+        self.block_size = 0;
+        self.page_offset = 0;
+        self.capacity = 0;
+        self.reserved = 0;
+        self.slice_pcommitted = 0;
+        self.retire_expire = 0;
+        self.free_is_zero = false;
+        self.theap = null_mut();
+        self.heap = null_mut();
+        self.next = null_mut();
+        self.prev = null_mut();
+        self.memid = MemoryId::none();
+        Some(memid)
+    }
+
+    #[inline]
+    pub(crate) const fn free_list_head(&self) -> *mut Block {
+        self.free
+    }
+
+    /// Replaces the ordinary free-list head while this page is exclusively
+    /// owned by its associated single-thread theap.
+    ///
+    /// `head` must be null or the first valid block of this page's unencoded
+    /// free list. Encoded and remote free-list protocols remain out of scope.
+    #[inline]
+    pub(crate) fn set_exclusive_free_list_head(&mut self, head: *mut Block) {
+        self.free = head;
+    }
+
+    #[inline]
+    pub(crate) const fn used(&self) -> usize {
+        self.used
+    }
+
+    /// Changes `used` only for the exclusive local lifecycle. The caller must
+    /// preserve the source page equation relative to the free list and
+    /// capacity; remote-free collection is not implemented in this slice.
+    #[inline]
+    pub(crate) fn set_exclusive_used(&mut self, used: usize) {
+        self.used = used;
+    }
+
+    #[inline]
+    pub(crate) const fn reserved(&self) -> u16 {
+        self.reserved
+    }
+
+    #[inline]
+    pub(crate) const fn capacity(&self) -> u16 {
+        self.capacity
+    }
+
+    /// Sets the local page capacity record before the page is published into
+    /// an exclusive theap queue. `capacity` must not exceed `reserved`.
+    #[inline]
+    pub(crate) fn set_capacity_reserved(&mut self, capacity: u16, reserved: u16) -> bool {
+        if capacity > reserved {
+            return false;
+        }
+        self.capacity = capacity;
+        self.reserved = reserved;
+        true
+    }
+
+    #[inline]
+    pub(crate) const fn block_size(&self) -> usize {
+        self.block_size
+    }
+
+    #[inline]
+    pub(crate) fn set_block_size(&mut self, block_size: usize) {
+        self.block_size = block_size;
+    }
+
+    /// Returns the source `mi_page_start` address.
+    ///
+    /// # Safety
+    ///
+    /// The metadata must describe a live page whose block area starts exactly
+    /// `page_offset` bytes after this `Page`; the resulting pointer range must
+    /// remain in the same allocated object. The return value carries no access
+    /// permission by itself.
+    #[inline]
+    pub(crate) unsafe fn start(&self) -> *mut u8 {
+        // SAFETY: the caller proves the source page-area layout and bounds.
+        unsafe { (self as *const Self).cast_mut().cast::<u8>().add(self.page_offset) }
+    }
+
+    #[inline]
+    pub(crate) const fn page_offset(&self) -> usize {
+        self.page_offset
+    }
+
+    #[inline]
+    pub(crate) const fn memid(&self) -> MemoryId {
+        self.memid
+    }
+
+    #[inline]
+    pub(crate) const fn retire_expire(&self) -> u8 {
+        self.retire_expire
+    }
+
+    #[inline]
+    pub(crate) const fn free_is_zero(&self) -> bool {
+        self.free_is_zero
+    }
+
+    /// Sets the source retirement countdown while the caller exclusively owns
+    /// this page and its queue membership.
+    #[inline]
+    pub(crate) fn set_retire_expire(&mut self, retire_expire: u8) {
+        self.retire_expire = retire_expire;
+    }
+
+    /// Projects exactly the local free-list fields used by the single-thread
+    /// source path.
+    ///
+    /// # Safety
+    ///
+    /// The caller must exclusively own this live page and its entire block
+    /// area: `page_offset` bytes from this metadata address must begin a
+    /// writable allocation of exactly `reserved * block_size` bytes, with
+    /// nonzero `block_size` and `reserved`. The multiplication and resulting
+    /// pointer range must not overflow. The page must be associated with the
+    /// caller's live exclusive theap, and no remote-free, page-map,
+    /// queue-retirement, or other access may observe or mutate the projected
+    /// fields for the lifetime of the returned projection. Each free-list
+    /// pointer written through it must be null or an aligned block inside this
+    /// area. These are the source `mi_page_t` local-list invariants; this
+    /// bootstrap slice intentionally does not supply their concurrent form.
+    #[inline]
+    pub(super) unsafe fn local_free_list_state(&mut self) -> PageFreeListState<'_> {
+        debug_assert!(self.block_size != 0);
+        debug_assert!(self.reserved != 0);
+        // SAFETY: the caller's live-area contract proves that advancing from
+        // this page metadata address by `page_offset` remains in bounds and
+        // produces the beginning of its writable block area.
+        let area = unsafe { (self as *mut Self).cast::<u8>().add(self.page_offset) };
+        // SAFETY: the live-area contract also proves the returned area pointer
+        // is non-null and valid for the derived byte count.
+        let area = unsafe { NonNull::new_unchecked(area) };
+        // SAFETY: the same caller contract proves this source field product
+        // does not overflow and identifies the complete page block area.
+        let area_bytes = unsafe { usize::from(self.reserved).unchecked_mul(self.block_size) };
+
+        PageFreeListState {
+            area,
+            area_bytes,
+            block_size: self.block_size,
+            capacity: &mut self.capacity,
+            reserved: self.reserved,
+            free: &mut self.free,
+            local_free: &mut self.local_free,
+            used: &mut self.used,
+            free_is_zero: &mut self.free_is_zero,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn theap(&self) -> *mut Theap {
+        self.theap
+    }
+
+    #[inline]
+    pub(crate) const fn heap(&self) -> *mut Heap {
+        self.heap
+    }
+
+    /// Returns the next raw queue link for exclusive retired-page traversal.
+    ///
+    /// Queue mutation remains confined to `page_queue`; callers may only
+    /// follow this pointer while the owning single-thread session guarantees
+    /// that the page stays queue-linked and live.
+    #[inline]
+    pub(crate) const fn next(&self) -> *mut Page {
+        self.next
+    }
 }
 
 // This is the immutable `src/init.c:mi_page_empty` prototype. `Page` contains
@@ -459,9 +939,285 @@ impl BootstrapPage {
     pub(crate) const fn as_ref(&self) -> &Page {
         &self.0
     }
+
+    /// Returns the source-shaped direct-cache sentinel pointer.
+    ///
+    /// The pointed page is immutable bootstrap metadata. A direct-cache slot
+    /// may compare against it, but it must never mutate it or enqueue it.
+    #[inline]
+    pub(crate) const fn as_ptr(&self) -> *mut Page {
+        core::ptr::addr_of!(self.0).cast_mut()
+    }
 }
 
 pub(crate) static EMPTY_PAGE: BootstrapPage = BootstrapPage(Page::empty());
+
+// `src/init.c:mi_tld_detached`. It is immutable: the live default-theap
+// bootstrap owns a separate TLD prefix after pinning. Keeping this source
+// static separate is what lets the initial empty theap avoid any TLS access.
+pub(crate) static DETACHED_THREAD_LOCAL: ThreadLocalData = ThreadLocalData::detached();
+
+/// Exact ABI image of `mi_random_ctx_t` used only by the static theap prefix.
+///
+/// The active random lifecycle is owned by `random::RandomContext`, whose
+/// RustCrypto-backed representation intentionally is not this C layout. The
+/// bootstrap only needs the source's all-zero input/output state with `weak`
+/// set, so an inert layout image keeps those roles separate.
+#[repr(C)]
+struct TheapRandomImage {
+    input: [u32; 16],
+    output: [u32; 16],
+    output_available: i32,
+    weak: bool,
+}
+
+impl TheapRandomImage {
+    const fn empty_weak() -> Self {
+        Self {
+            input: [0; 16],
+            output: [0; 16],
+            output_available: 0,
+            weak: true,
+        }
+    }
+}
+
+/// Source-layout prefix of `mi_theap_t` through `memid`.
+///
+/// This prefix contains every field required by the default direct-page
+/// cache, page queues, and exclusive local page accounting. `mi_stats_t`
+/// follows `memid` in C but is not represented: statistics require their own
+/// lifecycle and merge contract. Consequently this Rust type intentionally
+/// has no complete-`mi_theap_t` size claim.
+#[repr(C)]
+pub(crate) struct Theap {
+    // Keep first for `internal.h:_mi_theap_get_free_small_page`.
+    pages_free_direct: [*mut Page; PAGES_DIRECT],
+    tld: *mut ThreadLocalData,
+    heap: AtomicPtr<Heap>,
+    subproc: AtomicPtr<Subprocess>,
+    refcount: AtomicUsize,
+    heartbeat: u64,
+    cookie: usize,
+    random: TheapRandomImage,
+    page_count: usize,
+    page_retired_min: usize,
+    page_retired_max: usize,
+    pages_full_size: usize,
+    generic_count: isize,
+    generic_collect_count: isize,
+    tnext: *mut Theap,
+    tprev: *mut Theap,
+    hnext: *mut Theap,
+    hprev: *mut Theap,
+    page_full_retain: isize,
+    allow_page_reclaim: bool,
+    allow_page_abandon: bool,
+    is_detached: bool,
+    pages: [PageQueue; BIN_COUNT],
+    memid: MemoryId,
+}
+
+impl Theap {
+    /// `src/init.c:_mi_theap_empty` through its `memid` prefix.
+    ///
+    /// No heap is published, so `is_initialized` remains false exactly as in
+    /// `internal.h:mi_theap_is_initialized`. The direct table is deliberately
+    /// populated with the immutable empty-page sentinel rather than null.
+    pub(crate) const fn empty() -> Self {
+        Self {
+            pages_free_direct: [EMPTY_PAGE.as_ptr(); PAGES_DIRECT],
+            tld: core::ptr::addr_of!(DETACHED_THREAD_LOCAL).cast_mut(),
+            heap: AtomicPtr::new(null_mut()),
+            subproc: AtomicPtr::new(null_mut()),
+            refcount: AtomicUsize::new(1),
+            heartbeat: 0,
+            cookie: 0,
+            random: TheapRandomImage::empty_weak(),
+            page_count: 0,
+            page_retired_min: BIN_FULL,
+            page_retired_max: 0,
+            pages_full_size: 0,
+            generic_count: 0,
+            generic_collect_count: 0,
+            tnext: null_mut(),
+            tprev: null_mut(),
+            hnext: null_mut(),
+            hprev: null_mut(),
+            page_full_retain: 0,
+            allow_page_reclaim: false,
+            allow_page_abandon: true,
+            is_detached: true,
+            pages: EMPTY_PAGE_QUEUES,
+            memid: MemoryId::static_empty(),
+        }
+    }
+
+    /// Binds the empty source image to the one pinned default heap/TLD pair.
+    ///
+    /// The caller must first attach `tld` to a valid [`LiveThreadId`] and must
+    /// ensure both input addresses remain stable for every associated page.
+    /// `DefaultSingleThreadBootstrap` is the only owner in this slice and
+    /// makes that condition explicit with `Pin`. Publishing `heap` last is
+    /// source order from `src/theap.c:_mi_theap_init`: it is the initialized
+    /// predicate and must not become non-null before the preceding fields are
+    /// ready.
+    pub(crate) fn bind_exclusive_single_thread(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+    ) -> bool {
+        let Some(thread_id) = LiveThreadId::new(tld.thread_id()) else {
+            return false;
+        };
+        if self.is_initialized() {
+            return false;
+        }
+
+        self.tld = core::ptr::from_mut(tld);
+        self.refcount.store(1, core::sync::atomic::Ordering::Release);
+        self.subproc
+            .store(heap.subprocess, core::sync::atomic::Ordering::Release);
+        self.is_detached = false;
+        // The normal source default permits abandonment. This bounded state
+        // intentionally uses the source's non-abandoning/destroyable-theap
+        // mode because it does not implement remote-free or adoption.
+        self.allow_page_abandon = false;
+        debug_assert!(self.matches_thread(thread_id));
+        self.heap.store(
+            core::ptr::from_mut(heap),
+            core::sync::atomic::Ordering::Release,
+        );
+        true
+    }
+
+    #[inline]
+    pub(crate) fn is_initialized(&self) -> bool {
+        !self.heap.load(core::sync::atomic::Ordering::Relaxed).is_null()
+    }
+
+    #[inline]
+    pub(crate) fn matches_thread(&self, thread_id: LiveThreadId) -> bool {
+        // The only constructors use `DETACHED_THREAD_LOCAL` or a pinned
+        // `DefaultSingleThreadBootstrap` field, both live for this reference.
+        let tld = unsafe { self.tld.as_ref() };
+        matches!(tld, Some(tld) if tld.thread_id() == thread_id.get())
+    }
+
+    #[inline]
+    pub(crate) const fn is_detached(&self) -> bool {
+        self.is_detached
+    }
+
+    #[inline]
+    pub(crate) fn refcount(&self) -> usize {
+        self.refcount.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub(crate) fn heap(&self) -> *mut Heap {
+        self.heap.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub(crate) const fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    #[inline]
+    pub(crate) const fn allows_page_abandon(&self) -> bool {
+        self.allow_page_abandon
+    }
+
+    #[inline]
+    pub(crate) const fn retired_bounds(&self) -> (usize, usize) {
+        (self.page_retired_min, self.page_retired_max)
+    }
+
+    /// Includes one source regular-bin retirement in the bounded collection
+    /// range. Full and huge queues are never retired through this mechanism.
+    #[inline]
+    pub(crate) fn note_retired_bin(&mut self, bin: usize) -> bool {
+        if bin >= BIN_FULL {
+            return false;
+        }
+        if bin < self.page_retired_min {
+            self.page_retired_min = bin;
+        }
+        if bin > self.page_retired_max {
+            self.page_retired_max = bin;
+        }
+        true
+    }
+
+    /// Restores the empty `src/init.c:_mi_theap_empty` retirement range after
+    /// a collection pass has found no remaining retired regular-bin page.
+    #[inline]
+    pub(crate) fn reset_retired_bounds(&mut self) {
+        self.page_retired_min = BIN_FULL;
+        self.page_retired_max = 0;
+    }
+
+    #[inline]
+    pub(crate) fn queue(&self, bin: usize) -> Option<&PageQueue> {
+        self.pages.get(bin)
+    }
+
+    /// Grants the single-thread lifecycle code mutable access to one exact
+    /// source queue. It must maintain `page_count` through
+    /// [`Self::note_page_added`] and [`Self::note_page_removed`] alongside the
+    /// intrusive `page_queue` transitions.
+    #[inline]
+    pub(crate) fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
+        self.pages.get_mut(bin)
+    }
+
+    #[inline]
+    pub(crate) fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        match self.pages_free_direct.get(index) {
+            Some(page) => Some(*page),
+            None => None,
+        }
+    }
+
+    /// Replaces one direct-cache entry under the exclusive local lifecycle.
+    ///
+    /// `page` must be [`EMPTY_PAGE`] or a live page owned by this exact theap;
+    /// callers must clear the slot before retiring or reusing that live page.
+    #[inline]
+    pub(crate) fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        let Some(slot) = self.pages_free_direct.get_mut(index) else {
+            return false;
+        };
+        *slot = page;
+        true
+    }
+
+    #[inline]
+    pub(crate) fn clear_direct_page(&mut self, index: usize) -> bool {
+        self.set_direct_page(index, EMPTY_PAGE.as_ptr())
+    }
+
+    /// Mirrors the owning-theap count update performed around the source's
+    /// queue insertion helpers. The caller must have exclusively inserted one
+    /// page into a queue first.
+    #[inline]
+    pub(crate) fn note_page_added(&mut self) {
+        self.page_count += 1;
+    }
+
+    /// Mirrors the owning-theap count update performed around the source's
+    /// queue removal helpers. Returns `false` rather than underflowing when a
+    /// caller violates the queue/page-count pairing contract.
+    #[inline]
+    pub(crate) fn note_page_removed(&mut self) -> bool {
+        let Some(next) = self.page_count.checked_sub(1) else {
+            return false;
+        };
+        self.page_count = next;
+        true
+    }
+}
 
 const _: [(); 4] = [(); size_of::<MemoryKind>()];
 const _: [(); 16] = [(); size_of::<MemoryInfo>()];
@@ -476,6 +1232,12 @@ const _: [(); 8] = [(); size_of::<Block>()];
 const _: [(); 32] = [(); size_of::<PageQueue>()];
 const _: [(); 128] = [(); size_of::<Page>()];
 const _: [(); 8] = [(); align_of::<Page>()];
+const _: [(); 8] = [(); size_of::<Heap>()];
+const _: [(); 8] = [(); align_of::<Heap>()];
+const _: [(); 136] = [(); size_of::<TheapRandomImage>()];
+const _: [(); 4] = [(); align_of::<TheapRandomImage>()];
+const _: [(); 3736] = [(); size_of::<Theap>()];
+const _: [(); 8] = [(); align_of::<Theap>()];
 const _: [(); 129] = [(); PAGES_DIRECT];
 const _: [(); 74] = [(); BIN_FULL];
 
@@ -539,6 +1301,17 @@ mod tests {
             "offsetof.mi_page_queue_t.block_size",
             offset_of!(PageQueue, block_size)
         );
+        record!("alignof.mi_theap_t", align_of::<Theap>());
+        record!(
+            "offsetof.mi_theap_t.pages_free_direct",
+            offset_of!(Theap, pages_free_direct)
+        );
+        record!("offsetof.mi_theap_t.page_count", offset_of!(Theap, page_count));
+        record!("offsetof.mi_theap_t.pages", offset_of!(Theap, pages));
+        record!("offsetof.mi_theap_t.memid", offset_of!(Theap, memid));
+        // This exact prefix ends where the intentionally absent C `stats`
+        // field begins; it is not a complete `sizeof(mi_theap_t)` claim.
+        record!("offsetof.mi_theap_t.stats", size_of::<Theap>());
         record!("sizeof.mi_arena_t", size_of::<Arena>());
         record!("alignof.mi_arena_t", align_of::<Arena>());
         record!("offsetof.mi_arena_t.memid", offset_of!(Arena, memid));
@@ -773,6 +1546,130 @@ mod tests {
         assert_eq!(offset_of!(Page, xthread_id), 8);
         assert_eq!(offset_of!(Page, xthread_free), 64);
         assert_eq!(offset_of!(Page, memid), 104);
+    }
+
+    #[test]
+    fn represented_theap_prefix_keeps_the_pinned_field_offsets() {
+        // These are offsets in the actual C `mi_theap_t`; this Rust prefix
+        // stops at the same `memid` end boundary before absent `mi_stats_t`.
+        assert_eq!(size_of::<Heap>(), 8);
+        assert_eq!(align_of::<Heap>(), 8);
+        assert_eq!(size_of::<TheapRandomImage>(), 136);
+        assert_eq!(offset_of!(Theap, pages_free_direct), 0);
+        assert_eq!(offset_of!(Theap, tld), PAGES_DIRECT * size_of::<*mut Page>());
+        assert_eq!(offset_of!(Theap, heap), 1_040);
+        assert_eq!(offset_of!(Theap, random), 1_080);
+        assert_eq!(offset_of!(Theap, pages), 1_312);
+        assert_eq!(offset_of!(Theap, memid), 3_712);
+        assert_eq!(size_of::<Theap>(), 3_736);
+        assert_eq!(align_of::<Theap>(), 8);
+    }
+
+    #[test]
+    fn fresh_page_publication_resets_every_local_lifecycle_field() {
+        let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_exclusive(thread_id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+
+        let mut page = Page::empty();
+        page.used = 7;
+        page.local_free = core::ptr::without_provenance_mut::<Block>(0x1000);
+        page.capacity = 7;
+        page.retire_expire = 3;
+        page.free_is_zero = true;
+        page.next = core::ptr::without_provenance_mut::<Page>(0x1000);
+        page.prev = core::ptr::without_provenance_mut::<Page>(0x2000);
+
+        let memid = MemoryId::none();
+        assert!(page.publish_fresh_exclusive(
+            &mut theap,
+            &mut heap,
+            thread_id,
+            16,
+            128,
+            32,
+            0,
+            false,
+            memid,
+        ));
+
+        assert_eq!(page.self_.load(core::sync::atomic::Ordering::Acquire), core::ptr::from_mut(&mut page));
+        assert_eq!(page.theap(), core::ptr::from_mut(&mut theap));
+        assert_eq!(page.heap(), core::ptr::from_mut(&mut heap));
+        assert_eq!(page.xthread_id.load(core::sync::atomic::Ordering::Acquire), thread_id.get());
+        assert_eq!(page.xthread_free.load(core::sync::atomic::Ordering::Acquire), 1);
+        assert!(page.free.is_null());
+        assert!(page.local_free.is_null());
+        assert_eq!(page.used(), 0);
+        assert_eq!(page.capacity(), 0);
+        assert_eq!(page.reserved(), 32);
+        assert_eq!(page.block_size(), 16);
+        assert_eq!(page.page_offset(), 128);
+        assert_eq!(page.slice_pcommitted, 0);
+        assert!(!page.free_is_zero);
+        assert_eq!(page.retire_expire(), 0);
+        assert!(page.next.is_null());
+        assert!(page.prev.is_null());
+        assert_eq!(page.memid().kind(), MemoryKind::None);
+    }
+
+    #[test]
+    fn free_detached_page_retirement_clears_owner_and_returns_provenance() {
+        let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_exclusive(thread_id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+
+        let source_memid = MemoryId::external(
+            core::ptr::without_provenance_mut::<u8>(0x1000),
+            4096,
+            true,
+            false,
+            true,
+        );
+        let mut page = Page::empty();
+        assert!(page.publish_fresh_exclusive(
+            &mut theap,
+            &mut heap,
+            thread_id,
+            16,
+            128,
+            32,
+            1,
+            true,
+            source_memid,
+        ));
+
+        let released = page
+            .retire_exclusive()
+            .expect("fresh page is free and queue-detached");
+        assert_eq!(released.kind(), MemoryKind::External);
+        assert!(page.self_.load(core::sync::atomic::Ordering::Acquire).is_null());
+        assert_eq!(
+            page.xthread_id.load(core::sync::atomic::Ordering::Acquire),
+            THREAD_ID_ABANDONED
+        );
+        assert_eq!(page.xthread_free.load(core::sync::atomic::Ordering::Acquire), 0);
+        assert!(page.free.is_null());
+        assert!(page.local_free.is_null());
+        assert_eq!(page.used(), 0);
+        assert_eq!(page.block_size(), 0);
+        assert_eq!(page.page_offset(), 0);
+        assert_eq!(page.capacity(), 0);
+        assert_eq!(page.reserved(), 0);
+        assert_eq!(page.slice_pcommitted, 0);
+        assert_eq!(page.retire_expire(), 0);
+        assert!(!page.free_is_zero());
+        assert!(page.theap().is_null());
+        assert!(page.heap().is_null());
+        assert!(page.next().is_null());
+        assert!(page.prev.is_null());
+        assert_eq!(page.memid().kind(), MemoryKind::None);
     }
 
     #[test]

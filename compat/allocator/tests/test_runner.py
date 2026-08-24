@@ -328,6 +328,52 @@ ok
         with self.assertRaisesRegex(RUNNER.HarnessError, "layout markers"):
             RUNNER.parse_rust_layout("pointer.size=8\n")
 
+    def test_small_trace_parser_requires_one_address_independent_machine_record(self) -> None:
+        output = """
+noise before
+CRABC_MI_SMALL_TRACE_BEGIN
+trace.boundary.count=2
+trace.boundary.0.request=0
+trace.boundary.0.usable=8
+CRABC_MI_SMALL_TRACE_END
+noise after
+"""
+        self.assertEqual(
+            RUNNER.parse_small_trace(output),
+            {
+                "trace.boundary.0.request": 0,
+                "trace.boundary.0.usable": 8,
+                "trace.boundary.count": 2,
+            },
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "trace.*markers"):
+            RUNNER.parse_small_trace("trace.boundary.count=2\n")
+
+    def test_small_trace_comparison_requires_exact_keys_and_values(self) -> None:
+        c_trace = {
+            "trace.boundary.0.request": 0,
+            "trace.boundary.0.usable": 8,
+            "trace.boundary.count": 1,
+        }
+        self.assertEqual(
+            RUNNER.compare_small_trace(c_trace, c_trace),
+            {"compared_value_count": 3, "status": "matched"},
+        )
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            r"missing from C oracle: trace\.extra; "
+            r"missing from Rust port: trace\.boundary\.0\.usable; "
+            r"value mismatches: trace\.boundary\.count \(C=1, Rust=2\)",
+        ):
+            RUNNER.compare_small_trace(
+                c_trace,
+                {
+                    "trace.boundary.0.request": 0,
+                    "trace.boundary.count": 2,
+                    "trace.extra": 1,
+                },
+            )
+
     def test_layout_parser_rejects_duplicate_machine_record_keys(self) -> None:
         with self.assertRaisesRegex(RUNNER.HarnessError, "duplicate layout probe key"):
             RUNNER.parse_layout("pointer.size=8\npointer.size=4\n")

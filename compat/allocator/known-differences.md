@@ -8,9 +8,11 @@ The source pin is defined in
 ## Current status
 
 No differences are recorded. The current Rust crate contains source-mapped
-foundations and partial OS, page-map, bitmap, arena, and random-state
-substrates, but exposes no allocation/free operation and makes no Rust/C parity
-claim.
+foundations plus a private, explicit single-thread small-allocation lifecycle.
+That bounded path has exact address-independent trace parity with pinned C
+v3.5.0, but it is not exported and does not imply parity for the absent
+process/TLS, remote-free, medium/large/aligned, reallocation, teardown, or
+public-API regions.
 
 ## Entry requirements
 

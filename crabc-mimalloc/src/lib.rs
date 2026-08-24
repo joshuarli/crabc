@@ -1,9 +1,10 @@
 //! Linux/AArch64 allocator-engine port of the pinned mimalloc upstream.
 //!
-//! The crate currently contains source-mapped allocator foundations but
-//! deliberately exposes no allocator operations or lifecycle hooks. Later
-//! implementation slices will add them only together with their contracts
-//! and behavioral evidence.
+//! The crate contains source-mapped allocator foundations and one private,
+//! explicit single-thread small-allocation lifecycle over a caller-managed
+//! external arena and page map. It deliberately exposes no public allocator
+//! API or process/TLS lifecycle yet; medium, large, aligned, realloc, remote
+//! free, teardown, and integration slices remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
 //! `crabc-libc`; this crate must not depend on it.
 
@@ -27,7 +28,9 @@ mod bits;
 mod atomic;
 mod arena;
 mod bitmap;
+mod bootstrap;
 mod config;
+mod free_list;
 mod invariants;
 mod lock;
 mod once;
@@ -41,5 +44,6 @@ mod page_map;
 mod provenance;
 mod random;
 mod size_class;
+mod single_thread;
 mod support;
 mod types;

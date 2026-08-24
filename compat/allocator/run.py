@@ -439,6 +439,7 @@ int main(void) {
   U("offsetof.mi_theap_t.pages_free_direct", offsetof(mi_theap_t, pages_free_direct));
   U("offsetof.mi_theap_t.page_count", offsetof(mi_theap_t, page_count));
   U("offsetof.mi_theap_t.pages", offsetof(mi_theap_t, pages));
+  U("offsetof.mi_theap_t.memid", offsetof(mi_theap_t, memid));
   U("offsetof.mi_theap_t.stats", offsetof(mi_theap_t, stats));
   U("sizeof.mi_heap_t", sizeof(mi_heap_t));
   U("alignof.mi_heap_t", _Alignof(mi_heap_t));
@@ -567,6 +568,110 @@ int main(void) {
     printf("bin.index.%zu.at=%zu\n", bin, _mi_bin(boundary));
     printf("bin.index.%zu.plus=%zu\n", bin, _mi_bin(boundary + 1));
   }
+  return 0;
+}
+"""
+
+
+SMALL_TRACE_PROBE = r"""
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+
+#define CRABC_TRACE_MAX_BOUNDARIES 384
+#define CRABC_TRACE_REPEAT_COUNT 96
+
+static bool append_unique(size_t* requests, size_t* count, size_t request) {
+  for (size_t index = 0; index < *count; index++) {
+    if (requests[index] == request) return true;
+  }
+  if (*count >= CRABC_TRACE_MAX_BOUNDARIES) return false;
+  requests[*count] = request;
+  *count += 1;
+  return true;
+}
+
+static size_t collect_small_boundaries(size_t* requests) {
+  size_t count = 0;
+  size_t previous = SIZE_MAX;
+  for (size_t request = 0; request <= MI_SMALL_SIZE_MAX; request++) {
+    const size_t usable = mi_good_size(request);
+    if (request == 0 || usable != previous) {
+      if (request > 0 && !append_unique(requests, &count, request - 1)) return 0;
+      if (!append_unique(requests, &count, request)) return 0;
+      if (request < MI_SMALL_SIZE_MAX && !append_unique(requests, &count, request + 1)) return 0;
+    }
+    previous = usable;
+  }
+  return count;
+}
+
+static bool bytes_equal(const uint8_t* bytes, size_t size, uint8_t value) {
+  for (size_t index = 0; index < size; index++) {
+    if (bytes[index] != value) return false;
+  }
+  return true;
+}
+
+int main(void) {
+  size_t requests[CRABC_TRACE_MAX_BOUNDARIES];
+  const size_t boundary_count = collect_small_boundaries(requests);
+  if (boundary_count == 0) return 2;
+
+  puts("CRABC_MI_SMALL_TRACE_BEGIN");
+  printf("trace.boundary.count=%zu\n", boundary_count);
+  for (size_t index = 0; index < boundary_count; index++) {
+    const size_t request = requests[index];
+    uint8_t* const first = (uint8_t*)mi_malloc(request);
+    uint8_t* const second = (uint8_t*)mi_malloc(request);
+    if (first == NULL || second == NULL) return 3;
+    const size_t first_usable = mi_usable_size(first);
+    const size_t second_usable = mi_usable_size(second);
+    if (first_usable < request || first_usable != second_usable) return 4;
+    const uint8_t pattern = (uint8_t)(0x41u + (index % 47u));
+    memset(first, pattern, request);
+    printf("trace.boundary.%zu.request=%zu\n", index, request);
+    printf("trace.boundary.%zu.usable=%zu\n", index, first_usable);
+    printf("trace.boundary.%zu.distinct=%u\n", index, first != second);
+    printf("trace.boundary.%zu.word_aligned=%u\n", index,
+           (((uintptr_t)first % sizeof(uintptr_t)) == 0));
+    printf("trace.boundary.%zu.max_aligned=%u\n", index,
+           (((uintptr_t)first % MI_MAX_ALIGN_SIZE) == 0));
+    printf("trace.boundary.%zu.preserved=%u\n", index,
+           bytes_equal(first, request, pattern));
+    mi_free(second);
+    mi_free(first);
+  }
+
+  uint8_t* const zeroed = (uint8_t*)mi_zalloc(37);
+  if (zeroed == NULL) return 5;
+  printf("trace.zero.request=37\n");
+  printf("trace.zero.usable=%zu\n", mi_usable_size(zeroed));
+  printf("trace.zero.cleared=%u\n", bytes_equal(zeroed, 37, 0));
+  mi_free(zeroed);
+
+  uint8_t* live[CRABC_TRACE_REPEAT_COUNT];
+  bool repeat_ok = true;
+  for (size_t index = 0; index < CRABC_TRACE_REPEAT_COUNT; index++) {
+    live[index] = (uint8_t*)mi_malloc(MI_SMALL_SIZE_MAX);
+    if (live[index] == NULL) return 6;
+    const uint8_t pattern = (uint8_t)(index + 1);
+    memset(live[index], pattern, MI_SMALL_SIZE_MAX);
+  }
+  for (size_t index = 0; index < CRABC_TRACE_REPEAT_COUNT; index++) {
+    const uint8_t pattern = (uint8_t)(index + 1);
+    repeat_ok = repeat_ok && bytes_equal(live[index], MI_SMALL_SIZE_MAX, pattern);
+  }
+  for (size_t ordinal = 0; ordinal < CRABC_TRACE_REPEAT_COUNT; ordinal++) {
+    const size_t index = (ordinal * 37u) % CRABC_TRACE_REPEAT_COUNT;
+    mi_free(live[index]);
+  }
+  printf("trace.repeat.count=%u\n", CRABC_TRACE_REPEAT_COUNT);
+  printf("trace.repeat.fill_preserved=%u\n", repeat_ok);
+  puts("CRABC_MI_SMALL_TRACE_END");
   return 0;
 }
 """
@@ -1488,6 +1593,20 @@ def parse_rust_layout(output: str) -> dict[str, int]:
     return parse_layout(output[start:stop].strip())
 
 
+def parse_small_trace(output: str) -> dict[str, int]:
+    """Parse one address-independent single-thread small-allocation record."""
+
+    begin = "CRABC_MI_SMALL_TRACE_BEGIN"
+    end = "CRABC_MI_SMALL_TRACE_END"
+    if output.count(begin) != 1 or output.count(end) != 1:
+        raise HarnessError("small-allocation trace did not emit exactly one pair of markers")
+    start = output.index(begin) + len(begin)
+    stop = output.index(end)
+    if stop <= start:
+        raise HarnessError("small-allocation trace emitted reversed markers")
+    return parse_layout(output[start:stop].strip())
+
+
 def parse_rust_test_count(output: str) -> int:
     matches = re.findall(
         r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
@@ -1536,6 +1655,33 @@ def compare_rust_layout(c_layout: Mapping[str, int], rust_layout: Mapping[str, i
     if problems:
         raise HarnessError("Rust allocator layout differs from pinned release C: " + "; ".join(problems))
     return {"compared_value_count": len(rust_layout), "status": "matched"}
+
+
+def compare_small_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+) -> dict[str, Any]:
+    """Require the bounded Rust lifecycle to match every pinned C trace fact."""
+
+    missing_from_c = sorted(set(rust_trace).difference(c_trace))
+    missing_from_rust = sorted(set(c_trace).difference(rust_trace))
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in sorted(set(c_trace).intersection(rust_trace))
+        if c_trace[key] != rust_trace[key]
+    ]
+    problems: list[str] = []
+    if missing_from_c:
+        problems.append("missing from C oracle: " + ", ".join(missing_from_c))
+    if missing_from_rust:
+        problems.append("missing from Rust port: " + ", ".join(missing_from_rust))
+    if mismatches:
+        problems.append("value mismatches: " + ", ".join(mismatches))
+    if problems:
+        raise HarnessError(
+            "Rust small-allocation trace differs from pinned release C: "
+            + "; ".join(problems)
+        )
+    return {"compared_value_count": len(rust_trace), "status": "matched"}
 
 
 def dynamic_symbols(readelf: str, artifact: Path) -> list[str]:
@@ -1637,6 +1783,46 @@ def compiler_version(compiler: str, source: Path) -> str:
     return str(record["stdout"]).splitlines()[0]
 
 
+def build_small_trace(
+    compiler: str,
+    source: Path,
+    profile_dir: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build the pinned release allocator as a fresh logical trace process."""
+
+    trace_source = profile_dir / "small-trace-probe.c"
+    trace_binary = profile_dir / "small-trace-probe"
+    trace_source.write_text(SMALL_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *profile_flags,
+        str(trace_source),
+        *(str(source / item) for item in ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C small-allocation trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C small-allocation trace execution")
+    return {
+        "command": command,
+        "record": parse_small_trace(str(run["stdout"])),
+    }
+
+
 def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: Sequence[str]) -> dict[str, Any]:
     profile_dir = REPORT_ROOT / "oracle" / name
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -1681,7 +1867,7 @@ def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: S
     header_text = str(header["stdout"])
     if "AArch64" not in header_text or "little endian" not in header_text:
         raise HarnessError(f"C oracle artifact is not little-endian AArch64: {artifact}")
-    return {
+    result = {
         "artifact": artifact_record(artifact),
         "build": {"command": command, "stderr": build["stderr"]},
         "configuration_macros": parse_macros(str(macro_probe["stdout"])),
@@ -1690,6 +1876,11 @@ def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: S
         "profile": name,
         "symbols": dynamic_symbols(readelf, artifact),
     }
+    if name == "release":
+        result["single_thread_small_trace"] = build_small_trace(
+            compiler, source, profile_dir, flags
+        )
+    return result
 
 
 def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -1889,7 +2080,9 @@ def production_dependency_graph() -> dict[str, Any]:
     return report
 
 
-def rust_layout_probe(c_release_layout: Mapping[str, int]) -> dict[str, Any]:
+def rust_layout_probe(
+    c_release_layout: Mapping[str, int], c_release_small_trace: Mapping[str, int]
+) -> dict[str, Any]:
     command = [
         "cargo",
         "test",
@@ -1903,12 +2096,16 @@ def rust_layout_probe(c_release_layout: Mapping[str, int]) -> dict[str, Any]:
     require_success(record, "Rust allocator layout probe")
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
     rust_layout = parse_rust_layout(output)
-    comparison = compare_rust_layout(c_release_layout, rust_layout)
+    rust_small_trace = parse_small_trace(output)
     return {
         "command": command,
-        "comparison": comparison,
+        "comparison": compare_rust_layout(c_release_layout, rust_layout),
         "layout": rust_layout,
         "passed_test_count": parse_rust_test_count(output),
+        "single_thread_small_trace": {
+            "comparison": compare_small_trace(c_release_small_trace, rust_small_trace),
+            "record": rust_small_trace,
+        },
     }
 
 
@@ -1974,7 +2171,10 @@ def run_milestone0(*, offline: bool, generate_contracts: bool, check_only: bool)
             contracts[API_CONTRACT], profiles["release"]["symbols"]
         )
         dependency_graph = production_dependency_graph()
-        rust_layout = rust_layout_probe(profiles["release"]["layout"])
+        rust_layout = rust_layout_probe(
+            profiles["release"]["layout"],
+            profiles["release"]["single_thread_small_trace"]["record"],
+        )
         report = milestone0_report(pin, archive, source, profiles)
         report["contracts"] = {relative(path): payload["summary"] for path, payload in contracts.items()}
         report["port_map"] = port_map_counts(port_map)

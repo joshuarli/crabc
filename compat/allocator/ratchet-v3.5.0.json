@@ -4,16 +4,16 @@
   "configuration_profile_count": 5,
   "format": 1,
   "port_map_counts": {
-    "differential_verified": 8,
+    "differential_verified": 11,
     "exported": 0,
-    "implemented": 45,
-    "item_count": 42,
+    "implemented": 49,
+    "item_count": 46,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 45
+    "unit_verified": 49
   },
-  "port_map_sha256": "2e34625c3391e62e9dccdc4aba05a48c180863c0f4c590d36f6a2353fdc26e94",
+  "port_map_sha256": "dc77626e8fd67256ba5489163093a46f0ee7dd5f75579d8a21f1d9d87a8f89de",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -92,11 +92,20 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:src/alloc.c:explicit-default-theap-small-allocation-lifecycle": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/arena.c:_mi_arenas_page_alloc-kind-selection": [
       "implemented",
       "unit_verified"
     ],
     "item:src/arena.c:arena-identity-registry-layout-and-in-place-external-management": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:external-arena-contiguous-claim-page-metadata-and-release": [
       "implemented",
       "unit_verified"
     ],
@@ -179,6 +188,11 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/page.c:scalar-local-page-free-list-allocation-and-collection": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
     "item:src/prim/unix/prim.c:linux-direct-process-thread-and-entropy-observations": [
       "implemented",
       "unit_verified"
@@ -190,6 +204,11 @@
     "item:src/random.c:original-chacha-context-state-and-output-contract": [
       "implemented",
       "unit_verified"
+    ],
+    "item:src/theap.c:default-theap-prefix-and-exclusive-pinned-bootstrap": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
     ],
     "unit:include/mimalloc-stats.h": [],
     "unit:include/mimalloc.h": [],

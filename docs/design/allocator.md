@@ -22,22 +22,27 @@ configuration, arithmetic, types, provenance, atomic operations, size classes,
 ordinary and binned caller-owned bitmap views, a live two-level page map,
 immutable Linux memory policy, regular/aligned mapping ownership, an in-place
 external-arena substrate, a private futex lock boundary, and bounded
-nonallocating support kernels. Its allocator-owned random context preserves the pinned source's
-original-ChaCha state and output contract through the audited RustCrypto
-primitive; OS entropy acquisition and runtime lifecycle wiring remain
-unfinished slices. The recursive allocation-free once protocol is present as a
-coordination primitive, but no process initialization state machine is yet
-claimed. Intrusive page-queue metadata kernels are source-mapped separately
-from the still-absent theap accounting that makes them live allocator
-operations. Pure page geometry covers slice counts, separated-metadata starts,
-object counts/offsets, and the default capacity-extension bound without
-claiming live page initialization. A fixed-capacity `cfg(miri)` mapping model
-exercises current VM ownership and page-map transitions without broadening
-production support; the pinned toolchain does not currently install Miri
-itself. Arena page allocation/search/release, the global initialization state
-machine, heap/theap/TLS ownership, and allocation/free paths are still absent.
-The crate exposes no allocator operation, adds no libc integration or backend
-selection, and makes no allocator-readiness claim.
+nonallocating support kernels. Its allocator-owned random context preserves the
+pinned source's original-ChaCha state and output contract through the audited
+RustCrypto primitive; OS entropy acquisition and runtime lifecycle wiring
+remain unfinished slices. The recursive allocation-free once protocol is
+present as a coordination primitive, but no process initialization state
+machine is yet claimed.
+
+One private vertical slice now binds a caller-pinned default theap to a
+caller-managed external arena and page map. It claims and publishes 64-KiB
+small pages, maintains the direct cache and regular/full queues, extends and
+collects scalar local free lists, retires fully free pages, unregisters them
+before arena release, and rolls back injected commitment, bitmap, and page-map
+failures. The quick oracle gate compares 378 address-independent allocation
+facts with exact pinned C v3.5.0 across all 62 small-bin transition requests.
+This is bounded engine evidence, not an exported allocator: the crate still
+has no public operation, libc integration, process/TLS lifecycle, remote free,
+medium/large/aligned/reallocation path, thread teardown, fork protocol, or
+backend selection. A fixed-capacity `cfg(miri)` mapping model exercises current
+VM ownership and page-map transitions without broadening production support;
+the pinned toolchain does not currently install Miri itself. No allocator
+readiness or promotion claim follows from this slice.
 
 ## Scope boundary
 

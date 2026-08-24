@@ -7,11 +7,16 @@
 // Source map: pinned mimalloc v3.5.0 `src/arena.c:32-219` (arena identity,
 // suitability, registry indexing, geometry, and arena memory IDs),
 // `src/arena.c:1573-1659` (registry insertion and exact metadata/bitmap
-// sizing), and `src/arena.c:1676-1917` (in-place arena initialization,
-// metadata reservation, external-region alignment, and 16-GiB splitting).
-// This substrate deliberately stops before arena page allocation/search,
-// per-heap `arena_pages` ownership, purge lifecycle, theap/TLS state, NUMA
-// option lookup, statistics, and allocator-backed metadata.
+// sizing), `src/arena.c:240-335` (single-arena slice claims,
+// committed/dirty/zero observations, and commit rollback),
+// `src/arena.c:911-947` (aligned page metadata selection and commitment),
+// `src/arena.c:1433-1490` (arena slice release), and
+// `src/arena.c:1676-1917` (in-place arena initialization, metadata
+// reservation, external-region alignment, and 16-GiB splitting).
+// This substrate deliberately stops before arena iteration/search across the
+// registry, per-heap `arena_pages` ownership, fresh-page lifecycle and page
+// map registration, purge lifecycle, theap/TLS state, NUMA option lookup,
+// statistics, and allocator-backed metadata.
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
@@ -534,6 +539,191 @@ pub(crate) unsafe fn manage_external_in_place(
     })
 }
 
+/// A live, contiguous claim from one initialized external arena.
+///
+/// The claim has no destructor: its owner transfers the exact source release
+/// obligation either through [`Self::release`] or, when later page lifecycle
+/// code stores the provenance, through [`release_arena_slices`]. Keeping that
+/// transfer explicit prevents an implicit drop from returning slices while a
+/// page still refers to them.
+pub(crate) struct ArenaSliceClaim<'arena> {
+    arena: NonNull<Arena>,
+    start: NonNull<u8>,
+    memory: MemoryId,
+    _arena: PhantomData<&'arena Arena>,
+}
+
+impl ArenaSliceClaim<'_> {
+    #[inline]
+    pub(crate) const fn start(&self) -> *mut u8 {
+        self.start.as_ptr()
+    }
+
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId {
+        self.memory
+    }
+
+    #[inline]
+    pub(crate) fn slice_index(&self) -> usize {
+        // Constructed only by `MemoryId::from_arena` in
+        // `ArenaView::try_claim_suitable_slices`.
+        self.memory.arena_memory().unwrap().slice_index as usize
+    }
+
+    #[inline]
+    pub(crate) fn slice_count(&self) -> usize {
+        // Constructed only by `MemoryId::from_arena` in
+        // `ArenaView::try_claim_suitable_slices`.
+        self.memory.arena_memory().unwrap().slice_count as usize
+    }
+
+    /// Returns the aligned metadata slot for this fresh arena-page claim.
+    ///
+    /// This is only the `mi_arena_page_meta` selection-and-commit boundary.
+    /// The future fresh-page path owns the subsequent zero initialization and
+    /// field publication from `mi_arenas_page_alloc_fresh`; it must not expose
+    /// the returned `Page` to page-map or queue users beforehand.
+    pub(crate) fn page_metadata(&self) -> Option<NonNull<Page>> {
+        let arena = unsafe { self.arena.as_ref() };
+        let arena_memory = self.memory.arena_memory()?;
+        if arena_memory.arena != self.arena.as_ptr() {
+            return None;
+        }
+        let slice_index = arena_memory.slice_index as usize;
+        let metadata_slice_index =
+            invariants::align_down(slice_index, PAGE_META_ALIGNED_COUNT)?;
+        let metadata_slice_count = page_metadata_slice_count()?;
+        let metadata_end = metadata_slice_index.checked_add(metadata_slice_count)?;
+        if metadata_end > arena.slice_count {
+            return None;
+        }
+
+        let layout = BitmapLayout::for_bit_count(arena.slice_count)?;
+        let committed = unsafe {
+            BitmapView::attach(arena.slices_committed, layout.byte_size(), layout)
+        }?;
+        if committed.is_clear_range(metadata_slice_index, 1)? {
+            let metadata_start = arena_slice_start(arena, metadata_slice_index)?;
+            let metadata_size = invariants::size_of_slices(metadata_slice_count)?;
+            let commit = arena.commit_function?;
+            let committed_now = unsafe {
+                commit(
+                    true,
+                    metadata_start,
+                    metadata_size,
+                    null_mut(),
+                    arena.commit_function_argument,
+                )
+            };
+            if !committed_now {
+                return None;
+            }
+            committed.set_range(metadata_slice_index, metadata_slice_count)?;
+        }
+
+        let metadata_start = arena_slice_start(arena, metadata_slice_index)?;
+        let page_offset = slice_index
+            .checked_sub(metadata_slice_index)?
+            .checked_mul(size_of::<Page>())?;
+        NonNull::new(unsafe { metadata_start.add(page_offset).cast::<Page>() })
+    }
+
+    /// Returns this exact claim to its source free bitmap.
+    ///
+    /// Consuming the claim makes a second safe release impossible. `false`
+    /// reports a violated source ownership invariant, including an already
+    /// free span introduced through an unsafe external release.
+    #[inline]
+    pub(crate) fn release(self) -> bool {
+        unsafe { release_arena_slices(self.memory) }
+    }
+}
+
+/// Returns an arena-backed source span to `slices_free`.
+///
+/// This is the arena branch of `_mi_arenas_free`, before its deliberately
+/// absent purge scheduling. It is separate from [`ArenaSliceClaim::release`]
+/// because the later page lifecycle stores only `MemoryId` in `Page`.
+///
+/// # Safety
+///
+/// `memory` must be the still-live, arena-backed provenance of exactly one
+/// outstanding claim. Its arena must remain registry-published and live for
+/// the call, and no other operation may release the same span. The source
+/// binned bitmap is atomic, but a false result signals that these ownership
+/// obligations were already violated; callers must not treat it as a retry.
+pub(crate) unsafe fn release_arena_slices(memory: MemoryId) -> bool {
+    let Some(arena_memory) = memory.arena_memory() else {
+        return false;
+    };
+    let Some(arena) = NonNull::new(arena_memory.arena) else {
+        return false;
+    };
+    let arena = unsafe { arena.as_ref() };
+    let slice_index = arena_memory.slice_index as usize;
+    let slice_count = arena_memory.slice_count as usize;
+    if !arena_slice_range_is_usable(arena, slice_index, slice_count) {
+        return false;
+    }
+
+    let Some(layout) = BinnedBitmapLayout::for_bit_count(arena.slice_count) else {
+        return false;
+    };
+    let Some(free) = (unsafe {
+        BinnedBitmapView::attach(arena.slices_free, layout.byte_size(), layout)
+    }) else {
+        return false;
+    };
+    free.set_range(slice_index, slice_count) == Some(true)
+}
+
+#[inline]
+fn arena_slice_start(arena: &Arena, slice_index: usize) -> Option<*mut u8> {
+    if slice_index >= arena.slice_count {
+        return None;
+    }
+    let offset = invariants::size_of_slices(slice_index)?;
+    Some(unsafe { arena.start.add(offset) })
+}
+
+/// Checks the source's reservation boundaries before accepting an untyped
+/// arena `MemoryId` for release. A valid claim can never overlap the initial
+/// info prefix or any later aligned page-metadata prefix.
+fn arena_slice_range_is_usable(arena: &Arena, slice_index: usize, slice_count: usize) -> bool {
+    if slice_count == 0 {
+        return false;
+    }
+    let Some(end) = slice_index.checked_add(slice_count) else {
+        return false;
+    };
+    if end > arena.slice_count {
+        return false;
+    }
+    let Some(metadata_slice_count) = page_metadata_slice_count() else {
+        return false;
+    };
+    let mut metadata_start = 0usize;
+    while metadata_start < arena.slice_count {
+        let reserved = if metadata_start == 0 {
+            arena.info_slices
+        } else {
+            metadata_slice_count
+        };
+        let Some(reserved_end) = metadata_start.checked_add(reserved) else {
+            return false;
+        };
+        if slice_index < reserved_end && end > metadata_start {
+            return false;
+        }
+        let Some(next) = metadata_start.checked_add(PAGE_META_ALIGNED_COUNT) else {
+            return false;
+        };
+        metadata_start = next;
+    }
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn initialize_arena_in_place(
     registry: &ArenaRegistry,
@@ -742,11 +932,124 @@ impl<'arena> ArenaView<'arena> {
     }
 
     pub(crate) fn slice_start(&self, slice_index: usize) -> Option<*mut u8> {
-        if slice_index >= self.arena().slice_count {
+        arena_slice_start(self.arena(), slice_index)
+    }
+
+    /// Claims one contiguous source span when this arena satisfies `requested`.
+    ///
+    /// This is the concrete external-arena half of `mi_arena_try_alloc_at`.
+    /// `None` preserves the source's single failure result for unsuitability,
+    /// exhaustion, malformed internal bitmap state, and commit-hook failure.
+    /// On a failed commit the free claim is rolled back while the dirty bits
+    /// deliberately remain set, exactly as in the pinned source.
+    pub(crate) fn try_claim_suitable_slices(
+        &self,
+        requested: ArenaId,
+        slice_count: usize,
+        commit: bool,
+        thread_sequence: usize,
+    ) -> Option<ArenaSliceClaim<'arena>> {
+        let arena = self.arena();
+        if slice_count == 0
+            || slice_count > arena.slice_count
+            || !unsafe { arena_is_suitable(self.arena.as_ptr(), requested) }
+        {
             return None;
         }
-        let offset = invariants::size_of_slices(slice_index)?;
-        Some(unsafe { self.arena().start.add(offset) })
+        let free = unsafe { self.slices_free() }?;
+        let committed = unsafe { self.slices_committed() }?;
+        let dirty = unsafe { self.slices_dirty() }?;
+        let slice_index = free.try_find_and_claim(thread_sequence, slice_count)?;
+        let rollback = || free.set_range(slice_index, slice_count) == Some(true);
+
+        let Some(start) = self.slice_start(slice_index).and_then(NonNull::new) else {
+            let _ = rollback();
+            return None;
+        };
+        let Some(mut memory) = (unsafe {
+            MemoryId::from_arena(self.arena.as_ptr(), slice_index, slice_count)
+        }) else {
+            let _ = rollback();
+            return None;
+        };
+        memory.is_pinned = arena.memid.is_pinned();
+
+        // `mi_bitmap_setN` returns whether every selected dirty bit was
+        // previously clear. The result is the source's zero observation for
+        // a range whose backing external memory was initially zero.
+        if arena.memid.initially_zero() {
+            let Some(dirty_transition) = dirty.set_range(slice_index, slice_count) else {
+                let _ = rollback();
+                return None;
+            };
+            memory.initially_zero = dirty_transition.all_transitioned();
+        }
+
+        if commit {
+            let Some(already_committed) = committed.popcount_range(slice_index, slice_count)
+            else {
+                let _ = rollback();
+                return None;
+            };
+            if already_committed < slice_count {
+                let Some(commit_function) = arena.commit_function else {
+                    let _ = rollback();
+                    return None;
+                };
+                let Some(size) = invariants::size_of_slices(slice_count) else {
+                    let _ = rollback();
+                    return None;
+                };
+                let mut commit_zero = false;
+                let committed_now = unsafe {
+                    commit_function(
+                        true,
+                        start.as_ptr(),
+                        size,
+                        &mut commit_zero,
+                        arena.commit_function_argument,
+                    )
+                };
+                if !committed_now {
+                    // `mi_arena_try_alloc_at` returns only ownership here;
+                    // the dirty observation remains deliberately sticky.
+                    let _ = rollback();
+                    return None;
+                }
+                if commit_zero {
+                    memory.initially_zero = true;
+                }
+                if committed.set_range(slice_index, slice_count).is_none() {
+                    let _ = rollback();
+                    return None;
+                }
+            }
+            memory.initially_committed = true;
+        } else {
+            let Some(is_committed) = committed.is_set_range(slice_index, slice_count) else {
+                let _ = rollback();
+                return None;
+            };
+            memory.initially_committed = is_committed;
+            if !is_committed {
+                // Source accounting treats a mixed commitment observation as
+                // uncommitted: it first observes all bits set, then clears the
+                // exact span. There are no statistics in this isolated slice.
+                if committed.set_range(slice_index, slice_count).is_none()
+                    || committed.clear_range(slice_index, slice_count).is_none()
+                {
+                    let _ = rollback();
+                    return None;
+                }
+            }
+        }
+
+        Some(ArenaSliceClaim {
+            arena: self.arena,
+            start,
+            memory,
+            _arena: PhantomData,
+        })
     }
 
     /// # Safety
@@ -814,6 +1117,42 @@ mod tests {
         fn drop(&mut self) {
             unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
         }
+    }
+
+    struct CommitScript {
+        calls: std::sync::atomic::AtomicUsize,
+        fail: std::sync::atomic::AtomicBool,
+        allocation_is_zero: bool,
+    }
+
+    impl CommitScript {
+        fn new(allocation_is_zero: bool) -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                fail: std::sync::atomic::AtomicBool::new(false),
+                allocation_is_zero,
+            }
+        }
+    }
+
+    unsafe extern "C" fn scripted_commit(
+        commit: bool,
+        _start: *mut u8,
+        _size: usize,
+        is_zero: *mut bool,
+        user_argument: *mut c_void,
+    ) -> bool {
+        let script = unsafe { &*user_argument.cast::<CommitScript>() };
+        script
+            .calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if !commit || script.fail.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        if !is_zero.is_null() {
+            unsafe { is_zero.write(script.allocation_is_zero) };
+        }
+        true
     }
 
     #[test]
@@ -949,5 +1288,165 @@ mod tests {
         assert!(!unsafe { memory_is_suitable(MemoryId::none(), managed.arena_id()) });
         assert!(unsafe { memory_is_suitable(MemoryId::none(), ArenaId::none()) });
         assert_eq!(memory.arena_memory().unwrap().slice_index, 9);
+
+        let view = unsafe { ArenaView::from_ptr(arena) }.unwrap();
+        assert!(view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .is_none());
+        let requested = view
+            .try_claim_suitable_slices(managed.arena_id(), 1, true, 0)
+            .unwrap();
+        assert!(requested.release());
+    }
+
+    #[test]
+    fn suitable_slice_claim_exhausts_and_release_reuses_its_contiguous_span() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                true,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let usable_slices = BCHUNK_BITS - view.arena().info_slices;
+
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), usable_slices, true, 17)
+            .unwrap();
+        assert_eq!(claim.slice_index(), view.arena().info_slices);
+        assert_eq!(claim.slice_count(), usable_slices);
+        assert_eq!(Some(claim.start()), view.slice_start(view.arena().info_slices));
+        let page_metadata = claim.page_metadata().unwrap();
+        assert_eq!(
+            page_metadata.as_ptr().cast::<u8>(),
+            unsafe {
+                view.arena()
+                    .start
+                    .add(view.arena().info_slices * size_of::<Page>())
+            },
+        );
+        assert!(claim.memory_id().is_pinned());
+        assert!(claim.memory_id().initially_committed());
+        assert!(claim.memory_id().initially_zero());
+        assert!(view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 17)
+            .is_none());
+
+        assert!(claim.release());
+        let reused = view
+            .try_claim_suitable_slices(ArenaId::none(), usable_slices, true, 17)
+            .unwrap();
+        assert_eq!(reused.slice_index(), view.arena().info_slices);
+        assert!(!reused.memory_id().initially_zero());
+        assert!(reused.release());
+    }
+
+    #[test]
+    fn commit_failure_returns_claimed_slices_without_rolling_back_dirty_observation() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = CommitScript::new(false);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                false,
+                false,
+                true,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    scripted_commit,
+                    (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let index = view.arena().info_slices;
+        let deferred = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, false, 3)
+            .unwrap();
+        assert!(!deferred.memory_id().initially_committed());
+        assert!(deferred.memory_id().initially_zero());
+        assert!(deferred.release());
+        script
+            .fail
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        assert!(view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 3)
+            .is_none());
+        let free = unsafe { view.slices_free() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let dirty = unsafe { view.slices_dirty() }.unwrap();
+        assert_eq!(free.is_set_range(index, 1), Some(true));
+        assert_eq!(committed.is_clear_range(index, 1), Some(true));
+        assert_eq!(dirty.is_set_range(index, 1), Some(true));
+
+        script
+            .fail
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let retry = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 3)
+            .unwrap();
+        assert!(retry.memory_id().initially_committed());
+        assert!(!retry.memory_id().initially_zero());
+        assert!(retry.release());
+        assert_eq!(script.calls.load(std::sync::atomic::Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn successful_external_commit_hook_can_report_a_zero_committed_slice() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let registry = ArenaRegistry::new(null_mut());
+        let script = CommitScript::new(true);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                false,
+                false,
+                false,
+                -1,
+                false,
+                Some(CommitHook::new(
+                    scripted_commit,
+                    (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }
+        .unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let index = view.arena().info_slices;
+
+        let claim = view
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .unwrap();
+        assert!(claim.memory_id().initially_committed());
+        assert!(claim.memory_id().initially_zero());
+        assert_eq!(
+            unsafe { view.slices_committed() }
+                .unwrap()
+                .is_set_range(index, 1),
+            Some(true),
+        );
+        assert!(claim.release());
+        assert_eq!(script.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
     }
 }

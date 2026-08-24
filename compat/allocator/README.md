@@ -12,14 +12,16 @@ The workspace crate currently contains source-mapped foundations, immutable
 Linux memory policy, regular/aligned mapping ownership, a live two-level page
 map, ordinary and binned caller-owned bitmap views, an in-place external-arena
 substrate, the private futex-lock boundary, bounded nonallocating support
-kernels, the allocation-free recursive once protocol, page-queue intrusive
-metadata kernels (without theap accounting), pure page geometry, and the
-allocator random context over RustCrypto's original-ChaCha primitive. Its
-fixed-capacity `cfg(miri)` model covers current mapping and page-map ownership.
-It exposes no
-allocator operation and makes no allocator-readiness or parity claim. The
-pinned image does not currently contain Miri, so forced-`cfg(miri)` execution
-is smoke evidence only and is never reported as a Miri pass.
+kernels, the allocation-free recursive once protocol, pure page geometry, and
+the allocator random context over RustCrypto's original-ChaCha primitive. A
+private explicit single-thread slice now binds a pinned default theap to a
+caller-managed arena and page map and exercises small allocation, local free,
+full-queue retention, retirement, unregister-before-release, and failure
+rollback. It is not a public allocator API and makes no allocator-readiness or
+whole-port parity claim. Its fixed-capacity `cfg(miri)` model covers current
+mapping and page-map ownership. The pinned image does not currently contain
+Miri, so forced-`cfg(miri)` execution is smoke evidence only and is never
+reported as a Miri pass.
 
 ## Canonical commands
 
@@ -41,7 +43,12 @@ are under `compat/reports/allocator/oracle/`. The gate runs the complete
 `crabc-mimalloc` library unit suite with a marked Rust machine record and
 rejects any mismatch in the currently ported configuration constants,
 page/memory-ID layout, queue block-size table, or bin-selection boundary
-vectors. It also traverses Cargo metadata for the fixed
+vectors. The release profile additionally runs independent C and Rust small-
+allocation traces and requires the exact same 378-key logical record: every
+one of 62 good-size transition requests, usable size, pointer-distinctness and
+alignment observation, payload preservation, zeroing, and a 96-block repeated
+fill/free permutation. Raw addresses are deliberately excluded. The gate also
+traverses Cargo metadata for the fixed
 `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside
 the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
@@ -146,5 +153,7 @@ investigated only under the design-note, differential, and performance rule in
 
 [`known-differences.md`](known-differences.md) is the single durable register
 for accepted or pending Rust/C differences. A missing entry is not permission
-to deviate. The register currently records no differences because no Rust
-allocator implementation exists.
+to deviate. The register currently records no differences. The bounded small-
+allocation slice has exact logical-trace parity, but its deliberately absent
+lifecycle and API regions are incomplete scope rather than claimed
+differences.
