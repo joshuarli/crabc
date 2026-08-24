@@ -39,14 +39,16 @@ state are ordinary private modules with explicit imports: syscall adapters,
 fenv, DNS expansion, random, select, timer helpers, small compatibility
 exports, and linkage-adjacent leaves are representative examples.
 
-Three deliberately lexical families remain inside `c_abi.rs`. The
-`math_family.rs` aggregation keeps musl-derived numerical ports beside their
-private bit and floating-environment helpers; `encoding_tables.rs` is literal
-iconv data shared by the conversion implementation; and
-`c_abi/aarch64/{atomic,memory}.rs` contains linkage-sensitive AArch64
-assembly. These are not generic portability layers or unexplained include
-chains. Every other extracted leaf must remain a normal private module with
-named imports rather than returning to the lexical include graph.
+`c_abi.rs` is deliberately a lexical C-ABI namespace rather than a second
+composition root: its compatibility fragments directly share private layouts,
+TLS state, and helper routines. Independently owned C-ABI leaves remain normal
+private modules with named imports. Three cohesive lexical families have an
+additional, specific rationale: `math_family.rs` keeps musl-derived numerical
+ports beside their private bit and floating-environment helpers;
+`encoding_tables.rs` is literal iconv data shared by the conversion
+implementation; and `c_abi/aarch64/{atomic,memory}.rs` contains
+linkage-sensitive AArch64 assembly. These inclusions never cross the public
+crate root, which stays a small target and linkage composition boundary.
 
 [`COMPATIBILITY.md`](../../COMPATIBILITY.md) reports generated measurements.
 The exact native capability classification lives in
