@@ -110,7 +110,17 @@ This is bounded private routing, not general dynamic allocation or remote-free
 concurrency. General cached-root switching/reference ownership, abandonment,
 pthread/process hooks, complete subprocess layout/lifecycle, and C
 pthread-mutex layout claims remain absent. A
-private explicit single-thread slice now binds a pinned default theap to a
+first dynamic arena page additionally creates a private
+`DynamicArenaPagesOwner`: after proving the registry-published arena's
+non-null subprocess identity equals the attachment's selected main subprocess,
+one exact zeroed BCHUNK-aligned typed metadata image is Release-published into
+its bound Heap's exact arena slot. The shared engine uses this image, rather
+than `pages_main`, for fresh-page registration, rollback, and terminal release.
+A nonempty image rejects
+teardown before roots mutate; pre-publication allocation failure leaves no
+slot, while post-mutation lock/free ambiguity remains terminally retained.
+Its abandoned-bin touch is test-only disjointness evidence, not abandonment
+movement. The private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,
 retirement, full-span unregister-before-release, checked counted allocation,

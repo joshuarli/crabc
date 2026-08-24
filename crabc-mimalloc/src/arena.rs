@@ -7,7 +7,9 @@
 // Source map: pinned mimalloc v3.5.0 `src/arena.c:32-219` (arena identity,
 // suitability, registry indexing, geometry, and arena memory IDs),
 // `src/arena.c:1573-1659` (registry insertion and exact metadata/bitmap
-// sizing), `src/arena.c:240-335` (single-arena slice claims,
+// sizing), `src/arena.c:674-723` (lazy non-main `heap->arena_pages`
+// allocation/Acquire lookup/Release publication), `src/arena.c:240-335`
+// (single-arena slice claims,
 // committed/dirty/zero observations, and commit rollback),
 // `src/arena.c:911-947` (aligned page metadata selection and commitment),
 // `src/arena.c:1433-1490` (arena slice release),
@@ -16,8 +18,8 @@
 // `src/arena.c:1676-1917` (in-place arena initialization, metadata
 // reservation, external-region alignment, and 16-GiB splitting).
 // This substrate deliberately stops before arena iteration/search across the
-// registry, per-heap `arena_pages` ownership, fresh-page lifecycle and page
-// map registration, theap/TLS state, NUMA option lookup,
+// registry-wide arena search, fresh page routing beyond the one bounded
+// heap-local `arena_pages` owner, theap/TLS state, NUMA option lookup,
 // statistics, and allocator-backed metadata.
 
 use core::ffi::c_void;
@@ -40,9 +42,13 @@ use crate::config::{
     BCHUNK_BITS, BITMAP_MAX_BIT_COUNT, MAX_ARENAS, PAGE_META_ALIGNED_COUNT,
 };
 use crate::invariants;
+use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
 use crate::os::{self, DecommitOutcome, PageSize};
+use crate::os::MemoryConfig;
+use crate::subproc::MainSubprocess;
 use crate::types::{
-    Arena, ArenaPages, CommitFunction, MemoryId, Page, Subprocess,
+    Arena, ArenaPages, CommitFunction, Heap, HeapArenaPagesError, MemoryId,
+    Page, Subprocess,
 };
 
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
@@ -302,6 +308,351 @@ impl ArenaPagesLayout {
     pub(crate) const fn bitmap_layout(self) -> BitmapLayout { self.bitmap_layout }
     #[inline]
     pub(crate) const fn byte_size(self) -> usize { self.byte_size }
+
+    /// Returns the exact byte offset of one source `mi_bitmap_t` image.
+    ///
+    /// Bitmap zero is `mi_arena_pages_t::pages`; the following
+    /// `ARENA_BIN_COUNT` images are the source `pages_abandoned[bin]` array.
+    /// Naming the offset here keeps the private per-heap owner from treating
+    /// the flexible C tail as a guessed Rust array layout.
+    #[inline]
+    pub(crate) const fn bitmap_offset(self, bitmap: usize) -> Option<usize> {
+        if bitmap > ARENA_BIN_COUNT {
+            return None;
+        }
+        let stride = self.bitmap_layout.byte_size();
+        match bitmap.checked_mul(stride) {
+            Some(offset) => self.bitmap_base.checked_add(offset),
+            None => None,
+        }
+    }
+}
+
+/// One private failure while forming or retiring an allocator-owned dynamic
+/// `mi_arena_pages_t` image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicArenaPagesOwnerError {
+    Layout,
+    Metadata(MetaError),
+    Image,
+    Heap(HeapArenaPagesError),
+    ForeignArena,
+    UnboundArenaSubprocess,
+    ForeignArenaSubprocess,
+    ForeignHeap,
+    NotPublished,
+    NonEmpty,
+    Terminal,
+}
+
+/// Result of allocating the typed dynamic arena-pages image.
+///
+/// A metadata allocation failure has not formed an owner. An impossible
+/// typed-image failure, in contrast, returns the exact retained capability so
+/// the attachment cannot silently lose release authority.
+pub(crate) enum DynamicArenaPagesOwnerCreateError {
+    Error(DynamicArenaPagesOwnerError),
+    Retained(DynamicArenaPagesOwner),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DynamicArenaPagesOwnerState {
+    Prepared,
+    Published,
+    Terminal,
+    Released,
+}
+
+/// One linear, heap-local `mi_arena_pages_t` allocation for one dynamic Heap
+/// and one source arena.
+///
+/// Pinned `mi_heap_ensure_arena_pages` lazily allocates this image for a
+/// non-main heap, then stores it in `heap->arena_pages[arena_idx]` under the
+/// private lock. This owner keeps the aligned `MetaAllocation` capability and
+/// never aliases the arena's process-main `pages_main` / `pages_abandoned`
+/// bitmaps. It intentionally does not implement abandonment movement,
+/// multiple-arena ownership, or the full source heap destruction protocol.
+#[must_use = "dynamic arena-pages metadata must remain with its dynamic Heap owner"]
+pub(crate) struct DynamicArenaPagesOwner {
+    metadata: core::pin::Pin<&'static MetaAllocator>,
+    allocation: Option<MetaAllocation<'static>>,
+    heap: NonNull<Heap>,
+    arena: NonNull<Arena>,
+    arena_index: usize,
+    layout: ArenaPagesLayout,
+    state: DynamicArenaPagesOwnerState,
+}
+
+impl DynamicArenaPagesOwner {
+    /// Allocates and initializes the source-sized image before it can be
+    /// published into a Heap slot.
+    ///
+    /// The caller supplies an already registry-published `ArenaView`. Before
+    /// any metadata allocation, this validates the source-initialized arena
+    /// subprocess field against the attachment's selected main identity and
+    /// snapshots its immutable registry index. Later operations use the raw
+    /// arena pointer only for exact memory-ID identity checks.
+    pub(crate) fn create(
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        heap: &Heap,
+        arena: &ArenaView<'_>,
+    ) -> Result<Self, DynamicArenaPagesOwnerCreateError> {
+        let source_arena = arena.arena();
+        if source_arena.subprocess.is_null() {
+            return Err(DynamicArenaPagesOwnerCreateError::Error(
+                DynamicArenaPagesOwnerError::UnboundArenaSubprocess,
+            ));
+        }
+        if !core::ptr::eq(source_arena.subprocess, subprocess.as_ptr()) {
+            return Err(DynamicArenaPagesOwnerCreateError::Error(
+                DynamicArenaPagesOwnerError::ForeignArenaSubprocess,
+            ));
+        }
+        let layout = ArenaPagesLayout::for_slice_count(source_arena.slice_count)
+            .ok_or(DynamicArenaPagesOwnerCreateError::Error(
+                DynamicArenaPagesOwnerError::Layout,
+            ))?;
+        let mut allocation = metadata
+            .zalloc_aligned_for_main_subprocess(config, subprocess, layout.byte_size(), BCHUNK_SIZE)
+            .map_err(|error| {
+                DynamicArenaPagesOwnerCreateError::Error(DynamicArenaPagesOwnerError::Metadata(error))
+            })?;
+        if !allocation.initialize_dynamic_arena_pages(metadata, layout) {
+            return Err(DynamicArenaPagesOwnerCreateError::Retained(Self {
+                metadata,
+                allocation: Some(allocation),
+                heap: NonNull::from(heap),
+                arena: arena.arena,
+                arena_index: source_arena.arena_index,
+                layout,
+                state: DynamicArenaPagesOwnerState::Terminal,
+            }));
+        }
+        Ok(Self {
+            metadata,
+            allocation: Some(allocation),
+            heap: NonNull::from(heap),
+            arena: arena.arena,
+            arena_index: source_arena.arena_index,
+            layout,
+            state: DynamicArenaPagesOwnerState::Prepared,
+        })
+    }
+
+    #[inline]
+    pub(crate) fn is_for_arena(&self, arena: &ArenaView<'_>) -> bool {
+        self.arena == arena.arena
+    }
+
+    #[inline]
+    pub(crate) fn is_published_for(&self, heap: &Heap) -> bool {
+        self.state == DynamicArenaPagesOwnerState::Published
+            && core::ptr::eq(self.heap.as_ptr(), core::ptr::from_ref(heap).cast_mut())
+            && self
+                .header_pointer()
+                .is_some_and(|header| {
+                    heap.dynamic_arena_pages_at(self.arena_index) == Some(header)
+                })
+    }
+
+    /// Performs `mi_heap_ensure_arena_pages`'s non-main allocation branch:
+    /// publish only an entirely initialized image under the Heap lock.
+    pub(crate) fn publish(&mut self, heap: &Heap) -> Result<(), DynamicArenaPagesOwnerError> {
+        if self.state != DynamicArenaPagesOwnerState::Prepared {
+            return Err(if self.state == DynamicArenaPagesOwnerState::Terminal {
+                DynamicArenaPagesOwnerError::Terminal
+            } else {
+                DynamicArenaPagesOwnerError::NotPublished
+            });
+        }
+        if !core::ptr::eq(self.heap.as_ptr(), core::ptr::from_ref(heap).cast_mut()) {
+            return Err(DynamicArenaPagesOwnerError::ForeignHeap);
+        }
+        let header = self.header_pointer().ok_or(DynamicArenaPagesOwnerError::Image)?;
+        match heap.publish_dynamic_arena_pages(self.arena_index, header) {
+            Ok(()) => {
+                self.state = DynamicArenaPagesOwnerState::Published;
+                Ok(())
+            }
+            Err(error) => {
+                // An unlock error may follow the Release store. Re-read the
+                // exact slot so the retained state never calls that outcome
+                // a pre-publication retry.
+                if heap.dynamic_arena_pages_at(self.arena_index) == Some(header) {
+                    self.state = DynamicArenaPagesOwnerState::Terminal;
+                }
+                Err(DynamicArenaPagesOwnerError::Heap(error))
+            }
+        }
+    }
+
+    /// Marks one source arena slice as named by this dynamic Heap only after
+    /// fresh page metadata exists and before page-map registration.
+    pub(crate) fn set_page(&self, memory: MemoryId) -> bool {
+        let Some(index) = self.slice_index(memory) else {
+            return false;
+        };
+        self.with_pages(|pages| pages.set_range(index, 1))
+            .is_some_and(|transition| transition.is_some_and(|run| run.all_transitioned()))
+    }
+
+    /// Clears exactly one dynamic Heap page bit after its PageMap range was
+    /// removed and before the arena slice claim is released.
+    pub(crate) fn clear_page(&self, memory: MemoryId) -> bool {
+        let Some(index) = self.slice_index(memory) else {
+            return false;
+        };
+        self.with_pages(|pages| pages.clear_range(index, 1)) == Some(Some(true))
+    }
+
+    #[inline]
+    pub(crate) fn page_is_set(&self, memory: MemoryId) -> bool {
+        let Some(index) = self.slice_index(memory) else {
+            return false;
+        };
+        self.with_pages(|pages| pages.is_clear_range(index, 1)) == Some(Some(false))
+    }
+
+    #[inline]
+    pub(crate) fn is_empty_published(&self) -> bool {
+        self.state == DynamicArenaPagesOwnerState::Published && self.is_empty()
+    }
+
+    /// Test-only disjointness witness for one heap-local abandoned-bin bitmap.
+    ///
+    /// No production abandonment identity/capability exists in this slice, so
+    /// exposing a safe setter here would manufacture an invalid owned-page
+    /// state. The abandonment implementation must replace this with its
+    /// source-valid abandoned-mapped publication boundary.
+    #[cfg(test)]
+    pub(crate) fn set_abandoned_page(&self, bin: usize, memory: MemoryId) -> bool {
+        let Some(index) = self.slice_index(memory) else {
+            return false;
+        };
+        self.with_abandoned(bin, |pages| pages.set_range(index, 1))
+            .is_some_and(|transition| transition.is_some_and(|run| run.all_transitioned()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_abandoned_page(&self, bin: usize, memory: MemoryId) -> bool {
+        let Some(index) = self.slice_index(memory) else {
+            return false;
+        };
+        self.with_abandoned(bin, |pages| pages.clear_range(index, 1)) == Some(Some(true))
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn abandoned_page_is_set(&self, bin: usize, memory: MemoryId) -> bool {
+        let Some(index) = self.slice_index(memory) else {
+            return false;
+        };
+        self.with_abandoned(bin, |pages| pages.is_clear_range(index, 1)) == Some(Some(false))
+    }
+
+    /// Removes this exact Heap slot and frees its retained capability only
+    /// after every ordinary/abandoned bit is clear. A lock/free failure is a
+    /// terminal invalid-owner state; this owner never reconstructs or retries
+    /// uncertain metadata ownership.
+    pub(crate) fn unpublish_and_free(
+        &mut self,
+        heap: &Heap,
+    ) -> Result<(), DynamicArenaPagesOwnerError> {
+        if self.state != DynamicArenaPagesOwnerState::Published {
+            return Err(if self.state == DynamicArenaPagesOwnerState::Terminal {
+                DynamicArenaPagesOwnerError::Terminal
+            } else {
+                DynamicArenaPagesOwnerError::NotPublished
+            });
+        }
+        let header = self.header_pointer().ok_or(DynamicArenaPagesOwnerError::Image)?;
+        if !core::ptr::eq(self.heap.as_ptr(), core::ptr::from_ref(heap).cast_mut())
+            || heap.dynamic_arena_pages_at(self.arena_index) != Some(header)
+        {
+            return Err(DynamicArenaPagesOwnerError::ForeignHeap);
+        }
+        if !self.is_empty() {
+            return Err(DynamicArenaPagesOwnerError::NonEmpty);
+        }
+        if let Err(error) = heap.remove_dynamic_arena_pages(self.arena_index, header) {
+            // As above, a failing unlock may already have made the removal
+            // visible. Retain the still-live allocation terminally instead
+            // of claiming the original slot can be retried.
+            if heap.dynamic_arena_pages_at(self.arena_index).is_none() {
+                self.state = DynamicArenaPagesOwnerState::Terminal;
+            }
+            return Err(DynamicArenaPagesOwnerError::Heap(error));
+        }
+        let allocation = self
+            .allocation
+            .as_mut()
+            .ok_or(DynamicArenaPagesOwnerError::Terminal)?;
+        if let Err(error) = self.metadata.free(allocation) {
+            self.state = DynamicArenaPagesOwnerState::Terminal;
+            return Err(DynamicArenaPagesOwnerError::Metadata(error));
+        }
+        self.allocation = None;
+        self.state = DynamicArenaPagesOwnerState::Released;
+        Ok(())
+    }
+
+    #[inline]
+    fn header_pointer(&self) -> Option<NonNull<ArenaPages>> {
+        self.allocation
+            .as_ref()?
+            .dynamic_arena_pages_pointer(self.metadata, self.layout)
+    }
+
+    #[inline]
+    fn slice_index(&self, memory: MemoryId) -> Option<usize> {
+        let arena_memory = memory.arena_memory()?;
+        if arena_memory.arena != self.arena.as_ptr() {
+            return None;
+        }
+        let index = arena_memory.slice_index as usize;
+        (index < self.layout.slice_count()).then_some(index)
+    }
+
+    #[inline]
+    fn with_pages<R>(&self, operation: impl FnOnce(&BitmapView<'_>) -> R) -> Option<R> {
+        if self.state != DynamicArenaPagesOwnerState::Published {
+            return None;
+        }
+        self.allocation
+            .as_ref()?
+            .with_dynamic_arena_pages(self.metadata, self.layout, operation)
+    }
+
+    #[inline]
+    fn with_abandoned<R>(
+        &self,
+        bin: usize,
+        operation: impl FnOnce(&BitmapView<'_>) -> R,
+    ) -> Option<R> {
+        if self.state != DynamicArenaPagesOwnerState::Published {
+            return None;
+        }
+        self.allocation
+            .as_ref()?
+            .with_dynamic_arena_abandoned_pages(self.metadata, self.layout, bin, operation)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.with_pages(|pages| pages.is_clear_range(0, self.layout.slice_count()))
+            == Some(Some(true))
+            && (0..ARENA_BIN_COUNT).all(|bin| {
+                self.with_abandoned(bin, |pages| pages.is_clear_range(0, self.layout.slice_count()))
+                    == Some(Some(true))
+            })
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_image(&self) -> Option<(NonNull<ArenaPages>, ArenaPagesLayout, MemoryId)> {
+        Some((self.header_pointer()?, self.layout, self.allocation.as_ref()?.memory_id()))
+    }
 }
 
 /// Complete in-place metadata layout reserved at the start of one arena.
@@ -1554,6 +1905,23 @@ mod tests {
         assert_eq!(info.bitmaps_end(), 537_984);
         assert_eq!(info.info_slices(), 9);
         assert_eq!(info.info_size(), 9 * ARENA_SLICE_SIZE);
+    }
+
+    #[test]
+    fn dynamic_arena_pages_layout_names_every_source_bitmap_at_its_exact_offset() {
+        let layout = ArenaPagesLayout::for_slice_count(BCHUNK_BITS).unwrap();
+        let bitmap_size = layout.bitmap_layout().byte_size();
+
+        assert_eq!(layout.bitmap_offset(0), Some(layout.bitmap_base()));
+        assert_eq!(
+            layout.bitmap_offset(ARENA_BIN_COUNT),
+            Some(layout.bitmap_base() + ARENA_BIN_COUNT * bitmap_size)
+        );
+        assert_eq!(layout.bitmap_offset(ARENA_BIN_COUNT + 1), None);
+        assert_eq!(
+            layout.byte_size(),
+            layout.bitmap_base() + (1 + ARENA_BIN_COUNT) * bitmap_size
+        );
     }
 
     #[test]

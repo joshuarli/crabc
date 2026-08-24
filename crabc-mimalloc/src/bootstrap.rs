@@ -21,6 +21,8 @@ use core::marker::{PhantomData, PhantomPinned};
 use core::pin::Pin;
 use core::ptr::NonNull;
 
+use crate::arena::ArenaView;
+use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
 use crate::types::{
     Heap, LiveThreadId, MemoryId, Page, PageQueue, Theap, TheapOwner,
@@ -238,8 +240,10 @@ pub(crate) mod theap_page_session_sealed {
 /// An implementation must retain one stable initialized Theap, Heap, and TLD;
 /// prove the exact live owner/thread identity for every published page; keep
 /// page metadata/block mappings and the source queue/direct state exclusive;
-/// and prevent attachment/metadata/list teardown while the engine or a scoped
-/// producer may hold raw page state. `publish_fresh_page` must wire only that
+/// select the exact main or heap-local arena-pages bitmap for fresh, rollback,
+/// and release transitions; and prevent attachment/metadata/list teardown
+/// while the engine or a scoped producer may hold raw page state.
+/// `publish_fresh_page` must wire only that
 /// exact stable Theap/Heap pair.
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     fn theap(&self) -> &Theap;
@@ -250,6 +254,17 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool;
     fn note_page_added(&mut self);
     fn note_page_removed(&mut self) -> bool;
+    /// Ensures the source-selected ordinary arena-pages bitmap exists before
+    /// fresh page metadata can be published. The static session selects the
+    /// arena's `pages_main`; a dynamic session lazily owns one heap-local
+    /// `mi_arena_pages_t` image.
+    fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, config: MemoryConfig) -> bool;
+    /// Sets one ordinary arena-pages bit after fresh metadata exists and
+    /// before page-map registration.
+    fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool;
+    /// Clears one ordinary arena-pages bit after page-map unregistration and
+    /// before returning the source arena slice claim.
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool;
     unsafe fn publish_fresh_page(
         &mut self,
         metadata: NonNull<Page>,
@@ -462,6 +477,40 @@ unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
     fn note_page_added(&mut self) { Self::note_page_added(self) }
     #[inline]
     fn note_page_removed(&mut self) -> bool { Self::note_page_removed(self) }
+    #[inline]
+    fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
+        // SAFETY: static bootstrap owns the same source arena lifecycle and
+        // `pages_main` is in-place initialized before the ArenaView exists.
+        unsafe { arena.pages().is_some() }
+    }
+    #[inline]
+    fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() {
+            return false;
+        }
+        // SAFETY: the fresh-page lifecycle owns this exact in-place main
+        // bitmap transition before page-map publication.
+        unsafe { arena.pages() }
+            .and_then(|pages| pages.set_range(arena_memory.slice_index as usize, 1))
+            .is_some_and(|transition| transition.all_transitioned())
+    }
+    #[inline]
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() {
+            return false;
+        }
+        // SAFETY: the matching page-map entry is gone in source release
+        // order, so the static session may clear its exact main bitmap bit.
+        unsafe { arena.pages() }
+            .and_then(|pages| pages.clear_range(arena_memory.slice_index as usize, 1))
+            == Some(true)
+    }
     #[inline]
     unsafe fn publish_fresh_page(
         &mut self,

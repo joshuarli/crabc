@@ -249,6 +249,24 @@ quiescence. This does not implement heap new/delete/destroy, general
 cached-root switching/references, general dynamic routing or remote-free
 concurrency, abandonment, pthread hooks, or process shutdown.
 
+On the first fresh dynamic arena page, that same session lazily creates one
+private `DynamicArenaPagesOwner`. Before allocating it proves that the
+registry-published arena has a non-null `Arena::subprocess` equal to the
+attachment's selected main subprocess. It then retains one exact zeroed,
+`BCHUNK_SIZE`-aligned `MetaAllocation`, initializes the `mi_arena_pages_t`
+header plus ordinary bitmap tail, and Release-publishes only the bound dynamic
+Heap's `arena_pages[arena_index]` slot under its private lock. The shared
+engine then follows the source order:
+fresh page metadata, heap-local ordinary bitmap bit, page-map registration;
+rollback and terminal release use the inverse map-clear then exact
+heap-local-bit-clear order. `ArenaView::pages_main` remains untouched by a
+dynamic page. Empty teardown removes that exact slot before freeing the typed
+image; a nonempty image is a wholly pre-mutation rejection. Allocation failure
+before publication leaves the slot null and retryable. Lock/unlock/free
+ambiguity after mutation terminally retains the known owner state. The only
+abandoned-bin operation is a test-only disjointness witness; abandonment
+movement, multiple arena images, and general heap destruction remain deferred.
+
 `PrivateLock` preserves the TLD field's private-lock meaning but is not a
 byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made.
 General cached-root switching/reference ownership, general remote-free/page

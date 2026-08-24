@@ -7,9 +7,10 @@
 // Source map: pinned mimalloc v3.5.0 `src/subproc.c:19-88`
 // (`_mi_meta_zalloc`, `_mi_meta_zalloc_aligned`, `_mi_meta_rezalloc`,
 // `_mi_meta_free`, and `_mi_meta_is_meta_page`) with bootstrap ordering from
-// `src/init.c:15-145,184-208`. The detached owner uses the already-portioned
-// `src/arena.c`/`src/page-map.c`/`src/page.c` ordinary page lifecycle rather
-// than a bespoke metadata allocator.
+// `src/init.c:15-145,184-208`, plus `src/arena.c:674-723,1613-1673` for the
+// typed non-main `mi_arena_pages_t` metadata image. The detached owner uses
+// the already-portioned `src/arena.c`/`src/page-map.c`/`src/page.c` ordinary
+// page lifecycle rather than a bespoke metadata allocator.
 
 //! Process-lived detached metadata-theap ownership.
 //!
@@ -40,18 +41,21 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 
 use crabc_core::Errno;
 
-use crate::arena::{manage_external_in_place, ArenaId, ArenaRegistry, ArenaView};
+use crate::arena::{
+    ArenaId, ArenaPagesLayout, ArenaRegistry, ArenaView, manage_external_in_place,
+};
 use crate::bitmap::{BCHUNK_SIZE, BitmapLayout, BitmapView};
 use crate::bootstrap::{BootstrapError, ExclusiveTheapBootstrap};
 use crate::compiler_tls::DynamicThreadLocalBacking;
-use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, MAX_VABITS};
+use crate::config::{ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MIN_SIZE, MAX_VABITS};
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, MemoryConfig};
 use crate::page_map::PageMap;
 use crate::single_thread::{FreeError, SingleThreadAllocator};
 use crate::size_class;
 use crate::types::{
-    LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData, ThreadSequence,
+    ArenaPages, LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData,
+    ThreadSequence,
 };
 use crate::subproc::MainSubprocess;
 
@@ -85,7 +89,9 @@ enum MetaAllocationOrigin {
 /// origin proves that the allocation started as an aligned zero image; this
 /// state proves whether that particular image was initialized directly,
 /// copied from an already-published prefix, or made observable as a bitmap.
-/// Non-bitmap metadata never consults this field.
+/// Non-bitmap metadata never consults this field. Its own exact typed-role
+/// marker prevents a TLS backing or dynamic arena image from later taking the
+/// bitmap role merely because a future flexible layout has the same size.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BitmapImageState {
     Fresh,
@@ -168,8 +174,14 @@ pub(crate) struct MetaAllocation<'owner> {
     state: AtomicU8,
     origin: MetaAllocationOrigin,
     bitmap_image_state: BitmapImageState,
+    // The first dynamic TLS backing projection permanently selects the
+    // flexible `mi_thread_locals_t` role. Repeated TLS projections remain
+    // valid through this same linear capability, but no other typed role may
+    // reinterpret its bytes even if its request happens to coincide.
+    dynamic_thread_local_backing_projected: bool,
     thread_local_data_initialized: bool,
     dynamic_theap_initialized: bool,
+    dynamic_arena_pages_initialized: bool,
     _owner: PhantomData<Pin<&'owner MetaAllocator>>,
 }
 
@@ -195,8 +207,10 @@ impl<'owner> MetaAllocation<'owner> {
             state: AtomicU8::new(ALLOCATION_LIVE),
             origin,
             bitmap_image_state: BitmapImageState::Fresh,
+            dynamic_thread_local_backing_projected: false,
             thread_local_data_initialized: false,
             dynamic_theap_initialized: false,
+            dynamic_arena_pages_initialized: false,
             _owner: PhantomData,
         }
     }
@@ -329,6 +343,132 @@ impl<'owner> MetaAllocation<'owner> {
         Ok(())
     }
 
+    /// Initializes this exact aligned metadata capability as one private
+    /// dynamic `mi_arena_pages_t` image.
+    ///
+    /// The fixed pointer header and every ordinary bitmap are formed from the
+    /// source-sized [`ArenaPagesLayout`] before a Heap can Release-publish the
+    /// header pointer. The individual bitmap views never escape this linear
+    /// allocation capability.
+    #[inline]
+    pub(crate) fn initialize_dynamic_arena_pages(
+        &mut self,
+        owner: Pin<&MetaAllocator>,
+        layout: ArenaPagesLayout,
+    ) -> bool {
+        if !self.validate_dynamic_arena_pages_image(owner, layout)
+            || self.dynamic_arena_pages_initialized
+        {
+            return false;
+        }
+
+        let mut pointers = [core::ptr::null_mut(); ARENA_BIN_COUNT + 1];
+        for (index, slot) in pointers.iter_mut().enumerate() {
+            let Some(offset) = layout.bitmap_offset(index) else {
+                return false;
+            };
+            // SAFETY: validation proves the exact aligned source layout fits
+            // this fresh zeroed allocation. Each source bitmap owns its
+            // distinct fixed subrange and is initialized before publication.
+            let pointer = unsafe { self.pointer.as_ptr().add(offset) };
+            let initialized = unsafe {
+                BitmapView::initialize_zeroed(
+                    pointer,
+                    layout.bitmap_layout().byte_size(),
+                    layout.bitmap_layout(),
+                )
+            };
+            if initialized.is_none() {
+                return false;
+            }
+            *slot = pointer;
+        }
+
+        // SAFETY: the fixed header lies at the allocation start and every
+        // flexible-tail pointer above names one initialized, Release-published
+        // bitmap image. No typed header reference escaped before this write.
+        unsafe {
+            self.pointer.as_ptr().cast::<ArenaPages>().write(ArenaPages {
+                pages: pointers[0],
+                pages_abandoned: core::array::from_fn(|bin| pointers[bin + 1]),
+            });
+        }
+        self.dynamic_arena_pages_initialized = true;
+        true
+    }
+
+    /// Returns the exact typed header pointer for Heap publication.
+    ///
+    /// This is intentionally not a raw-parts escape hatch: the header stays
+    /// owned by this capability, and ordinary bitmap access below requires a
+    /// transient closure tied to the same capability and source layout.
+    #[inline]
+    pub(crate) fn dynamic_arena_pages_pointer(
+        &self,
+        owner: Pin<&MetaAllocator>,
+        layout: ArenaPagesLayout,
+    ) -> Option<NonNull<ArenaPages>> {
+        if !self.dynamic_arena_pages_initialized
+            || !self.validate_dynamic_arena_pages_image(owner, layout)
+        {
+            return None;
+        }
+        NonNull::new(self.pointer.as_ptr().cast::<ArenaPages>())
+    }
+
+    /// Borrows the one private heap-local ordinary-pages bitmap transiently.
+    #[inline]
+    pub(crate) fn with_dynamic_arena_pages<R>(
+        &self,
+        owner: Pin<&MetaAllocator>,
+        layout: ArenaPagesLayout,
+        operation: impl FnOnce(&BitmapView<'_>) -> R,
+    ) -> Option<R> {
+        self.with_dynamic_arena_pages_bitmap(owner, layout, 0, operation)
+    }
+
+    /// Borrows one private heap-local abandoned-pages bitmap transiently.
+    #[inline]
+    pub(crate) fn with_dynamic_arena_abandoned_pages<R>(
+        &self,
+        owner: Pin<&MetaAllocator>,
+        layout: ArenaPagesLayout,
+        bin: usize,
+        operation: impl FnOnce(&BitmapView<'_>) -> R,
+    ) -> Option<R> {
+        if bin >= ARENA_BIN_COUNT {
+            return None;
+        }
+        self.with_dynamic_arena_pages_bitmap(owner, layout, bin + 1, operation)
+    }
+
+    #[inline]
+    fn with_dynamic_arena_pages_bitmap<R>(
+        &self,
+        owner: Pin<&MetaAllocator>,
+        layout: ArenaPagesLayout,
+        bitmap: usize,
+        operation: impl FnOnce(&BitmapView<'_>) -> R,
+    ) -> Option<R> {
+        if !self.dynamic_arena_pages_initialized
+            || !self.validate_dynamic_arena_pages_image(owner, layout)
+        {
+            return None;
+        }
+        let offset = layout.bitmap_offset(bitmap)?;
+        // SAFETY: the initialized marker and exact layout validation prove
+        // this one bitmap's bounded, Release-published image. The view is
+        // transient and cannot outlive the retained metadata capability.
+        let view = unsafe {
+            BitmapView::attach(
+                self.pointer.as_ptr().add(offset),
+                layout.bitmap_layout().byte_size(),
+                layout.bitmap_layout(),
+            )
+        }?;
+        Some(operation(&view))
+    }
+
     /// Projects this capability as the one source-shaped dynamic TLS backing.
     ///
     /// This is deliberately the only typed flexible-allocation projection.
@@ -336,7 +476,10 @@ impl<'owner> MetaAllocation<'owner> {
     /// sizeof(mi_tls_slot_t)`, requires the backing's native alignment, and
     /// borrows through the existing owner-bound capability. There is no
     /// generic raw-parts or arbitrary-type cast API: a future metadata user
-    /// needs its own audited typed projection and source layout proof.
+    /// needs its own audited typed projection and source layout proof. The
+    /// first projection claims the durable dynamic-TLS role; a later TLS
+    /// projection through the same linear capability is allowed, while every
+    /// other typed role rejects this capability.
     #[inline]
     pub(crate) fn dynamic_thread_local_backing_mut(
         &mut self,
@@ -344,11 +487,16 @@ impl<'owner> MetaAllocation<'owner> {
     ) -> Option<&mut DynamicThreadLocalBacking> {
         let required = DynamicThreadLocalBacking::allocation_size(count)?;
         if !self.is_live()
+            || self.bitmap_image_state != BitmapImageState::Fresh
+            || self.thread_local_data_initialized
+            || self.dynamic_theap_initialized
+            || self.dynamic_arena_pages_initialized
             || self.requested_size != required
             || self.pointer.as_ptr().addr() % align_of::<DynamicThreadLocalBacking>() != 0
         {
             return None;
         }
+        self.dynamic_thread_local_backing_projected = true;
         // SAFETY: the exact source flexible request is checked above. The
         // metadata allocation is zeroed when fresh and source-copied when
         // replaced, both valid representations of the fixed header; `&mut
@@ -379,6 +527,8 @@ impl<'owner> MetaAllocation<'owner> {
             || self.origin != MetaAllocationOrigin::DirectZeroed
             || self.thread_local_data_initialized
             || self.dynamic_theap_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
             || self.requested_size != size_of::<ThreadLocalData>()
             || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
         {
@@ -419,6 +569,8 @@ impl<'owner> MetaAllocation<'owner> {
         if !self.is_live()
             || !self.thread_local_data_initialized
             || self.dynamic_theap_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
             || self.requested_size != size_of::<ThreadLocalData>()
             || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
         {
@@ -475,6 +627,8 @@ impl<'owner> MetaAllocation<'owner> {
             || self.origin != MetaAllocationOrigin::DirectZeroed
             || self.thread_local_data_initialized
             || self.dynamic_theap_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
             || self.requested_size != size_of::<Theap>()
             || self.pointer.as_ptr().addr() % align_of::<Theap>() != 0
             || self.memory.kind() != MemoryKind::Malloc
@@ -502,6 +656,8 @@ impl<'owner> MetaAllocation<'owner> {
         if !self.is_live()
             || !self.dynamic_theap_initialized
             || self.thread_local_data_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
             || self.requested_size != size_of::<Theap>()
             || self.pointer.as_ptr().addr() % align_of::<Theap>() != 0
             || self.memory.kind() != MemoryKind::Malloc
@@ -523,6 +679,8 @@ impl<'owner> MetaAllocation<'owner> {
         if !self.is_live()
             || !self.dynamic_theap_initialized
             || self.thread_local_data_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
             || self.requested_size != size_of::<Theap>()
             || self.pointer.as_ptr().addr() % align_of::<Theap>() != 0
             || self.memory.kind() != MemoryKind::Malloc
@@ -590,6 +748,8 @@ impl<'owner> MetaAllocation<'owner> {
         }
         if self.state.load(Ordering::Acquire) != ALLOCATION_LIVE
             || self.origin != MetaAllocationOrigin::AlignedZeroed
+            || self.dynamic_arena_pages_initialized
+            || self.dynamic_thread_local_backing_projected
             || self.requested_size != layout.byte_size()
             || self.pointer.as_ptr().addr() % BCHUNK_SIZE != 0
             || self.memory.kind() != MemoryKind::Malloc
@@ -598,6 +758,25 @@ impl<'owner> MetaAllocation<'owner> {
             return Err(MetaBitmapProjectionError::InvalidImage);
         }
         Ok(())
+    }
+
+    #[inline]
+    fn validate_dynamic_arena_pages_image(
+        &self,
+        owner: Pin<&MetaAllocator>,
+        layout: ArenaPagesLayout,
+    ) -> bool {
+        self.belongs_to(owner)
+            && self.is_live()
+            && self.origin == MetaAllocationOrigin::AlignedZeroed
+            && self.bitmap_image_state == BitmapImageState::Fresh
+            && !self.dynamic_thread_local_backing_projected
+            && !self.thread_local_data_initialized
+            && !self.dynamic_theap_initialized
+            && self.requested_size == layout.byte_size()
+            && self.pointer.as_ptr().addr() % BCHUNK_SIZE == 0
+            && self.memory.kind() == MemoryKind::Malloc
+            && self.has_consistent_malloc_provenance()
     }
 
     #[inline]
@@ -633,6 +812,8 @@ pub(crate) struct MetaAllocator {
     registry: ArenaRegistry,
     #[cfg(test)]
     fail_next_direct_zeroed_size: AtomicUsize,
+    #[cfg(test)]
+    fail_next_aligned_zeroed_size: AtomicUsize,
     _pin: PhantomPinned,
 }
 
@@ -658,6 +839,8 @@ impl MetaAllocator {
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             #[cfg(test)]
             fail_next_direct_zeroed_size: AtomicUsize::new(0),
+            #[cfg(test)]
+            fail_next_aligned_zeroed_size: AtomicUsize::new(0),
             _pin: PhantomPinned,
         }
     }
@@ -737,6 +920,16 @@ impl MetaAllocator {
         self.fail_next_direct_zeroed_size.store(size, Ordering::Release);
     }
 
+    /// Makes one exact aligned-zeroed metadata request fail in an isolated
+    /// test. This remains narrower than an allocator policy: it only proves
+    /// a caller's pre-publication ownership branch.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_fail_next_aligned_zeroed_size(&self, size: usize) {
+        assert_ne!(size, 0);
+        self.fail_next_aligned_zeroed_size.store(size, Ordering::Release);
+    }
+
     /// Allocates zeroed metadata with the source alignment contract.
     pub(crate) fn zalloc_aligned(
         self: Pin<&'static Self>,
@@ -768,6 +961,15 @@ impl MetaAllocator {
         }
         let mut entry = self.enter()?;
         entry.ensure_ready(config, subprocess)?;
+        #[cfg(test)]
+        if size != 0
+            && self
+                .fail_next_aligned_zeroed_size
+                .compare_exchange(size, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            return Err(MetaError::AllocationUnavailable);
+        }
         let pointer = entry
             .allocator()
             .allocate_aligned_zeroed(size, alignment)
@@ -1282,6 +1484,71 @@ mod tests {
             Err(MetaBitmapProjectionError::ForeignOwner)
         );
         allocator.free(&mut image).unwrap();
+    }
+
+    #[test]
+    fn tls_projection_cannot_be_reinterpreted_as_dynamic_arena_or_bitmap_image() {
+        let allocator = static_allocator();
+        let subprocess = MainSubprocess::test_static_owner();
+        let arena_layout = ArenaPagesLayout::for_slice_count(crate::config::BCHUNK_BITS)
+            .expect("the source minimum arena has a dynamic pages layout");
+        assert_eq!(arena_layout.byte_size(), 12_416);
+        let count = (1..=u16::MAX as usize)
+            .find(|count| DynamicThreadLocalBacking::allocation_size(*count) == Some(arena_layout.byte_size()))
+            .expect("the source-sized arena pages image coincides with one valid TLS backing");
+        let bitmap_layout = BitmapLayout::for_bit_count(crate::config::BCHUNK_BITS * 192)
+            .expect("the same aligned image also has one ordinary bitmap layout");
+        assert_eq!(bitmap_layout.byte_size(), arena_layout.byte_size());
+
+        let mut image = allocator
+            .zalloc_aligned_for_main_subprocess(
+                config(),
+                subprocess,
+                arena_layout.byte_size(),
+                BCHUNK_SIZE,
+            )
+            .expect("the colliding aligned metadata request succeeds");
+        let memory = image.memory_id();
+        {
+            let backing = image
+                .dynamic_thread_local_backing_mut(count)
+                .expect("the exact flexible TLS image projects once");
+            // SAFETY: this exact typed backing projection owns the flexible
+            // source request and writes its fixed header before publication.
+            unsafe { backing.initialize_owned_header(memory, count) };
+            assert_eq!(backing.count(), count);
+        }
+        assert!(
+            image.dynamic_thread_local_backing_mut(count).is_some(),
+            "the retained TLS role permits its own later typed projection"
+        );
+        assert_eq!(
+            image.initialize_zeroed_bitmap(allocator, bitmap_layout, |_| ()),
+            Err(MetaBitmapProjectionError::InvalidImage),
+            "a TLS-projected image cannot become an ordinary bitmap"
+        );
+        assert!(
+            !image.initialize_dynamic_arena_pages(allocator, arena_layout),
+            "a TLS-projected image cannot become a dynamic arena-pages header"
+        );
+        allocator.free(&mut image).unwrap();
+
+        let mut bitmap = allocator
+            .zalloc_aligned_for_main_subprocess(
+                config(),
+                subprocess,
+                bitmap_layout.byte_size(),
+                BCHUNK_SIZE,
+            )
+            .expect("the same-sized ordinary bitmap image allocates");
+        assert!(bitmap
+            .initialize_zeroed_bitmap(allocator, bitmap_layout, |_| ())
+            .is_ok());
+        assert!(
+            bitmap.dynamic_thread_local_backing_mut(count).is_none(),
+            "a published ordinary bitmap cannot later take the TLS backing role"
+        );
+        allocator.free(&mut bitmap).unwrap();
     }
 
     #[test]

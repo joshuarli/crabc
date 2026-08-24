@@ -25,18 +25,20 @@
 // full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
 // `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
-// queue mutations), `src/arena.c:950-1283` (fresh regular/singleton page
-// metadata, arena-page registration, page-map publication, and release
-// ordering), and `include/mimalloc/internal.h:650-654,945-949`
+// queue mutations), `src/arena.c:674-723,950-1283` (heap-local arena-pages
+// selection, fresh regular/singleton metadata, arena-page registration,
+// page-map publication, and release ordering), and
+// `include/mimalloc/internal.h:650-654,945-949`
 // (direct-page, size-bin, and full-page predicates).
 //
 // This is the intentionally bounded normal-release lifecycle for exactly one
 // pinned exclusive theap. Ordinary activation supplies a live default theap;
 // the detached metadata wrapper supplies its own PrivateLock and reuses the
 // same exclusive mutation engine. It accepts only caller-managed external
-// arenas and a caller-initialized page map. There is no TLS, first-class heap,
-// general lock-free remote-free routing, page abandonment, OS arena
-// reservation, or public API here. A bounded false-force collector runs in
+// arenas and a caller-initialized page map. This engine does not construct or
+// generalize TLS/Heap lifecycle; its narrow dynamic session instead borrows
+// one caller-pinned first-class Heap. There is no general lock-free remote-free
+// routing, page abandonment, OS arena reservation, or public API here. A bounded false-force collector runs in
 // the source regular candidate scan and in the non-abandoning full-page pass.
 // `RemoteFreeProducer` is one private linear, scoped route to create that
 // publication for an exact active non-huge regular or `BIN_FULL` allocation;
@@ -164,7 +166,6 @@ enum ReleaseSpan {
         memory: MemoryId,
         slice_start: *mut u8,
         size: usize,
-        slice_index: usize,
     },
     Os(PublishedOsAlignedPage),
 }
@@ -419,6 +420,47 @@ impl<'attach, 'heap, 'arena, 'map>
     #[cfg(test)]
     pub(crate) fn test_attachment_teardown_preflight(&mut self) -> Result<(), crate::dynamic_theap::DynamicTheapError> {
         self.session.test_teardown_preflight()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_arena_pages_image(
+        &self,
+        memory: MemoryId,
+    ) -> Option<(
+        NonNull<crate::types::ArenaPages>,
+        crate::arena::ArenaPagesLayout,
+        MemoryId,
+        bool,
+    )> {
+        self.session.test_arena_pages_image(memory)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_main_arena_page_is_clear(&self, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        // SAFETY: the engine retains the registry-published arena view. This
+        // is a nonmutating test witness for the dynamic/local bitmap split.
+        unsafe { self.arena.pages() }
+            .and_then(|pages| pages.is_clear_range(arena_memory.slice_index as usize, 1))
+            == Some(true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_abandoned_witness(&self, bin: usize, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if !self
+            .session
+            .test_set_and_clear_dynamic_abandoned_witness(bin, memory)
+        {
+            return false;
+        }
+        self.arena
+            .abandoned_pages(bin)
+            .is_some_and(|pages| !pages.is_published(arena_memory.slice_index as usize))
     }
 }
 
@@ -2003,7 +2045,6 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         )?;
         let slice_start = claim.start();
         let memory = claim.memory_id();
-        let slice_index = claim.slice_index();
         let metadata = match claim.page_metadata() {
             Some(metadata) => metadata,
             None => {
@@ -2045,6 +2086,14 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             }
         };
 
+        if !self
+            .session
+            .ensure_arena_pages(&self.arena, self.page_map.memory_config())
+        {
+            let _ = claim.release();
+            return None;
+        }
+
         // SAFETY: `claim` owns the exact unregistered slice and selected
         // metadata record exclusively. The caller-pinned session owns the
         // only mutable theap/heap image. Publication writes a fresh Page value
@@ -2065,15 +2114,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             return None;
         };
 
-        let registered_in_arena = unsafe {
-            match self.arena.pages() {
-                Some(pages) => match pages.set_range(slice_index, 1) {
-                    Some(transition) => transition.all_transitioned(),
-                    None => false,
-                },
-                None => false,
-            }
-        };
+        let registered_in_arena = self.session.set_arena_page(&self.arena, memory);
         if !registered_in_arena {
             self.rollback_fresh(page, slice_start, allocation_size, memory, false, false);
             return None;
@@ -2126,12 +2167,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             };
         }
         if arena_registered {
-            if let Some(arena_memory) = memory.arena_memory() {
-                // SAFETY: the page bitmap bit was set by this exact fresh
-                // attempt and no page-map reader can observe the rollback.
-                if let Some(pages) = unsafe { self.arena.pages() } {
-                    let _ = pages.clear_range(arena_memory.slice_index as usize, 1);
-                }
+            if memory.arena_memory().is_some() {
+                // The exact session-selected bitmap bit was set by this
+                // fresh attempt and no page-map reader can observe rollback.
+                let _ = self.session.clear_arena_page(&self.arena, memory);
             }
         }
         // SAFETY: no queue/direct-cache entry names this failed fresh page, so
@@ -2256,7 +2295,6 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 memory,
                 slice_start,
                 size,
-                slice_index,
             } => {
                 // SAFETY: `memory` describes the prevalidated, still
                 // map-published span; no plain lookup overlaps this explicit
@@ -2265,12 +2303,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                     self.reinsert_after_release_failure(bin, page);
                     return false;
                 }
-                let cleared = unsafe {
-                    self.arena
-                        .pages()
-                        .and_then(|pages| pages.clear_range(slice_index, 1))
-                };
-                if cleared != Some(true) {
+                if !self.session.clear_arena_page(&self.arena, memory) {
                     // The map is already clear, so do not release the arena
                     // span on an arena-page registration invariant failure. It
                     // remains a visible diagnostic leak rather than a
@@ -2425,7 +2458,6 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             memory,
             slice_start,
             size,
-            slice_index,
         })
     }
 

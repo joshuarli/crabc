@@ -154,6 +154,18 @@ stores `false`/`-1` before Release heap publication; its sealed borrowed
 an unfinished engine Drop terminally latches the attachment rather than
 allowing teardown to claim quiescence.
 
+The first fresh page in that private non-abandoning dynamic session now owns
+one exact source-shaped heap-local `mi_arena_pages_t` image. Creation first
+requires the registry-published arena's non-null `Arena::subprocess` to equal
+the attachment's selected main subprocess; the retained BCHUNK-aligned
+metadata capability is then Release-published only in the bound Heap's exact
+arena slot and is used for fresh/rollback/release page bits. It remains
+disjoint from the arena's `pages_main`. Empty attachment
+teardown removes the exact slot before freeing it, while a nonempty image is a
+pre-mutation rejection and post-mutation lock/free ambiguity terminally
+retains owner state. This is not abandonment movement, multi-arena dynamic
+heap support, or general heap destruction.
+
 Separately, the exact source-layout `mi_random_ctx_t` image now lives directly
 in `Theap::random`: it preserves source input/output word order, counter
 carries, consumed-output clearing, direct random-field-address nonce identity,

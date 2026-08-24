@@ -222,6 +222,17 @@ result may refine it only when it can prove retained ownership.
   retains the live page/map/resource state rather than claiming teardown. This
   remains bounded private routing, not a general
   dynamic allocation, abandonment, pthread, fork, or process lifecycle.
+  Its first dynamic arena page first proves the registry-published arena's
+  non-null subprocess identity equals the attachment's selected main
+  subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
+  metadata image bound to the exact Heap and one arena slot. The ordinary page
+  bitmap is disjoint from
+  `Arena::pages_main` for fresh/rollback/release; a test-only abandoned-bin
+  witness is not abandonment publication. Image allocation failure before
+  slot publication remains retryable; any post-slot private lock/unlock/free
+  ambiguity retains the known terminal owner. A nonempty image is rejected
+  before dynamic root/list/key mutation; multiple arenas and general heap
+  destruction remain deferred.
 - **Evidence:**
   `dynamic_theap::tests::post_list_publication_backing_failure_returns_a_retained_poisoned_owner`
   proves retained post-publication authority;
@@ -238,9 +249,18 @@ result may refine it only when it can prove retained ownership.
   and `dynamic_pending_os_release_makes_finish_retain_then_drop_latch_attachment`
   prove bounded dynamic page-session identity, source `-1` full routing,
   joined remote collection, and terminal unfinished shutdown;
-  `meta::tests::released_capability_cannot_project_any_safe_typed_image`
-  proves released backing/TLD/dynamic-Theap capabilities cannot form safe
-  byte references;
+  `dynamic_arena_pages_aligned_metadata_failure_leaves_slot_null_and_retries`,
+  `dynamic_arena_pages_nonempty_teardown_rejects_without_root_or_slot_mutation`,
+  `dynamic_arena_pages_rejects_cross_heap_removal_and_retains_exact_slot`, and
+  `dynamic_arena_pages_slot_publish_failure_retains_typed_owner_terminally`,
+  and `dynamic_arena_pages_reject_unbound_or_foreign_arena_subprocess_before_allocation`
+  prove the private image's retry, pre-mutation, exact-Heap, source-identity,
+  and terminal ownership boundaries.
+  `meta::tests::released_capability_cannot_project_any_safe_typed_image` and
+  `tls_projection_cannot_be_reinterpreted_as_dynamic_arena_or_bitmap_image`
+  prove released capabilities cannot form safe byte references and an exact
+  size-coincident dynamic TLS backing cannot become an arena-pages or bitmap
+  image;
   `tld::tests::dynamic_teardown_releases_registration_before_busy_lock_poison`
   proves the source live-count order across an invalid quiescence boundary.
   The remaining dynamic attachment tests prove regular-slot

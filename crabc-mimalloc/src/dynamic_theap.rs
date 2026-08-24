@@ -4,7 +4,8 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/threadlocal.c:23-214`,
+// Source map: pinned mimalloc v3.5.0 `src/arena.c:674-723,1101-1114,1240-1282`,
+// `src/threadlocal.c:23-214`,
 // `src/init.c:236-360,377-421,448-481`, `src/theap.c:228-306,357-369,414-449`,
 // `src/heap.c:60-100`, and `src/prim/prim-tls.c:211-229`.
 
@@ -19,7 +20,10 @@
 //! abandoning `true`/`2` option image and rejects a page session. The private
 //! unsafe non-abandoning begin selects source-reachable `false`/`-1` before
 //! Release heap publication; its exclusive borrowed `DynamicTheapPageSession`
-//! alone reaches the shared private page engine. It does implement the one
+//! alone reaches the shared private page engine. Its first dynamic arena page
+//! lazily receives one exact heap-local `mi_arena_pages_t` metadata image;
+//! fresh/rollback/release use that image rather than `Arena::pages_main`.
+//! It does implement the one
 //! owner-only cached-Theap root/reference pair which follows regular-slot
 //! publication in `src/heap.c:_mi_heap_theap_get_or_init`.
 
@@ -33,6 +37,10 @@ use core::ptr::NonNull;
 
 use crate::compiler_tls::{
     cached_theap, current_thread_identity, default_theap, fast_slot_peek, set_cached_theap,
+};
+use crate::arena::{
+    ArenaView, DynamicArenaPagesOwner, DynamicArenaPagesOwnerCreateError,
+    DynamicArenaPagesOwnerError,
 };
 use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
@@ -75,6 +83,7 @@ pub(crate) enum DynamicTheapError {
     SlotOwnership,
     ListOwnership,
     PageCountNonZero,
+    ArenaPages(DynamicArenaPagesOwnerError),
     TheapList(ThreadLocalTheapListError),
     TheapClear,
     HeapRetire,
@@ -210,6 +219,7 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     cached_root_bound: bool,
     page_mode: DynamicTheapPageMode,
     terminal_os_release: Option<OsAlignedPageOwner>,
+    arena_pages: Option<DynamicArenaPagesOwner>,
     thread: crate::types::LiveThreadId,
     state: DynamicAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
@@ -381,6 +391,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             cached_root_bound: false,
             page_mode,
             terminal_os_release: None,
+            arena_pages: None,
             thread,
             state: DynamicAttachmentState::Preparing,
             _not_send_or_sync: PhantomData,
@@ -469,6 +480,86 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         DynamicTheapPageSession::begin(self)
     }
 
+    /// Lazily forms the one non-main source `mi_arena_pages_t` image selected
+    /// by this dynamic Heap and arena. A metadata-allocation failure occurs
+    /// before publication and leaves the attached owner retryable; any typed
+    /// image or Heap-slot failure retains the exact allocation and terminally
+    /// poisons this attachment rather than falling back to `pages_main`.
+    fn ensure_dynamic_arena_pages(
+        &mut self,
+        arena: &ArenaView<'_>,
+        config: MemoryConfig,
+    ) -> Result<(), DynamicTheapError> {
+        self.ensure_attached_current()?;
+        if let Some(owner) = self.arena_pages.as_ref() {
+            return if owner.is_for_arena(arena) && owner.is_published_for(self.heap.as_ref().get_ref()) {
+                Ok(())
+            } else {
+                Err(self.poison(DynamicTheapError::ArenaPages(
+                    DynamicArenaPagesOwnerError::ForeignArena,
+                )))
+            };
+        }
+        let (metadata, subprocess) = match self.tld.as_ref() {
+            Some(tld) => (tld.metadata(), tld.subprocess()),
+            None => return Err(self.poison(DynamicTheapError::Poisoned)),
+        };
+        let mut owner = match DynamicArenaPagesOwner::create(
+            metadata,
+            config,
+            subprocess,
+            self.heap.as_ref().get_ref(),
+            arena,
+        ) {
+            Ok(owner) => owner,
+            Err(DynamicArenaPagesOwnerCreateError::Error(error)) => {
+                return Err(DynamicTheapError::ArenaPages(error));
+            }
+            Err(DynamicArenaPagesOwnerCreateError::Retained(owner)) => {
+                self.arena_pages = Some(owner);
+                return Err(self.poison(DynamicTheapError::ArenaPages(
+                    DynamicArenaPagesOwnerError::Image,
+                )));
+            }
+        };
+        if let Err(error) = owner.publish(self.heap.as_ref().get_ref()) {
+            self.arena_pages = Some(owner);
+            return Err(self.poison(DynamicTheapError::ArenaPages(error)));
+        }
+        self.arena_pages = Some(owner);
+        Ok(())
+    }
+
+    fn set_dynamic_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        if self.ensure_attached_current().is_err() {
+            return false;
+        }
+        let Some(owner) = self.arena_pages.as_ref() else {
+            self.state = DynamicAttachmentState::Poisoned;
+            return false;
+        };
+        if !owner.is_for_arena(arena) || !owner.set_page(memory) {
+            self.state = DynamicAttachmentState::Poisoned;
+            return false;
+        }
+        true
+    }
+
+    fn clear_dynamic_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        if self.ensure_attached_current().is_err() {
+            return false;
+        }
+        let Some(owner) = self.arena_pages.as_ref() else {
+            self.state = DynamicAttachmentState::Poisoned;
+            return false;
+        };
+        if !owner.is_for_arena(arena) || !owner.clear_page(memory) {
+            self.state = DynamicAttachmentState::Poisoned;
+            return false;
+        }
+        true
+    }
+
     /// Performs the bounded no-page teardown sequence.
     pub(crate) fn teardown(&mut self) -> Result<(), DynamicTheapError> {
         if self.state == DynamicAttachmentState::AwaitingKeyRelease {
@@ -532,6 +623,12 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             Some(false) => return Err(self.poison(DynamicTheapError::TheapClear)),
             None => return Err(self.poison(DynamicTheapError::TheapProjection)),
         }
+        if let Some(owner) = self.arena_pages.as_mut() {
+            if let Err(error) = owner.unpublish_and_free(self.heap.as_ref().get_ref()) {
+                return Err(self.poison(DynamicTheapError::ArenaPages(error)));
+            }
+        }
+        self.arena_pages = None;
         let mut theap = match self.theap.take() {
             Some(theap) => theap,
             None => return Err(self.poison(DynamicTheapError::Poisoned)),
@@ -631,6 +728,15 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         };
         if page_count != 0 {
             return Err(DynamicTheapError::PageCountNonZero);
+        }
+        if let Some(owner) = self.arena_pages.as_ref() {
+            if !owner.is_published_for(self.heap.as_ref().get_ref())
+                || !owner.is_empty_published()
+            {
+                return Err(DynamicTheapError::ArenaPages(
+                    DynamicArenaPagesOwnerError::NonEmpty,
+                ));
+            }
         }
         if !self.cached_root_bound || !core::ptr::eq(cached_theap().as_ptr(), theap_pointer) {
             return Err(DynamicTheapError::RootOwnership);
@@ -974,6 +1080,30 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
     pub(crate) fn test_teardown_preflight(&mut self) -> Result<(), DynamicTheapError> {
         self.attachment.prevalidate_teardown()
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_arena_pages_image(
+        &self,
+        memory: MemoryId,
+    ) -> Option<(NonNull<crate::types::ArenaPages>, crate::arena::ArenaPagesLayout, MemoryId, bool)> {
+        let owner = self.attachment.arena_pages.as_ref()?;
+        let (header, layout, image_memory) = owner.test_image()?;
+        Some((header, layout, image_memory, owner.page_is_set(memory)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_set_and_clear_dynamic_abandoned_witness(
+        &self,
+        bin: usize,
+        memory: MemoryId,
+    ) -> bool {
+        let Some(owner) = self.attachment.arena_pages.as_ref() else {
+            return false;
+        };
+        owner.set_abandoned_page(bin, memory)
+            && owner.abandoned_page_is_set(bin, memory)
+            && owner.clear_abandoned_page(bin, memory)
+    }
 }
 
 impl theap_page_session_sealed::Sealed for DynamicTheapPageSession<'_, '_> {}
@@ -1014,6 +1144,21 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
 
     #[inline]
     fn note_page_removed(&mut self) -> bool { self.dynamic_theap_mut().note_page_removed() }
+
+    #[inline]
+    fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, config: MemoryConfig) -> bool {
+        self.attachment.ensure_dynamic_arena_pages(arena, config).is_ok()
+    }
+
+    #[inline]
+    fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        self.attachment.set_dynamic_arena_page(arena, memory)
+    }
+
+    #[inline]
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        self.attachment.clear_dynamic_arena_page(arena, memory)
+    }
 
     #[inline]
     unsafe fn publish_fresh_page(
@@ -1086,7 +1231,9 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arena::{ArenaId, ArenaRegistry, ArenaView, manage_external_in_place};
+    use crate::arena::{
+        ArenaId, ArenaPagesLayout, ArenaRegistry, ArenaView, manage_external_in_place,
+    };
     use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
     use crate::compiler_tls::{
         dynamic_backing_peek, is_empty_dynamic_backing, set_cached_theap,
@@ -1240,6 +1387,7 @@ mod tests {
             };
             let mut region = DynamicArenaRegion::zeroed();
             let registry = ArenaRegistry::new(null_mut());
+            assert!(unsafe { registry.bind_subprocess_before_publication(subprocess.as_ptr()) });
             let managed = unsafe {
                 manage_external_in_place(
                     &registry,
@@ -1335,6 +1483,26 @@ mod tests {
             // entry and its source page fields live until its matching free.
             assert_eq!(unsafe { (*page).theap() }, allocator.theap_identity());
             assert_eq!(unsafe { (*page).heap() }, heap);
+            let memory = unsafe { (*page).memid() };
+            let (header, layout, image_memory, dynamic_bit_set) = allocator
+                .test_dynamic_arena_pages_image(memory)
+                .expect("fresh dynamic page lazily creates heap-local arena pages");
+            assert_eq!(header.as_ptr().addr() % crate::bitmap::BCHUNK_SIZE, 0);
+            assert_eq!(layout.byte_size(), 12_416);
+            assert_eq!(image_memory.kind(), MemoryKind::Malloc);
+            let malloc = image_memory
+                .malloc_memory()
+                .expect("typed arena-pages metadata retains Malloc provenance");
+            assert_eq!(malloc.base, header.as_ptr().cast());
+            assert_eq!(malloc.size, layout.byte_size());
+            assert!(image_memory.initially_zero());
+            assert!(image_memory.initially_committed());
+            assert!(dynamic_bit_set);
+            assert!(
+                allocator.test_dynamic_main_arena_page_is_clear(memory),
+                "dynamic page registration must not masquerade as pages_main"
+            );
+            assert!(allocator.test_dynamic_abandoned_witness(0, memory));
             assert_eq!(
                 allocator.test_attachment_teardown_preflight(),
                 Err(DynamicTheapError::PageCountNonZero),
@@ -1344,6 +1512,238 @@ mod tests {
             unsafe { allocator.free(block) }.expect("the dynamic block frees locally");
             assert!(matches!(allocator.finish(), Ok(())));
             DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_arena_pages_nonempty_teardown_rejects_without_root_or_slot_mutation() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let key = owner.key().expect("attached owner keeps its regular key");
+            let cached_before = cached_theap();
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator.allocate(37, false).expect("dynamic page block");
+            let page = unsafe { allocator.page_for_block(block) };
+            let memory = unsafe { (*page).memid() };
+            unsafe { allocator.free(block) }.expect("local dynamic block frees");
+            assert!(matches!(allocator.finish(), Ok(())));
+
+            let arena_pages = owner
+                .arena_pages
+                .as_ref()
+                .expect("finished engine retains the empty heap-local image");
+            assert!(arena_pages.set_page(memory));
+            assert_eq!(
+                owner.teardown(),
+                Err(DynamicTheapError::ArenaPages(DynamicArenaPagesOwnerError::NonEmpty))
+            );
+            assert_eq!(cached_theap(), cached_before);
+            assert!(!owner
+                .backing
+                .as_mut()
+                .expect("pre-mutation rejection retains backing")
+                .get(key)
+                .expect("slot lookup remains valid")
+                .is_null());
+            assert!(owner
+                .arena_pages
+                .as_ref()
+                .expect("pre-mutation rejection retains owner")
+                .clear_page(memory));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_arena_pages_rejects_cross_heap_removal_and_retains_exact_slot() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator.allocate(37, false).expect("dynamic page block");
+            unsafe { allocator.free(block) }.expect("local dynamic block frees");
+            assert!(matches!(allocator.finish(), Ok(())));
+
+            let foreign = Heap::bootstrap_empty();
+            let arena_pages = owner
+                .arena_pages
+                .as_mut()
+                .expect("dynamic page engine retained its exact Heap owner");
+            assert_eq!(
+                arena_pages.unpublish_and_free(&foreign),
+                Err(DynamicArenaPagesOwnerError::ForeignHeap)
+            );
+            assert!(arena_pages.is_published_for(owner.heap.as_ref().get_ref()));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_arena_pages_aligned_metadata_failure_leaves_slot_null_and_retries() {
+        thread::spawn(|| {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut owner = match unsafe {
+                DynamicTheapAttachment::begin_non_abandoning_with_components(
+                    memory_config(),
+                    pinned_empty_heap(),
+                    subprocess,
+                    metadata,
+                    registry,
+                )
+            } {
+                Ok(owner) => owner,
+                Err(DynamicTheapBeginError::Rejected(error)) => panic!("attach: {error:?}"),
+                Err(DynamicTheapBeginError::Retained { error, .. }) => panic!("retained: {error:?}"),
+            };
+            let mut region = DynamicArenaRegion::zeroed();
+            let registry = ArenaRegistry::new(null_mut());
+            assert!(unsafe { registry.bind_subprocess_before_publication(subprocess.as_ptr()) });
+            let managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).expect("pinned page size"),
+                    true,
+                    true,
+                    true,
+                    -1,
+                    false,
+                    None,
+                )
+            }
+            .expect("external arena");
+            let arena_pointer = managed.arena_id().as_ptr();
+            let arena = unsafe { ArenaView::from_ptr(arena_pointer) }
+                .expect("arena view");
+            let arena_index = arena.arena().arena_index;
+            let mut page_map = PageMap::initialize(memory_config(), 0, true).expect("page map");
+            let layout = ArenaPagesLayout::for_slice_count(arena.arena().slice_count)
+                .expect("source arena bitmap layout");
+            metadata.test_fail_next_aligned_zeroed_size(layout.byte_size());
+            let session = owner.page_session().expect("page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                &mut page_map,
+            );
+            assert!(allocator.allocate(37, false).is_none());
+            assert!(matches!(allocator.finish(), Ok(())));
+            assert!(owner.arena_pages.is_none());
+            assert!(owner.heap.as_ref().get_ref().dynamic_arena_pages_at(
+                arena_index
+            ).is_none());
+            let retry_arena = unsafe { ArenaView::from_ptr(arena_pointer) }
+                .expect("arena stays registered for retry");
+            let retry_session = owner.page_session().expect("retry page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                retry_session,
+                retry_arena,
+                ArenaId::none(),
+                &mut page_map,
+            );
+            let block = allocator.allocate(37, false).expect("retry allocates after pre-publication failure");
+            unsafe { allocator.free(block) }.expect("retry allocation frees");
+            assert!(matches!(allocator.finish(), Ok(())));
+            owner.teardown().expect("empty retry owner tears down");
+            unsafe { page_map.destroy() }.expect("no retry map entries remain");
+        })
+        .join()
+        .expect("aligned metadata failure fixture stays current-thread local");
+    }
+
+    #[test]
+    fn dynamic_arena_pages_reject_unbound_or_foreign_arena_subprocess_before_allocation() {
+        thread::spawn(|| {
+            let (subprocess, metadata, _) = fixture();
+            let foreign = MainSubprocess::test_static_owner();
+            let reject = |registry, expected| {
+                let mut region = DynamicArenaRegion::zeroed();
+                let managed = unsafe {
+                    manage_external_in_place(
+                        &registry,
+                        region.as_ptr(),
+                        ARENA_MIN_SIZE,
+                        PageSize::new(4096).expect("pinned page size"),
+                        true,
+                        true,
+                        true,
+                        -1,
+                        false,
+                        None,
+                    )
+                }
+                .expect("the isolated external arena publishes");
+                let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+                    .expect("the published arena has a view");
+                let heap = Heap::bootstrap_empty();
+                assert!(matches!(
+                    DynamicArenaPagesOwner::create(
+                        metadata,
+                        memory_config(),
+                        subprocess,
+                        &heap,
+                        &arena,
+                    ),
+                    Err(DynamicArenaPagesOwnerCreateError::Error(error)) if error == expected
+                ));
+                assert!(
+                    heap.dynamic_arena_pages_at(arena.arena().arena_index).is_none(),
+                    "the source-identity preflight rejects before any Heap-slot or metadata publication"
+                );
+            };
+
+            reject(
+                ArenaRegistry::new(null_mut()),
+                DynamicArenaPagesOwnerError::UnboundArenaSubprocess,
+            );
+            reject(
+                ArenaRegistry::new(foreign.as_ptr()),
+                DynamicArenaPagesOwnerError::ForeignArenaSubprocess,
+            );
+        })
+        .join()
+        .expect("the source-identity rejection fixture stays current-thread local");
+    }
+
+    #[test]
+    fn dynamic_arena_pages_slot_publish_failure_retains_typed_owner_terminally() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let arena_index = arena.arena().arena_index;
+            owner
+                .heap
+                .as_ref()
+                .get_ref()
+                .test_inject_busy_arena_pages_lock();
+            let session = owner.page_session().expect("non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            assert!(allocator.allocate(37, false).is_none());
+            assert!(matches!(allocator.finish(), Ok(())));
+            assert!(owner.arena_pages.is_some());
+            assert!(owner
+                .heap
+                .as_ref()
+                .get_ref()
+                .dynamic_arena_pages_at(arena_index)
+                .is_none());
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
         });
     }
 

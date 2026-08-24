@@ -15,7 +15,8 @@
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
 // empty-theap initializers), `src/theap.c:228-306,357-369,414-449` (dynamic
 // Theap initialization, canonical cached reference pair, and list detach),
-// `src/arena.c:1023-1095` (fresh-page metadata
+// `src/arena.c:674-723,1023-1114,1240-1282` (per-heap arena-pages
+// acquisition/publication and fresh/release page metadata
 // publication), `src/page.c:214-243,708-757` (false-force owner-local
 // collection and fresh-page local-state invariants),
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
@@ -308,6 +309,66 @@ impl Heap {
             && self.memid.kind() == MemoryKind::None
     }
 
+    /// Acquire-loads one private source `heap->arena_pages[arena]` slot.
+    #[inline]
+    pub(crate) fn dynamic_arena_pages_at(&self, arena_index: usize) -> Option<NonNull<ArenaPages>> {
+        if arena_index >= MAX_ARENAS {
+            return None;
+        }
+        NonNull::new(self.arena_pages[arena_index].load(Ordering::Acquire))
+    }
+
+    /// Release-publishes one freshly initialized private dynamic
+    /// `mi_arena_pages_t` image under the source heap lock.
+    ///
+    /// This is intentionally a one-image bounded operation: the dynamic
+    /// attachment owns the exact arena identity and keeps the matching typed
+    /// metadata capability alive. A non-null slot or busy lock is an
+    /// invalid-owner boundary, never a fallback to main-heap `pages_main`.
+    #[inline]
+    pub(crate) fn publish_dynamic_arena_pages(
+        &self,
+        arena_index: usize,
+        pages: NonNull<ArenaPages>,
+    ) -> Result<(), HeapArenaPagesError> {
+        if arena_index >= MAX_ARENAS {
+            return Err(HeapArenaPagesError::ArenaIndex);
+        }
+        let guard = self
+            .arena_pages_lock
+            .try_lock()
+            .ok_or(HeapArenaPagesError::Busy)?;
+        if !self.arena_pages[arena_index].load(Ordering::Acquire).is_null() {
+            let _ = guard.unlock();
+            return Err(HeapArenaPagesError::Occupied);
+        }
+        self.arena_pages[arena_index].store(pages.as_ptr(), Ordering::Release);
+        guard.unlock().map_err(HeapArenaPagesError::Lock)
+    }
+
+    /// Removes precisely the prior private dynamic arena-pages image before
+    /// its retained metadata capability is freed.
+    #[inline]
+    pub(crate) fn remove_dynamic_arena_pages(
+        &self,
+        arena_index: usize,
+        expected: NonNull<ArenaPages>,
+    ) -> Result<(), HeapArenaPagesError> {
+        if arena_index >= MAX_ARENAS {
+            return Err(HeapArenaPagesError::ArenaIndex);
+        }
+        let guard = self
+            .arena_pages_lock
+            .try_lock()
+            .ok_or(HeapArenaPagesError::Busy)?;
+        if self.arena_pages[arena_index].load(Ordering::Acquire) != expected.as_ptr() {
+            let _ = guard.unlock();
+            return Err(HeapArenaPagesError::Mismatch);
+        }
+        self.arena_pages[arena_index].store(null_mut(), Ordering::Release);
+        guard.unlock().map_err(HeapArenaPagesError::Lock)
+    }
+
     /// Retires only the bounded caller-storage dynamic-binding fields after
     /// the exact Theap was detached from this heap list. This is neither
     /// `_mi_heap_delete` nor a general caller-heap reset: the caller retains
@@ -320,7 +381,12 @@ impl Heap {
     /// address-stable authority for this caller image.
     #[inline]
     pub(crate) unsafe fn retire_dynamic_binding_after_detach(&mut self) -> bool {
-        if !self.theaps.is_null() {
+        if !self.theaps.is_null()
+            || self
+                .arena_pages
+                .iter()
+                .any(|slot| !slot.load(Ordering::Acquire).is_null())
+        {
             return false;
         }
         let guard = match self.theaps_lock.try_lock() {
@@ -453,6 +519,12 @@ impl Heap {
         self.theaps_lock.test_inject_busy();
     }
 
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_inject_busy_arena_pages_lock(&self) {
+        self.arena_pages_lock.test_inject_busy();
+    }
+
     #[inline]
     pub(crate) fn is_bound_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
         core::ptr::eq(self.subprocess, subprocess.as_ptr())
@@ -464,6 +536,16 @@ impl Heap {
 pub(crate) enum HeapTheapListError {
     Busy,
     Membership,
+    Lock(crabc_core::Errno),
+}
+
+/// One failure manipulating the source-private `heap->arena_pages` table.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeapArenaPagesError {
+    ArenaIndex,
+    Busy,
+    Occupied,
+    Mismatch,
     Lock(crabc_core::Errno),
 }
 
