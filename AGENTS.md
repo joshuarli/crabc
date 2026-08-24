@@ -27,6 +27,7 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | `ldso/` | `crabc-ldso`: AArch64 dynamic linker and private runtime-state owner. `ldso/src/lib.rs` is the target/linkage root; `ldso/src/loader.rs` owns loader algorithms and state. |
 | `crabc-core/` | Shared typed `no_std` Linux/AArch64 primitives used by the Rust facade. |
 | `crabc-rs/` | Public idiomatic Rust facade, direct probes, and native tests. |
+| `crabc-mimalloc/` | Fixed-upstream allocator provenance. Its future `#![no_std]` engine is a Linux/AArch64 semantic port of pinned mimalloc, not a new allocator design. |
 | `include/` | Installed public C headers. |
 | `tests/` | Root Rust integration tests and C fixtures. |
 | `compat/` | ABI, differential, loader, corpus, POSIX, Rust-std, LTO, Rustix, performance, and capability-ledger evidence. |
@@ -51,7 +52,9 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | Current measured results | [`COMPATIBILITY.md`](COMPATIBILITY.md) and `compat/reports/**` |
 | Cross-cutting document index | [`docs/README.md`](docs/README.md) |
 | Current Rust-facade architecture | [`docs/design/crabc-rs.md`](docs/design/crabc-rs.md) |
+| Allocator-port scope, ownership, and provenance | [`docs/design/allocator.md`](docs/design/allocator.md) and [`crabc-mimalloc/UPSTREAM.md`](crabc-mimalloc/UPSTREAM.md) |
 | Performance contract and active cost frontier | [`docs/design/performance.md`](docs/design/performance.md) and [`compat/perf/README.md`](compat/perf/README.md) |
+| Allocator differential evidence and recorded differences | [`compat/allocator/README.md`](compat/allocator/README.md) and [`compat/allocator/known-differences.md`](compat/allocator/known-differences.md) |
 | Exact native capability classification | [`compat/crabc-rs/coverage.toml`](compat/crabc-rs/coverage.toml) |
 | Historical delivery rationale and rename provenance | [`docs/history/`](docs/history/) — provenance only, never a live backlog |
 | Harness mechanics | The nearest `compat/*/README.md` or package `README.md` |
@@ -102,9 +105,13 @@ does not replace the pinned native evidence environment.
 
 - Kernel-facing code may rely on Linux 5.10. Do not add pre-5.10 fallbacks;
   centrally document a newer requirement before relying on it.
-- `malloc` implementation research is out of scope. The public C allocator
-  boundary uses the mature mimalloc strategy; `crabc-rs` uses normal Rust
-  allocation and does not expose C allocation APIs.
+- Allocator invention is out of scope. The one exception is a
+  provenance-preserving Linux/AArch64 semantic port of fixed mimalloc v3.5.0:
+  preserve its algorithms, data structures, memory orderings, and observable
+  behavior until parity is proved; retain the pinned C implementation as a
+  differential oracle; require a written design note plus differential and
+  performance evidence for any algorithmic divergence. `crabc-rs` uses normal
+  Rust allocation and does not expose C allocation APIs.
 - Never hand-roll cryptography. Entropy syscalls are in scope; compatibility
   crypto requires an approved focused Rust dependency or an explicit limit.
 - Locale support is `C`, `POSIX`, and `C.UTF-8`; Rust-facing text is UTF-8.
@@ -138,6 +145,9 @@ types, interfaces, state transitions, permissions, tests, and explanations.
 - For bugs, add the smallest isolated failing regression before the fix.
 - Keep unsafe boundaries explicit and preserve compatibility algorithms where
   musl behavior is subtle. Do not hide fallbacks merely to make a patch fit.
+- For a translated fixed-upstream subsystem, record its exact revision, source
+  file/function-to-Rust-module mapping, source-specific license provenance,
+  and intentional differences before treating an implementation as a port.
 - Preserve unrelated dirty work. Do not run formatters, linters, pre-commit
   hooks, or push a remote unless the user explicitly asks.
 - A completed feature needs coherent tests, ledger/documentation updates, and

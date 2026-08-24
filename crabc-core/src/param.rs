@@ -18,6 +18,12 @@ pub const AT_CLKTCK: usize = 17;
 pub const AT_HWCAP: usize = 16;
 /// `AT_HWCAP2`: the secondary hardware-capability bitset.
 pub const AT_HWCAP2: usize = 26;
+/// `AT_RANDOM`: pointer-valued tag for the kernel-provided random bytes.
+///
+/// This module exposes the tag only. [`auxv_value`] may return its raw word,
+/// but does not dereference it; startup owners decide whether and when the
+/// pointed-to material is valid to read.
+pub const AT_RANDOM: usize = 25;
 /// `AT_EXECFN`: pointer to the executable pathname string.
 pub const AT_EXECFN: usize = 31;
 /// `AT_SYSINFO_EHDR`: base address of the kernel-provided vDSO ELF image.

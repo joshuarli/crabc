@@ -1,7 +1,7 @@
 //! Stateless Linux/AArch64 virtual-memory operations.
 
 use crate::{RawFd, Result};
-use crate::syscall::{decode, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MADVISE, SYS_MINCORE, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES};
+use crate::syscall::{decode, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MADVISE, SYS_MBIND, SYS_MINCORE, SYS_MLOCK, SYS_MLOCK2, SYS_MLOCKALL, SYS_MMAP, SYS_MPROTECT, SYS_MREMAP, SYS_MSYNC, SYS_MUNLOCK, SYS_MUNLOCKALL, SYS_MUNMAP, SYS_REMAP_FILE_PAGES};
 
 const MREMAP_FIXED: u32 = 0x2;
 
@@ -242,6 +242,51 @@ pub unsafe fn madvise_raw(address: *mut u8, length: usize, advice: u32) -> Resul
     // Linux validates the advice value and mapping.
     decode(unsafe { syscall3(SYS_MADVISE, address as usize, length, advice as usize) })
         .map(|_| ())
+}
+
+/// Applies a Linux NUMA memory policy to an existing mapped range.
+///
+/// This is the exact Linux/AArch64 `mbind` ABI: `mode` is the kernel's
+/// signed `int`, while `nodemask` points to `unsigned long` words. On the
+/// supported AArch64 target `usize` is that unsigned-long word, so this seam
+/// does not introduce a compatibility layout. It intentionally supplies no
+/// memory-policy constants, NUMA discovery, huge-page allocation, retry, or
+/// fallback policy; those decisions remain with the caller.
+///
+/// # Safety
+///
+/// `address..address + length` must not wrap and must identify a mapping that
+/// remains valid for the syscall. For any `mode` that makes Linux inspect
+/// `nodemask`, the pointer must be null only when that mode permits it;
+/// otherwise it must be aligned and readable for enough `usize` words to
+/// represent `maxnode` bits, rounded up to the word size. Any pointer-valued
+/// policy argument must remain valid for the call, and the caller must uphold
+/// the selected Linux memory-policy semantics for the mapping and concurrent
+/// users of it.
+#[inline]
+pub unsafe fn mbind_raw(
+    address: *mut u8,
+    length: usize,
+    mode: i32,
+    nodemask: *const usize,
+    maxnode: usize,
+    flags: u32,
+) -> Result<()> {
+    // SAFETY: The caller owns the mapping and optional nodemask contracts;
+    // all scalar words are passed unchanged to Linux for option-specific
+    // validation.
+    decode(unsafe {
+        syscall6(
+            SYS_MBIND,
+            address as usize,
+            length,
+            mode as usize,
+            nodemask as usize,
+            maxnode,
+            flags as usize,
+        )
+    })
+    .map(|_| ())
 }
 
 /// Applies a POSIX memory-access advisory through Linux's `madvise` ABI.

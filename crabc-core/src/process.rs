@@ -3,7 +3,46 @@
 use core::{ffi::CStr, mem::MaybeUninit};
 
 use crate::{RawFd, Result};
-use crate::syscall::{decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, SYS_BRK, SYS_CHDIR, SYS_CHROOT, SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_FCHDIR, SYS_GETCWD, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETPRIORITY, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRUSAGE, SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_PIDFD_OPEN, SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN, SYS_SETFSGID, SYS_SETFSUID, SYS_SETPGID, SYS_SETPRIORITY, SYS_SETSID, SYS_TGKILL, SYS_TIMES, SYS_UMASK, SYS_WAIT4, SYS_WAITID};
+use crate::syscall::{decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, SYS_BRK, SYS_CHDIR, SYS_CHROOT, SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_FCHDIR, SYS_GETCWD, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETPRIORITY, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRUSAGE, SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_PIDFD_OPEN, SYS_PRCTL, SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN, SYS_SETFSGID, SYS_SETFSUID, SYS_SETPGID, SYS_SETPRIORITY, SYS_SETSID, SYS_TGKILL, SYS_TIMES, SYS_UMASK, SYS_WAIT4, SYS_WAITID};
+
+/// Invokes Linux's five-word `prctl` syscall ABI directly.
+///
+/// Linux receives `option` followed by its four option-specific `unsigned
+/// long` argument words. This raw seam deliberately owns no `PR_*` constant
+/// set, VMA name, transparent-huge-page setting, default, fallback, or
+/// process policy. Successful `PR_GET_*` operations retain their raw scalar
+/// result, while failures remain direct [`Errno`] values.
+///
+/// # Safety
+///
+/// The caller must uphold the complete Linux contract for `option` and all
+/// four argument words. In particular, every word interpreted by the selected
+/// option as a pointer must have the required alignment, validity, mutability,
+/// and lifetime for the syscall. The caller must also coordinate any selected
+/// operation's process-wide or calling-thread state transition with code that
+/// depends on that state.
+#[inline]
+pub unsafe fn prctl_raw(
+    option: i32,
+    argument2: usize,
+    argument3: usize,
+    argument4: usize,
+    argument5: usize,
+) -> Result<usize> {
+    // SAFETY: The caller owns the selected prctl option's complete pointer
+    // and state-transition contract; the raw words otherwise map one-to-one
+    // onto x0 through x4 in Linux's AArch64 syscall ABI.
+    decode(unsafe {
+        syscall5(
+            SYS_PRCTL,
+            option as usize,
+            argument2,
+            argument3,
+            argument4,
+            argument5,
+        )
+    })
+}
 
 /// Queries or requests Linux's current program break.
 ///

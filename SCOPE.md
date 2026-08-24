@@ -159,13 +159,28 @@ rather than implementing cryptography here.
 
 ---
 
-## 5. Do not turn allocation into a research project
+## 5. A fixed allocator port is compatibility work, not research
 
-Pure-Rust `malloc` is explicitly out of scope.
+Allocator invention, including a novel pure-Rust `malloc`, is explicitly out
+of scope.
 
-Use the already-chosen mature allocator strategy, such as mimalloc, for the libc allocation ABI.
+There is one narrow exception: `crabc` may maintain a pure-Rust semantic port
+of a fixed, mature allocator when that port removes the allocator's C
+implementation from the production dependency graph. The initial fixed target
+is mimalloc v3.5.0; its immutable upstream provenance is recorded in
+[`crabc-mimalloc/UPSTREAM.md`](crabc-mimalloc/UPSTREAM.md). This is
+compatibility engineering, not an allocator-design project:
 
-Do not spend project effort designing:
+- Preserve upstream algorithms, data structures, memory orderings, lifecycle
+  behavior, and valid-program observable behavior until parity is established.
+- Implement only Linux/AArch64 little-endian. Do not add architecture or
+  operating-system abstractions for a possible port.
+- An algorithmic divergence needs a written design note, deterministic
+  differential evidence, and performance evidence before it is accepted.
+- The exact pinned C implementation remains a mandatory test and differential
+  oracle after it leaves the production dependency graph.
+
+Do not spend project effort inventing:
 
 ```text
 malloc
@@ -177,7 +192,9 @@ thread caches
 page allocators
 ```
 
-unless necessary to integrate the chosen allocator correctly.
+Work needed to audit, translate, integrate, and validate that pinned semantic
+port is in scope. Replacing its design with a more idiomatic but materially
+different allocator is not.
 
 For native Rust users:
 
@@ -940,7 +957,8 @@ Do not compromise correctness for theoretical LTO gains.
 
 But avoid gratuitously destroying the opportunity.
 
-The chosen external allocator is an accepted exception.
+The pinned allocator semantic port is an accepted exception to the normal rule
+against allocator implementation work; it does not permit allocator invention.
 
 ---
 
@@ -1192,7 +1210,7 @@ no NSS/plugin ecosystem
 no bundled tzdata
 no gettext framework
 no IDNA policy
-external allocator
+pinned allocator semantic port, not allocator invention
 no cryptographic implementation
 ```
 
@@ -1267,7 +1285,7 @@ Before continuing broad implementation work:
    * locale profile;
    * charset profile;
    * NSS exclusion;
-   * allocator strategy;
+   * allocator strategy and provenance;
    * crypto exclusion;
    * timezone strategy;
    * dependency philosophy;

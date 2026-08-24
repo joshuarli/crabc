@@ -2,7 +2,7 @@
 
 use crate::Result;
 use crate::syscall::{decode, syscall0, syscall2, syscall3, syscall6, SYS_FUTEX, SYS_GETCPU, SYS_GETTID, SYS_SCHED_GETAFFINITY, SYS_SCHED_RR_GET_INTERVAL, SYS_SCHED_SETAFFINITY, SYS_SCHED_YIELD, SYS_SETRESGID, SYS_SETRESUID};
-use core::mem::MaybeUninit;
+use core::{arch::asm, mem::MaybeUninit};
 
 /// `FUTEX_WAIT`, waiting while the futex word still equals `expected`.
 pub const FUTEX_WAIT: u32 = 0;
@@ -103,6 +103,30 @@ pub fn gettid() -> i32 {
     unsafe { syscall0(SYS_GETTID) as i32 }
 }
 
+/// Reads the calling thread's AArch64 `TPIDR_EL0` value as an opaque identity.
+///
+/// This is the architectural thread-pointer register installed by the Linux
+/// thread runtime; it is intentionally distinct from the kernel task ID
+/// returned by [`gettid`]. The value is not dereferenced or retained here.
+/// Callers must treat it only as an opaque same-thread identity and must not
+/// assume it is a stable process-wide identifier across thread exit or TLS
+/// runtime transitions. A zero value remains representable during the earliest
+/// runtime setup before a thread pointer is installed.
+#[inline]
+pub fn thread_pointer_identity() -> usize {
+    let thread_pointer: usize;
+    // SAFETY: `TPIDR_EL0` is readable at Linux/AArch64 EL0. This instruction
+    // only snapshots the calling thread's register and touches no memory.
+    unsafe {
+        asm!(
+            "mrs {thread_pointer}, tpidr_el0",
+            thread_pointer = out(reg) thread_pointer,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    thread_pointer
+}
+
 /// Sets the calling task's real, effective, and saved user IDs through
 /// Linux's native `setresuid` syscall.
 ///
@@ -133,30 +157,61 @@ pub fn setresgid_raw(rgid: u32, egid: u32, sgid: u32) -> Result<()> {
         .map(|_| ())
 }
 
-/// Returns the Linux CPU on which the calling thread is currently running.
+/// The CPU and NUMA-node observation returned by Linux `getcpu`.
 ///
-/// The Linux/AArch64 `getcpu` syscall writes a `u32` CPU identifier through
-/// its first argument. The output points at private stack storage for the
-/// complete syscall, while the node and cache arguments are deliberately
-/// null because this API observes only the CPU. Rustix exposes this
-/// operation as an infallible `usize`; Linux reports `EFAULT` only when an
-/// output pointer is invalid, which the local storage contract rules out.
+/// These are separate kernel outputs: `cpu` identifies the CPU currently
+/// executing the call and `numa_node` identifies its NUMA node. The task may
+/// migrate immediately after the syscall, so this is an observation rather
+/// than an affinity or placement guarantee.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CpuAndNumaNode {
+    /// Linux CPU identifier at the `getcpu` observation point.
+    pub cpu: u32,
+    /// Linux NUMA-node identifier at the same observation point.
+    pub numa_node: u32,
+}
+
+/// Observes the Linux CPU and NUMA node of the calling thread.
+///
+/// Linux/AArch64 `getcpu` writes both `u32` outputs into private stack
+/// storage for the complete syscall. The cache argument is null because this
+/// direct seam intentionally exposes only the stable CPU/node output pair;
+/// it owns no NUMA topology discovery, CPU policy, or fallback. A valid pair
+/// of owned outputs makes `EFAULT` unreachable, but any other kernel error is
+/// preserved for callers that need that direct result.
 #[inline]
-pub fn sched_getcpu() -> usize {
+pub fn getcpu() -> Result<CpuAndNumaNode> {
     let mut cpu = MaybeUninit::<u32>::uninit();
-    match decode(unsafe {
+    let mut numa_node = MaybeUninit::<u32>::uninit();
+    // SAFETY: Both pointers address live, writable `u32` output storage for
+    // the syscall; the null cache pointer requests no cache observation.
+    decode(unsafe {
         syscall3(
             SYS_GETCPU,
             cpu.as_mut_ptr() as usize,
-            core::ptr::null::<u32>() as usize,
+            numa_node.as_mut_ptr() as usize,
             core::ptr::null::<u8>() as usize,
         )
-    }) {
-        Ok(_) => {
-            // SAFETY: A successful Linux `getcpu` initializes the caller's
-            // `u32` output before returning.
-            unsafe { cpu.assume_init() as usize }
-        }
+    })?;
+    // SAFETY: A successful Linux getcpu syscall initializes both requested
+    // output words before returning.
+    Ok(CpuAndNumaNode {
+        cpu: unsafe { cpu.assume_init() },
+        numa_node: unsafe { numa_node.assume_init() },
+    })
+}
+
+/// Returns the Linux CPU on which the calling thread is currently running.
+///
+/// This retained CPU-only view follows Rustix's infallible `sched_getcpu`
+/// contract while delegating to [`getcpu`], so the NUMA-node output is no
+/// longer discarded at the kernel boundary. Linux can report `EFAULT` only
+/// for invalid output pointers, which this function's private storage rules
+/// out.
+#[inline]
+pub fn sched_getcpu() -> usize {
+    match getcpu() {
+        Ok(location) => location.cpu as usize,
         Err(_) => {
             // The documented failure requires an invalid output pointer;
             // this function owns valid stack storage, so do not fabricate

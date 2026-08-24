@@ -163,6 +163,8 @@ pub(crate) const SYS_MLOCK: usize = 228;
 pub(crate) const SYS_MUNLOCK: usize = 229;
 pub(crate) const SYS_MINCORE: usize = 232;
 pub(crate) const SYS_MADVISE: usize = 233;
+// Linux/AArch64 NUMA memory-policy binding.
+pub(crate) const SYS_MBIND: usize = 235;
 pub(crate) const SYS_MLOCK2: usize = 284;
 pub(crate) const SYS_KILL: usize = 129;
 pub(crate) const SYS_TGKILL: usize = 131;
@@ -191,6 +193,9 @@ pub(crate) const SYS_SETFSGID: usize = 152;
 pub(crate) const SYS_GETGROUPS: usize = 158;
 pub(crate) const SYS_GETRUSAGE: usize = 165;
 pub(crate) const SYS_UMASK: usize = 166;
+// Linux/AArch64 process/thread control multiplexer. Its option-specific
+// argument interpretation belongs to the direct raw caller.
+pub(crate) const SYS_PRCTL: usize = 167;
 pub(crate) const SYS_GETPRIORITY: usize = 141;
 pub(crate) const SYS_SETPRIORITY: usize = 140;
 pub(crate) const SYS_TIMES: usize = 153;

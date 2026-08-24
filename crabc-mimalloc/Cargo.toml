@@ -1,0 +1,15 @@
+[package]
+name = "crabc-mimalloc"
+version.workspace = true
+edition.workspace = true
+description = "Pinned Rust port of the Linux/AArch64 mimalloc allocator engine"
+# The allocator contains MIT-only semantic translations of pinned mimalloc.
+license = "MIT"
+repository.workspace = true
+publish = false
+
+[lib]
+name = "crabc_mimalloc"
+
+[dependencies]
+crabc-core = { path = "../crabc-core" }

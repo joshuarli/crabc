@@ -55,10 +55,16 @@ capability**, not a Rust wrapper for every exported C symbol.
 
 ## Allocation and cryptography
 
-- Allocation implementation is intentionally external to project research.
-  The C allocation ABI is integrated against the chosen mature allocator
-  strategy (currently mimalloc) and remains observable-boundary test work.
-  `crabc-rs` uses normal Rust allocation rather than exposing C allocation APIs.
+- Allocator invention remains outside project scope. The one fixed exception
+  is a provenance-preserving Rust semantic port of mimalloc v3.5.0 for
+  Linux/AArch64 little-endian, governed by
+  [`docs/design/allocator.md`](docs/design/allocator.md). This is compatibility
+  work: upstream algorithms and observable behavior remain authoritative, the
+  exact pinned C implementation remains the differential oracle, and any
+  algorithmic divergence requires written design, differential, and
+  performance evidence. The C allocation ABI remains observable-boundary test
+  work owned by `crabc-libc`; `crabc-rs` uses normal Rust allocation rather
+  than exposing C allocation APIs.
 - `crabc` does not implement cryptographic hashes, password hashing, TLS,
   X.509, certificate validation, PRNG/DRBGs, or public-/symmetric-key
   algorithms. OS entropy such as `getrandom` is in scope. A compatibility API

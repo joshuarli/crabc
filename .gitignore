@@ -67,3 +67,9 @@ __pycache__/
 
 # Verified upstream archive cache for the test-only Lua source-build gate.
 /compat/lua/.cache/
+
+# Pinned mimalloc v3.5.0 oracle source cache and generated Linux/AArch64
+# evidence.  The archive provenance and checked-in inventories live outside
+# these generated paths.
+/compat/allocator/.cache/
+/compat/reports/allocator/

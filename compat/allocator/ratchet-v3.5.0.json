@@ -1,0 +1,216 @@
+{
+  "api_contract_sha256": "aa1f71c2c758719a385f584bbee46e2a90d5d382085d90fd14c408cd17d9e21d",
+  "api_total_item_count": 336,
+  "configuration_profile_count": 5,
+  "format": 1,
+  "port_map_counts": {
+    "differential_verified": 7,
+    "exported": 0,
+    "implemented": 39,
+    "item_count": 36,
+    "performance_qualified": 0,
+    "stress_verified": 0,
+    "unit_count": 34,
+    "unit_verified": 39
+  },
+  "port_map_sha256": "0e5ddfcdaeac047f3f1fbbb9c28676823ea9b8f18f78ffd5d1e2f4cb9b9e34ae",
+  "port_map_true_statuses": {
+    "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_bsf": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_bsr": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_clz": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_ctz": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_popcount": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_rotl": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_rotl32": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/bits.h:mi_rotr": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/internal.h:_mi_memid_create_os-and-_mi_memid_size": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/internal.h:_mi_page_map_index": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/internal.h:alignment-division-and-slice-invariants": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/internal.h:nonallocating-byte-memory-support-kernels": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:include/mimalloc/types.h:linux-aarch64-default-release-constants": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:include/mimalloc/types.h:mi_memkind_t-and-mi_memid_t": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:include/mimalloc/types.h:mi_page_kind_t-and-mi_page_queue_t": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:include/mimalloc/types.h:mi_page_t-default-layout": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/arena.c:_mi_arenas_page_alloc-kind-selection": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.c:mi_bchunk-set-clear-popcount-and-claim-kernels": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.c:mi_bitmap-size-init-and-range-operations": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.h:mi_bfield_t-and-mi_bchunk_t-default-layout": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/bitmap.h:mi_bitmap_t-dynamic-layout": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/init.c:MI_PAGE_QUEUES_EMPTY-block-size-table": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/init.c:mi_page_empty-and-MI_PAGE_QUEUES_EMPTY": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/libc.c:_mi_atomic_once_enter-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/libc.c:bounded-byte-string-support-kernels": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/os.c:mi_os_page_align_areax": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page-map.c:mi_page_map_init_once-vbits-and-reserve-count": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page-map.c:mi_page_map_set_range_prim-span-arithmetic": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page-queue.c:_mi_bin_size": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/page-queue.c:mi_bin-and-_mi_bin": [
+      "implemented",
+      "unit_verified",
+      "differential_verified"
+    ],
+    "item:src/page-queue.c:mi_good_size": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page-queue.c:page-queue-intrusive-metadata-kernels": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page.c:pure-page-geometry-and-capacity-extension-arithmetic": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/prim/unix/prim.c:linux-direct-process-thread-and-entropy-observations": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/prim/unix/prim.c:linux-regular-map-memory-transitions": [
+      "implemented",
+      "unit_verified"
+    ],
+    "unit:include/mimalloc-stats.h": [],
+    "unit:include/mimalloc.h": [],
+    "unit:include/mimalloc/atomic.h": [
+      "implemented",
+      "unit_verified"
+    ],
+    "unit:include/mimalloc/bits.h": [
+      "implemented",
+      "unit_verified"
+    ],
+    "unit:include/mimalloc/internal.h": [],
+    "unit:include/mimalloc/prim-tls.h": [],
+    "unit:include/mimalloc/prim.h": [],
+    "unit:include/mimalloc/types.h": [],
+    "unit:src/alloc-aligned.c": [],
+    "unit:src/alloc-override.c": [],
+    "unit:src/alloc-posix.c": [],
+    "unit:src/alloc.c": [],
+    "unit:src/arena.c": [],
+    "unit:src/bitmap.c": [],
+    "unit:src/bitmap.h": [],
+    "unit:src/free.c": [],
+    "unit:src/heap.c": [],
+    "unit:src/init.c": [],
+    "unit:src/libc.c": [],
+    "unit:src/options.c": [],
+    "unit:src/os.c": [],
+    "unit:src/page-map.c": [],
+    "unit:src/page-queue.c": [],
+    "unit:src/page.c": [],
+    "unit:src/prim/prim-tls.c": [],
+    "unit:src/prim/prim.c": [],
+    "unit:src/prim/unix/prim-tls.c": [],
+    "unit:src/prim/unix/prim.c": [],
+    "unit:src/random.c": [],
+    "unit:src/static.c": [
+      "implemented",
+      "unit_verified"
+    ],
+    "unit:src/stats.c": [],
+    "unit:src/subproc.c": [],
+    "unit:src/theap.c": [],
+    "unit:src/threadlocal.c": []
+  },
+  "upstream_test_contract_sha256": "23b48530f1a66018d4b5cde0d113aef9075ba000da7a0d80ad6f9145af57a89f",
+  "upstream_test_inventory_file_count": 16,
+  "upstream_test_source_count": 13
+}

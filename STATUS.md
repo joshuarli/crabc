@@ -1,8 +1,13 @@
 # Project status
 
-The current Linux/AArch64 little-endian implementation profile is closed.
-[`COMPATIBILITY.md`](COMPATIBILITY.md) is the generated record of current
-compatibility evidence and measurements; it is not edited by hand.
+The general Linux/AArch64 little-endian runtime profile is closed. One active,
+narrowly scoped compatibility program is open: the provenance-preserving Rust
+semantic port of fixed mimalloc v3.5.0 defined by
+[`docs/design/allocator.md`](docs/design/allocator.md) and measured through
+[`compat/allocator/README.md`](compat/allocator/README.md). It does not reopen
+allocator invention or another platform. [`COMPATIBILITY.md`](COMPATIBILITY.md)
+remains the generated record of current compatibility evidence and
+measurements; it is not edited by hand.
 
 Future acceptance contracts are deliberately specific:
 

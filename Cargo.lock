@@ -74,6 +74,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crabc-mimalloc"
+version = "0.3.0"
+dependencies = [
+ "crabc-core",
+]
+
+[[package]]
 name = "crabc-rs"
 version = "0.3.0"
 dependencies = [

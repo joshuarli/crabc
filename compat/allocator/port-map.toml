@@ -1,0 +1,1020 @@
+[metadata]
+format = 1
+upstream_version = "3.5.0"
+upstream_revision = "18b08671c9302247bfb682286e6bf3cc1773f801"
+
+[[unit]]
+upstream = "include/mimalloc.h"
+source_region = "public C API declarations"
+rust_module = "crabc_mimalloc::api"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "include/mimalloc-stats.h"
+source_region = "public statistics API and types"
+rust_module = "crabc_mimalloc::stats"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "include/mimalloc/types.h"
+source_region = "internal types, constants, layout, and invariants"
+rust_module = "crabc_mimalloc::types"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "include/mimalloc/atomic.h"
+source_region = "word/pointer atomic operation macros (65-132), i64 statistics/timer helpers (135-157), signed-word helpers (379-387), and mi_atomic_guard (394-401)"
+rust_module = "crabc_mimalloc::atomic"
+rust_item = "AtomicWord/AtomicPointer/AtomicSignedWord/AtomicI64Value operation facade and AtomicGuard"
+intentional_difference = "C macro type polymorphism maps to concrete Rust atomics and functions; every selected Relaxed/Acquire/Release/AcqRel pair is preserved. The lock and once surfaces remain in their source-owning lifecycle slices."
+tests = ["crabc-mimalloc/src/atomic.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "include/mimalloc/bits.h"
+source_region = "bit arithmetic and architecture-sized constants"
+rust_module = "crabc_mimalloc::bits and crabc_mimalloc::config"
+rust_item = "SIZE_BITS/MAX_VABITS/MIN_VABITS and popcount/scan/rotation functions"
+intentional_difference = "Compiler-builtin selection maps to Rust integer intrinsics; boolean-plus-out-parameter bit scans map to Option."
+tests = ["crabc-mimalloc/src/bits.rs", "crabc-mimalloc/src/config.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "include/mimalloc/prim.h"
+source_region = "OS primitive interface"
+rust_module = "crabc_mimalloc::os"
+rust_item = "unimplemented"
+intentional_difference = "Linux/AArch64 primitives will call crabc-core rather than duplicate raw syscall assembly."
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "include/mimalloc/prim-tls.h"
+source_region = "TLS primitive interface"
+rust_module = "crabc_mimalloc::thread_local"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "include/mimalloc/internal.h"
+source_region = "internal cross-module API and invariants"
+rust_module = "crabc_mimalloc::invariants"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/alloc.c"
+source_region = "allocation entry paths; includes free.c"
+rust_module = "crabc_mimalloc::alloc"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/alloc-aligned.c"
+source_region = "aligned and offset-aligned allocation"
+rust_module = "crabc_mimalloc::aligned"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/alloc-posix.c"
+source_region = "POSIX allocation extensions"
+rust_module = "crabc_mimalloc::api"
+rust_item = "unimplemented"
+intentional_difference = "crabc libc errno and public POSIX policy remain outside the engine."
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/alloc-override.c"
+source_region = "C override/interposition implementation"
+rust_module = "crabc_libc::allocator_boundary"
+rust_item = "unimplemented"
+intentional_difference = "The engine never exports malloc-family symbols; crabc-libc owns ELF interposition policy."
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/free.c"
+source_region = "local, delayed, and remote free protocols"
+rust_module = "crabc_mimalloc::free"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/arena.c"
+source_region = "arena reservation, slices, and page ownership"
+rust_module = "crabc_mimalloc::arena"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/bitmap.c"
+source_region = "bitmap and binned bitmap claims"
+rust_module = "crabc_mimalloc::bitmap"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/bitmap.h"
+source_region = "bitmap field/chunk representations and binned bitmap declarations"
+rust_module = "crabc_mimalloc::bitmap"
+rust_item = "partial: field/chunk constants and Chunk representation"
+intentional_difference = "The current foundation does not claim bitmap allocation, binned bitmap policy, or visitors."
+tests = ["crabc-mimalloc/src/bitmap.rs"]
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/heap.c"
+source_region = "first-class heap lifecycle"
+rust_module = "crabc_mimalloc::heap"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/init.c"
+source_region = "process bootstrap and initialization state machine"
+rust_module = "crabc_mimalloc::init"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/libc.c"
+source_region = "non-allocating C support routines"
+rust_module = "crabc_mimalloc::support"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/options.c"
+source_region = "options, callbacks, and diagnostics"
+rust_module = "crabc_mimalloc::options"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/os.c"
+source_region = "allocator OS memory policy"
+rust_module = "crabc_mimalloc::os"
+rust_item = "unimplemented"
+intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core."
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/page-map.c"
+source_region = "page-map range and provenance lookup"
+rust_module = "crabc_mimalloc::page_map"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/page.c"
+source_region = "page lifecycle; includes page-queue.c"
+rust_module = "crabc_mimalloc::page"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/page-queue.c"
+source_region = "page queue algorithms"
+rust_module = "crabc_mimalloc::page_queue"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/random.c"
+source_region = "allocator random state"
+rust_module = "crabc_mimalloc::random"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/stats.c"
+source_region = "statistics accumulation and export"
+rust_module = "crabc_mimalloc::stats"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/static.c"
+source_region = "single-translation-unit C amalgamation include graph"
+rust_module = "crabc_mimalloc crate module graph"
+rust_item = "not-applicable C amalgamation assembly"
+intentional_difference = "Rust modules replace the C amalgamation build role; this unit contains no independent allocator algorithm and no C/C++ is compiled in production."
+tests = ["scripts/check_structure.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/subproc.c"
+source_region = "subprocess state and lifecycle"
+rust_module = "crabc_mimalloc::subproc"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/theap.c"
+source_region = "thread-local heap lifecycle"
+rust_module = "crabc_mimalloc::theap"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/threadlocal.c"
+source_region = "dynamic thread-local slots and teardown"
+rust_module = "crabc_mimalloc::thread_local"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/prim/prim.c"
+source_region = "platform primitive selection"
+rust_module = "crabc_mimalloc::os"
+rust_item = "unimplemented"
+intentional_difference = "Linux/AArch64 only; no generic portability abstraction will be introduced."
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/prim/prim-tls.c"
+source_region = "platform TLS primitive selection"
+rust_module = "crabc_mimalloc::thread_local"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/prim/unix/prim.c"
+source_region = "Linux/Unix virtual-memory primitives"
+rust_module = "crabc_mimalloc::os"
+rust_item = "unimplemented"
+intentional_difference = "Only Linux/AArch64 behavior is in scope; raw syscalls remain centralized in crabc-core."
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[unit]]
+upstream = "src/prim/unix/prim-tls.c"
+source_region = "Linux/Unix TLS primitives"
+rust_module = "crabc_mimalloc::thread_local"
+rust_item = "unimplemented"
+intentional_difference = ""
+tests = []
+exported = false
+implemented = false
+unit_verified = false
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_popcount"
+source_region = "mi_popcount"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "popcount"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_ctz"
+source_region = "mi_ctz"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "ctz"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_clz"
+source_region = "mi_clz"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "clz"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_bsf"
+source_region = "mi_bsf"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "bsf"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_bsr"
+source_region = "mi_bsr"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "bsr"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_rotr"
+source_region = "mi_rotr"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "rotr"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_rotl"
+source_region = "mi_rotl"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "rotl"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/bits.h"
+name = "mi_rotl32"
+source_region = "mi_rotl32"
+rust_module = "crabc_mimalloc::bits"
+rust_item = "rotl32"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/bits.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/types.h"
+name = "linux-aarch64-default-release-constants"
+source_region = "normal release constants and compile-time feature values used by current foundations"
+rust_module = "crabc_mimalloc::config"
+rust_item = "source-derived configuration constants"
+intentional_difference = "Resolved Linux/AArch64 values are Rust constants rather than a C preprocessor surface; unsupported profiles are not advertised."
+tests = ["crabc-mimalloc/src/config.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/types.h"
+name = "mi_memkind_t-and-mi_memid_t"
+source_region = "memory-kind classification and memory provenance representation"
+rust_module = "crabc_mimalloc::types"
+rust_item = "MemoryKind/MemoryInfo/MemoryId"
+intentional_difference = "C field names become domain-specific Rust names; the proven default layout and discriminant representation are retained."
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/provenance.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/types.h"
+name = "mi_page_t-default-layout"
+source_region = "default release page metadata through memid"
+rust_module = "crabc_mimalloc::types"
+rust_item = "Page"
+intentional_difference = "Rust atomics and raw pointers retain the C layout; padding/encoded-freelist fields remain absent in the default profile exactly as configured upstream."
+tests = ["crabc-mimalloc/src/types.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/types.h"
+name = "mi_page_kind_t-and-mi_page_queue_t"
+source_region = "page kind and page queue representations"
+rust_module = "crabc_mimalloc::types"
+rust_item = "PageKind/PageQueue"
+intentional_difference = ""
+tests = ["crabc-mimalloc/src/types.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/internal.h"
+name = "alignment-division-and-slice-invariants"
+source_region = "_mi_align_up, _mi_align_down, _mi_divide_up, _mi_wsize_from_size, mi_slice_count_of_size, mi_size_of_slices"
+rust_module = "crabc_mimalloc::invariants"
+rust_item = "align_up/align_down/divide_up/word_count/slice_count_of_size/size_of_slices"
+intentional_difference = "Caller assertions and representational overflow are explicit Option results."
+tests = ["crabc-mimalloc/src/invariants.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/internal.h"
+name = "_mi_memid_create_os-and-_mi_memid_size"
+source_region = "OS memory-ID construction and kind-specific size"
+rust_module = "crabc_mimalloc::provenance"
+rust_item = "MemoryId::os/MemoryId::size/MemoryId::os_base"
+intentional_difference = "Kind-mismatched union access is unrepresentable through the constructors; address extraction retains no pointer-reconstruction authority."
+tests = ["crabc-mimalloc/src/provenance.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/init.c"
+name = "mi_page_empty-and-MI_PAGE_QUEUES_EMPTY"
+source_region = "immutable empty page and all 75 default page-queue initializers"
+rust_module = "crabc_mimalloc::types"
+rust_item = "EMPTY_PAGE/EMPTY_PAGE_QUEUES/BIN_BLOCK_SIZES"
+intentional_difference = "The immutable Page prototype has a narrow Sync wrapper because Rust raw-pointer fields do not auto-implement Sync; no mutable access is exposed."
+tests = ["crabc-mimalloc/src/types.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page-queue.c"
+name = "mi_bin-and-_mi_bin"
+source_region = "default MI_ALIGN2W bin selection"
+rust_module = "crabc_mimalloc::size_class"
+rust_item = "bin"
+intentional_difference = "The C size assertion becomes Option; the exact two-word AArch64 small-bin rounding is retained."
+tests = ["crabc-mimalloc/src/size_class.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page-queue.c"
+name = "_mi_bin_size"
+source_region = "default empty-theap page queue block sizes"
+rust_module = "crabc_mimalloc::size_class"
+rust_item = "bin_size"
+intentional_difference = "The internal bin bound assertion becomes Option."
+tests = ["crabc-mimalloc/src/size_class.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page-queue.c"
+name = "mi_good_size"
+source_region = "regular-bin and OS-page request rounding"
+rust_module = "crabc_mimalloc::size_class"
+rust_item = "good_size"
+intentional_difference = "The OS page size is an explicit validated input pending startup-context ownership; invalid inputs and overflow are Option results."
+tests = ["crabc-mimalloc/src/size_class.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/arena.c"
+name = "_mi_arenas_page_alloc-kind-selection"
+source_region = "alignment-forced singleton plus small, medium, large, and singleton block-size branches"
+rust_module = "crabc_mimalloc::size_class"
+rust_item = "page_kind_for_request/page_kind_for_block_size"
+intentional_difference = "The internal power-of-two assertion for over-aligned requests becomes Option."
+tests = ["crabc-mimalloc/src/size_class.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/internal.h"
+name = "_mi_page_map_index"
+source_region = "two-level page-map address decomposition"
+rust_module = "crabc_mimalloc::page_map"
+rust_item = "PageMapLocation/location_of_address"
+intentional_difference = "The address-only result cannot manufacture a pointer or grant page-metadata provenance."
+tests = ["crabc-mimalloc/src/page_map.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page-map.c"
+name = "mi_page_map_init_once-vbits-and-reserve-count"
+source_region = "virtual-address-bit clamp order and top-level reserve-entry count"
+rust_module = "crabc_mimalloc::page_map"
+rust_item = "effective_virtual_address_bits/reserve_count"
+intentional_difference = "Source assertions and unrepresentable shifts are rejected by Option; no reservation or initialization is claimed."
+tests = ["crabc-mimalloc/src/page_map.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page-map.c"
+name = "mi_page_map_set_range_prim-span-arithmetic"
+source_region = "submap-spanning range iteration"
+rust_module = "crabc_mimalloc::page_map"
+rust_item = "PageMapRange/PageMapSpan"
+intentional_difference = "The validated iterator exposes only span arithmetic; submap commitment and pointer publication remain unimplemented."
+tests = ["crabc-mimalloc/src/page_map.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/bitmap.h"
+name = "mi_bfield_t-and-mi_bchunk_t-default-layout"
+source_region = "64-bit bitmap field, eight-field chunk, and 512-bit chunk constants"
+rust_module = "crabc_mimalloc::bitmap"
+rust_item = "BFIELD_BITS/BCHUNK_FIELDS/BCHUNK_SIZE/Chunk/ChunkIndex"
+intentional_difference = "Checked chunk indices reject source assertion failures; the cache-line-sized atomic representation and bit numbering are retained."
+tests = ["crabc-mimalloc/src/bitmap.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/bitmap.c"
+name = "mi_bchunk-set-clear-popcount-and-claim-kernels"
+source_region = "field masks; chunk set/clear/query/popcount; exact-position claim and low-to-high run claim with rollback; scalar Relaxed all-clear/all-set/highest-bit/full-popcount observers"
+rust_module = "crabc_mimalloc::bitmap"
+rust_item = "field_mask and Chunk run/observer operations"
+intentional_difference = "C assertion preconditions become checked Option results; the scalar Linux/AArch64 scan order, AcqRel mutations, Acquire observations, Relaxed probes, and partial-claim rollback are retained."
+tests = ["crabc-mimalloc/src/bitmap.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/bitmap.h"
+name = "mi_bitmap_t-dynamic-layout"
+source_region = "mi_bitmap_t header, chunk map, dynamic chunk tail, maximum counts, and relaxed count/max-bit observers"
+rust_module = "crabc_mimalloc::bitmap"
+rust_item = "BitmapLayout/BitmapView"
+intentional_difference = "The C flexible allocation is a lifetime-bound view over explicitly sized, aligned caller storage. Binned bitmap representation and allocator-owned metadata remain absent."
+tests = ["crabc-mimalloc/src/bitmap.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/bitmap.c"
+name = "mi_bitmap-size-init-and-range-operations"
+source_region = "mi_bitmap_size/init, cross-chunk unsafe/set/clear/query/popcount operations, and conservative chunk-map maintenance"
+rust_module = "crabc_mimalloc::bitmap"
+rust_item = "BitmapLayout/BitmapView"
+intentional_difference = "Assertion-invalid layouts and ranges are rejected before access. Binned bitmap policy, visitors, callbacks, statistics, and allocator-owned metadata remain absent."
+tests = ["crabc-mimalloc/src/bitmap.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/prim/unix/prim.c"
+name = "linux-regular-map-memory-transitions"
+source_region = "regular anonymous mmap/munmap, commit, default-profile decommit, reset advisory cache, and protect/unprotect"
+rust_module = "crabc_mimalloc::os"
+rust_item = "Mapping and its explicit transition methods"
+intentional_difference = "Kernel errno results remain typed Result values and ownership closes only after successful unmap; overcommit, aligned hints, THP, and huge-page policy are not claimed by this primitive slice."
+tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/prim/unix/prim.c"
+name = "linux-direct-process-thread-and-entropy-observations"
+source_region = "monotonic clock, getrusage, process/task/TLS identity, getcpu NUMA node, scheduler yield, and direct getrandom path"
+rust_module = "crabc_mimalloc::os"
+rust_item = "monotonic_milliseconds/process_usage/process_id/thread_id/thread_pointer_identity/numa_node/thread_yield/entropy_fill"
+intentional_difference = "Linux 5.10 direct crabc-core primitives replace libc calls; pre-5.10 clock/getrandom fallbacks are outside project policy and mimalloc random-state expansion remains absent."
+tests = ["crabc-mimalloc/src/os.rs", "crabc-core/src/tests.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/os.c"
+name = "mi_os_page_align_areax"
+source_region = "covering and conservative OS-page subrange alignment"
+rust_module = "crabc_mimalloc::os"
+rust_item = "Mapping::page_range"
+intentional_difference = "The mapping-relative boundary rejects overflow and escape with EINVAL while retaining pointer provenance; the source's empty-range result remains non-operative."
+tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/os_host_model.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/atomic.h"
+name = "mi_lock_t-active-linux-private-lock-boundary"
+source_region = "MI_USE_PTHREADS private normal mutex capability used by allocator metadata"
+rust_module = "crabc_mimalloc::lock"
+rust_item = "PrivateLock/PrivateLockGuard"
+intentional_difference = "The no-libc allocator cannot call public pthread mutex APIs, so the active Linux/AArch64 normal process-private mutex capability is implemented as a private 0/1/2 futex state machine. Acquire/Release synchronization, nonrecursive scope, allocation-free static initialization, and explicit quiescence are retained; fork repair and once semantics are not claimed by this slice."
+tests = ["crabc-mimalloc/src/lock.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/libc.c"
+name = "bounded-byte-string-support-kernels"
+source_region = "_mi_toupper, _mi_strnicmp, _mi_streq, _mi_strlcpy, _mi_strlcat, _mi_strnlen, _mi_strlen, and _mi_strnstr"
+rust_module = "crabc_mimalloc::support"
+rust_item = "ascii_uppercase/c_strnicmp/c_str_eq/c_strlcpy/c_strlcat/c_strnlen/c_strlen/c_strnstr"
+intentional_difference = "AArch64 unsigned-byte character behavior is explicit. The bounded case comparison returns after N equal bytes instead of evaluating the C loop's next byte before its exhausted-bound condition; valid-program results are unchanged and no out-of-range read is performed."
+tests = ["crabc-mimalloc/src/support.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "include/mimalloc/internal.h"
+name = "nonallocating-byte-memory-support-kernels"
+source_region = "_mi_memcpy, _mi_memset, _mi_memzero, and aligned forms"
+rust_module = "crabc_mimalloc::support"
+rust_item = "copy_bytes/fill_bytes/zero_bytes and aligned forms"
+intentional_difference = "Rust raw-pointer intrinsics replace compiler builtins while preserving nonoverlap, byte conversion, zero-length, and caller alignment contracts; the scalar baseline adds no SIMD policy."
+tests = ["crabc-mimalloc/src/support.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page-queue.c"
+name = "page-queue-intrusive-metadata-kernels"
+source_region = "queue predicates plus remove/push/push-at-end/move-to-front/enqueue intrusive link, endpoint, count, and in-full flag transitions"
+rust_module = "crabc_mimalloc::types::page_queue"
+rust_item = "page_queue_*_metadata and queue predicate functions"
+intentional_difference = "The `_metadata` suffix prevents these kernels from being mistaken for complete live allocator operations: absent theap lifecycle state still owns direct-page-cache, page_count, and pages_full_size accounting. Source link order, queue counts, endpoints, second-position insertion, and Relaxed page flag changes are retained."
+tests = ["crabc-mimalloc/src/page_queue.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/libc.c"
+name = "_mi_atomic_once_enter-and-release"
+source_region = "allocation-free recursive initialization-once enter/release protocol"
+rust_module = "crabc_mimalloc::once"
+rust_item = "OnceThreadId/AllocatorOnce/AllocatorOnceCompletion"
+intentional_difference = "The current thread identity is a validated explicit input rather than an internal OS/pthread lookup. A non-Send completion token retains the private lock and publishes completion on explicit completion or scope exit, preserving the valid C macro's enter/body/release lifecycle while preventing a safe Rust caller from permanently retaining the lock. Callback execution, failure-state policy, and fork repair are outside this protocol slice."
+tests = ["crabc-mimalloc/src/once.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/page.c"
+name = "pure-page-geometry-and-capacity-extension-arithmetic"
+source_region = "mi_page_size/mi_page_block_at geometry and the scalar extend-count calculation from mi_page_extend_free, with regular/singleton slice and separated-metadata start arithmetic from arena.c/internal.h"
+rust_module = "crabc_mimalloc::page"
+rust_item = "regular_page_slice_count/singleton_page_slice_count/page_usable_start_offset/reserved_object_count/page_area_size/page_block_offset/page_slice_offset/page_counts_are_valid/page_extend_count"
+intentional_difference = "Live page/theap pointers and free-list writes are split from these pure scalar kernels. Source assertion and arithmetic-overflow preconditions become checked Option results; the default secure-level-zero eight-KiB extension bound and aligned separated-metadata profile are frozen exactly."
+tests = ["crabc-mimalloc/src/page.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/init.c"
+name = "MI_PAGE_QUEUES_EMPTY-block-size-table"
+source_region = "all 75 default page-queue block-size initializers"
+rust_module = "crabc_mimalloc::types"
+rust_item = "BIN_BLOCK_SIZES"
+intentional_difference = "C machine-word initializer expressions become an exact fixed AArch64 Rust table; queue ownership state remains zero in the surrounding EMPTY_PAGE_QUEUES aggregate."
+tests = ["crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false

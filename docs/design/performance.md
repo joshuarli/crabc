@@ -44,6 +44,30 @@ marked steady-state region has zero `clock_gettime` syscalls and its direct
 vDSO/fallback/error boundaries remain green. This does not change the final
 per-workload `<= 0.90x` release requirement or apply to another route.
 
+### Fixed allocator-port measurements
+
+Allocator design remains out of scope. The narrow planned exception is a
+provenance-preserving Rust semantic port of pinned mimalloc v3.5.0 for
+Linux/AArch64 little-endian; [`docs/design/allocator.md`](allocator.md) owns
+that boundary. The current production `libmimalloc-sys` 0.1.49 backend bundles
+mimalloc v3.3.2 and remains the runtime default until promotion; it is not the
+exact v3.5.0 oracle. The separately built exact pinned C v3.5.0 archive is the
+mandatory differential and performance baseline for the port.
+
+The ordinary musl–crabc rows continue to measure the runtime as users receive
+it. They do not establish Rust-port parity. A port candidate must instead be
+compared with the exact pinned C v3.5.0 archive under the same configuration,
+fixture, build profile, machine provenance, and measurement contract. Compare
+throughput, latency, resident memory, virtual mappings, and startup cost; do
+not change a configuration, allocation policy, or fixture to make the Rust
+translation look better. `compat/allocator/` owns the detailed differential
+evidence and known-difference record.
+
+Only a measured Rust/C divergence is an optimization lead. Preserve the
+upstream algorithm until a written design note, deterministic differential
+evidence, and performance evidence justify a change. The C implementation
+remains the oracle even after it leaves the production dependency graph.
+
 ### Isolation, equivalence, and statistical decision
 
 - Compile each C fixture exactly once. The lanes may differ only in staged
@@ -179,7 +203,7 @@ bounds in the order 64-byte aligned/unaligned, 16-KiB aligned/unaligned, then
 | Constructor/destructor startup PIE | 1.1502×–1.1809× CPU upper bounds across three 31-sample `kernel-main-image-*-31` reports; 29 crabc calls vs 9 musl, with one marked application-output write each | lifecycle ordering is proven before/after `main`; Linux's already mapped PIE is consumed through validated auxv program-header/entry metadata, and the direct pinned-musl regression proves no second executable mapping. The marker isolates `main`, while whole-process calls retain startup/destructor cost and still fail the syscall gate | P2 |
 | Startup-linked five-DSO graph PIE | 1.1687×–1.2205× CPU upper bounds across three 31-sample `kernel-main-image-*-31` reports; 65 crabc calls vs 50 musl, with complete marked output regions | startup relocation proves the root resolves both graph branches to `31`; the initial-graph exact-name cache remains bounded, and consuming the kernel main image removes its duplicate map/open/read lifecycle. The whole-process syscall gate passes, but CPU remains red | P2 |
 | Loader startup | 1.1908×–1.2958× CPU upper bounds across three 31-sample `kernel-main-image-*-31` reports; 30 crabc calls vs 10 musl | `AT_PHDR`/`AT_PHENT`/`AT_PHNUM`/`AT_ENTRY` describe the live Linux kernel mapping, and `AT_EXECFN` supplies the bounded executable `$ORIGIN`; the residual is separate image loading and mimalloc's eager constructor; pinned `libmimalloc-sys` 0.1.49 has no `MI_NO_AUTOMATIC_INIT` build control, so deferral requires a patched allocator integration | P2 |
-| Live 32-MiB allocator probe | 48.3 MiB crabc PSS vs 33.9 MiB musl; 47.3 MiB vs 33.3 MiB is anonymous | the fresh-cgroup `memory.peak` row is unsupported in the current read-only Docker cgroup mount. Independently, a 32-MiB touched payload exceeds 90% of musl's total PSS, so no mimalloc configuration can satisfy this universal fixture gate. The user-selected retained mimalloc boundary leaves this as a visible non-passing scope diagnostic, not an allocator-research task | retained allocator boundary |
+| Live 32-MiB allocator probe | 48.3 MiB crabc PSS vs 33.9 MiB musl; 47.3 MiB vs 33.3 MiB is anonymous | the fresh-cgroup `memory.peak` row is unsupported in the current read-only Docker cgroup mount. Independently, a 32-MiB touched payload exceeds 90% of musl's total PSS, so no mimalloc configuration can satisfy this universal fixture gate. This is current C-integration evidence, not Rust-port parity; a future port must preserve the fixture and compare against pinned C v3.5.0 | fixed-port baseline needed |
 | `getpid`, direct native | 108 ns for each crabc-rs and Rustix | no native gap in this selected route | no action |
 | Native open/close | 441 ns crabc-rs vs 450 ns Rustix | no native gap in this selected route | no action |
 
@@ -314,10 +338,10 @@ source-level fix can do that.
    reservation without a resident-memory claim. The 14-MiB anonymous excess is
    allocator-owned, but even zero excess cannot fit the current universal
    0.90× PSS gate: the touched 32-MiB payload alone is larger than 90% of musl's
-   whole-process PSS. The user-selected retained mimalloc boundary keeps this
-   as a non-passing visible diagnostic. Do not turn it into allocator research,
-   change the selected strategy, alter the fixture, or weaken its gate without
-   explicit new direction.
+   whole-process PSS. The fixed-port exception permits a Rust translation of
+   pinned mimalloc v3.5.0, not a configuration change, fixture change, or new
+   allocator strategy. Keep this visible diagnostic and use exact-C
+   differential evidence to attribute any Rust-port divergence.
 
 ## Standard-library optimization evidence
 

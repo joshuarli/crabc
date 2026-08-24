@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -14,6 +15,7 @@ PRODUCTION_SOURCE = (
     ROOT / "libc" / "src",
     ROOT / "ldso" / "src",
     ROOT / "crabc-core" / "src",
+    ROOT / "crabc-mimalloc" / "src",
     ROOT / "crabc-rs" / "src",
 )
 HISTORICAL_OR_TASK_SOURCES = {Path("cleanup.md")}
@@ -82,6 +84,63 @@ def main() -> int:
         errors.append("Cargo.toml: root manifest must remain a virtual workspace")
     if (ROOT / "src").exists():
         errors.append("src/: obsolete root package source directory must not return")
+
+    mimalloc_root = ROOT / "crabc-mimalloc"
+    mimalloc_manifest_path = mimalloc_root / "Cargo.toml"
+    if '"crabc-mimalloc"' not in root_manifest:
+        errors.append("Cargo.toml: crabc-mimalloc must remain a workspace member")
+    if not mimalloc_manifest_path.is_file():
+        errors.append("crabc-mimalloc/Cargo.toml: allocator crate manifest is missing")
+    else:
+        with mimalloc_manifest_path.open("rb") as stream:
+            mimalloc_manifest = tomllib.load(stream)
+        dependencies = mimalloc_manifest.get("dependencies", {})
+        if set(dependencies) != {"crabc-core"}:
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: normal dependencies must be exactly crabc-core"
+            )
+        package = mimalloc_manifest.get("package", {})
+        if package.get("license") != "MIT":
+            errors.append(
+                "crabc-mimalloc/Cargo.toml: translated mimalloc package must remain MIT-only"
+            )
+        if "build" in package or (mimalloc_root / "build.rs").exists():
+            errors.append("crabc-mimalloc: production allocator must not have a build script")
+
+    native_allocator_sources = sorted(
+        path.relative_to(ROOT)
+        for path in mimalloc_root.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".c", ".cc", ".cpp", ".cxx"}
+    )
+    if native_allocator_sources:
+        errors.append(
+            "crabc-mimalloc: C/C++ production source is forbidden: "
+            + ", ".join(map(str, native_allocator_sources))
+        )
+
+    mimalloc_source = mimalloc_root / "src"
+    if mimalloc_source.is_dir():
+        source_text = "\n".join(
+            path.read_text(errors="replace") for path in sorted(mimalloc_source.rglob("*.rs"))
+        )
+        if re.search(r"(?m)^\s*extern\s+crate\s+alloc\s*;", source_text):
+            errors.append("crabc-mimalloc: production allocator must not depend on alloc")
+        if re.search(r"\b(?:crabc_libc|libmimalloc_sys|libc)::", source_text):
+            errors.append("crabc-mimalloc: production allocator must not call libc or C mimalloc")
+        lib_source = (mimalloc_source / "lib.rs").read_text(errors="replace")
+        if "#![no_std]" not in lib_source:
+            errors.append("crabc-mimalloc/src/lib.rs: production allocator must remain no_std")
+        if any(
+            target not in lib_source
+            for target in (
+                "target_os = \"linux\"",
+                "target_arch = \"aarch64\"",
+                "target_endian = \"little\"",
+            )
+        ):
+            errors.append(
+                "crabc-mimalloc/src/lib.rs: Linux/AArch64 little-endian target rejection is missing"
+            )
 
     dev_script = (ROOT / "scripts" / "dev.sh").read_text()
     # Oracle checkouts are mounted for native evidence only.  They must stay

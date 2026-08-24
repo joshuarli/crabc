@@ -185,8 +185,18 @@ children and the diagnostic remains explicitly marked `timing: false`.
 This measures the project’s current C dynamic runtime against the pinned musl
 oracle. It does not benchmark a host glibc, allocator implementations in
 isolation, or cross-architecture performance. The resident-memory probe gives
-the process footprint of the selected allocator integration; allocator design
-itself remains outside crabc’s scope.
+the process footprint of the selected allocator integration.
+
+Allocator invention remains outside crabc’s scope. The narrowly approved work
+is a provenance-preserving Rust semantic port of fixed mimalloc v3.5.0 for
+Linux/AArch64 little-endian. These musl–crabc rows are not sufficient evidence
+for that port: its candidate must be compared against the exact pinned C
+v3.5.0 implementation with matching configuration, fixture, artifact, host,
+and sample provenance. The separate contract and difference register live in
+[`compat/allocator/README.md`](../allocator/README.md) and
+[`compat/allocator/known-differences.md`](../allocator/known-differences.md).
+Do not alter this fixture, an allocation policy, or a configuration merely to
+improve a Rust/C comparison.
 
 The memory probe creates a fresh delegated cgroup-v2 leaf for each lane, moves
 only the probe child into it before `exec`, and reads `memory.peak` after exit.

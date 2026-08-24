@@ -38,6 +38,10 @@ Commands:
   lto [options]       run the AArch64 static/build-std LTO evidence matrix
   lto-native-facade [options] run the native crabc-rs facade LTO proof
   lua [options]       build Lua 5.4 against the crabc adapter sysroot
+  allocator --quick|--full
+                      build/check the pinned mimalloc v3.5.0 C-oracle baseline
+  allocator-perf --smoke|--full
+                      request allocator comparison evidence (unavailable until its milestone)
   perf [options]      measure equivalent musl/crabc C-runtime workloads (release build)
   perf-native [options] measure crabc-rs direct facades against pinned Rustix
   crabc-rs            run the native crabc-rs capability/accounting/evidence gate
@@ -354,6 +358,47 @@ case "$command" in
         run_in_container cargo build --workspace --release
         run_in_container python3 compat/lua/run.py --target-dir target/release "$@"
         refresh_dashboard run_in_container
+        ;;
+    allocator)
+        ensure_image
+        if [ "$#" -ne 1 ]; then
+            usage >&2
+            exit 2
+        fi
+        case "$1" in
+            --quick)
+                run_in_container python3 compat/allocator/run.py --quick
+                ;;
+            --full)
+                # This runner builds the complete Milestone 0 C oracle before
+                # reporting the exact later feature that makes the full matrix
+                # unavailable. It never turns an absent Rust lane into a pass.
+                run_in_container python3 compat/allocator/run.py --full
+                ;;
+            *)
+                usage >&2
+                exit 2
+                ;;
+        esac
+        ;;
+    allocator-perf)
+        ensure_image
+        if [ "$#" -ne 1 ]; then
+            usage >&2
+            exit 2
+        fi
+        case "$1" in
+            --smoke)
+                run_in_container python3 compat/allocator/run.py --perf-smoke
+                ;;
+            --full)
+                run_in_container python3 compat/allocator/run.py --perf-full
+                ;;
+            *)
+                usage >&2
+                exit 2
+                ;;
+        esac
         ;;
     perf)
         ensure_image

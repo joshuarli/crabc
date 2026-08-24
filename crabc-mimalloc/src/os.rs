@@ -1,0 +1,884 @@
+// Copyright (c) 2018-2026, Microsoft Research, Daan Leijen
+// This is free software; you can redistribute it and/or modify it under the
+// terms of the MIT license. A copy of the license can be found in the file
+// "LICENSE" at the root of this distribution.
+// SPDX-License-Identifier: MIT
+//
+// Source map: pinned mimalloc v3.5.0 `include/mimalloc/prim.h`,
+// `src/prim/prim.c`, `src/prim/unix/prim.c`, and the raw page-alignment and
+// memory-transition portions of `src/os.c`.
+
+//! Private, allocation-free Linux virtual-memory primitives for the allocator
+//! engine.
+//!
+//! This is deliberately a direct primitive boundary, not the allocator's OS
+//! policy layer. It implements only the pinned default Unix regular-mapping
+//! behavior which can be completed without process option state: anonymous
+//! private mappings, commit/uncommit transitions, reset/purge, protection,
+//! and explicit release. It does not select huge pages, query overcommit or
+//! transparent-huge-page policy, create aligned random hints, count NUMA
+//! topology, parse options, or create mimalloc random state. Those upstream
+//! paths require state or dependencies owned by later slices and are absent
+//! here rather than represented by a successful placeholder.
+//!
+//! `StartupInput` is supplied by a future runtime owner. In particular, this
+//! module deliberately does not read `/proc/self/environ` or autonomously
+//! dereference `AT_RANDOM`: the latter belongs to the still-absent mimalloc
+//! random-state dependency. Tests may read `AT_PAGESZ` only to construct a
+//! real kernel-compatible input for their local mapping fixture.
+
+use core::num::NonZeroUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+use crabc_core::{Errno, Result};
+
+use crate::invariants;
+
+// Linux's AArch64 values used by the exact Unix primitive path. These are
+// intentionally private: allocator policy does not receive an open mmap or
+// madvise flag vocabulary from this module.
+const PROT_NONE: u32 = 0;
+const PROT_READ: u32 = 0x1;
+const PROT_WRITE: u32 = 0x2;
+const MAP_PRIVATE: u32 = 0x02;
+const MAP_ANONYMOUS: u32 = 0x20;
+const MADV_DONTNEED: u32 = 4;
+const MADV_FREE: u32 = 8;
+const CLOCK_MONOTONIC: i32 = 1;
+const GRND_NONBLOCK: u32 = 0x1;
+const RUSAGE_SELF: i32 = 0;
+
+// `src/prim/unix/prim.c:_mi_prim_reset` starts with MADV_FREE and permanently
+// switches to MADV_DONTNEED only when Linux says MADV_FREE is unsupported.
+// The frozen normal-release profile has no secure/debug mprotect transition
+// after decommit, so this static is the only raw Unix reset policy retained.
+static RESET_ADVICE: AtomicUsize = AtomicUsize::new(MADV_FREE as usize);
+
+/// One Linux/AArch64 base-page size supplied by the process-start owner.
+///
+/// Linux/AArch64 supports exactly these configured base-page granularities.
+/// Keeping the value typed prevents future page-map and OS paths from
+/// accidentally relying on the host's common 4-KiB configuration.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PageSize(NonZeroUsize);
+
+impl PageSize {
+    /// Validates one Linux/AArch64 base-page size.
+    #[inline]
+    pub(crate) const fn new(bytes: usize) -> Option<Self> {
+        match bytes {
+            4_096 | 16_384 | 65_536 => {
+                // SAFETY: Each enumerated base-page size is non-zero.
+                Some(Self(unsafe { NonZeroUsize::new_unchecked(bytes) }))
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the base-page byte size supplied at startup.
+    #[inline]
+    pub(crate) const fn bytes(self) -> usize {
+        self.0.get()
+    }
+}
+
+/// The allocation-free fragment of process-start information used here.
+///
+/// This carries only the verified kernel page size. `AT_RANDOM` is deliberately
+/// not copied or exposed: consuming it correctly requires the pinned
+/// mimalloc random-state implementation, which is outside this slice.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct StartupInput {
+    page_size: PageSize,
+}
+
+impl StartupInput {
+    /// Builds the direct primitive input from a runtime-owned page size.
+    #[inline]
+    pub(crate) const fn new(page_size: PageSize) -> Self {
+        Self { page_size }
+    }
+
+    /// Returns the page-size contract used by mappings from this input.
+    #[inline]
+    pub(crate) const fn page_size(self) -> PageSize {
+        self.page_size
+    }
+}
+
+/// The initial protection requested for a private anonymous mapping.
+///
+/// This maps directly onto `_mi_prim_alloc`'s `commit` boolean after the
+/// upstream policy has selected the ordinary, non-huge mapping path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MapAccess {
+    /// Reserve address space with no access until a later [`Mapping::commit`].
+    Reserved,
+    /// Create an immediately readable and writable anonymous mapping.
+    Committed,
+}
+
+impl MapAccess {
+    #[inline]
+    const fn protection(self) -> u32 {
+        match self {
+            Self::Reserved => PROT_NONE,
+            Self::Committed => PROT_READ | PROT_WRITE,
+        }
+    }
+}
+
+/// The known-zero outcome of one commit transition.
+///
+/// Unix `_mi_prim_commit` always reports false: a range may include already
+/// accessible bytes, so `mprotect` cannot establish that its contents are
+/// zero even when it originated from an anonymous reserved mapping.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CommitOutcome {
+    /// The mapping is accessible but the transition did not prove zero bytes.
+    NotKnownZero,
+}
+
+/// The default-release decommit outcome on Linux.
+///
+/// `_mi_prim_decommit` uses `MADV_DONTNEED` and leaves the mapping accessible
+/// for this profile, so a subsequent reuse does not require `mprotect`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DecommitOutcome {
+    /// The range may be reused without a recommit transition.
+    DoesNotNeedRecommit,
+}
+
+/// One private anonymous mapping with an explicit, non-RAII release edge.
+///
+/// `Mapping` intentionally has no `Drop` unmap. Upstream ownership and later
+/// memory-ID accounting decide when a mapping is freed; an implicit release
+/// here would hide an allocator policy transition and could double-unmap after
+/// ownership moves. A successful [`Mapping::unmap`] records the closed state,
+/// and all later range operations return `EINVAL` without crossing the kernel.
+pub(crate) struct Mapping {
+    address: *mut u8,
+    length: usize,
+    page_size: PageSize,
+    initially_committed: bool,
+    initially_zero: bool,
+    is_mapped: bool,
+}
+
+impl Mapping {
+    /// Maps one page-aligned-length private anonymous region.
+    ///
+    /// The current regular path is the final `unix_mmap` fallback from
+    /// `src/prim/unix/prim.c`: `MAP_PRIVATE | MAP_ANONYMOUS`, no file
+    /// descriptor, no address hint, and no `MAP_NORESERVE` selection. The
+    /// latter, huge pages, and alignment hints need upstream option/startup
+    /// policy and remain absent. Linux zero-initializes a new anonymous map,
+    /// matching `_mi_prim_alloc`'s `is_zero = true` result.
+    #[inline]
+    pub(crate) fn map_anonymous(
+        startup: StartupInput,
+        length: usize,
+        access: MapAccess,
+    ) -> Result<Self> {
+        validate_mapping_length(startup.page_size, length)?;
+        fault_before(FaultPoint::Map)?;
+
+        // SAFETY: `length` is non-zero and a multiple of the startup-owned
+        // kernel page size. A null hint and fd -1 are the Linux anonymous-map
+        // ABI, and the returned pointer stays opaque inside `Mapping` until
+        // the explicit release operation closes the mapping lifetime.
+        let address = unsafe {
+            crabc_core::mm::mmap_raw(
+                core::ptr::null_mut(),
+                length,
+                access.protection(),
+                MAP_PRIVATE | MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        }?;
+
+        Ok(Self {
+            address,
+            length,
+            page_size: startup.page_size,
+            initially_committed: matches!(access, MapAccess::Committed),
+            initially_zero: true,
+            is_mapped: true,
+        })
+    }
+
+    /// Returns whether the original anonymous mapping was zero initialized.
+    #[inline]
+    pub(crate) const fn initially_zero(&self) -> bool {
+        self.initially_zero
+    }
+
+    /// Returns whether the original map request made the full range accessible.
+    #[inline]
+    pub(crate) const fn initially_committed(&self) -> bool {
+        self.initially_committed
+    }
+
+    /// Returns the provenance-bearing base pointer of the live mapping.
+    ///
+    /// The pointer is intentionally raw: later allocator policy must preserve
+    /// its mapping lifetime, alignment, aliasing, and initialized-byte rules,
+    /// and must never retain it after [`Mapping::unmap`] succeeds. This method
+    /// creates no reference and is unavailable after the explicit release.
+    #[inline]
+    pub(crate) fn base(&self) -> Result<*mut u8> {
+        self.active()?;
+        Ok(self.address)
+    }
+
+    /// Returns the original mapping length while the mapping remains owned.
+    #[inline]
+    pub(crate) fn length(&self) -> Result<usize> {
+        self.active()?;
+        Ok(self.length)
+    }
+
+    /// Makes every page touched by `offset..offset + length` accessible.
+    ///
+    /// This is the liberal `mi_os_page_align_areax(false, ...)` path used by
+    /// `_mi_os_commit_ex`: a non-page-aligned requested range expands to cover
+    /// both straddling pages. `None` is the source's successful empty-range
+    /// result. The mapping owner prevents that expansion from escaping the
+    /// owned map.
+    #[inline]
+    pub(crate) fn commit(
+        &self,
+        offset: usize,
+        length: usize,
+    ) -> Result<Option<CommitOutcome>> {
+        let Some(range) = self.page_range(offset, length, PageAlignment::Covering)? else {
+            return Ok(None);
+        };
+        fault_before(FaultPoint::Commit)?;
+
+        // SAFETY: `range` is derived from this still-live mapping, starts on
+        // a startup-page boundary, and is contained entirely in the mapping.
+        // No Rust references into it are created or retained by this raw
+        // protection transition.
+        unsafe {
+            crabc_core::mm::mprotect_raw(range.address, range.length, PROT_READ | PROT_WRITE)
+        }?;
+        Ok(Some(CommitOutcome::NotKnownZero))
+    }
+
+    /// Releases physical contents for complete pages inside the requested range.
+    ///
+    /// This follows the conservative `mi_os_page_align_area_conservative`
+    /// branch of `mi_os_decommit_ex`. The frozen normal-release Unix primitive
+    /// uses `MADV_DONTNEED` and reports `needs_recommit = false`; it does not
+    /// install `PROT_NONE` because `MI_DEBUG == 0` and `MI_SECURE <= 2`.
+    #[inline]
+    pub(crate) fn decommit(
+        &self,
+        offset: usize,
+        length: usize,
+    ) -> Result<Option<DecommitOutcome>> {
+        let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
+            return Ok(None);
+        };
+        fault_before(FaultPoint::Decommit)?;
+
+        // SAFETY: `range` is a complete-page subrange of this live mapping.
+        // `MADV_DONTNEED` may discard its bytes but creates no Rust reference
+        // and does not change the mapping's ownership or accessibility.
+        unsafe { crabc_core::mm::madvise_raw(range.address, range.length, MADV_DONTNEED) }?;
+        Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
+    }
+
+    /// Purges complete pages inside the requested range using the Unix reset path.
+    ///
+    /// This is `_mi_prim_reset` under the pinned default Linux profile. It
+    /// retries only `EAGAIN`, and only an `EINVAL` from `MADV_FREE` switches
+    /// the process-wide upstream cache to `MADV_DONTNEED`; every other error
+    /// reaches the caller unchanged. No extra advisory or remapping fallback
+    /// is attempted.
+    #[inline]
+    pub(crate) fn purge(&self, offset: usize, length: usize) -> Result<bool> {
+        let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
+            return Ok(true);
+        };
+
+        loop {
+            let advice = RESET_ADVICE.load(Ordering::Relaxed) as u32;
+            fault_before(FaultPoint::Purge)?;
+            // SAFETY: `range` is a complete-page subrange of this live mapping.
+            // The advisory may discard contents but does not yield references
+            // or alter this boundary's ownership state.
+            match unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) } {
+                Ok(()) => return Ok(true),
+                Err(Errno::AGAIN) => continue,
+                Err(Errno::INVAL) if advice == MADV_FREE => {
+                    RESET_ADVICE.store(MADV_DONTNEED as usize, Ordering::Release);
+                    fault_before(FaultPoint::Purge)?;
+                    // SAFETY: The range contract is unchanged for the explicit
+                    // source-defined MADV_DONTNEED fallback.
+                    return unsafe {
+                        crabc_core::mm::madvise_raw(range.address, range.length, MADV_DONTNEED)
+                    }
+                    .map(|_| true);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// Makes complete pages inside the requested range inaccessible.
+    ///
+    /// The boolean preserves `mi_os_protectx`: an empty conservative range is
+    /// not a protection operation and returns false.
+    #[inline]
+    pub(crate) fn protect(&self, offset: usize, length: usize) -> Result<bool> {
+        self.protect_with(offset, length, true)
+    }
+
+    /// Restores read/write access to complete pages inside the requested range.
+    #[inline]
+    pub(crate) fn unprotect(&self, offset: usize, length: usize) -> Result<bool> {
+        self.protect_with(offset, length, false)
+    }
+
+    /// Explicitly releases the entire anonymous mapping.
+    ///
+    /// A failure leaves the mapping live so its owner can diagnose or retry;
+    /// only successful `munmap` closes this object. A second successful release
+    /// is therefore structurally impossible, and a second call returns
+    /// `EINVAL` before a kernel syscall.
+    #[inline]
+    pub(crate) fn unmap(&mut self) -> Result<()> {
+        self.active()?;
+        fault_before(FaultPoint::Unmap)?;
+        // SAFETY: `self.address..self.address + self.length` is precisely the
+        // mapping created by `map_anonymous`, and no method exposes references
+        // into it. The object remains live on error and closes only after the
+        // successful kernel result below.
+        unsafe { crabc_core::mm::munmap_raw(self.address, self.length) }?;
+        self.is_mapped = false;
+        Ok(())
+    }
+
+    #[inline]
+    fn protect_with(&self, offset: usize, length: usize, protect: bool) -> Result<bool> {
+        let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
+            return Ok(false);
+        };
+        fault_before(if protect {
+            FaultPoint::Protect
+        } else {
+            FaultPoint::Unprotect
+        })?;
+        let protection = if protect {
+            PROT_NONE
+        } else {
+            PROT_READ | PROT_WRITE
+        };
+
+        // SAFETY: `range` is a complete-page subrange of this live mapping.
+        // Callers receive no Rust reference from `Mapping`, so the boundary
+        // cannot leave an existing reference usable across PROT_NONE.
+        unsafe { crabc_core::mm::mprotect_raw(range.address, range.length, protection) }?;
+        Ok(true)
+    }
+
+    #[inline]
+    fn active(&self) -> Result<()> {
+        if self.is_mapped {
+            Ok(())
+        } else {
+            Err(Errno::INVAL)
+        }
+    }
+
+    #[inline]
+    fn page_range(
+        &self,
+        offset: usize,
+        length: usize,
+        alignment: PageAlignment,
+    ) -> Result<Option<MappingRange>> {
+        self.active()?;
+        let end = offset.checked_add(length).ok_or(Errno::INVAL)?;
+        if end > self.length {
+            return Err(Errno::INVAL);
+        }
+        if length == 0 {
+            return Ok(None);
+        }
+
+        let page_size = self.page_size.bytes();
+        let (start, end) = match alignment {
+            PageAlignment::Covering => (
+                invariants::align_down(offset, page_size).ok_or(Errno::INVAL)?,
+                invariants::align_up(end, page_size).ok_or(Errno::INVAL)?,
+            ),
+            PageAlignment::Contained => (
+                invariants::align_up(offset, page_size).ok_or(Errno::INVAL)?,
+                invariants::align_down(end, page_size).ok_or(Errno::INVAL)?,
+            ),
+        };
+        if end <= start {
+            return Ok(None);
+        }
+        if end > self.length {
+            // The parent map is itself page-sized, so a valid source-aligned
+            // range cannot escape it. Treat a mismatched startup page size as
+            // invalid input rather than issuing a broader kernel operation.
+            return Err(Errno::INVAL);
+        }
+
+        Ok(Some(MappingRange {
+            // `wrapping_add` retains the kernel-returned mapping provenance and
+            // does not manufacture a pointer from an integer. Bounds above
+            // prove this is an address within the owned mapping.
+            address: self.address.wrapping_add(start),
+            length: end - start,
+        }))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MappingRange {
+    address: *mut u8,
+    length: usize,
+}
+
+#[derive(Clone, Copy)]
+enum PageAlignment {
+    /// Expand over any partial first/last page, like `_mi_os_commit_ex`.
+    Covering,
+    /// Retain only full pages, like reset/decommit/protect in `src/os.c`.
+    Contained,
+}
+
+#[inline]
+fn validate_mapping_length(page_size: PageSize, length: usize) -> Result<()> {
+    if length == 0 || length % page_size.bytes() != 0 {
+        Err(Errno::INVAL)
+    } else {
+        Ok(())
+    }
+}
+
+/// Reads monotonic time with the Unix primitive's millisecond truncation.
+///
+/// Linux 5.10 supplies `CLOCK_MONOTONIC`, so this keeps the upstream preferred
+/// clock and intentionally omits the `clock()` low-resolution fallback. The
+/// `i64` output is the pinned `mi_msecs_t` representation.
+#[inline]
+pub(crate) fn monotonic_milliseconds() -> Result<i64> {
+    #[repr(C)]
+    struct KernelTimespec {
+        seconds: i64,
+        nanoseconds: i64,
+    }
+
+    let mut time = core::mem::MaybeUninit::<KernelTimespec>::uninit();
+    fault_before(FaultPoint::Clock)?;
+    // SAFETY: `KernelTimespec` is the two-signed-word Linux/AArch64 timespec
+    // layout, and the kernel/vDSO initializes both words on success.
+    unsafe { crabc_core::time::clock_gettime_raw(CLOCK_MONOTONIC, time.as_mut_ptr().cast()) }?;
+    // SAFETY: the successful clock query initialized the exact output record.
+    let time = unsafe { time.assume_init() };
+    if time.seconds < 0 || !(0..1_000_000_000).contains(&time.nanoseconds) {
+        return Err(Errno::RANGE);
+    }
+    time.seconds
+        .checked_mul(1_000)
+        .and_then(|seconds| seconds.checked_add(time.nanoseconds / 1_000_000))
+        .ok_or(Errno::RANGE)
+}
+
+/// The source-complete `getrusage(RUSAGE_SELF)` portion of process statistics.
+///
+/// Unix mimalloc leaves current RSS and commit fields at the caller's default
+/// values; this direct observation returns only the fields Linux populates in
+/// `_mi_prim_process_info` rather than inventing a `/proc` parser.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ProcessUsage {
+    pub(crate) user_milliseconds: i64,
+    pub(crate) system_milliseconds: i64,
+    pub(crate) peak_resident_bytes: usize,
+    pub(crate) major_page_faults: usize,
+}
+
+/// Reads the process observations used by the pinned Unix primitive.
+#[inline]
+pub(crate) fn process_usage() -> Result<ProcessUsage> {
+    fault_before(FaultPoint::Process)?;
+    let usage = crabc_core::process::getrusage_raw(RUSAGE_SELF)?;
+    Ok(ProcessUsage {
+        user_milliseconds: timeval_milliseconds(usage.ru_utime.tv_sec, usage.ru_utime.tv_usec)?,
+        system_milliseconds: timeval_milliseconds(usage.ru_stime.tv_sec, usage.ru_stime.tv_usec)?,
+        // Linux returns ru_maxrss in KiB. Reject impossible negative or
+        // overflowing observations instead of silently wrapping a statistic.
+        peak_resident_bytes: usize::try_from(usage.ru_maxrss)
+            .ok()
+            .and_then(|kibibytes| kibibytes.checked_mul(1024))
+            .ok_or(Errno::RANGE)?,
+        major_page_faults: usize::try_from(usage.ru_majflt).map_err(|_| Errno::RANGE)?,
+    })
+}
+
+#[inline]
+fn timeval_milliseconds(seconds: i64, microseconds: i64) -> Result<i64> {
+    if seconds < 0 || !(0..1_000_000).contains(&microseconds) {
+        return Err(Errno::RANGE);
+    }
+    seconds
+        .checked_mul(1_000)
+        .and_then(|seconds| seconds.checked_add(microseconds / 1_000))
+        .ok_or(Errno::RANGE)
+}
+
+/// Returns the calling process's Linux process ID without libc state.
+#[inline]
+pub(crate) fn process_id() -> i32 {
+    crabc_core::process::getpid()
+}
+
+/// Returns the calling Linux task ID without libc state.
+#[inline]
+pub(crate) fn thread_id() -> i32 {
+    crabc_core::thread::gettid()
+}
+
+/// Returns the calling AArch64 TLS-register identity as an opaque value.
+///
+/// This is distinct from [`thread_id`]. It is suitable only for later
+/// same-thread allocator ownership checks and is never dereferenced here.
+#[inline]
+pub(crate) fn thread_pointer_identity() -> usize {
+    crabc_core::thread::thread_pointer_identity()
+}
+
+/// Returns the current NUMA node using the pinned Unix fallback convention.
+///
+/// `_mi_prim_numa_node` returns node zero when its `getcpu` syscall fails;
+/// retain that source behavior rather than creating a topology policy here.
+#[inline]
+pub(crate) fn numa_node() -> usize {
+    if fault_before(FaultPoint::Cpu).is_err() {
+        return 0;
+    }
+    match crabc_core::thread::getcpu() {
+        Ok(location) => location.numa_node as usize,
+        Err(_) => 0,
+    }
+}
+
+/// Yields the calling task through Linux's direct scheduler primitive.
+///
+/// The Unix source's `sleep(0)` is only a best-effort yield request. Linux's
+/// direct `sched_yield` is the corresponding no-libc kernel primitive and
+/// preserves any kernel error for a later synchronization policy owner.
+#[inline]
+pub(crate) fn thread_yield() -> Result<()> {
+    fault_before(FaultPoint::ThreadYield)?;
+    crabc_core::thread::sched_yield()
+}
+
+/// Fills a caller-owned buffer through Linux `getrandom(GRND_NONBLOCK)`.
+///
+/// The boolean is `_mi_prim_random_buf`'s success predicate: a short success
+/// is not enough. Linux 5.10 guarantees `getrandom`, so the historical
+/// `/dev/urandom` fallback is intentionally absent. This is only raw entropy;
+/// it does not instantiate or substitute for mimalloc's pinned random state.
+#[inline]
+pub(crate) fn entropy_fill(buffer: &mut [u8]) -> Result<bool> {
+    fault_before(FaultPoint::Entropy)?;
+    // SAFETY: `buffer` provides writable storage for exactly its supplied
+    // length, including the zero-length case accepted by Linux getrandom.
+    let count = unsafe {
+        crabc_core::rand::getrandom_raw(buffer.as_mut_ptr(), buffer.len(), GRND_NONBLOCK)
+    }?;
+    Ok(count == buffer.len())
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum FaultPoint {
+    Map = 1,
+    Commit = 2,
+    Decommit = 3,
+    Purge = 4,
+    Protect = 5,
+    Unprotect = 6,
+    Unmap = 7,
+    Clock = 8,
+    Process = 9,
+    Cpu = 10,
+    ThreadYield = 11,
+    Entropy = 12,
+}
+
+#[cfg(not(test))]
+#[inline]
+fn fault_before(_point: FaultPoint) -> Result<()> {
+    // Test-only injection compiles to this empty direct call in production;
+    // no trait object, callback, or runtime dispatch is present.
+    Ok(())
+}
+
+#[cfg(test)]
+mod fault {
+    use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+
+    use crabc_core::{Errno, Result};
+
+    pub(super) use super::FaultPoint as Point;
+
+    const ANY_POINT: usize = 0;
+    static LOCKED: AtomicBool = AtomicBool::new(false);
+    static SELECTED_POINT: AtomicUsize = AtomicUsize::new(ANY_POINT);
+    static FAILURE_ORDINAL: AtomicUsize = AtomicUsize::new(0);
+    static OBSERVED: AtomicUsize = AtomicUsize::new(0);
+    static FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
+
+    /// An allocation-free deterministic failure plan for one serial test.
+    #[derive(Clone, Copy)]
+    pub(super) struct Plan {
+        point: usize,
+        ordinal: usize,
+        error: Errno,
+    }
+
+    impl Plan {
+        pub(super) const fn disabled() -> Self {
+            Self {
+                point: ANY_POINT,
+                ordinal: 0,
+                error: Errno::NOMEM,
+            }
+        }
+
+        pub(super) const fn any_nth(ordinal: usize, error: Errno) -> Self {
+            Self {
+                point: ANY_POINT,
+                ordinal,
+                error,
+            }
+        }
+
+        pub(super) const fn at(point: Point, ordinal: usize, error: Errno) -> Self {
+            Self {
+                point: point as usize,
+                ordinal,
+                error,
+            }
+        }
+    }
+
+    /// Serializes tests which exercise the process-global injection counters.
+    ///
+    /// This is test-only spin synchronization over static atomics; it neither
+    /// allocates nor involves the allocator engine under test.
+    pub(super) struct Guard;
+
+    pub(super) fn install(plan: Plan) -> Guard {
+        while LOCKED
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        set(plan);
+        Guard
+    }
+
+    impl Guard {
+        pub(super) fn set(&self, plan: Plan) {
+            set(plan);
+        }
+
+        pub(super) fn observed(&self) -> usize {
+            OBSERVED.load(Ordering::Acquire)
+        }
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            set(Plan::disabled());
+            LOCKED.store(false, Ordering::Release);
+        }
+    }
+
+    #[inline]
+    fn set(plan: Plan) {
+        SELECTED_POINT.store(plan.point, Ordering::Relaxed);
+        FAILURE_ORDINAL.store(plan.ordinal, Ordering::Relaxed);
+        FAILURE_ERROR.store(plan.error.raw(), Ordering::Relaxed);
+        OBSERVED.store(0, Ordering::Release);
+    }
+
+    #[inline]
+    pub(super) fn before(point: Point) -> Result<()> {
+        let selected = SELECTED_POINT.load(Ordering::Acquire);
+        if selected != ANY_POINT && selected != point as usize {
+            return Ok(());
+        }
+        let ordinal = FAILURE_ORDINAL.load(Ordering::Acquire);
+        if ordinal == 0 {
+            return Ok(());
+        }
+        let observed = OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
+        if observed == ordinal {
+            let error = FAILURE_ERROR.load(Ordering::Acquire);
+            // SAFETY: `Plan` obtains `error` from a valid `Errno`, so the
+            // stored integer remains a positive Linux errno throughout.
+            return Err(unsafe { Errno::from_raw(error).unwrap_unchecked() });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[inline]
+fn fault_before(point: FaultPoint) -> Result<()> {
+    fault::before(point)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crabc_core::Errno;
+
+    fn current_startup() -> StartupInput {
+        let raw_page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
+            .expect("the Linux test process must expose AT_PAGESZ");
+        let page_size = PageSize::new(raw_page_size)
+            .expect("AT_PAGESZ must be a valid Linux page size");
+        StartupInput::new(page_size)
+    }
+
+    #[test]
+    fn startup_page_size_represents_supported_linux_aarch64_granularities() {
+        let _fault = fault::install(fault::Plan::disabled());
+        assert!(PageSize::new(0).is_none());
+        assert!(PageSize::new(3).is_none());
+        for bytes in [4 * 1024, 16 * 1024, 64 * 1024] {
+            assert_eq!(PageSize::new(bytes).unwrap().bytes(), bytes);
+        }
+    }
+
+    #[test]
+    fn mapping_rejects_invalid_ranges_without_calling_a_kernel_fallback() {
+        let fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+        let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Reserved)
+            .expect("reserve one kernel page");
+        assert!(mapping.base().is_ok());
+
+        fault.set(fault::Plan::any_nth(1, Errno::NOMEM));
+        assert_eq!(mapping.commit(1, page), Err(Errno::INVAL));
+        assert_eq!(fault.observed(), 0, "invalid input must not reach an OS fallback");
+        fault.set(fault::Plan::disabled());
+
+        mapping.unmap().expect("release the valid mapping");
+        assert_eq!(mapping.base(), Err(Errno::INVAL));
+        assert_eq!(mapping.commit(0, page), Err(Errno::INVAL));
+        assert_eq!(mapping.unmap(), Err(Errno::INVAL));
+    }
+
+    #[test]
+    fn map_commit_protect_unprotect_and_unmap_have_an_explicit_lifecycle() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+        let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Reserved)
+            .expect("reserve one kernel page");
+
+        assert_eq!(mapping.commit(0, page), Ok(Some(CommitOutcome::NotKnownZero)));
+        assert!(mapping.protect(0, page).expect("protect the committed page"));
+        assert!(mapping.unprotect(0, page).expect("restore read/write access"));
+        mapping.unmap().expect("release the mapped page");
+    }
+
+    #[test]
+    fn decommit_and_purge_use_only_the_source_defined_page_transitions() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+        let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Committed)
+            .expect("map one committed kernel page");
+
+        assert!(mapping.initially_committed());
+        assert!(mapping.initially_zero());
+        assert_eq!(mapping.decommit(1, page - 1), Ok(None));
+        assert_eq!(
+            mapping.decommit(0, page),
+            Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
+        );
+        assert!(mapping.purge(0, page).expect("purge a full mapped page"));
+        mapping.unmap().expect("release the mapped page");
+    }
+
+    #[test]
+    fn fault_injection_fails_the_selected_ordinal_without_a_hidden_retry() {
+        let fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+        fault.set(fault::Plan::any_nth(2, Errno::NOMEM));
+
+        let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Reserved)
+            .expect("the first applicable operation must succeed");
+        assert_eq!(mapping.commit(0, page), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 2, "the injected commit must not retry or fall back");
+        fault.set(fault::Plan::disabled());
+
+        mapping.unmap().expect("the failed commit leaves the reservation owned");
+    }
+
+    #[test]
+    fn purge_failure_does_not_substitute_an_unclaimed_memory_transition() {
+        let fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+        let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Committed)
+            .expect("map one committed kernel page");
+
+        fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::NOMEM));
+        assert_eq!(mapping.purge(0, page), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1, "NOMEM must not trigger a second advisory");
+        fault.set(fault::Plan::disabled());
+        mapping.unmap().expect("the failed purge leaves the mapping owned");
+    }
+
+    #[test]
+    fn direct_process_thread_clock_cpu_and_entropy_observations_stay_available() {
+        let _fault = fault::install(fault::Plan::disabled());
+
+        assert!(process_id() > 0);
+        assert!(thread_id() > 0);
+        assert_ne!(thread_pointer_identity(), 0);
+        let before = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
+        thread_yield().expect("sched_yield");
+        let after = monotonic_milliseconds().expect("CLOCK_MONOTONIC");
+        assert!(after >= before);
+
+        let usage = process_usage().expect("getrusage(RUSAGE_SELF)");
+        assert!(usage.user_milliseconds >= 0);
+        assert!(usage.system_milliseconds >= 0);
+        let _peak_resident_bytes = usage.peak_resident_bytes;
+        let _major_page_faults = usage.major_page_faults;
+        let _numa_node = numa_node();
+
+        let mut bytes = [0u8; 16];
+        assert!(entropy_fill(&mut bytes).expect("Linux getrandom"));
+    }
+
+    #[test]
+    fn entropy_failure_is_direct_and_never_uses_a_secondary_source() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Entropy, 1, Errno::NOMEM));
+        let mut bytes = [0u8; 16];
+
+        assert_eq!(entropy_fill(&mut bytes), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+    }
+}

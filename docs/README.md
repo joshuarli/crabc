@@ -23,6 +23,9 @@ them; this router should explain ownership, not duplicate command contracts.
   ownership, safety, and runtime-state boundary.
 - [Performance design](design/performance.md) — measurement methodology,
   optimization doctrine, and current cost model.
+- [Fixed mimalloc semantic-port design](design/allocator.md) — provenance,
+  dependency direction, integration ownership, and promotion boundary for the
+  active Linux/AArch64 allocator compatibility program.
 - [Source-build adapter-sysroot design](design/source-build.md) — completed Lua
   gate and the permanent adapter boundary.
 - [Rust-subsumption evidence](evidence/crabc-rs-subsumption.md) — why selected
@@ -66,3 +69,6 @@ machine-readable contracts, or generated evidence.
 - Rust `std`, Rustix, and LTO evidence: [`compat/rust-std/README.md`](../compat/rust-std/README.md),
   [`compat/rustix/`](../compat/rustix/), and [`compat/lto/README.md`](../compat/lto/README.md).
 - Performance runner mechanics: [`compat/perf/README.md`](../compat/perf/README.md).
+- Allocator source/oracle/differential mechanics:
+  [`compat/allocator/README.md`](../compat/allocator/README.md) and
+  [`crabc-mimalloc/UPSTREAM.md`](../crabc-mimalloc/UPSTREAM.md).

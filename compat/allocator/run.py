@@ -1,0 +1,1788 @@
+#!/usr/bin/env python3
+"""Build and inventory the pinned mimalloc v3.5.0 C oracle.
+
+This Milestone 0 runner deliberately has no third-party Python dependencies
+and never regards the workspace's `libmimalloc-sys` copy as an oracle.  Its
+only allocator source input is the SHA-256-verified upstream archive named in
+`compat/upstreams.toml`.  It records the existing v3.3.2 integration solely
+as migration provenance.
+
+The runner is a source/provenance and C-oracle instrument.  It does not claim
+that a Rust allocator operation, adapter symbol, differential trace, or
+performance comparison exists before its owning implementation milestone.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import tomllib
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
+
+
+ROOT = Path(__file__).resolve().parents[2]
+ALLOCATOR_ROOT = Path(__file__).resolve().parent
+UPSTREAMS = ROOT / "compat/upstreams.toml"
+CACHE = ALLOCATOR_ROOT / ".cache"
+REPORT_ROOT = ROOT / "compat/reports/allocator"
+API_CONTRACT = ALLOCATOR_ROOT / "api-v3.5.0.json"
+UPSTREAM_TEST_CONTRACT = ALLOCATOR_ROOT / "upstream-tests-v3.5.0.json"
+PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
+RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
+
+STATUS_FIELDS = (
+    "exported",
+    "implemented",
+    "unit_verified",
+    "differential_verified",
+    "stress_verified",
+    "performance_qualified",
+)
+
+ORACLE_SOURCES = (
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c",
+)
+
+# These files are translation units included by the sources above, not absent
+# source-map work.  They remain independent rows because their invariants need
+# a direct Rust destination and verification record later.
+REQUIRED_PORT_UNITS = (
+    "include/mimalloc.h",
+    "include/mimalloc-stats.h",
+    "include/mimalloc/types.h",
+    "include/mimalloc/atomic.h",
+    "include/mimalloc/bits.h",
+    "include/mimalloc/prim.h",
+    "include/mimalloc/prim-tls.h",
+    "include/mimalloc/internal.h",
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/alloc-override.c",
+    "src/free.c",
+    "src/arena.c",
+    "src/bitmap.h",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page-map.c",
+    "src/page.c",
+    "src/page-queue.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/static.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c",
+    "src/prim/unix/prim.c",
+    "src/prim/unix/prim-tls.c",
+)
+
+PUBLIC_HEADERS = (
+    "include/mimalloc.h",
+    "include/mimalloc-stats.h",
+    "include/mimalloc-override.h",
+    "include/mimalloc-new-delete.h",
+)
+
+# `CMakeLists.txt` puts these four declarations in the installed public header,
+# but the normal shared library does not define them.  The two stale entries
+# have no v3.5.0 definition at all; the two malloc-size helpers are supplied
+# only when the opt-in `src/alloc-override.c` translation unit is selected.
+# Keeping this table explicit makes a header/symbol discrepancy a reviewed
+# compatibility fact instead of a parser accident.
+NORMAL_RELEASE_SYMBOL_EXCEPTIONS: Mapping[str, str] = {
+    "mi_collect_reduce": (
+        "Deprecated public-header declaration has no definition in the pinned "
+        "v3.5.0 normal-release source set."
+    ),
+    "mi_malloc_size": (
+        "Defined only by opt-in src/alloc-override.c, which is outside the "
+        "normal v3.5.0 shared-library source set."
+    ),
+    "mi_malloc_usable_size": (
+        "Defined only by opt-in src/alloc-override.c, which is outside the "
+        "normal v3.5.0 shared-library source set."
+    ),
+    "mi_stats_merge": (
+        "Deprecated public-header declaration has no definition in the pinned "
+        "v3.5.0 normal-release source set."
+    ),
+}
+
+STALE_EXTERNAL_DECLARATIONS = frozenset({"mi_collect_reduce", "mi_stats_merge"})
+OVERRIDE_ONLY_EXTERNAL_DECLARATIONS = frozenset({"mi_malloc_size", "mi_malloc_usable_size"})
+
+# This source can compile its wide-environment helper on Linux, but crabc's
+# Linux/AArch64 C ABI deliberately has no wide-character environment surface.
+# It remains in the symbol cross-check so that the C oracle's actual export is
+# never hidden by its crabc applicability classification.
+UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS: Mapping[str, str] = {
+    "mi_collect_reduce": NORMAL_RELEASE_SYMBOL_EXCEPTIONS["mi_collect_reduce"],
+    "mi_stats_merge": NORMAL_RELEASE_SYMBOL_EXCEPTIONS["mi_stats_merge"],
+    "mi_wdupenv_s": (
+        "Windows wide-character environment API; crabc's Linux/AArch64 ABI "
+        "does not provide a wide-character environment surface. The pinned C "
+        "oracle does define the symbol, and the release-symbol contract records it."
+    ),
+}
+
+EXPERIMENTAL_EXTERNAL_FUNCTIONS = frozenset(
+    {
+        "mi_manage_memory",
+        "mi_theap_guarded_set_sample_rate",
+        "mi_theap_guarded_set_size_bound",
+        "mi_unsafe_heap_page_is_under_utilized",
+    }
+)
+
+DEPRECATED_EXTERNAL_FUNCTIONS = frozenset(
+    {
+        "mi_check_owned",
+        "mi_collect_reduce",
+        "mi_is_in_heap_region",
+        "mi_reserve_huge_os_pages",
+        "mi_stats_merge",
+        "mi_stats_print",
+        "mi_stats_reset",
+        "mi_theap_visit_blocks",
+        "mi_thread_stats_print_out",
+    }
+)
+
+CXX_NEW_DELETE_EXTERNAL_FUNCTIONS = frozenset(
+    {
+        "mi_heap_alloc_new",
+        "mi_heap_alloc_new_n",
+        "mi_new",
+        "mi_new_aligned",
+        "mi_new_aligned_nothrow",
+        "mi_new_n",
+        "mi_new_nothrow",
+        "mi_new_realloc",
+        "mi_new_reallocn",
+    }
+)
+
+HEADER_DEPRECATED_OPTIONS = frozenset(
+    {
+        "mi_option_deprecated_abandoned_page_purge",
+        "mi_option_deprecated_eager_commit",
+        "mi_option_deprecated_eager_commit_delay",
+        "mi_option_deprecated_max_segment_reclaim",
+        "mi_option_deprecated_page_reset",
+        "mi_option_deprecated_purge_extend_delay",
+        "mi_option_deprecated_segment_cache",
+        "mi_option_deprecated_segment_reset",
+        "mi_option_deprecated_visit_abandoned",
+    }
+)
+
+LEGACY_OPTION_ALIASES = frozenset(
+    {
+        "mi_option_eager_region_commit",
+        "mi_option_large_os_pages",
+        "mi_option_limit_os_alloc",
+        "mi_option_reset_decommits",
+        "mi_option_reset_delay",
+    }
+)
+
+CXX_DECLARATION_MACROS = frozenset({"mi_decl_new", "mi_decl_new_nothrow"})
+
+GUARDED_MODE_OPTIONS = frozenset(
+    {
+        "mi_option_guarded_max",
+        "mi_option_guarded_min",
+        "mi_option_guarded_precise",
+        "mi_option_guarded_sample_rate",
+        "mi_option_guarded_sample_seed",
+    }
+)
+
+UNSUPPORTED_LINUX_AARCH64_OPTIONS: Mapping[str, str] = {
+    "mi_option_os_tag": "macOS-only OS logging tag option in the pinned v3.5.0 header.",
+    "mi_option_retry_on_oom": "Windows-only out-of-memory retry option in the pinned v3.5.0 header.",
+}
+
+CONFIGURATION_PROFILES: Mapping[str, tuple[str, ...]] = {
+    # The normal Linux/AArch64 profile deliberately does not use v3's optional
+    # Armv8.3 path: crabc's production baseline is Armv8.0 / Linux 5.10.
+    "release": (
+        "-O3",
+        "-DNDEBUG",
+        "-DMI_BUILD_RELEASE=1",
+        "-DMI_DEBUG=0",
+        "-DMI_STAT=0",
+        "-DMI_SECURE=0",
+        "-DMI_GUARDED=0",
+    ),
+    "debug-full": (
+        "-O0",
+        "-g3",
+        "-DMI_DEBUG=3",
+        "-DMI_STAT=2",
+        "-DMI_GUARDED=1",
+        "-DMI_SECURE=0",
+    ),
+    "secure": (
+        "-O2",
+        "-DNDEBUG",
+        "-DMI_BUILD_RELEASE=1",
+        "-DMI_DEBUG=0",
+        "-DMI_STAT=0",
+        "-DMI_SECURE=4",
+        "-DMI_FREE_IS_CHECKED=1",
+    ),
+    "secure-full": (
+        "-O2",
+        "-DNDEBUG",
+        "-DMI_BUILD_RELEASE=1",
+        "-DMI_DEBUG=0",
+        "-DMI_STAT=0",
+        "-DMI_SECURE=5",
+        "-DMI_FREE_IS_CHECKED=1",
+    ),
+    "guarded-stats": (
+        "-O2",
+        "-DNDEBUG",
+        "-DMI_BUILD_RELEASE=1",
+        "-DMI_DEBUG=0",
+        "-DMI_STAT=2",
+        "-DMI_SECURE=0",
+        "-DMI_GUARDED=1",
+    ),
+}
+
+LAYOUT_PROBE = r"""
+#include <stddef.h>
+#include <stdio.h>
+#include <mimalloc.h>
+#include <mimalloc/internal.h>
+#include "bitmap.h"
+
+#ifdef MI_GUARDED
+#define CRABC_MI_GUARDED MI_GUARDED
+#else
+#define CRABC_MI_GUARDED 0
+#endif
+#ifdef MI_PADDING
+#define CRABC_MI_PADDING MI_PADDING
+#else
+#define CRABC_MI_PADDING 0
+#endif
+#ifdef MI_ENCODE_FREELIST
+#define CRABC_MI_ENCODE_FREELIST MI_ENCODE_FREELIST
+#else
+#define CRABC_MI_ENCODE_FREELIST 0
+#endif
+#ifdef MI_FREE_IS_CHECKED
+#define CRABC_MI_FREE_IS_CHECKED MI_FREE_IS_CHECKED
+#else
+#define CRABC_MI_FREE_IS_CHECKED 0
+#endif
+#ifdef MI_FREE_USE_PAGEMAP
+#define CRABC_MI_FREE_USE_PAGEMAP MI_FREE_USE_PAGEMAP
+#else
+#define CRABC_MI_FREE_USE_PAGEMAP 0
+#endif
+#ifdef MI_OPT_FREE_SMALL
+#define CRABC_MI_OPT_FREE_SMALL MI_OPT_FREE_SMALL
+#else
+#define CRABC_MI_OPT_FREE_SMALL 0
+#endif
+#ifdef MI_OPT_SIMD
+#define CRABC_MI_OPT_SIMD MI_OPT_SIMD
+#else
+#define CRABC_MI_OPT_SIMD 0
+#endif
+#ifdef MI_PAGE_META_IS_ALIGNED
+#define CRABC_MI_PAGE_META_IS_ALIGNED MI_PAGE_META_IS_ALIGNED
+#else
+#define CRABC_MI_PAGE_META_IS_ALIGNED 0
+#endif
+#ifdef MI_PAGE_META_ALIGNED_CHUNKS
+#define CRABC_MI_PAGE_META_ALIGNED_CHUNKS MI_PAGE_META_ALIGNED_CHUNKS
+#else
+#define CRABC_MI_PAGE_META_ALIGNED_CHUNKS 0
+#endif
+#ifdef MI_PAGE_META_ALIGNED_COUNT
+#define CRABC_MI_PAGE_META_ALIGNED_COUNT MI_PAGE_META_ALIGNED_COUNT
+#else
+#define CRABC_MI_PAGE_META_ALIGNED_COUNT 0
+#endif
+#ifdef MI_PAGE_META_ALIGNMENT
+#define CRABC_MI_PAGE_META_ALIGNMENT MI_PAGE_META_ALIGNMENT
+#else
+#define CRABC_MI_PAGE_META_ALIGNMENT 0
+#endif
+
+#define U(name, value) printf(name "=%llu\n", (unsigned long long)(value))
+int main(void) {
+  U("pointer.size", sizeof(void*));
+  U("public.handle.mi_heap_t", sizeof(mi_heap_t*));
+  U("public.handle.mi_theap_t", sizeof(mi_theap_t*));
+  U("public.handle.mi_subproc_t", sizeof(mi_subproc_t*));
+  U("sizeof.mi_memkind_t", sizeof(mi_memkind_t));
+  U("alignof.mi_memkind_t", _Alignof(mi_memkind_t));
+  U("value.MI_MEM_NONE", MI_MEM_NONE);
+  U("value.MI_MEM_EXTERNAL", MI_MEM_EXTERNAL);
+  U("value.MI_MEM_STATIC", MI_MEM_STATIC);
+  U("value.MI_MEM_OS", MI_MEM_OS);
+  U("value.MI_MEM_OS_HUGE", MI_MEM_OS_HUGE);
+  U("value.MI_MEM_OS_REMAP", MI_MEM_OS_REMAP);
+  U("value.MI_MEM_ARENA", MI_MEM_ARENA);
+  U("value.MI_MEM_MALLOC", MI_MEM_MALLOC);
+  U("sizeof.mi_memid_t", sizeof(mi_memid_t));
+  U("alignof.mi_memid_t", _Alignof(mi_memid_t));
+  U("offsetof.mi_memid_t.mem", offsetof(mi_memid_t, mem));
+  U("offsetof.mi_memid_t.memkind", offsetof(mi_memid_t, memkind));
+  U("offsetof.mi_memid_t.is_pinned", offsetof(mi_memid_t, is_pinned));
+  U("offsetof.mi_memid_t.initially_committed", offsetof(mi_memid_t, initially_committed));
+  U("offsetof.mi_memid_t.initially_zero", offsetof(mi_memid_t, initially_zero));
+  U("sizeof.mi_page_t", sizeof(mi_page_t));
+  U("alignof.mi_page_t", _Alignof(mi_page_t));
+  U("offsetof.mi_page_t.xthread_free", offsetof(mi_page_t, xthread_free));
+  U("offsetof.mi_page_t.theap", offsetof(mi_page_t, theap));
+  U("offsetof.mi_page_t.memid", offsetof(mi_page_t, memid));
+  U("sizeof.mi_page_kind_t", sizeof(mi_page_kind_t));
+  U("alignof.mi_page_kind_t", _Alignof(mi_page_kind_t));
+  U("value.MI_PAGE_SMALL", MI_PAGE_SMALL);
+  U("value.MI_PAGE_MEDIUM", MI_PAGE_MEDIUM);
+  U("value.MI_PAGE_LARGE", MI_PAGE_LARGE);
+  U("value.MI_PAGE_SINGLETON", MI_PAGE_SINGLETON);
+  U("sizeof.mi_page_queue_t", sizeof(mi_page_queue_t));
+  U("alignof.mi_page_queue_t", _Alignof(mi_page_queue_t));
+  U("offsetof.mi_page_queue_t.first", offsetof(mi_page_queue_t, first));
+  U("offsetof.mi_page_queue_t.last", offsetof(mi_page_queue_t, last));
+  U("offsetof.mi_page_queue_t.count", offsetof(mi_page_queue_t, count));
+  U("offsetof.mi_page_queue_t.block_size", offsetof(mi_page_queue_t, block_size));
+  U("sizeof.mi_theap_t", sizeof(mi_theap_t));
+  U("alignof.mi_theap_t", _Alignof(mi_theap_t));
+  U("offsetof.mi_theap_t.pages_free_direct", offsetof(mi_theap_t, pages_free_direct));
+  U("offsetof.mi_theap_t.page_count", offsetof(mi_theap_t, page_count));
+  U("offsetof.mi_theap_t.pages", offsetof(mi_theap_t, pages));
+  U("offsetof.mi_theap_t.stats", offsetof(mi_theap_t, stats));
+  U("sizeof.mi_heap_t", sizeof(mi_heap_t));
+  U("alignof.mi_heap_t", _Alignof(mi_heap_t));
+  U("offsetof.mi_heap_t.theap", offsetof(mi_heap_t, theap));
+  U("offsetof.mi_heap_t.abandoned_count", offsetof(mi_heap_t, abandoned_count));
+  U("offsetof.mi_heap_t.arena_pages", offsetof(mi_heap_t, arena_pages));
+  U("offsetof.mi_heap_t.stats", offsetof(mi_heap_t, stats));
+  U("sizeof.mi_arena_t", sizeof(mi_arena_t));
+  U("alignof.mi_arena_t", _Alignof(mi_arena_t));
+  U("offsetof.mi_arena_t.slice_count", offsetof(mi_arena_t, slice_count));
+  U("offsetof.mi_arena_t.slices_free", offsetof(mi_arena_t, slices_free));
+  U("sizeof.mi_stats_t", sizeof(mi_stats_t));
+  U("alignof.mi_stats_t", _Alignof(mi_stats_t));
+  U("MI_MALLOC_VERSION", MI_MALLOC_VERSION);
+  U("MI_DEBUG", MI_DEBUG);
+  U("MI_SECURE", MI_SECURE);
+  U("MI_STAT", MI_STAT);
+  U("MI_GUARDED", CRABC_MI_GUARDED);
+  U("MI_PADDING", CRABC_MI_PADDING);
+  U("MI_ENCODE_FREELIST", CRABC_MI_ENCODE_FREELIST);
+  U("MI_FREE_IS_CHECKED", CRABC_MI_FREE_IS_CHECKED);
+  U("MI_BIN_COUNT", MI_BIN_COUNT);
+  U("MI_BIN_HUGE", MI_BIN_HUGE);
+  U("MI_ARENA_SLICE_SIZE", MI_ARENA_SLICE_SIZE);
+  U("MI_ARENA_CHUNK_SIZE", MI_ARENA_CHUNK_SIZE);
+  U("MI_SMALL_PAGE_SIZE", MI_SMALL_PAGE_SIZE);
+  U("MI_MEDIUM_PAGE_SIZE", MI_MEDIUM_PAGE_SIZE);
+  U("MI_LARGE_PAGE_SIZE", MI_LARGE_PAGE_SIZE);
+  U("MI_SMALL_MAX_OBJ_SIZE", MI_SMALL_MAX_OBJ_SIZE);
+  U("MI_MEDIUM_MAX_OBJ_SIZE", MI_MEDIUM_MAX_OBJ_SIZE);
+  U("MI_LARGE_MAX_OBJ_SIZE", MI_LARGE_MAX_OBJ_SIZE);
+  U("MI_MAX_ARENAS", MI_MAX_ARENAS);
+
+  // `config.*` is the complete source-derived production-constant record
+  // for the frozen Rust profile.  Expressions intentionally use the pinned
+  // v3.5.0 macro names (or the exact unset-option-to-zero expression below),
+  // so this record remains a differential probe rather than a Python oracle.
+  U("config.WORD_SIZE", MI_SIZE_SIZE);
+  U("config.MAX_ALIGN_SIZE", MI_MAX_ALIGN_SIZE);
+  U("config.SECURE_LEVEL", MI_SECURE);
+  U("config.DEBUG_LEVEL", MI_DEBUG);
+  U("config.STAT_LEVEL", MI_STAT);
+  U("config.FREE_IS_CHECKED", (CRABC_MI_FREE_IS_CHECKED != 0));
+  U("config.FREE_USE_PAGEMAP", (CRABC_MI_FREE_USE_PAGEMAP != 0));
+  U("config.OPT_FREE_SMALL", (CRABC_MI_OPT_FREE_SMALL != 0));
+  U("config.ENABLE_LARGE_PAGES", (MI_ENABLE_LARGE_PAGES != 0));
+  U("config.ENCODE_FREELIST", (CRABC_MI_ENCODE_FREELIST != 0));
+  U("config.GUARDED", (CRABC_MI_GUARDED != 0));
+  U("config.OPT_SIMD", (CRABC_MI_OPT_SIMD != 0));
+  U("config.PADDING_SIZE", MI_PADDING_SIZE);
+  U("config.PADDING_WSIZE", MI_PADDING_WSIZE);
+  U("config.PAGE_KEY_COUNT", MI_PAGE_KEY_COUNT);
+  U("config.ARENA_SLICE_SHIFT", (13 + MI_SIZE_SHIFT));
+  U("config.BCHUNK_BITS_SHIFT", (6 + MI_SIZE_SHIFT));
+  U("config.BCHUNK_BITS", MI_BCHUNK_BITS);
+  U("config.ARENA_SLICE_SIZE", MI_ARENA_SLICE_SIZE);
+  U("config.ARENA_SLICE_ALIGN", MI_ARENA_SLICE_ALIGN);
+  U("config.ARENA_CHUNK_SIZE", MI_ARENA_CHUNK_SIZE);
+  U("config.ARENA_MIN_OBJ_SLICES", MI_ARENA_MIN_OBJ_SLICES);
+  U("config.ARENA_MAX_CHUNK_OBJ_SLICES", MI_ARENA_MAX_CHUNK_OBJ_SLICES);
+  U("config.ARENA_MIN_OBJ_SIZE", MI_ARENA_MIN_OBJ_SIZE);
+  U("config.ARENA_MAX_CHUNK_OBJ_SIZE", MI_ARENA_MAX_CHUNK_OBJ_SIZE);
+  U("config.SMALL_PAGE_SIZE", MI_SMALL_PAGE_SIZE);
+  U("config.MEDIUM_PAGE_SIZE", MI_MEDIUM_PAGE_SIZE);
+  U("config.LARGE_PAGE_SIZE", MI_LARGE_PAGE_SIZE);
+  U("config.BIN_HUGE", MI_BIN_HUGE);
+  U("config.BIN_FULL", MI_BIN_FULL);
+  U("config.BIN_COUNT", MI_BIN_COUNT);
+  U("config.MAX_ALLOC_SIZE", MI_MAX_ALLOC_SIZE);
+  U("config.PAGE_MIN_COMMIT_SIZE", MI_PAGE_MIN_COMMIT_SIZE);
+  U("config.PAGE_META_IS_SEPARATED", (MI_PAGE_META_IS_SEPARATED != 0));
+  U("config.PAGE_META_IS_ALIGNED", (CRABC_MI_PAGE_META_IS_ALIGNED != 0));
+  U("config.PAGE_META_ALIGNED_CHUNKS", CRABC_MI_PAGE_META_ALIGNED_CHUNKS);
+  U("config.PAGE_META_ALIGNED_COUNT", CRABC_MI_PAGE_META_ALIGNED_COUNT);
+  U("config.PAGE_META_ALIGNMENT", CRABC_MI_PAGE_META_ALIGNMENT);
+  U("config.ARENA_ALIGNMENT", MI_ARENA_ALIGNMENT);
+  U("config.PAGE_ALIGN", MI_PAGE_ALIGN);
+  U("config.PAGE_MIN_START_BLOCK_ALIGN", MI_PAGE_MIN_START_BLOCK_ALIGN);
+  U("config.PAGE_MAX_START_BLOCK_ALIGN2", MI_PAGE_MAX_START_BLOCK_ALIGN2);
+  U("config.PAGE_OSPAGE_BLOCK_ALIGN2", MI_PAGE_OSPAGE_BLOCK_ALIGN2);
+  U("config.PAGE_MAX_OVERALLOC_ALIGN", MI_PAGE_MAX_OVERALLOC_ALIGN);
+  U("config.SMALL_WSIZE_MAX", MI_SMALL_WSIZE_MAX);
+  U("config.SMALL_SIZE_MAX", MI_SMALL_SIZE_MAX);
+  U("config.SMALL_MAX_OBJ_SIZE", MI_SMALL_MAX_OBJ_SIZE);
+  U("config.MEDIUM_MAX_OBJ_SIZE", MI_MEDIUM_MAX_OBJ_SIZE);
+  U("config.LARGE_MAX_OBJ_SIZE", MI_LARGE_MAX_OBJ_SIZE);
+  U("config.LARGE_MAX_OBJ_WSIZE", MI_LARGE_MAX_OBJ_WSIZE);
+  U("config.MAX_SINGLETON_BIN", MI_MAX_SINGLETON_BIN);
+  U("config.PAGES_DIRECT", MI_PAGES_DIRECT);
+  U("config.MAX_ARENAS", MI_MAX_ARENAS);
+  U("config.ARENA_BIN_COUNT", MI_ARENA_BIN_COUNT);
+  U("config.BITMAP_MAX_BIT_COUNT", MI_BITMAP_MAX_BIT_COUNT);
+  U("config.ARENA_MIN_SIZE", MI_ARENA_MIN_SIZE);
+  U("config.ARENA_MAX_SIZE", MI_ARENA_MAX_SIZE);
+  U("config.MAX_VABITS", MI_MAX_VABITS);
+  U("config.MIN_VABITS", MI_MIN_VABITS);
+  U("config.PAGE_MAP_FLAT", (MI_PAGE_MAP_FLAT != 0));
+  U("config.PAGE_MAP_SUB_SHIFT", MI_PAGE_MAP_SUB_SHIFT);
+  U("config.PAGE_MAP_SUB_COUNT", MI_PAGE_MAP_SUB_COUNT);
+  U("config.PAGE_MAP_SHIFT", MI_PAGE_MAP_SHIFT);
+  for (size_t bin = 0; bin < MI_BIN_COUNT; bin++) {
+    const size_t boundary = _mi_theap_empty.pages[bin].block_size;
+    printf("bin.block_size.%zu=%zu\n", bin, boundary);
+    printf("bin.index.%zu.minus=%zu\n", bin, _mi_bin(boundary - 1));
+    printf("bin.index.%zu.at=%zu\n", bin, _mi_bin(boundary));
+    printf("bin.index.%zu.plus=%zu\n", bin, _mi_bin(boundary + 1));
+  }
+  return 0;
+}
+"""
+
+
+class HarnessError(RuntimeError):
+    """A reproducibility, source, or oracle-build contract failure."""
+
+
+class MilestoneUnavailable(HarnessError):
+    """A requested later milestone has no implementation yet."""
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def relative(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def write_json(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    temporary.replace(path)
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise HarnessError(f"invalid JSON contract: {path}") from error
+    if not isinstance(value, dict):
+        raise HarnessError(f"JSON contract is not an object: {path}")
+    return value
+
+
+def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
+    try:
+        with path.open("rb") as stream:
+            raw = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise HarnessError(f"invalid upstream pin file: {path}") from error
+    pin = raw.get("mimalloc")
+    if not isinstance(pin, dict):
+        raise HarnessError("compat/upstreams.toml requires a [mimalloc] table")
+    required = ("version", "repository", "tag", "source", "sha256", "tag_object", "revision", "archive_root")
+    normalized: dict[str, str] = {}
+    for key in required:
+        value = pin.get(key)
+        if not isinstance(value, str) or not value:
+            raise HarnessError(f"mimalloc.{key} must be a non-empty string")
+        normalized[key] = value
+    if normalized["version"] != "3.5.0":
+        raise HarnessError("Milestone 0 is fixed to mimalloc v3.5.0")
+    if normalized["repository"] != "https://github.com/microsoft/mimalloc.git" or normalized["tag"] != "v3.5.0":
+        raise HarnessError("Milestone 0 must verify the microsoft/mimalloc v3.5.0 annotated tag")
+    for key in ("sha256", "tag_object", "revision"):
+        expected_length = 64 if key == "sha256" else 40
+        if not re.fullmatch(rf"[0-9a-f]{{{expected_length}}}", normalized[key]):
+            raise HarnessError(f"mimalloc.{key} is not a lowercase hexadecimal identity")
+    if normalized["archive_root"] != "mimalloc-3.5.0":
+        raise HarnessError("mimalloc.archive_root must be mimalloc-3.5.0")
+    return normalized
+
+
+def archive_path(pin: Mapping[str, str]) -> Path:
+    return CACHE / f"mimalloc-{pin['version']}.tar.gz"
+
+
+def tag_attestation_path(pin: Mapping[str, str]) -> Path:
+    return CACHE / f"mimalloc-{pin['version']}.tag.json"
+
+
+def cached_tag_attestation(pin: Mapping[str, str]) -> dict[str, Any] | None:
+    path = tag_attestation_path(pin)
+    if not path.is_file():
+        return None
+    try:
+        value = read_json(path)
+    except HarnessError:
+        return None
+    expected = {
+        "format": 1,
+        "repository": pin["repository"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "revision": pin["revision"],
+    }
+    if value != expected:
+        return None
+    return value
+
+
+def verify_tag_identity(pin: Mapping[str, str], offline: bool) -> dict[str, Any]:
+    """Cache an exact annotated-tag/peeled-commit attestation beside the archive."""
+
+    cached = cached_tag_attestation(pin)
+    if cached is not None:
+        return cached
+    if offline:
+        raise HarnessError(
+            "verified mimalloc tag identity is absent from offline cache: "
+            f"{tag_attestation_path(pin)}"
+        )
+    git = require_tool("git")
+    ref = f"refs/tags/{pin['tag']}"
+    peeled = ref + "^{}"
+    record = command_record((git, "ls-remote", pin["repository"], ref, peeled), cwd=ROOT)
+    require_success(record, "mimalloc annotated tag identity probe")
+    identities: dict[str, str] = {}
+    for line in str(record["stdout"]).splitlines():
+        object_id, separator, name = line.partition("\t")
+        if separator and re.fullmatch(r"[0-9a-f]{40}", object_id):
+            identities[name] = object_id
+    if identities.get(ref) != pin["tag_object"] or identities.get(peeled) != pin["revision"]:
+        raise HarnessError(
+            "mimalloc v3.5.0 tag identity mismatch: "
+            f"expected tag {pin['tag_object']} peeled {pin['revision']}, "
+            f"observed tag {identities.get(ref)!r} peeled {identities.get(peeled)!r}"
+        )
+    attestation = {
+        "format": 1,
+        "repository": pin["repository"],
+        "tag": pin["tag"],
+        "tag_object": pin["tag_object"],
+        "revision": pin["revision"],
+    }
+    write_json(tag_attestation_path(pin), attestation)
+    return attestation
+
+
+def fetch_archive(pin: Mapping[str, str], offline: bool) -> Path:
+    """Return a locally cached archive only after validating its exact digest."""
+
+    archive = archive_path(pin)
+    expected = pin["sha256"]
+    if archive.is_file() and sha256_file(archive) == expected:
+        verify_tag_identity(pin, offline)
+        return archive
+    if archive.exists():
+        archive.unlink()
+    if offline:
+        raise HarnessError(f"verified mimalloc archive is absent from offline cache: {archive}")
+    CACHE.mkdir(parents=True, exist_ok=True)
+    partial = archive.with_name(f".{archive.name}.part")
+    try:
+        with urllib.request.urlopen(pin["source"], timeout=60) as response, partial.open("wb") as output:
+            shutil.copyfileobj(response, output)
+    except (OSError, urllib.error.URLError) as error:
+        partial.unlink(missing_ok=True)
+        raise HarnessError(f"failed to download pinned mimalloc archive: {error}") from error
+    observed = sha256_file(partial)
+    if observed != expected:
+        partial.unlink(missing_ok=True)
+        raise HarnessError(
+            "mimalloc archive SHA-256 mismatch: "
+            f"expected {expected}, observed {observed}"
+        )
+    partial.replace(archive)
+    verify_tag_identity(pin, offline=False)
+    return archive
+
+
+def safe_extract(archive: Path, destination: Path, archive_root: str) -> Path:
+    """Extract one archive root, rejecting links, devices, and path escapes."""
+
+    with tarfile.open(archive, "r:gz") as stream:
+        members = stream.getmembers()
+        prefix = f"{archive_root}/"
+        for member in members:
+            member_path = Path(member.name)
+            if (
+                (member.name != archive_root and not member.name.startswith(prefix))
+                or member_path.is_absolute()
+                or ".." in member_path.parts
+            ):
+                raise HarnessError(f"mimalloc archive member escapes expected root: {member.name}")
+            if member.issym() or member.islnk() or member.isdev():
+                raise HarnessError(f"mimalloc archive contains unsupported link/device member: {member.name}")
+        stream.extractall(destination, members, filter="data")
+    source = destination / archive_root
+    if not (source / "include/mimalloc.h").is_file() or not (source / "src/alloc.c").is_file():
+        raise HarnessError("mimalloc archive lacks required v3.5.0 source files")
+    return source
+
+
+def source_file_records(source: Path, paths: Iterable[str]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for name in sorted(paths):
+        path = source / name
+        if not path.is_file():
+            raise HarnessError(f"pinned source is missing expected file: {name}")
+        records.append({"path": name, "sha256": sha256_file(path), "bytes": path.stat().st_size})
+    return records
+
+
+def strip_comments(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    return re.sub(r"//[^\n]*", "", text)
+
+
+def without_preprocessor_directives(text: str) -> str:
+    """Drop complete preprocessor directives, including continued macro bodies."""
+
+    retained: list[str] = []
+    continued = False
+    for line in text.splitlines():
+        if continued:
+            continued = line.rstrip().endswith("\\")
+            continue
+        if line.lstrip().startswith("#"):
+            continued = line.rstrip().endswith("\\")
+            continue
+        retained.append(line)
+    return "\n".join(retained)
+
+
+def public_external_function_names(text: str) -> set[str]:
+    """Extract only `mi_decl_export` C declarations from a public header.
+
+    The old semicolon scanner accidentally treated calls in C++ template
+    bodies as functions.  In v3.5.0 all public, externally declared `mi_*`
+    functions have the declaration marker, while its seven header helpers are
+    explicitly `static inline`; use that source contract as the boundary.
+    """
+
+    stripped = without_preprocessor_directives(strip_comments(text))
+    return {
+        match.group(1)
+        for match in re.finditer(
+            r"\bmi_decl_export\b[^;{}]*?\b(mi_[A-Za-z0-9_]+)\s*\(", stripped
+        )
+    }
+
+
+def public_static_inline_names(text: str) -> set[str]:
+    """Extract header-only helpers that have bodies and no ELF symbol."""
+
+    stripped = without_preprocessor_directives(strip_comments(text))
+    return {
+        match.group(1)
+        for match in re.finditer(
+            r"\bstatic\s+inline\b[^;{}]*?\b(mi_[A-Za-z0-9_]+)\s*\(", stripped
+        )
+    }
+
+
+def public_cxx_template_names(text: str) -> set[str]:
+    """Return named public C++ template conveniences, never C functions."""
+
+    return {
+        match.group(1)
+        for match in re.finditer(
+            r"\btemplate\s*<[^>]*>\s*struct\s+(mi_[A-Za-z0-9_]+)\b", text
+        )
+    }
+
+
+def public_macro_names(text: str) -> set[str]:
+    return {
+        match.group(1)
+        for match in re.finditer(r"^\s*#\s*define\s+(mi_[A-Za-z0-9_]+)\b", text, re.MULTILINE)
+    }
+
+
+def override_macro_names(text: str) -> set[str]:
+    """Extract the opt-in source-rewrite macros, excluding its include guard."""
+
+    return {
+        match.group(1)
+        for match in re.finditer(r"^\s*#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\b", text, re.MULTILINE)
+        if match.group(1) != "MIMALLOC_OVERRIDE_H"
+    }
+
+
+def public_type_names(text: str) -> set[str]:
+    stripped = strip_comments(text)
+    names: set[str] = set()
+    # Complete struct/enum typedefs contain member semicolons, so statement
+    # splitting loses their trailing alias.  Match their braced definition as
+    # a unit, then separately handle forward declarations, opaque aliases, and
+    # callback function typedefs.
+    for match in re.finditer(
+        r"\btypedef\s+(?:struct|enum)\b.*?\}\s*(mi_[A-Za-z0-9_]+(?:_t|_fun))\s*;",
+        stripped,
+        re.DOTALL,
+    ):
+        names.add(match.group(1))
+    for match in re.finditer(r"\btypedef\b[^;{}]*;", stripped, re.DOTALL):
+        declaration = match.group(0)
+        callback = re.search(
+            r"\(\s*(?:mi_cdecl\s+)?(mi_[A-Za-z0-9_]+_fun)\s*\)\s*\(", declaration
+        )
+        if callback is not None:
+            names.add(callback.group(1))
+            continue
+        aliases = re.findall(r"\b(mi_[A-Za-z0-9_]+(?:_t|_fun))\b", declaration)
+        if aliases:
+            names.add(aliases[-1])
+    return names
+
+
+def public_option_names(text: str) -> set[str]:
+    """Extract exactly the `mi_option_e` enumerators, not option functions."""
+
+    stripped = strip_comments(text)
+    match = re.search(
+        r"\btypedef\s+enum\s+mi_option_e\s*\{(?P<body>.*?)\}\s*mi_option_t\s*;",
+        stripped,
+        re.DOTALL,
+    )
+    if match is None:
+        return set()
+    names: set[str] = set()
+    for entry in match.group("body").split(","):
+        enumerator = re.match(r"\s*(mi_option_[A-Za-z0-9_]+)\b", entry)
+        if enumerator is not None:
+            names.add(enumerator.group(1))
+    return names
+
+
+def macro_configuration_names(source: Path) -> set[str]:
+    names: set[str] = set()
+    for header in sorted((source / "include").rglob("*.h")):
+        text = header.read_text(encoding="utf-8", errors="replace")
+        names.update(
+            match.group(1)
+            for match in re.finditer(r"^\s*#\s*define\s+(MI_[A-Za-z0-9_]+)\b", text, re.MULTILINE)
+        )
+    return names
+
+
+def api_group(name: str) -> str:
+    if name.startswith("mi_theap_"):
+        return "theap"
+    if name.startswith("mi_heap_"):
+        return "heap"
+    if name.startswith("mi_arena_"):
+        return "arena"
+    if name.startswith("mi_subproc_"):
+        return "subprocess"
+    if name.startswith("mi_option_") or name.startswith("mi_options_"):
+        return "options"
+    if name.startswith("mi_stat") or name.startswith("mi_process_info"):
+        return "statistics-process-information"
+    if name.startswith("mi_register_"):
+        return "callbacks"
+    if name.startswith("mi_visit") or name.startswith("mi_manage"):
+        return "memory-visitation-management"
+    if name.startswith("mi_collect") or name.startswith("mi_thread_") or name.startswith("mi_process_"):
+        return "lifecycle-collection"
+    if "aligned" in name or name.startswith("mi_memalign") or name.startswith("mi_posix_memalign"):
+        return "aligned-allocation"
+    if name in {"mi_malloc", "mi_calloc", "mi_realloc", "mi_expand", "mi_free", "mi_strdup", "mi_strndup", "mi_realpath"}:
+        return "standard-allocation"
+    if name.startswith("mi_"):
+        return "extended-allocation"
+    return "source-convenience"
+
+
+def classify_api_item(name: str, kind: str) -> dict[str, Any]:
+    """Classify one pinned public-header item for this Linux/AArch64 port.
+
+    This is intentionally a closed, source-audited policy table rather than a
+    best-effort platform guess.  New header names fall into the conservative
+    required/source-only defaults and then fail the release-symbol cross-check
+    if they are external declarations without a reviewed symbol disposition.
+    """
+
+    classification = "required-platform-applicable"
+    reason = "Pinned v3.5.0 public API applicable to the Linux/AArch64 allocator engine."
+    profile = "linux-aarch64-release"
+    test_adapter_applicable = kind == "external-function"
+
+    if kind == "macro":
+        if name in CXX_DECLARATION_MACROS:
+            classification = "source-only-cxx-convenience"
+            reason = (
+                "C++-only mimalloc-new-delete.h declaration macro; it decorates "
+                "global operator new overloads and has no independent ELF symbol."
+            )
+            profile = "linux-aarch64-cxx-source"
+        else:
+            classification = "source-only-macro"
+            reason = "Preprocessor source convenience; it has no independent ELF symbol."
+            profile = "source-only"
+        test_adapter_applicable = False
+    elif kind == "override-macro":
+        classification = "source-only-macro"
+        reason = (
+            "Opt-in mimalloc-override.h source rewrite; it changes caller source "
+            "and has no independent allocator ELF symbol."
+        )
+        profile = "linux-aarch64-override"
+        test_adapter_applicable = False
+    elif kind == "static-inline":
+        classification = "source-only-inline"
+        reason = "Pinned header `static inline` helper; it has no independent ELF symbol."
+        profile = "source-only"
+        test_adapter_applicable = False
+    elif kind in {"cxx-template", "cxx-convenience"}:
+        classification = "source-only-cxx-convenience"
+        reason = "C++ source convenience, not a C function declaration or allocator ELF symbol."
+        profile = "linux-aarch64-cxx-source"
+        test_adapter_applicable = False
+    elif kind == "type":
+        reason = "Pinned public type declaration used by the Linux/AArch64 C API."
+        test_adapter_applicable = False
+    elif kind == "option":
+        test_adapter_applicable = False
+        if name in UNSUPPORTED_LINUX_AARCH64_OPTIONS:
+            classification = "unsupported-linux-aarch64"
+            reason = UNSUPPORTED_LINUX_AARCH64_OPTIONS[name]
+            profile = "not-applicable-linux-aarch64"
+        elif name in HEADER_DEPRECATED_OPTIONS:
+            classification = "deprecated"
+            reason = "Explicit `mi_option_deprecated_*` enumerator retained by the pinned v3.5.0 header."
+            profile = "linux-aarch64-deprecated"
+        elif name in LEGACY_OPTION_ALIASES:
+            classification = "deprecated"
+            reason = "Legacy option alias in the pinned v3.5.0 `mi_option_e` declaration."
+            profile = "linux-aarch64-legacy-option-alias"
+        elif name in GUARDED_MODE_OPTIONS:
+            classification = "optional-mode"
+            reason = "Guarded-allocation option; relevant only in the MI_GUARDED profile."
+            profile = "linux-aarch64-guarded"
+        elif name == "mi_option_arena_is_numa_local":
+            classification = "experimental"
+            reason = "Marked experimental by the pinned v3.5.0 option declaration."
+            profile = "linux-aarch64-experimental"
+    elif kind == "external-function":
+        if name in UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS:
+            classification = "unsupported-linux-aarch64"
+            reason = UNSUPPORTED_LINUX_AARCH64_EXTERNAL_REASONS[name]
+            profile = "not-applicable-linux-aarch64"
+            test_adapter_applicable = False
+        elif name in OVERRIDE_ONLY_EXTERNAL_DECLARATIONS:
+            classification = "override-only"
+            reason = NORMAL_RELEASE_SYMBOL_EXCEPTIONS[name]
+            profile = "linux-aarch64-override"
+            test_adapter_applicable = False
+        elif name in EXPERIMENTAL_EXTERNAL_FUNCTIONS:
+            classification = "experimental"
+            reason = "Marked experimental by the pinned v3.5.0 public header."
+            profile = "linux-aarch64-experimental"
+        elif name in DEPRECATED_EXTERNAL_FUNCTIONS:
+            classification = "deprecated"
+            reason = "Marked deprecated by the pinned v3.5.0 public header."
+            profile = "linux-aarch64-deprecated"
+        elif name in CXX_NEW_DELETE_EXTERNAL_FUNCTIONS:
+            classification = "optional-mode"
+            reason = "C++ new/delete integration function; applicable when the C++ adapter mode is enabled."
+            profile = "linux-aarch64-cxx-new-delete"
+
+    return {
+        "classification": classification,
+        "classification_reason": reason,
+        "profile": profile,
+        "test_adapter_applicable": test_adapter_applicable,
+    }
+
+
+def item_record(name: str, kind: str, headers: Sequence[str], tests: Sequence[str]) -> dict[str, Any]:
+    classification = classify_api_item(name, kind)
+    applicable_external = kind == "external-function" and classification["test_adapter_applicable"]
+    return {
+        "adapter_surface": "test-c-api-adapter-only" if applicable_external else "source-only",
+        **classification,
+        "crabc_libc_exported": False,
+        "differential_verified": False,
+        "exported": False,
+        "group": api_group(name) if kind in {"external-function", "option", "type"} else "source-convenience",
+        "headers": list(headers),
+        "implemented": False,
+        "intentional_difference": "",
+        "kind": kind,
+        "name": name,
+        "oracle_release_exported": (
+            kind == "external-function" and name not in NORMAL_RELEASE_SYMBOL_EXCEPTIONS
+        ),
+        "performance_qualified": False,
+        "stress_verified": False,
+        "test_references": list(tests),
+        "unit_verified": False,
+    }
+
+
+def test_sources(source: Path) -> list[Path]:
+    root = source / "test"
+    paths = [path for path in root.rglob("*") if path.is_file() and path.suffix in {".c", ".cc", ".cpp", ".h"}]
+    if not paths:
+        raise HarnessError("pinned mimalloc source has no upstream test sources")
+    return sorted(paths)
+
+
+def build_api_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]:
+    by_name: dict[tuple[str, str], set[str]] = {}
+    all_header_text: dict[str, str] = {}
+    for header in PUBLIC_HEADERS:
+        path = source / header
+        if not path.is_file():
+            raise HarnessError(f"pinned source has no public header: {header}")
+        text = path.read_text(encoding="utf-8", errors="replace")
+        all_header_text[header] = text
+        for name in public_external_function_names(text):
+            by_name.setdefault(("external-function", name), set()).add(header)
+        for name in public_static_inline_names(text):
+            by_name.setdefault(("static-inline", name), set()).add(header)
+        for name in public_cxx_template_names(text):
+            by_name.setdefault(("cxx-template", name), set()).add(header)
+        for name in public_macro_names(text):
+            by_name.setdefault(("macro", name), set()).add(header)
+        for name in public_type_names(text):
+            by_name.setdefault(("type", name), set()).add(header)
+        for name in public_option_names(text):
+            by_name.setdefault(("option", name), set()).add(header)
+
+    override_header = "include/mimalloc-override.h"
+    for name in override_macro_names(all_header_text[override_header]):
+        by_name.setdefault(("override-macro", name), set()).add(override_header)
+    by_name.setdefault(("cxx-convenience", "global-new-delete-overrides"), set()).add(
+        "include/mimalloc-new-delete.h"
+    )
+
+    test_text = {
+        path.relative_to(source).as_posix(): path.read_text(encoding="utf-8", errors="replace")
+        for path in test_sources(source)
+    }
+    items: list[dict[str, Any]] = []
+    for (kind, name), headers in sorted(by_name.items(), key=lambda pair: (pair[0][1], pair[0][0])):
+        references = sorted(name for name, text in test_text.items() if re.search(rf"\b{re.escape(name)}\b", text))
+        items.append(item_record(name, kind, sorted(headers), references))
+
+    config_names = sorted(macro_configuration_names(source))
+    return {
+        "archive_root": pin["archive_root"],
+        "format": 2,
+        "items": items,
+        "mimalloc_version": pin["version"],
+        "pinned_archive_sha256": pin["sha256"],
+        "pinned_revision": pin["revision"],
+        "public_headers": source_file_records(source, PUBLIC_HEADERS),
+        "resolved_configuration_macro_names": config_names,
+        "release_symbol_contract": {
+            "expected_defined_symbol_names": sorted(
+                item["name"]
+                for item in items
+                if item["kind"] == "external-function" and item["oracle_release_exported"]
+            ),
+            "header_declarations_without_normal_release_symbol": [
+                {
+                    "classification": item["classification"],
+                    "name": item["name"],
+                    "reason": item["classification_reason"],
+                }
+                for item in items
+                if item["kind"] == "external-function" and not item["oracle_release_exported"]
+            ],
+        },
+        "summary": {
+            "configuration_macro_count": len(config_names),
+            "cxx_convenience_count": sum(item["kind"] == "cxx-convenience" for item in items),
+            "cxx_template_count": sum(item["kind"] == "cxx-template" for item in items),
+            "external_function_count": sum(item["kind"] == "external-function" for item in items),
+            "macro_count": sum(item["kind"] == "macro" for item in items),
+            "option_count": sum(item["kind"] == "option" for item in items),
+            "override_macro_count": sum(item["kind"] == "override-macro" for item in items),
+            "source_only_count": sum(item["adapter_surface"] == "source-only" for item in items),
+            "source_only_macro_count": sum(item["kind"] in {"macro", "override-macro"} for item in items),
+            "static_inline_count": sum(item["kind"] == "static-inline" for item in items),
+            "total_item_count": len(items),
+            "type_count": sum(item["kind"] == "type" for item in items),
+        },
+    }
+
+
+def build_test_inventory(source: Path, pin: Mapping[str, str]) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for path in test_sources(source):
+        name = path.relative_to(source).as_posix()
+        kind = "test-source" if path.suffix in {".c", ".cc", ".cpp"} else "test-support"
+        items.append(
+            {
+                "blocked_by": "Milestone 4: Rust test C API adapter and fundamental allocation API are not implemented.",
+                "kind": kind,
+                "path": name,
+                "sha256": sha256_file(path),
+                "status": "blocked-milestone-4",
+            }
+        )
+    return {
+        "format": 1,
+        "mimalloc_version": pin["version"],
+        "pinned_archive_sha256": pin["sha256"],
+        "tests": items,
+        "summary": {
+            "blocked_milestone_4_count": sum(item["kind"] == "test-source" for item in items),
+            "test_source_count": sum(item["kind"] == "test-source" for item in items),
+            "test_support_file_count": sum(item["kind"] == "test-support" for item in items),
+            "total_inventory_file_count": len(items),
+        },
+    }
+
+
+def generated_contracts(source: Path, pin: Mapping[str, str]) -> dict[Path, dict[str, Any]]:
+    return {API_CONTRACT: build_api_inventory(source, pin), UPSTREAM_TEST_CONTRACT: build_test_inventory(source, pin)}
+
+
+def write_contracts(contracts: Mapping[Path, Mapping[str, Any]]) -> None:
+    for path, payload in contracts.items():
+        write_json(path, payload)
+
+
+def check_contracts(contracts: Mapping[Path, Mapping[str, Any]]) -> None:
+    for path, generated in contracts.items():
+        if not path.is_file():
+            raise HarnessError(f"generated contract is absent: {path}; run --generate-contracts")
+        checked_in = read_json(path)
+        if checked_in != generated:
+            raise HarnessError(
+                f"generated contract is stale: {path}; run compat/allocator/run.py --generate-contracts and review the diff"
+            )
+
+
+def load_port_map(path: Path = PORT_MAP) -> dict[str, Any]:
+    try:
+        with path.open("rb") as stream:
+            raw = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        raise HarnessError(f"invalid port map: {path}") from error
+    metadata = raw.get("metadata")
+    units = raw.get("unit")
+    items = raw.get("item", [])
+    if not isinstance(metadata, dict) or metadata.get("format") != 1:
+        raise HarnessError("port map requires [metadata] format = 1")
+    if not isinstance(units, list):
+        raise HarnessError("port map requires [[unit]] records")
+    if not isinstance(items, list):
+        raise HarnessError("port map item records must be [[item]] tables")
+    observed: set[str] = set()
+    for index, unit in enumerate(units):
+        if not isinstance(unit, dict):
+            raise HarnessError(f"port map unit {index} is not a table")
+        upstream = unit.get("upstream")
+        if not isinstance(upstream, str) or not upstream:
+            raise HarnessError(f"port map unit {index} has no upstream path")
+        if upstream in observed:
+            raise HarnessError(f"port map duplicates upstream path: {upstream}")
+        observed.add(upstream)
+        for key in ("source_region", "rust_module", "rust_item", "intentional_difference"):
+            if not isinstance(unit.get(key), str):
+                raise HarnessError(f"port map unit {upstream} has invalid {key}")
+        tests = unit.get("tests")
+        if not isinstance(tests, list) or not all(isinstance(test, str) for test in tests):
+            raise HarnessError(f"port map unit {upstream} has invalid tests")
+        for flag in STATUS_FIELDS:
+            if not isinstance(unit.get(flag), bool):
+                raise HarnessError(f"port map unit {upstream} has non-boolean {flag}")
+    required = set(REQUIRED_PORT_UNITS)
+    missing = sorted(required - observed)
+    unexpected = sorted(observed - required)
+    if missing or unexpected:
+        detail = []
+        if missing:
+            detail.append("missing: " + ", ".join(missing))
+        if unexpected:
+            detail.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError("port map source coverage changed (" + "; ".join(detail) + ")")
+    observed_items: set[tuple[str, str]] = set()
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise HarnessError(f"port map item {index} is not a table")
+        upstream = item.get("upstream")
+        name = item.get("name")
+        if not isinstance(upstream, str) or upstream not in required:
+            raise HarnessError(f"port map item {index} has an unknown upstream path")
+        if not isinstance(name, str) or not name:
+            raise HarnessError(f"port map item {index} has no source symbol")
+        key = (upstream, name)
+        if key in observed_items:
+            raise HarnessError(f"port map duplicates source symbol: {upstream}:{name}")
+        observed_items.add(key)
+        for key_name in ("source_region", "rust_module", "rust_item", "intentional_difference"):
+            if not isinstance(item.get(key_name), str):
+                raise HarnessError(f"port map item {upstream}:{name} has invalid {key_name}")
+        tests = item.get("tests")
+        if not isinstance(tests, list) or not all(isinstance(test, str) for test in tests):
+            raise HarnessError(f"port map item {upstream}:{name} has invalid tests")
+        for flag in STATUS_FIELDS:
+            if not isinstance(item.get(flag), bool):
+                raise HarnessError(f"port map item {upstream}:{name} has non-boolean {flag}")
+    return raw
+
+
+def port_map_counts(port_map: Mapping[str, Any]) -> dict[str, int]:
+    units = port_map["unit"]
+    items = port_map.get("item", [])
+    assert isinstance(units, list)
+    assert isinstance(items, list)
+    records = [*units, *items]
+    counts = {"item_count": len(items), "unit_count": len(units)}
+    for field in STATUS_FIELDS:
+        counts[field] = sum(bool(record[field]) for record in records)
+    return counts
+
+
+def port_map_true_statuses(port_map: Mapping[str, Any]) -> dict[str, list[str]]:
+    statuses: dict[str, list[str]] = {}
+    for unit in port_map["unit"]:
+        key = f"unit:{unit['upstream']}"
+        statuses[key] = [field for field in STATUS_FIELDS if unit[field]]
+    for item in port_map.get("item", []):
+        key = f"item:{item['upstream']}:{item['name']}"
+        statuses[key] = [field for field in STATUS_FIELDS if item[field]]
+    return dict(sorted(statuses.items()))
+
+
+def ratchet_status_regressions(
+    baseline: Mapping[str, Any], current: Mapping[str, Any]
+) -> list[str]:
+    baseline_statuses = baseline.get("port_map_true_statuses")
+    current_statuses = current.get("port_map_true_statuses")
+    if not isinstance(baseline_statuses, dict) or not isinstance(current_statuses, dict):
+        return ["port_map_true_statuses:missing"]
+    regressions: list[str] = []
+    for record, old_fields in baseline_statuses.items():
+        if not isinstance(record, str) or not isinstance(old_fields, list):
+            return ["port_map_true_statuses:invalid"]
+        new_fields = current_statuses.get(record, [])
+        if not isinstance(new_fields, list):
+            new_fields = []
+        for field in old_fields:
+            if field not in new_fields:
+                regressions.append(f"{record}:{field}")
+    return sorted(regressions)
+
+
+def ratchet_measurement_regressions(
+    baseline: Mapping[str, Any], current: Mapping[str, Any]
+) -> list[str]:
+    """Find monotonic inventory/count regressions before replacing a baseline."""
+
+    regressions: list[str] = []
+    for key in (
+        "api_total_item_count",
+        "configuration_profile_count",
+        "upstream_test_source_count",
+        "upstream_test_inventory_file_count",
+    ):
+        old_value = baseline.get(key)
+        new_value = current.get(key)
+        if type(old_value) is not int or type(new_value) is not int or new_value < old_value:
+            regressions.append(key)
+
+    old_counts = baseline.get("port_map_counts")
+    new_counts = current.get("port_map_counts")
+    if not isinstance(old_counts, dict) or not isinstance(new_counts, dict):
+        regressions.append("port_map_counts")
+    else:
+        for key, old_value in old_counts.items():
+            new_value = new_counts.get(key)
+            if type(old_value) is not int or type(new_value) is not int or new_value < old_value:
+                regressions.append(f"port_map_counts.{key}")
+    return sorted(regressions)
+
+
+def file_digest(path: Path) -> str:
+    if not path.is_file():
+        raise HarnessError(f"ratchet input is absent: {path}")
+    return sha256_file(path)
+
+
+def ratchet_payload(port_map: Mapping[str, Any]) -> dict[str, Any]:
+    api = read_json(API_CONTRACT)
+    tests = read_json(UPSTREAM_TEST_CONTRACT)
+    return {
+        "api_contract_sha256": file_digest(API_CONTRACT),
+        "api_total_item_count": api["summary"]["total_item_count"],
+        "configuration_profile_count": len(CONFIGURATION_PROFILES),
+        "format": 1,
+        "port_map_counts": port_map_counts(port_map),
+        "port_map_sha256": file_digest(PORT_MAP),
+        "port_map_true_statuses": port_map_true_statuses(port_map),
+        "upstream_test_contract_sha256": file_digest(UPSTREAM_TEST_CONTRACT),
+        "upstream_test_source_count": tests["summary"]["test_source_count"],
+        "upstream_test_inventory_file_count": tests["summary"]["total_inventory_file_count"],
+    }
+
+
+def snapshot_ratchet(port_map: Mapping[str, Any]) -> None:
+    current = ratchet_payload(port_map)
+    if RATCHET.is_file():
+        baseline = read_json(RATCHET)
+        status_regressions = ratchet_status_regressions(baseline, current)
+        if status_regressions == ["port_map_true_statuses:missing"]:
+            status_regressions = []
+        regressions = [
+            *ratchet_measurement_regressions(baseline, current),
+            *status_regressions,
+        ]
+        if regressions:
+            raise HarnessError(
+                "allocator ratchet regressed: " + ", ".join(sorted(regressions))
+            )
+    write_json(RATCHET, current)
+
+
+def check_ratchet(port_map: Mapping[str, Any]) -> None:
+    if not RATCHET.is_file():
+        raise HarnessError(f"allocator ratchet is absent: {RATCHET}; run --snapshot-ratchet")
+    baseline = read_json(RATCHET)
+    if baseline.get("format") != 1:
+        raise HarnessError("unsupported allocator ratchet format")
+    current = ratchet_payload(port_map)
+    regressions = [
+        *ratchet_measurement_regressions(baseline, current),
+        *ratchet_status_regressions(baseline, current),
+    ]
+    if regressions:
+        raise HarnessError(
+            "allocator port-map true status regressed or lacks an itemized baseline: "
+            + ", ".join(regressions)
+        )
+    for key in ("api_contract_sha256", "port_map_sha256", "upstream_test_contract_sha256"):
+        if current[key] != baseline.get(key):
+            raise HarnessError(f"allocator ratchet input changed: {key}; snapshot and review explicitly")
+
+
+def require_native_aarch64() -> None:
+    if platform.system() != "Linux" or platform.machine() != "aarch64":
+        raise HarnessError("allocator C oracle requires the pinned native Linux/AArch64 development image")
+
+
+def require_tool(name: str) -> str:
+    resolved = shutil.which(name)
+    if resolved is None:
+        raise HarnessError(f"required oracle tool is unavailable: {name}")
+    return resolved
+
+
+def command_record(command: Sequence[str], *, cwd: Path, input_text: str | None = None) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            list(command),
+            cwd=cwd,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise HarnessError(f"failed to execute oracle command {' '.join(command)}: {error}") from error
+    return {
+        "command": list(command),
+        "status": completed.returncode,
+        "stderr": completed.stderr,
+        "stdout": completed.stdout,
+    }
+
+
+def require_success(record: Mapping[str, Any], description: str) -> None:
+    if record["status"] != 0:
+        stderr = str(record["stderr"]).strip()
+        raise HarnessError(f"{description} failed ({record['status']}): {stderr}")
+
+
+def artifact_record(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise HarnessError(f"oracle artifact is absent: {path}")
+    return {"bytes": path.stat().st_size, "path": relative(path), "sha256": sha256_file(path)}
+
+
+def parse_macros(output: str) -> dict[str, str]:
+    macros: dict[str, str] = {}
+    for line in output.splitlines():
+        match = re.fullmatch(r"#define\s+(MI_[A-Za-z0-9_]+)(?:\s+(.*))?", line)
+        if match:
+            macros[match.group(1)] = (match.group(2) or "").strip()
+    return dict(sorted(macros.items()))
+
+
+def parse_layout(output: str) -> dict[str, int]:
+    values: dict[str, int] = {}
+    for line in output.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or not key or not value.isdecimal():
+            raise HarnessError(f"unparseable C layout probe output: {line!r}")
+        if key in values:
+            raise HarnessError(f"duplicate layout probe key: {key}")
+        values[key] = int(value)
+    if not values:
+        raise HarnessError("C layout probe produced no values")
+    return dict(sorted(values.items()))
+
+
+def parse_rust_layout(output: str) -> dict[str, int]:
+    """Parse the marked machine record from a noisy `cargo test --nocapture`."""
+
+    begin = "CRABC_MI_LAYOUT_BEGIN"
+    end = "CRABC_MI_LAYOUT_END"
+    if output.count(begin) != 1 or output.count(end) != 1:
+        raise HarnessError("Rust layout probe did not emit exactly one pair of layout markers")
+    start = output.index(begin) + len(begin)
+    stop = output.index(end)
+    if stop <= start:
+        raise HarnessError("Rust layout probe emitted reversed layout markers")
+    return parse_layout(output[start:stop].strip())
+
+
+def parse_rust_test_count(output: str) -> int:
+    matches = re.findall(
+        r"^test result: ok\. ([0-9]+) passed; 0 failed; [0-9]+ ignored; [0-9]+ measured; [0-9]+ filtered out;",
+        output,
+        flags=re.MULTILINE,
+    )
+    if len(matches) != 1:
+        raise HarnessError("Rust allocator test summary is absent or ambiguous")
+    return int(matches[0])
+
+
+def compare_configuration_layout(
+    c_layout: Mapping[str, int], rust_layout: Mapping[str, int]
+) -> int:
+    """Require the C and Rust probes to record the same config constants."""
+
+    c_keys = {key for key in c_layout if key.startswith("config.")}
+    rust_keys = {key for key in rust_layout if key.startswith("config.")}
+    missing_from_c = sorted(rust_keys - c_keys)
+    missing_from_rust = sorted(c_keys - rust_keys)
+    if missing_from_c or missing_from_rust:
+        problems: list[str] = []
+        if missing_from_c:
+            problems.append("configuration records missing from C: " + ", ".join(missing_from_c))
+        if missing_from_rust:
+            problems.append("configuration records missing from Rust: " + ", ".join(missing_from_rust))
+        raise HarnessError("C/Rust configuration record sets differ: " + "; ".join(problems))
+    return len(rust_keys)
+
+
+def compare_rust_layout(c_layout: Mapping[str, int], rust_layout: Mapping[str, int]) -> dict[str, Any]:
+    """Require every Rust-owned layout value to equal the pinned release C oracle."""
+
+    compare_configuration_layout(c_layout, rust_layout)
+    missing = sorted(set(rust_layout).difference(c_layout))
+    mismatches = [
+        f"{key} (C={c_layout[key]}, Rust={rust_layout[key]})"
+        for key in sorted(rust_layout)
+        if key in c_layout and c_layout[key] != rust_layout[key]
+    ]
+    problems: list[str] = []
+    if missing:
+        problems.append("missing from C oracle: " + ", ".join(missing))
+    if mismatches:
+        problems.append("value mismatches: " + ", ".join(mismatches))
+    if problems:
+        raise HarnessError("Rust allocator layout differs from pinned release C: " + "; ".join(problems))
+    return {"compared_value_count": len(rust_layout), "status": "matched"}
+
+
+def dynamic_symbols(readelf: str, artifact: Path) -> list[str]:
+    record = command_record((readelf, "--wide", "--dyn-syms", str(artifact)), cwd=ROOT)
+    require_success(record, "dynamic symbol inventory")
+    symbols: list[str] = []
+    for line in str(record["stdout"]).splitlines():
+        fields = line.split()
+        if len(fields) < 8 or not fields[0].rstrip(":").isdigit():
+            continue
+        name = fields[-1].split("@", 1)[0]
+        binding = fields[4]
+        visibility = fields[5]
+        section = fields[6]
+        if name.startswith("mi_") and binding in {"GLOBAL", "WEAK"} and visibility == "DEFAULT" and section != "UND":
+            symbols.append(name)
+    return sorted(set(symbols))
+
+
+def validate_release_symbol_contract(
+    api_contract: Mapping[str, Any], symbols: Sequence[str]
+) -> dict[str, int]:
+    """Prove normal-release `mi_*` exports match the checked-in header audit."""
+
+    raw_items = api_contract.get("items")
+    raw_contract = api_contract.get("release_symbol_contract")
+    if not isinstance(raw_items, list) or not isinstance(raw_contract, dict):
+        raise HarnessError("API contract lacks a release-symbol classification")
+    external_items = [
+        item
+        for item in raw_items
+        if isinstance(item, dict) and item.get("kind") == "external-function"
+    ]
+    external_names = {item.get("name") for item in external_items}
+    if not all(isinstance(name, str) and name for name in external_names):
+        raise HarnessError("API contract has an invalid external-function name")
+    expected_raw = raw_contract.get("expected_defined_symbol_names")
+    exceptions_raw = raw_contract.get("header_declarations_without_normal_release_symbol")
+    if not isinstance(expected_raw, list) or not all(isinstance(name, str) for name in expected_raw):
+        raise HarnessError("API contract has invalid expected release symbols")
+    if not isinstance(exceptions_raw, list):
+        raise HarnessError("API contract has invalid release-symbol exceptions")
+    exception_names: set[str] = set()
+    for exception in exceptions_raw:
+        if not isinstance(exception, dict):
+            raise HarnessError("API contract has an invalid release-symbol exception")
+        name = exception.get("name")
+        if not isinstance(name, str) or not name:
+            raise HarnessError("API contract has an unnamed release-symbol exception")
+        exception_names.add(name)
+    expected = set(expected_raw)
+    if len(expected) != len(expected_raw) or len(exception_names) != len(exceptions_raw):
+        raise HarnessError("API contract duplicates a release-symbol classification")
+    if expected & exception_names or expected | exception_names != external_names:
+        raise HarnessError(
+            "API contract has unclassified external declarations in the release-symbol contract"
+        )
+    actual = set(symbols)
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    if missing or unexpected:
+        parts: list[str] = []
+        if missing:
+            parts.append("missing defined symbols: " + ", ".join(missing))
+        if unexpected:
+            parts.append("unclassified defined symbols: " + ", ".join(unexpected))
+        raise HarnessError("normal-release API/symbol contract mismatch (" + "; ".join(parts) + ")")
+    return {
+        "declared_external_function_count": len(external_names),
+        "defined_export_count": len(actual),
+    }
+
+
+def profile_command(compiler: str, source: Path, artifact: Path, profile_flags: Sequence[str]) -> list[str]:
+    return [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-fvisibility=hidden",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        *profile_flags,
+        "-I",
+        str(source / "include"),
+        "-shared",
+        "-Wl,-soname," + artifact.name,
+        "-pthread",
+        "-o",
+        str(artifact),
+        *(str(source / item) for item in ORACLE_SOURCES),
+    ]
+
+
+def compiler_version(compiler: str, source: Path) -> str:
+    record = command_record((compiler, "--version"), cwd=source)
+    require_success(record, "compiler version probe")
+    return str(record["stdout"]).splitlines()[0]
+
+
+def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: Sequence[str]) -> dict[str, Any]:
+    profile_dir = REPORT_ROOT / "oracle" / name
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    artifact = profile_dir / "libmimalloc.so"
+    command = profile_command(compiler, source, artifact, flags)
+    build = command_record(command, cwd=source)
+    require_success(build, f"pinned C oracle {name} build")
+    probe_source = profile_dir / "layout-probe.c"
+    probe_binary = profile_dir / "layout-probe"
+    probe_source.write_text(LAYOUT_PROBE, encoding="utf-8")
+    probe_command = [
+        compiler,
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        "-I",
+        str(source / "include"),
+        "-I",
+        str(source / "src"),
+        *flags,
+        str(probe_source),
+        *(str(source / item) for item in ORACLE_SOURCES),
+        "-pthread",
+        "-o",
+        str(probe_binary),
+    ]
+    probe_build = command_record(probe_command, cwd=source)
+    require_success(probe_build, f"pinned C layout probe {name} build")
+    probe_run = command_record((str(probe_binary),), cwd=source)
+    require_success(probe_run, f"pinned C layout probe {name} execution")
+    macro_probe = command_record(
+        [compiler, "-std=c11", "-dM", "-E", "-I", str(source / "include"), *flags, "-"],
+        cwd=source,
+        input_text="#include <mimalloc/types.h>\n",
+    )
+    require_success(macro_probe, f"pinned C preprocessor probe {name}")
+    header = command_record((readelf, "-h", str(artifact)), cwd=source)
+    require_success(header, f"pinned C ELF header probe {name}")
+    header_text = str(header["stdout"])
+    if "AArch64" not in header_text or "little endian" not in header_text:
+        raise HarnessError(f"C oracle artifact is not little-endian AArch64: {artifact}")
+    return {
+        "artifact": artifact_record(artifact),
+        "build": {"command": command, "stderr": build["stderr"]},
+        "configuration_macros": parse_macros(str(macro_probe["stdout"])),
+        "flags": list(flags),
+        "layout": parse_layout(str(probe_run["stdout"])),
+        "profile": name,
+        "symbols": dynamic_symbols(readelf, artifact),
+    }
+
+
+def rust_layout_probe(c_release_layout: Mapping[str, int]) -> dict[str, Any]:
+    command = [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--lib",
+        "--",
+        "--nocapture",
+    ]
+    record = command_record(command, cwd=ROOT)
+    require_success(record, "Rust allocator layout probe")
+    output = str(record["stdout"]) + "\n" + str(record["stderr"])
+    rust_layout = parse_rust_layout(output)
+    comparison = compare_rust_layout(c_release_layout, rust_layout)
+    return {
+        "command": command,
+        "comparison": comparison,
+        "layout": rust_layout,
+        "passed_test_count": parse_rust_test_count(output),
+    }
+
+
+def integration_provenance() -> dict[str, str]:
+    return {
+        "crate": "libmimalloc-sys",
+        "crate_version": "0.1.49",
+        "bundled_mimalloc_version": "3.3.2",
+        "role": "current crabc C integration only; never an allocator oracle",
+    }
+
+
+def milestone0_report(pin: Mapping[str, str], archive: Path, source: Path, profiles: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "c_oracle": {
+            "build_strategy": "direct compilation of the pinned CMake mi_sources list; the pinned development image intentionally does not contain CMake",
+            "compiler": compiler_version("musl-gcc", source),
+            "profiles": profiles,
+            "source_files": source_file_records(source, ORACLE_SOURCES),
+        },
+        "current_integration_provenance": integration_provenance(),
+        "format": 1,
+        "oracle": {
+            "archive": artifact_record(archive),
+            "archive_root": pin["archive_root"],
+            "revision": pin["revision"],
+            "sha256": pin["sha256"],
+            "source": pin["source"],
+            "tag_object": pin["tag_object"],
+            "tag_verified": cached_tag_attestation(pin),
+            "version": pin["version"],
+        },
+        "target": {"architecture": platform.machine(), "system": platform.system()},
+    }
+
+
+def run_milestone0(*, offline: bool, generate_contracts: bool, check_only: bool) -> dict[str, Any]:
+    pin = load_pin()
+    archive = fetch_archive(pin, offline)
+    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        contracts = generated_contracts(source, pin)
+        if generate_contracts:
+            write_contracts(contracts)
+        else:
+            check_contracts(contracts)
+        port_map = load_port_map()
+        check_ratchet(port_map)
+        if check_only:
+            return {
+                "contracts": {relative(path): payload["summary"] for path, payload in contracts.items()},
+                "port_map": port_map_counts(port_map),
+                "status": "checked",
+            }
+        require_native_aarch64()
+        compiler = require_tool("musl-gcc")
+        readelf = require_tool("readelf")
+        profiles = {
+            name: build_profile(compiler, readelf, source, name, flags)
+            for name, flags in CONFIGURATION_PROFILES.items()
+        }
+        release_symbol_contract = validate_release_symbol_contract(
+            contracts[API_CONTRACT], profiles["release"]["symbols"]
+        )
+        rust_layout = rust_layout_probe(profiles["release"]["layout"])
+        report = milestone0_report(pin, archive, source, profiles)
+        report["contracts"] = {relative(path): payload["summary"] for path, payload in contracts.items()}
+        report["port_map"] = port_map_counts(port_map)
+        report["release_symbol_contract"] = release_symbol_contract
+        report["rust_release_layout"] = rust_layout
+        write_json(REPORT_ROOT / "latest.json", report)
+        return report
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--quick", action="store_true", help="run the Milestone 0 C oracle and deterministic contract gate")
+    mode.add_argument("--full", action="store_true", help="attempt the later full allocator gate")
+    perf = parser.add_mutually_exclusive_group()
+    perf.add_argument("--perf-smoke", action="store_true", help="attempt the later allocator performance smoke gate")
+    perf.add_argument("--perf-full", action="store_true", help="attempt the later allocator performance full gate")
+    parser.add_argument("--offline", action="store_true", help="require the verified source archive to already be cached")
+    parser.add_argument("--generate-contracts", action="store_true", help="write deterministic checked-in API and upstream-test contracts")
+    parser.add_argument("--snapshot-ratchet", action="store_true", help="write the reviewed allocator ratchet after contracts are current")
+    parser.add_argument("--check", action="store_true", help="check contracts, source map, and ratchets without compiling C")
+    arguments = parser.parse_args()
+    if not any((arguments.quick, arguments.full, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
+        parser.error("choose --quick, --full, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
+    if arguments.generate_contracts or arguments.snapshot_ratchet:
+        if arguments.quick or arguments.full or arguments.perf_smoke or arguments.perf_full:
+            parser.error("contract generation/snapshot cannot be combined with a gate mode")
+    return arguments
+
+
+def main() -> int:
+    arguments = parse_arguments()
+    try:
+        if arguments.generate_contracts:
+            pin = load_pin()
+            archive = fetch_archive(pin, arguments.offline)
+            with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
+                source = safe_extract(archive, Path(temporary), pin["archive_root"])
+                contracts = generated_contracts(source, pin)
+                write_contracts(contracts)
+                print("\n".join(str(path) for path in contracts))
+            return 0
+        if arguments.snapshot_ratchet:
+            port_map = load_port_map()
+            snapshot_ratchet(port_map)
+            print(RATCHET)
+            return 0
+        if arguments.check:
+            result = run_milestone0(offline=arguments.offline, generate_contracts=False, check_only=True)
+            print(json.dumps(result, sort_keys=True))
+            return 0
+        run_milestone0(offline=arguments.offline, generate_contracts=False, check_only=False)
+        if arguments.full:
+            raise MilestoneUnavailable(
+                "allocator --full is unavailable at Milestone 0: Milestone 4 must provide the Rust test C API adapter and fundamental allocation API before upstream tests, traces, stress, backend matrix, fork/TLS, and corpus lanes can run."
+            )
+        if arguments.perf_smoke or arguments.perf_full:
+            raise MilestoneUnavailable(
+                "allocator performance is unavailable at Milestone 0: Milestone 9 requires both C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; no Rust operation is implemented or benchmarked."
+            )
+        print(REPORT_ROOT / "latest.json")
+        return 0
+    except MilestoneUnavailable as error:
+        print(f"UNMET MILESTONE: {error}", file=sys.stderr)
+        return 3
+    except (HarnessError, OSError, tarfile.TarError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
