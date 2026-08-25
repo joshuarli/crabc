@@ -172,7 +172,22 @@ def reject_forbidden_tls_forms(text: str) -> None:
         raise VerificationError(f"forbidden dynamic TLS access forms are present: {present}")
 
 
+def require_native_x86_execution_provenance() -> None:
+    # Guest `uname` cannot distinguish Docker's native amd64 execution from
+    # QEMU emulation. The canonical dispatcher carries its host observation
+    # into the container; require that evidence before writing a report that
+    # calls this x86-64 codegen result native.
+    execution_mode = os.environ.get("CRABC_EXECUTION_MODE")
+    host_arch = os.environ.get("CRABC_HOST_ARCH")
+    if execution_mode != "native" or host_arch not in {"x86_64", "amd64"}:
+        raise VerificationError(
+            "TLS codegen evidence requires canonical native x86-64 provenance "
+            "(CRABC_EXECUTION_MODE=native and CRABC_HOST_ARCH=x86_64)"
+        )
+
+
 def require_native_x86_host(rustc: str) -> str:
+    require_native_x86_execution_provenance()
     machine = platform.machine().lower()
     if machine not in {"x86_64", "amd64"}:
         raise VerificationError(
@@ -187,6 +202,7 @@ def require_native_x86_host(rustc: str) -> str:
 
 
 def main() -> int:
+    require_native_x86_execution_provenance()
     cargo = require_tool("cargo")
     rustc = require_tool("rustc")
     ar = require_tool("ar")
