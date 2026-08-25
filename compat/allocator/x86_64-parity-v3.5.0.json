@@ -49,6 +49,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, runs seven named private Rust lifecycle/concurrency lanes with 11 selected tests, including five finite Loom head-protocol models. It is not general process/thread lifecycle, client routing, abandonment/adoption, pthread callback, fault-injection, or whole-allocator stress evidence.",
+      "command": "./scripts/dev-amd64.sh allocator-lifecycle",
+      "id": "native-bounded-lifecycle-concurrency",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/lifecycle-concurrency.json",
+      "state": "available"
+    },
+    {
       "claim": "Exercises the allocator engine's selected x86-64 configuration, including its one 4 KiB base-page profile.",
       "command": "./scripts/dev-amd64.sh cargo test -p crabc-mimalloc --lib --quiet",
       "id": "native-allocator-unit",
@@ -132,7 +140,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "General remote-free routing, process/thread teardown, abandonment/adoption lifecycle, and pthread stress remain incomplete allocator work.",
+      "reason": "Seven bounded private Rust lanes (11 tests, including five finite Loom models) are recorded, but general remote-free routing, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault injection, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

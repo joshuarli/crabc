@@ -473,9 +473,10 @@ contracts, reports, and status.
 - [ ] Close the source-applicable engine behavior holes identified by that
   ledger, map each source unit to Rust, record every intentional difference,
   and add native pinned-C differential evidence for each completed behavior.
-- [ ] Add native lifecycle and concurrency evidence: init/done, remote free,
-  abandonment/adoption, pthread/TLS/fork, fault/misuse isolation, remaining
-  upstream tests, Loom, and stress.
+- [ ] Broaden the seven bounded native lifecycle/concurrency lanes (11 selected
+  tests, including five finite Loom models) into init/done, general remote
+  free, abandonment/adoption, pthread/TLS/fork, fault/misuse isolation,
+  remaining upstream tests, and stress evidence.
 - [ ] Broaden the bounded native private-adapter C/Rust timing and post-init
   memory measurements into qualified whole-engine performance evidence.
 
