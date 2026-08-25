@@ -1157,7 +1157,12 @@ mod tests {
         for bytes in [16 * 1024, 64 * 1024] {
             assert_eq!(PageSize::new(bytes).unwrap().bytes(), bytes);
         }
-        #[cfg(target_arch = "x86_64")]
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_startup_page_size_accepts_only_the_four_kib_profile() {
+        assert_eq!(PageSize::new(4 * 1024).unwrap().bytes(), 4 * 1024);
         for bytes in [16 * 1024, 64 * 1024] {
             assert!(PageSize::new(bytes).is_none());
         }

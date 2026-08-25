@@ -95,6 +95,13 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             facts["thread-pointer-identity"]["value"], target["tls_identity"]
         )
+        self.assertNotIn(
+            "aarch64", facts["base-page-size-bytes"]["rust_source"]["required_text"]
+        )
+        self.assertEqual(
+            facts["base-page-size-bytes"]["upstream_source"],
+            "src/prim/unix/prim.c: native Linux x86-64 base-page observation",
+        )
 
     def test_source_anchors_preserve_each_recorded_target_fact(self) -> None:
         for fact in self.contract["facts"]:
@@ -125,6 +132,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-direct-rust-c-differential",
                 "native-normal-engine-build-boundary",
                 "native-private-test-adapter",
+                "native-private-adapter-performance",
                 "native-tls-codegen",
                 "native-allocator-unit",
             },
@@ -149,6 +157,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-normal-engine-build-boundary"]["report"],
             "compat/reports/allocator/x86_64/latest.json",
         )
+        self.assertEqual(
+            gates["native-private-adapter-performance"]["report"],
+            "compat/reports/allocator/x86_64/perf/x86-private-adapter-smoke.json",
+        )
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
@@ -156,6 +168,9 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("not a staticlib/cdylib", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("private prefixed", gates["native-private-test-adapter"]["claim"])
         self.assertIn("no mi_* symbols", gates["native-private-test-adapter"]["claim"])
+        self.assertIn("bounded single-thread private-adapter", gates["native-private-adapter-performance"]["claim"])
+        self.assertIn("no promotion threshold", gates["native-private-adapter-performance"]["claim"])
+        self.assertIn("does not qualify general mimalloc performance", gates["native-private-adapter-performance"]["claim"])
 
     def test_native_thread_pointer_unit_is_an_implementation_regression(self) -> None:
         regressions = {
@@ -189,6 +204,8 @@ class X86_64ParityStatusTests(unittest.TestCase):
             },
         )
         self.assertTrue(all(lane["state"] == "not_covered" for lane in lanes.values()))
+        self.assertIn("Bounded native private-adapter", lanes["performance-qualification"]["reason"])
+        self.assertIn("no whole-engine", lanes["performance-qualification"]["reason"])
 
         boundary = self.contract["ledger_boundary"]
         self.assertEqual(boundary["status"], "intentionally-not-mirrored")

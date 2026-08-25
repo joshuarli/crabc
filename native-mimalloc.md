@@ -465,18 +465,23 @@ promotion. The AArch64-only production statements below remain authoritative
 for that production profile; new x86 work must use architecture-qualified
 contracts, reports, and status.
 
-### Remaining native x86 parity work
+### Remaining native x86-64 allocator-parity work
 
-- [ ] Add an architecture-qualified x86-64 API inventory, source map, and
-  ratchet; do not merge x86 statuses into the AArch64 allocator contracts.
-- [ ] Complete target-specific layout/configuration, TLS, dependency-graph,
-  and Rust-vs-pinned-C differential evidence for the selected x86 profile.
-- [ ] Port and verify only the source-applicable x86 profile; preserve the
-  pinned mimalloc algorithms and record every target-specific difference.
-- [ ] Add native x86-64 stress, fault-injection, and performance/memory
-  evidence, with reports isolated from AArch64 evidence.
-- [ ] Keep x86 parity separate from libc allocator readiness, public `crabc`
-  support, and any default-backend promotion decision.
+- [ ] Extend the target-local declaration inventory and source-map/ratchet
+  foundation into a complete API/mode/test/symbol coverage ledger with explicit
+  per-item status; never reuse AArch64 statuses.
+- [ ] Close the source-applicable engine behavior holes identified by that
+  ledger, map each source unit to Rust, record every intentional difference,
+  and add native pinned-C differential evidence for each completed behavior.
+- [ ] Add native lifecycle and concurrency evidence: init/done, remote free,
+  abandonment/adoption, pthread/TLS/fork, fault/misuse isolation, remaining
+  upstream tests, Loom, and stress.
+- [ ] Broaden the bounded native private-adapter C/Rust timing and post-init
+  memory measurements into qualified whole-engine performance evidence.
+
+Public x86 `crabc` support, x86 libc/ldso/`crabc-rs` integration, public
+allocator exports, and default-backend promotion remain explicitly excluded;
+they are not x86 parity backlog items.
 
 ## Handoff — 2026-08-25
 

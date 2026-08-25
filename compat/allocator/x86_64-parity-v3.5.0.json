@@ -33,6 +33,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, measures one shared C fixture through pinned C mimalloc and the private crabc_test_* adapter, including post-initialization live-set memory observations. It is bounded single-thread private-adapter evidence with no promotion threshold; it does not qualify general mimalloc performance, public mi_* behavior, libc integration, or a backend.",
+      "command": "./scripts/dev-amd64.sh allocator-perf --smoke --label x86-private-adapter-smoke",
+      "id": "native-private-adapter-performance",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/perf/x86-private-adapter-smoke.json",
+      "state": "available"
+    },
+    {
       "claim": "Proves the private compiler-TLS roots and direct x86-64 TLS access model; it does not prove process/thread lifecycle parity.",
       "command": "./scripts/dev-amd64.sh allocator-tls",
       "id": "native-tls-codegen",
@@ -71,9 +79,9 @@
       "id": "base-page-size-bytes",
       "rust_source": {
         "path": "crabc-mimalloc/src/os.rs",
-        "required_text": "assert_eq!(PageSize::new(4 * 1024).unwrap().bytes(), 4 * 1024);\n        #[cfg(target_arch = \"aarch64\")]\n        for bytes in [16 * 1024, 64 * 1024] {\n            assert_eq!(PageSize::new(bytes).unwrap().bytes(), bytes);\n        }\n        #[cfg(target_arch = \"x86_64\")]\n        for bytes in [16 * 1024, 64 * 1024] {\n            assert!(PageSize::new(bytes).is_none());\n        }"
+        "required_text": "#[cfg(target_arch = \"x86_64\")]\n    #[test]\n    fn x86_64_startup_page_size_accepts_only_the_four_kib_profile() {\n        assert_eq!(PageSize::new(4 * 1024).unwrap().bytes(), 4 * 1024);\n        for bytes in [16 * 1024, 64 * 1024] {\n            assert!(PageSize::new(bytes).is_none());\n        }\n    }"
       },
-      "upstream_source": "include/mimalloc/prim/unix/prim.c: native Linux x86-64 base-page observation",
+      "upstream_source": "src/prim/unix/prim.c: native Linux x86-64 base-page observation",
       "value": 4096
     },
     {
@@ -134,7 +142,7 @@
     },
     {
       "id": "performance-qualification",
-      "reason": "No matched native x86-64 Rust-versus-pinned-C allocator performance qualification is recorded.",
+      "reason": "Bounded native private-adapter timing and post-init live-memory measurements are recorded, but no whole-engine, lifecycle/concurrency, public-API, or backend performance qualification exists.",
       "state": "not_covered"
     }
   ],

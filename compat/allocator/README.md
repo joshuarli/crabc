@@ -893,18 +893,39 @@ The runner rejects emulation by requiring both the native x86-64 guest and
 the dispatcher's native-host provenance. Its report is
 `compat/reports/allocator/x86_64/latest.json` and its profile is
 `x86_64-native-c-oracle`: the lane checks the target-local source declaration
-inventory, builds the pinned native C oracle, compares direct Rust-engine
-configuration/layout and small/fundamental traces, proves x86-64 TLS codegen,
-and builds/audits the private prefixed adapter. That adapter has exactly 16
-`crabc_test_*` exports, no `mi_*` exports, the recorded musl dynamic
-dependencies, and native executions of both the existing allocator fixture
-and 33 selected patched upstream API checks. The adapter cdylib and both
-fixture executables are audited for their x86-64 ELF identity and dynamic
-dependencies; each executable also records a PT_INTERP loader whose basename
-is `ld-musl-x86_64.so.1`. It does not claim the production
-dependency graph, public `mi_*` API, libc integration, general lifecycle or
-stress coverage, performance, full x86 mimalloc parity, or public x86
-`crabc` support.
+inventory; the exact unfeatured x86 normal dependency graph (including
+`cpufeatures` and no selected `libc` package); and a fresh, lockfile-verified
+`#![no_std]` release `rlib`. The workspace release profile uses fat LTO, so
+that normal-library artifact's codegen member is recorded as LLVM bitcode,
+not falsely presented as a linked ELF/staticlib ABI. The lane then builds the
+pinned native C oracle, compares direct Rust-engine configuration/layout and
+small/fundamental traces, proves x86-64 TLS codegen, and builds/audits the
+private prefixed adapter. That adapter has exactly 16 `crabc_test_*` exports,
+no `mi_*` exports, the recorded musl dynamic dependencies, and native
+executions of both the existing allocator fixture and 33 selected patched
+upstream API checks. The adapter cdylib and both fixture executables are
+audited for their x86-64 ELF identity and dynamic dependencies; each
+executable also records a PT_INTERP loader whose basename is
+`ld-musl-x86_64.so.1`. Its first native run may populate the architecture-local
+Cargo cache from the checked-in lockfile; it never updates that lockfile.
+
+A separate native private-adapter measurement lane is available through the
+same dispatcher:
+
+```sh
+./scripts/dev-amd64.sh allocator-perf --smoke --label x86-private-adapter-smoke
+./scripts/dev-amd64.sh allocator-perf --full --label x86-private-adapter-baseline
+```
+
+It compiles one shared, release-optimized C fixture against pinned C mimalloc
+and the private Rust adapter, pins one allowed CPU, interleaves fresh-process
+samples, and records batch timing plus post-initialization touched-live-set
+memory observations under `compat/reports/allocator/x86_64/perf/`. These are
+bounded single-thread measurements with no promotion threshold—not whole-engine
+performance qualification, public `mi_*` behavior, libc integration, or an
+x86 backend decision. The x86 lane does not claim public `mi_*` API, libc
+integration, general lifecycle or stress coverage, full x86 mimalloc parity,
+or public x86 `crabc` support.
 
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
@@ -928,6 +949,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | --- | --- |
 | `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, and C++ conveniences; every item records its Linux/AArch64 classification, reason, profile, C-oracle release-symbol disposition, and crabc-libc export policy. Native x86-64 parity requires a separate architecture-qualified inventory. |
 | `x86_64-api-v3.5.0.json` | Target-local, source-only inventory of the pinned base `mimalloc.h` `mi_decl_export` declarations. It does not claim object exports, adapter coverage, implementation, or public integration. |
+| `x86_64-source-map-v3.5.0.json` and `x86_64_source_map.py` | Target-local pinned-source mapping and ratchet foundation for 34 x86-relevant source units. Its statuses remain explicitly incomplete and never reuse the AArch64 port-map/ratchet. |
 | `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
 | `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and AArch64 native link contract for pinned upstream `test-api.c`. |
 | `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. It hashes only the extracted target-neutral patch/selection facts from the M4 record and separately records native x86-64 cdylib/executable ELF, PT_INTERP, dependency, and link expectations. |
@@ -938,6 +960,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
 | `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
 | `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
+| `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
 
 Generated reports are measurements and remain ignored. The checked-in
