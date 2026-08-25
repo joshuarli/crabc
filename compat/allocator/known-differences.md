@@ -48,7 +48,7 @@ result may refine it only when it can prove retained ownership.
   pointer. Detached sessions, a producer registry, concurrent queue
   collection, abandonment integration beyond one consuming dynamic mapped
   regular handoff and the separately recorded later-main all-free scan plus
-  its three sole-page handoffs and bounded aggregate medium-only traversal,
+  its three sole-page handoffs and bounded aggregate medium-and-large traversal,
   general owner exit, pthread lifecycle, and
   general asynchronous/public free routing remain absent. The caller still
   proves join/quiescence before queue collection because existing queue helpers
@@ -419,10 +419,11 @@ result may refine it only when it can prove retained ownership.
   sole nonfull medium page with one or more live blocks, tears down the old
   Theap/TLD, and returns a linear `ProcessPageMapPostExitAccess` route.
 
-  `abandon_mapped_medium_pages_to_process_route` is a distinct aggregate
+  `abandon_mapped_medium_large_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
   structural preflight rejects before mutation unless every direct slot is
-  empty and every queued page is a nonfull medium arena page. It proves the
+  empty and every queued page is a nonfull medium-or-large arena page. It
+  proves the
   complete bounded doubly linked queue image before the unsafe removal kernel:
   zero-count queues have null endpoints, nonempty heads have null predecessors,
   every successor points back to its predecessor, and the counted forward walk
@@ -435,11 +436,14 @@ result may refine it only when it can prove retained ownership.
   plus the exact static-main bitmap/count pair are membership, and the count
   decreases only after a full PageMap -> main bitmap -> metadata -> slice
   release. A free chooses its bin only after acquiring the source low owner
-  bit; a nonempty result keeps the pairing, and a retired/force-empty traversal
-  returns the ordinary drain. Fresh engines may serialize independent map
+  bit; a nonempty result keeps the pairing, and a terminal free re-derives its
+  complete regular span before release (8 slices for medium, 64 for large).
+  A retired/force-empty traversal returns the ordinary drain. Fresh engines may
+  serialize independent map
   operations between frees, but no current engine receives an adoption,
-  reclaim, or requeue capability for a registered route page. Small/full/large/
-  unmapped/huge/foreign pages, concurrent client-free routes, source deferred
+  reclaim, or requeue capability for a registered route page. Small/full/
+  singleton/unmapped/huge/foreign pages, concurrent client-free routes, source
+  deferred
   callbacks, arena collection, statistics merge, and retry/reuse as a normal
   allocator remain absent. A dropped unfinished engine, drain, or route
   poisons its owner rather than fabricating cleanup.
@@ -477,26 +481,33 @@ result may refine it only when it can prove retained ownership.
   `later_thread_exit_mapped_regular_route_can_move_to_the_client_free_thread`
   proves the linear route can cross to its later client-free thread without
   retaining the departed Theap/TLD; and
-  `later_thread_exit_mapped_medium_pages_route_tears_down_and_releases_two_pages`
-  proves one aggregate registry keeps two PageMap/bitmap/count memberships
-  paired across a still-live free, one-page release, and last-page release;
-  `later_thread_exit_mapped_medium_pages_route_releases_retired_page_before_live_route`
-  proves a normally retired all-free medium span releases before the remaining
+  `later_thread_exit_mapped_medium_large_pages_route_tears_down_and_releases_mixed_pages`
+  proves one aggregate registry keeps mixed medium-and-large PageMap/bitmap/
+  count memberships paired across a still-live free, one-page release, and
+  last-page release;
+  `later_thread_exit_mapped_medium_large_pages_route_releases_retired_large_before_live_medium`
+  proves a normally retired all-free large span releases before the remaining
   live medium page becomes a post-exit registry member;
-  `later_thread_exit_mapped_medium_pages_route_rejects_malformed_prev_before_mutation`
+  `later_thread_exit_mapped_medium_large_pages_route_rejects_small_before_mutation`
+  proves an unsupported small page rejects before retirement, collection,
+  queue removal, or PageMap mutation; and
+  `later_thread_exit_mapped_medium_large_pages_route_rejects_malformed_prev_before_mutation`
   proves a malformed predecessor rejects before retirement, collection, queue
   removal, or PageMap mutation; and
-  `later_thread_exit_mapped_medium_pages_route_selects_each_page_bin_after_claim`
-  proves two distinct medium bins select their paired static-main capability
+  `later_thread_exit_mapped_medium_large_pages_route_selects_each_large_page_bin_after_claim`
+  proves two distinct large bins select their paired static-main capability
   only after the source low owner-bit claim; and
-  `later_thread_exit_mapped_medium_pages_route_returns_drained_after_force_collection`
-  proves a force-empty traversal returns the ordinary drain and releases its
-  span before route construction; and
+  `later_thread_exit_mapped_medium_large_pages_route_releases_large_page_span`
+  proves the 64-slice large span remains PageMap-registered until its final
+  client free, then unregisters and returns every slice; and
+  `later_thread_exit_mapped_medium_large_pages_route_returns_drained_after_large_force_collection`
+  proves a force-empty large traversal returns the ordinary drain and releases
+  its full span before route construction; and
   `unfinished_later_page_engine_poison_retains_the_attachment_and_process_map`
   proves terminal retention rather than forged thread cleanup.
 - **Decision/removal:** accepted until the PageMap supports its source
   concurrent consumers, automatic reservation/multi-arena routing exists, and
-  the remaining `_mi_theap_collect_abandon` small/full/large/unmapped/huge
+  the remaining `_mi_theap_collect_abandon` small/full/singleton/unmapped/huge
   owner-exit traversal plus pthread/TLS integration is proved. It does not
   authorize concurrent later-thread allocation routing, a public thread
   attachment API, process shutdown, or default backend use.

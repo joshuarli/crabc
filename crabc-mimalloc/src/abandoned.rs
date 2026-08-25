@@ -13,8 +13,8 @@
 // TLS/theap registration. It does not itself own raw page-map/span release:
 // `single_thread.rs` supplies that distinct authority for a bounded mapped
 // regular handoff, a sole mapped one-block later-main owner-exit handoff, one
-// sole-medium later-main process route and one aggregate medium-only process
-// registry after their Theap/TLD tears down, and one post-TLS full singleton
+// sole-medium later-main process route and one aggregate medium-and-large
+// process registry after their Theap/TLD tears down, and one post-TLS full singleton
 // owner-exit handoff. Metadata reuse and every general terminal-release route
 // remain outside this substrate.
 
