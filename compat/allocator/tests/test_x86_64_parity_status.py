@@ -144,6 +144,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-regular-small-retire-quick-collect-release-differential",
                 "native-medium-full-to-regular-retire-force-release-differential",
                 "native-full-non-direct-small-force-collect-post-exit-differential",
+                "native-full-direct-small-force-collect-post-exit-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -262,6 +263,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
             ],
             "compat/reports/allocator/x86_64/"
             "full-non-direct-small-force-collect-post-exit.json",
+        )
+        self.assertEqual(
+            gates["native-full-direct-small-force-collect-post-exit-differential"][
+                "command"
+            ],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-full-direct-small-force-collect-post-exit",
+        )
+        self.assertEqual(
+            gates["native-full-direct-small-force-collect-post-exit-differential"][
+                "report"
+            ],
+            "compat/reports/allocator/x86_64/"
+            "full-direct-small-force-collect-post-exit.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
@@ -547,6 +562,29 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, full_non_direct_small)
+        full_direct_small = gates[
+            "native-full-direct-small-force-collect-post-exit-differential"
+        ]["claim"]
+        for fragment in (
+            "28 address-independent values",
+            "worker-owned arena full direct-small regular-bin page",
+            "1024 bytes",
+            "1024-byte class, 64 blocks, one slice",
+            "complete rounded direct-cache range",
+            "source anchors establish the direct-cache range update before queue detachment",
+            "exactly one remote mi_free",
+            "real mi_thread_done and pthread_join",
+            "immediately publishes the page as mapped-abandoned",
+            "preserve the mapped route",
+            "unregisters the PageMap",
+            "ordinary arena-page bitmap",
+            "one-slice span",
+            "arena_abandoned_bin_bitmap_clear_after_final_free",
+            "direct-specific preflight",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, full_direct_small)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])

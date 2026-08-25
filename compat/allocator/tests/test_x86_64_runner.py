@@ -44,6 +44,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-regular-small",
             "allocator-medium-full-retire",
             "allocator-full-non-direct-small-force-collect-post-exit",
+            "allocator-full-direct-small-force-collect-post-exit",
             "allocator-unit",
             "allocator-core-unit",
         ):
@@ -119,6 +120,26 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn(
             "allocator-full-non-direct-small-force-collect-post-exit takes no arguments",
+            result.stderr,
+        )
+
+    def test_full_direct_small_force_collect_post_exit_command_is_closed_and_uses_its_private_offline_probe(
+        self,
+    ) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-full-direct-small-force-collect-post-exit)", source)
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_full_direct_small_force_collect_post_exit_evidence.py "
+            "--offline",
+            source,
+        )
+        result = self.run_launcher(
+            "allocator-full-direct-small-force-collect-post-exit", "unexpected"
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-full-direct-small-force-collect-post-exit takes no arguments",
             result.stderr,
         )
 

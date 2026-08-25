@@ -1,0 +1,59 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-full-direct-small-force-collect-post-exit-evidence",
+  "profile": "linux-x86_64-private-full-direct-small-force-collect-post-exit-mapped-release",
+  "target": {"architecture": "x86_64", "endianness": "little", "rust_target": "x86_64-unknown-linux-musl", "system": "linux"},
+  "upstream": {"archive_root": "mimalloc-3.5.0", "revision": "18b08671c9302247bfb682286e6bf3cc1773f801", "version": "3.5.0"},
+  "scope": {
+    "aarch64_status_reused": false, "emulation_accepted": false, "full_direct_small_regular_bin_only": true,
+    "general_abandonment_or_adoption_claimed": false, "general_lifecycle_claimed": false,
+    "general_remote_free_routing_claimed": false, "mapped_process_route_only": true,
+    "native_linux_x86_64_required": true, "one_joined_remote_free_during_thread_exit_only": true,
+    "private_engine_evidence_only": true, "public_crabc_support": false, "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false, "real_pinned_c_mi_free_trigger": true,
+    "sequential_joined_consumer_frees_only": true
+  },
+  "compile_definitions": ["-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1"],
+  "release_flags": ["-O3", "-DNDEBUG", "-DMI_BUILD_RELEASE=1", "-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=0", "-DMI_GUARDED=0"],
+  "release_source_set": ["src/alloc.c", "src/alloc-aligned.c", "src/alloc-posix.c", "src/arena.c", "src/bitmap.c", "src/heap.c", "src/init.c", "src/libc.c", "src/options.c", "src/os.c", "src/page.c", "src/page-map.c", "src/random.c", "src/stats.c", "src/subproc.c", "src/theap.c", "src/threadlocal.c", "src/prim/prim.c", "src/prim/prim-tls.c"],
+  "source_anchors": [
+    {"member": "src/theap.c", "start_line": 23, "end_line": 48, "sha256": "4df1e18388900637745d7867bb5a4b6e1bac86679b550bb8ff77ac6ff9a68679"},
+    {"member": "src/theap.c", "start_line": 97, "end_line": 114, "sha256": "9c66a394ded8185fc4af733ddcf4fd2f60db3922fc8c547400bc612def40f2d5"},
+    {"member": "src/page-queue.c", "start_line": 204, "end_line": 244, "sha256": "4216ce3f998d0a8c3891e0c89e1feaa34aff407d10e14135e68334ce833d6e6b"},
+    {"member": "src/page.c", "start_line": 214, "end_line": 243, "sha256": "35148cff687e602b8de307ca1abad524655f48bf4410b2c64a7e44af8909203b"},
+    {"member": "src/page.c", "start_line": 291, "end_line": 303, "sha256": "d363079d5e484919082b5602cc3757a3e3a357e68594fc040d902232c7458bbf"},
+    {"member": "src/arena.c", "start_line": 1304, "end_line": 1409, "sha256": "6a6d08e7cb4a45803619ce1c9d7efab31808068a756a727a4d3fd3d48d30413f"},
+    {"member": "src/free.c", "start_line": 365, "end_line": 515, "sha256": "4f31b0716f4b8086797a84d1bfc6ca21531d1316ca37bbea18e218937fc941c1"},
+    {"member": "src/init.c", "start_line": 448, "end_line": 477, "sha256": "289083292b594ae6e467808000a94f3ddaacdacb0372abee002f4db779137b0c"},
+    {"member": "src/page-map.c", "start_line": 199, "end_line": 209, "sha256": "adcac501bd759bc1052bd46a2931adeb23a3740f5437ed15d9f5b2596e132cd0"}
+  ],
+  "c_probe_sha256": "57de675a33250548f323e6352c60cabadd15d089e67132229030c99c049fa47f",
+  "rust_test": {"path": "crabc-mimalloc/src/main_heap_page.rs", "target_arch": "x86_64", "test_filter": "main_heap_page::tests::x86_64_full_direct_small_force_collect_post_exit_trace_matches_pinned_c"},
+  "trace": {
+    "begin": "CRABC_MI_FULL_DIRECT_SMALL_EXIT_TRACE_BEGIN", "end": "CRABC_MI_FULL_DIRECT_SMALL_EXIT_TRACE_END",
+    "expected_values": {
+      "trace.full_direct_small_exit.arena_backed": 1, "trace.full_direct_small_exit.small_page": 1,
+      "trace.full_direct_small_exit.direct_small": 1, "trace.full_direct_small_exit.full_before_remote": 1,
+      "trace.full_direct_small_exit.ordinary_regular_bin_before_remote": 1,
+      "trace.full_direct_small_exit.direct_cache_range_matches_before_remote": 1,
+      "trace.full_direct_small_exit.direct_cache_range_start": 113, "trace.full_direct_small_exit.direct_cache_range_end": 128,
+      "trace.full_direct_small_exit.remote_free_published_before_thread_done": 1,
+      "trace.full_direct_small_exit.producer_thread_done_completed": 1, "trace.full_direct_small_exit.producer_joined_before_consumer_frees": 1,
+      "trace.full_direct_small_exit.mapped_after_thread_done": 1, "trace.full_direct_small_exit.abandoned_after_thread_done": 1,
+      "trace.full_direct_small_exit.page_map_registered_after_thread_done": 1,
+      "trace.full_direct_small_exit.arena_page_bitmap_set_after_thread_done": 1,
+      "trace.full_direct_small_exit.ordinary_queue_detached_after_thread_done": 1,
+      "trace.full_direct_small_exit.request_size": 1024, "trace.full_direct_small_exit.capacity": 64,
+      "trace.full_direct_small_exit.block_size": 1024, "trace.full_direct_small_exit.slice_count": 1,
+      "trace.full_direct_small_exit.used_after_force_collect": 63,
+      "trace.full_direct_small_exit.remaining_client_count_after_force_collect": 63,
+      "trace.full_direct_small_exit.nonfinal_consumer_free_keeps_mapped": 1,
+      "trace.full_direct_small_exit.page_map_unregistered_after_final_free": 1,
+      "trace.full_direct_small_exit.arena_page_bitmap_clear_after_final_free": 1,
+      "trace.full_direct_small_exit.arena_slice_released_after_final_free": 1,
+      "trace.full_direct_small_exit.arena_abandoned_bin_bitmap_clear_after_final_free": 1,
+      "trace.full_direct_small_exit.valid": 1
+    }
+  },
+  "harness_dependency": {"path": "compat/allocator/x86_64_regular_small_evidence.py", "sha256": "325e47567009e8fa2135acf08e221bad22f4ac5c47f16a1c900827aa518aecfc"}
+}

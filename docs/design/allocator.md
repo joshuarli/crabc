@@ -213,7 +213,20 @@ evidence. A separate native x86-only medium-page differential covers one
  the PageMap, bitmap, and slice. It is not general remote-free routing, thread
  exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public
  `mi_*` behavior or runtime, libc integration, backend promotion, public x86
- support, or AArch64 evidence. A fourth native x86-only
+ support, or AArch64 evidence. The paired full direct-small route is covered
+ by a separate private native x86-only 28-field C/Rust differential. A
+ 1024-byte request fills one 1024-byte, 64-block, one-slice arena direct-small
+ regular-bin page. Before the remote free, its preflight requires the complete
+ rounded source direct-cache range; source anchors establish the cache-range
+ update before queue removal. One remote `mi_free` precedes real
+ `mi_thread_done()` and `pthread_join()`; force collection immediately
+ publishes mapped abandonment while detaching the ordinary queue, and
+ sequential joined consumer frees retain that mapped route until PageMap,
+ ordinary arena bitmap, exact slice release, and terminal static-main
+ abandoned-bin bitmap cleanup
+ (`arena_abandoned_bin_bitmap_clear_after_final_free`). This is bounded private
+ client-free route evidence, not general routing, lifecycle, abandonment/
+ adoption, concurrency, public x86 support, or AArch64 evidence. A separate native x86-only
 eight-field C/Rust differential creates one arena-backed mapped page with two
 same-page live blocks, applies the source queue-detach abandonment transition,
 and frees one block through the same-origin reclaim path while the survivor

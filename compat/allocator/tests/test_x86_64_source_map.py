@@ -491,6 +491,60 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("25-field native C/Rust differential", unit["difference"])
                 self.assertIn("1032-byte arena full non-direct-small", unit["difference"])
 
+    def test_full_direct_small_post_exit_lane_preserves_cache_preflight_and_mapped_force_route(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "process-and-thread-initialization",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_full_direct_small_force_collect_post_exit_evidence.py",
+            "compat/allocator/x86_64-full-direct-small-force-collect-post-exit-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_full_direct_small_force_collect_post_exit_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                unit = units[unit_id]
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn(
+                    "compat/allocator/x86_64-full-direct-small-force-collect-post-exit-evidence-v3.5.0.json",
+                    unit["evidence"],
+                )
+                self.assertIn("28-field native C/Rust differential", unit["difference"])
+                self.assertIn("complete rounded direct-cache range", unit["difference"])
+                self.assertIn("immediately publishes mapped abandonment", unit["difference"])
+                self.assertIn("ordinary queue detached", unit["difference"])
+                self.assertIn(
+                    "arena_abandoned_bin_bitmap_clear_after_final_free",
+                    unit["difference"],
+                )
+
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(
             unit

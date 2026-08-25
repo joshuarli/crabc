@@ -6137,6 +6137,53 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     unsafe impl Send for FullNonDirectSmallExitConsumer<'_> {}
 
+    /// The stable facts a joined post-exit consumer needs to compare the
+    /// full direct-small source transition without retaining an old Theap,
+    /// queue, or raw page pointer.
+    #[cfg(target_arch = "x86_64")]
+    struct FullDirectSmallExitTrace {
+        arena_backed: bool,
+        small_page: bool,
+        direct_small: bool,
+        full_before_remote: bool,
+        ordinary_regular_bin_before_remote: bool,
+        direct_cache_range_matches_before_remote: bool,
+        direct_cache_range_start: usize,
+        direct_cache_range_end: usize,
+        remote_free_published_before_thread_done: bool,
+        producer_thread_done_completed: bool,
+        mapped_after_thread_done: bool,
+        abandoned_after_thread_done: bool,
+        page_map_registered_after_thread_done: bool,
+        arena_page_bitmap_set_after_thread_done: bool,
+        ordinary_queue_detached_after_thread_done: bool,
+        request_size: usize,
+        capacity: usize,
+        block_size: usize,
+        slice_index: usize,
+        slice_count: usize,
+        used_after_force_collect: usize,
+        remaining_client_count_after_force_collect: usize,
+    }
+
+    /// One direct-cache source route plus its client aliases, transferred only
+    /// after the source worker has completed its old Theap/TLD teardown.
+    #[cfg(target_arch = "x86_64")]
+    struct FullDirectSmallExitConsumer<'main> {
+        route: MainHeapThreadProcessPageExitMappedRegularRoute<'main>,
+        client_blocks: std::vec::Vec<NonNull<u8>>,
+        trace: FullDirectSmallExitTrace,
+    }
+
+    // SAFETY: `MainHeapThreadProcessPageExitMappedRegularRoute` explicitly
+    // supports this one post-exit client-free handoff. The stored blocks are
+    // exact once-live client aliases; the worker returns only after old-TLD
+    // teardown and `JoinHandle::join` establishes the required quiescence.
+    // The receiving thread retains the sole consuming route and frees each
+    // remaining alias once, so this wrapper does not permit concurrent use.
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Send for FullDirectSmallExitConsumer<'_> {}
+
     #[test]
     fn later_thread_page_engine_uses_the_static_main_heap_and_in_place_arena_bitmap() {
         thread::spawn(|| {
@@ -17136,6 +17183,502 @@ mod tests {
         })
         .join()
         .expect("full non-direct-small trace fixture remains current-thread local");
+    }
+
+    /// Emits an address-independent native x86-64 record for one full
+    /// direct-small regular-bin owner-exit route. One joined remote free is
+    /// collected during `MI_ABANDON`; source removes the sole ordinary queue
+    /// member and updates its direct-cache range before the old Theap/TLD
+    /// teardown. The joined consumer then releases every remaining client
+    /// alias through the mapped process route.
+    ///
+    /// The paired pinned-C fixture follows this deliberately narrow direct
+    /// cache shape. This is private allocator-engine evidence only: it
+    /// establishes neither public x86 runtime support nor general owner-exit,
+    /// remote-free, or allocation-time routing.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_full_direct_small_force_collect_post_exit_trace_matches_pinned_c() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            let consumer = thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the paired arena remains published through the route");
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the full direct-small trace fixture");
+                    let request_size = SMALL_SIZE_MAX;
+                    let first = allocator
+                        .allocate(request_size, false)
+                        .expect("the fixture creates one direct-small regular page");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the full direct small page stays PageMap-published");
+                    let page_ptr = page.as_ptr();
+                    let capacity = unsafe { page.as_ref().reserved() as usize };
+                    assert!(
+                        capacity >= 16,
+                        "the source direct-small partial collector needs its complete reserved floor"
+                    );
+                    let mut client_blocks = std::vec::Vec::with_capacity(capacity);
+                    client_blocks.push(first);
+                    while client_blocks.len() < capacity {
+                        let block = allocator
+                            .allocate(request_size, false)
+                            .expect("the fixture fills exactly one direct-small page");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(block) },
+                            page_ptr,
+                            "the fixture does not allocate a second direct-small page"
+                        );
+                        client_blocks.push(block);
+                    }
+                    assert_eq!(
+                        unsafe { page.as_ref().capacity() as usize },
+                        capacity,
+                        "the full direct-small fixture commits its complete source capacity after fill"
+                    );
+
+                    // SAFETY: all client aliases are still current, so the
+                    // PageMap retains this one page and its source geometry.
+                    let page_ref = unsafe { page.as_ref() };
+                    let block_size = page_ref.block_size();
+                    let bin = crate::size_class::bin(block_size)
+                        .expect("the direct-small page has one regular source bin");
+                    let arena_backed = page_ref.memid().kind() == MemoryKind::Arena;
+                    let small_page = crate::size_class::page_kind_for_block_size(block_size)
+                        == Some(PageKind::Small);
+                    let direct_small = block_size <= SMALL_SIZE_MAX && small_page;
+                    let full_before_remote = page_ref.used() == capacity;
+                    let ordinary_regular_bin_before_remote = allocator.test_queue_count(bin) == Some(1)
+                        && allocator.test_queue_count(crate::config::BIN_FULL) == Some(0)
+                        && !crate::types::page_queue::page_is_in_full(page_ref);
+                    let (direct_cache_range_start, direct_cache_range_end) =
+                        source_direct_cache_range(block_size);
+                    let direct_cache_range_matches_before_remote = (0..PAGES_DIRECT).all(|index| {
+                        let expected = if index >= direct_cache_range_start
+                            && index <= direct_cache_range_end
+                        {
+                            page_ptr
+                        } else {
+                            EMPTY_PAGE.as_ptr()
+                        };
+                        allocator.test_direct_page(index) == Some(expected)
+                    });
+                    let arena_memory = page_ref
+                        .memid()
+                        .arena_memory()
+                        .expect("the full direct-small page belongs to the paired arena");
+                    let slice_index = arena_memory.slice_index as usize;
+                    let slice_count = arena_memory.slice_count as usize;
+                    assert_eq!(
+                        slice_count,
+                        crate::page::regular_page_slice_count(PageKind::Small)
+                            .expect("small source spans have fixed geometry"),
+                        "the post-exit route retains the complete small span"
+                    );
+                    assert!(
+                        arena_backed
+                            && small_page
+                            && direct_small
+                            && full_before_remote
+                            && ordinary_regular_bin_before_remote
+                            && direct_cache_range_matches_before_remote,
+                        "the fixture starts from one full direct-small regular-bin page with its exact source cache range"
+                    );
+
+                    // `client_blocks[0]` becomes the sole joined remote
+                    // publication. It is no longer a client alias after this
+                    // worker joins; every later consumer free starts at index
+                    // one and is routed only after old-TLD teardown.
+                    let producer = unsafe { allocator.begin_remote_free(client_blocks[0]) }
+                        .expect("the full direct-small page admits one scoped remote producer");
+                    thread::scope(|scope| {
+                        let publisher = scope.spawn(move || producer.publish());
+                        match publisher.join().expect("the remote producer publishes") {
+                            Ok(()) => {}
+                            Err((producer, error)) => {
+                                let _ = producer.cancel();
+                                panic!("the remote client publishes before owner exit: {error:?}");
+                            }
+                        }
+                    });
+                    let remote_head = unsafe { page.as_ref().remote_free_test_head() };
+                    let remote_free_published_before_thread_done = remote_head & 1 != 0
+                        && remote_head & !1 == client_blocks[0].as_ptr().addr()
+                        && unsafe { page.as_ref().used() } == capacity;
+                    assert!(
+                        remote_free_published_before_thread_done,
+                        "the source force collector must receive the one joined direct-small client"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe {
+                        drain.abandon_full_direct_small_after_force_collect_to_mapped_process_route(
+                            client_blocks[1],
+                        )
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "a full direct-small page that force collection makes nonfull enters the mapped process route"
+                        ),
+                    };
+
+                    let producer_thread_done_completed = owner.finish_after_page_drain()
+                        == Err(MainHeapThreadAttachmentError::TornDown);
+                    assert!(
+                        producer_thread_done_completed,
+                        "the route tears down the old Theap/TLD before consumer frees"
+                    );
+
+                    // The route's successful type proves source
+                    // `abandon_after_collect` removed the exact direct-cache
+                    // range before queue/page-count detachment and published
+                    // the unowned mapped regular page. Do not inspect the old
+                    // Theap after teardown; the surviving page is observed
+                    // only through its stable PageMap-backed route, arena,
+                    // and atomic xthread-free source projection.
+                    let used_after_force_collect = unsafe { page.as_ref().used() };
+                    let remaining_client_count_after_force_collect = capacity - 1;
+                    let abandoned_after_thread_done = route.test_abandoned_count() == Some(1);
+                    let page_map_registered_after_thread_done = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(client_blocks[1].as_ptr())
+                    } == page_ptr;
+                    let arena_page_bitmap_set_after_thread_done = unsafe { arena.pages() }
+                        .unwrap()
+                        .is_set_range(slice_index, 1)
+                        == Some(true);
+                    let ordinary_queue_detached_after_thread_done = unsafe {
+                        page.as_ref().is_queue_detached()
+                            && page.as_ref().remote_free_test_head() & 1 == 0
+                    };
+                    let mapped_after_thread_done = abandoned_after_thread_done
+                        && page_map_registered_after_thread_done
+                        && arena_page_bitmap_set_after_thread_done;
+                    assert!(
+                        mapped_after_thread_done
+                            && ordinary_queue_detached_after_thread_done
+                            && used_after_force_collect == remaining_client_count_after_force_collect,
+                        "force collection publishes the mapped, queue-detached direct-small route"
+                    );
+
+                    FullDirectSmallExitConsumer {
+                        route,
+                        client_blocks,
+                        trace: FullDirectSmallExitTrace {
+                            arena_backed,
+                            small_page,
+                            direct_small,
+                            full_before_remote,
+                            ordinary_regular_bin_before_remote,
+                            direct_cache_range_matches_before_remote,
+                            direct_cache_range_start,
+                            direct_cache_range_end,
+                            remote_free_published_before_thread_done,
+                            producer_thread_done_completed,
+                            mapped_after_thread_done,
+                            abandoned_after_thread_done,
+                            page_map_registered_after_thread_done,
+                            arena_page_bitmap_set_after_thread_done,
+                            ordinary_queue_detached_after_thread_done,
+                            request_size,
+                            capacity,
+                            block_size,
+                            slice_index,
+                            slice_count,
+                            used_after_force_collect,
+                            remaining_client_count_after_force_collect,
+                        },
+                    }
+                });
+                worker
+                    .join()
+                    .expect("the post-exit direct-small route transfers only after its source worker joins")
+            });
+
+            let FullDirectSmallExitConsumer {
+                route,
+                client_blocks,
+                trace,
+            } = consumer;
+            let producer_joined_before_consumer_frees = true;
+            assert!(
+                producer_joined_before_consumer_frees,
+                "the consumer receives the route only after the source worker joined"
+            );
+            let arena = process_arena
+                .arena()
+                .expect("the paired arena remains published through terminal release");
+            assert_eq!(
+                client_blocks.len(),
+                trace.capacity,
+                "the joined consumer receives every original client alias"
+            );
+            assert_eq!(
+                trace.remaining_client_count_after_force_collect,
+                trace.capacity - 1,
+                "only the force-collected remote client leaves the consumer set"
+            );
+
+            let mut route = route;
+            let first_consumer_client = client_blocks[1];
+            route = match unsafe { route.remote_free_after_thread_exit(first_consumer_client) } {
+                Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => route,
+                Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {
+                    panic!("the first joined-consumer free cannot release the direct-small page")
+                }
+                Err(_) => panic!("the first joined-consumer free remains in the mapped route"),
+            };
+            let final_client = *client_blocks
+                .last()
+                .expect("the direct-small route has one final client alias");
+            let claimed_nonfinal_page = NonNull::new(unsafe {
+                page_map.page_map().unwrap().checked_lookup(final_client.as_ptr())
+            })
+            .expect("the still-live final client keeps its page PageMap-published");
+            let nonfinal_consumer_free_keeps_mapped = route.test_abandoned_count() == Some(1)
+                // Direct-small frees use the source partial collector: the
+                // newly published head remains uncounted until a later
+                // collection, so the first post-exit free keeps `used` at
+                // the force-collected `capacity - 1` value.
+                && unsafe { claimed_nonfinal_page.as_ref().used() } + 1 == trace.capacity
+                && unsafe { arena.pages() }
+                    .unwrap()
+                    .is_set_range(trace.slice_index, 1)
+                    == Some(true);
+            assert!(
+                nonfinal_consumer_free_keeps_mapped,
+                "the first joined-consumer free retains the mapped direct-small page"
+            );
+            for block in client_blocks
+                .iter()
+                .copied()
+                .skip(2)
+                .take(trace.remaining_client_count_after_force_collect - 2)
+            {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => route,
+                    Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {
+                        panic!("a nonfinal joined-consumer free cannot release the direct-small page")
+                    }
+                    Err(_) => panic!("a nonfinal joined-consumer free remains in the mapped route"),
+                };
+            }
+
+            match unsafe { route.remote_free_after_thread_exit(final_client) } {
+                Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {}
+                Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final joined-consumer free releases the direct-small page")
+                }
+                Err(_) => panic!("the final joined-consumer free releases the direct-small page"),
+            }
+            let page_map_unregistered_after_final_free = unsafe {
+                page_map.page_map().unwrap().checked_lookup(client_blocks[1].as_ptr())
+            }
+            .is_null();
+            let arena_page_bitmap_clear_after_final_free = unsafe { arena.pages() }
+                .unwrap()
+                .is_clear_range(trace.slice_index, 1)
+                == Some(true);
+            let arena_abandoned_bin_bitmap_clear_after_final_free = arena
+                .abandoned_pages(
+                    crate::size_class::bin(trace.block_size)
+                        .expect("the direct-small page retains one regular source bin"),
+                )
+                .expect("the direct-small bin has a static-main abandoned bitmap")
+                .bitmap_is_clear(trace.slice_index);
+            let arena_slice_released_after_final_free = unsafe { arena.slices_free() }
+                .unwrap()
+                .is_set_range(trace.slice_index, trace.slice_count)
+                == Some(true);
+            assert!(
+                page_map_unregistered_after_final_free
+                    && arena_page_bitmap_clear_after_final_free
+                    && arena_abandoned_bin_bitmap_clear_after_final_free
+                    && arena_slice_released_after_final_free,
+                "the final joined-consumer free clears the full PageMap and arena publications"
+            );
+            assert_eq!(
+                page_map.begin_page_lifecycle().unwrap().finish(),
+                Ok(()),
+                "terminal release reopens an empty process PageMap lifecycle"
+            );
+
+            let valid = trace.arena_backed
+                && trace.small_page
+                && trace.direct_small
+                && trace.full_before_remote
+                && trace.ordinary_regular_bin_before_remote
+                && trace.direct_cache_range_matches_before_remote
+                && trace.direct_cache_range_start <= trace.direct_cache_range_end
+                && trace.direct_cache_range_end < PAGES_DIRECT
+                && trace.remote_free_published_before_thread_done
+                && trace.producer_thread_done_completed
+                && producer_joined_before_consumer_frees
+                && trace.mapped_after_thread_done
+                && trace.abandoned_after_thread_done
+                && trace.page_map_registered_after_thread_done
+                && trace.arena_page_bitmap_set_after_thread_done
+                && trace.ordinary_queue_detached_after_thread_done
+                && trace.request_size == SMALL_SIZE_MAX
+                && trace.capacity >= 16
+                && trace.block_size <= SMALL_SIZE_MAX
+                && trace.slice_count
+                    == crate::page::regular_page_slice_count(PageKind::Small)
+                        .expect("small source spans have fixed geometry")
+                && trace.used_after_force_collect == trace.capacity - 1
+                && trace.remaining_client_count_after_force_collect == trace.capacity - 1
+                && nonfinal_consumer_free_keeps_mapped
+                && page_map_unregistered_after_final_free
+                && arena_page_bitmap_clear_after_final_free
+                && arena_abandoned_bin_bitmap_clear_after_final_free
+                && arena_slice_released_after_final_free;
+            assert!(valid, "full direct-small exit trace diverged from pinned C");
+
+            std::println!("CRABC_MI_FULL_DIRECT_SMALL_EXIT_TRACE_BEGIN");
+            std::println!(
+                "trace.full_direct_small_exit.arena_backed={}",
+                trace.arena_backed as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.small_page={}",
+                trace.small_page as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.direct_small={}",
+                trace.direct_small as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.full_before_remote={}",
+                trace.full_before_remote as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.ordinary_regular_bin_before_remote={}",
+                trace.ordinary_regular_bin_before_remote as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.direct_cache_range_matches_before_remote={}",
+                trace.direct_cache_range_matches_before_remote as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.direct_cache_range_start={}",
+                trace.direct_cache_range_start
+            );
+            std::println!(
+                "trace.full_direct_small_exit.direct_cache_range_end={}",
+                trace.direct_cache_range_end
+            );
+            std::println!(
+                "trace.full_direct_small_exit.remote_free_published_before_thread_done={}",
+                trace.remote_free_published_before_thread_done as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.producer_thread_done_completed={}",
+                trace.producer_thread_done_completed as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.producer_joined_before_consumer_frees={}",
+                producer_joined_before_consumer_frees as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.mapped_after_thread_done={}",
+                trace.mapped_after_thread_done as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.abandoned_after_thread_done={}",
+                trace.abandoned_after_thread_done as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.page_map_registered_after_thread_done={}",
+                trace.page_map_registered_after_thread_done as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.arena_page_bitmap_set_after_thread_done={}",
+                trace.arena_page_bitmap_set_after_thread_done as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.ordinary_queue_detached_after_thread_done={}",
+                trace.ordinary_queue_detached_after_thread_done as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.request_size={}",
+                trace.request_size
+            );
+            std::println!(
+                "trace.full_direct_small_exit.capacity={}",
+                trace.capacity
+            );
+            std::println!(
+                "trace.full_direct_small_exit.block_size={}",
+                trace.block_size
+            );
+            std::println!(
+                "trace.full_direct_small_exit.slice_count={}",
+                trace.slice_count
+            );
+            std::println!(
+                "trace.full_direct_small_exit.used_after_force_collect={}",
+                trace.used_after_force_collect
+            );
+            std::println!(
+                "trace.full_direct_small_exit.remaining_client_count_after_force_collect={}",
+                trace.remaining_client_count_after_force_collect
+            );
+            std::println!(
+                "trace.full_direct_small_exit.nonfinal_consumer_free_keeps_mapped={}",
+                nonfinal_consumer_free_keeps_mapped as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.page_map_unregistered_after_final_free={}",
+                page_map_unregistered_after_final_free as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.arena_page_bitmap_clear_after_final_free={}",
+                arena_page_bitmap_clear_after_final_free as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.arena_abandoned_bin_bitmap_clear_after_final_free={}",
+                arena_abandoned_bin_bitmap_clear_after_final_free as u8
+            );
+            std::println!(
+                "trace.full_direct_small_exit.arena_slice_released_after_final_free={}",
+                arena_slice_released_after_final_free as u8
+            );
+            std::println!("trace.full_direct_small_exit.valid={}", valid as u8);
+            std::println!("CRABC_MI_FULL_DIRECT_SMALL_EXIT_TRACE_END");
+
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("full direct-small trace fixture remains current-thread local");
     }
 
     #[test]

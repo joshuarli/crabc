@@ -1329,6 +1329,31 @@ exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public
 `mi_*` behavior or runtime, libc integration, backend promotion, public x86
 support, or AArch64 evidence.
 
+The separate full direct-small force-collect post-exit differential is also
+native x86-64 only:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-full-direct-small-force-collect-post-exit
+```
+
+It writes
+`compat/reports/allocator/x86_64/full-direct-small-force-collect-post-exit.json`
+after comparing 28 address-independent values from pinned C and one private
+Rust test. One worker-owned arena page receives a 1024-byte request in the
+1024-byte, 64-block, one-slice full direct-small regular bin. Its pre-remote
+preflight requires the complete rounded direct-cache range, and the pinned
+source anchors establish that range update before queue detachment. The
+consumer publishes exactly one remote `mi_free` before real `mi_thread_done()`;
+`pthread_join()` completes before sequential consumer frees. Force collection
+immediately publishes mapped abandonment while detaching the ordinary queue;
+the mapped route remains PageMap- and arena-bitmap-registered until the final
+free releases the PageMap, ordinary arena bitmap, exact slice, and the
+terminal static-main abandoned-bin bitmap (`arena_abandoned_bin_bitmap_clear_after_final_free`). This is
+private native x86-64 engine evidence only: it does not establish general
+remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption,
+concurrent collection, public `mi_*` behavior or runtime, libc integration,
+backend promotion, public x86 support, or AArch64 evidence.
+
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
@@ -1376,6 +1401,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_regular_small_evidence.py` and `x86_64-regular-small-evidence-v3.5.0.json` | Native x86-64-only private 40-field pinned-C/Rust differential for one 1025-byte ordinary regular-small arena page: a 1280-byte 51-block one-slice class locally retires at 16, the next same-Theap generic allocation quick-collects/reuses a just-freed same-page block, and forced collection verifies queue/PageMap/ordinary arena bitmap/exact slice release. It is dispatched by `allocator-regular-small`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_medium_full_retire_evidence.py` and `x86_64-medium-full-retire-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one same-thread/same-Theap, arena-backed ordinary 10241-byte medium page (12288-byte block size, 42 capacity, eight slices) under C full-retain `-1`: `BIN_FULL`, one local-free return to regular, retire expiry `4`, and forced queue/PageMap/arena-bit/slice-span release. It is dispatched by `allocator-medium-full-retire`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_full_non_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-non-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for one worker-owned arena full non-direct-small regular-bin page: a 1032-byte request uses the 1280-byte, 51-block, one-slice class; one remote `mi_free` is published before real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection makes the page nonfull/mapped-abandoned and detaches its ordinary queue, and only the final free releases the PageMap/arena bitmap/slice. It is dispatched by `allocator-full-non-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |
+| `x86_64_full_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 28-field pinned-C/Rust differential for one worker-owned arena full direct-small regular-bin page: a 1024-byte request uses the 1024-byte, 64-block, one-slice class; a pre-remote preflight requires the complete rounded direct-cache range, one remote `mi_free` precedes real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection immediately publishes the mapped route while detaching the ordinary queue, and only the final free releases the PageMap/arena bitmap/slice and clears the terminal static-main abandoned-bin bitmap (`arena_abandoned_bin_bitmap_clear_after_final_free`). It is dispatched by `allocator-full-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. It is dispatched by `allocator-mapped-post-exit`; Rust covers only one bounded process-owned mapped regular handoff and directly observes PageMap, ordinary arena-page bitmap, and free-slice bitmap release. The lane does not claim general thread exit/routing, public API, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_retired_prepass_evidence.py` and `x86_64-retired-prepass-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for one worker-local retirement, real `mi_thread_done()`/`pthread_join()` retired-page force-release, one distinct live mapped-abandoned page, and one consumer terminal free. It is dispatched by `allocator-retired-prepass`; it directly records PageMap, ordinary arena bitmap, exact slice-span, and empty-route checks, and does not claim general retirement/teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_aggregate_post_exit_evidence.py` and `x86_64-aggregate-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for exactly two distinct live nonfull medium arena pages in distinct bins: the real worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before freeing, both pages are mapped-abandoned after teardown, then a second-first selective terminal release is followed by a first-page terminal release and empty route. It is dispatched by `allocator-aggregate-post-exit`; it directly records PageMap, ordinary arena bitmap, exact slice span, and the first page's registered/bit-set/mapped-abandoned/`used == 1` state after the second-page free. It does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
