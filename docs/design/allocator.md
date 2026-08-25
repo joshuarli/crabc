@@ -363,7 +363,8 @@ the final PageMap -> `pages_main` -> metadata -> slice release. The large
 route validates the complete 64-slice PageMap span before terminal release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
-`MainHeapThreadProcessPageExitDrain::abandon_full_medium_after_force_collect_to_mapped_process_route`
+`MainHeapThreadProcessPageExitDrain::abandon_full_medium_after_force_collect_to_mapped_process_route`,
+`MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped_process_route`,
 and
 `MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_after_force_collect_to_mapped_process_route`
 are separate, source-specific predecessors of the eighth mapped route rather
@@ -373,18 +374,21 @@ The medium predecessor starts from the sole full `BIN_FULL` member: force
 collection leaves it linked and marked full, then `_mi_page_abandon` removes
 that member, clears its full flag and page count, and immediately publishes the
 ordinary medium mapped-abandoned identity plus its exact static-main
-bitmap/count pair. The direct-small predecessor instead starts from the sole
-full ordinary-bin `PageKind::Small` member with `block_size <= SMALL_SIZE_MAX`,
-`reserved >= 16`, and its complete rounded direct-cache range. It stays out of
-`BIN_FULL`; after force and false collection, source removes the regular
-member, clears that exact direct range before page-count detach, and immediately
-publishes the ordinary small mapped-abandoned identity plus the same paired
-static-main capability. Both old Theap/TLD owners tear down before remaining
+bitmap/count pair. The non-direct-small predecessor starts from the sole full
+ordinary-bin `PageKind::Small` member with
+`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and every direct entry
+empty. It stays out of `BIN_FULL`; after force and false collection, source
+removes that regular member, performs the source no-op direct-cache update, and
+immediately publishes the ordinary small mapped-abandoned identity plus the
+same paired static-main capability. The direct-small predecessor instead
+requires `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and its complete
+rounded direct-cache range; source clears that range before page-count detach.
+All three old Theap/TLD owners tear down before remaining
 linear client frees enter `MainHeapThreadProcessPageExitMappedRegularRoute`.
 Their full origins remain client-free-only: final nonfull geometry cannot grant
 the initially-nonfull-medium allocation-time adoption edge. Malformed regular,
-nonfull, or stale direct-cache input rejects before mutation, while a collector
-fault retains the drain terminally. They deliberately exclude multiple joined
+nonfull, wrong-small-class, or stale direct-cache input rejects before mutation,
+while a collector fault retains the drain terminally. They deliberately exclude multiple joined
 frees, local-free variants, all-free release, normal full-page unmapped
 abandonment, allocation-time adoption/requeue, mixed traversal, and concurrent
 frees.

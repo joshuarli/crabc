@@ -457,20 +457,23 @@ result may refine it only when it can prove retained ownership.
   `pages_abandoned[bin]` bit/count pair, and later frees use the mapped tail
   until the same terminal PageMap -> main bitmap -> metadata -> slice release.
   The full-large route additionally proves its complete 64-slice span before
-  that release. A distinct source-specific predecessor also accepts one sole
-  full medium page with one joined remote free: force collection changes
-  `used` to exactly `reserved - 1` while the page remains linked and marked
-  full in `BIN_FULL`; false collection then removes that same member and
-  immediately publishes the ordinary medium mapped bit/count pair into the
-  existing mapped regular route. Its direct-small counterpart starts from the
-  sole full ordinary-bin `PageKind::Small` page with `block_size <=
-  SMALL_SIZE_MAX`, `reserved >= 16`, and the complete rounded direct-cache
-  range. Force and false collection leave that direct member queue-linked but
-  nonfull; removal clears its exact direct range before page-count detach and
-  immediately publishes the ordinary small mapped bit/count pair into the same
-  client-free-only route. Neither predecessor is a general full-page traversal:
-  malformed/nonfull input rejects before mutation and a collector fault retains
-  the drain terminally. The sixth handoff accepts one full non-direct small page only
+  that release. Distinct source-specific predecessors accept one sole full
+  medium, non-direct-small, or direct-small page with one joined remote free:
+  force collection changes `used` to exactly `reserved - 1` while each page
+  remains linked in its source queue. The medium page remains marked full in
+  `BIN_FULL`; false collection then removes that same member and immediately
+  publishes the ordinary medium mapped bit/count pair into the existing mapped
+  regular route. The non-direct-small counterpart starts from the sole full
+  ordinary-bin `PageKind::Small` page with `SMALL_SIZE_MAX < block_size <=
+  SMALL_MAX_OBJ_SIZE` and every direct slot empty. Its source direct-cache
+  update is a no-op; false collection removes the regular member and immediately
+  publishes the ordinary small mapped bit/count pair. The direct-small
+  counterpart requires `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and
+  the complete rounded direct-cache range; removal clears that exact range
+  before page-count detach and immediately publishes the same client-free-only
+  route. No predecessor is a general full-page traversal: malformed/nonfull
+  input rejects before mutation and a collector fault retains the drain
+  terminally. The sixth handoff accepts one full non-direct small page only
   when its rounded `block_size > SMALL_SIZE_MAX`: unlike the `BIN_FULL` medium
   and large shapes, it remains in its ordinary small bin, has no direct-cache
   range, and takes the ordinary collector. It follows the same
@@ -597,6 +600,16 @@ aggregate-registry adoption remain absent.
   `later_thread_exit_full_medium_force_collect_route_retains_a_collection_failure`
   proves a force-collector failure records terminal drain poison rather than
   fabricating a retry; and
+  `later_thread_exit_full_non_direct_small_force_collects_to_client_free_only_mapped_process_route`
+  proves one joined remote free makes the sole full ordinary-bin non-direct
+  small page nonfull during force collection, then source retains its empty
+  direct-cache image, removes the regular member, immediately publishes the
+  mapped bit/count pair, tears down the old Theap/TLD, rejects allocation-time
+  adoption, and releases its one-slice span through sequential client frees.
+  `later_thread_exit_full_non_direct_small_force_collect_route_rejects_direct_small_before_mutation`
+  proves the sibling direct-small class cannot cross this source boundary, and
+  `later_thread_exit_full_non_direct_small_force_collect_route_retains_a_collection_failure`
+  proves a force-collector fault retains terminal drain poison; and
   `later_thread_exit_full_large_route_reabandons_after_mostly_used_frees`
   proves the same full-regular owner-exit state machine for a large page,
   including old-Theap/TLD teardown before client frees, the threshold-adjacent

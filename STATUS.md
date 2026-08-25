@@ -91,14 +91,16 @@ with one live block, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that remain unmapped until
 their mostly-used free boundary then reabandon to the static-main bitmap, and a sole nonfull
 small-or-medium page whose process-owned route survives old-Theap/TLD teardown,
-including exact full-medium and full-direct-small predecessors where one joined
-remote free is force-collected before immediate mapped publication (the medium
-page remains in `BIN_FULL`; the direct-small page remains in its ordinary bin
-until its rounded direct-cache range is cleared during removal));
+including exact full-medium, full-non-direct-small, and full-direct-small
+predecessors where one joined remote free is force-collected before immediate
+mapped publication (the medium page remains in `BIN_FULL`; the non-direct-small
+page remains in its ordinary bin with every direct slot empty; the direct-small
+page remains in its ordinary bin until its rounded direct-cache range is
+cleared during removal));
 and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
 through sequential client frees. A fresh later-main owner can explicitly
-reclaim only a sole mapped medium route that began owner exit nonfull; both
+reclaim only a sole mapped medium route that began owner exit nonfull; all
 force-collected full-origin predecessors remain sequential client-free-only.
 Its bounded test fixture also covers a real reserved on-demand prefix, direct
 page-area commitment, and failed-commit mapped reabandonment before a
