@@ -260,8 +260,8 @@
       "source_anchor": {
         "member": "include/mimalloc/bits.h",
         "start_line": 49,
-        "end_line": 145,
-        "sha256": "167f3fa0110b96d0511d1d772dfb6768748d43badda7ed1dca60eabb1de6a76a"
+        "end_line": 350,
+        "sha256": "d51d892ae64dc8d94fe7ad8099771f3431638101248e87a8547cac587d7206a7"
       },
       "rust_modules": [
         "crabc_mimalloc::bits",
@@ -898,6 +898,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "9e34d7fb4297c86a5a620d9e0b581400d95ec83fdb58466b6d58cc43eac3473c"
+    "units_sha256": "4fc1e0c49721e6ebff81d50d6266f4f7e593a7fc6f983495275f315628a36df8"
   }
 }

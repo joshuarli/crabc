@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -42,6 +43,8 @@ UPSTREAM_TEST_CONTRACT = ALLOCATOR_ROOT / "upstream-tests-v3.5.0.json"
 ADAPTED_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-v3.5.0.json"
 X86_64_API_CONTRACT = ALLOCATOR_ROOT / "x86_64-api-v3.5.0.json"
 X86_64_API_INVENTORY_RUNNER = ALLOCATOR_ROOT / "x86_64_api_inventory.py"
+X86_64_SOURCE_MAP_CONTRACT = ALLOCATOR_ROOT / "x86_64-source-map-v3.5.0.json"
+X86_64_SOURCE_MAP_RUNNER = ALLOCATOR_ROOT / "x86_64_source_map.py"
 X86_64_TEST_ADAPTER_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-x86_64-v3.5.0.json"
 TEST_ADAPTER_ROOT = ALLOCATOR_ROOT / "test-adapter"
 TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
@@ -2272,6 +2275,89 @@ def artifact_record(path: Path) -> dict[str, Any]:
     return {"bytes": path.stat().st_size, "path": relative(path), "sha256": sha256_file(path)}
 
 
+def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
+    """Run the target-local source-map validator without spawning a child process."""
+
+    spec = importlib.util.spec_from_file_location(
+        "crabc_allocator_x86_64_source_map_validator",
+        X86_64_SOURCE_MAP_RUNNER,
+    )
+    if spec is None or spec.loader is None:
+        raise HarnessError("cannot load native x86-64 source-map validator")
+    source_map = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(source_map)
+    except Exception as error:
+        raise HarnessError(f"cannot load native x86-64 source-map validator: {error}") from error
+
+    validator = getattr(source_map, "checked_contract_result", None)
+    if not callable(validator):
+        raise HarnessError("native x86-64 source-map validator has no checked result callable")
+    try:
+        result = validator(archive)
+    except Exception as error:
+        raise HarnessError(f"native x86-64 source-map validation failed: {error}") from error
+    if not isinstance(result, dict) or set(result) != {
+        "contract",
+        "overall_status",
+        "profile",
+        "scope",
+        "source_member_count",
+        "status",
+        "status_counts",
+        "target",
+        "unit_count",
+        "unfinished_unit_count",
+    }:
+        raise HarnessError("native x86-64 source-map validator returned an unsupported result")
+
+    expected_contract = {
+        "path": relative(X86_64_SOURCE_MAP_CONTRACT),
+        "sha256": sha256_file(X86_64_SOURCE_MAP_CONTRACT),
+    }
+    if result["contract"] != expected_contract:
+        raise HarnessError("native x86-64 source-map validator returned the wrong contract")
+    expected_target = {
+        "architecture": "x86_64",
+        "endianness": "little",
+        "rust_target": X86_64_RUST_TARGET,
+        "system": "linux",
+    }
+    if result["target"] != expected_target:
+        raise HarnessError("native x86-64 source-map validator returned the wrong target")
+    if result["profile"] != "linux-x86_64-mimalloc-engine-parity":
+        raise HarnessError("native x86-64 source-map validator returned the wrong profile")
+    if result["overall_status"] != "incomplete" or result["status"] != "passed":
+        raise HarnessError("native x86-64 source-map validator returned an invalid status")
+    scope = result["scope"]
+    if not isinstance(scope, str) or "does not establish" not in scope:
+        raise HarnessError("native x86-64 source-map validator result has an unscoped claim")
+
+    status_counts = result["status_counts"]
+    if not isinstance(status_counts, dict) or set(status_counts) != {
+        "implemented",
+        "inapplicable",
+        "not-started",
+        "partial",
+    } or any(type(count) is not int or count < 0 for count in status_counts.values()):
+        raise HarnessError("native x86-64 source-map validator returned invalid status counts")
+    source_member_count = result["source_member_count"]
+    unit_count = result["unit_count"]
+    unfinished_unit_count = result["unfinished_unit_count"]
+    if (
+        type(source_member_count) is not int
+        or type(unit_count) is not int
+        or type(unfinished_unit_count) is not int
+        or source_member_count <= 0
+        or unit_count != source_member_count
+        or sum(status_counts.values()) != unit_count
+        or unfinished_unit_count != status_counts["partial"] + status_counts["not-started"]
+        or not 0 < unfinished_unit_count <= unit_count
+    ):
+        raise HarnessError("native x86-64 source-map validator returned inconsistent counts")
+    return result
+
+
 def x86_64_source_api_inventory(archive: Path) -> dict[str, Any]:
     """Check the target-local source declaration inventory against this archive."""
 
@@ -4174,6 +4260,7 @@ def run_x86_64_oracle(
     archive: Path,
     source: Path,
     source_api_inventory: Mapping[str, Any],
+    source_map: Mapping[str, Any],
     adapter_source_contract: Mapping[str, Any],
     adapter_source_summary: Mapping[str, Any],
     adapter_contract: Mapping[str, Any],
@@ -4228,6 +4315,7 @@ def run_x86_64_oracle(
     report["architecture_profile"] = "x86_64-native-c-oracle"
     report["native_execution_provenance"] = native_execution_provenance
     report["x86_64_source_api_inventory"] = dict(source_api_inventory)
+    report["x86_64_source_map"] = dict(source_map)
     report["x86_64_engine_dependency_graph"] = engine_dependency_graph
     report["x86_64_normal_engine_artifact"] = normal_engine_artifact
     # The unit suite exercises the direct no_std engine against this native C
@@ -4314,6 +4402,9 @@ def run_milestone0(
         require_native_x86_64()
     pin = load_pin()
     archive = fetch_archive(pin, offline)
+    x86_64_source_map: Mapping[str, Any] | None = None
+    if architecture == "x86_64":
+        x86_64_source_map = x86_64_source_map_contract(archive)
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
         source = safe_extract(archive, Path(temporary), pin["archive_root"])
         if architecture == "x86_64":
@@ -4322,6 +4413,7 @@ def run_milestone0(
                     "native x86-64 uses its checked-in source API inventory; "
                     "AArch64 contract generation is not part of this profile"
                 )
+            assert x86_64_source_map is not None
             source_api_inventory = x86_64_source_api_inventory(archive)
             adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
             adapted_summary = validate_adapted_test_contract(
@@ -4346,6 +4438,7 @@ def run_milestone0(
                 return {
                     "architecture_profile": "x86_64-source-contract-check",
                     "x86_64_source_api_inventory": source_api_inventory,
+                    "x86_64_source_map": dict(x86_64_source_map),
                     "x86_64_private_test_adapter": {
                         "contract": artifact_record(X86_64_TEST_ADAPTER_CONTRACT),
                         "contract_summary": x86_64_adapter_summary,
@@ -4365,6 +4458,7 @@ def run_milestone0(
                 archive=archive,
                 source=source,
                 source_api_inventory=source_api_inventory,
+                source_map=x86_64_source_map,
                 adapter_source_contract=adapted_contract,
                 adapter_source_summary=adapted_summary,
                 adapter_contract=x86_64_adapter_contract,

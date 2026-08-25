@@ -24,6 +24,10 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat/allocator/x86_64-source-map-v3.5.0.json"
 UPSTREAMS_PATH = ROOT / "compat/upstreams.toml"
 DEFAULT_ARCHIVE_PATH = ROOT / "compat/allocator/.cache/mimalloc-3.5.0.tar.gz"
+RESULT_SCOPE = (
+    "Pinned source mapping and ratchet validation only; it does not establish "
+    "behavioral parity, public C allocator API, or runtime integration."
+)
 
 TARGET_CONTEXT = {
     "architecture": "x86_64",
@@ -114,7 +118,23 @@ REQUIRED_UNIT_IDS = (
 # An `implemented` source scope is deliberately rare.  The source map itself
 # cannot prove a whole translation unit, so only this narrow scalar scope may
 # use the stronger word until a later reviewed ratchet expands the allow-list.
-IMPLEMENTED_UNIT_IDS = frozenset({"x86-64-width-and-bit-operations"})
+# The required definitions make the source claim concrete: a range containing
+# only architecture/configuration macros cannot also claim the Rust bit helpers.
+IMPLEMENTED_SOURCE_REQUIREMENTS = {
+    "x86-64-width-and-bit-operations": {
+        "member": "include/mimalloc/bits.h",
+        "required_definitions": (
+            b"static inline size_t mi_popcount",
+            b"static inline size_t mi_ctz",
+            b"static inline size_t mi_clz",
+            b"static inline bool mi_bsf",
+            b"static inline bool mi_bsr",
+            b"static inline size_t mi_rotr",
+            b"static inline size_t mi_rotl",
+            b"static inline uint32_t mi_rotl32",
+        ),
+    }
+}
 
 EXPECTED_TOP_LEVEL_FIELDS = {
     "boundary",
@@ -389,9 +409,30 @@ def validate_units(
             or isinstance(end_line, bool)
         ):
             raise SourceMapError(f"x86-64 source-map unit {unit_id} anchor lines are invalid")
-        actual_anchor_hash = sha256_bytes(source_range(sources[member], start_line, end_line))
+        anchored_source = source_range(sources[member], start_line, end_line)
+        actual_anchor_hash = sha256_bytes(anchored_source)
         if anchor.get("sha256") != actual_anchor_hash:
             raise SourceMapError(f"x86-64 source-map unit {unit_id} source anchor drifted")
+
+        if status == "implemented":
+            requirement = IMPLEMENTED_SOURCE_REQUIREMENTS.get(unit_id)
+            if requirement is None:
+                raise SourceMapError(
+                    f"x86-64 source-map unit {unit_id} cannot claim implemented status before a reviewed ratchet expansion"
+                )
+            if member != requirement["member"]:
+                raise SourceMapError(
+                    f"x86-64 source-map unit {unit_id} has the wrong implemented source member"
+                )
+            missing = [
+                definition
+                for definition in requirement["required_definitions"]
+                if definition not in anchored_source
+            ]
+            if missing:
+                raise SourceMapError(
+                    f"x86-64 source-map unit {unit_id} does not anchor every claimed scalar helper"
+                )
 
         modules = validate_rust_modules(unit.get("rust_modules"), unit_id)
         evidence = validate_evidence(unit.get("evidence"), unit_id)
@@ -403,14 +444,14 @@ def validate_units(
             raise SourceMapError(
                 f"x86-64 source-map unit {unit_id} has an unstarted/inapplicable status with code evidence"
             )
-        if status == "implemented" and unit_id not in IMPLEMENTED_UNIT_IDS:
-            raise SourceMapError(
-                f"x86-64 source-map unit {unit_id} cannot claim implemented status before a reviewed ratchet expansion"
-            )
         normalized.append(unit)
 
     if tuple(unit["id"] for unit in normalized) != REQUIRED_UNIT_IDS:
         raise SourceMapError("x86-64 source-map unit inventory changed")
+    if tuple(unit["source_anchor"]["member"] for unit in normalized) != REQUIRED_SOURCE_MEMBERS:
+        raise SourceMapError(
+            "x86-64 source-map units must cover each reviewed source member exactly once"
+        )
     return normalized
 
 
@@ -518,6 +559,45 @@ def validate_contract(contract: Mapping[str, Any], pin: Mapping[str, str], sourc
     normalized_sources = validate_source_records(contract, pin, sources)
     normalized_units = validate_units(contract, sources)
     validate_ratchet(contract, normalized_sources, normalized_units)
+
+
+def checked_contract_result(archive_path: Path) -> dict[str, object]:
+    """Validate the checked-in map and return only its bounded evidence result.
+
+    Callers can include this record in a larger native-oracle report without
+    treating a source map as execution, behavioral, public-API, or runtime
+    integration evidence.  This helper never writes a contract or ratchet.
+    """
+
+    pin = load_mimalloc_pin()
+    contract = load_contract()
+    sources = read_pinned_sources(
+        archive_path,
+        pin,
+        source_members_from_contract(contract),
+    )
+    validate_contract(contract, pin, sources)
+    ratchet = contract["ratchet"]
+    assert isinstance(ratchet, dict)
+    target = contract["target_context"]
+    assert isinstance(target, dict)
+    status_counts = ratchet["status_counts"]
+    assert isinstance(status_counts, dict)
+    return {
+        "contract": {
+            "path": CONTRACT_PATH.relative_to(ROOT).as_posix(),
+            "sha256": sha256_bytes(CONTRACT_PATH.read_bytes()),
+        },
+        "overall_status": contract["overall"]["status"],
+        "profile": contract["profile"],
+        "scope": RESULT_SCOPE,
+        "source_member_count": ratchet["source_member_count"],
+        "status": "passed",
+        "status_counts": dict(status_counts),
+        "target": dict(target),
+        "unit_count": ratchet["unit_count"],
+        "unfinished_unit_count": ratchet["unfinished_unit_count"],
+    }
 
 
 def parse_arguments() -> argparse.Namespace:

@@ -39,6 +39,22 @@ class X86_64SourceMapTests(unittest.TestCase):
     def test_checked_in_contract_matches_the_verified_pinned_sources(self) -> None:
         SOURCE_MAP.validate_contract(self.contract, self.pin, self.sources)
 
+    def test_callable_validator_returns_a_scoped_checked_result(self) -> None:
+        result = SOURCE_MAP.checked_contract_result(SOURCE_MAP.DEFAULT_ARCHIVE_PATH)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["profile"], "linux-x86_64-mimalloc-engine-parity")
+        self.assertEqual(result["overall_status"], "incomplete")
+        self.assertEqual(result["target"], self.contract["target_context"])
+        self.assertEqual(result["source_member_count"], 34)
+        self.assertEqual(result["unit_count"], 34)
+        self.assertEqual(result["unfinished_unit_count"], 30)
+        self.assertEqual(result["status_counts"], self.contract["ratchet"]["status_counts"])
+        self.assertEqual(
+            result["contract"]["path"],
+            "compat/allocator/x86_64-source-map-v3.5.0.json",
+        )
+        self.assertIn("does not establish", result["scope"])
+
     def test_contract_is_architecture_qualified_and_explicitly_incomplete(self) -> None:
         self.assertEqual(self.contract["format"], 1)
         self.assertEqual(self.contract["kind"], "mimalloc-x86_64-engine-source-map")
@@ -84,6 +100,21 @@ class X86_64SourceMapTests(unittest.TestCase):
                 ),
             )
 
+    def test_duplicate_source_member_anchor_is_rejected(self) -> None:
+        malformed = copy.deepcopy(self.contract)
+        duplicate = malformed["units"][1]["source_anchor"]
+        duplicate["member"] = "include/mimalloc.h"
+        duplicate["start_line"] = 109
+        duplicate["end_line"] = 220
+        duplicate["sha256"] = SOURCE_MAP.sha256_bytes(
+            SOURCE_MAP.source_range(self.sources["include/mimalloc.h"], 109, 220)
+        )
+        with self.assertRaisesRegex(
+            SOURCE_MAP.SourceMapError,
+            "cover each reviewed source member exactly once",
+        ):
+            SOURCE_MAP.validate_contract(malformed, self.pin, self.sources)
+
     def test_each_status_is_present_without_upgrading_the_whole_profile(self) -> None:
         self.assertEqual(
             self.contract["ratchet"]["status_counts"],
@@ -99,6 +130,51 @@ class X86_64SourceMapTests(unittest.TestCase):
         ]
         self.assertEqual(implemented, ["x86-64-width-and-bit-operations"])
         self.assertGreater(self.contract["ratchet"]["unfinished_unit_count"], 0)
+
+    def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
+        unit = next(
+            unit
+            for unit in self.contract["units"]
+            if unit["id"] == "x86-64-width-and-bit-operations"
+        )
+        anchor = unit["source_anchor"]
+        self.assertEqual(anchor["member"], "include/mimalloc/bits.h")
+        self.assertLessEqual(anchor["start_line"], 49)
+        self.assertGreaterEqual(anchor["end_line"], 350)
+        anchored_source = SOURCE_MAP.source_range(
+            self.sources[anchor["member"]],
+            anchor["start_line"],
+            anchor["end_line"],
+        )
+        for helper in (
+            b"static inline size_t mi_popcount",
+            b"static inline size_t mi_ctz",
+            b"static inline size_t mi_clz",
+            b"static inline bool mi_bsf",
+            b"static inline bool mi_bsr",
+            b"static inline size_t mi_rotr",
+            b"static inline size_t mi_rotl",
+            b"static inline uint32_t mi_rotl32",
+        ):
+            self.assertIn(helper, anchored_source)
+
+    def test_implemented_bit_scope_rejects_a_config_only_anchor(self) -> None:
+        malformed = copy.deepcopy(self.contract)
+        unit = next(
+            unit
+            for unit in malformed["units"]
+            if unit["id"] == "x86-64-width-and-bit-operations"
+        )
+        anchor = unit["source_anchor"]
+        anchor["end_line"] = 145
+        anchor["sha256"] = SOURCE_MAP.sha256_bytes(
+            SOURCE_MAP.source_range(self.sources[anchor["member"]], anchor["start_line"], 145)
+        )
+        with self.assertRaisesRegex(
+            SOURCE_MAP.SourceMapError,
+            "does not anchor every claimed scalar helper",
+        ):
+            SOURCE_MAP.validate_contract(malformed, self.pin, self.sources)
 
     def test_completion_claim_is_rejected(self) -> None:
         malformed = copy.deepcopy(self.contract)

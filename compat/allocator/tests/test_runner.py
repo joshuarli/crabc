@@ -231,6 +231,28 @@ class InventoryTests(unittest.TestCase):
             "declaration_count": 180,
             "status": "passed",
         }
+        source_map = {
+            "contract": {"path": "compat/allocator/x86_64-source-map-v3.5.0.json"},
+            "overall_status": "incomplete",
+            "profile": "linux-x86_64-mimalloc-engine-parity",
+            "scope": "pinned source mapping only; it does not establish runtime integration",
+            "source_member_count": 34,
+            "status": "passed",
+            "status_counts": {
+                "implemented": 1,
+                "inapplicable": 3,
+                "not-started": 5,
+                "partial": 25,
+            },
+            "target": {
+                "architecture": "x86_64",
+                "endianness": "little",
+                "rust_target": "x86_64-unknown-linux-musl",
+                "system": "linux",
+            },
+            "unit_count": 34,
+            "unfinished_unit_count": 30,
+        }
         expected = {"status": "x86-local"}
         with tempfile.TemporaryDirectory() as temporary:
             temporary_root = Path(temporary)
@@ -255,6 +277,10 @@ class InventoryTests(unittest.TestCase):
                 "x86_64_source_api_inventory",
                 return_value=source_api_inventory,
             ) as inventory, mock.patch.object(
+                RUNNER,
+                "x86_64_source_map_contract",
+                return_value=source_map,
+            ) as source_map_validator, mock.patch.object(
                 RUNNER,
                 "apply_and_verify_adapted_test_patch",
                 return_value={"selected_test_count": 33},
@@ -286,12 +312,16 @@ class InventoryTests(unittest.TestCase):
                 )
         self.assertEqual(source_check["architecture_profile"], "x86_64-source-contract-check")
         self.assertEqual(source_check["x86_64_source_api_inventory"], source_api_inventory)
+        self.assertEqual(source_check["x86_64_source_map"], source_map)
         self.assertNotIn("native_execution_provenance", source_check)
         inventory.assert_has_calls([mock.call(archive), mock.call(archive)])
         self.assertEqual(inventory.call_count, 2)
+        source_map_validator.assert_has_calls([mock.call(archive), mock.call(archive)])
+        self.assertEqual(source_map_validator.call_count, 2)
         self.assertEqual(
             run_x86.call_args.kwargs["source_api_inventory"], source_api_inventory
         )
+        self.assertEqual(run_x86.call_args.kwargs["source_map"], source_map)
         generated_contracts.assert_not_called()
         load_port_map.assert_not_called()
         check_ratchet.assert_not_called()
