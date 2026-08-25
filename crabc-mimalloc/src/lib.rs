@@ -34,9 +34,11 @@
 #[cfg(feature = "test-adapter")]
 extern crate alloc as rust_alloc;
 
-// Linux/AArch64 is the sole production profile. `cfg(miri)` selects a private
-// test instrument only; Linux/x86-64 is accepted solely for the bounded native
-// allocator differentials documented above.
+// These are the explicit allocator-engine target profiles. The AArch64
+// profile is the production-integration target; the x86-64 profile is native
+// parity evidence only. `cfg(miri)` selects a private test instrument: it
+// never makes another target supported by the allocator engine or a public
+// production build.
 #[cfg(all(
     not(miri),
     not(all(

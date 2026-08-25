@@ -180,7 +180,7 @@ static mut CACHED_THEAP_ROOT: *mut Theap = empty_default_theap_ptr();
 // compiler builtin, after which `prim-tls.h` selects direct `TPIDR_EL0` reads
 // on AArch64 and `%fs:0` reads on x86-64. Retain the helper root for
 // source-shape completeness and for any later configuration inventory; do not
-// route live ownership through it on either production target.
+// route live ownership through it on either selected native profile.
 #[thread_local]
 static mut THREAD_ID_HELPER_ROOT: *mut () = core::ptr::null_mut();
 
