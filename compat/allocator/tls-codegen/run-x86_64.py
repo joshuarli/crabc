@@ -45,9 +45,8 @@ WITNESSES = (
     "crabc_mimalloc_tls_probe_identity_helper_address",
     "crabc_mimalloc_tls_probe_reset",
 )
-DIRECT_ROOT_WITNESSES = frozenset(WITNESSES) - {
-    "crabc_mimalloc_tls_probe_identity_get"
-}
+IDENTITY_WITNESS = "crabc_mimalloc_tls_probe_identity_get"
+TLS_ROOT_WITNESSES = frozenset(WITNESSES) - {IDENTITY_WITNESS}
 FORBIDDEN_TLS_FORMS = (
     "__tls_get_addr",
     "TLSDESC",
@@ -60,6 +59,14 @@ FORBIDDEN_TLS_FORMS = (
 # The access itself then adds that offset to the native FS base in the
 # generated instruction sequence.
 EXPECTED_TLS_RELOCATION = "R_X86_64_GOTTPOFF"
+FS_SEGMENT_ACCESS = re.compile(r"\bfs\s*:", re.IGNORECASE)
+# GNU objdump normally renders the identity load as ``%fs:0x0``. Accept the
+# equivalent Intel spelling as well, but do not mistake an FS-relative TLS
+# access such as ``%fs:(%rax)`` for the direct thread-pointer identity load.
+FS_ZERO_ACCESS = re.compile(
+    r"\bfs\s*:\s*(?:0x0+|0+)(?=\b|[,\)])|\bfs\s*:\s*\[\s*(?:0x0+|0+)\s*\]",
+    re.IGNORECASE,
+)
 
 
 class VerificationError(RuntimeError):
@@ -170,6 +177,48 @@ def reject_forbidden_tls_forms(text: str) -> None:
     present = [forbidden for forbidden in FORBIDDEN_TLS_FORMS if forbidden in text]
     if present:
         raise VerificationError(f"forbidden dynamic TLS access forms are present: {present}")
+
+
+def witness_access_evidence(witness: str, disassembly: str) -> dict[str, bool | str]:
+    """Validate the target-specific access proof for one retained witness.
+
+    The selected Linux/musl identity path is a literal load from the TCB self
+    pointer at ``%fs:0`` and must not acquire a TLS relocation. The other
+    witnesses access private compiler-TLS roots, for which initial-exec code
+    uses an FS-segment addressing instruction together with a
+    ``R_X86_64_GOTTPOFF`` relocation. A register-derived FS offset is expected
+    for those roots and is intentionally not represented as an exact zero
+    offset.
+    """
+    if not FS_SEGMENT_ACCESS.search(disassembly):
+        raise VerificationError(f"{witness} has no x86-64 %fs-segment access")
+
+    has_tlsie = EXPECTED_TLS_RELOCATION in disassembly
+    if witness == IDENTITY_WITNESS:
+        if not FS_ZERO_ACCESS.search(disassembly):
+            raise VerificationError(
+                f"{witness} does not directly read the x86-64 %fs:0 identity word"
+            )
+        if has_tlsie:
+            raise VerificationError(
+                "selected Linux/x86-64 identity unexpectedly accesses a TLS variable"
+            )
+        return {
+            "access_model": "direct-thread-pointer-fs-zero",
+            "exact_fs_zero_read": True,
+            "fs_segment_access": True,
+            "tlsie_relocation": False,
+        }
+
+    if witness not in TLS_ROOT_WITNESSES:
+        raise VerificationError(f"unclassified x86-64 TLS codegen witness: {witness}")
+    if not has_tlsie:
+        raise VerificationError(f"{witness} has no x86-64 initial-exec TLS relocation")
+    return {
+        "access_model": "initial-exec-tls-fs-segment-gottpoff",
+        "fs_segment_access": True,
+        "tlsie_relocation": True,
+    }
 
 
 def require_native_x86_execution_provenance() -> None:
@@ -296,20 +345,13 @@ def main() -> int:
             ]
 
         witness_disassembly: dict[str, str] = {}
+        witness_accesses: dict[str, dict[str, bool | str]] = {}
         for witness in WITNESSES:
             section = f".text.{witness}"
             disassembly = run([objdump, "-dr", "--section", section, str(object_path)])
             if witness not in disassembly:
                 raise VerificationError(f"missing codegen witness section: {witness}")
-            if not re.search(r"\bfs:", disassembly, re.IGNORECASE):
-                raise VerificationError(f"{witness} does not directly read x86-64 %fs:0")
-            has_tlsie = EXPECTED_TLS_RELOCATION in disassembly
-            if witness in DIRECT_ROOT_WITNESSES and not has_tlsie:
-                raise VerificationError(f"{witness} has no x86-64 initial-exec TLS relocation")
-            if witness == "crabc_mimalloc_tls_probe_identity_get" and has_tlsie:
-                raise VerificationError(
-                    "selected Linux/x86-64 identity unexpectedly accesses a TLS variable"
-                )
+            witness_accesses[witness] = witness_access_evidence(witness, disassembly)
             reject_forbidden_tls_forms(disassembly)
             witness_disassembly[witness] = disassembly.replace(
                 str(object_path), "<probe-object>"
@@ -335,9 +377,7 @@ def main() -> int:
             "witnesses": {
                 name: {
                     "disassembly_sha256": hashlib.sha256(text.encode()).hexdigest(),
-                    "direct_thread_pointer": True,
-                    "thread_pointer_register": "%fs:0",
-                    "tlsie_relocation": name in DIRECT_ROOT_WITNESSES,
+                    **witness_accesses[name],
                 }
                 for name, text in witness_disassembly.items()
             },

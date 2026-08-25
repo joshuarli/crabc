@@ -47,8 +47,12 @@ Run it in the native amd64 laboratory (the wrapper refuses non-x86-64 hosts):
 
 The native runner requires the `x86_64-unknown-linux-musl` target, validates
 an ELF64 little-endian x86-64 relocatable object, and requires every private
-root to use `R_X86_64_GOTTPOFF`. Each named witness must directly read `%fs:0`;
-the ownership-identity witness must have no TLS relocation, while the root
-witnesses must retain the x86-64 initial-exec relocation. The report is written
-separately to
+root to use `R_X86_64_GOTTPOFF`. The
+ownership-identity witness alone must perform an exact `%fs:0` load and have
+no TLS relocation. Each private-root witness instead proves an FS-segment TLS
+access together with `R_X86_64_GOTTPOFF`; its offset may be register-derived
+and is not claimed to be zero. The `crabc-core` `%fs:0` test is a
+compilation/runtime regression for that source boundary, not independent
+oracle evidence. The object and relocation inspection in this runner is the
+native x86-64 codegen evidence. The report is written separately to
 `compat/reports/allocator/tls-codegen-x86_64.json`.
