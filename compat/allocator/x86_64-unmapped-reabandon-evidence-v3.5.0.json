@@ -1,0 +1,123 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-unmapped-reabandon-evidence",
+  "profile": "linux-x86_64-private-unmapped-full-medium-reabandon",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "aarch64_status_reused": false,
+    "emulation_accepted": false,
+    "general_abandonment_or_adoption_claimed": false,
+    "general_free_routing_claimed": false,
+    "native_linux_x86_64_required": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "real_pinned_c_mi_free_trigger": true,
+    "rust_full_medium_routing_claimed": false,
+    "rust_synthetic_failed_reclaim_tail_only": true,
+    "unmapped_full_page_reabandon_only": true
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {
+      "member": "src/free.c",
+      "start_line": 365,
+      "end_line": 515,
+      "sha256": "4f31b0716f4b8086797a84d1bfc6ca21531d1316ca37bbea18e218937fc941c1"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 291,
+      "end_line": 303,
+      "sha256": "d363079d5e484919082b5602cc3757a3e3a357e68594fc040d902232c7458bbf"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 374,
+      "end_line": 388,
+      "sha256": "c2c25a5a4faef1258508e47e1697bc062d157ec72a19ac266be0156180c1d7f6"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1304,
+      "end_line": 1379,
+      "sha256": "04771bd2a839a5a07b308ada8b4ff9b3ec4e192b3ad9b94a300e30355f1d28fc"
+    },
+    {
+      "member": "src/theap.c",
+      "start_line": 228,
+      "end_line": 232,
+      "sha256": "16c0e73a20b9a94bf994c4e83836c976f5683e3c6e8b18935782a934405adba0"
+    }
+  ],
+  "c_probe_sha256": "2f55995210640db950a890a94be42edf498f76b4c7981270eea5bb395ff7b365",
+  "rust_test": {
+    "path": "crabc-mimalloc/src/abandoned.rs",
+    "target_arch": "x86_64",
+    "test_filter": "abandoned::tests::x86_64_unmapped_reabandon_trace_matches_pinned_c_protocol_tail"
+  },
+  "trace": {
+    "begin": "CRABC_MI_UNMAPPED_REABANDON_TRACE_BEGIN",
+    "end": "CRABC_MI_UNMAPPED_REABANDON_TRACE_END",
+    "expected_values": {
+      "trace.unmapped_reabandon.abandoned_after_free": 1,
+      "trace.unmapped_reabandon.abandoned_before_free": 1,
+      "trace.unmapped_reabandon.arena_backed": 1,
+      "trace.unmapped_reabandon.bitmap_published_after": 1,
+      "trace.unmapped_reabandon.initially_full": 1,
+      "trace.unmapped_reabandon.initially_unmapped": 1,
+      "trace.unmapped_reabandon.medium_page": 1,
+      "trace.unmapped_reabandon.page_still_live": 1,
+      "trace.unmapped_reabandon.pretransition_remained_unmapped": 1,
+      "trace.unmapped_reabandon.reabandon_threshold_crossed": 1,
+      "trace.unmapped_reabandon.reabandoned_mapped_after_free": 1,
+      "trace.unmapped_reabandon.unowned_after_free": 1,
+      "trace.unmapped_reabandon.valid": 1
+    }
+  }
+}

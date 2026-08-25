@@ -138,9 +138,11 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-live-owner-remote-free-differential",
                 "native-small-direct-remote-free-differential",
                 "native-mapped-arena-same-origin-reclaim-differential",
+                "native-unmapped-full-medium-reabandon-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
+                "native-static-library-and-override-object-linkability",
                 "native-bounded-fault-injection",
                 "native-allocator-unit",
             },
@@ -198,6 +200,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "compat/reports/allocator/x86_64/mapped-reclaim.json",
         )
         self.assertEqual(
+            gates["native-unmapped-full-medium-reabandon-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-unmapped-reabandon",
+        )
+        self.assertEqual(
+            gates["native-unmapped-full-medium-reabandon-differential"]["report"],
+            "compat/reports/allocator/x86_64/unmapped-reabandon.json",
+        )
+        self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
             "compat/reports/allocator/x86_64/fault-injection.json",
         )
@@ -225,6 +235,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-staged-public-header-mode-linkability"]["report"],
             "compat/reports/allocator/x86_64/header-mode-evidence.json",
         )
+        self.assertEqual(
+            gates["native-static-library-and-override-object-linkability"]["command"],
+            "./scripts/dev-amd64.sh allocator-static-modes",
+        )
+        self.assertEqual(
+            gates["native-static-library-and-override-object-linkability"]["report"],
+            "compat/reports/allocator/x86_64/static-mode-evidence.json",
+        )
         self.assertIn("preprocessor", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("object", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("default-visible", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
@@ -234,6 +252,9 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("does not claim declaration behavior", gates["native-release-api-mode-object-symbol-assessment"]["claim"])
         self.assertIn("five selected staged public C/C++ header forms", gates["native-staged-public-header-mode-linkability"]["claim"])
         self.assertIn("does not prove CMake configuration or installation", gates["native-staged-public-header-mode-linkability"]["claim"])
+        self.assertIn("ar t", gates["native-static-library-and-override-object-linkability"]["claim"])
+        self.assertIn("src/static.c", gates["native-static-library-and-override-object-linkability"]["claim"])
+        self.assertIn("does not execute a consumer", gates["native-static-library-and-override-object-linkability"]["claim"])
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
@@ -262,6 +283,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("eight address-independent values", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
         self.assertIn("same-origin mi_free reclaim", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
         self.assertIn("not general abandonment/adoption", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
+        self.assertIn("13 address-independent values", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
+        self.assertIn("initially-unmapped abandonment", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
+        self.assertIn("synthetic private failed-reclaim tail", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
+        self.assertIn("does not establish a Rust full-medium routing path", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])
@@ -304,6 +329,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("five bounded crate-private fault-injection", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("25-field native C/Rust quiescent live-owner", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("28-field real small direct-page", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("13-field unmapped full-medium reabandon", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])
 
         boundary = self.contract["ledger_boundary"]

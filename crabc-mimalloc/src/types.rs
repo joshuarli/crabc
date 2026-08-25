@@ -2989,6 +2989,15 @@ impl Page {
         self.used
     }
 
+    /// Returns the fixed synthetic page reservation used by the abandoned
+    /// free protocol tests. This exposes no production allocator state: the
+    /// test fixture owns the page metadata exclusively.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn remote_free_test_reserved(&self) -> u16 {
+        self.reserved
+    }
+
     #[cfg(test)]
     pub(crate) fn remote_free_test_local_chain(&self) -> [*mut u8; 3] {
         // SAFETY: the remote-free test fixture writes these exact three

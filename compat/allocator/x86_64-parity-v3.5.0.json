@@ -25,6 +25,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, builds the pinned normal-release static source set and observes every archive member with ar t, separately compiles src/static.c as the selected musl static override object, observes its malloc/free/mi_malloc/mi_free definitions with nm, and compile-links one static-library mi_malloc form plus one override-object malloc/free form. It proves only selected artifact and consumer compile/linkability; it does not execute a consumer, establish behavior, Rust implementation, CMake configuration/installation, public x86 runtime support, or AArch64 status.",
+      "command": "./scripts/dev-amd64.sh allocator-static-modes",
+      "id": "native-static-library-and-override-object-linkability",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/static-mode-evidence.json",
+      "state": "available"
+    },
+    {
       "claim": "Builds and inspects the separately compiled, pinned mimalloc C oracle. It does not claim a Rust C-API adapter or public allocator support.",
       "command": "./scripts/dev-amd64.sh allocator --quick",
       "id": "native-c-oracle",
@@ -102,6 +110,14 @@
       "id": "native-mapped-arena-same-origin-reclaim-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/mapped-reclaim.json",
+      "state": "available"
+    },
+    {
+      "claim": "On an attested native x86-64 host, differentially compares 13 address-independent values for one real pinned-C medium arena page forced through its source full queue to initially-unmapped abandonment, then through public mi_free calls that cross the exact reabandon threshold and publish its arena bitmap. Rust compares only its deterministic synthetic private failed-reclaim tail. This does not establish a Rust full-medium routing path, general abandonment/adoption or free routing, public mi_* behavior, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./scripts/dev-amd64.sh allocator-unmapped-reabandon",
+      "id": "native-unmapped-full-medium-reabandon-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/unmapped-reabandon.json",
       "state": "available"
     },
     {
@@ -196,7 +212,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, and one 28-field real small direct-page remote-free/reuse differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, and one 13-field unmapped full-medium reabandon differential with a synthetic Rust tail are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

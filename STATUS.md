@@ -54,12 +54,18 @@ non-object source forms explicitly. A separate eight-field C/Rust differential
 now covers one arena-backed mapped page's queue-detach abandonment and
 same-origin nonempty `mi_free` reclaim/requeue transition. A separate
 five-mode staged public-header gate compile-links selected C/C++ forms against
-the pinned C release shared object and records all ELF identities. These
-bounded results do not claim general routing or concurrent collection,
-behavior or Rust implementation parity, general abandonment/adoption,
-cross-thread reclaim, CMake installation, consumer execution, thread teardown,
-public API/runtime support, libc integration, backend promotion, or AArch64
-evidence.
+the pinned C release shared object and records all ELF identities. A further
+two-mode static gate observes every selected static archive member and the
+`src/static.c` override object's required symbols before C consumer
+compile/linking. A separate 13-field C/Rust differential covers one real C
+full-medium arena page forced from the full queue to unmapped abandonment, then
+through the `mi_free` threshold that republishes its mapped bitmap; its Rust
+side is explicitly only the deterministic synthetic failed-reclaim tail.
+These bounded results do not claim general routing or concurrent collection,
+behavior or Rust implementation parity, a Rust full-medium route, general
+abandonment/adoption, cross-thread reclaim, CMake installation, consumer
+execution, thread teardown, public API/runtime support, libc integration,
+backend promotion, or AArch64 evidence.
 
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free

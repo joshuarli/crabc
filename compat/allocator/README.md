@@ -966,6 +966,22 @@ forms and records x86-64 ELF identity for every artifact. The report is
 CMake configure/install proof and it does not execute consumers or claim their
 behavior, Rust implementation, public x86 runtime support, or AArch64 status.
 
+Selected static artifact modes have a separate native gate:
+
+```sh
+./scripts/dev-amd64.sh allocator-static-modes
+```
+
+It compiles the pinned normal-release source set into one static archive,
+observes its exact members with `ar t`, then separately compiles the upstream
+`src/static.c` amalgamation as the musl static override object and observes its
+`malloc`, `free`, `mi_malloc`, and `mi_free` definitions with `nm`. It
+compile-links one `mi_malloc` static-library consumer and one `malloc`/`free`
+override-object consumer, recording each ELF identity in
+`compat/reports/allocator/x86_64/static-mode-evidence.json`. It does not run
+either consumer, prove behavior or Rust implementation, perform a CMake
+configure/install, or create public x86/AArch64 runtime support.
+
 The dedicated live-owner remote-free differential is likewise native x86-only:
 
 ```sh
@@ -1015,6 +1031,26 @@ requeues the page. It compares eight address-independent values with one Rust
 test and writes `compat/reports/allocator/x86_64/mapped-reclaim.json`. It does
 not prove general abandonment/adoption, cross-thread reclaim, public `mi_*`
 behavior, libc integration, a backend, or AArch64 evidence.
+
+One initially-unmapped full-medium reabandon tail has a distinct native
+private differential:
+
+```sh
+./scripts/dev-amd64.sh allocator-unmapped-reabandon
+```
+
+The pinned-C side creates an arena Theap with reclaim-on-free and full-page
+abandon disabled, fills one real medium page into the source full queue, then
+source-abandons it while unmapped. Public `mi_free` calls cross the exact
+eighth threshold and republish its arena bitmap. The 13 logical C values match
+one Rust test's deterministic synthetic failed-reclaim tail in
+`compat/reports/allocator/x86_64/unmapped-reabandon.json`. The Rust result is
+not a full-medium routing or owner-exit fixture, and this lane does not claim
+general free routing, abandonment/adoption, public `mi_*` behavior, libc
+integration, a backend, public x86 support, or AArch64 evidence.
+The isolated C probe frees its blocks and heap; its exclusive reserved arena
+remains process-lifetime fixture state and is reclaimed when that short-lived
+probe exits, not a reusable long-lived harness.
 
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
@@ -1099,9 +1135,11 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_release_evidence.py` and `x86_64-release-evidence-v3.5.0.json` | Native x86-64-only C release-mode, ELF identity, object-symbol, and dynamic-symbol evidence. It is dispatched by `allocator-release-evidence`; it does not claim public x86 support or reuse AArch64 status. |
 | `x86_64_api_native_coverage.py` and `x86_64-api-native-coverage-v3.5.0.json` | Native x86-64-only selected-release per-source-form object/dynamic-symbol assessment. It is dispatched by `allocator-api-coverage`; it does not claim behavior, Rust implementation, public API, or runtime compatibility. |
 | `x86_64_header_mode_evidence.py` and `x86_64-header-mode-evidence-v3.5.0.json` | Native x86-64-only staged public-header C/C++ compile/link evidence for five selected forms plus the linked pinned C shared object. It is dispatched by `allocator-header-modes`; it does not validate CMake installation, execute consumers, or claim behavior/public runtime support. |
+| `x86_64_static_mode_evidence.py` and `x86_64-static-mode-evidence-v3.5.0.json` | Native x86-64-only selected static archive and `src/static.c` override-object artifact evidence. It is dispatched by `allocator-static-modes`; it observes archive members and override symbols, compile-links two consumers, but does not execute them, configure/install CMake, or claim behavior/public runtime support. |
 | `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. It is dispatched by `allocator-remote-free` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. It is dispatched by `allocator-mapped-reclaim` and does not claim general abandonment/adoption, public API, or AArch64 evidence. |
+| `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon tail. It is dispatched by `allocator-unmapped-reabandon`; Rust models only the synthetic failed-reclaim tail and it does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |

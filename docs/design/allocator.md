@@ -1429,6 +1429,17 @@ macOS, Windows, big-endian, 32-bit, and portability scaffolds remain out of
 scope. Both allocator profiles must be `#![no_std]`, must not depend on
 `alloc` or libc, and must not compile C or C++ in the production allocator.
 
+The x86-64 profile's bounded artifact evidence separately compiles the pinned
+normal-release static source set, observes its archive members, and compiles
+the upstream `src/static.c` override object before compile-linking two selected
+consumers. That is neither consumer execution nor a CMake configure/install or
+behavior claim. Its separate 13-field unmapped-full-medium differential uses a
+real pinned-C full-queue page and public `mi_free` to observe the source
+threshold reabandon/map publication tail. The Rust record intentionally models
+only `abandoned::free_unmapped_after_failed_reclaim` after the reclaim decision
+has failed, using synthetic metadata; it is not a Rust full-medium routing,
+owner-exit, general abandonment, or public API claim.
+
 The port preserves mimalloc v3.5.0's algorithms, data structures, memory
 orderings, lifecycle behavior, and valid-program observable behavior until
 parity is established. It is not permitted to replace those mechanisms with

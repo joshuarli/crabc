@@ -153,6 +153,7 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("25-field native C/Rust differential", unit["difference"])
                 self.assertIn("28-field native C/Rust differential", unit["difference"])
                 self.assertIn("8-field native C/Rust differential", unit["difference"])
+                self.assertIn("13-field native C/Rust differential", unit["difference"])
                 self.assertIn(
                     "compat/allocator/x86_64_remote_free_evidence.py", unit["evidence"]
                 )
@@ -174,6 +175,14 @@ class X86_64SourceMapTests(unittest.TestCase):
                     "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
                     unit["evidence"],
                 )
+                self.assertIn(
+                    "compat/allocator/x86_64_unmapped_reabandon_evidence.py",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/tests/test_x86_64_unmapped_reabandon_evidence.py",
+                    unit["evidence"],
+                )
         self.assertLessEqual(remote["source_anchor"]["start_line"], 62)
         self.assertGreaterEqual(remote["source_anchor"]["end_line"], 515)
         self.assertLessEqual(page["source_anchor"]["start_line"], 150)
@@ -182,6 +191,8 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertGreaterEqual(arena["source_anchor"]["end_line"], 1409)
         self.assertIn("mapped-abandon bitmap transition", arena["difference"])
         self.assertIn("compat/allocator/x86_64_mapped_reclaim_evidence.py", arena["evidence"])
+        self.assertIn("13-field C/Rust differential", arena["difference"])
+        self.assertIn("compat/allocator/x86_64_unmapped_reabandon_evidence.py", arena["evidence"])
 
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(

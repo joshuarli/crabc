@@ -2696,6 +2696,129 @@ mod tests {
         assert_eq!(page.remote_free_test_used(), 13);
     }
 
+    /// Emits the address-independent counterpart to the bounded native C
+    /// unmapped-full-page reabandon fixture. The C side fills a real medium
+    /// arena page, disables reclaim-on-free, abandons its full queue entry,
+    /// and uses public `mi_free` calls to cross the source eighth threshold.
+    ///
+    /// This Rust fixture intentionally starts after the failed reclaim
+    /// decision. The current private Rust engine has no matching native
+    /// full-medium owner-exit/free-routing harness, so it models only the
+    /// deterministic `free.c` failed-reclaim tail on caller-owned synthetic
+    /// page metadata.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_unmapped_reabandon_trace_matches_pinned_c_protocol_tail() {
+        let block_size = crate::config::SMALL_MAX_OBJ_SIZE + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(16, 16);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+
+        let reserved_before_free = usize::from(page.remote_free_test_reserved());
+        let arena_backed = page.memid().kind() == MemoryKind::Arena;
+        let medium_page = page.block_size() > crate::config::SMALL_MAX_OBJ_SIZE
+            && page.block_size() <= crate::config::MEDIUM_MAX_OBJ_SIZE;
+        let initially_full = page.remote_free_test_used() == reserved_before_free;
+        let page_raw = abandon_full_unmapped(&mut page);
+        let initially_unmapped = page.abandoned_test_thread_id() == THREAD_ID_ABANDONED;
+        let abandoned_before_free = initially_unmapped;
+
+        let free_count_to_reabandon = reserved_before_free / 8 + 1;
+        let mut blocks = [TestBlock([0; 16]), TestBlock([0; 16]), TestBlock([0; 16])];
+        assert_eq!(free_count_to_reabandon, blocks.len());
+
+        for block in blocks.iter_mut().take(free_count_to_reabandon - 1) {
+            assert_eq!(
+                unsafe { free_unmapped_after_failed_reclaim(page_raw, block.pointer(), &map) },
+                Ok(UnmappedAbandonedFreeResult::UnownedUnmapped)
+            );
+        }
+        let pretransition_remained_unmapped = page.abandoned_test_thread_id() == THREAD_ID_ABANDONED
+            && !map.is_published(17)
+            && page.remote_free_test_head() & THREAD_FREE_OWNED == 0;
+
+        assert_eq!(
+            unsafe {
+                free_unmapped_after_failed_reclaim(
+                    page_raw,
+                    blocks[free_count_to_reabandon - 1].pointer(),
+                    &map,
+                )
+            },
+            Ok(UnmappedAbandonedFreeResult::ReabandonedMapped)
+        );
+
+        // This is the exact source threshold, derived from the original
+        // fixed reservation and the number of fully collected medium frees.
+        // It intentionally does not inspect unowned ordinary page fields.
+        let reabandon_threshold_crossed = free_count_to_reabandon > reserved_before_free / 8;
+        let reabandoned_mapped_after_free = page.abandoned_test_thread_id()
+            == THREAD_ID_ABANDONED_MAPPED;
+        let abandoned_after_free = matches!(
+            page.abandoned_test_thread_id(),
+            THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+        );
+        let bitmap_published_after = map.is_published(17);
+        let page_still_live = reserved_before_free > free_count_to_reabandon;
+        let unowned_after_free = page.remote_free_test_head() & THREAD_FREE_OWNED == 0;
+        let valid = arena_backed
+            && medium_page
+            && initially_full
+            && initially_unmapped
+            && abandoned_before_free
+            && pretransition_remained_unmapped
+            && reabandon_threshold_crossed
+            && reabandoned_mapped_after_free
+            && abandoned_after_free
+            && bitmap_published_after
+            && page_still_live
+            && unowned_after_free;
+
+        std::println!("CRABC_MI_UNMAPPED_REABANDON_TRACE_BEGIN");
+        std::println!("trace.unmapped_reabandon.arena_backed={}", arena_backed as u8);
+        std::println!("trace.unmapped_reabandon.medium_page={}", medium_page as u8);
+        std::println!("trace.unmapped_reabandon.initially_full={}", initially_full as u8);
+        std::println!(
+            "trace.unmapped_reabandon.initially_unmapped={}",
+            initially_unmapped as u8
+        );
+        std::println!(
+            "trace.unmapped_reabandon.abandoned_before_free={}",
+            abandoned_before_free as u8
+        );
+        std::println!(
+            "trace.unmapped_reabandon.pretransition_remained_unmapped={}",
+            pretransition_remained_unmapped as u8
+        );
+        std::println!(
+            "trace.unmapped_reabandon.reabandon_threshold_crossed={}",
+            reabandon_threshold_crossed as u8
+        );
+        std::println!(
+            "trace.unmapped_reabandon.reabandoned_mapped_after_free={}",
+            reabandoned_mapped_after_free as u8
+        );
+        std::println!(
+            "trace.unmapped_reabandon.abandoned_after_free={}",
+            abandoned_after_free as u8
+        );
+        std::println!(
+            "trace.unmapped_reabandon.bitmap_published_after={}",
+            bitmap_published_after as u8
+        );
+        std::println!("trace.unmapped_reabandon.page_still_live={}", page_still_live as u8);
+        std::println!("trace.unmapped_reabandon.unowned_after_free={}", unowned_after_free as u8);
+        std::println!("trace.unmapped_reabandon.valid={}", valid as u8);
+        std::println!("CRABC_MI_UNMAPPED_REABANDON_TRACE_END");
+        assert!(valid, "native unmapped-reabandon trace diverged from pinned C tail");
+    }
+
     #[test]
     fn full_medium_or_large_aggregate_tail_accepts_each_regular_page_kind_after_the_owner_claim() {
         let medium_block_size =
