@@ -1,0 +1,1895 @@
+{
+  "base_c_function_inventory": {
+    "checked_in_inventory": {
+      "path": "compat/allocator/x86_64-api-v3.5.0.json",
+      "bytes": 15256,
+      "sha256": "1cfbdffb2d6dc6f6f984a48f83dcc68cdd679cca958027181eb9e74ebdb130bc"
+    },
+    "source_declared_function_count": 180,
+    "source_declared_function_names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975"
+  },
+  "build_mode_declarations": {
+    "declarations": [
+      {
+        "declaration_kind": "cmake-cache-string",
+        "default_source_token": "\"OFF\"",
+        "name": "MI_SECURE",
+        "source_line": 7
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_OVERRIDE",
+        "source_line": 10
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_XMALLOC",
+        "source_line": 11
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_SHOW_ERRORS",
+        "source_line": 12
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_GUARDED",
+        "source_line": 13
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_USE_CXX",
+        "source_line": 14
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_OPT_ARCH",
+        "source_line": 15
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_OPT_SIMD",
+        "source_line": 16
+      },
+      {
+        "declaration_kind": "cmake-cache-string",
+        "default_source_token": "\"DEFAULT\"",
+        "name": "MI_FREE_IS_CHECKED",
+        "source_line": 18
+      },
+      {
+        "declaration_kind": "cmake-cache-string",
+        "default_source_token": "\"DEFAULT\"",
+        "name": "MI_DEBUG",
+        "source_line": 21
+      },
+      {
+        "declaration_kind": "cmake-cache-string",
+        "default_source_token": "\"OFF\"",
+        "name": "MI_TRACK",
+        "source_line": 24
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_DEBUG_TSAN",
+        "source_line": 27
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_DEBUG_UBSAN",
+        "source_line": 28
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_BUILD_SHARED",
+        "source_line": 30
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_BUILD_STATIC",
+        "source_line": 31
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_BUILD_OBJECT",
+        "source_line": 32
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_BUILD_TESTS",
+        "source_line": 33
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_OSX_INTERPOSE",
+        "source_line": 36
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_OSX_ZONE",
+        "source_line": 37
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "ON",
+        "name": "MI_WIN_REDIRECT",
+        "source_line": 38
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_LIBC_MUSL",
+        "source_line": 39
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_INSTALL_TOPLEVEL",
+        "source_line": 42
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_NO_THP",
+        "source_line": 43
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_FREE_USE_PAGEMAP",
+        "source_line": 44
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_PADDING",
+        "source_line": 45
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_NO_PADDING",
+        "source_line": 46
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_SKIP_COLLECT_ON_EXIT",
+        "source_line": 47
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "\"\"",
+        "name": "MI_EXTRA_CPPDEFS",
+        "source_line": 48
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_SEE_ASM",
+        "source_line": 49
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_NO_USE_CXX",
+        "source_line": 52
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_NO_OPT_ARCH",
+        "source_line": 53
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_NO_DEBUG",
+        "source_line": 54
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_TLS_RECURSE_GUARD",
+        "source_line": 57
+      },
+      {
+        "declaration_kind": "cmake-cache-string",
+        "default_source_token": "\"DEFAULT\"",
+        "name": "MI_WIN_INIT",
+        "source_line": 59
+      },
+      {
+        "declaration_kind": "cmake-cache-string",
+        "default_source_token": "\"DEFAULT\"",
+        "name": "MI_TLS_MODEL",
+        "source_line": 62
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_USE_LIBATOMIC",
+        "source_line": 66
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_OPT_FREE_SMALL",
+        "source_line": 67
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_DEBUG_INTERNAL",
+        "source_line": 68
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_DEBUG_FULL",
+        "source_line": 69
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_CHECK_FULL",
+        "source_line": 70
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_SECURE_FULL",
+        "source_line": 71
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_TLS_MODEL_LOCAL",
+        "source_line": 72
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_TLS_MODEL_PTHREADS",
+        "source_line": 73
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_TLS_MODEL_FIXED",
+        "source_line": 74
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_LOCAL_DYNAMIC_TLS",
+        "source_line": 75
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_WIN_USE_FLS",
+        "source_line": 76
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_WIN_INIT_USE_RAW_DLLMAIN",
+        "source_line": 77
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_WIN_INIT_USE_TLS_DLLMAIN",
+        "source_line": 78
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_WIN_DIRECT_TLS",
+        "source_line": 79
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_TRACK_VALGRIND",
+        "source_line": 80
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_TRACK_ASAN",
+        "source_line": 81
+      },
+      {
+        "declaration_kind": "cmake-option",
+        "default_source_token": "OFF",
+        "name": "MI_TRACK_ETW",
+        "source_line": 82
+      }
+    ],
+    "resolution_status": "not-assessed",
+    "scope": "Initial MI_* option and CACHE STRING declarations in the pinned root CMakeLists.txt; they are not resolved x86_64 build settings."
+  },
+  "coverage": {
+    "c-or-cxx-compilation": "not-assessed",
+    "native-x86_64-execution": "not-assessed",
+    "native-x86_64-linkability": "not-assessed",
+    "native-x86_64-object-symbol-inventory": "not-assessed",
+    "overall_status": "incomplete",
+    "rust-engine-implementation": "not-assessed",
+    "source-inventory": "complete-for-listed-pinned-source-members-only",
+    "target-preprocessor-selection": "not-assessed"
+  },
+  "format": 1,
+  "header_surfaces": [
+    {
+      "c_external_function_surface": {
+        "declarations": [],
+        "names_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source_declared_function_count": 0,
+        "source_form": "mi_decl_export function declarations",
+        "symbol_disposition": "native-object-export-unassessed"
+      },
+      "c_static_inline_functions": [],
+      "c_type_tags": [],
+      "c_type_aliases": [],
+      "cxx_operator_source_definitions": [
+        {
+          "operator": "delete",
+          "source_line": 34
+        },
+        {
+          "operator": "delete[]",
+          "source_line": 35
+        },
+        {
+          "operator": "delete",
+          "source_line": 37
+        },
+        {
+          "operator": "delete[]",
+          "source_line": 38
+        },
+        {
+          "operator": "new",
+          "source_line": 40
+        },
+        {
+          "operator": "new[]",
+          "source_line": 41
+        },
+        {
+          "operator": "new",
+          "source_line": 43
+        },
+        {
+          "operator": "new[]",
+          "source_line": 44
+        },
+        {
+          "operator": "delete",
+          "source_line": 47
+        },
+        {
+          "operator": "delete[]",
+          "source_line": 48
+        },
+        {
+          "operator": "delete",
+          "source_line": 52
+        },
+        {
+          "operator": "delete[]",
+          "source_line": 53
+        },
+        {
+          "operator": "delete",
+          "source_line": 54
+        },
+        {
+          "operator": "delete[]",
+          "source_line": 55
+        },
+        {
+          "operator": "delete",
+          "source_line": 56
+        },
+        {
+          "operator": "delete[]",
+          "source_line": 57
+        },
+        {
+          "operator": "new",
+          "source_line": 59
+        },
+        {
+          "operator": "new[]",
+          "source_line": 60
+        },
+        {
+          "operator": "new",
+          "source_line": 61
+        },
+        {
+          "operator": "new[]",
+          "source_line": 62
+        }
+      ],
+      "cxx_template_structures": [],
+      "installation": "root-cmake-installed-public-header",
+      "macro_definitions": [
+        {
+          "name": "MIMALLOC_NEW_DELETE_H",
+          "source_lines": [
+            9
+          ]
+        },
+        {
+          "name": "mi_decl_new",
+          "source_lines": [
+            27,
+            30
+          ]
+        },
+        {
+          "name": "mi_decl_new_nothrow",
+          "source_lines": [
+            28,
+            31
+          ]
+        }
+      ],
+      "member": "include/mimalloc-new-delete.h",
+      "mode": {
+        "source_form": "cxx-global-new-delete-source-definitions",
+        "x86_64_preprocessor_selection": "not-assessed"
+      },
+      "runtime_option_enumerators": [],
+      "source": {
+        "bytes": 4044,
+        "sha256": "1bc31e20fb0340d9d071c69eaac2f07d0dfe4cdf95849ed8d91fb2bd7538d55b"
+      },
+      "source_line_of_root_cmake_install": 885
+    },
+    {
+      "c_external_function_surface": {
+        "declarations": [],
+        "names_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source_declared_function_count": 0,
+        "source_form": "mi_decl_export function declarations",
+        "symbol_disposition": "native-object-export-unassessed"
+      },
+      "c_static_inline_functions": [],
+      "c_type_tags": [],
+      "c_type_aliases": [],
+      "cxx_operator_source_definitions": [],
+      "cxx_template_structures": [],
+      "installation": "root-cmake-installed-public-header",
+      "macro_definitions": [
+        {
+          "name": "MIMALLOC_OVERRIDE_H",
+          "source_lines": [
+            9
+          ]
+        },
+        {
+          "name": "malloc",
+          "source_lines": [
+            21
+          ]
+        },
+        {
+          "name": "calloc",
+          "source_lines": [
+            22
+          ]
+        },
+        {
+          "name": "realloc",
+          "source_lines": [
+            23
+          ]
+        },
+        {
+          "name": "free",
+          "source_lines": [
+            24
+          ]
+        },
+        {
+          "name": "strdup",
+          "source_lines": [
+            26
+          ]
+        },
+        {
+          "name": "strndup",
+          "source_lines": [
+            27
+          ]
+        },
+        {
+          "name": "realpath",
+          "source_lines": [
+            28
+          ]
+        },
+        {
+          "name": "_expand",
+          "source_lines": [
+            31
+          ]
+        },
+        {
+          "name": "_msize",
+          "source_lines": [
+            32
+          ]
+        },
+        {
+          "name": "_recalloc",
+          "source_lines": [
+            33
+          ]
+        },
+        {
+          "name": "_strdup",
+          "source_lines": [
+            35
+          ]
+        },
+        {
+          "name": "_strndup",
+          "source_lines": [
+            36
+          ]
+        },
+        {
+          "name": "_wcsdup",
+          "source_lines": [
+            37
+          ]
+        },
+        {
+          "name": "_mbsdup",
+          "source_lines": [
+            38
+          ]
+        },
+        {
+          "name": "_dupenv_s",
+          "source_lines": [
+            39
+          ]
+        },
+        {
+          "name": "_wdupenv_s",
+          "source_lines": [
+            40
+          ]
+        },
+        {
+          "name": "reallocf",
+          "source_lines": [
+            43
+          ]
+        },
+        {
+          "name": "malloc_size",
+          "source_lines": [
+            44
+          ]
+        },
+        {
+          "name": "malloc_usable_size",
+          "source_lines": [
+            45
+          ]
+        },
+        {
+          "name": "malloc_good_size",
+          "source_lines": [
+            46
+          ]
+        },
+        {
+          "name": "cfree",
+          "source_lines": [
+            47
+          ]
+        },
+        {
+          "name": "valloc",
+          "source_lines": [
+            49
+          ]
+        },
+        {
+          "name": "pvalloc",
+          "source_lines": [
+            50
+          ]
+        },
+        {
+          "name": "reallocarray",
+          "source_lines": [
+            51
+          ]
+        },
+        {
+          "name": "reallocarr",
+          "source_lines": [
+            52
+          ]
+        },
+        {
+          "name": "memalign",
+          "source_lines": [
+            53
+          ]
+        },
+        {
+          "name": "aligned_alloc",
+          "source_lines": [
+            54
+          ]
+        },
+        {
+          "name": "posix_memalign",
+          "source_lines": [
+            55
+          ]
+        },
+        {
+          "name": "_posix_memalign",
+          "source_lines": [
+            56
+          ]
+        },
+        {
+          "name": "_aligned_malloc",
+          "source_lines": [
+            59
+          ]
+        },
+        {
+          "name": "_aligned_realloc",
+          "source_lines": [
+            60
+          ]
+        },
+        {
+          "name": "_aligned_recalloc",
+          "source_lines": [
+            61
+          ]
+        },
+        {
+          "name": "_aligned_msize",
+          "source_lines": [
+            62
+          ]
+        },
+        {
+          "name": "_aligned_free",
+          "source_lines": [
+            63
+          ]
+        },
+        {
+          "name": "_aligned_offset_malloc",
+          "source_lines": [
+            64
+          ]
+        },
+        {
+          "name": "_aligned_offset_realloc",
+          "source_lines": [
+            65
+          ]
+        },
+        {
+          "name": "_aligned_offset_recalloc",
+          "source_lines": [
+            66
+          ]
+        }
+      ],
+      "member": "include/mimalloc-override.h",
+      "mode": {
+        "source_form": "source-rewrite-macro-header",
+        "x86_64_preprocessor_selection": "not-assessed"
+      },
+      "runtime_option_enumerators": [],
+      "source": {
+        "bytes": 3094,
+        "sha256": "21fcf61c4443341ac6bf6ea528af31dc7267e8e3456fc64bfd07704503032175"
+      },
+      "source_line_of_root_cmake_install": 884
+    },
+    {
+      "c_external_function_surface": {
+        "declarations": [
+          {
+            "name": "mi_heap_stats_get",
+            "source_line": 139
+          },
+          {
+            "name": "mi_heap_stats_get_json",
+            "source_line": 140
+          },
+          {
+            "name": "mi_heap_stats_print_out",
+            "source_line": 141
+          },
+          {
+            "name": "mi_theap_stats_get",
+            "source_line": 144
+          },
+          {
+            "name": "mi_subproc_stats_get",
+            "source_line": 147
+          },
+          {
+            "name": "mi_subproc_stats_get_json",
+            "source_line": 148
+          },
+          {
+            "name": "mi_subproc_stats_print_out",
+            "source_line": 149
+          },
+          {
+            "name": "mi_subproc_heap_stats_print_out",
+            "source_line": 151
+          },
+          {
+            "name": "mi_stats_get",
+            "source_line": 154
+          },
+          {
+            "name": "mi_stats_get_json",
+            "source_line": 155
+          },
+          {
+            "name": "mi_stats_print_out",
+            "source_line": 156
+          },
+          {
+            "name": "mi_heap_stats_merge_to_subproc",
+            "source_line": 159
+          },
+          {
+            "name": "mi_subproc_stats_get_exclusive",
+            "source_line": 162
+          },
+          {
+            "name": "mi_stats_as_json",
+            "source_line": 164
+          },
+          {
+            "name": "mi_stats_get_bin_size",
+            "source_line": 165
+          }
+        ],
+        "names_sha256": "9a9c4bf51cde6774f22488f0e92200d1909cc6bc688cc4b824aa3aa92020cdda",
+        "source_declared_function_count": 15,
+        "source_form": "mi_decl_export function declarations",
+        "symbol_disposition": "native-object-export-unassessed"
+      },
+      "c_static_inline_functions": [
+        {
+          "name": "mi_stats_header_init",
+          "source_line": 122
+        },
+        {
+          "name": "mi_stats_init",
+          "source_line": 126
+        }
+      ],
+      "c_type_tags": [
+        {
+          "name": "mi_stat_count_s",
+          "source_lines": [
+            30
+          ]
+        },
+        {
+          "name": "mi_stat_counter_s",
+          "source_lines": [
+            37
+          ]
+        },
+        {
+          "name": "mi_chunkbin_e",
+          "source_lines": [
+            85
+          ]
+        },
+        {
+          "name": "mi_stats_s",
+          "source_lines": [
+            101
+          ]
+        }
+      ],
+      "c_type_aliases": [
+        {
+          "name": "mi_stat_count_t",
+          "source_line": 34
+        },
+        {
+          "name": "mi_stat_counter_t",
+          "source_line": 39
+        },
+        {
+          "name": "mi_chunkbin_t",
+          "source_line": 93
+        },
+        {
+          "name": "mi_stats_t",
+          "source_line": 116
+        }
+      ],
+      "cxx_operator_source_definitions": [],
+      "cxx_template_structures": [],
+      "installation": "root-cmake-installed-public-header",
+      "macro_definitions": [
+        {
+          "name": "MIMALLOC_STATS_H",
+          "source_lines": [
+            9
+          ]
+        },
+        {
+          "name": "MI_STAT_VERSION",
+          "source_lines": [
+            15
+          ]
+        },
+        {
+          "name": "mi_decl_align",
+          "source_lines": [
+            19,
+            21,
+            23,
+            25
+          ]
+        },
+        {
+          "name": "MI_STAT_FIELDS",
+          "source_lines": [
+            41
+          ]
+        },
+        {
+          "name": "MI_BIN_HUGE",
+          "source_lines": [
+            97
+          ]
+        },
+        {
+          "name": "MI_STAT_COUNT",
+          "source_lines": [
+            98
+          ]
+        },
+        {
+          "name": "MI_STAT_COUNTER",
+          "source_lines": [
+            99
+          ]
+        },
+        {
+          "name": "mi_stats_t_decl",
+          "source_lines": [
+            131
+          ]
+        }
+      ],
+      "member": "include/mimalloc-stats.h",
+      "mode": {
+        "source_form": "statistics-extension-c-api",
+        "x86_64_preprocessor_selection": "not-assessed"
+      },
+      "runtime_option_enumerators": [],
+      "source": {
+        "bytes": 7489,
+        "sha256": "7bc3c522d9a5203b27464179177845f3c09eea4453b82545d20ce61a711a9a1e"
+      },
+      "source_line_of_root_cmake_install": 886
+    },
+    {
+      "c_external_function_surface": {
+        "checked_in_inventory": {
+          "path": "compat/allocator/x86_64-api-v3.5.0.json",
+          "bytes": 15256,
+          "sha256": "1cfbdffb2d6dc6f6f984a48f83dcc68cdd679cca958027181eb9e74ebdb130bc"
+        },
+        "names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975",
+        "source_declared_function_count": 180,
+        "source_form": "mi_decl_export function declarations",
+        "symbol_disposition": "native-object-export-unassessed"
+      },
+      "c_static_inline_functions": [
+        {
+          "name": "mi_malloc_csize",
+          "source_line": 398
+        },
+        {
+          "name": "mi_zalloc_csize",
+          "source_line": 401
+        },
+        {
+          "name": "mi_theap_malloc_csize",
+          "source_line": 404
+        },
+        {
+          "name": "mi_theap_zalloc_csize",
+          "source_line": 407
+        },
+        {
+          "name": "mi_free_csize",
+          "source_line": 410
+        }
+      ],
+      "c_type_tags": [
+        {
+          "name": "mi_heap_s",
+          "source_lines": [
+            235
+          ]
+        },
+        {
+          "name": "mi_heap_area_s",
+          "source_lines": [
+            303
+          ]
+        },
+        {
+          "name": "mi_theap_s",
+          "source_lines": [
+            377
+          ]
+        },
+        {
+          "name": "mi_option_e",
+          "source_lines": [
+            463
+          ]
+        }
+      ],
+      "c_type_aliases": [
+        {
+          "name": "mi_deferred_free_fun",
+          "source_line": 184
+        },
+        {
+          "name": "mi_output_fun",
+          "source_line": 187
+        },
+        {
+          "name": "mi_error_fun",
+          "source_line": 190
+        },
+        {
+          "name": "mi_heap_t",
+          "source_line": 235
+        },
+        {
+          "name": "mi_heap_area_t",
+          "source_line": 311
+        },
+        {
+          "name": "mi_block_visit_fun",
+          "source_line": 313
+        },
+        {
+          "name": "mi_arena_id_t",
+          "source_line": 338
+        },
+        {
+          "name": "mi_subproc_id_t",
+          "source_line": 355
+        },
+        {
+          "name": "mi_heap_visit_fun",
+          "source_line": 362
+        },
+        {
+          "name": "mi_theap_t",
+          "source_line": 377
+        },
+        {
+          "name": "mi_commit_fun_t",
+          "source_line": 427
+        },
+        {
+          "name": "mi_option_t",
+          "source_line": 520
+        }
+      ],
+      "cxx_operator_source_definitions": [],
+      "cxx_template_structures": [
+        {
+          "name": "mi_stl_allocator",
+          "source_line": 623
+        },
+        {
+          "name": "mi_heap_stl_allocator",
+          "source_line": 695
+        },
+        {
+          "name": "mi_heap_destroy_stl_allocator",
+          "source_line": 712
+        }
+      ],
+      "installation": "root-cmake-installed-public-header",
+      "macro_definitions": [
+        {
+          "name": "MIMALLOC_H",
+          "source_lines": [
+            9
+          ]
+        },
+        {
+          "name": "MI_MALLOC_VERSION",
+          "source_lines": [
+            11
+          ]
+        },
+        {
+          "name": "mi_attr_noexcept",
+          "source_lines": [
+            19,
+            21,
+            24
+          ]
+        },
+        {
+          "name": "mi_decl_nodiscard",
+          "source_lines": [
+            28,
+            30,
+            32,
+            34,
+            36
+          ]
+        },
+        {
+          "name": "mi_decl_export",
+          "source_lines": [
+            41,
+            43,
+            45,
+            64,
+            66,
+            86
+          ]
+        },
+        {
+          "name": "mi_decl_restrict",
+          "source_lines": [
+            48,
+            52,
+            54,
+            69,
+            87
+          ]
+        },
+        {
+          "name": "mi_attr_malloc",
+          "source_lines": [
+            49,
+            56,
+            70,
+            88
+          ]
+        },
+        {
+          "name": "mi_cdecl",
+          "source_lines": [
+            58,
+            68,
+            85
+          ]
+        },
+        {
+          "name": "mi_attr_alloc_size",
+          "source_lines": [
+            59,
+            72,
+            76,
+            80,
+            89
+          ]
+        },
+        {
+          "name": "mi_attr_alloc_size2",
+          "source_lines": [
+            60,
+            73,
+            77,
+            81,
+            90
+          ]
+        },
+        {
+          "name": "mi_attr_alloc_align",
+          "source_lines": [
+            61,
+            74,
+            78,
+            82,
+            91
+          ]
+        },
+        {
+          "name": "MI_SMALL_WSIZE_MAX",
+          "source_lines": [
+            122
+          ]
+        },
+        {
+          "name": "MI_SMALL_SIZE_MAX",
+          "source_lines": [
+            123
+          ]
+        },
+        {
+          "name": "mi_malloc_tp",
+          "source_lines": [
+            163
+          ]
+        },
+        {
+          "name": "mi_zalloc_tp",
+          "source_lines": [
+            164
+          ]
+        },
+        {
+          "name": "mi_calloc_tp",
+          "source_lines": [
+            165
+          ]
+        },
+        {
+          "name": "mi_mallocn_tp",
+          "source_lines": [
+            166
+          ]
+        },
+        {
+          "name": "mi_reallocn_tp",
+          "source_lines": [
+            167
+          ]
+        },
+        {
+          "name": "mi_recalloc_tp",
+          "source_lines": [
+            168
+          ]
+        },
+        {
+          "name": "mi_free_tp",
+          "source_lines": [
+            169
+          ]
+        },
+        {
+          "name": "mi_heap_malloc_tp",
+          "source_lines": [
+            171
+          ]
+        },
+        {
+          "name": "mi_heap_zalloc_tp",
+          "source_lines": [
+            172
+          ]
+        },
+        {
+          "name": "mi_heap_calloc_tp",
+          "source_lines": [
+            173
+          ]
+        },
+        {
+          "name": "mi_heap_mallocn_tp",
+          "source_lines": [
+            174
+          ]
+        },
+        {
+          "name": "mi_heap_reallocn_tp",
+          "source_lines": [
+            175
+          ]
+        },
+        {
+          "name": "mi_heap_recalloc_tp",
+          "source_lines": [
+            176
+          ]
+        },
+        {
+          "name": "MI_HAS_HEAP_STL_ALLOCATOR",
+          "source_lines": [
+            652
+          ]
+        }
+      ],
+      "member": "include/mimalloc.h",
+      "mode": {
+        "source_form": "base-c-api-with-optional-cxx-conveniences",
+        "x86_64_preprocessor_selection": "not-assessed"
+      },
+      "runtime_option_enumerators": [
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_show_errors",
+          "source_line": 465
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_show_stats",
+          "source_line": 466
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_verbose",
+          "source_line": 467
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_eager_commit",
+          "source_line": 469
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_arena_eager_commit",
+          "source_line": 470
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_purge_decommits",
+          "source_line": 471
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_allow_large_os_pages",
+          "source_line": 472
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_reserve_huge_os_pages",
+          "source_line": 473
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_reserve_huge_os_pages_at",
+          "source_line": 474
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_reserve_os_memory",
+          "source_line": 475
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_segment_cache",
+          "source_line": 476
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_page_reset",
+          "source_line": 477
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_abandoned_page_purge",
+          "source_line": 478
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_segment_reset",
+          "source_line": 479
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_eager_commit_delay",
+          "source_line": 480
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_purge_delay",
+          "source_line": 481
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_use_numa_nodes",
+          "source_line": 482
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_disallow_os_alloc",
+          "source_line": 483
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_os_tag",
+          "source_line": 484
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_max_errors",
+          "source_line": 485
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_max_warnings",
+          "source_line": 486
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_max_segment_reclaim",
+          "source_line": 487
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_destroy_on_exit",
+          "source_line": 488
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_arena_reserve",
+          "source_line": 489
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_arena_purge_mult",
+          "source_line": 490
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_purge_extend_delay",
+          "source_line": 491
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_disallow_arena_alloc",
+          "source_line": 492
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_retry_on_oom",
+          "source_line": 493
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_deprecated_visit_abandoned",
+          "source_line": 494
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_guarded_min",
+          "source_line": 495
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_guarded_max",
+          "source_line": 496
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_guarded_precise",
+          "source_line": 497
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_guarded_sample_rate",
+          "source_line": 498
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_guarded_sample_seed",
+          "source_line": 499
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_generic_collect",
+          "source_line": 500
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_page_reclaim_on_free",
+          "source_line": 501
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_page_full_retain",
+          "source_line": 502
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_page_max_candidates",
+          "source_line": 503
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_max_vabits",
+          "source_line": 504
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_pagemap_commit",
+          "source_line": 505
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_page_commit_on_demand",
+          "source_line": 506
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_page_max_reclaim",
+          "source_line": 507
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_page_cross_thread_max_reclaim",
+          "source_line": 508
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_allow_thp",
+          "source_line": 509
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_minimal_purge_size",
+          "source_line": 510
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_arena_max_object_size",
+          "source_line": 511
+        },
+        {
+          "kind": "runtime-option",
+          "name": "mi_option_arena_is_numa_local",
+          "source_line": 512
+        },
+        {
+          "kind": "internal-sentinel",
+          "name": "_mi_option_last",
+          "source_line": 513
+        },
+        {
+          "kind": "legacy-alias",
+          "name": "mi_option_large_os_pages",
+          "source_line": 515,
+          "value_source": "mi_option_allow_large_os_pages"
+        },
+        {
+          "kind": "legacy-alias",
+          "name": "mi_option_eager_region_commit",
+          "source_line": 516,
+          "value_source": "mi_option_arena_eager_commit"
+        },
+        {
+          "kind": "legacy-alias",
+          "name": "mi_option_reset_decommits",
+          "source_line": 517,
+          "value_source": "mi_option_purge_decommits"
+        },
+        {
+          "kind": "legacy-alias",
+          "name": "mi_option_reset_delay",
+          "source_line": 518,
+          "value_source": "mi_option_purge_delay"
+        },
+        {
+          "kind": "legacy-alias",
+          "name": "mi_option_limit_os_alloc",
+          "source_line": 519,
+          "value_source": "mi_option_disallow_os_alloc"
+        }
+      ],
+      "source": {
+        "bytes": 49389,
+        "sha256": "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5"
+      },
+      "source_line_of_root_cmake_install": 883
+    }
+  ],
+  "integration_boundary": {
+    "crabc_libc_exports": "not-assessed",
+    "crabc_mimalloc_implementation": "not-assessed",
+    "native_object_export_inventory": "not-assessed",
+    "public_c_api_adapter": "not-assessed",
+    "public_x86_64_runtime_support": "not-claimed",
+    "verification": "This ledger verifies pinned source inventory only. It does not establish a selected x86_64 preprocessor/build mode, compilation, linkability, ELF exports, Rust implementation coverage, public ABI, behavioral parity, test execution, stress coverage, or performance qualification."
+  },
+  "kind": "mimalloc-x86_64-public-api-mode-test-symbol-coverage-ledger",
+  "maturity": "source-surface-coverage-foundation",
+  "profile": "linux-x86_64-mimalloc-source-public-surface",
+  "scope": {
+    "included": [
+      "Every include/*.h member installed by the pinned root CMake install(FILES ...) declarations.",
+      "The existing target-local include/mimalloc.h mi_decl_export declaration inventory, cross-checked against the same archive.",
+      "Public C type aliases, runtime option enumerators, macro definitions, optional C++ source forms, and the public statistics extension source forms.",
+      "Initial root-CMake MI_* configuration declarations and all pinned test/ members and CMake target source forms."
+    ],
+    "noninstalled_include_boundary": "include/mimalloc/*.h members are recorded only as source-tree members absent from the pinned root CMake public install list; this does not classify other packaging systems or claim an internal ABI boundary.",
+    "excluded": [
+      "CMake-generated package metadata and compiled artifacts.",
+      "A selected compiler, preprocessor, CMake, static/shared/object, TLS, override, sanitizer, or optimization mode.",
+      "ELF symbols, C++ mangled symbols, linkability, native execution, adapter coverage, Rust implementation coverage, and public crabc integration."
+    ]
+  },
+  "source": {
+    "all_include_headers": [
+      {
+        "bytes": 4044,
+        "member": "include/mimalloc-new-delete.h",
+        "sha256": "1bc31e20fb0340d9d071c69eaac2f07d0dfe4cdf95849ed8d91fb2bd7538d55b"
+      },
+      {
+        "bytes": 3094,
+        "member": "include/mimalloc-override.h",
+        "sha256": "21fcf61c4443341ac6bf6ea528af31dc7267e8e3456fc64bfd07704503032175"
+      },
+      {
+        "bytes": 7489,
+        "member": "include/mimalloc-stats.h",
+        "sha256": "7bc3c522d9a5203b27464179177845f3c09eea4453b82545d20ce61a711a9a1e"
+      },
+      {
+        "bytes": 49389,
+        "member": "include/mimalloc.h",
+        "sha256": "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5"
+      },
+      {
+        "bytes": 24497,
+        "member": "include/mimalloc/atomic.h",
+        "sha256": "106b267e98ccc5e01b48252c9742584cd5c914f309e7f4a4413ad85e65063d41"
+      },
+      {
+        "bytes": 12932,
+        "member": "include/mimalloc/bits.h",
+        "sha256": "c308d398617d7bfc120aeb27347974b53f9ef10768e81b7b9275b0796fff2e39"
+      },
+      {
+        "bytes": 60106,
+        "member": "include/mimalloc/internal.h",
+        "sha256": "4fd7b1dd450989b1a8a5b4cb54e163a36d932bbf7e341abcd882763251252852"
+      },
+      {
+        "bytes": 19214,
+        "member": "include/mimalloc/prim-tls.h",
+        "sha256": "46d871923b38c9463da985c54503cd5cb64bb2c91008f3d35bcbaae2a11c31c2"
+      },
+      {
+        "bytes": 6403,
+        "member": "include/mimalloc/prim.h",
+        "sha256": "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172"
+      },
+      {
+        "bytes": 5602,
+        "member": "include/mimalloc/track.h",
+        "sha256": "e7d94cae6b36f92b934b76aa3d24854845710e798654bdd29cef90e13e0f161e"
+      },
+      {
+        "bytes": 40624,
+        "member": "include/mimalloc/types.h",
+        "sha256": "6a81148760be95f8fc8a2b7694f29e0f1f153b4c871ddd808e63cb0bbb9c3bae"
+      }
+    ],
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
+    "noninstalled_include_headers": [
+      {
+        "bytes": 24497,
+        "member": "include/mimalloc/atomic.h",
+        "sha256": "106b267e98ccc5e01b48252c9742584cd5c914f309e7f4a4413ad85e65063d41"
+      },
+      {
+        "bytes": 12932,
+        "member": "include/mimalloc/bits.h",
+        "sha256": "c308d398617d7bfc120aeb27347974b53f9ef10768e81b7b9275b0796fff2e39"
+      },
+      {
+        "bytes": 60106,
+        "member": "include/mimalloc/internal.h",
+        "sha256": "4fd7b1dd450989b1a8a5b4cb54e163a36d932bbf7e341abcd882763251252852"
+      },
+      {
+        "bytes": 19214,
+        "member": "include/mimalloc/prim-tls.h",
+        "sha256": "46d871923b38c9463da985c54503cd5cb64bb2c91008f3d35bcbaae2a11c31c2"
+      },
+      {
+        "bytes": 6403,
+        "member": "include/mimalloc/prim.h",
+        "sha256": "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172"
+      },
+      {
+        "bytes": 5602,
+        "member": "include/mimalloc/track.h",
+        "sha256": "e7d94cae6b36f92b934b76aa3d24854845710e798654bdd29cef90e13e0f161e"
+      },
+      {
+        "bytes": 40624,
+        "member": "include/mimalloc/types.h",
+        "sha256": "6a81148760be95f8fc8a2b7694f29e0f1f153b4c871ddd808e63cb0bbb9c3bae"
+      }
+    ],
+    "root_cmake": {
+      "bytes": 46629,
+      "member": "CMakeLists.txt",
+      "sha256": "9b38dd30d4c503ffbef7c809dab3642b563adca9633615134902ce3a503fe4fd"
+    },
+    "test_members": [
+      {
+        "bytes": 2182,
+        "member": "test/CMakeLists.txt",
+        "sha256": "50b19c62f11f9cda88d1434bbd412c3948aff5ee439ff6e2ca4f8d77e8e8826d"
+      },
+      {
+        "bytes": 1241,
+        "member": "test/main-override-dep.cpp",
+        "sha256": "1e7aa89a6fc3b33f5bbce16e807b0ce9b6fe86a09871bb0042988617833e1da3"
+      },
+      {
+        "bytes": 315,
+        "member": "test/main-override-dep.h",
+        "sha256": "61b05bb4ab4729ba85896acd810b072050fbfb0f9a001a1cfad2e457d25d6566"
+      },
+      {
+        "bytes": 13584,
+        "member": "test/main-override-static.c",
+        "sha256": "36bdce42e530d4248dac1beeea26f655b8076e59745f2ce62f0730298aeb1294"
+      },
+      {
+        "bytes": 1052,
+        "member": "test/main-override.c",
+        "sha256": "c624450c29d5a847540bc7dd9e0c3d729468ce155801a45b9d0fd6efd67ce624"
+      },
+      {
+        "bytes": 13117,
+        "member": "test/main-override.cpp",
+        "sha256": "1c181934f375e04f215cbcc2bf0650d649e26053842c5d23ccd0e03be9bb0dfd"
+      },
+      {
+        "bytes": 1029,
+        "member": "test/main-static-dep.cpp",
+        "sha256": "c8aa4aa2e781f9b823419b1f5f58b2f56001d3461dbe0b6ab1bdaebc2e479881"
+      },
+      {
+        "bytes": 236,
+        "member": "test/main-static-dep.h",
+        "sha256": "bd2acbaa7461aee7ec8d4b90d29c5f66534307bd2afd8289116433216724af5c"
+      },
+      {
+        "bytes": 676,
+        "member": "test/main-static.cpp",
+        "sha256": "7d9af1b69b76d2c0571d1c68403ad26271f48acc4f306ff4f31b877c351029d4"
+      },
+      {
+        "bytes": 908,
+        "member": "test/main.c",
+        "sha256": "05b83f39aac6f5d502d667c8960551dcf5d875d55994119373d2b62a324d07a0"
+      },
+      {
+        "bytes": 904,
+        "member": "test/readme.md",
+        "sha256": "e4fe0da0a365b51814c71bca52f3b77000aacbda32ae3f3b889b7c4406f1fe1b"
+      },
+      {
+        "bytes": 12180,
+        "member": "test/test-api-fill.c",
+        "sha256": "b90ed6ef1ba28f4621d075ad91c975f3720cc3713edb0f64532749ccf04f90eb"
+      },
+      {
+        "bytes": 20368,
+        "member": "test/test-api.c",
+        "sha256": "85a31dd69a5f53697c093716e03778af7db077b32f78f7436dc8eacc8bb687b1"
+      },
+      {
+        "bytes": 505,
+        "member": "test/test-stress-heaps.c",
+        "sha256": "0461dbb58b5a9962572ca555aca58438f88ea8855632b442ee079acd5b4abbf6"
+      },
+      {
+        "bytes": 436,
+        "member": "test/test-stress-subprocs.c",
+        "sha256": "baf06a16d12b150700dd5faee0d045673cee18b032a05bd80cbc1953796f5d42"
+      },
+      {
+        "bytes": 17109,
+        "member": "test/test-stress.c",
+        "sha256": "e2bed5f2be12239b1fa696dafffda384d19140cb50a6ee2f6e096f70934d73df"
+      },
+      {
+        "bytes": 2097,
+        "member": "test/test-wrong.c",
+        "sha256": "9b0797a19e14e3801410a28d3b3c6c9e689316f9e90e02e75e20f3b3ce8ba028"
+      },
+      {
+        "bytes": 3006,
+        "member": "test/testhelper.h",
+        "sha256": "ab1421bf38c423c38ed3e91c2e803d2bda6cac4335d4f90a8e3555083350e681"
+      }
+    ]
+  },
+  "symbol_dispositions": [
+    {
+      "entry_count": 180,
+      "native_x86_64_object_symbol_status": "not-assessed",
+      "source_form": "mimalloc.h mi_decl_export function declarations",
+      "surface": "base-c-functions"
+    },
+    {
+      "entry_count": 15,
+      "native_x86_64_object_symbol_status": "not-assessed",
+      "source_form": "mimalloc-stats.h mi_decl_export function declarations",
+      "surface": "statistics-extension-functions"
+    },
+    {
+      "entry_count": 5,
+      "native_x86_64_object_symbol_status": "not-assessed",
+      "source_form": "static inline C helper definitions",
+      "surface": "base-header-inline-helpers"
+    },
+    {
+      "entry_count": 2,
+      "native_x86_64_object_symbol_status": "not-assessed",
+      "source_form": "static inline C statistics helper definitions",
+      "surface": "statistics-header-inline-helpers"
+    },
+    {
+      "entry_count": 3,
+      "native_x86_64_object_symbol_status": "not-assessed",
+      "source_form": "optional C++ template structures",
+      "surface": "base-header-cxx-templates"
+    },
+    {
+      "entry_count": 20,
+      "native_x86_64_object_symbol_status": "not-assessed",
+      "source_form": "C++ global operator source definitions",
+      "surface": "new-delete-header-cxx-operators"
+    },
+    {
+      "entry_count": 37,
+      "native_x86_64_object_symbol_status": "not-assessed",
+      "source_form": "preprocessor source-rewrite definitions",
+      "surface": "override-header-rewrite-macros"
+    },
+    {
+      "entry_count": 153,
+      "native_x86_64_object_symbol_status": "not-an-object-symbol-inventory",
+      "source_form": "C type tags and aliases, runtime option enumerators, and preprocessor definitions",
+      "surface": "type-option-and-macro-source-forms"
+    }
+  ],
+  "target_context": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "test_source_inventory": {
+    "native_x86_64_execution_status": "not-assessed",
+    "root_cmake_test_targets": [
+      {
+        "name": "api",
+        "source_line": 953,
+        "source_member": "test/test-api.c",
+        "source_form": "root-cmake-test-name-foreach"
+      },
+      {
+        "name": "api-fill",
+        "source_line": 953,
+        "source_member": "test/test-api-fill.c",
+        "source_form": "root-cmake-test-name-foreach"
+      },
+      {
+        "name": "stress-heaps",
+        "source_line": 953,
+        "source_member": "test/test-stress-heaps.c",
+        "source_form": "root-cmake-test-name-foreach"
+      },
+      {
+        "name": "stress-subprocs",
+        "source_line": 953,
+        "source_member": "test/test-stress-subprocs.c",
+        "source_form": "root-cmake-test-name-foreach"
+      },
+      {
+        "name": "stress",
+        "source_line": 953,
+        "source_member": "test/test-stress.c",
+        "source_form": "root-cmake-test-name-foreach"
+      },
+      {
+        "name": "stress-static",
+        "source_line": 976,
+        "source_member": "test/test-stress.c",
+        "source_form": "root-cmake-explicit-test-target"
+      },
+      {
+        "name": "stress-dynamic",
+        "source_line": 986,
+        "source_member": "test/test-stress.c",
+        "source_form": "root-cmake-explicit-test-target"
+      }
+    ],
+    "scope": "Pinned source members and CMake target declarations only; this is not a compilation, execution, pass/fail, adapter-selection, or stress result.",
+    "standalone_consumer_test_targets": [
+      {
+        "name": "dynamic-override",
+        "source_line": 25,
+        "source_member": "test/main-override.c",
+        "source_form": "test-cmake-installed-consumer-target"
+      },
+      {
+        "name": "dynamic-override-cxx",
+        "source_line": 28,
+        "source_member": "test/main-override.cpp",
+        "source_form": "test-cmake-installed-consumer-target"
+      },
+      {
+        "name": "static-override-obj",
+        "source_line": 34,
+        "source_member": "test/main-override.c",
+        "source_form": "test-cmake-installed-consumer-target"
+      },
+      {
+        "name": "static-override-static",
+        "source_line": 41,
+        "source_member": "test/main-override-static.c",
+        "source_form": "test-cmake-installed-consumer-target"
+      },
+      {
+        "name": "static-override",
+        "source_line": 47,
+        "source_member": "test/main-override.c",
+        "source_form": "test-cmake-installed-consumer-target"
+      },
+      {
+        "name": "static-override-cxx",
+        "source_line": 50,
+        "source_member": "test/main-override.cpp",
+        "source_form": "test-cmake-installed-consumer-target"
+      },
+      {
+        "name": "test-wrong",
+        "source_line": 55,
+        "source_member": "test/test-wrong.c",
+        "source_form": "test-cmake-installed-consumer-target"
+      }
+    ]
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}
