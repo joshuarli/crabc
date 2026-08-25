@@ -5777,7 +5777,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
             }
             Ok(Ok(ThreadExitMappedRegularPostExitFreeOutcome::Released)) => {
                 // SAFETY: the source terminal release above removed the
-                // mapped identity/bit/count, full PageMap span, ordinary
+                // mapped identity/bit/count, source PageMap area, ordinary
                 // arena bit, metadata, and backing slices. No route state is
                 // left after this final quiescence transition.
                 match unsafe { page_map_access.finish_after_all_pages_released() } {
@@ -5948,7 +5948,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main> {
             }
             Ok(Ok(ThreadExitMappedRegularPagesPostExitFreeOutcome::ReleasedAll)) => {
                 // The source release above removed the last mapped
-                // identity/bitmap/count, complete PageMap span, ordinary
+                // identity/bitmap/count, source PageMap area, ordinary
                 // arena bit, metadata, and backing slices. Drop the empty
                 // registry before explicitly reopening the process map.
                 drop(parts);
@@ -6501,7 +6501,7 @@ mod tests {
                     assert!(matches!(drain.finish(), Ok(())));
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
-                        "forced owner-exit collection unregisters the full PageMap span"
+                        "forced owner-exit collection unregisters the source PageMap area"
                     );
                     assert_eq!(
                         unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
@@ -9233,7 +9233,7 @@ mod tests {
                     }
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
-                        "the final release unregisters the full PageMap span"
+                        "the final release unregisters the source PageMap area"
                     );
                     assert_eq!(
                         unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
@@ -12144,7 +12144,7 @@ mod tests {
                     }
                     assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
-                        "the final release unregisters the full PageMap span"
+                        "the final release unregisters the source PageMap area"
                     );
                     assert_eq!(
                         unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
@@ -16238,7 +16238,7 @@ mod tests {
                         let address = unsafe { slice_start.add(offset * crate::config::ARENA_SLICE_SIZE) };
                         assert!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
-                            "the final route release unregisters every large PageMap slice"
+                            "the final route leaves every complete-large arena address PageMap-null"
                         );
                     }
                     assert_eq!(
@@ -18056,11 +18056,22 @@ mod tests {
                         slice_count,
                         crate::page::regular_page_slice_count(crate::types::PageKind::Large)
                             .expect("large source spans have fixed geometry"),
-                        "the process route preserves the complete large PageMap span"
+                        "the process route preserves the complete large arena span"
                     );
                     let slice_start = arena
                         .slice_start(slice)
                         .expect("the source large span remains addressable");
+                    let page_start_offset = unsafe { page_ref.start() }
+                        .addr()
+                        .checked_sub(slice_start.addr())
+                        .expect("the large page area starts in its arena span");
+                    let page_map_slice_count = crate::page::page_map_slice_count(
+                        page_ref.block_size(),
+                        page_ref.reserved(),
+                        page_start_offset,
+                    )
+                    .expect("the large page has source-shaped PageMap geometry");
+                    assert_eq!(page_map_slice_count, 63);
 
                     // Preserve the source remote state until `MI_ABANDON`
                     // force-collection. The first block is no longer a
@@ -18111,14 +18122,23 @@ mod tests {
                         "queue removal clears the source full flag after force collection"
                     );
                     assert_eq!(route.test_abandoned_count(), Some(1));
-                    for offset in 0..slice_count {
+                    for offset in 0..page_map_slice_count {
                         let address = unsafe {
                             slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                         };
                         assert_eq!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) },
                             page.as_ptr(),
-                            "mapped abandonment retains every large PageMap slice"
+                            "mapped abandonment retains every source large PageMap slice"
+                        );
+                    }
+                    for offset in page_map_slice_count..slice_count {
+                        let address = unsafe {
+                            slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
+                        };
+                        assert!(
+                            unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
+                            "the trailing large arena slice is source-owned slack rather than PageMap area"
                         );
                     }
 
@@ -18231,7 +18251,7 @@ mod tests {
                         };
                         assert!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
-                            "the terminal release unregisters every large PageMap slice"
+                            "the terminal release leaves every complete-large arena address PageMap-null"
                         );
                     }
                     assert_eq!(
@@ -22837,10 +22857,33 @@ mod tests {
                     let trailing_slice = arena
                         .slice_start(slice + slice_count - 1)
                         .expect("the large span's final slice remains in the paired arena");
+                    let page_start_offset = unsafe { page_ref.start() }
+                        .addr()
+                        .checked_sub(
+                            arena
+                                .slice_start(slice)
+                                .expect("the large span begins in the paired arena")
+                                .addr(),
+                        )
+                        .expect("the large page area starts in its arena span");
+                    let page_map_slice_count = crate::page::page_map_slice_count(
+                        page_ref.block_size(),
+                        page_ref.reserved(),
+                        page_start_offset,
+                    )
+                    .expect("the live large page has source-shaped PageMap geometry");
+                    assert_eq!(page_map_slice_count, 63);
+                    let final_mapped_slice = arena
+                        .slice_start(slice + page_map_slice_count - 1)
+                        .expect("the final source PageMap slice remains in the paired arena");
                     assert_eq!(
-                        unsafe { page_map.page_map().unwrap().checked_lookup(trailing_slice) },
+                        unsafe { page_map.page_map().unwrap().checked_lookup(final_mapped_slice) },
                         page.as_ptr(),
-                        "fresh large-page publication covers every slice in its span"
+                        "fresh large-page publication covers every source PageMap slice"
+                    );
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(trailing_slice) }.is_null(),
+                        "the final arena slice is source-owned slack rather than PageMap-reachable area"
                     );
                     assert_eq!(
                         unsafe { arena.slices_free() }
@@ -22915,8 +22958,12 @@ mod tests {
                         Err(_) => panic!("the large page's final client free releases its full span"),
                     }
                     assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(final_mapped_slice) }.is_null(),
+                        "the final large-page release unregisters the final source PageMap slice"
+                    );
+                    assert!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(trailing_slice) }.is_null(),
-                        "the final large-page release unregisters the trailing PageMap slice"
+                        "the trailing arena slice remains PageMap-null through terminal release"
                     );
                     assert_eq!(
                         unsafe { arena.slices_free() }

@@ -866,6 +866,20 @@ pair before the complete 64-slice release. It does not add multiple frees,
 other classes, reclaim, adoption, requeue, scans, or general dynamic owner
 exit.
 
+The native x86-only track also has a separate 31-field dynamic full-large
+one-remote force-collect-to-mapped differential. A pinned-C worker fills one
+sole full `BIN_FULL` large arena page (request 86706, 98304-byte blocks,
+capacity/reserved 42, a 64-slice arena span with 63 PageMap-registered source
+page-area slices), publishes exactly one joined remote
+`mi_free`, runs real `mi_thread_done()`, and joins before consumer frees.
+Rust uses only the corresponding private typed drain. Force collection records
+`used == 41`, mapped dynamic abandonment, and terminal PageMap, ordinary arena
+bitmap, dynamic bitmap/count, and complete 64-slice release; the final
+PageMap-null arena slice is slack but remains terminally released. This
+remains private native x86-64 engine evidence only: it does not establish
+general lifecycle/routing/concurrent collection, public x86 support, backend
+promotion, or AArch64 evidence.
+
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
 dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
 page only in its ordinary regular bin, with
@@ -935,8 +949,9 @@ publication. Its exact final free reaches empty before any source reclaim
 branch—through the normal collector for medium/large/non-direct small and the
 partial collector for direct small—clears the dynamic bit/count pair, then
 releases PageMap -> dynamic ordinary bit -> metadata -> arena slices. The
-large endpoint validates the complete 64-slice PageMap span before that
-terminal release. Neither dynamic handoff scans, reclaims, adopts, requeues,
+large endpoint validates its 63 PageMap-registered source page-area slices;
+the final PageMap-null arena slice is slack but remains part of the terminal
+64-slice release. Neither dynamic handoff scans, reclaims, adopts, requeues,
 accepts a second free, or generalizes thread exit. Only an empty drain may
 resume the existing cached-root/list/key teardown.
 

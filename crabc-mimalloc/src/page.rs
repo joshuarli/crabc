@@ -93,6 +93,44 @@ pub(crate) const fn page_area_size(block_size: usize, reserved: u16) -> Option<u
     block_size.checked_mul(reserved as usize)
 }
 
+/// Calculates the number of PageMap slices registered for a regular page.
+///
+/// This mirrors the pinned mimalloc v3.5.0 `src/page-map.c:139-145` span
+/// calculation: derive `mi_page_area` as `block_size * reserved`, clip an
+/// area larger than `LARGE_PAGE_SIZE` to `LARGE_PAGE_SIZE -
+/// ARENA_SLICE_SIZE`, then add the whole-slice prefix before the page start:
+/// `ceil(page_area / ARENA_SLICE_SIZE) +
+/// floor(page_start_offset / ARENA_SLICE_SIZE)`.
+/// `page_start_offset` is the byte offset from `mi_page_slice_start(page)` to
+/// `mi_page_area(page)`, so offsets within a slice intentionally contribute
+/// zero. `None` rejects an uninitialized page or checked arithmetic overflow.
+#[inline]
+pub(crate) const fn page_map_slice_count(
+    block_size: usize,
+    reserved: u16,
+    page_start_offset: usize,
+) -> Option<usize> {
+    if block_size == 0 || reserved == 0 {
+        return None;
+    }
+    let page_area = match page_area_size(block_size, reserved) {
+        Some(page_area) if page_area > LARGE_PAGE_SIZE => {
+            match LARGE_PAGE_SIZE.checked_sub(ARENA_SLICE_SIZE) {
+                Some(page_area) => page_area,
+                None => return None,
+            }
+        }
+        Some(page_area) => page_area,
+        None => return None,
+    };
+    let area_slice_count = match invariants::slice_count_of_size(page_area) {
+        Some(slice_count) => slice_count,
+        None => return None,
+    };
+    let leading_slice_count = page_start_offset / ARENA_SLICE_SIZE;
+    area_slice_count.checked_add(leading_slice_count)
+}
+
 /// Calculates the `reserved` field set by `mi_arenas_page_alloc_fresh` for a
 /// non-OS-aligned page: `(page_noguard_size - block_start) / block_size`.
 ///
@@ -432,6 +470,34 @@ mod tests {
         assert_eq!(page_slice_offset(512, 0), Some(512));
         assert_eq!(page_slice_offset(512, ARENA_SLICE_SIZE - 512), Some(ARENA_SLICE_SIZE));
         assert_eq!(page_slice_offset(usize::MAX, 1), None);
+    }
+
+    #[test]
+    fn page_map_slice_counts_follow_source_area_clip_and_start_offset() {
+        assert_eq!(page_map_slice_count(98_304, 42, 0), Some(63));
+        assert_eq!(page_map_slice_count(12 * KIB, 42, 0), Some(8));
+        assert_eq!(
+            page_map_slice_count(12 * KIB, 42, ARENA_SLICE_SIZE),
+            Some(9),
+        );
+        assert_eq!(
+            page_map_slice_count(12 * KIB, 42, ARENA_SLICE_SIZE - 1),
+            Some(8),
+        );
+
+        // The area is clipped before the whole-slice start offset is added.
+        assert_eq!(page_map_slice_count(LARGE_PAGE_SIZE, 2, 0), Some(63));
+        assert_eq!(
+            page_map_slice_count(LARGE_PAGE_SIZE, 2, ARENA_SLICE_SIZE),
+            Some(64),
+        );
+    }
+
+    #[test]
+    fn page_map_slice_count_rejects_uninitialized_pages_and_area_overflow() {
+        assert_eq!(page_map_slice_count(0, 1, 0), None);
+        assert_eq!(page_map_slice_count(1, 0, 0), None);
+        assert_eq!(page_map_slice_count(usize::MAX, 2, 0), None);
     }
 
     #[test]

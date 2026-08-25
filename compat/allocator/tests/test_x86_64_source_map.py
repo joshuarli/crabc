@@ -599,6 +599,38 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("exact eight-slice release", theap["difference"])
         self.assertIn("not general lifecycle", theap["difference"])
 
+    def test_dynamic_full_large_one_remote_lane_is_scoped_to_reviewed_units(self) -> None:
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_dynamic_full_large_one_remote_force_collect_to_mapped_evidence.py",
+            "compat/allocator/x86_64-dynamic-full-large-one-remote-force-collect-to-mapped-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_dynamic_full_large_one_remote_force_collect_to_mapped_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                unit = units[unit_id]
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn("31-field native C/Rust differential", unit["difference"])
+                self.assertIn("dynamic full-large one-remote force-collect-to-mapped route", unit["difference"])
+                self.assertIn("63 PageMap-registered source page-area slices", unit["difference"])
+                self.assertIn("final PageMap-null arena slice is slack", unit["difference"])
+
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(
             unit

@@ -288,6 +288,42 @@ enum ReleaseSpan {
     Os(PublishedOsAlignedPage),
 }
 
+/// Returns the exact source PageMap range length for one in-arena page.
+///
+/// Pinned `src/page-map.c:139-145` derives PageMap reachability from the
+/// usable `mi_page_area`, not from the complete arena claim.  The frozen
+/// aligned-metadata profile keeps the page-area start in the first arena
+/// slice, so this engine's `PageMap::register_range` begins at
+/// `mi_page_slice_start(page)` and the source's whole-slice prefix is zero.
+/// A different metadata/layout profile would need an explicit range-start
+/// representation instead of silently publishing a wider map range.
+fn arena_page_map_size(
+    page: NonNull<Page>,
+    slice_start: *mut u8,
+    arena_span_size: usize,
+) -> Option<usize> {
+    // SAFETY: every caller retains the initialized page while validating or
+    // mutating its private PageMap lifecycle.
+    let page_ref = unsafe { page.as_ref() };
+    // SAFETY: the same caller proof keeps the page's published block area
+    // live, so the source `mi_page_start` address is an integer geometry fact.
+    let page_start = unsafe { page_ref.start() };
+    let page_start_offset = page_start.addr().checked_sub(slice_start.addr())?;
+    if page_start_offset >= ARENA_SLICE_SIZE || page_start_offset >= arena_span_size {
+        return None;
+    }
+    let slice_count = page::page_map_slice_count(
+        page_ref.block_size(),
+        page_ref.reserved(),
+        page_start_offset,
+    )?;
+    let map_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
+    if map_size == 0 || map_size > arena_span_size {
+        return None;
+    }
+    Some(map_size)
+}
+
 /// One invalid local free at the explicit exclusive-theap boundary.
 ///
 /// These are allocator-state failures, not a replacement for the C ABI's
@@ -12842,7 +12878,10 @@ impl<'main, 'arena> ThreadExitFullRegularPostExitParts<'main, 'arena> {
         {
             return false;
         }
-        for offset in (0..self.size).step_by(ARENA_SLICE_SIZE) {
+        let Some(page_map_size) = arena_page_map_size(page, self.slice_start, self.size) else {
+            return false;
+        };
+        for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
             let Some(address) = self.slice_start.addr().checked_add(offset) else {
                 return false;
             };
@@ -12850,14 +12889,14 @@ impl<'main, 'arena> ThreadExitFullRegularPostExitParts<'main, 'arena> {
                 return false;
             }
             // SAFETY: short map access excludes ordinary writers. Every
-            // registered span slice must still name this exact page.
+            // source PageMap slice must still name this exact page.
             if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
                 return false;
             }
         }
-        // SAFETY: the full-span check proved this retained post-exit PageMap
-        // publication is exactly the route page's source allocation.
-        if unsafe { page_map.unregister_range(self.slice_start, self.size) }.is_err() {
+        // SAFETY: the source-map-area check proved this retained post-exit
+        // PageMap publication is exactly the route page's usable allocation.
+        if unsafe { page_map.unregister_range(self.slice_start, page_map_size) }.is_err() {
             return false;
         }
         if unsafe { self.arena.pages() }
@@ -14462,20 +14501,23 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         {
             return false;
         }
-        for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+        let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
+            return false;
+        };
+        for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
             let Some(address) = slice_start.addr().checked_add(offset) else {
                 return false;
             };
             // SAFETY: the complete post-exit map operation excludes ordinary
-            // writers. Every registered slice must still name this exact
+            // writers. Every source PageMap slice must still name this exact
             // queue-detached page before the source terminal unregister.
             if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
                 return false;
             }
         }
-        // SAFETY: the full-span check above proves this is precisely the
-        // PageMap publication that remains after mapped identity removal.
-        if unsafe { page_map.unregister_range(slice_start, size) }.is_err() {
+        // SAFETY: the source-map-area check above proves this is precisely
+        // the PageMap publication that remains after mapped identity removal.
+        if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
         // Preserve source order: PageMap unregister, ordinary main-arena bit
@@ -15056,23 +15098,25 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
             {
                 return false;
             }
-            for offset in (0..self.size).step_by(ARENA_SLICE_SIZE) {
+            let Some(page_map_size) = arena_page_map_size(page, self.slice_start, self.size) else {
+                return false;
+            };
+            for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
                 let Some(address) = self.slice_start.addr().checked_add(offset) else {
                     return false;
                 };
                 // SAFETY: this complete post-exit PageMap operation excludes
-                // ordinary map writers. Every slice must still name exactly
-                // the page whose source identity just became empty.
+                // ordinary map writers. Every source PageMap slice must still
+                // name exactly the page whose source identity became empty.
                 if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
                     return false;
                 }
             }
-        }
-        // SAFETY: the preceding full-span check proved that this exact
-        // source-plain range remains registered to `page` under the current
-        // post-exit map exclusion boundary.
-        if unsafe { page_map.unregister_range(self.slice_start, self.size) }.is_err() {
-            return false;
+            // Preserve the exact source-clipped range while the short map
+            // guard still proves its plain entries.
+            if unsafe { page_map.unregister_range(self.slice_start, page_map_size) }.is_err() {
+                return false;
+            }
         }
         // The ordinary main-arena page bit remains distinct from the mapped
         // abandoned bit cleared by the raw helper. Preserve source order:
@@ -19423,9 +19467,9 @@ impl<'attach, 'heap, 'arena, 'map>
             ));
         }
 
-        // release_span proves every PageMap entry and the complete large
-        // arena geometry before queue detachment. Its terminal release
-        // validates the pinned 64-slice span before retiring it.
+        // `release_span` proves every source PageMap entry and the complete
+        // large arena geometry before queue detachment. Its terminal release
+        // validates the source map area before returning the 64-slice span.
         let exact_arena_span = match (
             self.engine.release_span(page.as_ptr()),
             memory.arena_memory(),
@@ -19709,9 +19753,10 @@ impl<'attach, 'heap, 'arena, 'map>
             ));
         }
 
-        // `release_span` proves every PageMap entry and the complete large
-        // arena geometry before force collection or queue detachment. The
-        // returned mapped handoff repeats this proof before terminal release.
+        // `release_span` proves every source PageMap entry and the complete
+        // large arena geometry before force collection or queue detachment.
+        // The returned mapped handoff repeats this proof before terminal
+        // release.
         let exact_arena_span = match (
             self.engine.release_span(page.as_ptr()),
             memory.arena_memory(),
@@ -26544,6 +26589,15 @@ impl<'attach, 'heap, 'arena, 'map>
 
     #[cfg(test)]
     #[inline]
+    pub(crate) fn test_dynamic_arena_page_is_set(&self) -> bool {
+        self.drain
+            .engine
+            .session
+            .test_dynamic_arena_page_is_set(self.memory)
+    }
+
+    #[cfg(test)]
+    #[inline]
     pub(crate) fn test_page_map_entry(&self, address: *mut u8) -> *mut Page {
         // SAFETY: the handoff retains the only PageMap lifecycle capability;
         // this test witness reads one exact registered large-span entry
@@ -30742,9 +30796,21 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             return None;
         };
 
+        let page_map_size = match arena_page_map_size(page, slice_start, allocation_size) {
+            Some(size) => size,
+            None => {
+                // The fresh metadata is initialized but has not entered an
+                // arena bitmap, PageMap, or queue. Retire it before returning
+                // the exact claim; no wider PageMap fallback is source-valid.
+                let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
+                let _ = unsafe { release_arena_slices(memory) };
+                return None;
+            }
+        };
+
         let registered_in_arena = self.session.set_arena_page(&self.arena, memory);
         if !registered_in_arena {
-            self.rollback_fresh(page, slice_start, allocation_size, memory, false, false);
+            self.rollback_fresh(page, slice_start, page_map_size, memory, false, false);
             return None;
         }
         // SAFETY: `page` is fully initialized and remains address-stable until
@@ -30752,11 +30818,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // lookup racing this source-plain page-map write.
         if unsafe {
             self.page_map
-                .register_range(slice_start, allocation_size, page)
+                .register_range(slice_start, page_map_size, page)
         }
         .is_err()
         {
-            self.rollback_fresh(page, slice_start, allocation_size, memory, true, false);
+            self.rollback_fresh(page, slice_start, page_map_size, memory, true, false);
             return None;
         }
 
@@ -30771,7 +30837,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             Some(())
         })();
         if initialized.is_none() {
-            self.rollback_fresh(page, slice_start, allocation_size, memory, true, true);
+            self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
             return None;
         }
         Some(page)
@@ -30781,7 +30847,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         &mut self,
         page: NonNull<Page>,
         slice_start: *mut u8,
-        allocation_size: usize,
+        page_map_size: usize,
         memory: MemoryId,
         arena_registered: bool,
         page_map_registered: bool,
@@ -30791,7 +30857,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // registered above; no allocation was handed out.
             let _ = unsafe {
                 self.page_map
-                    .unregister_range(slice_start, allocation_size)
+                    .unregister_range(slice_start, page_map_size)
             };
         }
         if arena_registered {
@@ -30927,10 +30993,17 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 slice_start,
                 size,
             } => {
+                let Some(page_map_size) = NonNull::new(page)
+                    .and_then(|page| arena_page_map_size(page, slice_start, size))
+                else {
+                    self.reinsert_after_release_failure(bin, page);
+                    return false;
+                };
                 // SAFETY: `memory` describes the prevalidated, still
-                // map-published span; no plain lookup overlaps this explicit
-                // lifecycle transition.
-                if unsafe { self.page_map.unregister_range(slice_start, size) }.is_err() {
+                // map-published usable page area; no plain lookup overlaps
+                // this explicit lifecycle transition. `size` remains the
+                // complete arena claim released below.
+                if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
                     self.reinsert_after_release_failure(bin, page);
                     return false;
                 }
@@ -31020,9 +31093,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// page count. The caller therefore must not perform either transition a
     /// second time. It instead proves the retained page is still all-free and
     /// detached, then preserves the source terminal ordering: unregister the
-    /// full PageMap span, clear the exact ordinary arena-page bit, retire
-    /// metadata, and return the arena slices. Any failure after unregistration
-    /// is terminal because reconstructing a visible owner would be unsound.
+    /// source PageMap area, clear the exact ordinary arena-page bit, retire
+    /// metadata, and return the complete arena slices. Any failure after
+    /// unregistration is terminal because reconstructing a visible owner
+    /// would be unsound.
     fn release_queue_detached_abandoned_arena_page(&mut self, page: NonNull<Page>) -> bool {
         let Some(ReleaseSpan::Arena {
             memory,
@@ -31038,10 +31112,13 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         if page_ref.used() != 0 || !page_ref.is_queue_detached() {
             return false;
         }
+        let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
+            return false;
+        };
         // SAFETY: `release_span` proved this exact page still owns every
-        // registered slice of its arena span. No ordinary queue/producer
-        // capability remains after the all-free abandoned-free result.
-        if unsafe { self.page_map.unregister_range(slice_start, size) }.is_err() {
+        // registered PageMap slice. No ordinary queue/producer capability
+        // remains after the all-free abandoned-free result.
+        if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
         if !self.session.clear_arena_page(&self.arena, memory) {
@@ -31198,11 +31275,12 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         {
             return None;
         }
+        let page_map_size = arena_page_map_size(page, slice_start, size)?;
         // SAFETY: this explicit lifecycle serializes all source-plain map
-        // accesses. Checking every claimed slice before queue removal proves
-        // that terminal unregistration targets exactly the map range published
-        // for this one page, rather than merely its leading slice.
-        for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+        // accesses. Checking every source PageMap slice before queue removal
+        // proves that terminal unregistration targets the published usable
+        // page area, while `size` remains the complete arena-release span.
+        for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
             let address = slice_start.addr().checked_add(offset)? as *const u8;
             if unsafe { self.page_map.checked_lookup(address) } != page.as_ptr() {
                 return None;
@@ -31738,11 +31816,19 @@ mod tests {
         let memory = page.memid().arena_memory().unwrap();
         let start = allocator.arena.slice_start(memory.slice_index as usize).unwrap();
         let size = memory.slice_count as usize * ARENA_SLICE_SIZE;
-        for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+        let page_map_size = arena_page_map_size(NonNull::from(page), start, size)
+            .expect("the live regular page has one source-shaped PageMap range");
+        for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
             let address = start.wrapping_add(offset);
-            // SAFETY: every page-map entry across the published source span
-            // remains stable while this test holds the allocation live.
+            // SAFETY: every source PageMap entry remains stable while this
+            // test holds the allocation live.
             assert_eq!(unsafe { allocator.page_map.checked_lookup(address) }, page as *const Page as *mut Page);
+        }
+        for offset in (page_map_size..size).step_by(ARENA_SLICE_SIZE) {
+            let address = start.wrapping_add(offset);
+            // SAFETY: the remaining arena span is owned storage slack, not
+            // PageMap-reachable page area, under the pinned source geometry.
+            assert!(unsafe { allocator.page_map.checked_lookup(address) }.is_null());
         }
         (start, size, page.block_size())
     }

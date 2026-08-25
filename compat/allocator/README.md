@@ -541,8 +541,9 @@ publishes that exact dynamic `pages_abandoned[bin]` bit plus paired
 final free, which reaches empty before any reclaim branch—through the normal
 collector for medium/large/non-direct small or the partial collector for direct
 small—clears that bit/count, and releases PageMap -> dynamic ordinary bit ->
-metadata -> arena slices. The large endpoint validates all 64 PageMap entries
-before that terminal release. It does not reclaim the departed Theap, adopt,
+metadata -> arena slices. The large endpoint validates its 63 PageMap-registered
+source page-area slices; the final PageMap-null arena slice is slack but remains
+part of the terminal 64-slice release. It does not reclaim the departed Theap, adopt,
 requeue, scan, or accept multiple pages or frees.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular,
@@ -1207,6 +1208,27 @@ or runtime, public x86 support, libc integration, backend promotion, or
 AArch64 evidence. Its report is
 `compat/reports/allocator/x86_64/dynamic-full-medium-one-remote-force-collect-to-mapped.json`.
 
+A separate dynamic full-large one-remote force-collect-to-mapped route is
+available on native x86-64:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-dynamic-full-large-one-remote-force-collect-to-mapped
+```
+
+This private 31-field C/Rust differential fills one sole full `BIN_FULL`
+large arena page (request 86706, 98304-byte blocks, capacity/reserved 42,
+64 arena slices, 63 PageMap-registered source page-area slices), publishes exactly one joined remote `mi_free` before real
+`mi_thread_done()` in the C oracle, and force-collects it to mapped
+abandonment. Rust exercises only the corresponding private typed drain.
+Sequential consumer frees retain the mapped route until terminal PageMap,
+ordinary arena bitmap, dynamic bitmap/count, and complete 64-slice release;
+the final PageMap-null arena slice is slack but is still terminally released.
+It is private native x86-64 engine evidence only; it does not establish
+general lifecycle/routing/concurrent collection, abandonment/adoption, public
+API/runtime, backend promotion, public x86 support, or AArch64 evidence. Its
+report is
+`compat/reports/allocator/x86_64/dynamic-full-large-one-remote-force-collect-to-mapped.json`.
+
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
 
@@ -1442,6 +1464,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_full_non_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-non-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for one worker-owned arena full non-direct-small regular-bin page: a 1032-byte request uses the 1280-byte, 51-block, one-slice class; one remote `mi_free` is published before real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection makes the page nonfull/mapped-abandoned and detaches its ordinary queue, and only the final free releases the PageMap/arena bitmap/slice. It is dispatched by `allocator-full-non-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_full_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 28-field pinned-C/Rust differential for one worker-owned arena full direct-small regular-bin page: a 1024-byte request uses the 1024-byte, 64-block, one-slice class; a pre-remote preflight requires the complete rounded direct-cache range, one remote `mi_free` precedes real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection immediately publishes the mapped route while detaching the ordinary queue, and only the final free releases the PageMap/arena bitmap/slice and clears the terminal static-main abandoned-bin bitmap (`arena_abandoned_bin_bitmap_clear_after_final_free`). It is dispatched by `allocator-full-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_dynamic_full_medium_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-medium-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private 29-field pinned-C/Rust differential for one sole full `BIN_FULL` medium arena page: request 10248 yields 12288-byte blocks, capacity/reserved 42, and eight slices; the C oracle's exactly one joined remote `mi_free` precedes real `mi_thread_done()`, while Rust uses only the corresponding private typed drain; force collection publishes mapped abandonment with dynamic bitmap/count and `used == 41`, and sequential consumer frees retain the mapped route until PageMap, ordinary arena bitmap, dynamic bitmap/count, and exact slice release. It is dispatched by `allocator-dynamic-full-medium-one-remote-force-collect-to-mapped`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
+| `x86_64_dynamic_full_large_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-large-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private 31-field pinned-C/Rust differential for one sole full `BIN_FULL` large arena page: request 86706 yields 98304-byte blocks, capacity/reserved 42, and a 64-slice arena span with 63 PageMap-registered source page-area slices; the C oracle's exactly one joined remote `mi_free` precedes real `mi_thread_done()`, while Rust uses only the corresponding private typed drain; force collection publishes mapped abandonment with dynamic bitmap/count and `used == 41`, and sequential consumer frees retain the mapped route until PageMap, ordinary arena bitmap, dynamic bitmap/count, and complete 64-slice release. The final PageMap-null arena slice is slack but remains terminally released. It is dispatched by `allocator-dynamic-full-large-one-remote-force-collect-to-mapped`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend promotion, public x86 support, or AArch64 evidence. |
 | `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. It is dispatched by `allocator-mapped-post-exit`; Rust covers only one bounded process-owned mapped regular handoff and directly observes PageMap, ordinary arena-page bitmap, and free-slice bitmap release. The lane does not claim general thread exit/routing, public API, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_retired_prepass_evidence.py` and `x86_64-retired-prepass-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for one worker-local retirement, real `mi_thread_done()`/`pthread_join()` retired-page force-release, one distinct live mapped-abandoned page, and one consumer terminal free. It is dispatched by `allocator-retired-prepass`; it directly records PageMap, ordinary arena bitmap, exact slice-span, and empty-route checks, and does not claim general retirement/teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_aggregate_post_exit_evidence.py` and `x86_64-aggregate-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for exactly two distinct live nonfull medium arena pages in distinct bins: the real worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before freeing, both pages are mapped-abandoned after teardown, then a second-first selective terminal release is followed by a first-page terminal release and empty route. It is dispatched by `allocator-aggregate-post-exit`; it directly records PageMap, ordinary arena bitmap, exact slice span, and the first page's registered/bit-set/mapped-abandoned/`used == 1` state after the second-page free. It does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |

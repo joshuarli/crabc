@@ -317,6 +317,19 @@ private native x86-64 engine evidence only, not general lifecycle/routing or
 concurrent collection, abandonment/adoption, public API/runtime, public x86
 support, backend promotion, libc integration, or AArch64 evidence.
 
+The native x86-only track separately records a 31-field dynamic full-large
+one-remote force-collect-to-mapped differential. The pinned-C worker fills a
+sole full `BIN_FULL` large arena page (86706-byte request, 98304-byte blocks,
+42 clients, 64 arena slices with 63 PageMap-registered source page-area
+slices), publishes one joined remote `mi_free`, runs real
+`mi_thread_done()`, and joins before consumer frees; Rust uses only the private
+typed drain. The bounded trace checks `used == 41`, mapped dynamic
+abandonment, and terminal PageMap, ordinary arena bitmap, dynamic
+bitmap/count, and complete 64-slice release; the final PageMap-null arena
+slice is slack but remains terminally released. This is private native x86-64
+engine evidence only and does not establish general lifecycle/routing, public
+x86 support, backend promotion, or AArch64 evidence.
+
 Those operations are
 live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
@@ -615,7 +628,9 @@ witnesses under short PageMap access. Client frees remain unmapped through
 into its exact static-main `pages_abandoned[bin]` bit plus paired
 `Heap::abandoned_count[bin]`, after which the mapped failed-reclaim tail owns
 the final PageMap -> `pages_main` -> metadata -> slice release. The large
-route validates the complete 64-slice PageMap span before terminal release.
+route validates its 63 PageMap-registered source page-area slices; the final
+PageMap-null arena slice is slack but remains part of the terminal 64-slice
+release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_singleton_pages_to_process_route`
@@ -838,7 +853,9 @@ other direct slot empty; queue removal clears that range before page-count
 detach. It also retains the source partial-collector `reserved >= 16`
 invariant. It preserves the same force -> false -> queue/direct/page-count
 detach -> mapped identity/bit/count -> unown order, and retains the exact
-complete PageMap span plus static-main arena/Heap witnesses. It then calls
+63 PageMap-registered source page-area slices plus the 64-slice arena span
+(whose final PageMap-null slice is slack) and static-main arena/Heap witnesses.
+It then calls
 `MainHeapThreadAttachment::finish_after_detached_process_page_route`, so the
 old Theap/TLD is genuinely detached and freed before a later client free.
 `MainHeapThreadProcessPageExitMappedRegularRoute` holds only those stable
@@ -1384,7 +1401,8 @@ non-direct small use the normal collector, while direct small consumes the
 partial collector head; each becomes empty before any reclaim branch, clears
 the dynamic bit/count pair, then releases the queue-detached PageMap span ->
 dynamic ordinary bit -> metadata -> arena slices. The large route validates
-its complete 64-slice span before that release. It cannot adopt, requeue, scan,
+its 63 PageMap-registered source page-area slices; the final PageMap-null arena
+slice is slack but remains part of the terminal 64-slice release. It cannot adopt, requeue, scan,
 reclaim the departed Theap, or handle multiple pages or frees.
 
 `DynamicThreadExitDrain::abandon_mapped_two_block_medium` deliberately remains
