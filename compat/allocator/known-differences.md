@@ -48,7 +48,7 @@ result may refine it only when it can prove retained ownership.
   pointer. Detached sessions, a producer registry, concurrent queue
   collection, abandonment integration beyond one consuming dynamic mapped
   regular handoff and the separately recorded later-main all-free scan plus
-  its five sole-page handoffs and bounded aggregate regular-pages traversal,
+  its six sole-page handoffs and bounded aggregate regular-pages traversal,
   general owner exit, pthread lifecycle, and
   general asynchronous/public free routing remain absent. The caller still
   proves join/quiescence before queue collection because existing queue helpers
@@ -402,7 +402,7 @@ result may refine it only when it can prove retained ownership.
   removal -> main bitmap clear -> metadata retirement -> slice release. The
   pass continues through later queues even when an earlier page remains live,
   then retains that general live page rather than queue-detaching or abandoning
-  it. Five explicit sole-page post-fast-slot handoffs require `page_count ==
+  it. Six explicit sole-page post-fast-slot handoffs require `page_count ==
   1`, the target as its sole queue member, and every other queue/direct slot
   empty. A full one-block arena singleton in `BIN_FULL` false-collects,
   detaches its queue/count, unmapped-abandons, and retains the process PageMap
@@ -424,17 +424,22 @@ result may refine it only when it can prove retained ownership.
   `pages_abandoned[bin]` bit/count pair, and later frees use the mapped tail
   until the same terminal PageMap -> main bitmap -> metadata -> slice release.
   The full-large route additionally proves its complete 64-slice span before
-  that release. The fifth handoff accepts one
+  that release. The fifth handoff accepts one full non-direct small page only
+  when its rounded `block_size > SMALL_SIZE_MAX`: unlike the `BIN_FULL` medium
+  and large shapes, it remains in its ordinary small bin, has no direct-cache
+  range, and takes the ordinary collector. It follows the same
+  unmapped-through-mostly-used and later mapped-tail state machine.
+  Direct full small pages remain excluded. The sixth handoff accepts one
   sole nonfull medium page or small page with one or more live blocks, tears
   down the old Theap/TLD, and returns a linear
   `ProcessPageMapPostExitAccess` route. A direct small member derives its
   cache class from rounded `block_size`, requires the complete source direct
   range to name that sole page with every other direct slot empty, and clears
   the range during queue removal before page-count detach. It requires the
-  source partial-collection `reserved >= 16` invariant. Every full small page
-  remains excluded before source collection through the explicit `used <
-  reserved` guard, because it can stay in its regular queue with `used ==
-  reserved`.
+  source partial-collection `reserved >= 16` invariant. This nonfull route
+  excludes full small pages before source collection through the explicit
+  `used < reserved` guard; the distinct fifth handoff above owns only the
+  source non-direct full-small shape.
 
   `abandon_mapped_regular_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
@@ -503,6 +508,11 @@ result may refine it only when it can prove retained ownership.
   including old-Theap/TLD teardown before client frees, the threshold-adjacent
   unmapped-to-mapped transition, and terminal release of every one of its
   64 PageMap slices; and
+  `later_thread_exit_full_non_direct_small_route_reabandons_after_mostly_used_frees`
+  proves the source regular-bin full-small detach, no direct-cache image,
+  ordinary-collector branch, threshold-adjacent unmapped-to-mapped transition,
+  and one-slice terminal release after
+  old-Theap/TLD teardown; and
   `later_thread_exit_mapped_regular_route_tears_down_before_two_client_frees`
   proves the mapped identity/bit/count survives actual old attachment teardown,
   stays paired after the first client free, and clears before the final span
@@ -517,8 +527,8 @@ result may refine it only when it can prove retained ownership.
   proves a stale direct slot rejects before collection, queue detachment, or
   PageMap mutation; and
   `later_thread_exit_mapped_regular_route_refuses_full_non_direct_small_before_detach`
-  proves the full-small exclusion occurs before collection, queue detachment,
-  or PageMap mutation; `later_thread_exit_mapped_regular_route_refuses_another_live_page_before_detach`
+  proves the nonfull route's full-small exclusion occurs before collection,
+  queue detachment, or PageMap mutation; `later_thread_exit_mapped_regular_route_refuses_another_live_page_before_detach`
   proves the route remains one-page only; and
   `later_thread_exit_mapped_regular_route_can_move_to_the_client_free_thread`
   proves the linear route can cross to its later client-free thread without
@@ -537,7 +547,8 @@ result may refine it only when it can prove retained ownership.
   proves a malformed predecessor rejects before retirement, collection, queue
   removal, or PageMap mutation; and
   `later_thread_exit_mapped_regular_pages_route_refuses_full_non_direct_small_before_detach`
-  proves a full small page rejects before source collection or detachment; and
+  proves the nonfull aggregate rejects a full small page before source
+  collection or detachment; and
   `later_thread_exit_mapped_regular_pages_route_selects_each_large_page_bin_after_claim`
   proves two distinct large bins select their paired static-main capability
   only after the source low owner-bit claim; and
@@ -674,8 +685,9 @@ result may refine it only when it can prove retained ownership.
   `free_unmapped_after_failed_reclaim` substrate ports expected-head unown,
   conflict collection without another reclaim attempt, and terminal-empty /
   reabandon / unown selection. Its lifecycle-integrated raw terminal-release
-  owners are the post-TLS singleton above and the later-main full-medium and
-  full-large routes; none routes general policy through the dynamic handoff. Other
+  owners are the post-TLS singleton above and the later-main full-medium,
+  full-large, and full-non-direct-small routes; none routes general policy
+  through the dynamic handoff. Other
   regular/nonempty unmapped, non-arena, foreign, and full/singleton/huge pages
   still lack lifecycle integration or terminal reuse.
   Image allocation failure before

@@ -68,12 +68,13 @@ process-static main heap/default-Theap attachment; one no-page later-thread
 attachment to that shared main Heap; one process-static page-map root
 publication owner plus one caller-selected, process-shared single-arena
 sidecar; bounded ticket-zero and later-thread page engines over that matched
-process pair; one all-free later-main thread-exit drain; five sole-page
+process pair; one all-free later-main thread-exit drain; six sole-page
 later-main owner-exit handoffs (a full arena singleton, a mapped medium page
-with one live block, full medium and full large pages that remain unmapped
-until their mostly-used free boundary then reabandon to the static-main bitmap,
-and a sole nonfull small-or-medium page whose process-owned route survives old
-Theap/TLD teardown); and one aggregate regular-pages post-exit
+with one live block, full medium and full large `BIN_FULL` pages plus one full
+non-direct small regular-bin page that remain unmapped until their mostly-used
+free boundary then reabandon to the static-main bitmap, and a sole nonfull
+small-or-medium page whose process-owned route survives old-Theap/TLD teardown);
+and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
 through sequential client frees.
 The regular owner uses the process-static metadata allocator for the exact
@@ -167,7 +168,7 @@ fast slot, force-collects every queue (including full), and releases only pages
 that become all-free through PageMap removal -> `pages_main` clear -> metadata
 retirement -> slice release. The pass continues beyond an earlier live page,
 then retains that post-fast-slot owner instead of queue-detaching or abandoning
-the general live page. Five explicit sole-page exceptions remain after
+the general live page. Six explicit sole-page exceptions remain after
 fast-slot clear, each requiring no other queue/direct/page state. The full
 one-block arena singleton false-collects, detaches, and unmapped-abandons while
 retaining its PageMap lifecycle and registration through its exact final client
@@ -181,8 +182,11 @@ that bit/identity, consumes the paired count, and performs the same terminal
 release; a still-live result is terminally retained rather than reclaimed or
 requeued. Full medium and full large `BIN_FULL` exceptions force- then
 false-collect, queue/page-count-detach, and deliberately become ordinary
-unmapped abandonment before old-Theap/TLD teardown. Their sequential client
-frees remain unmapped through `free <= reserved / 8`; the first
+unmapped abandonment before old-Theap/TLD teardown. The full non-direct small
+exception follows the same tail but detaches from its ordinary small size bin,
+requires `block_size > SMALL_SIZE_MAX`, has no direct-cache range, and uses the
+ordinary failed-reclaim collector. Their sequential client frees remain unmapped through
+`free <= reserved / 8`; the first
 below-mostly-used free publishes the exact static-main `pages_abandoned[bin]`
 bit plus paired `Heap::abandoned_count[bin]`, and the mapped tail preserves
 that pairing until the same terminal release. The full-large route validates
@@ -193,7 +197,8 @@ frees through short PageMap access. A direct small member must prove the exact
 rounded source direct-cache range before collection; queue removal clears that
 range before page-count detach. The route retains the source `reserved >= 16`
 small partial-collection invariant and excludes full small pages through its
-explicit `used < reserved` guard.
+explicit `used < reserved` guard; the separate full-small exception above owns
+only the non-direct class.
 
 `abandon_mapped_regular_pages_to_process_route` is the bounded source-traversal
 extension: before any mutation, every direct slot must match its source queue
@@ -310,8 +315,9 @@ then arena slices—and returns the drained engine; an existing owner remains a
 terminal handoff. Separately, `free_unmapped_after_failed_reclaim` remains the
 source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
-singleton above and the bounded later-main full-medium and full-large process
-routes are its lifecycle-integrated raw-release callers; other regular or
+singleton above and the bounded later-main full-medium, full-large, and full
+non-direct-small process routes are its lifecycle-integrated raw-release
+callers; other regular or
 nonempty unmapped pages, general producer routing, terminal reuse, multi-arena dynamic heap
 support, and general heap destruction remain absent.
 
@@ -345,8 +351,9 @@ regular/nonempty pages, general producer routing, terminal reuse, actual
 process/thread lifecycle hooks, full teardown traversal, and reusable
 abandoned-page lifetime remain absent.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
-later-thread owner exit beyond the bounded sole full-medium/full-large routes,
-sole small-or-medium route, and regular-pages aggregate, allocation-time
+later-thread owner exit beyond the bounded sole
+full-medium/full-large/full-non-direct-small routes, sole small-or-medium
+route, and regular-pages aggregate, allocation-time
 claim/reclaim/requeue after later-thread exit, general dynamic heap/Theap
 attachment and remote-free routing, complete concurrency modeling and stress,
 libc integration, the remaining upstream suites, and performance promotion

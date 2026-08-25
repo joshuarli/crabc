@@ -347,9 +347,9 @@ impl AdoptedPage {
 /// valid until the caller requeues a successful reclaim. The caller retains
 /// the page-map, arena image, and terminal release authority throughout. A
 /// result of `Empty` retains the owned page for that terminal authority. A
-/// small page must satisfy the pinned source `reserved >= 16` invariant; an
-/// invalid page is retained as a terminal error instead of entering partial
-/// collection.
+/// direct-sized small page (`block_size <= SMALL_SIZE_MAX`) must satisfy the
+/// pinned source `reserved >= 16` invariant; an invalid page is retained as a
+/// terminal error instead of entering partial collection.
 pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     block: NonNull<u8>,
@@ -494,8 +494,9 @@ pub(crate) unsafe fn free_mapped_one_block_to_empty<M: MappedAbandonedPages + ?S
 /// the page, and must retain the PageMap, matching Heap/arena bitmap-count
 /// pair, metadata, and final span-release authority through every returned
 /// state. `Empty` retains the low owner bit and requires that separate final
-/// release before the page can be reused. For a small page, the pinned source
-/// `reserved >= 16` invariant is required.
+/// release before the page can be reused. For a direct-sized small page
+/// (`block_size <= SMALL_SIZE_MAX`), the pinned source `reserved >= 16`
+/// invariant is required.
 pub(crate) unsafe fn free_mapped_after_failed_reclaim<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     block: NonNull<u8>,
@@ -616,9 +617,9 @@ where
 /// entry, bitmap reader, producer, or terminal release may outlive this call
 /// except under the result's retained owner state. `map` must be the exact
 /// arena/bin/slice capability that would receive this page if it becomes
-/// reusable. A small page must satisfy the pinned source `reserved >= 16`
-/// invariant. `Empty` retains the owned abandoned page for a distinct terminal
-/// page-map/span release authority.
+/// reusable. A direct-sized small page (`block_size <= SMALL_SIZE_MAX`) must
+/// satisfy the pinned source `reserved >= 16` invariant. `Empty` retains the
+/// owned abandoned page for a distinct terminal page-map/span release authority.
 pub(crate) unsafe fn free_unmapped_after_failed_reclaim<M: MappedAbandonedPages + ?Sized>(
     page: NonNull<Page>,
     block: NonNull<u8>,

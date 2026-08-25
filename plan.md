@@ -81,7 +81,7 @@ later engine into `MainHeapThreadProcessPageExitDrain`: source fast-slot clear
 precedes force collection of every queue (including regular and full); a page
 that becomes all-free follows the same PageMap -> bitmap -> metadata -> slice
 release order. The pass continues after an earlier live page, then retains that
-live page rather than queue-detaching or abandoning it. Five explicit
+live page rather than queue-detaching or abandoning it. Six explicit
 live-page handoffs require the drain's sole page after fast-slot clear: one
 target queue member and every other queue/direct slot empty. The full one-block
 arena singleton false-collects, queue-detaches, and unmapped-abandons while its
@@ -113,6 +113,20 @@ adoption, concurrent client-free routing, or another full-regular owner-exit
 shape.
 
 The fifth handoff,
+`MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`,
+accepts one sole full small arena page only when its rounded `block_size`
+exceeds `SMALL_SIZE_MAX`. That is source's non-direct full-small shape: it
+remains in its ordinary regular size bin rather than `BIN_FULL`, has no
+direct-cache range, and takes free.c's ordinary collector rather than the
+direct-sized partial branch. It force- then false-collects, detaches that exact
+regular queue member and page count, and keeps ordinary unmapped abandonment through
+`free <= reserved / 8`. The first below-mostly-used client free publishes the
+exact static-main bitmap/count pair and its mapped tail performs the same
+PageMap -> `pages_main` -> metadata -> slice release after old-Theap/TLD
+teardown. It does not admit direct full small pages, mixed traversal,
+allocation-time adoption, reclaim, requeue, or concurrent frees.
+
+The sixth handoff,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`,
 accepts one sole nonfull arena page with one or more live blocks when it is a
 medium page or any small page. A direct small member is classified by rounded
@@ -120,8 +134,10 @@ source `block_size`, not request size: before collection, its exact source
 `pages_free_direct` range must name the sole page and every other direct slot
 must be empty. Queue removal then clears that exact range before the Theap
 page-count decrement. A direct small page retains the source `reserved >= 16`
-partial-collection invariant; full small pages remain excluded through `used <
-reserved`, since they can remain in a regular queue. The handoff preserves
+partial-collection invariant; this nonfull route excludes full small pages
+through `used < reserved`, since they can remain in a regular queue. The
+separate fifth handoff above owns only the non-direct full-small class. This
+handoff preserves
 source force -> false collection, queue/direct/page-count detach, and mapped
 identity/bit/count/unown publication, then retains exact arena/span/static-main
 Heap facts while `MainHeapThreadAttachment::finish_after_detached_process_page_route`
@@ -201,7 +217,8 @@ coordinator.
 
 General producer routing, concurrent/general shared/later-thread page-bearing
 ownership, full/singleton/unmapped/huge owner-exit pages and behavior beyond
-the bounded sole full-medium/full-large routes, sole small-or-medium route, and
+the bounded sole full-medium/full-large/full-non-direct-small routes, sole
+small-or-medium route, and
 aggregate regular-pages registry, terminal reuse, automatic
 and multiple dynamic arenas, complete process options/TLS/shutdown,
 pthread/TLS teardown hooks, fork repair, public libc backend integration,
@@ -220,8 +237,9 @@ pairing or unmapped abandonment to `src/arena.c:1304-1409`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit transfer
-now has four narrow forms: the full-medium route, full-large route, sole
-small-or-medium route, and aggregate regular-pages registry convert the long
+now has five narrow forms: the full-medium route, full-large route, full
+non-direct-small route, sole small-or-medium route, and aggregate regular-pages
+registry convert the long
 mutation lease into a short locked free owner,
 retain stable span/arena/Heap facts rather than the old Theap/TLD, and prove
 bitmap/count pairing through actual teardown and sequential later frees. The
@@ -237,7 +255,7 @@ and the raw false/force-local-list order/cycle regressions in `free_list::tests`
 the no-page shared-main regressions in `main_heap_thread::tests`, the
 process-map commit/once/lifecycle regressions in `process_page_map::tests`, the
 root-pairing regressions in `process_arena::tests`, the five bounded
-static-main page-owner regressions in `main_static_page::tests`, the twenty-eight
+static-main page-owner regressions in `main_static_page::tests`, the twenty-nine
 bounded later-main page-owner regressions in `main_heap_page::tests` (including
 the joined remote-full all-free exit drain, its later-queue collection behind a
 retained live page, the retained-live-page boundary, the sole-full-singleton
@@ -245,6 +263,8 @@ final-free/reject-before-detach regressions, the sole-medium
 mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
 full-medium and full-large routes' unmapped mostly-used thresholds and later
 mapped tails (including the full-large route's 64-slice terminal release), the
+full non-direct-small route's ordinary-bin detach, threshold-adjacent
+unmapped-to-mapped transition, and terminal release, the
 post-exit regular route's medium, threshold-adjacent non-direct small, upper direct and
 non-direct small boundaries, direct-image preflight refusal, full-small
 pre-detach refusal, one-page-refusal, and cross-thread movement
@@ -265,10 +285,10 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 79 items and 83
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 80 items and 84
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
-all-free scan/five sole-page handoffs/aggregate regular-pages registry, or either
+all-free scan/six sole-page handoffs/aggregate regular-pages registry, or either
 bounded process page owner. The next frontier is another page-bearing
 owner-exit class or registry adoption policy, then complete process and real
 pthread/TLS lifecycle integration—not routing that general policy through either

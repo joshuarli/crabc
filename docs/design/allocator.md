@@ -135,18 +135,24 @@ uses false force after its preflight and before queue detach, while both
 mapped-medium sole-page handoffs preserve the source force-then-false sequence
 before bitmap publication. The one-block handoff accepts only its empty final
 free. Separate full-medium and full-large routes first preserve the source
-full-queue detach and ordinary unmapped abandonment: sequential client frees
-remain unmapped while `free <= reserved / 8`, then the first below-mostly-used
-free publishes the exact static-main bitmap/count pair and subsequent frees use
-the mapped tail. Their terminal empty results still release in PageMap ->
-`pages_main` -> metadata -> slice order after old-Theap teardown; the large
-route validates its complete 64-slice span. The process route can keep one sole
+full-queue detach and ordinary unmapped abandonment. A separate full
+non-direct-small route preserves that same unmapped tail while detaching from
+its ordinary small bin instead of `BIN_FULL`; it requires
+`block_size > SMALL_SIZE_MAX`, has no direct-cache image, and takes the
+ordinary failed-reclaim collector.
+Sequential client frees remain unmapped while `free <= reserved / 8`, then the
+first below-mostly-used free publishes the exact static-main bitmap/count pair
+and subsequent frees use the mapped tail. Their terminal empty results still
+release in PageMap -> `pages_main` -> metadata -> slice order after old-Theap
+teardown; the large route validates its complete 64-slice span. The process
+route can keep one sole
 nonfull small-or-medium page mapped while its linear
 client frees finish after the old Theap/TLD is gone. A direct small member is
 recognized by rounded source block size, preflights its exact
 `pages_free_direct` range, and clears that range with queue removal before the
 former Theap page count drops; the small partial-free tail retains its source
-`reserved >= 16` invariant. Full small pages remain outside that route. The
+`reserved >= 16` invariant. Full small pages remain outside that nonfull route;
+the dedicated route above admits only the non-direct full-small shape. The
 aggregate regular-pages route applies that same source sequence to every
 qualifying small, medium, or large page, releases force-empty pages, and stores
 PageMap/bitmap registry. Its direct-small preflight accepts only the complete
@@ -329,8 +335,21 @@ the final PageMap -> `pages_main` -> metadata -> slice release. The large
 route validates the complete 64-slice PageMap span before terminal release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`
+is the fifth handoff. It accepts only a sole full `PageKind::Small` arena page
+with rounded `block_size > SMALL_SIZE_MAX`. Unlike the
+medium/large `BIN_FULL` shapes, pinned `page.c:766-832` retains this full small
+page in its ordinary regular bin, so the transition verifies that exact queue,
+requires every direct slot empty, and never treats it as a direct cache member.
+It takes free.c's ordinary collector, then preserves force then false
+collection, regular-queue/page-count detach, ordinary unmapped abandonment,
+the mostly-used boundary, static-main
+bitmap/count reabandonment, and the existing one-slice terminal release. It
+does not accept direct full small pages, mixed pages, adoption, reclaim,
+requeue, or concurrent frees.
+
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`
-is the fifth handoff. It accepts one sole nonfull arena page with one or more
+is the sixth handoff. It accepts one sole nonfull arena page with one or more
 live blocks when it is a medium page or any small page. The small decision uses
 the rounded source block size, not the request size. A direct small page must
 have its complete source direct-cache range point at that sole page with every
@@ -349,8 +368,9 @@ nonempty result keeps the paired mapped identity/bit/count and returns the
 linear route; the final free clears that pairing before the PageMap ->
 `pages_main` -> metadata -> slice release. The route is movable to a client
 free thread but is not shareable as concurrent routes. Every full small page
-remains outside this sole route, checked by `used < reserved` because it can
-remain in a regular queue.
+remains outside this nonfull sole route, checked by `used < reserved` because
+it can remain in a regular queue; the fifth handoff owns only its non-direct
+full-small counterpart.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.

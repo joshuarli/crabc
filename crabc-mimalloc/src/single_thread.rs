@@ -50,11 +50,12 @@
 // abandonment, failed reclaim, and all-free release; it is not a general
 // owner-exit traversal or remote-free route.
 // The separately bounded later-main drain force-scans all-free pages, then
-// admits five sole-page handoffs: the same unmapped full singleton shape, one
+// admits six sole-page handoffs: the same unmapped full singleton shape, one
 // medium regular page with one live block, full medium and full large
-// `BIN_FULL` pages that remain unmapped through source's mostly-used boundary
-// before they may reabandon to the static-main bitmap/count pair, and one
-// nonfull small-or-medium page with one or more live blocks. The one-block handoff uses
+// `BIN_FULL` pages, one full non-direct small page in its ordinary regular
+// queue, and one nonfull small-or-medium page with one or more live blocks.
+// Each full route remains unmapped through source's mostly-used boundary
+// before it may reabandon to the static-main bitmap/count pair. The one-block handoff uses
 // the static main `pages_abandoned[bin]` image plus paired
 // `abandoned_count[bin]`, and accepts only its source empty-before-reclaim
 // final free. The sole-page process route performs the same mapped publication,
@@ -470,9 +471,9 @@ pub(crate) struct ThreadExitMappedRegularPostExitTeardownTerminal<'attachment, '
     error: MainHeapThreadAttachmentError,
 }
 
-/// One source-full regular medium-or-large page after `_mi_page_abandon` has
-/// removed it from its departing later Theap but before that Theap/TLD is torn
-/// down.
+/// One source-full regular medium, large, or non-direct small page after
+/// `_mi_page_abandon` has removed it from its departing later Theap but before
+/// that Theap/TLD is torn down.
 ///
 /// A full regular page begins as ordinary unmapped abandonment: its first
 /// sequential client frees remain unmapped while the source mostly-used
@@ -487,7 +488,8 @@ pub(crate) struct ThreadExitFullRegularPostExitDetach<'attachment, 'main, 'arena
 }
 
 /// The process-lifetime facts needed to route one initially unmapped full
-/// regular medium-or-large page after its originating Theap/TLD is gone.
+/// regular medium, large, or non-direct small page after its originating
+/// Theap/TLD is gone.
 ///
 /// `state` mirrors the only two source outcomes retained by this bounded
 /// route: an unowned unmapped page that remains mostly used, and a later
@@ -542,6 +544,16 @@ pub(crate) type ThreadExitFullLargePostExitDetach<'attachment, 'main, 'arena> =
 pub(crate) type ThreadExitFullLargePostExitParts<'main, 'arena> =
     ThreadExitFullRegularPostExitParts<'main, 'arena>;
 pub(crate) type ThreadExitFullLargePostExitTeardownTerminal<'attachment, 'main, 'arena> =
+    ThreadExitFullRegularPostExitTeardownTerminal<'attachment, 'main, 'arena>;
+
+/// A full non-direct small page takes the same source-unmapped failed-reclaim
+/// tail as full medium and large pages, while its queue detachment remains
+/// explicitly constrained to the regular small bin.
+pub(crate) type ThreadExitFullNonDirectSmallPostExitDetach<'attachment, 'main, 'arena> =
+    ThreadExitFullRegularPostExitDetach<'attachment, 'main, 'arena>;
+pub(crate) type ThreadExitFullNonDirectSmallPostExitParts<'main, 'arena> =
+    ThreadExitFullRegularPostExitParts<'main, 'arena>;
+pub(crate) type ThreadExitFullNonDirectSmallPostExitTeardownTerminal<'attachment, 'main, 'arena> =
     ThreadExitFullRegularPostExitTeardownTerminal<'attachment, 'main, 'arena>;
 
 /// Every mapped regular arena page detached by one source-order
@@ -780,8 +792,8 @@ pub(crate) enum ThreadExitMappedRegularPostExitFreeError {
 }
 
 /// A source-boundary refusal while one later-main post-fast-slot drain moves
-/// its sole full regular medium-or-large page into the sequential
-/// unmapped-to-mapped process route.
+/// its sole full regular medium, large, or non-direct small page into the
+/// sequential unmapped-to-mapped process route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadExitFullRegularPostExitAbandonError {
     Collection,
@@ -792,7 +804,7 @@ pub(crate) enum ThreadExitFullRegularPostExitAbandonError {
     /// The current drain owns additional queue/direct/page state, so it
     /// cannot skip source traversal order by detaching one full page early.
     NotOnlyPage,
-    NotActiveFull,
+    NotActiveExpectedQueue,
     InvalidBlock,
     MissingMainArenaPages,
     Queue,
@@ -865,6 +877,17 @@ pub(crate) type ThreadExitFullLargePostExitAbandonFailure<'attachment, 'main, 'a
     ThreadExitFullRegularPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>;
 pub(crate) type ThreadExitFullLargePostExitFreeOutcome = ThreadExitFullRegularPostExitFreeOutcome;
 pub(crate) type ThreadExitFullLargePostExitFreeError = ThreadExitFullRegularPostExitFreeError;
+
+/// Full non-direct small keeps its distinct source boundary spelling while
+/// sharing the full regular unmapped-to-mapped failed-reclaim state machine.
+pub(crate) type ThreadExitFullNonDirectSmallPostExitAbandonError =
+    ThreadExitFullRegularPostExitAbandonError;
+pub(crate) type ThreadExitFullNonDirectSmallPostExitAbandonFailure<'attachment, 'main, 'arena, 'map> =
+    ThreadExitFullRegularPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>;
+pub(crate) type ThreadExitFullNonDirectSmallPostExitFreeOutcome =
+    ThreadExitFullRegularPostExitFreeOutcome;
+pub(crate) type ThreadExitFullNonDirectSmallPostExitFreeError =
+    ThreadExitFullRegularPostExitFreeError;
 
 /// A source-boundary refusal while a later-main post-fast-slot drain prepares
 /// its complete mapped regular-page owner-exit traversal. `Rejected` is
@@ -2081,25 +2104,30 @@ impl<'attachment, 'main, 'arena, 'map>
         })
     }
 
-    /// Transfers one sole full regular medium-or-large arena page into a
-    /// sequential process route after the fixed main fast slot has cleared.
+    /// Transfers one sole full regular medium, large, or non-direct small
+    /// arena page into a sequential process route after the fixed main fast
+    /// slot has cleared.
     ///
-    /// Source `_mi_page_abandon` leaves a full regular page unmapped: it
-    /// queue-detaches, clears the full-queue membership, and publishes only
-    /// the ordinary abandoned identity. A later failed-reclaim free keeps it
-    /// unmapped while `mi_page_is_mostly_used` holds, then may publish the
-    /// exact static-main bitmap/count pair once the page drops below that
-    /// threshold. This route carries only that source state machine. It does
-    /// not reclaim, requeue, adopt, or expose concurrent client frees.
+    /// Source `_mi_page_abandon` leaves each of these full shapes unmapped: a
+    /// medium or large member detaches from `BIN_FULL`, while a full
+    /// non-direct small member detaches from its ordinary size bin. Both
+    /// publish only the ordinary abandoned identity. A later failed-reclaim
+    /// free keeps the page unmapped while `mi_page_is_mostly_used` holds, then
+    /// may publish the exact static-main bitmap/count pair once the page drops
+    /// below that threshold. This route carries only that source state machine.
+    /// It does not reclaim, requeue, adopt, or expose concurrent client frees.
     ///
     /// # Safety
     ///
     /// `block` must be one exact current canonical allocation in the sole full
-    /// `expected_kind` page owned by this post-fast-slot drain. No scoped
-    /// producer may survive, and every client alias must remain live only until
-    /// the returned route consumes it exactly once or is retained terminally.
-    /// In particular, no pre-existing local or remote free may make the page
-    /// nonfull during the source force/false collections below.
+    /// `expected_kind` page owned by this post-fast-slot drain. For
+    /// `PageKind::Small`, it must be non-direct (`block_size > SMALL_SIZE_MAX`)
+    /// and therefore takes free.c's ordinary collector rather than the
+    /// direct-sized partial-collection branch.
+    /// No scoped producer may survive, and every client alias must remain live
+    /// only until the returned route consumes it exactly once or is retained
+    /// terminally. In particular, no pre-existing local or remote free may
+    /// make the page nonfull during the source force/false collections below.
     unsafe fn abandon_full_regular_to_process_route(
         mut self,
         block: NonNull<u8>,
@@ -2114,7 +2142,10 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if !matches!(expected_kind, PageKind::Medium | PageKind::Large) {
+        if !matches!(
+            expected_kind,
+            PageKind::Small | PageKind::Medium | PageKind::Large
+        ) {
             return Err(reject(
                 self,
                 ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
@@ -2157,12 +2188,16 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
             ));
         };
+        let is_non_direct_small = expected_kind == PageKind::Small;
         if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(expected_kind)
             || bin >= ARENA_BIN_COUNT
             || bin == BIN_FULL
             || page_ref.reserved() <= 1
             || page_ref.used() != usize::from(page_ref.reserved())
-            || !page_is_in_full(page_ref)
+            || (is_non_direct_small
+                && (page_ref.block_size() <= SMALL_SIZE_MAX
+                    || page_is_in_full(page_ref)))
+            || (!is_non_direct_small && !page_is_in_full(page_ref))
         {
             return Err(reject(
                 self,
@@ -2170,12 +2205,15 @@ impl<'attachment, 'main, 'arena, 'map>
             ));
         }
 
-        // The source visitor must not skip another page. Every full regular
-        // page resides only in `BIN_FULL`, and every regular direct-cache slot
-        // is therefore the source empty-page value before collection begins.
+        // The source visitor must not skip another page. Full medium and
+        // large pages reside in `BIN_FULL`; a full non-direct small page
+        // remains in its ordinary size bin. The latter has no direct-cache
+        // range, so every direct-cache slot remains the source empty-page
+        // value before collection begins.
+        let expected_queue_bin = if is_non_direct_small { bin } else { BIN_FULL };
         let mut sole_page = self.session.theap().page_count() == 1;
         for queue_bin in 0..BIN_COUNT {
-            let expected = if queue_bin == BIN_FULL { 1 } else { 0 };
+            let expected = if queue_bin == expected_queue_bin { 1 } else { 0 };
             if !self
                 .session
                 .queue(queue_bin)
@@ -2222,10 +2260,10 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitFullRegularPostExitAbandonError::MissingMainArenaPages,
             ));
         }
-        if !self.page_is_active_queue_member(BIN_FULL, page) {
+        if !self.page_is_active_queue_member(expected_queue_bin, page) {
             return Err(reject(
                 self,
-                ThreadExitFullRegularPostExitAbandonError::NotActiveFull,
+                ThreadExitFullRegularPostExitAbandonError::NotActiveExpectedQueue,
             ));
         }
         let Some(canonical_block) = self.canonical_block_start(page_ref, block) else {
@@ -2260,7 +2298,9 @@ impl<'attachment, 'main, 'arena, 'map>
             ));
         }
         let after_force = unsafe { page.as_ref() };
-        if after_force.used() != usize::from(after_force.reserved()) || !page_is_in_full(after_force)
+        if after_force.used() != usize::from(after_force.reserved())
+            || (is_non_direct_small && page_is_in_full(after_force))
+            || (!is_non_direct_small && !page_is_in_full(after_force))
         {
             return Err(retained(
                 self,
@@ -2279,7 +2319,10 @@ impl<'attachment, 'main, 'arena, 'map>
             || size_class::bin(after_collect.block_size()) != Some(bin)
             || after_collect.reserved() <= 1
             || after_collect.used() != usize::from(after_collect.reserved())
-            || !page_is_in_full(after_collect)
+            || (is_non_direct_small
+                && (after_collect.block_size() <= SMALL_SIZE_MAX
+                    || page_is_in_full(after_collect)))
+            || (!is_non_direct_small && !page_is_in_full(after_collect))
         {
             return Err(retained(
                 self,
@@ -2287,7 +2330,7 @@ impl<'attachment, 'main, 'arena, 'map>
             ));
         }
 
-        let queue = match self.session.queue_mut(BIN_FULL) {
+        let queue = match self.session.queue_mut(expected_queue_bin) {
             Some(queue) => queue as *mut _,
             None => {
                 return Err(retained(
@@ -2296,8 +2339,9 @@ impl<'attachment, 'main, 'arena, 'map>
                 ));
             }
         };
-        // SAFETY: preflight proved this exact page is the sole full-queue
-        // member, and the consuming drain owns every queue mutation.
+        // SAFETY: preflight proved this exact page is the sole expected
+        // source queue member, and the consuming drain owns every queue
+        // mutation. Non-direct small has no direct-cache range to update.
         unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
         if !self.session.note_page_removed() {
             return Err(retained(
@@ -2429,6 +2473,28 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: this wrapper fixes the source class before the generic
         // preflight begins; no queue or page state changes before that proof.
         unsafe { self.abandon_full_regular_to_process_route(block, PageKind::Large) }
+    }
+
+    /// Transfers one sole full non-direct small arena page through the same
+    /// source-unmapped failed-reclaim state machine. Unlike full medium and
+    /// large pages, this page must remain in its ordinary small size bin and
+    /// must have no direct-cache range.
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::abandon_full_regular_to_process_route`]. `block` must name
+    /// one exact current allocation in the only full non-direct small page.
+    pub(crate) unsafe fn abandon_full_non_direct_small_to_process_route(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        ThreadExitFullNonDirectSmallPostExitDetach<'attachment, 'main, 'arena>,
+        ThreadExitFullNonDirectSmallPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>,
+    > {
+        // SAFETY: this wrapper fixes the only regular-queue full-small class
+        // before preflight; direct small pages and all other queue shapes are
+        // rejected without mutating source state.
+        unsafe { self.abandon_full_regular_to_process_route(block, PageKind::Small) }
     }
 
     /// Ports the retired-page portion of
