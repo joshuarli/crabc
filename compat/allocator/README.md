@@ -14,10 +14,10 @@ map, one bounded source-order process-main coordinator, one separately owned
 process-static page-map publication root plus one caller-selected
 process-shared arena sidecar and bounded ticket-zero and later-thread page
 engines over their matched pair, including one all-free later-main exit drain
-and its four sole-page handoffs (a full arena singleton, a mapped medium
-one-block page, a full medium page that begins unmapped and reabandons after
-the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
-client-free route) plus
+and its five sole-page handoffs (a full arena singleton, a mapped medium
+one-block page, full medium and full large pages that begin unmapped and
+reabandon after the source mostly-used boundary, and a nonfull mapped
+small-or-medium post-exit client-free route) plus
 one aggregate regular small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
@@ -60,7 +60,7 @@ in-place `pages_main` bitmap into the shared static main Heap, and completes
 normal fresh/release ordering through map, bitmap, metadata, and slices. It
 chooses no reserve policy, does not model the C `mi_page_map_empty` pre-root,
 and has no concurrent/general later-thread page routing, general owner exit
-beyond the recorded all-free later-main scan, its four sole-page handoffs, and
+beyond the recorded all-free later-main scan, its five sole-page handoffs, and
 the bounded aggregate regular-pages traversal, teardown, or public routing.
 The coordinator deliberately does not reserve this shared arena or supply a
 full process lifecycle. An unpublished

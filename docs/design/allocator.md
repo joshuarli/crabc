@@ -134,13 +134,14 @@ detached paths still use false force. Its separate sole full-singleton handoff
 uses false force after its preflight and before queue detach, while both
 mapped-medium sole-page handoffs preserve the source force-then-false sequence
 before bitmap publication. The one-block handoff accepts only its empty final
-free. A separate full-medium route first preserves the source full-queue
-detach and ordinary unmapped abandonment: sequential client frees remain
-unmapped while `free <= reserved / 8`, then the first below-mostly-used free
-publishes the exact static-main bitmap/count pair and subsequent frees use the
-mapped tail. Its terminal empty result still releases in PageMap ->
-`pages_main` -> metadata -> slice order after old-Theap teardown. The process
-route can keep one sole nonfull small-or-medium page mapped while its linear
+free. Separate full-medium and full-large routes first preserve the source
+full-queue detach and ordinary unmapped abandonment: sequential client frees
+remain unmapped while `free <= reserved / 8`, then the first below-mostly-used
+free publishes the exact static-main bitmap/count pair and subsequent frees use
+the mapped tail. Their terminal empty results still release in PageMap ->
+`pages_main` -> metadata -> slice order after old-Theap teardown; the large
+route validates its complete 64-slice span. The process route can keep one sole
+nonfull small-or-medium page mapped while its linear
 client frees finish after the old Theap/TLD is gone. A direct small member is
 recognized by rounded source block size, preflights its exact
 `pages_free_direct` range, and clears that range with queue removal before the
@@ -312,21 +313,24 @@ clears the mapped identity/bit, consumes that paired count, and performs the
 same PageMap -> `pages_main` -> metadata -> slice release; a still-live page
 is terminally retained rather than reclaimed or requeued.
 
-`MainHeapThreadProcessPageExitDrain::abandon_full_medium_to_process_route` is
-the third handoff. It accepts only the sole full medium arena page in
-`BIN_FULL`, preserves force then false collection and queue/page-count detach,
-and follows source's ordinary unmapped abandonment before actually tearing down
-the old Theap/TLD. Its linear `MainHeapThreadProcessPageExitFullMediumRoute`
-keeps stable arena/Heap/span/bin witnesses under short PageMap access. Client
-frees remain unmapped through `free <= reserved / 8`; the first
-below-mostly-used free reabandons the page into its exact static-main
-`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`, after
-which the mapped failed-reclaim tail owns the final PageMap -> `pages_main` ->
-metadata -> slice release. It exposes no allocation-time claim, reclaim,
-requeue, or concurrent route.
+`MainHeapThreadProcessPageExitDrain::abandon_full_medium_to_process_route` and
+`MainHeapThreadProcessPageExitDrain::abandon_full_large_to_process_route` are
+the third and fourth handoffs. They accept only the sole full medium or large
+arena page in `BIN_FULL`, preserve force then false collection and
+queue/page-count detach, and follow source's ordinary unmapped abandonment
+before actually tearing down the old Theap/TLD. Their linear
+`MainHeapThreadProcessPageExitFullMediumRoute` and
+`MainHeapThreadProcessPageExitFullLargeRoute` keep stable arena/Heap/span/bin
+witnesses under short PageMap access. Client frees remain unmapped through
+`free <= reserved / 8`; the first below-mostly-used free reabandons the page
+into its exact static-main `pages_abandoned[bin]` bit plus paired
+`Heap::abandoned_count[bin]`, after which the mapped failed-reclaim tail owns
+the final PageMap -> `pages_main` -> metadata -> slice release. The large
+route validates the complete 64-slice PageMap span before terminal release.
+They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`
-is the fourth handoff. It accepts one sole nonfull arena page with one or more
+is the fifth handoff. It accepts one sole nonfull arena page with one or more
 live blocks when it is a medium page or any small page. The small decision uses
 the rounded source block size, not the request size. A direct small page must
 have its complete source direct-cache range point at that sole page with every
