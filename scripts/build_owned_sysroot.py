@@ -11,13 +11,16 @@ path was accidentally reused.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -31,10 +34,45 @@ COMPARISON_SYSROOT = TARGET / "crabc-sysroot-repro"
 REPORT = ROOT / "compat/reports/sysroot/latest.json"
 TARGET_TRIPLE = "aarch64-unknown-linux-musl"
 CANONICAL_INTERPRETER = "/lib/ld-crabc-aarch64.so.1"
+RUNTIME_RUSTFLAGS = (
+    "-C",
+    "link-dead-code",
+    "-C",
+    "target-feature=-crt-static,-outline-atomics",
+)
+RUNTIME_CFLAGS_KEY = "CFLAGS_aarch64_unknown_linux_musl"
+RUNTIME_CFLAGS = "-mno-outline-atomics"
+
+# Cargo's `staticlib` emitter embeds the target's stock compiler-builtins and
+# its native compiler-rt fallbacks even though the installed C driver owns a
+# separately audited Rust-only helper archive.  The installed libc archive is
+# deliberately reconstructed from the two runtime roots below: crabc's Rust
+# libc object and the current native mimalloc object.  The latter remains the
+# explicitly recorded full-runtime-purity blocker; no compiler-rt member is
+# allowed to cross this archive boundary.
+LIBC_RUNTIME_MEMBER = re.compile(r"^c\.c\.[0-9a-f]+-cgu\.[0-9]+\.rcgu\.o$")
+NATIVE_ALLOCATOR_MEMBER = re.compile(r"^[0-9a-f]+-static\.o$")
+NATIVE_COMPILER_RT_MEMBER = re.compile(
+    r"^[0-9a-f]+-(?:aarch64|lse_(?:cas|swp|ldadd|ldclr|ldeor|ldset)[0-9]+_(?:relax|acq|rel|acq_rel)|"
+    r"(?:absv|addv|cmp|div|ffs|fp_mode|int_util|mul|neg|parity|popcount|subv|ucmp)[a-z0-9_]*)(?:\.o)$"
+)
 
 
 class BuildError(RuntimeError):
     """A production build or evidence boundary failed."""
+
+
+@dataclasses.dataclass(frozen=True)
+class StaticRuntimeArchiveSelection:
+    """The only Cargo-staticlib members permitted in installed ``libc.a``."""
+
+    runtime_member: str
+    allocator_member: str
+    excluded_members: tuple[str, ...]
+
+    @property
+    def selected_members(self) -> tuple[str, str]:
+        return (self.runtime_member, self.allocator_member)
 
 
 def sha256_file(path: Path) -> str:
@@ -137,25 +175,207 @@ def deterministic_environment() -> dict[str, str]:
         "RUSTFLAGS",
         "CARGO_ENCODED_RUSTFLAGS",
         "CARGO_BUILD_RUSTFLAGS",
+        "CC",
+        "CFLAGS",
+        "CXX",
+        "CXXFLAGS",
+        "CPPFLAGS",
+        "AR",
+        "ARFLAGS",
     ):
         environment.pop(key, None)
     for key in tuple(environment):
         if key.startswith("CARGO_TARGET_") and key.endswith(("_LINKER", "_RUSTFLAGS")):
             environment.pop(key, None)
+        if key.startswith(("CC_", "CFLAGS_", "CXX_", "CXXFLAGS_", "AR_", "ARFLAGS_")):
+            environment.pop(key, None)
     # Cargo artifacts are produced under two deliberately different target
     # roots below. Keep paths from either tree out of object/debug metadata so
     # the installed comparison proves reproducibility rather than path reuse.
-    environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(
-        (
-            "-C",
-            "link-dead-code",
-            "-C",
-            "target-feature=-crt-static",
-            f"--remap-path-prefix={ROOT}=/crabc",
-        )
-    )
+    environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join((*RUNTIME_RUSTFLAGS, f"--remap-path-prefix={ROOT}=/crabc"))
+    # The native allocator is the only temporary non-Rust runtime component.
+    # Keep its AArch64 atomics inline so Rust's normal target archive cannot
+    # smuggle compiler-rt's external LSE assembly into a static application.
+    environment[RUNTIME_CFLAGS_KEY] = RUNTIME_CFLAGS
     environment.update({"SOURCE_DATE_EPOCH": "0", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"})
     return environment
+
+
+def select_static_runtime_members(members: Sequence[str]) -> StaticRuntimeArchiveSelection:
+    """Select the explicit installed ``libc.a`` roots from Cargo's staticlib.
+
+    The regular Cargo staticlib is an intermediate producer. It carries a
+    large stock compiler-builtins closure and native compiler-rt fallbacks
+    whose symbols would otherwise win before `libcrabc-builtins.a` on a C
+    static link.  Keep only the crabc Rust runtime object and the one known
+    native allocator object. Reject unfamiliar members instead of silently
+    dropping a new runtime dependency.
+    """
+
+    names = tuple(members)
+    if not names or len(names) != len(set(names)):
+        raise BuildError("Cargo libc.a must contain a non-empty, unique member list")
+    runtime = tuple(name for name in names if LIBC_RUNTIME_MEMBER.fullmatch(name))
+    allocator = tuple(name for name in names if NATIVE_ALLOCATOR_MEMBER.fullmatch(name))
+    if len(runtime) != 1:
+        raise BuildError(f"Cargo libc.a must contain exactly one crabc Rust runtime member, found {runtime!r}")
+    if len(allocator) != 1:
+        raise BuildError(f"Cargo libc.a must contain exactly one native allocator member, found {allocator!r}")
+    selected = {runtime[0], allocator[0]}
+    unclassified = [
+        name
+        for name in names
+        if name not in selected and not name.startswith("compiler_builtins-") and not NATIVE_COMPILER_RT_MEMBER.fullmatch(name)
+    ]
+    if unclassified:
+        raise BuildError(
+            "Cargo libc.a introduced unclassified transitive runtime members: " + ", ".join(unclassified)
+        )
+    excluded = tuple(name for name in names if name not in selected)
+    if not any(name.startswith("compiler_builtins-") for name in excluded):
+        raise BuildError("Cargo libc.a did not expose the stock compiler-builtins members this boundary must exclude")
+    if not any(NATIVE_COMPILER_RT_MEMBER.fullmatch(name) for name in excluded):
+        raise BuildError("Cargo libc.a did not expose the native compiler-rt members this boundary must exclude")
+    return StaticRuntimeArchiveSelection(runtime[0], allocator[0], excluded)
+
+
+def _archive_member_symbols(llvm_nm: str, member: Path, records: list[dict[str, object]]) -> list[str]:
+    output = run_checked([llvm_nm, "--defined-only", "--extern-only", str(member)], records)
+    symbols: list[str] = []
+    for line in output.decode("utf-8", errors="replace").splitlines():
+        fields = line.split()
+        if fields and not line.endswith(":") and len(fields) >= 2:
+            symbols.append(fields[-1])
+    return sorted(set(symbols))
+
+
+def rebuild_static_runtime_archive(
+    source: Path,
+    output: Path,
+    records: list[dict[str, object]],
+) -> tuple[Path, Path, Path]:
+    """Create the deterministic, compiler-rt-free installed static libc archive.
+
+    The raw Cargo archive is preserved only beneath the disposable build root.
+    The generated provenance binds the installed archive to the selected
+    members, their symbols, and the rejected stock compiler-runtime closure.
+    """
+
+    cargo_staticlib = source.resolve()
+    if not cargo_staticlib.is_file():
+        raise BuildError(f"Cargo did not produce libc.a: {cargo_staticlib}")
+    llvm_ar = shutil.which("llvm-ar")
+    llvm_nm = shutil.which("llvm-nm")
+    if llvm_ar is None or llvm_nm is None:
+        raise BuildError("llvm-ar and llvm-nm are required to construct the owned static runtime archive")
+    members_output = run_checked([llvm_ar, "t", str(cargo_staticlib)], records)
+    members = [line for line in members_output.decode("utf-8", errors="replace").splitlines() if line]
+    selection = select_static_runtime_members(members)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    selected_member_records: list[dict[str, object]]
+    with tempfile.TemporaryDirectory(prefix="crabc-static-runtime-", dir=output.parent) as temporary:
+        stage = Path(temporary)
+        run_checked(
+            [llvm_ar, "x", str(cargo_staticlib), *selection.selected_members],
+            records,
+            cwd=stage,
+        )
+        selected_paths = tuple(stage / name for name in selection.selected_members)
+        if any(not path.is_file() for path in selected_paths):
+            raise BuildError("llvm-ar did not extract every selected static runtime member")
+        runtime_symbols = _archive_member_symbols(llvm_nm, selected_paths[0], records)
+        allocator_symbols = _archive_member_symbols(llvm_nm, selected_paths[1], records)
+        if "__libc_start_main" not in runtime_symbols:
+            raise BuildError("selected Rust libc member does not define __libc_start_main")
+        if "mi_malloc" not in allocator_symbols:
+            raise BuildError("selected allocator member does not define mimalloc's mi_malloc")
+        staged_archive = stage / output.name
+        run_checked([llvm_ar, "rcsD", str(staged_archive), *(str(path) for path in selected_paths)], records)
+        rebuilt_output = run_checked([llvm_ar, "t", str(staged_archive)], records)
+        rebuilt_members = tuple(line for line in rebuilt_output.decode("utf-8", errors="replace").splitlines() if line)
+        if rebuilt_members != selection.selected_members:
+            raise BuildError(f"rebuilt libc.a has the wrong member order: {rebuilt_members!r}")
+        selected_member_records = [
+            {
+                "role": "crabc_rust_runtime",
+                "name": selection.runtime_member,
+                "sha256": sha256_file(selected_paths[0]),
+                "required_symbol": "__libc_start_main",
+                "defined_symbols": runtime_symbols,
+            },
+            {
+                "role": "native_allocator_exception",
+                "name": selection.allocator_member,
+                "sha256": sha256_file(selected_paths[1]),
+                "required_symbol": "mi_malloc",
+                "defined_symbols": allocator_symbols,
+            },
+        ]
+        shutil.copyfile(staged_archive, output)
+
+    commands_path = output.with_suffix(output.suffix + ".commands.json")
+    provenance_path = output.with_suffix(output.suffix + ".provenance.json")
+    portable_source = "$CRABC_CARGO_RUNTIME/libc.a"
+    portable_output = f"$CRABC_STATIC_RUNTIME/{output.name}"
+    operations: list[dict[str, object]] = [
+        {
+            "kind": "enumerate_cargo_staticlib_members",
+            "command": [Path(llvm_ar).name, "t", portable_source],
+            "members": members,
+        },
+        {
+            "kind": "extract_selected_runtime_members",
+            "command": [Path(llvm_ar).name, "x", portable_source, *selection.selected_members],
+            "selected_members": list(selection.selected_members),
+        },
+        {
+            "kind": "create_deterministic_static_runtime_archive",
+            "command": [
+                Path(llvm_ar).name,
+                "rcsD",
+                portable_output,
+                *(f"$CRABC_STATIC_RUNTIME/members/{name}" for name in selection.selected_members),
+            ],
+        },
+        {
+            "kind": "audit_selected_runtime_members",
+            "commands": [
+                [Path(llvm_ar).name, "t", portable_output],
+                [Path(llvm_nm).name, "--defined-only", "--extern-only", f"$CRABC_STATIC_RUNTIME/members/{selection.runtime_member}"],
+                [Path(llvm_nm).name, "--defined-only", "--extern-only", f"$CRABC_STATIC_RUNTIME/members/{selection.allocator_member}"],
+            ],
+        },
+    ]
+    commands = {"schema": 1, "archive": output.name, "operations": operations}
+    write_json(commands_path, commands)
+    provenance = {
+        "schema": 1,
+        "component": {"name": "crabc-libc-static", "target": TARGET_TRIPLE},
+        "archive": {
+            "name": output.name,
+            "sha256": sha256_file(output),
+            "members": selected_member_records,
+        },
+        "source_staticlib": {"sha256": sha256_file(cargo_staticlib), "member_count": len(members)},
+        "excluded_members": {
+            "all": list(selection.excluded_members),
+            "stock_compiler_builtins": [name for name in selection.excluded_members if name.startswith("compiler_builtins-")],
+            "native_compiler_rt": [name for name in selection.excluded_members if NATIVE_COMPILER_RT_MEMBER.fullmatch(name)],
+        },
+        "native_allocator_exception": {
+            "status": "blocked_by_native_allocator",
+            "member": selection.allocator_member,
+            "reason": "libmimalloc-sys remains the separately tracked full-runtime-purity blocker",
+        },
+        "build": {
+            "runtime_rustflags": list(RUNTIME_RUSTFLAGS),
+            "runtime_cflags": {RUNTIME_CFLAGS_KEY: RUNTIME_CFLAGS},
+            "exact_command_record": {"name": commands_path.name, "sha256": sha256_file(commands_path)},
+        },
+    }
+    write_json(provenance_path, provenance)
+    return output, provenance_path, commands_path
 
 
 def run_checked(command: Sequence[str], records: list[dict[str, object]], *, cwd: Path = ROOT) -> bytes:
@@ -256,8 +476,13 @@ def build_once(output: Path, build_root: Path) -> dict[str, object]:
     if not (crt_dir / "commands.json").is_file():
         raise BuildError(f"CRT builder did not write producer-command record: {crt_dir / 'commands.json'}")
 
-    remove_owned_sysroot(output)
     runtime = cargo_target / "release"
+    static_runtime, static_runtime_provenance, static_runtime_commands = rebuild_static_runtime_archive(
+        runtime / "libc.a",
+        build_root / "static-runtime" / "libc.a",
+        records,
+    )
+    remove_owned_sysroot(output)
     assembly = [
         python,
         "scripts/crabc_sysroot.py",
@@ -269,7 +494,11 @@ def build_once(output: Path, build_root: Path) -> dict[str, object]:
         "--libc-shared",
         str(runtime / "libc.so"),
         "--libc-static",
-        str(runtime / "libc.a"),
+        str(static_runtime),
+        "--libc-static-provenance",
+        str(static_runtime_provenance),
+        "--libc-static-commands",
+        str(static_runtime_commands),
         "--loader",
         str(runtime / "libldso.so"),
         "--crt-dir",
@@ -323,7 +552,10 @@ def build_once(output: Path, build_root: Path) -> dict[str, object]:
         "output": str(output),
         "build_record": str(record_path),
         "runtime": {
-            name: {"path": str(runtime / name), "sha256": sha256_file(runtime / name)}
+            name: {
+                "path": str(static_runtime if name == "libc.a" else runtime / name),
+                "sha256": sha256_file(static_runtime if name == "libc.a" else runtime / name),
+            }
             for name in ("libc.so", "libc.a", "libldso.so")
         },
         "purity": purity,
@@ -362,6 +594,10 @@ def run_focused_contract_tests(records: list[dict[str, object]]) -> list[dict[st
         (
             "sysroot_driver_and_evidence_parsers",
             [sys.executable, "compat/sysroot/tests/test_runner.py"],
+        ),
+        (
+            "owned_static_runtime_archive_contracts",
+            [sys.executable, "scripts/tests/test_build_owned_sysroot.py"],
         ),
         (
             "crt_object_contracts",

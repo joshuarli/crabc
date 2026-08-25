@@ -12,6 +12,7 @@ fn build_dso(
 ) {
     let state_define = format!("-DLOADER_STATE_SYMBOL={state_symbol}");
     let value_define = format!("-DLOADER_VALUE_SYMBOL={value_symbol}");
+    let soname_option = format!("-Wl,--soname,{soname}");
     let status = Command::new(test_support::crabc_cc())
         .args([
             "-shared",
@@ -19,14 +20,23 @@ fn build_dso(
             state_define.as_str(),
             value_define.as_str(),
             source.to_str().unwrap(),
-            "-Wl,--soname",
-            soname,
+            soname_option.as_str(),
             "-o",
             output.to_str().unwrap(),
         ])
         .status()
         .expect("failed to run crabc-cc for loader DSO");
     assert!(status.success(), "loader DSO compilation failed");
+    let dynamic = Command::new("readelf")
+        .args(["-d"])
+        .arg(output)
+        .output()
+        .expect("failed to inspect loader DSO dynamic section");
+    assert!(dynamic.status.success(), "readelf failed for loader DSO");
+    assert!(
+        String::from_utf8_lossy(&dynamic.stdout).contains(&format!("Library soname: [{soname}]")),
+        "loader DSO is missing its requested SONAME",
+    );
 }
 
 #[test]

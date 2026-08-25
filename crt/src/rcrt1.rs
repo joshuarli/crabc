@@ -79,6 +79,9 @@ _start:
 
     // A valid PT_PHDR maps the runtime AT_PHDR address back to the ELF load
     // bias. The same checked table supplies the bounded PT_DYNAMIC record.
+    // Every later dynamic/relocation range is checked against a PT_LOAD range;
+    // relocation writes additionally require PF_W. Arithmetic alone cannot
+    // establish that a malformed tag points into mapped writable memory.
     mov x23, x20
     mov x24, xzr
     mov x25, xzr
@@ -92,12 +95,14 @@ _start:
     ldr w11, [x23]
     cmp w11, #6
     b.ne .Lstatic_pie_not_program_header
+    cbnz x9, .Lstatic_pie_fail
     ldr x25, [x23, #16]
     mov x9, #1
     b .Lstatic_pie_next_program_header
 .Lstatic_pie_not_program_header:
     cmp w11, #2
     b.ne .Lstatic_pie_next_program_header
+    cbnz x10, .Lstatic_pie_fail
     ldr x26, [x23, #16]
     ldr x27, [x23, #40]
     mov x10, #1
@@ -112,6 +117,18 @@ _start:
     cmp x20, x25
     b.lo .Lstatic_pie_fail
     sub x19, x20, x25
+    adds x23, x19, x26
+    b.cs .Lstatic_pie_fail
+    adds x24, x23, x27
+    b.cs .Lstatic_pie_fail
+    mov x0, x23
+    mov x1, x27
+    adr x17, .Lstatic_pie_after_dynamic_range
+    b .Lstatic_pie_require_load_range
+.Lstatic_pie_after_dynamic_range:
+    // The range verifier intentionally reuses x23/x24 for its PT_LOAD
+    // traversal; reconstruct the validated PT_DYNAMIC cursor before reading
+    // any dynamic tag.
     adds x23, x19, x26
     b.cs .Lstatic_pie_fail
     adds x24, x23, x27
@@ -167,6 +184,11 @@ _start:
     b.cs .Lstatic_pie_fail
     adds x26, x25, x26
     b.cs .Lstatic_pie_fail
+    mov x0, x25
+    sub x1, x26, x25
+    adr x17, .Lstatic_pie_after_rela_table_range
+    b .Lstatic_pie_require_load_range
+.Lstatic_pie_after_rela_table_range:
 .Lstatic_pie_rela:
     cmp x25, x26
     b.hs .Lstatic_pie_rela_done
@@ -182,6 +204,11 @@ _start:
     b.ne .Lstatic_pie_fail
     adds x12, x19, x9
     b.cs .Lstatic_pie_fail
+    mov x0, x12
+    mov x1, #8
+    adr x17, .Lstatic_pie_after_rela_target_range
+    b .Lstatic_pie_require_writable_load_range
+.Lstatic_pie_after_rela_target_range:
     adds x11, x19, x11
     b.cs .Lstatic_pie_fail
     str x11, [x12]
@@ -199,6 +226,11 @@ _start:
     b.cs .Lstatic_pie_fail
     adds x28, x27, x28
     b.cs .Lstatic_pie_fail
+    mov x0, x27
+    sub x1, x28, x27
+    adr x17, .Lstatic_pie_after_relr_table_range
+    b .Lstatic_pie_require_load_range
+.Lstatic_pie_after_relr_table_range:
     mov x25, xzr
     mov x26, xzr
 .Lstatic_pie_relr:
@@ -210,6 +242,11 @@ _start:
     b.ne .Lstatic_pie_fail
     adds x25, x19, x9
     b.cs .Lstatic_pie_fail
+    mov x0, x25
+    mov x1, #8
+    adr x17, .Lstatic_pie_after_relr_target_range
+    b .Lstatic_pie_require_writable_load_range
+.Lstatic_pie_after_relr_target_range:
     ldr x10, [x25]
     adds x10, x10, x19
     b.cs .Lstatic_pie_fail
@@ -224,16 +261,24 @@ _start:
     cmp x10, #63
     b.eq .Lstatic_pie_relr_bits_done
     tbz x9, #0, .Lstatic_pie_relr_next_bit
-    ldr x11, [x25, x10, lsl #3]
+    adds x12, x25, x10, lsl #3
+    b.cs .Lstatic_pie_fail
+    mov x0, x12
+    mov x1, #8
+    adr x17, .Lstatic_pie_after_relr_bitmap_target_range
+    b .Lstatic_pie_require_writable_load_range
+.Lstatic_pie_after_relr_bitmap_target_range:
+    ldr x11, [x12]
     adds x11, x11, x19
     b.cs .Lstatic_pie_fail
-    str x11, [x25, x10, lsl #3]
+    str x11, [x12]
 .Lstatic_pie_relr_next_bit:
     lsr x9, x9, #1
     add x10, x10, #1
     b .Lstatic_pie_relr_bits
 .Lstatic_pie_relr_bits_done:
-    add x25, x25, #504
+    adds x25, x25, #504
+    b.cs .Lstatic_pie_fail
     b .Lstatic_pie_relr
 .Lstatic_pie_relr_done:
 
@@ -282,6 +327,52 @@ _start:
     svc #0
     brk #0
     .size _start, .-_start
+
+    // Inputs: x0 = runtime address, x1 = nonzero byte length. This verifier
+    // walks the already bounded program-header table and accepts only a
+    // complete range inside one PT_LOAD. It uses no GOT, TLS, allocator, or
+    // relocated state; callers may safely run it before the first relocation.
+.Lstatic_pie_require_load_range:
+    mov x7, xzr
+    b .Lstatic_pie_require_load_range_common
+
+    // The relocation target variant is identical except that the owning load
+    // segment must have PF_W (bit 1) set. Do not infer writability from the
+    // dynamic table or from a successful address calculation.
+.Lstatic_pie_require_writable_load_range:
+    mov x7, #1
+.Lstatic_pie_require_load_range_common:
+    cbz x1, .Lstatic_pie_fail
+    adds x1, x0, x1
+    b.cs .Lstatic_pie_fail
+    mov x23, x20
+    mov x24, xzr
+.Lstatic_pie_require_load_range_next:
+    cmp x24, x22
+    b.hs .Lstatic_pie_fail
+    ldr w2, [x23]
+    cmp w2, #1
+    b.ne .Lstatic_pie_require_load_range_advance
+    cbz x7, .Lstatic_pie_require_load_range_bounds
+    ldr w3, [x23, #4]
+    tst w3, #2
+    b.eq .Lstatic_pie_require_load_range_advance
+.Lstatic_pie_require_load_range_bounds:
+    ldr x3, [x23, #16]
+    ldr x4, [x23, #40]
+    adds x3, x19, x3
+    b.cs .Lstatic_pie_fail
+    adds x4, x3, x4
+    b.cs .Lstatic_pie_fail
+    cmp x0, x3
+    b.lo .Lstatic_pie_require_load_range_advance
+    cmp x1, x4
+    b.hi .Lstatic_pie_require_load_range_advance
+    br x17
+.Lstatic_pie_require_load_range_advance:
+    add x23, x23, #56
+    add x24, x24, #1
+    b .Lstatic_pie_require_load_range_next
 
     .section .note.GNU-stack,"",@progbits
 "#,

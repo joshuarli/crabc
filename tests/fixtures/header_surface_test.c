@@ -8,6 +8,8 @@
 #include <malloc.h>
 #include <memory.h>
 #include <paths.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdalign.h>
 #include <stdarg.h>
 #include <stdc-predef.h>

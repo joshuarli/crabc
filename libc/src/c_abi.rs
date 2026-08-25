@@ -3877,12 +3877,12 @@ static mut STATIC_TLS_TP_OFFSET: usize = 0;
 static mut STATIC_TLS_IMAGE_OFFSET: usize = 0;
 
 #[inline]
-const fn static_align_up(value: usize, align: usize) -> usize {
-    if align <= 1 {
-        value
-    } else {
-        (value + align - 1) & !(align - 1)
+fn static_align_up(value: usize, align: usize) -> Option<usize> {
+    if align == 0 || !align.is_power_of_two() {
+        return None;
     }
+    let rounded = value.checked_add(align - 1)?;
+    Some(rounded & !(align - 1))
 }
 
 
@@ -3905,105 +3905,130 @@ unsafe fn static_write_tp(tp: usize) -> bool {
 
 
 /// Discover and install the main executable's static TLS image from the
-/// auxiliary-vector program headers.  The musl CRT enters libc before any
-/// libc constructor runs, so this must precede `_init` and Rust/mimalloc TLS
-/// accesses.  A dynamic invocation already has a TP from ldso and is left
-/// untouched.
-unsafe fn static_tls_startup(argv: *const *const c_char) {
-    if static_read_tp() != 0 || argv.is_null() {
-        return;
+/// already bounded auxiliary-vector program headers. The musl CRT enters libc
+/// before any libc constructor runs, so this must precede `_init` and
+/// Rust/mimalloc TLS accesses. A dynamic invocation already has a TP from
+/// ldso and is left untouched. Any malformed program-header contract or TLS
+/// setup failure returns false so the startup caller can fail closed.
+unsafe fn static_tls_startup(auxv: *const usize) -> bool {
+    if unsafe { static_read_tp() } != 0 {
+        return true;
     }
 
-    // musl's crt1 passes argv as the third argument; argc is the machine word
-    // immediately before it on the original entry stack.
-    let stack = (argv as *const usize).sub(1);
-    let argc = *stack;
-    let argv = stack.add(1);
-    let envp = argv.add(argc + 1);
-    let mut auxv = envp;
-    while *auxv != 0 {
-        auxv = auxv.add(1);
+    let Some(phdr_addr) = (unsafe { startup_auxv_value(auxv, AT_PHDR) }).filter(|address| *address != 0) else {
+        return false;
+    };
+    let Some(phent) = (unsafe { startup_auxv_value(auxv, AT_PHENT) }) else {
+        return false;
+    };
+    let Some(phnum) = (unsafe { startup_auxv_value(auxv, AT_PHNUM) }) else {
+        return false;
+    };
+    if phent != ELF64_PROGRAM_HEADER_SIZE || phnum == 0 || phnum > CABI_STARTUP_MAX_PROGRAM_HEADERS {
+        return false;
     }
-    auxv = auxv.add(1);
-    __auxv = auxv;
+    let Some(table_size) = phent.checked_mul(phnum) else {
+        return false;
+    };
+    if phdr_addr.checked_add(table_size).is_none() {
+        return false;
+    }
 
-    let mut phdr_addr = 0usize;
-    let mut phnum = 0usize;
-    let mut phent = core::mem::size_of::<[usize; 7]>();
-    let mut p = auxv;
-    loop {
-        let tag = *p;
-        if tag == 0 {
-            break;
-        }
-        match tag {
-            3 => phdr_addr = *p.add(1),
-            4 => phent = *p.add(1),
-            5 => phnum = *p.add(1),
+    let mut load_bias = None;
+    let mut tls = None;
+    for index in 0..phnum {
+        let Some(offset) = index.checked_mul(phent) else {
+            return false;
+        };
+        let Some(address) = phdr_addr.checked_add(offset) else {
+            return false;
+        };
+        let ph = address as *const u8;
+        // SAFETY: The kernel's AT_PHDR/AT_PHENT/AT_PHNUM tuple denotes this
+        // live executable's program-header table; arithmetic above is fully
+        // checked and its entry width is the AArch64 ELF64 width.
+        let kind = unsafe { core::ptr::read_unaligned(ph.cast::<u32>()) };
+        let vaddr = unsafe { core::ptr::read_unaligned(ph.add(16).cast::<usize>()) };
+        match kind {
+            PT_PHDR => {
+                if load_bias.is_some() {
+                    return false;
+                }
+                let Some(value) = phdr_addr.checked_sub(vaddr) else {
+                    return false;
+                };
+                load_bias = Some(value);
+            }
+            PT_TLS => {
+                if tls.is_some() {
+                    return false;
+                }
+                let filesz = unsafe { core::ptr::read_unaligned(ph.add(32).cast::<usize>()) };
+                let memsz = unsafe { core::ptr::read_unaligned(ph.add(40).cast::<usize>()) };
+                let align = unsafe { core::ptr::read_unaligned(ph.add(48).cast::<usize>()) };
+                let align = if align == 0 { 1 } else { align };
+                if filesz > memsz || !align.is_power_of_two() {
+                    return false;
+                }
+                tls = Some((vaddr, filesz, memsz, align));
+            }
             _ => {}
         }
-        p = p.add(2);
     }
-    if phdr_addr == 0 || phnum == 0 || phent < 56 {
-        return;
-    }
-
-    let mut load_bias = 0usize;
-    let mut tls_vaddr = 0usize;
-    let mut tls_filesz = 0usize;
-    let mut tls_memsz = 0usize;
-    let mut tls_align = 1usize;
-    for i in 0..phnum {
-        let ph = (phdr_addr as *const u8).add(i * phent);
-        let kind = core::ptr::read_unaligned(ph as *const u32);
-        let vaddr = core::ptr::read_unaligned(ph.add(16) as *const usize);
-        if kind == 6 {
-            // PT_PHDR
-            load_bias = phdr_addr.wrapping_sub(vaddr);
-        } else if kind == 7 {
-            // PT_TLS
-            tls_vaddr = vaddr;
-            tls_filesz = core::ptr::read_unaligned(ph.add(32) as *const usize);
-            tls_memsz = core::ptr::read_unaligned(ph.add(40) as *const usize);
-            tls_align = core::ptr::read_unaligned(ph.add(48) as *const usize).max(1);
-        }
-    }
+    let Some(load_bias) = load_bias else {
+        return false;
+    };
+    let (tls_vaddr, mut tls_filesz, tls_memsz, tls_align) = tls.unwrap_or((0, 0, 0, 1));
     if tls_memsz == 0 {
         // A TCB is still required for stack canaries and future pthreads,
         // even when the executable has no user-declared TLS variables.
         tls_filesz = 0;
     }
+    let Some(image) = load_bias.checked_add(tls_vaddr) else {
+        return false;
+    };
+    let Some(tp_offset) = static_align_up(STATIC_TCB_SIZE, tls_align) else {
+        return false;
+    };
+    let Some(image_offset) = static_align_up(STATIC_TLS_GAP_ABOVE_TP, tls_align) else {
+        return false;
+    };
+    let Some(block_size) = tp_offset
+        .checked_add(image_offset)
+        .and_then(|size| size.checked_add(tls_memsz))
+    else {
+        return false;
+    };
 
-
-        {
-        let tp_offset = static_align_up(STATIC_TCB_SIZE, tls_align);
-        let image_offset = static_align_up(STATIC_TLS_GAP_ABOVE_TP, tls_align);
+    unsafe {
         STATIC_TLS_TP_OFFSET = tp_offset;
         STATIC_TLS_IMAGE_OFFSET = image_offset;
-        STATIC_TLS_BLOCK_SIZE = tp_offset + image_offset + tls_memsz;
+        STATIC_TLS_BLOCK_SIZE = block_size;
+        STATIC_TLS_IMAGE = image as *const u8;
+        STATIC_TLS_FILESZ = tls_filesz;
+        STATIC_TLS_MEMSZ = tls_memsz;
     }
-
-    STATIC_TLS_IMAGE = (load_bias + tls_vaddr) as *const u8;
-    STATIC_TLS_FILESZ = tls_filesz;
-    STATIC_TLS_MEMSZ = tls_memsz;
-    let block = sys_mmap(
-        core::ptr::null_mut(),
-        STATIC_TLS_BLOCK_SIZE,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
-        -1,
-        0,
-    );
+    let block = unsafe {
+        sys_mmap(
+            core::ptr::null_mut(),
+            block_size,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
     if block == MMAP_FAILED {
-        return;
+        return false;
     }
-    static_tls_init_block(block);
-    let tp = block.add(STATIC_TLS_TP_OFFSET);
-    if !static_write_tp(tp as usize) {
-        sys_munmap(block, STATIC_TLS_BLOCK_SIZE);
-        STATIC_TLS_BLOCK_SIZE = 0;
-        return;
+    unsafe { static_tls_init_block(block) };
+    let tp = unsafe { block.add(tp_offset) };
+    if !unsafe { static_write_tp(tp as usize) } {
+        unsafe { sys_munmap(block, block_size) };
+        unsafe { STATIC_TLS_BLOCK_SIZE = 0 };
+        return false;
     }
+    true
 }
 
 unsafe fn static_tls_init_block(block: *mut u8) {
@@ -5429,15 +5454,14 @@ unsafe fn pthread_mutex_unlock_impl(mutex: *mut pthread_mutex_t) -> c_int {
     if (type_ & 0x8f) == PTHREAD_MUTEX_NORMAL {
         // SAFETY: the caller supplies a live, aligned mutex whose lock word
         // and waiter count are owned by this atomic-helper family. The count
-        // is an advisory wake hint, not a protected-data edge.
+        // is an advisory wake hint, not a protected-data edge. The signed
+        // lock word is authoritative for a thread already sleeping in futex.
         let waiters = unsafe { a_load_relaxed(&raw const (*mutex).__i[2]) };
-        if waiters <= 0 {
-            // A waiter that races this release either sees zero before it can
-            // mark the lock, or observes its signed futex value replaced by
-            // this store and receives `EAGAIN` instead of sleeping.
-            unsafe { a_store(&raw mut (*mutex).__i[1], 0) };
-            return 0;
-        }
+        // Match musl's exchange even when the relaxed hint reads zero. A
+        // plain store would discard the negative waiter mark without seeing
+        // it; then a contender already asleep on that value has no owner left
+        // to wake it. The exchange releases the mutex and captures that mark
+        // as one state transition.
         let old = unsafe { a_swap(&raw mut (*mutex).__i[1], 0) };
         if old < 0 || waiters > 0 {
             unsafe { futex_wake(&raw mut (*mutex).__i[1], 1) };
@@ -21797,8 +21821,15 @@ pub static mut __auxv: *const usize = core::ptr::null();
 const CABI_STARTUP_MAX_ARGC: usize = 1 << 20;
 const CABI_STARTUP_MAX_ENVC: usize = 1 << 20;
 const CABI_STARTUP_MAX_AUX_ENTRIES: usize = 4096;
+const CABI_STARTUP_MAX_PROGRAM_HEADERS: usize = 128;
 const AT_NULL: usize = 0;
+const AT_PHDR: usize = 3;
+const AT_PHENT: usize = 4;
+const AT_PHNUM: usize = 5;
 const AT_RANDOM: usize = 25;
+const PT_PHDR: u32 = 6;
+const PT_TLS: u32 = 7;
+const ELF64_PROGRAM_HEADER_SIZE: usize = 56;
 
 #[derive(Clone, Copy)]
 struct StartupVectors {
@@ -21975,7 +22006,12 @@ pub unsafe extern "C" fn __libc_start_main(
     // The static CRT does not initialize TLS itself. A dynamic invocation
     // already owns an ldso-installed TP and this helper deliberately leaves
     // it untouched. Both cases complete before guard/constructor work.
-    unsafe { static_tls_startup(argv) };
+    if !unsafe { static_tls_startup(vectors.auxv) } {
+        // Static TLS setup consumes the same bounded startup vectors above.
+        // It must not let a malformed program-header tuple or failed mmap
+        // leak into constructor execution with an uninitialized TP.
+        unsafe { _exit(127) };
+    }
     __auxv = vectors.auxv;
     __environ = vectors.envp as *mut *mut c_char;
     sync_environ();

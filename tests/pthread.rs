@@ -1,10 +1,44 @@
 #[path = "common/mod.rs"]
 mod test_support;
 
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 static PTHREAD_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn run_with_timeout(mut command: Command, description: &str) -> Output {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|error| panic!("failed to run {description}: {error}"));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        match child
+            .try_wait()
+            .unwrap_or_else(|error| panic!("failed to poll {description}: {error}"))
+        {
+            Some(_) => {
+                return child
+                    .wait_with_output()
+                    .unwrap_or_else(|error| panic!("failed to collect {description}: {error}"));
+            }
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let output = child
+                    .wait_with_output()
+                    .unwrap_or_else(|error| panic!("failed to collect timed-out {description}: {error}"));
+                panic!(
+                    "{description} did not complete within 15 seconds; stdout: {}, stderr: {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+            }
+            None => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
 
 #[test]
 fn pthread_functions_under_libc_so() {
@@ -38,13 +72,12 @@ fn pthread_functions_under_libc_so() {
         .expect("failed to run crabc-cc for pthread_test");
     assert!(status.success(), "crabc-cc pthread_test compilation failed");
 
-    let output = Command::new(&bin)
-        .env(
-            "LD_LIBRARY_PATH",
-            manifest_dir.join("target/debug").to_str().unwrap(),
-        )
-        .output()
-        .expect("failed to run pthread_test");
+    let mut command = Command::new(&bin);
+    command.env(
+        "LD_LIBRARY_PATH",
+        manifest_dir.join("target/debug").to_str().unwrap(),
+    );
+    let output = run_with_timeout(command, "pthread_test");
 
     assert!(
         output.status.success(),

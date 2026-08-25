@@ -19,7 +19,10 @@ do the same. This completed boundary is documented in
 [`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md). It is
 precisely **CRT/sysroot** purity: the report keeps complete target-runtime
 purity `blocked_by_native_allocator` until the separate mimalloc port replaces
-the current `libmimalloc-sys` backend.
+the current `libmimalloc-sys` backend. The sole recorded native closure is the
+pinned allocator source and its direct pinned `cc` compiler-discovery helper;
+the sysroot audit rejects any other native production input, including
+compiler-rt target objects.
 
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free
@@ -63,7 +66,7 @@ aligned zeroed allocation, source-ordered replacement, and serialized
 cross-thread free, with deterministic retryable and retained initialization
 failure states. It neither attaches a live TLD/theap nor implements the
 source's null/needs-no-free/non-Malloc release paths. This is not a production
-backend or readiness claim. Milestone 5 currently includes the exact AArch64
+backend or readiness claim. The active allocator scope includes the exact AArch64
 16-bit-index/48-bit-generation TLS key and caller-owned slot contract, its
 older caller-storage registry substrate, and one allocator-owned process-global
 regular-key registry; five private compiler-TLS roots with direct `TPIDR_EL0`

@@ -10,7 +10,11 @@ copy before removing it, keeping the staging operation explicit and bounded.
 
 This launcher does not set `LD_LIBRARY_PATH`: Rust test binaries continue to
 use their normal host runtime, while individual C fixture tests retain their
-explicit crabc debug-library search paths.
+explicit crabc debug-library search paths.  Cargo emits only `libc.so` in that
+debug directory, so the launcher temporarily supplies the deliberate installed
+libc aliases there as well.  This keeps those fixtures on one debug runtime
+rather than falling through to a second, installed libc just to resolve
+`libdl.so` or `libpthread.so`.
 """
 
 from __future__ import annotations
@@ -46,6 +50,63 @@ def require_regular_file(path: Path, description: str) -> Path:
     if not resolved.is_file() or resolved.is_symlink():
         raise TestSuiteError(f"{description} must be a regular file: {path}")
     return resolved
+
+
+def installed_libc_aliases(sysroot: Path) -> tuple[str, ...]:
+    """Return only installed library aliases that resolve to the owned libc."""
+
+    library_directory = sysroot / "usr/lib"
+    libc = require_regular_file(library_directory / "libc.so", "installed libc")
+    if not library_directory.is_dir():
+        raise TestSuiteError(f"installed library directory is unavailable: {library_directory}")
+    aliases: list[str] = []
+    for path in sorted(library_directory.iterdir()):
+        if path.name == "libc.so" or not path.is_symlink():
+            continue
+        try:
+            target = path.resolve(strict=True)
+        except OSError as error:
+            raise TestSuiteError(f"installed library alias is not resolvable: {path}") from error
+        if target == libc:
+            aliases.append(path.name)
+    if not aliases:
+        raise TestSuiteError(f"installed sysroot has no deliberate libc aliases: {library_directory}")
+    return tuple(aliases)
+
+
+@contextmanager
+def staged_debug_runtime_aliases(sysroot: Path, loader: Path) -> Iterator[None]:
+    """Temporarily mirror installed libc aliases next to the debug runtime."""
+
+    runtime_directory = loader.parent
+    libc = require_regular_file(runtime_directory / "libc.so", "owned debug libc")
+    staged: list[Path] = []
+    try:
+        for name in installed_libc_aliases(sysroot):
+            alias = runtime_directory / name
+            if alias.exists() or alias.is_symlink():
+                raise TestSuiteError(f"refusing to replace existing debug runtime alias: {alias}")
+            alias.symlink_to("libc.so")
+            staged.append(alias)
+        yield
+    finally:
+        unexpected: list[Path] = []
+        for alias in reversed(staged):
+            try:
+                expected = (
+                    alias.is_symlink()
+                    and alias.readlink() == Path("libc.so")
+                    and alias.resolve(strict=True) == libc
+                )
+            except OSError:
+                expected = False
+            if expected:
+                alias.unlink()
+            else:
+                unexpected.append(alias)
+        if unexpected:
+            paths = ", ".join(str(path) for path in unexpected)
+            raise TestSuiteError(f"staged debug runtime aliases changed unexpectedly and were retained: {paths}")
 
 
 @contextmanager
@@ -91,8 +152,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         loader = require_regular_file(args.loader, "owned debug loader")
         environment = dict(os.environ)
         environment["CRABC_TEST_SYSROOT"] = str(sysroot)
-        with staged_owned_loader(loader):
-            return subprocess.run(args.command, env=environment, check=False).returncode
+        with staged_debug_runtime_aliases(sysroot, loader):
+            with staged_owned_loader(loader):
+                return subprocess.run(args.command, env=environment, check=False).returncode
     except TestSuiteError as error:
         print(f"owned-test-suite: {error}", file=sys.stderr)
         return 1

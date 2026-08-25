@@ -79,24 +79,31 @@ unsafe fn aarch64_swap_acqrel_i32(address: *mut c_int, desired: c_int) -> c_int 
 /// operations compatible with this acquire/release synchronization protocol.
 #[inline(always)]
 unsafe fn aarch64_fetch_add_acqrel_i32(address: *mut c_int, value: c_int) -> c_int {
-    let previous: c_int;
+    let replacement: c_int;
     // SAFETY: `address` is the raw pthread/atomic storage supplied by the
     // caller. The exclusive loop has the same ordering and wrapped `i32`
-    // arithmetic as `AtomicI32::fetch_add(AcqRel)`, without LLVM's outlined
-    // LSE capability dispatch on every condition-variable transition.
+    // arithmetic as `AtomicI32::fetch_add(AcqRel)`. `value` is an immutable
+    // input register: a failed `stlxr` must retry with the original addend,
+    // never with the replacement calculated for a prior observed value.
+    // This also avoids LLVM's outlined LSE capability dispatch on every
+    // condition-variable transition.
     unsafe {
         core::arch::asm!(
             "2:",
-            "ldaxr {previous:w}, [{address}]",
-            "add {value:w}, {previous:w}, {value:w}",
-            "stlxr {status:w}, {value:w}, [{address}]",
-            "cbnz {status:w}, 2b",
-            address = in(reg) address,
-            previous = out(reg) previous,
-            value = inout(reg) value => _,
-            status = out(reg) _,
+            "ldaxr w10, [x12]",
+            "add w10, w10, w9",
+            "stlxr w11, w10, [x12]",
+            "cbnz w11, 2b",
+            // Keep the original increment in a different fixed register from
+            // the retry-local replacement. Independent general-register
+            // operands may be coalesced; that would turn a failed retry into
+            // an accidentally growing addend.
+            in("x12") address,
+            in("w9") value,
+            lateout("w10") replacement,
+            lateout("w11") _,
             options(nostack),
         );
     }
-    previous
+    replacement.wrapping_sub(value)
 }

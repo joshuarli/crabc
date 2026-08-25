@@ -183,6 +183,11 @@ class DriverRequestTests(unittest.TestCase):
             ("hello.c", "-moutline-atomics"),
             ("hello.c", "-Xclang", "-triple", "other-linux"),
             ("hello.c", "-Xclang", "-target-feature", "+outline-atomics"),
+            ("hello.c", "-Xlinker", "-L", "-Xlinker", "/foreign/lib"),
+            ("hello.c", "-Xlinker", "--sysroot=/foreign"),
+            ("hello.c", "-Xlinker", "-Tforeign.ld"),
+            ("hello.c", "-Wl,-L,/foreign/lib"),
+            ("hello.c", "-Wl,--script=foreign.ld"),
         )
         for arguments in rejected:
             with self.subTest(arguments=arguments):
@@ -261,6 +266,26 @@ class SealingAndAuditTests(unittest.TestCase):
             audit = TOOL.audit_linker_trace(trace, sysroot)
         self.assertEqual(audit["status"], "passed")
         self.assertEqual(audit["trace_paths"], [str(owned.resolve())])
+
+    def test_linker_trace_retains_archive_member_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sysroot = make_sysroot(root)
+            archive = sysroot / "usr/lib/libc.a"
+            trace = f"ld.lld: {archive}(compiler_builtins-forbidden.o)\n".encode()
+            audit = TOOL.audit_linker_trace(trace, sysroot)
+        self.assertEqual(audit["status"], "passed")
+        self.assertEqual(
+            audit["archive_member_inputs"],
+            [
+                {
+                    "path": str(archive.resolve()),
+                    "archive_member": "compiler_builtins-forbidden.o",
+                    "classification": "crabc Rust runtime",
+                    "reason": "installed crabc sysroot input",
+                }
+            ],
+        )
 
     def test_linker_trace_allows_declared_application_library_root_but_not_foreign_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -569,6 +594,117 @@ class HarnessContractTests(unittest.TestCase):
             audit = TOOL.audit_dependencies([manifest])
         self.assertEqual(audit["status"], "rejected")
         self.assertIn("native implementation", audit["rejected"][0]["reason"])
+
+    def test_dependency_audit_excludes_dev_only_packages_from_runtime_closure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime"
+            allocator = root / "allocator"
+            compiler_helper = root / "cc"
+            generator = root / "generator"
+            for directory, name, extra in (
+                (runtime, "runtime", ""),
+                (allocator, "libmimalloc-sys", "links = 'mimalloc'\nbuild = 'build.rs'\n"),
+                (compiler_helper, "cc", ""),
+                (generator, "generator", ""),
+            ):
+                (directory / "src").mkdir(parents=True)
+                version = "0.1.49" if name == "libmimalloc-sys" else "1.4.3" if name == "cc" else "0.1.0"
+                (directory / "Cargo.toml").write_text(
+                    f"[package]\nname = '{name}'\nversion = '{version}'\n{extra}", encoding="utf-8"
+                )
+            (allocator / "c_src/mimalloc/v3/src").mkdir(parents=True)
+            (allocator / "c_src/mimalloc/v3/src/static.c").write_text("native allocator\n", encoding="utf-8")
+            (allocator / "build.rs").write_text(
+                'let static_source = include_root.join("src").join("static.c");\n'
+                "build.file(&static_source);\n"
+                'build.compile("mimalloc");\n',
+                encoding="utf-8",
+            )
+            (compiler_helper / "src/detect_compiler_family.c").write_text("host compiler probe\n", encoding="utf-8")
+            (generator / "src/fixture.S").write_text("foreign assembly\n", encoding="utf-8")
+            metadata = root / "metadata.json"
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "packages": [
+                            {"id": "runtime", "name": "runtime", "manifest_path": str(runtime / "Cargo.toml")},
+                            {"id": "allocator", "name": "libmimalloc-sys", "manifest_path": str(allocator / "Cargo.toml")},
+                            {"id": "cc", "name": "cc", "manifest_path": str(compiler_helper / "Cargo.toml")},
+                            {"id": "generator", "name": "generator", "manifest_path": str(generator / "Cargo.toml")},
+                        ],
+                        "resolve": {
+                            "nodes": [
+                                {
+                                    "id": "runtime",
+                                    "deps": [
+                                        {"pkg": "allocator", "dep_kinds": [{"kind": None}]},
+                                        {"pkg": "generator", "dep_kinds": [{"kind": "dev"}]},
+                                    ],
+                                },
+                                {"id": "allocator", "deps": [{"pkg": "cc", "dep_kinds": [{"kind": "build"}]}]},
+                                {"id": "cc", "deps": []},
+                                {"id": "generator", "deps": []},
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            audit = TOOL.audit_dependencies([runtime / "Cargo.toml"], cargo_metadata=[metadata])
+        self.assertEqual(audit["status"], "blocked_by_native_allocator")
+        self.assertEqual(audit["production_closure"]["excluded_dev_package_ids"], ["generator"])
+        self.assertEqual([entry["package"] for entry in audit["manifests"]], ["libmimalloc-sys", "cc", "runtime"])
+        self.assertEqual(audit["unapproved_rejected"], [])
+        self.assertEqual(audit["allocator_exception"]["verified_build_helper_package_ids"], ["cc"])
+
+    def test_dependency_audit_does_not_bless_allocator_transitive_native_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime"
+            allocator = root / "allocator"
+            transitive = root / "transitive"
+            for directory, name, extra in (
+                (runtime, "runtime", ""),
+                (allocator, "libmimalloc-sys", "links = 'mimalloc'\n"),
+                (transitive, "unexpected-native", "links = 'unexpected'\n"),
+            ):
+                directory.mkdir(parents=True)
+                version = "0.1.49" if name == "libmimalloc-sys" else "0.1.0"
+                (directory / "Cargo.toml").write_text(
+                    f"[package]\nname = '{name}'\nversion = '{version}'\n{extra}", encoding="utf-8"
+                )
+            (allocator / "c_src/mimalloc/v3/src").mkdir(parents=True)
+            (allocator / "c_src/mimalloc/v3/src/static.c").write_text("native allocator\n", encoding="utf-8")
+            (allocator / "build.rs").write_text(
+                'let static_source = include_root.join("src").join("static.c");\n'
+                "build.file(&static_source);\n"
+                'build.compile("mimalloc");\n',
+                encoding="utf-8",
+            )
+            metadata = root / "metadata.json"
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "packages": [
+                            {"id": "runtime", "name": "runtime", "manifest_path": str(runtime / "Cargo.toml")},
+                            {"id": "allocator", "name": "libmimalloc-sys", "manifest_path": str(allocator / "Cargo.toml")},
+                            {"id": "transitive", "name": "unexpected-native", "manifest_path": str(transitive / "Cargo.toml")},
+                        ],
+                        "resolve": {
+                            "nodes": [
+                                {"id": "runtime", "deps": [{"pkg": "allocator", "dep_kinds": [{"kind": None}]}]},
+                                {"id": "allocator", "deps": [{"pkg": "transitive", "dep_kinds": [{"kind": "build"}]}]},
+                                {"id": "transitive", "deps": []},
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            audit = TOOL.audit_dependencies([runtime / "Cargo.toml"], cargo_metadata=[metadata])
+        self.assertEqual(audit["status"], "rejected")
+        self.assertTrue(any(entry["package_id"] == "transitive" for entry in audit["unapproved_rejected"]))
 
 
 if __name__ == "__main__":

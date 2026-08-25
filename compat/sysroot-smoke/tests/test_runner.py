@@ -1,0 +1,85 @@
+"""Pure archive and manifest checks for the extracted-sysroot smoke runner."""
+
+from __future__ import annotations
+
+import importlib.util
+import io
+import tarfile
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[3]
+SPEC = importlib.util.spec_from_file_location("crabc_sysroot_smoke_test_runner", ROOT / "compat/sysroot-smoke/run.py")
+assert SPEC is not None and SPEC.loader is not None
+RUNNER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RUNNER)
+
+
+def member(name: str, kind: str = "file", linkname: str = "") -> tarfile.TarInfo:
+    value = tarfile.TarInfo(name)
+    if kind == "directory":
+        value.type = tarfile.DIRTYPE
+        value.mode = 0o755
+    elif kind == "symlink":
+        value.type = tarfile.SYMTYPE
+        value.linkname = linkname
+        value.mode = 0o777
+    else:
+        value.type = tarfile.REGTYPE
+        value.mode = 0o644
+    return value
+
+
+class ArchiveValidationTests(unittest.TestCase):
+    def test_one_root_and_internal_symlink_are_accepted(self) -> None:
+        members = [member("root", "directory"), member("root/usr", "directory"), member("root/usr/libc.so"), member("root/usr/libc-alias.so", "symlink", "libc.so")]
+        self.assertEqual(RUNNER.validate_archive_members(members), "root")
+
+    def test_absolute_and_traversing_members_are_rejected(self) -> None:
+        for name in ("/outside", "root/../outside"):
+            with self.subTest(name=name):
+                with self.assertRaises(RUNNER.SmokeError):
+                    RUNNER.validate_archive_members([member("root", "directory"), member(name)])
+
+    def test_escaping_and_ancestor_symlinks_are_rejected(self) -> None:
+        with self.assertRaises(RUNNER.SmokeError):
+            RUNNER.validate_archive_members([member("root", "directory"), member("root/lib", "symlink", "../../outside")])
+        with self.assertRaises(RUNNER.SmokeError):
+            RUNNER.validate_archive_members([member("root", "directory"), member("root/lib", "symlink", "target"), member("root/lib/file")])
+
+    def test_special_and_hard_link_members_are_rejected(self) -> None:
+        for kind in ("hard", "fifo", "device"):
+            value = member("root/item")
+            if kind == "hard":
+                value.type = tarfile.LNKTYPE
+                value.linkname = "root/other"
+            elif kind == "fifo":
+                value.type = tarfile.FIFOTYPE
+            else:
+                value.type = tarfile.CHRTYPE
+            with self.subTest(kind=kind):
+                with self.assertRaises(RUNNER.SmokeError):
+                    RUNNER.validate_archive_members([member("root", "directory"), value])
+
+    def test_safe_extract_preserves_internal_symlink_without_following_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            archive = base / "sysroot.tar.xz"
+            with tarfile.open(archive, "w:xz") as stream:
+                directory = member("root", "directory")
+                stream.addfile(directory)
+                data = b"owned\n"
+                file_info = member("root/libc.so")
+                file_info.size = len(data)
+                stream.addfile(file_info, io.BytesIO(data))
+                stream.addfile(member("root/libc-alias.so", "symlink", "libc.so"))
+            extracted = RUNNER.safe_extract_archive(archive, base / "out")
+            self.assertEqual((extracted / "libc.so").read_bytes(), b"owned\n")
+            self.assertTrue((extracted / "libc-alias.so").is_symlink())
+            self.assertEqual((extracted / "libc-alias.so").readlink().as_posix(), "libc.so")
+
+
+if __name__ == "__main__":
+    unittest.main()

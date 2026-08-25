@@ -70,6 +70,24 @@ The image and compatibility oracles are pinned in
 surface; it is not a statement that every historical musl subsystem is active
 project scope.
 
+## Experimental sysroot snapshots
+
+On Apple Silicon macOS, Docker is the only local build dependency for an
+experimental Linux/AArch64 sysroot snapshot:
+
+```bash
+./scripts/dev.sh image
+./scripts/dev.sh sysroot-dist
+```
+
+The build, deterministic package, extraction, and smoke run entirely inside
+the pinned `linux/arm64` Docker image; GitHub Actions invokes the same command.
+The four tested snapshot assets appear under `dist/`. Each is an
+experimental commit snapshot with no ABI, API, header/layout, or
+cross-version compatibility guarantee. The smoke uses the container's pinned
+disposable Clang/lld, not a released `llvm-clang-crabc` toolchain. x86-64 is
+not built.
+
 ## Project layout
 
 | Path | Description |

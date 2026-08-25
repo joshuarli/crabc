@@ -3,6 +3,8 @@ mod test_support;
 
 use std::process::Command;
 
+const DSO_SONAME: &str = "libloader_dlfcn_introspection.so";
+
 fn build_dso(source: &std::path::Path, output: &std::path::Path) {
     let status = Command::new(test_support::crabc_cc())
         .args([
@@ -11,8 +13,7 @@ fn build_dso(source: &std::path::Path, output: &std::path::Path) {
             "-DLOADER_STATE_SYMBOL=loader_dlfcn_introspection_state",
             "-DLOADER_VALUE_SYMBOL=loader_dlfcn_introspection_value",
             source.to_str().unwrap(),
-            "-Wl,--soname",
-            "libloader_dlfcn_introspection.so",
+            "-Wl,--soname,libloader_dlfcn_introspection.so",
             "-o",
             output.to_str().unwrap(),
         ])
@@ -21,6 +22,20 @@ fn build_dso(source: &std::path::Path, output: &std::path::Path) {
     assert!(
         status.success(),
         "loader introspection DSO compilation failed"
+    );
+    let dynamic = Command::new("readelf")
+        .args(["-d"])
+        .arg(output)
+        .output()
+        .expect("failed to inspect loader introspection DSO dynamic section");
+    assert!(
+        dynamic.status.success(),
+        "readelf failed for loader introspection DSO"
+    );
+    assert!(
+        String::from_utf8_lossy(&dynamic.stdout)
+            .contains(&format!("Library soname: [{DSO_SONAME}]")),
+        "loader introspection DSO is missing its requested SONAME",
     );
 }
 

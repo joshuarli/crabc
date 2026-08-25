@@ -508,7 +508,7 @@ def musl_oracle_capability_reasons(
         metadata,
         tools,
         attempts,
-        required_tools=("cargo", "rustc", "rustup", "musl_gcc", "llvm_nm", "readelf", "objdump", "file"),
+        required_tools=("cargo", "rustc", "rustup", "musl_gcc", "clang", "llvm_nm", "readelf", "objdump", "file"),
     )
     if musl_root.name != f"musl-{MUSL_VERSION}":
         reasons.append(f"musl oracle root must name pinned musl-{MUSL_VERSION}: {musl_root}")
@@ -982,7 +982,10 @@ def build_fixture(
     elif runtime == MUSL_ORACLE_RUNTIME:
         sealed_driver = None
         linker_record = None
-        linker = tools["musl_gcc"]
+        # The retained stock-std oracle still needs clang/lld for its existing
+        # fat-LTO `--target`/`--sysroot` contract. Keep that musl-only choice
+        # separate from the candidate driver's owned-runtime contract.
+        linker = tools["clang"] if lto == "fat" else tools["musl_gcc"]
     else:
         raise RunnerError(f"unknown fixture runtime contract: {runtime}")
     command = [
