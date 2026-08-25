@@ -369,7 +369,24 @@ beyond `reserved / 8` publishes the matching dynamic `pages_abandoned[bin]`
 bit plus `Heap::abandoned_count[bin]`, and the mapped tail clears that pair
 before PageMap -> dynamic ordinary bit -> metadata -> arena-slice release.
 This one route neither reclaims, adopts, requeues, scans, nor covers full
-small, large, multi-page, or general dynamic owner exit.
+non-direct-small, direct-small, large, multi-page, or general dynamic owner
+exit.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small` is a fifth, separate
+dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
+page only in its ordinary regular bin, with
+`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
+`used == reserved`, `!page_is_in_full`, and an empty direct-cache image.
+It preserves source force -> false collection -> regular-bin/page-count detach
+-> ordinary unmapped abandonment. Its linear
+`DynamicThreadExitFullNonDirectSmallHandoff` consumes sequential normal
+failed-reclaim frees: the page stays unmapped through the source mostly-used
+prefix, the first free beyond `reserved / 8` publishes the matching dynamic
+`pages_abandoned[bin]` bit plus `Heap::abandoned_count[bin]`, and the mapped
+tail clears that pair before PageMap -> dynamic ordinary bit -> metadata ->
+arena-slice release. It rejects direct-small before collection and neither
+reclaims, adopts, requeues, scans, nor covers full medium/direct-small/large,
+multi-page, or general dynamic owner exit.
 
 A separate `DynamicThreadExitMappedOneBlockHandoff` accepts only a sole,
 nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
@@ -415,9 +432,10 @@ then arena slices—and returns the drained engine; an existing owner remains a
 terminal handoff. Separately, `free_unmapped_after_failed_reclaim` remains the
 source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
-singleton above, the separate dynamic full-medium handoff, and the bounded
-later-main normal full-medium, full-large, and full non-direct-small process
-routes are its lifecycle-integrated raw-release callers; other regular or
+singleton above, the separate dynamic full-medium and full non-direct-small
+handoffs, and the bounded later-main normal full-medium, full-large, and full
+non-direct-small process routes are its lifecycle-integrated raw-release
+callers; other regular or
 nonempty unmapped pages, general producer routing, terminal reuse, multi-arena dynamic heap
 support, and general heap destruction remain absent.
 
@@ -444,12 +462,12 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-dynamic owner-exit singleton, one full-medium unmapped-to-mapped handoff, and
-sole mapped medium/non-direct-small/direct-small one-block handoffs: clearing
-the regular backing prevents reclaim; the singleton final free takes the raw
-failed-reclaim all-free release, the full-medium route crosses the source
-mostly-used boundary before dynamic bitmap publication, and each mapped
-endpoint clears its dynamic bitmap/count before terminal arena release. The raw
+dynamic owner-exit singleton, full-medium and full-non-direct-small
+unmapped-to-mapped handoffs, and sole mapped medium/non-direct-small/direct-small
+one-block handoffs: clearing the regular backing prevents reclaim; the singleton
+final free takes the raw failed-reclaim all-free release, both full routes cross
+the source mostly-used boundary before dynamic bitmap publication, and each
+mapped endpoint clears its dynamic bitmap/count before terminal arena release. The raw
 protocol remains
 otherwise unintegrated: regular/nonempty pages, general producer routing,
 terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,

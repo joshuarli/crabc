@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 93,
-    "item_count": 89,
+    "implemented": 94,
+    "item_count": 90,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 93
+    "unit_verified": 94
   },
-  "port_map_sha256": "516755064555d70adbf2ff4c51b36ed3e0e233f19e637e25e0c4c7e54b1462a5",
+  "port_map_sha256": "e9c189ed66dfbf8b07cf37f15d7efb8f83d8922064372482219014510d655570",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -340,6 +340,10 @@
       "differential_verified"
     ],
     "item:src/theap.c:dynamic-thread-exit-full-medium-unmapped-to-mapped-handoff": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:dynamic-thread-exit-full-non-direct-small-unmapped-to-mapped-handoff": [
       "implemented",
       "unit_verified"
     ],

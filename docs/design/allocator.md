@@ -604,6 +604,22 @@ tail clears that pair before queue-detached PageMap span -> dynamic ordinary
 bit -> metadata -> arena-slice release. It is not a reclaim, adoption,
 requeue, scan, full-small/full-large, multi-page, or general traversal route.
 
+`DynamicThreadExitDrain::abandon_full_non_direct_small` is a fifth, separate
+source-unmapped dynamic handoff. It accepts only the drain's sole full
+`MemoryKind::Arena` small page in its ordinary regular bin, with
+`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
+`used == reserved`, `!page_is_in_full`, and an empty direct-cache image.
+Force then false collection precedes ordinary-bin/page-count detach and
+ordinary abandoned unown; it deliberately does not publish a bitmap at
+abandonment. `DynamicThreadExitFullNonDirectSmallHandoff` takes the normal
+failed-reclaim collector for each sequential client free: it stays unmapped
+through the same mostly-used prefix, publishes only the matching heap-local
+`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]` on the
+first free beyond `reserved / 8`, and clears that pair before PageMap ->
+dynamic ordinary bit -> metadata -> arena-slice release. It rejects direct
+small before collection, and it neither reclaims, adopts, requeues, scans, nor
+covers full medium/direct-small/large, multi-page, or general traversal state.
+
 The same drain has three separately bounded mapped endpoints,
 `DynamicThreadExitDrain::abandon_mapped_one_block` for a medium page,
 `DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small` for a
@@ -686,9 +702,9 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs and the separate dynamic full-medium handoff
-above; all other initially-unmapped pages retain the raw terminal decision for
-a later lifecycle. A test-only Loom model executes the
+OS-aligned singleton handoffs and the separate dynamic full-medium and full
+non-direct-small handoffs above; all other initially-unmapped pages retain the
+raw terminal decision for a later lifecycle. A test-only Loom model executes the
 live-owner remote-head publication/detach loops and the abandoned
 owner-claim/unown races under bounded schedules; deterministic native
 regressions cover the bitmap-field quiescence and full one-page abandonment
