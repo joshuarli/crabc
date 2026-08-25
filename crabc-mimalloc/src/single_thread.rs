@@ -673,14 +673,26 @@ pub(crate) struct ThreadExitMappedRegularPostExitParts<'main, 'arena> {
 /// allocation-time authority: a full medium/large, non-direct-small, or
 /// direct-small page can become nonfull only after `MI_ABANDON` force
 /// collection. Keep that origin coupled to the post-exit facts so the shared
-/// client-free route cannot accidentally grant the initially-nonfull medium
-/// adoption/requeue edge to any full-origin source branch.
+/// client-free route cannot accidentally grant the initially-nonfull
+/// allocation-time adoption/requeue edge to a full-origin, non-direct-small,
+/// or direct-small-extension source branch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ThreadExitMappedRegularPostExitOrigin {
-    /// The page was already a nonfull regular small-or-medium member when
-    /// source owner exit began. Only its medium subset has the completed
-    /// allocation-time adoption/requeue proof.
-    InitiallyNonfull,
+    /// The page was already a nonfull medium regular member when source owner
+    /// exit began. Its allocation-time adoption/requeue proof is complete.
+    InitiallyNonfullMedium,
+    /// The page was already a nonfull small regular member, but its rounded
+    /// block size is outside the direct-cache range. It remains
+    /// client-free-only until a distinct non-direct-small proof exists.
+    InitiallyNonfullNonDirectSmall,
+    /// The page was already a nonfull direct-small regular member and, after
+    /// source force/false collection, retains an immediate local free block.
+    /// Its exact one-page allocation-time adoption/requeue proof is complete.
+    InitiallyNonfullDirectSmallImmediate,
+    /// The page was already a nonfull direct-small regular member, but source
+    /// collection left no immediate local free block. It remains
+    /// client-free-only until the source extension/commit tail is proved.
+    InitiallyNonfullDirectSmallNeedsExtension,
     /// The page entered owner exit as a full medium `BIN_FULL` member and one
     /// joined remote free made it nonfull during force collection. It remains
     /// client-free-only even though its final geometry is medium/nonfull.
@@ -1091,7 +1103,7 @@ pub(crate) enum ThreadExitMappedRegularPostExitAdoptOutcome {
 /// an unrelated allocation path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadExitMappedRegularPostExitAdoptError {
-    SourceNotInitiallyNonfullMedium,
+    SourceNotInitiallyNonfullAdoptable,
     TargetArenaMismatch,
     TargetMainHeapMismatch,
     InvalidSpan,
@@ -2803,21 +2815,44 @@ impl<'attachment, 'main, 'arena, 'map>
             ));
         }
         // SAFETY: both source collectors completed under the exclusive drain.
-        let after_collect = unsafe { page.as_ref() };
-        let after_collect_kind = size_class::page_kind_for_block_size(after_collect.block_size());
-        if !matches!(after_collect_kind, Some(PageKind::Small | PageKind::Medium))
-            || size_class::bin(after_collect.block_size()) != Some(bin)
-            || after_collect.reserved() <= 1
-            || (after_collect.block_size() <= SMALL_SIZE_MAX && after_collect.reserved() < 16)
-            || after_collect.used() == 0
-            || after_collect.used() >= usize::from(after_collect.reserved())
-            || page_is_in_full(after_collect)
-        {
-            return Err(retained(
-                self,
-                ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
-            ));
-        }
+        // Classify the final source shape before queue removal and bitmap
+        // publication. A direct-small page that still needs `mi_page_extend_free`
+        // must remain client-free-only: the narrow adoption route below accepts
+        // only an immediate local free-list head.
+        let (after_collect_kind, origin) = {
+            let after_collect = unsafe { page.as_ref() };
+            let after_collect_kind = size_class::page_kind_for_block_size(after_collect.block_size());
+            if !matches!(after_collect_kind, Some(PageKind::Small | PageKind::Medium))
+                || size_class::bin(after_collect.block_size()) != Some(bin)
+                || after_collect.reserved() <= 1
+                || (after_collect.block_size() <= SMALL_SIZE_MAX
+                    && after_collect.reserved() < 16)
+                || after_collect.used() == 0
+                || after_collect.used() >= usize::from(after_collect.reserved())
+                || page_is_in_full(after_collect)
+            {
+                return Err(retained(
+                    self,
+                    ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
+                ));
+            }
+            let origin = match after_collect_kind {
+                Some(PageKind::Medium) => ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullMedium,
+                Some(PageKind::Small) if after_collect.block_size() > SMALL_SIZE_MAX => {
+                    ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullNonDirectSmall
+                }
+                Some(PageKind::Small) if after_collect.free_list_head().is_null() => {
+                    ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsExtension
+                }
+                Some(PageKind::Small) => {
+                    ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate
+                }
+                Some(PageKind::Large | PageKind::Singleton) | None => unreachable!(
+                    "the prior mapped regular validation admits only small or medium pages"
+                ),
+            };
+            (after_collect_kind, origin)
+        };
 
         let queue = match self.session.queue_mut(bin) {
             Some(queue) => queue as *mut _,
@@ -2941,7 +2976,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 bin,
                 kind: after_collect_kind
                     .expect("the mapped regular post-exit shape has a page kind"),
-                origin: ThreadExitMappedRegularPostExitOrigin::InitiallyNonfull,
+                origin,
             },
         })
     }
@@ -6554,15 +6589,23 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
 }
 
 impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
-    /// Whether this exact source route has the one initially-nonfull medium
-    /// shape whose allocation-time reclaim tail is completed in this slice.
-    /// Small pages and every force-collected full origin remain
-    /// client-free-only until a separate source-specific adoption proof
-    /// exists.
+    /// Whether this exact source route has an allocation-time reclaim tail
+    /// completed in this slice: an initially-nonfull medium, or an
+    /// initially-nonfull direct-small page with an immediate local free block.
+    /// Non-direct-small pages, direct-small extension cases, and every
+    /// force-collected full origin remain client-free-only.
     #[inline]
     pub(crate) fn supports_later_main_adoption(&self) -> bool {
-        self.kind == PageKind::Medium
-            && self.origin == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfull
+        matches!(
+            (self.kind, self.origin),
+            (
+                PageKind::Medium,
+                ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullMedium
+            ) | (
+                PageKind::Small,
+                ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate
+            )
+        )
     }
 
     /// Returns the static-main subprocess selected by the source route's
@@ -6581,9 +6624,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         core::ptr::eq(self.arena.arena(), arena.arena())
     }
 
-    /// Reclaims this one exact initially-nonfull mapped-abandoned medium route
-    /// into a fresh later-main engine, then appends it to the target regular
-    /// queue tail.
+    /// Reclaims one exact initially-nonfull mapped-abandoned medium or
+    /// immediate-head direct-small route into a fresh later-main engine, then
+    /// appends it to the target regular queue tail.
     ///
     /// The caller must already have consumed this route's short PageMap
     /// access into the target engine's long mutation lease. No generic page
@@ -6616,7 +6659,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     > {
         if !self.supports_later_main_adoption() {
             return Err(
-                ThreadExitMappedRegularPostExitAdoptError::SourceNotInitiallyNonfullMedium,
+                ThreadExitMappedRegularPostExitAdoptError::SourceNotInitiallyNonfullAdoptable,
             );
         }
         if !self.matches_arena(&target.arena) {
@@ -6720,11 +6763,23 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         // make this exact page exclusively target-owned until the queue tail
         // below publishes it to the normal target engine.
         let page_ref = unsafe { page.as_ref() };
+        let immediate_direct_small = self.origin
+            == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate;
+        let expected_kind = if immediate_direct_small {
+            PageKind::Small
+        } else {
+            PageKind::Medium
+        };
         if !target.owns_page(page_ref)
             || page_ref.heap() != target.session.theap().heap()
-            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Medium)
+            || self.kind != expected_kind
+            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(expected_kind)
             || size_class::bin(page_ref.block_size()) != Some(self.bin)
             || page_ref.reserved() <= 1
+            || (immediate_direct_small
+                && (page_ref.block_size() > SMALL_SIZE_MAX
+                    || page_ref.reserved() < 16
+                    || page_ref.free_list_head().is_null()))
             || page_ref.used() == 0
             || page_ref.used() >= usize::from(page_ref.reserved())
             || page_is_in_full(page_ref)
@@ -6737,10 +6792,13 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         };
         // SAFETY: source reassociation completed above, the page is detached,
         // and the fresh target session owns this complete regular queue.
-        // Preserve `src/page.c:_mi_theap_page_reclaim`'s tail insertion order.
+        // Preserve `src/page.c:_mi_theap_page_reclaim` and
+        // `src/page-queue.c:mi_page_queue_push_at_end`'s tail insertion
+        // order: when this first page becomes a direct queue head, update the
+        // full rounded direct-cache range before increasing Theap page count.
         unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
-        target.session.note_page_added();
         target.update_direct_cache(self.bin);
+        target.session.note_page_added();
         // `mi_page_fresh_alloc` makes this decision only after
         // `_mi_theap_page_reclaim` has restored the target queue tail. A
         // nonzero `slice_pcommitted` takes `mi_page_extend_free`'s separate

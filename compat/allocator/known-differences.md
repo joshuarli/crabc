@@ -499,20 +499,25 @@ result may refine it only when it can prove retained ownership.
 
   One explicit consuming allocation-time edge is complete for the sole route
   only: `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
-  accepts exactly its source-initially-nonfull mapped medium page. A full
-  `BIN_FULL` medium or full ordinary-bin direct-small page that force collection
-  makes nonfull preserves that origin and remains client-free-only. Before it
-  consumes the short route, the target
+  accepts its source-initially-nonfull mapped medium page, or its direct-small
+  page when source force/false collection leaves an immediate local free block.
+  A full `BIN_FULL` medium or full ordinary-bin direct-small page that force
+  collection makes nonfull preserves that origin and remains client-free-only.
+  Before it consumes the short route, the target
   proves the source subprocess, frozen configuration,
   PageMap-root identity, static main Heap, selected arena, complete span, and
   PageMap page identity. It turns `ProcessPageMapPostExitAccess` into the one
   long `ProcessPageMapMutationLease`, claims the exact bitmap/count member,
 collects abandoned state, reassociates the page with the fresh Theap/thread,
-collects live state, re-proves the complete span, and appends the detached
-page at the target queue tail. This source-shaped branch also handles an
-exhausted nonfull medium page (`capacity < reserved`). A fully committed page
-(`slice_pcommitted == 0`) applies scalar `mi_page_extend_free` list/capacity
-mutation after tail insertion. Its bounded test-only `commit == false` seam
+collects live state, re-proves the complete span and exact source class, and
+appends the detached page at the target queue tail. For the direct-small class,
+it restores the complete rounded direct-cache range before target page-count
+increment and immediately reuses that same page; a missing local head remains
+client-free-only rather than entering extension or commitment. The medium
+branch also handles an exhausted nonfull medium page (`capacity < reserved`).
+A fully committed medium page (`slice_pcommitted == 0`) applies scalar
+`mi_page_extend_free` list/capacity mutation after tail insertion. Its bounded
+test-only `commit == false` seam
 constructs one actual reserved medium page with the source initial callback-
 committed prefix. The nonzero-prefix branch derives the source direct
 `_mi_os_commit` byte range, commits it through the paired retained mapping,
@@ -522,9 +527,9 @@ direct-cache/page-count repair, and mapped identity/bit/count/unown
 publication; the returned consuming owner retries only the same candidate with
 its retained long lifecycle. This is not a production option, scan, or fresh
 fallback. A bitmap miss, malformed state, scalar extension error, or any other
-post-transfer failure remains terminally retained. Small/direct, full,
-singleton, unmapped, huge, foreign, automatic-scanning, concurrent, and
-aggregate-registry adoption remain absent.
+post-transfer failure remains terminally retained. Non-direct-small,
+direct-small extension/commit, full, singleton, unmapped, huge, foreign,
+automatic-scanning, concurrent, and aggregate-registry adoption remain absent.
 
   `abandon_mapped_regular_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete

@@ -450,9 +450,11 @@ non-direct and direct full-small counterparts.
 
 One deliberately consuming allocation-time edge is now complete for this
 sole route only. `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
-accepts an exact `PageKind::Medium` route and a fresh
-`MainHeapThreadAttachment` only after the subprocess, frozen configuration,
-stable PageMap root, static main Heap, and selected arena all match. It turns
+accepts either an exact `PageKind::Medium` route, or an exact
+`PageKind::Small` direct-cache route whose source force/false collection left
+an immediate local free block. Both require a fresh
+`MainHeapThreadAttachment` whose subprocess, frozen configuration, stable
+PageMap root, static main Heap, and selected arena all match. The handoff turns
 the route's `ProcessPageMapPostExitAccess` back into a
 `ProcessPageMapMutationLease`, so the new engine owns one continuous
 source-plain map lifecycle. `ThreadExitMappedRegularPostExitParts` keeps a
@@ -461,12 +463,16 @@ the source low-owner claim. The handoff then follows
 `src/arena.c:631-778,951-1153` and `src/page.c:245-302`: it claims the exact
 static-main bitmap member and paired count, collects while abandoned,
 reassociates the page with the new Theap/thread identity, collects live state,
-re-proves the complete PageMap span and medium geometry, and appends the
+re-proves the complete PageMap span and exact source geometry, and appends the
 queue-detached page with `page_queue_push_at_end_metadata` at the target queue
-tail before restoring its page count/direct-cache image. It accepts either an
-immediate head or an exhausted nonfull medium page (`capacity < reserved`). A
-fully committed page (`slice_pcommitted == 0`) performs scalar
+tail. A direct-small target restores its complete rounded direct-cache range
+before its target page-count increment, matching `mi_page_queue_push_at_end`.
+The medium branch accepts either an immediate head or an exhausted nonfull
+medium page (`capacity < reserved`). A fully committed medium page
+(`slice_pcommitted == 0`) performs scalar
 `mi_page_extend_free` free-list/capacity mutation after that tail restoration.
+The direct-small branch requires its immediate head; a direct-small page that
+would need extension or page-area commitment stays client-free-only.
 The bounded test-only `commit == false` seam creates one actual reserved medium
 page with the source initial callback-committed prefix. For that nonzero-prefix
 case, `page_area_commit_plan` separates OS-page counts from byte ranges, then
@@ -479,7 +485,7 @@ publication. The resulting consuming owner can retry only the same candidate
 through its long lifecycle; it cannot reopen short map access, scan, or take a
 fresh fallback. This proves no production page-on-demand option. A bitmap miss,
 malformed state, scalar extension error, or any other post-transfer failure
-likewise retains the target owner. Small/direct,
+likewise retains the target owner. Non-direct-small, direct-small extension,
 full, aggregate-registry, singleton, unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
 

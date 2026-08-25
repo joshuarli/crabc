@@ -295,8 +295,8 @@ linear `ProcessPageMapPostExitAccess`. Each client free re-acquires the same
 map lock briefly: a nonempty result keeps PageMap registration and the paired
 bitmap/count, while the final free clears them before PageMap -> `pages_main`
 -> metadata -> slice release. The route is movable to one client-free thread.
-One explicit consuming allocation-time edge is now complete for its sole
-mapped nonfull medium form:
+Two explicit consuming allocation-time edges are now complete for the sole
+mapped nonfull medium form and its immediate-head direct-small counterpart:
 `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
 requires an exact matching fresh later-main attachment/process pair (same
 subprocess, frozen configuration, stable PageMap root, static main Heap, and
@@ -304,8 +304,10 @@ arena) and re-proves the source span and page identity. It transfers the short
 `ProcessPageMapPostExitAccess` into one long mutation lease, claims the exact
 bitmap/count member, collects abandoned state, reassociates the page with the
 fresh Theap/thread, collects live state, and restores source queue-tail order.
-The completed branch accepts either an immediate head or an exhausted nonfull
-medium page (`capacity < reserved`). A fully committed page
+A direct-small target restores its complete rounded direct-cache range before
+target page-count increment and immediately allocates from that exact page.
+The medium branch accepts either an immediate head or an exhausted nonfull
+medium page (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs the scalar source
 `mi_page_extend_free` list/capacity transition after tail insertion. The
 bounded test-only `commit == false` seam instead constructs one actual
@@ -319,8 +321,9 @@ only that same candidate through its existing long lifecycle. This does not
 add a production page-on-demand option, a generic fresh fallback, or a bitmap
 scan. A bitmap miss, malformed state, scalar extension error, or any other
 post-transfer error remains terminally retained.
-Small/direct, full, singleton, unmapped, huge, foreign, aggregate-registry,
-automatic-scanning, and concurrent adoption remain deliberately absent.
+Non-direct-small, direct-small extension, full, singleton, unmapped, huge,
+foreign, aggregate-registry, automatic-scanning, and concurrent adoption
+remain deliberately absent.
 
 The bounded aggregate extension,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`,
@@ -508,8 +511,9 @@ non-direct small boundaries, direct-image preflight refusal, full-small
 pre-detach refusal, one-page-refusal, and cross-thread movement regressions;
 the sole mapped-medium route's immediate and exhausted-fully-committed
 fresh-owner adoption, scalar capacity-extension, real reserved-prefix direct
-page-area commitment, failed-commit mapped reabandonment/same-candidate retry,
-and direct-small pre-transfer refusal regressions; and the aggregate
+page-area commitment, failed-commit mapped reabandonment/same-candidate retry;
+the direct-small immediate-head fresh-owner reclaim/reuse and extension-needed
+pre-transfer refusal regressions; and the aggregate
 regular-pages registry's mixed small/medium/large
 release, retired-large prepass, malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
@@ -520,14 +524,14 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 471 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 473 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 100 items and 104
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 101 items and 105
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
 full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main

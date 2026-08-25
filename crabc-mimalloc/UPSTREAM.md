@@ -80,7 +80,18 @@ full-direct-small force-collection branches retain their full origins in
 `ThreadExitMappedRegularPostExitParts`: although source publishes a nonfull
 mapped page, each remains client-free-only. The
 separate `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
-edge accepts only a source-initially-nonfull medium route.
+edge accepts a source-initially-nonfull medium route or an immediate-head
+direct-small route. Non-direct-small, direct-small extension, and full-origin
+routes remain client-free-only.
+
+> **Later-main direct-small adoption correction.** The broad later-main table
+> rows below predate the source-specific
+> `later-main-one-member-immediate-direct-small-post-exit-allocation-adoption`
+> ledger item. Where those orientation rows describe the consuming handoff as
+> medium-only, read that as the medium extension/commit branch: the completed
+> direct-small branch requires its exact rounded cache range and an immediate
+> local free-list head, restores that range before target page-count increment,
+> and does not admit extension or commitment.
 
 > **Current raw-tail accounting.** The explicit dynamic full-medium, full-large,
 > full-non-direct-small, and full-direct-small rows below add four distinct lifecycle owners to the
