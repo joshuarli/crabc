@@ -123,6 +123,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
             {
                 "native-c-oracle",
                 "native-direct-rust-c-differential",
+                "native-normal-engine-build-boundary",
                 "native-private-test-adapter",
                 "native-tls-codegen",
                 "native-allocator-unit",
@@ -144,6 +145,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-private-test-adapter"]["report"],
             "compat/reports/allocator/x86_64/latest.json",
         )
+        self.assertEqual(
+            gates["native-normal-engine-build-boundary"]["report"],
+            "compat/reports/allocator/x86_64/latest.json",
+        )
+        self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
+        self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
+        self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
+        self.assertIn("LLVM bitcode", gates["native-normal-engine-build-boundary"]["claim"])
+        self.assertIn("not a staticlib/cdylib", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("private prefixed", gates["native-private-test-adapter"]["claim"])
         self.assertIn("no mi_* symbols", gates["native-private-test-adapter"]["claim"])
 
@@ -173,7 +183,6 @@ class X86_64ParityStatusTests(unittest.TestCase):
             set(lanes),
             {
                 "public-mi-api-and-libc-integration",
-                "production-dependency-graph",
                 "general-thread-lifecycle-and-stress",
                 "libc-backend-promotion-and-public-crabc-support",
                 "performance-qualification",

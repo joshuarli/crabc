@@ -17,6 +17,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, verifies the exact unfeatured normal Rust engine graph (including cpufeatures and no selected libc package), then builds the #![no_std] engine as a fresh release fat-LTO rlib and records its LLVM bitcode codegen member. Cargo resolution is lockfile-verified; a fresh bind-mounted cache may populate from the network with lockfile-selected packages. This is not a final linked ELF, not a staticlib/cdylib, and not a public allocator ABI, libc integration, or backend-promotion claim.",
+      "command": "./scripts/dev-amd64.sh allocator --quick",
+      "id": "native-normal-engine-build-boundary",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/latest.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, builds and audits the private prefixed Rust C test adapter, then runs the checked-in allocator fixture and 33 selected patched upstream API checks. It exposes no mi_* symbols and does not establish a public crabc allocator ABI or backend.",
       "command": "./scripts/dev-amd64.sh allocator --quick",
       "id": "native-private-test-adapter",
@@ -112,11 +120,6 @@
     {
       "id": "public-mi-api-and-libc-integration",
       "reason": "The native private adapter is covered, but it exposes only crabc_test_* evidence symbols. It does not expose a public mi_* API or establish crabc-libc allocator integration on x86-64.",
-      "state": "not_covered"
-    },
-    {
-      "id": "production-dependency-graph",
-      "reason": "The audited production dependency graph is currently fixed to aarch64-unknown-linux-musl and has no x86-64 target-specific contract.",
       "state": "not_covered"
     },
     {

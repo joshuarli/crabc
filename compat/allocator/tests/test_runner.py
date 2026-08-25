@@ -79,6 +79,34 @@ def production_dependency_metadata() -> dict[str, object]:
     return {"packages": packages, "resolve": {"nodes": nodes}}
 
 
+def x86_64_engine_dependency_metadata() -> dict[str, object]:
+    """Return the selected x86 normal graph, including its CPUID helper."""
+
+    metadata = production_dependency_metadata()
+    packages = metadata["packages"]
+    nodes = metadata["resolve"]["nodes"]
+    assert isinstance(packages, list) and isinstance(nodes, list)
+    packages.append(
+        {
+            "id": "cpufeatures 0.3.0",
+            "name": "cpufeatures",
+            "version": "0.3.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index",
+            "targets": [{"kind": ["lib"]}],
+        }
+    )
+    nodes.append({"id": "cpufeatures 0.3.0", "deps": []})
+    chacha = next(node for node in nodes if node["id"] == "chacha20 0.10.1")
+    chacha["deps"].append(
+        {
+            "name": "cpufeatures",
+            "pkg": "cpufeatures 0.3.0",
+            "dep_kinds": [{"kind": None, "target": None}],
+        }
+    )
+    return metadata
+
+
 class ArchiveTests(unittest.TestCase):
     def test_safe_extract_accepts_only_the_expected_archive_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -346,6 +374,167 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.HarnessError, "selected dependency edge mismatch"):
             RUNNER.validate_production_dependency_graph(metadata)
 
+    def test_x86_64_engine_dependency_graph_is_exact_and_excludes_libc(self) -> None:
+        report = RUNNER.validate_x86_64_engine_dependency_graph(
+            x86_64_engine_dependency_metadata()
+        )
+        self.assertEqual(report["target"], "x86_64-unknown-linux-musl")
+        self.assertEqual(report["external_package_count"], 10)
+        self.assertEqual(report["build_script_count"], 0)
+        self.assertEqual(report["proc_macro_count"], 0)
+        packages = {(package["name"], package["version"]) for package in report["packages"]}
+        self.assertIn(("cpufeatures", "0.3.0"), packages)
+        self.assertNotIn(("libc", "0.2.189"), packages)
+
+    def test_x86_64_engine_dependency_graph_rejects_a_selected_libc_edge(self) -> None:
+        metadata = x86_64_engine_dependency_metadata()
+        packages = metadata["packages"]
+        nodes = metadata["resolve"]["nodes"]
+        assert isinstance(packages, list) and isinstance(nodes, list)
+        packages.append(
+            {
+                "id": "libc 0.2.189",
+                "name": "libc",
+                "version": "0.2.189",
+                "source": "registry+https://github.com/rust-lang/crates.io-index",
+                "targets": [{"kind": ["lib"]}],
+            }
+        )
+        nodes.append({"id": "libc 0.2.189", "deps": []})
+        cpufeatures = next(node for node in nodes if node["id"] == "cpufeatures 0.3.0")
+        cpufeatures["deps"].append(
+            {
+                "name": "libc",
+                "pkg": "libc 0.2.189",
+                "dep_kinds": [{"kind": None, "target": None}],
+            }
+        )
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError, "unexpected selected package: libc 0.2.189"
+        ):
+            RUNNER.validate_x86_64_engine_dependency_graph(metadata)
+
+    def test_x86_64_engine_dependency_graph_command_is_pinned_and_unfeatured(self) -> None:
+        metadata = x86_64_engine_dependency_metadata()
+        with mock.patch.object(
+            RUNNER,
+            "command_record",
+            return_value={"status": 0, "stderr": "", "stdout": json.dumps(metadata)},
+        ) as command_record:
+            report = RUNNER.x86_64_engine_dependency_graph()
+        expected_command = [
+            "cargo",
+            "metadata",
+            "--format-version",
+            "1",
+            "--filter-platform",
+            "x86_64-unknown-linux-musl",
+            "--no-default-features",
+            "--locked",
+        ]
+        command_record.assert_called_once_with(expected_command, cwd=RUNNER.ROOT)
+        self.assertEqual(report["command"], expected_command)
+        self.assertEqual(report["resolution"], RUNNER.X86_64_LOCKFILE_RESOLUTION)
+        self.assertNotIn("--offline", expected_command)
+
+    def test_x86_64_normal_engine_rlib_parser_rejects_test_features(self) -> None:
+        event = {
+            "reason": "compiler-artifact",
+            "target": {
+                "crate_types": ["lib"],
+                "kind": ["lib"],
+                "name": "crabc_mimalloc",
+            },
+            "profile": {"test": False},
+            "features": [],
+            "filenames": ["/tmp/libcrabc_mimalloc.rlib"],
+        }
+        self.assertEqual(
+            RUNNER.x86_64_normal_engine_rlib_from_cargo_output(json.dumps(event)),
+            Path("/tmp/libcrabc_mimalloc.rlib"),
+        )
+        event["features"] = ["test-adapter"]
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unexpectedly selected crate features"):
+            RUNNER.x86_64_normal_engine_rlib_from_cargo_output(json.dumps(event))
+
+    def test_x86_64_normal_engine_artifact_command_is_locked_unfeatured_and_not_offline(self) -> None:
+        command = RUNNER.x86_64_normal_engine_artifact_command("cargo")
+        self.assertEqual(
+            command,
+            [
+                "cargo",
+                "rustc",
+                "--locked",
+                "--package",
+                "crabc-mimalloc",
+                "--lib",
+                "--release",
+                "--no-default-features",
+                "--target",
+                "x86_64-unknown-linux-musl",
+                "--message-format=json",
+            ],
+        )
+        self.assertNotIn("--offline", command)
+
+    def test_x86_64_normal_engine_artifact_requires_the_normal_fat_lto_bitcode_member(self) -> None:
+        self.assertEqual(
+            RUNNER.x86_64_normal_engine_codegen_member_format(
+                "<normal-engine-codegen-member>: LLVM IR bitcode"
+            ),
+            "llvm-ir-bitcode",
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "expected fat-LTO LLVM bitcode"):
+            RUNNER.x86_64_normal_engine_codegen_member_format(
+                "<normal-engine-codegen-member>: ELF 64-bit LSB relocatable, x86-64"
+            )
+
+    def test_x86_64_direct_engine_probe_is_pinned_unfeatured_and_isolated(self) -> None:
+        c_layout = {"config.value": 1}
+        c_small_trace = {"small.value": 2}
+        c_fundamental_trace = {"fundamental.value": 3}
+        with mock.patch.object(
+            RUNNER,
+            "command_record",
+            return_value={"status": 0, "stderr": "", "stdout": "probe output"},
+        ) as command_record, mock.patch.object(
+            RUNNER, "parse_rust_layout", return_value=c_layout
+        ), mock.patch.object(
+            RUNNER, "parse_small_trace", return_value=c_small_trace
+        ), mock.patch.object(
+            RUNNER, "parse_fundamental_trace", return_value=c_fundamental_trace
+        ), mock.patch.object(RUNNER, "parse_rust_test_count", return_value=1):
+            report = RUNNER.rust_layout_probe(
+                c_layout,
+                c_small_trace,
+                c_fundamental_trace,
+                rust_target="x86_64-unknown-linux-musl",
+            )
+        command = command_record.call_args.args[0]
+        environment = command_record.call_args.kwargs["environment"]
+        self.assertEqual(
+            command,
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--lib",
+                "--locked",
+                "--no-default-features",
+                "--target",
+                "x86_64-unknown-linux-musl",
+                "--",
+                "--nocapture",
+            ],
+        )
+        self.assertEqual(environment["CARGO_INCREMENTAL"], "0")
+        target_directory = Path(environment["CARGO_TARGET_DIR"])
+        self.assertEqual(target_directory.name, "target")
+        self.assertFalse(target_directory.exists())
+        self.assertEqual(report["dependency_resolution"], RUNNER.X86_64_LOCKFILE_RESOLUTION)
+        self.assertEqual(report["target_directory"], "fresh temporary CARGO_TARGET_DIR")
+
     def test_external_static_inline_and_cxx_template_parsing_are_distinct(self) -> None:
         header = """
             mi_decl_export void* mi_malloc(size_t size);
@@ -520,6 +709,8 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                 "-p",
                 "crabc-mimalloc",
                 "--lib",
+                "--locked",
+                "--no-default-features",
                 "--target",
                 "x86_64-unknown-linux-musl",
                 "--",

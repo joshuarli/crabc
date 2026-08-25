@@ -108,6 +108,49 @@ EXPECTED_PRODUCTION_DEPENDENCY_EDGES: Mapping[str, tuple[str, ...]] = {
     "inout": ("hybrid-array",),
     "zeroize": (),
 }
+# This is intentionally not derived from the AArch64 production contract.
+# `chacha20` selects RustCrypto's no_std x86 CPUID helper on this target, while
+# the x86_64-unknown-linux-musl normal graph selects no `libc` package.  Keep
+# both the extra package and the absence of libc reviewable at this target
+# boundary instead of treating lockfile-wide package presence as evidence.
+EXPECTED_X86_64_ENGINE_DEPENDENCY_VERSIONS: Mapping[str, str] = {
+    "crabc-mimalloc": "0.3.0",
+    "crabc-core": "0.3.0",
+    "chacha20": "0.10.1",
+    "cfg-if": "1.0.4",
+    "cipher": "0.5.2",
+    "block-buffer": "0.12.1",
+    "hybrid-array": "0.4.14",
+    "typenum": "1.20.1",
+    "crypto-common": "0.2.2",
+    "inout": "0.2.2",
+    "zeroize": "1.9.0",
+    "cpufeatures": "0.3.0",
+}
+EXPECTED_X86_64_ENGINE_DEPENDENCY_EDGES: Mapping[str, tuple[str, ...]] = {
+    "crabc-mimalloc": ("chacha20", "crabc-core", "zeroize"),
+    "crabc-core": (),
+    "chacha20": ("cfg-if", "cipher", "cpufeatures", "zeroize"),
+    "cfg-if": (),
+    "cipher": ("block-buffer", "crypto-common", "inout"),
+    "block-buffer": ("hybrid-array",),
+    "hybrid-array": ("typenum",),
+    "typenum": (),
+    "crypto-common": ("hybrid-array",),
+    "inout": ("hybrid-array",),
+    "zeroize": (),
+    "cpufeatures": (),
+}
+# The native x86-64 Docker path bind-mounts an initially empty Cargo cache.
+# `--locked` therefore gives the required reproducible resolution boundary,
+# while allowing Cargo to populate that cache with only lockfile-selected
+# packages on a first run.  Do not add `--offline` to this evidence lane unless
+# the canonical image has a separately verified cache-bootstrap contract.
+X86_64_LOCKFILE_RESOLUTION: Mapping[str, Any] = {
+    "cache": "may be populated from the network with lockfile-selected packages",
+    "lockfile_verified": True,
+    "offline": False,
+}
 
 STATUS_FIELDS = (
     "exported",
@@ -3066,14 +3109,25 @@ def build_profile(
     return result
 
 
-def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[str, Any]:
-    """Judge the exact normal dependency graph selected for production AArch64.
+def validate_exact_normal_dependency_graph(
+    metadata: Mapping[str, Any],
+    *,
+    target: str,
+    expected_dependency_versions: Mapping[str, str],
+    expected_dependency_edges: Mapping[str, tuple[str, ...]],
+) -> dict[str, Any]:
+    """Judge one explicit target's normal `crabc-mimalloc` dependency graph.
 
+    This parser is shared only to avoid giving the AArch64 and x86-64
+    evidence lanes subtly different graph traversal rules. Each caller still
+    supplies its own target, versions, and edges: a target-specific graph is
+    not inherited merely because its metadata is parsed by the same code.
     Cargo lockfiles retain target-conditional packages, so lockfile presence is
-    not evidence that a dependency is linked. The caller must obtain `metadata`
-    with `--filter-platform` for `PRODUCTION_RUST_TARGET`; this function then
-    traverses only normal dependency edges reachable from `crabc-mimalloc`.
+    not evidence that a dependency is linked.
     """
+
+    if set(expected_dependency_versions) != set(expected_dependency_edges):
+        raise HarnessError("allocator dependency contract has mismatched packages and edges")
 
     raw_packages = metadata.get("packages")
     raw_resolve = metadata.get("resolve")
@@ -3105,11 +3159,14 @@ def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[st
         package_id
         for package_id, package in packages.items()
         if package.get("name") == "crabc-mimalloc"
-        and package.get("version") == EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS["crabc-mimalloc"]
+        and package.get("version") == expected_dependency_versions["crabc-mimalloc"]
         and package.get("source") is None
     ]
     if len(roots) != 1:
-        raise HarnessError("Cargo metadata must contain exactly one workspace crabc-mimalloc 0.3.0 root")
+        raise HarnessError(
+            "Cargo metadata must contain exactly one workspace "
+            f"crabc-mimalloc {expected_dependency_versions['crabc-mimalloc']} root"
+        )
 
     selected_ids: set[str] = set()
     selected_edges: dict[str, tuple[str, ...]] = {}
@@ -3165,7 +3222,7 @@ def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[st
         (str(packages[package_id].get("name")), str(packages[package_id].get("version")))
         for package_id in selected_ids
     }
-    expected_versions = set(EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS.items())
+    expected_versions = set(expected_dependency_versions.items())
     unexpected = sorted(selected_versions - expected_versions)
     missing = sorted(expected_versions - selected_versions)
     if unexpected:
@@ -3193,10 +3250,10 @@ def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[st
         raw_targets = package.get("targets")
         if not isinstance(raw_targets, list):
             raise HarnessError(f"Cargo metadata has invalid targets for {name} {version}")
-        for target in raw_targets:
-            if not isinstance(target, dict) or not isinstance(target.get("kind"), list):
+        for package_target in raw_targets:
+            if not isinstance(package_target, dict) or not isinstance(package_target.get("kind"), list):
                 raise HarnessError(f"Cargo metadata has an invalid target for {name} {version}")
-            kinds = target["kind"]
+            kinds = package_target["kind"]
             if "custom-build" in kinds:
                 build_scripts.append(f"{name} {version}")
             if "proc-macro" in kinds:
@@ -3220,7 +3277,7 @@ def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[st
 
     expected_edges = {
         name: tuple(sorted(dependencies))
-        for name, dependencies in EXPECTED_PRODUCTION_DEPENDENCY_EDGES.items()
+        for name, dependencies in expected_dependency_edges.items()
     }
     if selected_edges != expected_edges:
         differences = [
@@ -3236,8 +3293,36 @@ def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[st
         "external_package_count": sum(package["source"] == "crates.io" for package in report_packages),
         "packages": report_packages,
         "proc_macro_count": 0,
-        "target": PRODUCTION_RUST_TARGET,
+        "target": target,
     }
+
+
+def validate_production_dependency_graph(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Judge the exact normal dependency graph selected for production AArch64."""
+
+    return validate_exact_normal_dependency_graph(
+        metadata,
+        target=PRODUCTION_RUST_TARGET,
+        expected_dependency_versions=EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS,
+        expected_dependency_edges=EXPECTED_PRODUCTION_DEPENDENCY_EDGES,
+    )
+
+
+def validate_x86_64_engine_dependency_graph(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Judge the normal unfeatured engine graph selected for native x86-64.
+
+    `cpufeatures` is required here for the selected RustCrypto x86 path; the
+    absence of a selected `libc` package is enforced by the same exact graph.
+    This is allocator-engine evidence only, not the AArch64 production graph
+    and not a public x86 allocator integration claim.
+    """
+
+    return validate_exact_normal_dependency_graph(
+        metadata,
+        target=X86_64_RUST_TARGET,
+        expected_dependency_versions=EXPECTED_X86_64_ENGINE_DEPENDENCY_VERSIONS,
+        expected_dependency_edges=EXPECTED_X86_64_ENGINE_DEPENDENCY_EDGES,
+    )
 
 
 def production_dependency_graph() -> dict[str, Any]:
@@ -3263,6 +3348,216 @@ def production_dependency_graph() -> dict[str, Any]:
     return report
 
 
+def x86_64_engine_dependency_graph() -> dict[str, Any]:
+    """Collect the native x86-64 engine's exact normal dependency graph."""
+
+    # The canonical Docker image may begin with an empty bind-mounted Cargo
+    # cache. `--locked` pins this resolution without falsely requiring that
+    # the cache was already populated; a first native run may download the
+    # lockfile-selected crates.
+    command = [
+        "cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--filter-platform",
+        X86_64_RUST_TARGET,
+        "--no-default-features",
+        "--locked",
+    ]
+    record = command_record(command, cwd=ROOT)
+    require_success(record, "Rust allocator x86-64 engine dependency graph")
+    try:
+        metadata = json.loads(str(record["stdout"]))
+    except json.JSONDecodeError as error:
+        raise HarnessError(f"Cargo metadata did not return valid JSON: {error}") from error
+    if not isinstance(metadata, dict):
+        raise HarnessError("Cargo metadata did not return a JSON object")
+    report = validate_x86_64_engine_dependency_graph(metadata)
+    report["command"] = command
+    report["resolution"] = dict(X86_64_LOCKFILE_RESOLUTION)
+    return report
+
+
+def x86_64_normal_engine_rlib_from_cargo_output(output: str) -> Path:
+    """Select the one unfeatured release rlib emitted for the x86 engine."""
+
+    candidates: list[Path] = []
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("reason") != "compiler-artifact":
+            continue
+        target = event.get("target")
+        if not isinstance(target, dict) or target.get("name") != "crabc_mimalloc":
+            continue
+        if target.get("kind") != ["lib"] or target.get("crate_types") != ["lib"]:
+            raise HarnessError("x86-64 engine artifact is not the normal Rust library")
+        profile = event.get("profile")
+        if not isinstance(profile, dict) or profile.get("test") is not False:
+            raise HarnessError("x86-64 engine artifact unexpectedly selected a test profile")
+        features = event.get("features")
+        if features != []:
+            raise HarnessError("x86-64 engine artifact unexpectedly selected crate features")
+        filenames = event.get("filenames")
+        if not isinstance(filenames, list):
+            raise HarnessError("x86-64 engine artifact lacks output filenames")
+        rlibs = [Path(filename) for filename in filenames if isinstance(filename, str) and filename.endswith(".rlib")]
+        if len(rlibs) != 1:
+            raise HarnessError("x86-64 engine artifact must report exactly one rlib")
+        candidates.extend(rlibs)
+    if len(candidates) != 1:
+        raise HarnessError("cargo did not report exactly one unfeatured x86-64 engine rlib")
+    return candidates[0]
+
+
+def x86_64_normal_engine_artifact_command(cargo: str) -> list[str]:
+    """Return the exact unfeatured, lockfile-verified x86 release-rustc command."""
+
+    return [
+        cargo,
+        "rustc",
+        "--locked",
+        "--package",
+        "crabc-mimalloc",
+        "--lib",
+        "--release",
+        "--no-default-features",
+        "--target",
+        X86_64_RUST_TARGET,
+        "--message-format=json",
+    ]
+
+
+def extract_single_rlib_codegen_member(ar: str, archive: Path, destination: Path) -> str:
+    """Copy the sole codegen-unit member from a controlled one-unit rlib."""
+
+    inventory = command_record((ar, "t", str(archive)), cwd=ROOT)
+    require_success(inventory, "x86-64 engine rlib inventory")
+    objects = [line for line in str(inventory["stdout"]).splitlines() if line.endswith(".o")]
+    if len(objects) != 1:
+        raise HarnessError(
+            "x86-64 engine rlib must contain exactly one codegen-unit member, "
+            f"found {objects}"
+        )
+    member = objects[0]
+    if Path(member).name != member:
+        raise HarnessError("x86-64 engine rlib codegen member is not a bare filename")
+    try:
+        completed = subprocess.run(
+            (ar, "p", str(archive), member),
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise HarnessError(f"failed to extract x86-64 engine rlib codegen member: {error}") from error
+    if completed.returncode != 0:
+        raise HarnessError(
+            "failed to extract x86-64 engine rlib codegen member: "
+            + completed.stderr.decode(errors="replace").strip()
+        )
+    destination.write_bytes(completed.stdout)
+    return member
+
+
+def x86_64_normal_engine_codegen_member_format(file_output: str) -> str:
+    """Require the normal fat-LTO release rlib's recorded codegen format.
+
+    The workspace release profile intentionally uses fat LTO.  Rust therefore
+    stores LLVM bitcode in this normal library rlib instead of a final linked
+    ELF object.  Treat that distinction as evidence, not as a reason to run a
+    non-normal `-Clto=off` build or to overclaim an ELF artifact.
+    """
+
+    if "LLVM IR bitcode" not in file_output:
+        raise HarnessError(
+            "x86-64 normal engine rlib codegen member is not the expected "
+            "fat-LTO LLVM bitcode: "
+            + file_output
+        )
+    return "llvm-ir-bitcode"
+
+
+def x86_64_normal_engine_artifact() -> dict[str, Any]:
+    """Build and inspect the normal native x86-64 `#![no_std]` engine rlib.
+
+    A no_std library has no standalone panic handler, so a staticlib would
+    fail before it could prove this boundary. The rlib is therefore the exact
+    normal-library artifact being audited here. The workspace release profile
+    uses fat LTO, so its codegen member is LLVM bitcode rather than a final
+    linked ELF object. This is not a final linked ABI, a public allocator
+    artifact, or an integration claim.
+    """
+
+    require_native_x86_64()
+    cargo = require_tool("cargo")
+    ar = require_tool("ar")
+    file_tool = require_tool("file")
+    crate_root = ROOT / "crabc-mimalloc/src/lib.rs"
+    if not re.search(r"(?m)^#!\[no_std\]\s*$", crate_root.read_text(encoding="utf-8")):
+        raise HarnessError("crabc-mimalloc crate root no longer declares #![no_std]")
+
+    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-engine-x86_64-") as temporary:
+        temporary_root = Path(temporary)
+        environment = os.environ.copy()
+        environment["CARGO_TARGET_DIR"] = str(temporary_root / "target")
+        environment["CARGO_INCREMENTAL"] = "0"
+        command = x86_64_normal_engine_artifact_command(cargo)
+        build = command_record(command, cwd=ROOT, env=environment)
+        require_success(build, "Rust allocator x86-64 normal engine rlib")
+        rlib = x86_64_normal_engine_rlib_from_cargo_output(
+            str(build["stdout"]) + "\n" + str(build["stderr"])
+        )
+        if not rlib.is_file():
+            raise HarnessError("cargo-reported x86-64 engine rlib is absent")
+        release_directory = environment["CARGO_TARGET_DIR"]
+        expected_rlib_directory = Path(release_directory) / X86_64_RUST_TARGET / "release"
+        try:
+            rlib.relative_to(expected_rlib_directory)
+        except ValueError as error:
+            raise HarnessError(
+                "cargo-reported x86-64 engine rlib is outside its isolated target release directory"
+            ) from error
+        codegen_member_path = temporary_root / "crabc_mimalloc_normal_engine.codegen"
+        archive_member = extract_single_rlib_codegen_member(ar, rlib, codegen_member_path)
+        file_output = command_record((file_tool, str(codegen_member_path)), cwd=ROOT)
+        require_success(file_output, "x86-64 engine rlib codegen member inspection")
+        normalized_file = str(file_output["stdout"]).replace(
+            str(codegen_member_path), "<normal-engine-codegen-member>"
+        ).strip()
+        codegen_member_format = x86_64_normal_engine_codegen_member_format(normalized_file)
+        return {
+            "artifact": {
+                "archive_member": archive_member,
+                "codegen_member_format": codegen_member_format,
+                "file": normalized_file,
+                "codegen_member_sha256": sha256_file(codegen_member_path),
+                "rlib_sha256": sha256_file(rlib),
+            },
+            "cargo_command": command,
+            "crate_root": {
+                "no_std": True,
+                "path": relative(crate_root),
+                "sha256": sha256_file(crate_root),
+            },
+            "dependency_resolution": dict(X86_64_LOCKFILE_RESOLUTION),
+            "features": [],
+            "profile": "release",
+            "scope": (
+                "unfeatured normal crabc-mimalloc fat-LTO rlib only; its LLVM bitcode "
+                "codegen member is not a final linked ELF, staticlib, cdylib, public allocator "
+                "ABI, libc integration, or backend-promotion claim"
+            ),
+            "target": X86_64_RUST_TARGET,
+            "target_directory": "fresh temporary CARGO_TARGET_DIR",
+        }
+
+
 def rust_layout_probe(
     c_release_layout: Mapping[str, int],
     c_release_small_trace: Mapping[str, int],
@@ -3286,12 +3581,26 @@ def rust_layout_probe(
         "--lib",
     ]
     if rust_target is not None:
+        if rust_target == X86_64_RUST_TARGET:
+            # The x86 evidence lane must neither update the lockfile nor
+            # inherit a feature-selected adapter/test artifact from the shared
+            # target volume. Its test harness remains behavioral evidence,
+            # while the separate normal rlib audit owns the no_std artifact
+            # claim below.
+            command.extend(("--locked", "--no-default-features"))
         command.extend(("--target", rust_target))
     command.extend((
         "--",
         "--nocapture",
     ))
-    record = command_record(command, cwd=ROOT)
+    if rust_target == X86_64_RUST_TARGET:
+        with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-direct-x86_64-") as temporary:
+            environment = os.environ.copy()
+            environment["CARGO_TARGET_DIR"] = str(Path(temporary) / "target")
+            environment["CARGO_INCREMENTAL"] = "0"
+            record = command_record(command, cwd=ROOT, env=environment)
+    else:
+        record = command_record(command, cwd=ROOT)
     require_success(record, "Rust allocator layout probe")
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
     rust_layout = parse_rust_layout(output)
@@ -3315,6 +3624,9 @@ def rust_layout_probe(
     }
     if rust_target is not None:
         result["target"] = rust_target
+    if rust_target == X86_64_RUST_TARGET:
+        result["dependency_resolution"] = dict(X86_64_LOCKFILE_RESOLUTION)
+        result["target_directory"] = "fresh temporary CARGO_TARGET_DIR"
     return result
 
 
@@ -3872,13 +4184,15 @@ def run_x86_64_oracle(
 
     The AArch64 API/adapter contracts remain the production contract.  This
     lane deliberately proves source identity, C layouts/traces, ELF machine
-    identity, native direct-Rust configuration/layout/trace parity, compiler
-    TLS code generation, the target-local private test adapter, and the
-    x86-64 musl target assumptions while leaving the dependency graph and
-    public allocator integration unclaimed.
+    identity, the target-local normal-engine dependency/rlib boundary, native
+    direct-Rust configuration/layout/trace parity, compiler TLS code
+    generation, the target-local private test adapter, and the x86-64 musl
+    target assumptions while leaving public allocator integration unclaimed.
     """
 
     native_execution_provenance = require_native_x86_64()
+    engine_dependency_graph = x86_64_engine_dependency_graph()
+    normal_engine_artifact = x86_64_normal_engine_artifact()
     compiler = require_tool("musl-gcc")
     readelf = require_tool("readelf")
     nm = require_tool("nm")
@@ -3914,6 +4228,8 @@ def run_x86_64_oracle(
     report["architecture_profile"] = "x86_64-native-c-oracle"
     report["native_execution_provenance"] = native_execution_provenance
     report["x86_64_source_api_inventory"] = dict(source_api_inventory)
+    report["x86_64_engine_dependency_graph"] = engine_dependency_graph
+    report["x86_64_normal_engine_artifact"] = normal_engine_artifact
     # The unit suite exercises the direct no_std engine against this native C
     # oracle. It is distinct from the target-local private adapter below and
     # is not evidence for public allocator integration.
@@ -3972,10 +4288,6 @@ def run_x86_64_oracle(
         },
     }
     report["unsupported_lanes"] = {
-        "production_dependency_graph": (
-            "not run: the production graph contract is target-specific to "
-            f"{PRODUCTION_RUST_TARGET}"
-        ),
         "public_allocator_integration": (
             "not run: the private prefixed adapter exports no mi_* symbols and "
             "does not establish public crabc allocator integration or default promotion"
