@@ -77,8 +77,10 @@ small-or-medium page whose process-owned route survives old-Theap/TLD teardown);
 and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
 through sequential client frees. A fresh later-main owner can explicitly
-reclaim only the sole mapped nonfull medium route; small/direct and aggregate
-members remain sequential client-free-only.
+reclaim only the sole mapped nonfull medium route. Its bounded test fixture
+also covers a real reserved on-demand prefix, direct page-area commitment, and
+failed-commit mapped reabandonment before a same-candidate retry; small/direct
+and aggregate members remain sequential client-free-only.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
@@ -207,12 +209,18 @@ subprocess/configuration/PageMap-root/static-main-Heap/arena/page-identity
 preflight: the short map access becomes one long lifecycle, the matching
 bitmap/count member is claimed, source abandoned/live collection and Theap
 reassociation run, and the page returns at the target queue tail. The first
-slice accepts an immediate head or an exhausted nonfull fully committed medium
-page (`slice_pcommitted == 0` and `capacity < reserved`), extending the latter
-after tail insertion. The lower process-owned mapping callback now exists, but
-page-area commit/failure-reabandon remains absent: a nonzero commit prefix,
-miss, scalar extension error, or post-transfer failure retains the target
-rather than taking a fresh allocation fallback. Small/direct
+slice accepts an immediate head or an exhausted nonfull medium page
+(`capacity < reserved`). A fully committed page (`slice_pcommitted == 0`)
+extends after tail insertion. The bounded test-only `commit == false` fixture
+instead starts from a real reserved medium page with the source callback-
+committed prefix. Its direct `_mi_os_commit`-shape extension precedes both the
+monotonic prefix-count update and free-list/capacity writes. A direct-commit
+failure repeats source false collection, queue detach, direct-cache/page-count
+repair, and mapped identity/bit/count/unown publication, then permits only a
+same-candidate retry through the retained long lifecycle. This is not a
+production page-on-demand policy or fresh fallback. A bitmap miss, malformed
+state, scalar extension error, or other post-transfer failure remains
+terminally retained. Small/direct
 members remain client-free-only. A direct small member must prove the exact
 rounded source direct-cache range before collection; queue removal clears that
 range before page-count detach. The route retains the source `reserved >= 16`
@@ -261,9 +269,10 @@ reserved mapping first enters that final owner slot, so the retained arena
 callback commits metadata and later selected ranges through the exact same
 `Mapping`; frozen Linux decommit reports no recommit requirement. An injected
 metadata-commit failure returns the exact map with the registry empty and the
-sidecar cold. This establishes only the external-map ownership prerequisite:
-it does not enable page-on-demand policy, `slice_pcommitted`, or failed-commit
-page reabandonment.
+sidecar cold. This establishes the external-map ownership prerequisite and one
+narrow paired direct page-area commit operation; it does not enable
+page-on-demand policy or itself maintain `slice_pcommitted` or page
+reabandonment.
 `ProcessPageArenaLease` proves that exact tuple before `main_static_page.rs`
 or `main_heap_page.rs` may bind an already selected source Theap to it. The
 private ticket-zero and later-thread engines each hold the only process-map

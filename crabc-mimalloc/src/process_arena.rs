@@ -4,9 +4,11 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/arena.c:1573-1611,
-// 1676-1791,1794-1871` (`mi_arenas_add`, `mi_arena_initialize`, and
-// `mi_manage_os_memory_ex2`). The later automatic arena-reserve policy in
+// Source map: pinned mimalloc v3.5.0 `src/page.c:574-644`
+// (`mi_page_extend_free`'s direct `_mi_os_commit`), and
+// `src/arena.c:1573-1611,1676-1791,1794-1871` (`mi_arenas_add`,
+// `mi_arena_initialize`, and `mi_manage_os_memory_ex2`). The later automatic
+// arena-reserve policy in
 // `src/arena.c:341-406,525-569` remains intentionally absent: it needs the
 // source option and fresh-page routing owners rather than a fixed substitute.
 
@@ -27,9 +29,13 @@
 //! `manage_external_in_place` initializes metadata. The retained arena callback
 //! therefore reaches the exact process-owned [`Mapping`] for metadata, later
 //! arena/page-metadata commitment, and the frozen Linux decommit request; it
-//! never borrows a stack-local mapping owner. That boundary deliberately does
-//! not choose source page-on-demand policy, track `slice_pcommitted`, or own a
-//! failed page-area commit's `_mi_page_abandon` transition.
+//! never borrows a stack-local mapping owner. A paired page owner can also
+//! request one range-checked direct page-area commit, mirroring
+//! `mi_page_extend_free`'s `_mi_os_commit` rather than reusing the arena
+//! callback. This boundary deliberately does not choose source
+//! page-on-demand policy, track `slice_pcommitted`, or own a failed page-area
+//! commit's `_mi_page_abandon` transition; the bounded page lifecycle does so
+//! after this capability returns an error.
 //!
 //! On a pre-publication rejection, the caller receives its [`Mapping`] back
 //! through [`ProcessSharedArenaInstallFailure`]. That is deliberate: this is
@@ -523,6 +529,71 @@ impl ProcessSharedArenaLease {
         unsafe { ArenaView::from_ptr(arena) }.ok_or(ProcessSharedArenaError::Retained)
     }
 
+    /// Commits one validated page-area subrange through the retained mapping.
+    ///
+    /// This is intentionally narrower than the stable arena callback. Source
+    /// `mi_page_extend_free` calls `_mi_os_commit` directly after a page has
+    /// been selected, so it must neither update the arena's complete-slice
+    /// commitment bitmap nor expose the mapping to page lifecycle policy.
+    fn commit_page_area(
+        self,
+        memory: crate::types::MemoryId,
+        offset: usize,
+        size: usize,
+    ) -> Result<(), ProcessSharedArenaError> {
+        self.ensure_ready()?;
+        if size == 0 {
+            return Err(ProcessSharedArenaError::InvalidPageArea);
+        }
+        let arena_memory = memory
+            .arena_memory()
+            .ok_or(ProcessSharedArenaError::InvalidPageArea)?;
+        let managed = self.storage.managed();
+        if arena_memory.arena != managed.arena_id().as_ptr() {
+            return Err(ProcessSharedArenaError::InvalidPageArea);
+        }
+        let arena = self.arena()?;
+        let slice_index = arena_memory.slice_index as usize;
+        let slice_count = arena_memory.slice_count as usize;
+        let span_size = slice_count
+            .checked_mul(crate::config::ARENA_SLICE_SIZE)
+            .ok_or(ProcessSharedArenaError::InvalidPageArea)?;
+        let span_end = offset
+            .checked_add(size)
+            .ok_or(ProcessSharedArenaError::InvalidPageArea)?;
+        if slice_count == 0 || span_end > span_size {
+            return Err(ProcessSharedArenaError::InvalidPageArea);
+        }
+        let slice_end = slice_index
+            .checked_add(slice_count)
+            .ok_or(ProcessSharedArenaError::InvalidPageArea)?;
+        if slice_index >= arena.arena().slice_count || slice_end > arena.arena().slice_count {
+            return Err(ProcessSharedArenaError::InvalidPageArea);
+        }
+        let span_start = arena
+            .slice_start(slice_index)
+            .ok_or(ProcessSharedArenaError::InvalidPageArea)?;
+        // SAFETY: READY retains this exact Mapping in a final stable slot.
+        let mapping = unsafe { self.storage.mapping_for_commit() };
+        let mapping_base = mapping.base().map_err(ProcessSharedArenaError::Mapping)?;
+        let mapping_length = mapping.length().map_err(ProcessSharedArenaError::Mapping)?;
+        let mapping_offset = span_start
+            .addr()
+            .checked_sub(mapping_base.addr())
+            .and_then(|start| start.checked_add(offset))
+            .ok_or(ProcessSharedArenaError::InvalidPageArea)?;
+        let mapping_end = mapping_offset
+            .checked_add(size)
+            .ok_or(ProcessSharedArenaError::InvalidPageArea)?;
+        if mapping_end > mapping_length {
+            return Err(ProcessSharedArenaError::InvalidPageArea);
+        }
+        mapping
+            .commit(mapping_offset, size)
+            .map_err(ProcessSharedArenaError::Mapping)?;
+        Ok(())
+    }
+
     #[cfg(test)]
     #[inline]
     fn registry_count(self) -> Result<usize, ProcessSharedArenaError> {
@@ -630,6 +701,21 @@ impl ProcessPageArenaLease {
             .subprocess()
             .map_err(ProcessPageArenaLeaseError::PageMap)
     }
+
+    /// Commits one selected on-demand page prefix or extension without
+    /// yielding mapping ownership or altering the arena's complete-slice
+    /// commitment accounting.
+    #[inline]
+    pub(crate) fn commit_page_area(
+        self,
+        memory: crate::types::MemoryId,
+        offset: usize,
+        size: usize,
+    ) -> Result<(), ProcessPageArenaLeaseError> {
+        self.arena
+            .commit_page_area(memory, offset, size)
+            .map_err(ProcessPageArenaLeaseError::Arena)
+    }
 }
 
 /// A pre-mutation mismatch while forming one process page/arena owner.
@@ -694,6 +780,9 @@ pub(crate) enum ProcessSharedArenaError {
     Mapping(Errno),
     MappingPageSizeMismatch,
     InvalidOneArena,
+    /// A page lifecycle capability named a non-arena, foreign, overflowing,
+    /// or out-of-span direct commitment range.
+    InvalidPageArea,
     PairMismatch,
     AlreadyInstalled,
     RegistryBinding,
@@ -760,7 +849,7 @@ static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStora
 mod tests {
     use super::*;
     use crate::arena::ArenaId;
-    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
+    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE};
     use crate::os::{fault, MapAccess, PageSize};
     use crate::process_page_map::ProcessPageMapStorage;
     use crabc_core::Errno;
@@ -884,6 +973,69 @@ mod tests {
             Some(true),
             "the default Linux decommit callback reports that reuse needs no recommit"
         );
+    }
+
+    #[test]
+    fn paired_page_lease_commits_one_page_area_without_marking_a_full_arena_slice() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let reserved = Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Reserved,
+        )
+        .expect("map one reserved source-sized arena backing");
+        let shared = match storage.install_one_owned_external_arena(page_map, reserved) {
+            Ok(shared) => shared,
+            Err(_) => panic!("the reserved backing publishes its stable callback owner"),
+        };
+        let pair = ProcessPageArenaLease::join(page_map, shared)
+            .expect("the map and retained arena form one page-area capability");
+        let arena = pair.arena().expect("the paired arena remains published");
+        let claim = arena
+            .try_claim_suitable_slices(ArenaId::none(), 1, false, 0)
+            .expect("the fixture reserves one source on-demand slice");
+        let memory = claim.memory_id();
+        let slice = claim.slice_index();
+        assert!(!memory.initially_committed());
+        assert_eq!(
+            unsafe { arena.slices_committed() }
+                .expect("the full-slice accounting bitmap is readable")
+                .is_clear_range(slice, 1),
+            Some(true),
+            "the reserved source page starts without a complete committed slice"
+        );
+
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        assert_eq!(
+            pair.commit_page_area(memory, 0, config.page_size().bytes()),
+            Err(ProcessPageArenaLeaseError::Arena(
+                ProcessSharedArenaError::Mapping(Errno::NOMEM)
+            )),
+            "the narrow page-area capability reaches the retained mapping directly"
+        );
+        fault.set(fault::Plan::disabled());
+        pair.commit_page_area(memory, 0, config.page_size().bytes())
+            .expect("the exact failed page area remains retryable through the stable mapping");
+        assert_eq!(
+            unsafe { arena.slices_committed() }
+                .expect("the source commitment bitmap remains readable")
+                .is_clear_range(slice, 1),
+            Some(true),
+            "a partial page-area commit never manufactures complete-slice accounting"
+        );
+        assert_eq!(
+            pair.commit_page_area(memory, ARENA_SLICE_SIZE, config.page_size().bytes()),
+            Err(ProcessPageArenaLeaseError::Arena(
+                ProcessSharedArenaError::InvalidPageArea
+            )),
+            "the capability rejects a range beyond the exact claimed page span"
+        );
+        assert!(claim.release(), "the isolated source claim returns to its free bitmap");
     }
 
     #[test]

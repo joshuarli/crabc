@@ -113,6 +113,31 @@ exhaustive statements of supported owner-exit shapes.
 
 | `src/init.c:236-282,305-360,377-421,448-481`, `src/theap.c:228-306,414-449`, `src/threadlocal.c:205-214`, and `src/heap.c:103-126`: later-thread `_mi_thread_init_with_heap(mi_heap_main())`, no-page `_mi_thread_done` order, shared Theap/TLD list operations, count-zero TLS roots, and the main Heap fast slot | `src/main_heap_thread.rs` over `src/main_theap.rs`, `src/tld.rs`, `src/types.rs`, `src/compiler_tls.rs`, and `src/meta.rs` | Source-specific 2018–2026 Microsoft Research/Daan Leijen MIT notice preserved; a borrow-tied `MainStaticHeapLease` grants short private-lock projections of the already-selected ticket-zero main Heap. Each later owner has a metadata TLD and Theap, publishes default then the fixed fast slot, and after user destructors resets roots, detaches shared-Heap then TLD membership, and releases metadata. `main_heap_page.rs` separately borrows one current owner through the same lease for a bounded map/arena page engine; this base row remains the direct no-page finish and its retained-owner rules. General concurrent routing, abandonment traversal, pthread/TLS hooks, and public allocator routing remain absent. |
 
+### Current mapped page-area correction
+
+The earlier table clauses saying that page-area commitment or the mapped-medium
+failed-commit reabandon branch is absent are historical and are superseded by
+this v3.5.0 mapping. `src/arena.c:870-1037` maps the source fresh
+`commit == false` prefix (`mi_arena_commit`, then `slice_pcommitted`) to
+`arena::ArenaSliceClaim::commit_initial_page_prefix`,
+`page::initial_page_slice_pcommitted`, and the test-only fresh seam in
+`single_thread::PageAllocatorEngine::allocate_fresh_page`. `src/page.c:574-644`
+maps `mi_page_extend_free`'s scalar extend calculation, direct `_mi_os_commit`,
+count update, and later free-list/capacity writes to
+`page::page_area_commit_plan`, `process_arena::ProcessPageArenaLease::commit_page_area`,
+`types::Page::set_slice_pcommitted_after_commit`, and
+`free_list::LocalFreeList::extend_count`. The sole mapped nonfull medium
+post-exit owner in `main_heap_page.rs` / `single_thread.rs` preserves source
+reclaim -> false collect -> queue-tail order; a direct-commit failure follows
+`_mi_page_abandon`'s second false collect -> queue detach -> mapped
+identity/bit/count/unown tail and returns a consuming, same-candidate retry
+owner. This is deliberately a real reserved-mapping **test-only** fixture, not
+production `page_commit_on_demand` option support, generic search, or fresh
+fallback. The paired process-arena lease exposes only the direct mapping
+operation; it does not select policy, update `slice_pcommitted`, or own the
+page lifecycle/reabandon decision. All source-specific 2018–2026 Microsoft
+Research/Daan Leijen MIT notices for the named Rust modules remain preserved.
+
 The completed mapping records the exact upstream path, relevant functions or
 types, target Rust module, source-specific notice, and every intentional
 deviation. It is a reviewable translation ledger, not an aspirational module

@@ -57,8 +57,10 @@ the final sidecar slot so a stable arena callback commits metadata and later
 selected/page-metadata ranges through that exact owner; default Linux decommit
 reports no recommit requirement. A metadata-commit failure returns the exact
 mapping with an empty registry and a cold retry state. This is only a lower
-external-map boundary, not page-on-demand policy, `slice_pcommitted`, or the
-failed-commit page-reabandon branch. `ProcessPageArenaLease` then proves
+external-map boundary, not page-on-demand policy. `ProcessPageArenaLease` has
+one range-checked direct page-area commitment operation for an already-selected
+source extension, but it does not maintain `slice_pcommitted` or own the
+failed-commit page-reabandon branch. It then proves
 the exact map/root/configuration/main tuple for private
 `MainStaticProcessPageAllocator` and `MainHeapThreadProcessPageAllocator`
 owners. Each holds the process map's exclusive plain-entry lifecycle through
@@ -285,13 +287,18 @@ nonfull medium page: it proves the same subprocess/configuration/PageMap root,
 static main Heap, arena, span, and page identity; transfers short PageMap
 access into one long lifecycle; claims the bitmap/count member; collects and
 reassociates it; then restores source queue-tail order. It requires an
-immediate head or an exhausted nonfull fully committed medium page
-(`slice_pcommitted == 0` and `capacity < reserved`), in which case it performs
-the scalar source capacity extension after tail insertion. Page-area
-commit/failure-reabandon remains absent: a nonzero commit prefix, bitmap miss,
-scalar extension error, or post-transfer failure is retained terminally,
-without a fresh allocation fallback. Small/direct, full, and aggregate members
-remain client-free-only. The
+immediate head or an exhausted nonfull medium page (`capacity < reserved`). A
+fully committed page (`slice_pcommitted == 0`) performs the scalar source
+capacity extension after tail insertion. Its bounded test-only
+`commit == false` seam constructs one actual reserved medium prefix, commits
+the direct page area before free-list/capacity mutation, and records its
+OS-page prefix count only on success. An injected direct-commit failure follows
+the source false-collect -> queue-detach -> mapped identity/bit/count/unown
+tail, preserving the PageMap and ordinary arena membership for a consuming
+same-candidate retry. This is not a production page-on-demand option or a
+fresh allocation fallback. A bitmap miss, malformed state, scalar extension
+error, or other post-transfer failure is retained terminally. Small/direct,
+full, and aggregate members remain client-free-only. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
 only after the source mostly-used boundary. The full direct-small route also

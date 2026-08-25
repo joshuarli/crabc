@@ -301,9 +301,11 @@ result may refine it only when it can prove retained ownership.
   path reports no recommit requirement. An injected metadata-commit failure
   returns that exact mapping with an empty registry and COLD sidecar, while the
   selected map/subprocess pair remains available for a matching retry. This is
-  not source page-on-demand allocation policy: it does not select on-demand
-  commitment, maintain `slice_pcommitted`, or perform failed-commit
-  `_mi_page_abandon` reabandonment. The typed pair may now be consumed by
+  not source page-on-demand allocation policy: its typed pair can make one
+  range-checked direct page-area commit for an already-selected extension, but
+  does not select on-demand commitment, maintain `slice_pcommitted`, or perform
+  failed-commit `_mi_page_abandon` reabandonment. The typed pair may now be
+  consumed by
   separately recorded ticket-zero or one sequential later-thread page owners:
   each installs this arena's embedded `pages_main`, registers/releases ordinary
   pages, and retains a joined scoped producer. That does not create general
@@ -320,6 +322,10 @@ result may refine it only when it can prove retained ownership.
   proves an injected metadata commit failure returns the exact live backing,
   leaves the registry empty/cold, and permits only a matching retry; its foreign
   retry cannot consume the selected pair.
+  `paired_page_lease_commits_one_page_area_without_marking_a_full_arena_slice`
+  proves the paired capability reaches the retained mapping directly, propagates
+  a direct-commit failure, remains retryable, and never manufactures a
+  complete-slice commitment bit.
   `foreign_map_or_subprocess_rejects_before_mapping_or_registry_mutation`
   proves a ready owner cannot accept a foreign process map.
   `main_static_page::tests::main_static_page_allocator_binds_the_in_place_main_arena_bitmap_before_page_map_publication`
@@ -478,15 +484,21 @@ result may refine it only when it can prove retained ownership.
 collects abandoned state, reassociates the page with the fresh Theap/thread,
 collects live state, re-proves the complete span, and appends the detached
 page at the target queue tail. This source-shaped branch also handles an
-exhausted nonfull fully committed medium page (`slice_pcommitted == 0` and
-`capacity < reserved`) by applying the scalar `mi_page_extend_free` list and
-capacity transition after tail insertion. The intentional remaining difference
-is page-area commitment: a nonzero commit prefix is retained terminally and
-the source's failed-commit `_mi_page_abandon` reabandon path is not yet
-implemented. A bitmap miss, scalar extension error, or any post-transfer
-failure likewise retains the target; it never falls back to fresh allocation.
-Small/direct, full, singleton, unmapped, huge, foreign, automatic-scanning,
-concurrent, and aggregate-registry adoption remain absent.
+exhausted nonfull medium page (`capacity < reserved`). A fully committed page
+(`slice_pcommitted == 0`) applies scalar `mi_page_extend_free` list/capacity
+mutation after tail insertion. Its bounded test-only `commit == false` seam
+constructs one actual reserved medium page with the source initial callback-
+committed prefix. The nonzero-prefix branch derives the source direct
+`_mi_os_commit` byte range, commits it through the paired retained mapping,
+then publishes the monotonic OS-page count before free-list/capacity mutation.
+An injected commit failure repeats false collection, queue detachment,
+direct-cache/page-count repair, and mapped identity/bit/count/unown
+publication; the returned consuming owner retries only the same candidate with
+its retained long lifecycle. This is not a production option, scan, or fresh
+fallback. A bitmap miss, malformed state, scalar extension error, or any other
+post-transfer failure remains terminally retained. Small/direct, full,
+singleton, unmapped, huge, foreign, automatic-scanning, concurrent, and
+aggregate-registry adoption remain absent.
 
   `abandon_mapped_regular_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
@@ -593,6 +605,13 @@ concurrent, and aggregate-registry adoption remain absent.
   and static-main bitmap/count pairing through short-to-long lifecycle
   transfer, abandoned/live collection, reassociation, queue-tail reentry, and
   final normal target release.
+  `later_thread_exit_mapped_medium_on_demand_commits_before_reuse` proves a
+  real reserved medium prefix uses the source direct page-area commitment
+  before it extends/reuses the exact queue-tail candidate; and
+  `later_thread_exit_mapped_medium_on_demand_reabandons_after_commit_failure_then_retries`
+  proves an injected commit failure preserves PageMap/ordinary arena membership,
+  restores the static-main mapped bitmap/count and target Theap association,
+  then permits only a same-candidate retry.
   `later_thread_exit_mapped_regular_route_rejects_direct_small_allocation_adoption`
   proves a small/direct route is rejected before the map/session transfer and
   remains available for its normal client-free tail.

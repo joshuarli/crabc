@@ -15,9 +15,9 @@
 // empty-page, direct-page table, all 75 default queues, detached TLD, and
 // empty-theap initializers), `src/theap.c:228-306,357-369,414-449` (dynamic
 // Theap initialization, canonical cached reference pair, and list detach),
-// `src/arena.c:674-723,1023-1114,1240-1282` (per-heap arena-pages
+// `src/arena.c:674-723,870-1037,1240-1282` (per-heap arena-pages
 // acquisition/publication and fresh/release page metadata
-// publication), `src/page.c:214-243,708-757` (false-force owner-local
+// publication), `src/page.c:214-243,574-644,708-757` (false-force owner-local
 // collection and fresh-page local-state invariants),
 // and `src/arena.c:199-219` (arena memory-ID construction and projection).
 // The intrusive membership operations from `src/page-queue.c:40-55,126-423`
@@ -2195,6 +2195,22 @@ impl Page {
     #[inline]
     pub(crate) const fn slice_pcommitted(&self) -> u16 {
         self.slice_pcommitted
+    }
+
+    /// Records the successfully committed on-demand prefix of this page.
+    ///
+    /// The caller must own this live associated page exclusively, have just
+    /// completed the direct OS commit for every byte between the old and new
+    /// prefix, and preserve the source page-area geometry. Zero remains the
+    /// distinct fully-committed sentinel, so this rejects transitions from or
+    /// back to zero and any decreasing count.
+    #[inline]
+    pub(crate) fn set_slice_pcommitted_after_commit(&mut self, next: u16) -> bool {
+        if self.slice_pcommitted == 0 || next == 0 || next < self.slice_pcommitted {
+            return false;
+        }
+        self.slice_pcommitted = next;
+        true
     }
 
     /// Sets the local page capacity record before the page is published into

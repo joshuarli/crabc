@@ -70,10 +70,13 @@ ranges through that same `Mapping`; its frozen Linux decommit reports that
 reuse needs no recommit. An injected metadata-commit failure recovers the
 exact unpublished mapping, leaves the registry empty and the sidecar cold, and
 keeps the selected map/subprocess pair available for a matching retry. This is
-only the lower external-map boundary: it does not select page-on-demand commit,
-maintain `slice_pcommitted`, or implement the source failed-commit
-`_mi_page_abandon` branch. `ProcessPageArenaLease` now proves that exact tuple
-for `main_static_page.rs`'s one bounded page-bearing owner.
+still only the lower external-map boundary: it does not select page-on-demand
+policy or maintain `slice_pcommitted`. Its paired lease now has one narrow,
+range-checked direct page-area commit operation for the already-selected
+`mi_page_extend_free` transition; the page lifecycle, not the sidecar, owns
+the resulting count publication and failed-commit `_mi_page_abandon` tail.
+`ProcessPageArenaLease` proves that exact tuple for `main_static_page.rs`'s one
+bounded page-bearing owner.
 `MainStaticProcessPageAllocator` borrows only the live ticket-zero attachment,
 holds a nonrecursive process-map lifecycle lease through its complete engine
 and joined scoped producer, installs the selected arena's embedded `pages_main`
@@ -182,14 +185,21 @@ arena) and re-proves the source span and page identity. It transfers the short
 `ProcessPageMapPostExitAccess` into one long mutation lease, claims the exact
 bitmap/count member, collects abandoned state, reassociates the page with the
 fresh Theap/thread, collects live state, and restores source queue-tail order.
-The completed branch accepts either an immediate head or an exhausted but
-nonfull fully committed medium page (`slice_pcommitted == 0` and
-`capacity < reserved`): after tail insertion it performs the source scalar
-`mi_page_extend_free` list/capacity transition before normal allocation
-resumes. Page-area on-demand commitment and its failed-commit
-`_mi_page_abandon` reabandon path remain absent; a nonzero commit prefix,
-bitmap miss, scalar extension error, or any other post-transfer failure
-retains the target terminally and never takes a fresh-page fallback.
+The completed branch accepts either an immediate head or an exhausted nonfull
+medium page (`capacity < reserved`). A fully committed page
+(`slice_pcommitted == 0`) performs the scalar source
+`mi_page_extend_free` list/capacity transition after tail insertion. The
+bounded test-only `commit == false` seam instead constructs one actual
+reserved medium page with the source initial callback-committed prefix. Its
+nonzero-prefix path derives the source OS-page count and byte-range plan, then
+uses the paired retained mapping for direct `_mi_os_commit`-shape commitment
+before it writes `slice_pcommitted` or its free list. An injected direct-commit
+failure repeats false collection, queue detach, direct-cache/page-count repair,
+and mapped identity/bit/count/unown publication; the retained owner can retry
+only that same candidate through its existing long lifecycle. This does not
+add a production page-on-demand option, a generic fresh fallback, or a bitmap
+scan. A bitmap miss, malformed state, scalar extension error, or any other
+post-transfer error remains terminally retained.
 Small/direct, full, singleton, unmapped, huge, foreign, aggregate-registry,
 automatic-scanning, and concurrent adoption remain deliberately absent.
 
@@ -267,12 +277,12 @@ and aggregate regular-pages registry, terminal reuse, automatic and multiple
 dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
 hooks, fork repair, public libc backend integration, performance qualification,
 and default promotion remain unfinished. The next safe lifecycle frontier is
-another source-shaped owner-exit page class, the exact route's page-area
-commit/failure-reabandon branch, or a separately proven aggregate-registry
-policy—not a superficial broad abandonment loop or generic allocation-time
-scan. The stable process-owned mapping callback required by a future
-page-area-commit route is now present, but its source allocation policy and
-failure-reabandon transition remain intentionally separate work.
+another source-shaped owner-exit page class or a separately proven
+aggregate-registry policy—not a superficial broad abandonment loop or generic
+allocation-time scan. The bounded mapped-medium page-area
+commit/failure-reabandon path is complete only for its real test fixture and
+same-candidate retry; it does not establish source option policy or general
+on-demand allocation.
 
 A fresh pinned-source audit makes that prerequisite concrete: after its absent
 deferred-callback edge, `mi_theap_collect_ex(MI_ABANDON)` first calls
@@ -290,9 +300,11 @@ small-or-medium route, and aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
 span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
 pairing through actual teardown and sequential later frees. The sole
-mapped-medium route also has the separately
-completed explicit inverse bridge into one fresh later-main mutation lease; it
-is not a generic allocation policy. The aggregate registry intentionally stops
+mapped-medium route also has the separately completed explicit inverse bridge
+into one fresh later-main mutation lease. Its bounded reserved-prefix fixture
+now covers source direct page-area commitment and failed-commit reabandonment
+before a same-candidate retry; it is not a generic allocation policy. The
+aggregate registry intentionally stops
 at nonfull regular small, medium, and large pages and has no adoption
 capability. Do not extend either boundary to another page shape without its
 source-specific publication, terminal-release, allocation-time claim/reclaim,
@@ -322,8 +334,10 @@ post-exit regular route's medium, threshold-adjacent non-direct small, upper dir
 non-direct small boundaries, direct-image preflight refusal, full-small
 pre-detach refusal, one-page-refusal, and cross-thread movement regressions;
 the sole mapped-medium route's immediate and exhausted-fully-committed
-fresh-owner adoption, scalar capacity-extension, and direct-small pre-transfer
-refusal regressions; and the aggregate regular-pages registry's mixed small/medium/large
+fresh-owner adoption, scalar capacity-extension, real reserved-prefix direct
+page-area commitment, failed-commit mapped reabandonment/same-candidate retry,
+and direct-small pre-transfer refusal regressions; and the aggregate
+regular-pages registry's mixed small/medium/large
 release, retired-large prepass, malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
 selection, large-span terminal release,
@@ -345,9 +359,8 @@ implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
 all-free scan/seven sole-page handoffs/aggregate regular-pages registry, or either
 bounded process page owner. The next frontier is another page-bearing
-owner-exit class, the exact medium handoff's source page-area
-commit/failure-reabandon branch, or a separately proven aggregate-registry
-policy, then complete process and real
+owner-exit class or a separately proven aggregate-registry policy, then complete
+process and real
 pthread/TLS lifecycle integration—not a generic allocation-time scan routed
 through a bounded singleton, mapped-one-block handoff, no-page finish, or these
 sequential ticket-zero/later page-owner slices.

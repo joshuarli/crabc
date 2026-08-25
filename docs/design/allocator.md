@@ -67,9 +67,11 @@ still has no automatic reserve policy, C `mi_page_map_empty` pre-root, general
 concurrent page consumer, owner-exit traversal, or process shutdown. A rejected
 unpublished mapping returns to its caller; a failed map reservation or dropped
 unfinished lifecycle is terminal rather than exposing a null or fresh root.
-This callback is not a fresh-page policy: page-on-demand selection,
-`slice_pcommitted` advancement, page-area commitment, and failed-commit
-`_mi_page_abandon` reabandonment remain separate source transitions.
+This callback is not a fresh-page policy. The paired lease has only one
+range-checked direct page-area commitment operation for an already-selected
+`mi_page_extend_free` transition; page-on-demand selection,
+`slice_pcommitted` advancement, and failed-commit `_mi_page_abandon`
+reabandonment remain separate page-lifecycle transitions.
 
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
 present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal
@@ -417,14 +419,22 @@ reassociates the page with the new Theap/thread identity, collects live state,
 re-proves the complete PageMap span and medium geometry, and appends the
 queue-detached page with `page_queue_push_at_end_metadata` at the target queue
 tail before restoring its page count/direct-cache image. It accepts either an
-immediate head or an exhausted nonfull fully committed medium page
-(`slice_pcommitted == 0` and `capacity < reserved`): only after that tail
-restoration does it perform the scalar `mi_page_extend_free` free-list and
-capacity transition. The handoff deliberately has no page-area commit
-capability, so a nonzero commit prefix and the source failed-commit
-`_mi_page_abandon` reabandon path remain terminally retained rather than
-guessed. A bitmap miss, scalar extension error, or any post-transfer failure
-likewise retains the target owner: there is no fresh-page fallback. Small/direct,
+immediate head or an exhausted nonfull medium page (`capacity < reserved`). A
+fully committed page (`slice_pcommitted == 0`) performs scalar
+`mi_page_extend_free` free-list/capacity mutation after that tail restoration.
+The bounded test-only `commit == false` seam creates one actual reserved medium
+page with the source initial callback-committed prefix. For that nonzero-prefix
+case, `page_area_commit_plan` separates OS-page counts from byte ranges, then
+the paired retained mapping performs the direct `_mi_os_commit`-shape extension
+before `Page::set_slice_pcommitted_after_commit` or
+`LocalFreeList::extend_count` may publish state. If that commit fails,
+`reabandon_after_page_commit_failure` follows source false collection, queue
+detach, direct-cache/page-count repair, and mapped identity/bit/count/unown
+publication. The resulting consuming owner can retry only the same candidate
+through its long lifecycle; it cannot reopen short map access, scan, or take a
+fresh fallback. This proves no production page-on-demand option. A bitmap miss,
+malformed state, scalar extension error, or any other post-transfer failure
+likewise retains the target owner. Small/direct,
 full, aggregate-registry, singleton, unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
 

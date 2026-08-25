@@ -5,9 +5,9 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-360,377-421,448-481`,
-// `src/theap.c:89-152`, `src/page.c:214-302,414-518`,
+// `src/theap.c:89-152`, `src/page.c:214-302,414-518,574-644`,
 // `src/page-queue.c:204-330`,
-// `src/arena.c:631-778,781-821,951-1153,1183-1204,1240-1282`, and
+// `src/arena.c:631-778,781-821,870-1037,951-1153,1183-1204,1240-1282`, and
 // `src/page-map.c:228-365`, and `src/free.c:372-514`.
 
 //! Page-bearing later-thread attachment to the source static main Heap.
@@ -40,8 +40,11 @@
 //! route. Each route free serializes its plain PageMap operation briefly. One
 //! explicit consuming edge additionally reclaims only the sole mapped nonfull
 //! medium route into a fresh later-main engine: it claims that exact bitmap
-//! member and requeues it at the source tail. It has no automatic allocation
-//! scan or fresh-page fallback. Small/direct, full, aggregate, concurrent,
+//! member and requeues it at the source tail. Its test-only real reserved
+//! on-demand medium prefix commits its next page area directly before extension;
+//! a direct-commit failure reabandones that same candidate for its one consuming
+//! retry. It has no automatic allocation scan or fresh-page fallback.
+//! Small/direct, full, aggregate, concurrent,
 //! singleton, unmapped, and huge adoption remain absent, as do source deferred
 //! callbacks and arena collection.
 
@@ -201,6 +204,25 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment
     parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
 }
 
+/// A target later-main owner whose direct on-demand page-area commit failed
+/// only after it restored the exact source page to mapped abandonment.
+///
+/// This preserves the fresh target attachment plus its long PageMap lease;
+/// it must not convert those capabilities back into a short post-exit route
+/// while the registered page remains live. Its one consuming retry starts
+/// from the source-restored bitmap/count pair and may reclaim only the same
+/// retained `parts.page` candidate.
+#[must_use = "a reabandoned mapped-medium owner must retry its exact candidate or remain terminally retained"]
+pub(crate) struct MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<
+    'attachment,
+    'main,
+> {
+    engine: PageAllocatorEngine<'static, 'static, MainHeapThreadPageSession<'attachment, 'main>>,
+    page_map_lifecycle: ProcessPageMapMutationLease,
+    parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
+    pair: ProcessPageArenaLease,
+}
+
 /// One sole full medium page that begins post-exit life as source-unmapped
 /// abandonment and can later reabandon into the static-main bitmap.
 ///
@@ -345,6 +367,10 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// owner is retained; this slice never turns that miss into fresh page
     /// allocation.
     Pending,
+    /// Direct page-area commitment failed after queue-tail restoration, and
+    /// source `_mi_page_abandon` restored the exact mapped-abandoned
+    /// bitmap/count pair for the bounded same-candidate retry.
+    PageCommit(ProcessPageArenaLeaseError),
     Route(ThreadExitMappedRegularPostExitAdoptError),
 }
 
@@ -367,6 +393,16 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptFailure<'attachme
     /// must not fall through into a fresh allocation.
     Retained {
         adoption: MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment, 'main>,
+        error: MainHeapThreadProcessPageExitMappedRegularAdoptError,
+    },
+    /// The direct commit itself failed, but the target completed the source
+    /// false-collect -> queue detach -> mapped abandonment tail. This owner
+    /// may consume itself only through its same-candidate [`retry`](
+    /// MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption::retry)
+    /// method; it is not a recovered short route or a fresh-page fallback.
+    Reabandoned {
+        adoption:
+            MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<'attachment, 'main>,
         error: MainHeapThreadProcessPageExitMappedRegularAdoptError,
     },
 }
@@ -1089,6 +1125,12 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     #[inline]
     fn test_queue_count(&self, bin: usize) -> Option<usize> {
         self.engine.queue_count(bin)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_enable_page_commit_on_demand(&mut self) {
+        self.engine.test_enable_page_commit_on_demand();
     }
 
     #[cfg(test)]
@@ -2553,13 +2595,24 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
                 page_map,
             )
         };
-        match unsafe { parts.adopt_into_later_main(&mut engine) } {
+        match unsafe { parts.adopt_into_later_main(&mut engine, pair) } {
             Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reclaimed) => {
                 Ok(MainHeapThreadProcessPageAllocator {
                     engine,
                     page_map_lifecycle,
                 })
             }
+            Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reabandoned(error)) => Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                    adoption: MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption {
+                        engine,
+                        page_map_lifecycle,
+                        parts,
+                        pair,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::PageCommit(error),
+                },
+            ),
             Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Pending) => Err(
                 MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
                     adoption: MainHeapThreadProcessPageExitMappedRegularAdoption {
@@ -2673,6 +2726,74 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     #[inline]
     pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
         self.parts.test_abandoned_count()
+    }
+}
+
+impl<'attachment, 'main>
+    MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<'attachment, 'main>
+{
+    /// Retries only the exact mapped-medium page whose failed direct commit
+    /// re-published its original static-main bitmap/count pair.
+    ///
+    /// This is the bounded source retry shape after `mi_page_fresh_alloc`
+    /// returns null from its failed `mi_page_extend_free` branch. It does not
+    /// reopen short PageMap access, attach a new target, scan a bitmap, or
+    /// allocate a fresh replacement page.
+    pub(crate) fn retry(
+        self,
+    ) -> Result<
+        MainHeapThreadProcessPageAllocator<'attachment, 'main>,
+        MainHeapThreadProcessPageExitMappedRegularAdoptFailure<'attachment, 'main>,
+    > {
+        let Self {
+            mut engine,
+            page_map_lifecycle,
+            parts,
+            pair,
+        } = self;
+        // SAFETY: this owner retains the exact long PageMap mutation lease,
+        // fresh target session, route facts, and paired arena capability that
+        // completed the preceding reabandonment. No short-access or fresh
+        // page path can interleave with this same-candidate retry.
+        match unsafe { parts.adopt_into_later_main(&mut engine, pair) } {
+            Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reclaimed) => {
+                Ok(MainHeapThreadProcessPageAllocator {
+                    engine,
+                    page_map_lifecycle,
+                })
+            }
+            Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reabandoned(error)) => Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                    adoption: Self {
+                        engine,
+                        page_map_lifecycle,
+                        parts,
+                        pair,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::PageCommit(error),
+                },
+            ),
+            Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Pending) => Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                    adoption: MainHeapThreadProcessPageExitMappedRegularAdoption {
+                        engine,
+                        page_map_lifecycle,
+                        parts,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Pending,
+                },
+            ),
+            Err(error) => Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                    adoption: MainHeapThreadProcessPageExitMappedRegularAdoption {
+                        engine,
+                        page_map_lifecycle,
+                        parts,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Route(error),
+                },
+            ),
+        }
     }
 }
 
@@ -2801,11 +2922,12 @@ mod tests {
     };
     use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::meta::MetaAllocator;
-    use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize};
+    use crate::os::{fault, MapAccess, Mapping, MemoryConfig, PageSize};
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
-    use crate::types::{BIN_BLOCK_SIZES, EMPTY_PAGE};
+    use crate::types::{BIN_BLOCK_SIZES, EMPTY_PAGE, THREAD_ID_ABANDONED_MAPPED};
+    use crabc_core::Errno;
     use std::thread;
 
     fn memory_config() -> MemoryConfig {
@@ -2836,6 +2958,29 @@ mod tests {
         {
             Ok(arena) => arena,
             Err(_) => panic!("the selected mapping becomes the one process arena"),
+        };
+        (page_map, arena)
+    }
+
+    fn paired_reserved_process_owner(
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> (ProcessPageMapLease, ProcessSharedArenaLease) {
+        let page_map = ProcessPageMapStorage::test_static_owner()
+            .initialize(config, subprocess)
+            .expect("the isolated process map initializes");
+        let mapping = Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Reserved,
+        )
+        .expect("the test owns one complete reserved source arena mapping");
+        let arena = match ProcessSharedArenaStorage::test_static_owner()
+            .install_one_owned_external_arena(page_map, mapping)
+        {
+            Ok(arena) => arena,
+            Err(_) => panic!("the selected reserved mapping becomes the one process arena"),
         };
         (page_map, arena)
     }
@@ -4215,7 +4360,7 @@ mod tests {
                             page_ref.capacity(),
                             page_ref.reserved(),
                             page_ref.block_size(),
-                            usize::from(page_ref.slice_pcommitted()),
+                            page_ref.slice_pcommitted(),
                         )
                         .expect("the exhausted source medium page has one valid extension count");
                         assert!(extend > 0, "the bounded branch has capacity left to extend");
@@ -4312,6 +4457,12 @@ mod tests {
                             ..
                         }) => panic!(
                             "the exact mapped medium route transfers into the fresh later-main page owner: {error:?}"
+                        ),
+                        Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                            error,
+                            ..
+                        }) => panic!(
+                            "the committed source fixture cannot enter the on-demand reabandon branch: {error:?}"
                         ),
                     };
 
@@ -4421,6 +4572,372 @@ mod tests {
     #[test]
     fn later_thread_exit_mapped_medium_route_extends_before_returning_a_fresh_later_owner() {
         assert_later_thread_exit_mapped_medium_route_adoption(true);
+    }
+
+    fn assert_later_thread_exit_mapped_medium_on_demand_adoption(
+        fail_first_page_area_commit: bool,
+    ) {
+        thread::spawn(move || {
+            let fault = fault::install(fault::Plan::disabled());
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_reserved_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the reserved process map and arena form one source image");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the reserved paired arena remains published through the route");
+                    let mut source = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("on-demand source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("on-demand source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut source_allocator = MainHeapThreadProcessPageAllocator::begin(&mut source, pair)
+                        .expect("the reserved source attachment admits one medium page");
+                    source_allocator.test_enable_page_commit_on_demand();
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let first = source_allocator
+                        .allocate(request, false)
+                        .expect("the source commits exactly its first medium-page prefix");
+                    let page = NonNull::new(unsafe { source_allocator.test_page_for_block(first) })
+                        .expect("the first on-demand client block is PageMap-published");
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(crate::types::PageKind::Medium),
+                        "the source fixture selects the bounded medium page class"
+                    );
+                    assert!(
+                        page_ref.slice_pcommitted() != 0,
+                        "the test-only fresh seam records an actual source on-demand prefix"
+                    );
+                    assert!(
+                        page_ref.free_list_head().is_null(),
+                        "one source block exhausts the initial committed medium prefix"
+                    );
+                    assert!(
+                        page_ref.used() > 0 && page_ref.used() < usize::from(page_ref.reserved()),
+                        "the on-demand page stays nonfull before its owner exits"
+                    );
+                    let source_capacity = page_ref.capacity();
+                    let source_pcommitted = page_ref.slice_pcommitted();
+                    let source_used = page_ref.used();
+                    let source_free = page_ref.free_list_head();
+                    let bin = crate::size_class::bin(page_ref.block_size())
+                        .expect("the medium source page has one regular bin");
+                    let memory = page_ref.memid();
+                    let slice = memory
+                        .arena_memory()
+                        .expect("the source page belongs to the paired reserved arena")
+                        .slice_index as usize;
+                    let slice_start = arena
+                        .slice_start(slice)
+                        .expect("the source slice still has its registered leading address");
+                    let page_start = page
+                        .as_ptr()
+                        .addr()
+                        .checked_add(page_ref.page_offset())
+                        .expect("the fresh source page offset is representable");
+                    let page_slice_offset = page_start
+                        .checked_sub(slice_start.addr())
+                        .expect("the fresh source block area begins inside its leading slice");
+                    let extension_plan = crate::page::page_area_commit_plan(
+                        source_capacity,
+                        page_ref.reserved(),
+                        page_ref.block_size(),
+                        source_pcommitted,
+                        config.page_size().bytes(),
+                        page_slice_offset,
+                        crate::page::regular_page_slice_count(crate::types::PageKind::Medium)
+                            .expect("the medium source span is fixed")
+                            * crate::config::ARENA_SLICE_SIZE,
+                    )
+                    .expect("the exhausted source prefix has one valid direct page-area extension");
+                    assert!(extension_plan.extend > 0);
+                    assert!(extension_plan.commit_size > 0);
+
+                    let drain = source_allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("on-demand source owner reaches its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe {
+                        drain.abandon_mapped_small_or_medium_to_process_route(first)
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "the sole on-demand nonfull medium page enters its mapped post-exit route"
+                        ),
+                    };
+                    assert_eq!(
+                        source.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the source Theap/TLD is gone before the fresh owner reclaims its prefix"
+                    );
+                    assert_eq!(route.test_abandoned_count(), Some(1));
+
+                    let mut target = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("on-demand target attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("on-demand target attachment retained: {error:?}")
+                        }
+                    };
+                    let target_theap = target
+                        .test_theap_pointer()
+                        .expect("the fresh target Theap remains live for source reassociation");
+                    let mut target_allocator = if fail_first_page_area_commit {
+                        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+                        let reabandoned = match route.adopt_into_later_main(&mut target, pair) {
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    adoption,
+                                    error:
+                                        MainHeapThreadProcessPageExitMappedRegularAdoptError::PageCommit(
+                                            ProcessPageArenaLeaseError::Arena(
+                                                crate::process_arena::ProcessSharedArenaError::Mapping(
+                                                    Errno::NOMEM,
+                                                ),
+                                            ),
+                                        ),
+                                },
+                            ) => adoption,
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                    route,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(route);
+                                panic!("the source route must transfer before direct commit: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("a direct commit failure must reabandon rather than retain: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("the injected direct commit failure has the exact mapping error: {error:?}");
+                            }
+                            Ok(allocator) => {
+                                core::mem::forget(allocator);
+                                panic!("the injected direct commit failure cannot return a normal target");
+                            }
+                        };
+                        assert_eq!(
+                            unsafe { page.as_ref().slice_pcommitted() },
+                            source_pcommitted,
+                            "a failed direct mapping commit leaves the source page prefix count unchanged"
+                        );
+                        assert_eq!(
+                            unsafe { page.as_ref().capacity() },
+                            source_capacity,
+                            "a failed direct mapping commit precedes every free-list capacity write"
+                        );
+                        assert_eq!(unsafe { page.as_ref().used() }, source_used);
+                        assert_eq!(unsafe { page.as_ref().free_list_head() }, source_free);
+                        assert_eq!(
+                            reabandoned.engine.queue_count(bin),
+                            Some(0),
+                            "source reabandon removes the page from the failed target queue"
+                        );
+                        assert_eq!(
+                            unsafe { page.as_ref().abandoned_test_thread_id() },
+                            THREAD_ID_ABANDONED_MAPPED,
+                            "source reabandon restores the mapped-abandoned identity"
+                        );
+                        assert_eq!(
+                            unsafe { page.as_ref().theap() },
+                            target_theap,
+                            "source reabandon retains the target Theap pointer for same-owner reclaim"
+                        );
+                        assert_eq!(
+                            unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                            page.as_ptr(),
+                            "the failed direct commit keeps the exact PageMap registration"
+                        );
+                        assert_eq!(
+                            unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
+                            Some(false),
+                            "the failed direct commit keeps the ordinary arena-page bit"
+                        );
+                        {
+                            let mut heap = main_heap
+                                .lock_heap()
+                                .expect("the static main Heap remains projectable after reabandon");
+                            assert_eq!(
+                                heap.heap_mut().abandoned_count(bin),
+                                Some(1),
+                                "source reabandon restores the exact paired static-main count"
+                            );
+                            heap.unlock()
+                                .expect("the reabandon observation releases the static-main heap projection");
+                        }
+                        assert!(matches!(
+                            page_map.begin_page_lifecycle(),
+                            Err(ProcessPageMapError::LifecycleBusy)
+                        ));
+                        fault.set(fault::Plan::disabled());
+                        match reabandoned.retry() {
+                            Ok(allocator) => allocator,
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("the disabled mapping fault permits the same candidate retry: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("the same candidate retry cannot retain terminally: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                    route,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(route);
+                                panic!("a long same-candidate retry cannot reopen a short route: {error:?}");
+                            }
+                        }
+                    } else {
+                        match route.adopt_into_later_main(&mut target, pair) {
+                            Ok(allocator) => allocator,
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                    error,
+                                    ..
+                                },
+                            ) => panic!("the reserved medium source route transfers into the target: {error:?}"),
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                    error,
+                                    ..
+                                },
+                            ) => panic!("the reserved medium source route cannot retain: {error:?}"),
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    error,
+                                    ..
+                                },
+                            ) => panic!("the fault-free direct mapping commit cannot reabandon: {error:?}"),
+                        }
+                    };
+
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        page_ref.slice_pcommitted(),
+                        extension_plan.next_slice_pcommitted,
+                        "successful source direct commitment publishes its new OS-page count"
+                    );
+                    assert_eq!(
+                        page_ref.capacity(),
+                        source_capacity + extension_plan.extend,
+                        "direct commitment precedes exactly one source free-list extension"
+                    );
+                    assert!(!page_ref.free_list_head().is_null());
+                    assert_eq!(target_allocator.test_queue_count(bin), Some(1));
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(first) },
+                        page.as_ptr(),
+                        "the target retains the original PageMap identity after on-demand reclaim"
+                    );
+                    let reused = target_allocator
+                        .allocate(request, false)
+                        .expect("the target allocates the directly committed second source block");
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(reused) },
+                        page.as_ptr(),
+                        "the target reuses the exact source page instead of taking a fresh slice"
+                    );
+                    unsafe {
+                        target_allocator
+                            .free(first)
+                            .expect("the original prefix block remains normally freeable");
+                        target_allocator
+                            .free(reused)
+                            .expect("the directly committed extension block remains normally freeable");
+                    }
+                    match target_allocator.finish() {
+                        Ok(()) => {}
+                        Err(_) => panic!("the on-demand reclaimed target lifecycle finishes after both frees"),
+                    }
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
+                        "normal target cleanup unregisters the re-adopted page"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
+                        Some(true),
+                        "normal target cleanup clears the original ordinary arena bit"
+                    );
+                    assert_eq!(
+                        target.finish_after_user_destructors(),
+                        Ok(()),
+                        "the fresh target tears down after the re-adopted page is released"
+                    );
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "the finished re-adoption lifecycle reopens the process map"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("on-demand mapped-medium adoption remains local to its fixture thread");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("reserved mapped-medium adoption fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_medium_on_demand_commits_before_reuse() {
+        assert_later_thread_exit_mapped_medium_on_demand_adoption(false);
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_medium_on_demand_reabandons_after_commit_failure_then_retries() {
+        assert_later_thread_exit_mapped_medium_on_demand_adoption(true);
     }
 
     /// Independent source model of `mi_theap_queue_first_update`'s direct
@@ -4617,6 +5134,17 @@ mod tests {
                                 core::mem::forget(adoption);
                                 panic!(
                                     "a small mapped route rejects before any target state transition: {error:?}"
+                                );
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!(
+                                    "a small mapped route cannot enter the medium page-commit branch: {error:?}"
                                 );
                             }
                             Ok(allocator) => {

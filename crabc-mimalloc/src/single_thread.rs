@@ -20,12 +20,12 @@
 // 347-388` (natural/overallocated aligned allocation and aligned realloc),
 // `src/free.c:28-50,104-114,372-514,522-542` (local free, abandoned
 // `allow_collect` reclaim, interior-base recovery, and aligned usable size),
-// `src/page.c:150-269,276-302,374-388,460-522,708-1069` (remote/local and
+// `src/page.c:150-269,276-302,374-388,460-522,574-644,708-1069` (remote/local and
 // small partial-head collection, non-abandoning post-enqueue full-page collection,
 // full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
 // `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
-// queue mutations), `src/arena.c:631-778,950-1283` (heap-local arena-pages
+// queue mutations), `src/arena.c:631-778,870-1037,950-1283` (heap-local arena-pages
 // selection, fresh regular/singleton metadata, arena-page registration,
 // page-map publication, and release ordering), and
 // `include/mimalloc/internal.h:650-654,945-949`
@@ -68,6 +68,10 @@
 // retaining a raw former-Theap page list. One explicit consumer can reclaim
 // only the sole mapped nonfull medium route into a fresh later-main Theap;
 // it claims the exact page identity and appends it to the source queue tail.
+// A test-only one-shot fresh on-demand seam reaches that route's real reserved
+// page prefix; its direct extension commit either succeeds before free-list
+// mutation or performs the source mapped reabandon tail for a same-candidate
+// retry. It is not a production option or generic allocation-time policy.
 // Small/direct, full, aggregate, and all automatic allocation-time routes
 // remain absent.
 // A bounded false-force collector runs in
@@ -115,6 +119,7 @@ use crate::invariants;
 use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage};
 use crate::page;
 use crate::page_map::PageMap;
+use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
@@ -350,6 +355,13 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
     // otherwise unchanged page before the public allocation returns.
     #[cfg(test)]
     last_page_to_full: Option<NonNull<Page>>,
+    // The frozen production profile always commits regular arena pages in
+    // full. Tests alone may consume this once to select the source's
+    // `commit == false` fresh-page branch for one otherwise-unreachable
+    // mapped-page re-adoption transition; this is deliberately not a process
+    // option.
+    #[cfg(test)]
+    page_commit_on_demand: bool,
     // A successful explicit shutdown disarms Drop. Otherwise Drop must leave
     // a dynamic attachment terminally retained rather than discarding this
     // engine's poison/pending-release knowledge and allowing false teardown.
@@ -372,6 +384,8 @@ struct PageAllocatorEngineState<'arena, 'map> {
     page_free_collect_failure_once: bool,
     #[cfg(test)]
     last_page_to_full: Option<NonNull<Page>>,
+    #[cfg(test)]
+    page_commit_on_demand: bool,
     shutdown_complete: bool,
 }
 
@@ -817,6 +831,11 @@ pub(crate) enum ThreadExitMappedRegularPostExitAdoptOutcome {
     /// The exact source page was reassociated and appended to the target
     /// regular queue's tail.
     Reclaimed,
+    /// Direct page-area commitment failed after source queue-tail restoration,
+    /// but `_mi_page_abandon` restored this exact page to the paired
+    /// mapped-abandoned bitmap/count state. The caller retains its long
+    /// target owner and may retry only this same candidate.
+    Reabandoned(ProcessPageArenaLeaseError),
 }
 
 /// A post-exit mapped regular adoption boundary that could not produce a
@@ -834,11 +853,13 @@ pub(crate) enum ThreadExitMappedRegularPostExitAdoptError {
     Claimed(RetainedAdoptFailure),
     ReclaimedPageMismatch,
     ReclaimedPageState,
-    /// The source page has exhausted its immediate list but records an
-    /// on-demand-commit prefix. This bounded handoff has no page-area commit
-    /// capability or source reabandon transition, so the target remains
-    /// terminally retained after its source queue restoration.
-    NeedsPageCommit,
+    /// The restored page's on-demand prefix/count/geometry cannot form the
+    /// source `mi_page_extend_free` direct-commit plan. This is an internal
+    /// invariant failure after source reassociation, not a fresh-page miss.
+    InvalidPageCommitPlan,
+    /// A direct page-area commit succeeded but its monotonic page-local
+    /// `slice_pcommitted` record could not be published.
+    PageCommitState,
     /// A reclaimed nonfull page had neither an immediate block nor remaining
     /// capacity after its source false-force collection. Pinned source treats
     /// this as an assertion-only impossible state, never as fresh fallback.
@@ -847,6 +868,29 @@ pub(crate) enum ThreadExitMappedRegularPostExitAdoptError {
     /// source-tail-enqueued. This is not a commit failure and must remain a
     /// retained target rather than fabricating `_mi_page_abandon`.
     Extension(FreeListError),
+    /// The source-planned extension reported a no-op after a null free list;
+    /// no concurrent producer can cause that in this bounded target owner.
+    ExtensionDidNotExtend,
+    /// The source `_mi_page_abandon` false collector failed after a direct
+    /// page-area commit failure. Its target owner remains terminal because a
+    /// real collector error can have detached remote state.
+    ReabandonCollection,
+    /// A direct-commit failure observed an all-free page even though this
+    /// consuming route has a live-block proof. The source would release it;
+    /// this impossible bounded-state observation remains terminal instead of
+    /// inventing a second release owner.
+    ReabandonUnexpectedEmpty,
+    /// Queue/direct-cache/page-count detachment did not preserve its paired
+    /// target-owner invariant during source `_mi_page_abandon`.
+    ReabandonQueue,
+    /// The target no longer exposes the exact static-main bitmap/count pair
+    /// required to republish the failed direct-commit page.
+    ReabandonMissingMainArenaPages,
+    /// Mapped abandonment returned a source state other than the required
+    /// `UnownedMapped` publication.
+    ReabandonUnexpected(AbandonResult),
+    /// The identity/bitmap/count publication failed after queue detachment.
+    Reabandon(AbandonError),
     Queue,
 }
 
@@ -1280,6 +1324,8 @@ impl<'bootstrap, 'arena, 'map>
             page_free_collect_failure_once: false,
             #[cfg(test)]
             last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
             shutdown_complete: false,
         })
     }
@@ -1309,6 +1355,8 @@ impl<'bootstrap, 'arena, 'map>
             page_free_collect_failure_once: false,
             #[cfg(test)]
             last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
             shutdown_complete: false,
         })
     }
@@ -1339,6 +1387,8 @@ impl<'attach, 'heap, 'arena, 'map>
             page_free_collect_failure_once: false,
             #[cfg(test)]
             last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
             shutdown_complete: false,
         }
     }
@@ -1626,6 +1676,8 @@ impl<'main, 'arena, 'map> PageAllocatorEngine<'arena, 'map, MainStaticPageSessio
             page_free_collect_failure_once: false,
             #[cfg(test)]
             last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
             shutdown_complete: false,
         }
     }
@@ -1665,8 +1717,24 @@ impl<'attachment, 'main, 'arena, 'map>
             page_free_collect_failure_once: false,
             #[cfg(test)]
             last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
             shutdown_complete: false,
         }
+    }
+
+    /// Selects one source `commit == false` fresh-regular-page branch for a
+    /// focused test fixture. The production configuration has no mutable
+    /// page-on-demand option; this exists only to construct one real reserved
+    /// mapping state for the bounded mapped-medium adoption transition.
+    #[cfg(test)]
+    pub(crate) fn test_enable_page_commit_on_demand(&mut self) {
+        assert_eq!(
+            self.session.theap().page_count(),
+            0,
+            "the test-only fresh-page commitment choice precedes every page"
+        );
+        self.page_commit_on_demand = true;
     }
 
     /// Consumes one ordinary later-main page engine into the source
@@ -2181,6 +2249,8 @@ impl<'attachment, 'main, 'arena, 'map>
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
+            #[cfg(test)]
+            page_commit_on_demand: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
@@ -2536,6 +2606,8 @@ impl<'attachment, 'main, 'arena, 'map>
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
+            #[cfg(test)]
+            page_commit_on_demand: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
@@ -3122,6 +3194,8 @@ impl<'attachment, 'main, 'arena, 'map>
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
+            #[cfg(test)]
+            page_commit_on_demand: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
@@ -4324,7 +4398,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     /// `target` must own the exact process PageMap lifecycle that previously
     /// belonged to this route, plus a fresh current-thread later-main
     /// attachment paired with this route's arena and static main Heap. The
-    /// caller must retain the complete target engine on every error: after a
+    /// caller must retain the complete target engine on every error. `pair`
+    /// must name that same process map/arena image; it is the only capability
+    /// allowed to execute the source direct page-area commit. After a
     /// successful low-owner claim, source bitmap/count/association state can
     /// no longer be retried through a second route.
     pub(crate) unsafe fn adopt_into_later_main<'attachment, 'map>(
@@ -4334,6 +4410,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
             'map,
             MainHeapThreadPageSession<'attachment, 'main>,
         >,
+        pair: ProcessPageArenaLease,
     ) -> Result<
         ThreadExitMappedRegularPostExitAdoptOutcome,
         ThreadExitMappedRegularPostExitAdoptError,
@@ -4464,25 +4541,156 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         target.session.note_page_added();
         target.update_direct_cache(self.bin);
         // `mi_page_fresh_alloc` makes this decision only after
-        // `_mi_theap_page_reclaim` has restored the target queue tail. This
-        // committed-arena branch has no page-area commit operation: a nonzero
-        // source `slice_pcommitted` must remain terminally retained until the
-        // matching commit/reabandon ownership transition exists.
+        // `_mi_theap_page_reclaim` has restored the target queue tail. A
+        // nonzero `slice_pcommitted` takes `mi_page_extend_free`'s separate
+        // direct `_mi_os_commit` path; it must not be folded into the generic
+        // local free-list helper or the arena callback's slice accounting.
         if unsafe { page.as_ref() }.free_list_head().is_null() {
-            if unsafe { page.as_ref() }.slice_pcommitted() != 0 {
-                return Err(ThreadExitMappedRegularPostExitAdoptError::NeedsPageCommit);
-            }
-            match target.page_make_immediate(page) {
-                Ok(true) => {}
-                Ok(false) => {
+            let (capacity, reserved, block_size, slice_pcommitted, page_offset, memory) = {
+                let page_ref = unsafe { page.as_ref() };
+                (
+                    page_ref.capacity(),
+                    page_ref.reserved(),
+                    page_ref.block_size(),
+                    page_ref.slice_pcommitted(),
+                    page_ref.page_offset(),
+                    page_ref.memid(),
+                )
+            };
+            if slice_pcommitted != 0 {
+                let page_start = page
+                    .as_ptr()
+                    .addr()
+                    .checked_add(page_offset)
+                    .ok_or(ThreadExitMappedRegularPostExitAdoptError::InvalidPageCommitPlan)?;
+                let page_slice_offset = page_start
+                    .checked_sub(self.slice_start.addr())
+                    .ok_or(ThreadExitMappedRegularPostExitAdoptError::InvalidPageCommitPlan)?;
+                if page_slice_offset >= self.size {
+                    return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidPageCommitPlan);
+                }
+                let plan = page::page_area_commit_plan(
+                    capacity,
+                    reserved,
+                    block_size,
+                    slice_pcommitted,
+                    target.page_map.memory_config().page_size().bytes(),
+                    page_slice_offset,
+                    self.size,
+                )
+                .ok_or(ThreadExitMappedRegularPostExitAdoptError::InvalidPageCommitPlan)?;
+                if plan.extend == 0 {
                     return Err(ThreadExitMappedRegularPostExitAdoptError::NotExpandable);
                 }
-                Err(error) => {
-                    return Err(ThreadExitMappedRegularPostExitAdoptError::Extension(error));
+                if plan.commit_size != 0 {
+                    if let Err(error) =
+                        pair.commit_page_area(memory, plan.commit_offset, plan.commit_size)
+                    {
+                        return match self.reabandon_after_page_commit_failure(target, page) {
+                            Ok(()) => Ok(
+                                ThreadExitMappedRegularPostExitAdoptOutcome::Reabandoned(error),
+                            ),
+                            Err(error) => Err(error),
+                        };
+                    }
+                    // SAFETY: the direct mapping transition above succeeded
+                    // for exactly the plan's old..new prefix. The target owns
+                    // the live page exclusively until this source extension
+                    // publishes its free-list head.
+                    if !unsafe {
+                        (&mut *page.as_ptr())
+                            .set_slice_pcommitted_after_commit(plan.next_slice_pcommitted)
+                    } {
+                        return Err(ThreadExitMappedRegularPostExitAdoptError::PageCommitState);
+                    }
+                }
+                // SAFETY: the page remains target-owned, queue-linked, and
+                // has a successfully accessible planned next block span.
+                let mut free_list = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }
+                    .map_err(ThreadExitMappedRegularPostExitAdoptError::Extension)?;
+                match free_list.extend_count(plan.extend) {
+                    Ok(0) => {
+                        return Err(
+                            ThreadExitMappedRegularPostExitAdoptError::ExtensionDidNotExtend,
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        return Err(ThreadExitMappedRegularPostExitAdoptError::Extension(error));
+                    }
+                }
+            } else {
+                match target.page_make_immediate(page) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return Err(ThreadExitMappedRegularPostExitAdoptError::NotExpandable);
+                    }
+                    Err(error) => {
+                        return Err(ThreadExitMappedRegularPostExitAdoptError::Extension(error));
+                    }
                 }
             }
         }
         Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reclaimed)
+    }
+
+    /// Performs the `_mi_page_abandon` tail required when direct on-demand
+    /// commitment fails after `_mi_theap_page_reclaim` has restored queue-tail
+    /// ownership.
+    ///
+    /// The caller retains the target engine and its complete PageMap lifecycle
+    /// for every result. A successful result restores the exact static-main
+    /// mapped-abandoned bit/count pair and leaves the PageMap plus ordinary
+    /// arena-page bit intact, so only the same explicit candidate can retry.
+    fn reabandon_after_page_commit_failure<'attachment, 'map>(
+        &self,
+        target: &mut PageAllocatorEngine<
+            'arena,
+            'map,
+            MainHeapThreadPageSession<'attachment, 'main>,
+        >,
+        page: NonNull<Page>,
+    ) -> Result<(), ThreadExitMappedRegularPostExitAdoptError> {
+        // Source `_mi_page_abandon` repeats its ordinary false-force
+        // collection before it decides between release and mapped publication.
+        if let Err(error) = target.page_free_collect_false(page) {
+            target.retain_page_collect_poison(page, error, None);
+            return Err(ThreadExitMappedRegularPostExitAdoptError::ReabandonCollection);
+        }
+        // This consuming route has already proven a live block and exposes no
+        // concurrent free/producer capability. Seeing an empty page here
+        // would require the source all-free release branch, for which this
+        // narrowly reabandoned owner deliberately has no second release API.
+        if unsafe { page.as_ref().used() } == 0 {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::ReabandonUnexpectedEmpty);
+        }
+        let queue = target
+            .session
+            .queue_mut(self.bin)
+            .ok_or(ThreadExitMappedRegularPostExitAdoptError::ReabandonQueue)?
+            as *mut _;
+        // SAFETY: the same target had just tail-enqueued this exact page and
+        // retains exclusive queue mutation authority through the long map
+        // lease. Source removal precedes mapped abandonment publication.
+        unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        target.update_direct_cache(self.bin);
+        if !target.session.note_page_removed() {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::ReabandonQueue);
+        }
+        let map = target
+            .main_heap_abandoned_page(self.bin)
+            .ok_or(ThreadExitMappedRegularPostExitAdoptError::ReabandonMissingMainArenaPages)?;
+        // SAFETY: false collection completed, the page is queue-detached, and
+        // `map` binds the matching static-main bitmap/count pair. Its live
+        // association remains the target Theap, exactly as `_mi_page_abandon`
+        // preserves `page->theap` for a later same-Theap reclaim.
+        match unsafe { abandoned::abandon_after_collect(page, Some(&map)) } {
+            Ok(AbandonResult::UnownedMapped) => Ok(()),
+            Ok(outcome) => Err(ThreadExitMappedRegularPostExitAdoptError::ReabandonUnexpected(
+                outcome,
+            )),
+            Err(error) => Err(ThreadExitMappedRegularPostExitAdoptError::Reabandon(error)),
+        }
     }
 
     /// Performs the source mapped abandoned-page free tail under one complete
@@ -5273,6 +5481,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                     page_free_collect_failure_once: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_free_collect_failure_once)),
                     #[cfg(test)]
                     last_page_to_full: core::ptr::read(core::ptr::addr_of!((*this_ptr).last_page_to_full)),
+                    #[cfg(test)]
+                    page_commit_on_demand: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_commit_on_demand)),
                     shutdown_complete: core::ptr::read(core::ptr::addr_of!((*this_ptr).shutdown_complete)),
                 },
             )
@@ -5298,6 +5508,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             page_free_collect_failure_once: state.page_free_collect_failure_once,
             #[cfg(test)]
             last_page_to_full: state.last_page_to_full,
+            #[cfg(test)]
+            page_commit_on_demand: state.page_commit_on_demand,
             shutdown_complete: state.shutdown_complete,
         }
     }
@@ -6921,10 +7133,19 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
         };
         let allocation_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
+        #[cfg(test)]
+        let commit = if self.page_commit_on_demand && !matches!(kind, PageKind::Singleton) {
+            self.page_commit_on_demand = false;
+            false
+        } else {
+            true
+        };
+        #[cfg(not(test))]
+        let commit = true;
         let claim = self.arena.try_claim_suitable_slices(
             self.requested_arena,
             slice_count,
-            true,
+            commit,
             self.thread_sequence,
         )?;
         let slice_start = claim.start();
@@ -6969,6 +7190,40 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 }
             }
         };
+        // `mi_arenas_page_alloc_fresh` commits only the prefix through
+        // `mi_arena_commit` when its fresh arena claim was deliberately
+        // uncommitted. The normal profile above always takes `commit == true`;
+        // the test-only source-shaped seam below is the only caller that can
+        // leave this nonzero page-local count.
+        let slice_pcommitted = if !memory.initially_committed() {
+            let page_size = self.page_map.memory_config().page_size().bytes();
+            let prefix_pages = match page::initial_page_slice_pcommitted(
+                usable_offset,
+                block_size,
+                allocation_size,
+                page_size,
+            ) {
+                Some(prefix_pages) => prefix_pages,
+                None => {
+                    let _ = claim.release();
+                    return None;
+                }
+            };
+            let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
+                Some(prefix_size) => prefix_size,
+                None => {
+                    let _ = claim.release();
+                    return None;
+                }
+            };
+            if !claim.commit_initial_page_prefix(prefix_size) {
+                let _ = claim.release();
+                return None;
+            }
+            prefix_pages
+        } else {
+            0
+        };
 
         if !self
             .session
@@ -6988,7 +7243,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 block_size,
                 page_offset,
                 reserved,
-                0,
+                slice_pcommitted,
                 memory.initially_zero(),
                 memory,
             )

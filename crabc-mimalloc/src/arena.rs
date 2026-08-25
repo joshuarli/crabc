@@ -11,7 +11,8 @@
 // allocation/Acquire lookup/Release publication), `src/arena.c:240-335`
 // (single-arena slice claims,
 // committed/dirty/zero observations, and commit rollback),
-// `src/arena.c:911-947` (aligned page metadata selection and commitment),
+// `src/arena.c:832-1037` (aligned page metadata selection, fresh-page prefix
+// commitment, and publication),
 // `src/arena.c:1433-1490` (arena slice release),
 // `src/arena.c:725-778,1304-1409` (mapped abandoned-page bitmap/count
 // publication, claim, and quiescent clear),
@@ -1145,6 +1146,43 @@ impl ArenaSliceClaim<'_> {
             .checked_sub(metadata_slice_index)?
             .checked_mul(size_of::<Page>())?;
         NonNull::new(unsafe { metadata_start.add(page_offset).cast::<Page>() })
+    }
+
+    /// Commits the initial prefix of one freshly claimed on-demand page.
+    ///
+    /// This is the `mi_arenas_page_alloc_fresh` `mi_arena_commit` call after
+    /// the claim has deliberately observed `initially_committed == false`.
+    /// It intentionally does not mutate `slices_committed`: a partial page
+    /// prefix is tracked by `Page::slice_pcommitted`, while that bitmap records
+    /// complete source arena slices. The bounded test-only page-on-demand
+    /// seam reaches this only for a process-owned arena with its stable commit
+    /// callback; an arena with no callback remains an explicit unsupported
+    /// source-policy path here.
+    #[inline]
+    pub(crate) fn commit_initial_page_prefix(&self, size: usize) -> bool {
+        let Some(span_size) = self.slice_count().checked_mul(ARENA_SLICE_SIZE) else {
+            return false;
+        };
+        if size == 0 || size > span_size {
+            return false;
+        }
+        let arena = unsafe { self.arena.as_ref() };
+        let Some(commit) = arena.commit_function else {
+            return false;
+        };
+        let mut is_zero = false;
+        // SAFETY: `self` owns the exact live slice span, the validated prefix
+        // begins at its leading slice, and the arena callback is stable while
+        // the registered arena remains live.
+        unsafe {
+            commit(
+                true,
+                self.start.as_ptr(),
+                size,
+                &mut is_zero,
+                arena.commit_function_argument,
+            )
+        }
     }
 
     /// Returns this exact claim to its source free bitmap.

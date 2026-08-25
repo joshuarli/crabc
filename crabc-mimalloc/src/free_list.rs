@@ -6,7 +6,7 @@
 //
 // Source map: pinned mimalloc v3.5.0 `include/mimalloc/internal.h:1245-1291`
 // (`mi_block_nextx`, `mi_block_set_nextx`, `mi_block_next`, and
-// `mi_block_set_next`), `src/page.c:204-242,589-610,625-700`
+// `mi_block_set_next`), `src/page.c:204-242,537-559,574-644`
 // (`mi_page_free_quick_collect`, the local-only portion of
 // `_mi_page_free_collect`, `mi_page_free_list_extend`, and
 // `mi_page_extend_free`), `src/alloc.c:35-103` (the scalar free-list pop and
@@ -291,6 +291,32 @@ impl<'a> LocalFreeList<'a> {
             .ok_or(FreeListError::InvalidPage)?;
         if extend == 0 {
             return Ok(0);
+        }
+
+        self.extend_count(extend)
+    }
+
+    /// Initializes exactly `extend` next sequential blocks and prepends them
+    /// to `free`.
+    ///
+    /// `mi_page_extend_free` computes the scalar count before it commits an
+    /// on-demand page area. The owner uses this narrow form only after that
+    /// commitment succeeds, so the list/capacity write cannot precede the
+    /// corresponding source accessibility transition. A live immediate list
+    /// still reports the source's no-op result; every nonzero requested count
+    /// must fit the remaining reserved capacity exactly.
+    #[inline]
+    pub(crate) fn extend_count(&mut self, extend: u16) -> Result<u16, FreeListError> {
+        if !self.local_free().is_null() {
+            return Err(FreeListError::LocalFreeListNotEmpty);
+        }
+        if !self.free().is_null() {
+            return Ok(0);
+        }
+
+        let capacity = self.capacity_value();
+        if extend == 0 || capacity.checked_add(extend).is_none_or(|next| next > self.reserved) {
+            return Err(FreeListError::InvalidPage);
         }
 
         let first_index = capacity as usize;
