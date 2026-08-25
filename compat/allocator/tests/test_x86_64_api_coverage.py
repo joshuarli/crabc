@@ -336,6 +336,48 @@ template<class T> struct mi_template { };
         COVERAGE.DEFAULT_ARCHIVE_PATH.is_file(),
         "native allocator oracle has not populated the pinned source archive cache",
     )
+    def test_callable_validator_returns_a_scoped_source_only_result(self) -> None:
+        result = COVERAGE.checked_contract_result(COVERAGE.DEFAULT_ARCHIVE_PATH)
+        self.assertEqual(
+            set(result),
+            {
+                "build_mode_declaration_count",
+                "contract",
+                "header_surface_count",
+                "overall_status",
+                "profile",
+                "scope",
+                "source_declared_function_count",
+                "source_member_count",
+                "status",
+                "symbol_disposition_count",
+                "target",
+                "test_member_count",
+            },
+        )
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["overall_status"], "incomplete")
+        self.assertEqual(result["target"], COVERAGE.TARGET_CONTEXT)
+        self.assertEqual(
+            result["profile"], "linux-x86_64-mimalloc-source-public-surface"
+        )
+        self.assertEqual(result["header_surface_count"], 4)
+        self.assertEqual(result["build_mode_declaration_count"], 52)
+        self.assertEqual(result["test_member_count"], 18)
+        self.assertEqual(result["source_member_count"], 30)
+        self.assertEqual(result["source_declared_function_count"], 195)
+        self.assertEqual(result["symbol_disposition_count"], 8)
+        self.assertEqual(
+            result["contract"]["path"],
+            "compat/allocator/x86_64-api-coverage-v3.5.0.json",
+        )
+        self.assertIn("does not establish", result["scope"])
+        self.assertIn("native execution", result["scope"])
+
+    @unittest.skipUnless(
+        COVERAGE.DEFAULT_ARCHIVE_PATH.is_file(),
+        "native allocator oracle has not populated the pinned source archive cache",
+    )
     def test_checked_in_ledger_matches_the_pinned_source_archive(self) -> None:
         COVERAGE.check_contract(COVERAGE.DEFAULT_ARCHIVE_PATH)
 

@@ -32,6 +32,12 @@ CONTRACT_PATH = ROOT / "compat/allocator/x86_64-api-coverage-v3.5.0.json"
 BASE_FUNCTION_INVENTORY_PATH = ROOT / "compat/allocator/x86_64-api-v3.5.0.json"
 UPSTREAMS_PATH = ROOT / "compat/upstreams.toml"
 DEFAULT_ARCHIVE_PATH = ROOT / "compat/allocator/.cache/mimalloc-3.5.0.tar.gz"
+RESULT_SCOPE = (
+    "Pinned source public-header, configuration-mode, test-input, and source-form "
+    "symbol ledger validation only; it does not establish a selected x86_64 "
+    "preprocessor/build mode, compilation, linkability, object exports, Rust "
+    "implementation coverage, native execution, public ABI, or runtime integration."
+)
 
 ROOT_CMAKE_MEMBER = "CMakeLists.txt"
 INCLUDE_PREFIX = "include/"
@@ -894,6 +900,90 @@ def check_contract(archive_path: Path) -> None:
             "x86_64 public API/mode/test/symbol source ledger drifted from pinned mimalloc "
             "v3.5.0; review the source boundary and update the checked-in ledger deliberately"
         )
+
+
+def checked_contract_result(archive_path: Path) -> dict[str, object]:
+    """Validate the checked-in ledger and return only its source-only result.
+
+    A caller may attach this result to a larger x86-64 oracle report, but the
+    result itself remains source provenance.  It does not turn a header,
+    CMake-mode, test-input, or source-form symbol inventory into an active
+    target configuration, compiled artifact, or execution claim.
+    """
+
+    check_contract(archive_path)
+    contract = load_contract()
+    target = contract.get("target_context")
+    coverage = contract.get("coverage")
+    source = contract.get("source")
+    header_surfaces = contract.get("header_surfaces")
+    modes = contract.get("build_mode_declarations")
+    dispositions = contract.get("symbol_dispositions")
+    base_functions = contract.get("base_c_function_inventory")
+    if not isinstance(target, dict) or target != TARGET_CONTEXT:
+        raise CoverageError("x86_64 API coverage ledger target context changed")
+    if not isinstance(coverage, dict) or coverage.get("overall_status") != "incomplete":
+        raise CoverageError("x86_64 API coverage ledger must remain incomplete")
+    if not isinstance(source, dict):
+        raise CoverageError("x86_64 API coverage ledger source record is invalid")
+    if not isinstance(header_surfaces, list) or not header_surfaces:
+        raise CoverageError("x86_64 API coverage ledger has no header surfaces")
+    if not isinstance(modes, dict):
+        raise CoverageError("x86_64 API coverage ledger mode record is invalid")
+    declarations = modes.get("declarations")
+    if not isinstance(declarations, list) or not declarations:
+        raise CoverageError("x86_64 API coverage ledger has no mode declarations")
+    if not isinstance(dispositions, list) or not dispositions:
+        raise CoverageError("x86_64 API coverage ledger has no symbol dispositions")
+    if not isinstance(base_functions, dict):
+        raise CoverageError("x86_64 API coverage ledger base API record is invalid")
+
+    all_headers = source.get("all_include_headers")
+    test_members = source.get("test_members")
+    root_cmake = source.get("root_cmake")
+    if (
+        not isinstance(all_headers, list)
+        or not all_headers
+        or not isinstance(test_members, list)
+        or not test_members
+        or not isinstance(root_cmake, dict)
+    ):
+        raise CoverageError("x86_64 API coverage ledger source-member inventory is invalid")
+
+    base_count = base_functions.get("source_declared_function_count")
+    if type(base_count) is not int or base_count <= 0:
+        raise CoverageError("x86_64 API coverage ledger base function count is invalid")
+    extension_count = 0
+    for surface in header_surfaces:
+        if not isinstance(surface, dict):
+            raise CoverageError("x86_64 API coverage ledger header surface is invalid")
+        member = surface.get("member")
+        function_surface = surface.get("c_external_function_surface")
+        if not isinstance(member, str) or not isinstance(function_surface, dict):
+            raise CoverageError("x86_64 API coverage ledger function surface is invalid")
+        count = function_surface.get("source_declared_function_count")
+        if type(count) is not int or count < 0:
+            raise CoverageError("x86_64 API coverage ledger function count is invalid")
+        if member != BASE_HEADER_MEMBER:
+            extension_count += count
+
+    return {
+        "build_mode_declaration_count": len(declarations),
+        "contract": {
+            "path": CONTRACT_PATH.relative_to(ROOT).as_posix(),
+            "sha256": sha256_bytes(CONTRACT_PATH.read_bytes()),
+        },
+        "header_surface_count": len(header_surfaces),
+        "overall_status": coverage["overall_status"],
+        "profile": contract["profile"],
+        "scope": RESULT_SCOPE,
+        "source_declared_function_count": base_count + extension_count,
+        "source_member_count": 1 + len(all_headers) + len(test_members),
+        "status": "passed",
+        "symbol_disposition_count": len(dispositions),
+        "target": dict(target),
+        "test_member_count": len(test_members),
+    }
 
 
 def parse_arguments() -> argparse.Namespace:

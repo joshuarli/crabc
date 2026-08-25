@@ -231,6 +231,28 @@ class InventoryTests(unittest.TestCase):
             "declaration_count": 180,
             "status": "passed",
         }
+        source_api_coverage = {
+            "build_mode_declaration_count": 52,
+            "contract": {"path": "compat/allocator/x86_64-api-coverage-v3.5.0.json"},
+            "header_surface_count": 4,
+            "overall_status": "incomplete",
+            "profile": "linux-x86_64-mimalloc-source-public-surface",
+            "scope": (
+                "pinned source inventory only; it does not establish native execution "
+                "or public runtime integration"
+            ),
+            "source_declared_function_count": 195,
+            "source_member_count": 30,
+            "status": "passed",
+            "symbol_disposition_count": 8,
+            "target": {
+                "architecture": "x86_64",
+                "endianness": "little",
+                "rust_target": "x86_64-unknown-linux-musl",
+                "system": "linux",
+            },
+            "test_member_count": 18,
+        }
         source_map = {
             "contract": {"path": "compat/allocator/x86_64-source-map-v3.5.0.json"},
             "overall_status": "incomplete",
@@ -282,6 +304,10 @@ class InventoryTests(unittest.TestCase):
                 return_value=source_map,
             ) as source_map_validator, mock.patch.object(
                 RUNNER,
+                "x86_64_api_coverage_contract",
+                return_value=source_api_coverage,
+            ) as source_api_coverage_validator, mock.patch.object(
+                RUNNER,
                 "apply_and_verify_adapted_test_patch",
                 return_value={"selected_test_count": 33},
             ), mock.patch.object(
@@ -312,14 +338,20 @@ class InventoryTests(unittest.TestCase):
                 )
         self.assertEqual(source_check["architecture_profile"], "x86_64-source-contract-check")
         self.assertEqual(source_check["x86_64_source_api_inventory"], source_api_inventory)
+        self.assertEqual(source_check["x86_64_api_coverage"], source_api_coverage)
         self.assertEqual(source_check["x86_64_source_map"], source_map)
         self.assertNotIn("native_execution_provenance", source_check)
         inventory.assert_has_calls([mock.call(archive), mock.call(archive)])
         self.assertEqual(inventory.call_count, 2)
         source_map_validator.assert_has_calls([mock.call(archive), mock.call(archive)])
         self.assertEqual(source_map_validator.call_count, 2)
+        source_api_coverage_validator.assert_has_calls([mock.call(archive), mock.call(archive)])
+        self.assertEqual(source_api_coverage_validator.call_count, 2)
         self.assertEqual(
             run_x86.call_args.kwargs["source_api_inventory"], source_api_inventory
+        )
+        self.assertEqual(
+            run_x86.call_args.kwargs["source_api_coverage"], source_api_coverage
         )
         self.assertEqual(run_x86.call_args.kwargs["source_map"], source_map)
         generated_contracts.assert_not_called()

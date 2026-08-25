@@ -43,6 +43,8 @@ UPSTREAM_TEST_CONTRACT = ALLOCATOR_ROOT / "upstream-tests-v3.5.0.json"
 ADAPTED_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-v3.5.0.json"
 X86_64_API_CONTRACT = ALLOCATOR_ROOT / "x86_64-api-v3.5.0.json"
 X86_64_API_INVENTORY_RUNNER = ALLOCATOR_ROOT / "x86_64_api_inventory.py"
+X86_64_API_COVERAGE_CONTRACT = ALLOCATOR_ROOT / "x86_64-api-coverage-v3.5.0.json"
+X86_64_API_COVERAGE_RUNNER = ALLOCATOR_ROOT / "x86_64_api_coverage.py"
 X86_64_SOURCE_MAP_CONTRACT = ALLOCATOR_ROOT / "x86_64-source-map-v3.5.0.json"
 X86_64_SOURCE_MAP_RUNNER = ALLOCATOR_ROOT / "x86_64_source_map.py"
 X86_64_TEST_ADAPTER_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-x86_64-v3.5.0.json"
@@ -2358,6 +2360,94 @@ def x86_64_source_map_contract(archive: Path) -> dict[str, Any]:
     return result
 
 
+def x86_64_api_coverage_contract(archive: Path) -> dict[str, Any]:
+    """Validate the x86-64 source-only public-surface coverage ledger.
+
+    This is intentionally separate from the native C oracle and private
+    adapter evidence.  It inventories source forms and mode/test inputs but
+    does not select a target configuration or prove compiled symbols,
+    execution, public ABI, or runtime integration.
+    """
+
+    spec = importlib.util.spec_from_file_location(
+        "crabc_allocator_x86_64_api_coverage_validator",
+        X86_64_API_COVERAGE_RUNNER,
+    )
+    if spec is None or spec.loader is None:
+        raise HarnessError("cannot load x86-64 API coverage validator")
+    coverage = importlib.util.module_from_spec(spec)
+    try:
+        # The source-only validator defines a dataclass, whose standard
+        # library decorator resolves its module through sys.modules.
+        sys.modules[spec.name] = coverage
+        spec.loader.exec_module(coverage)
+    except Exception as error:
+        sys.modules.pop(spec.name, None)
+        raise HarnessError(f"cannot load x86-64 API coverage validator: {error}") from error
+
+    validator = getattr(coverage, "checked_contract_result", None)
+    if not callable(validator):
+        raise HarnessError("x86-64 API coverage validator has no checked result callable")
+    try:
+        result = validator(archive)
+    except Exception as error:
+        raise HarnessError(f"x86-64 API coverage validation failed: {error}") from error
+    expected_fields = {
+        "build_mode_declaration_count",
+        "contract",
+        "header_surface_count",
+        "overall_status",
+        "profile",
+        "scope",
+        "source_declared_function_count",
+        "source_member_count",
+        "status",
+        "symbol_disposition_count",
+        "target",
+        "test_member_count",
+    }
+    if not isinstance(result, dict) or set(result) != expected_fields:
+        raise HarnessError("x86-64 API coverage validator returned an unsupported result")
+
+    expected_contract = {
+        "path": relative(X86_64_API_COVERAGE_CONTRACT),
+        "sha256": sha256_file(X86_64_API_COVERAGE_CONTRACT),
+    }
+    if result["contract"] != expected_contract:
+        raise HarnessError("x86-64 API coverage validator returned the wrong contract")
+    expected_target = {
+        "architecture": "x86_64",
+        "endianness": "little",
+        "rust_target": X86_64_RUST_TARGET,
+        "system": "linux",
+    }
+    if result["target"] != expected_target:
+        raise HarnessError("x86-64 API coverage validator returned the wrong target")
+    if result["profile"] != "linux-x86_64-mimalloc-source-public-surface":
+        raise HarnessError("x86-64 API coverage validator returned the wrong profile")
+    if result["overall_status"] != "incomplete" or result["status"] != "passed":
+        raise HarnessError("x86-64 API coverage validator returned an invalid status")
+    scope = result["scope"]
+    if not isinstance(scope, str) or "does not establish" not in scope:
+        raise HarnessError("x86-64 API coverage validator result has an unscoped claim")
+
+    count_fields = (
+        "build_mode_declaration_count",
+        "header_surface_count",
+        "source_declared_function_count",
+        "source_member_count",
+        "symbol_disposition_count",
+        "test_member_count",
+    )
+    if any(
+        type(result[field]) is not int or result[field] <= 0 for field in count_fields
+    ):
+        raise HarnessError("x86-64 API coverage validator returned invalid counts")
+    if result["source_member_count"] <= result["test_member_count"]:
+        raise HarnessError("x86-64 API coverage validator source-member count is invalid")
+    return result
+
+
 def x86_64_source_api_inventory(archive: Path) -> dict[str, Any]:
     """Check the target-local source declaration inventory against this archive."""
 
@@ -4260,6 +4350,7 @@ def run_x86_64_oracle(
     archive: Path,
     source: Path,
     source_api_inventory: Mapping[str, Any],
+    source_api_coverage: Mapping[str, Any],
     source_map: Mapping[str, Any],
     adapter_source_contract: Mapping[str, Any],
     adapter_source_summary: Mapping[str, Any],
@@ -4315,6 +4406,7 @@ def run_x86_64_oracle(
     report["architecture_profile"] = "x86_64-native-c-oracle"
     report["native_execution_provenance"] = native_execution_provenance
     report["x86_64_source_api_inventory"] = dict(source_api_inventory)
+    report["x86_64_api_coverage"] = dict(source_api_coverage)
     report["x86_64_source_map"] = dict(source_map)
     report["x86_64_engine_dependency_graph"] = engine_dependency_graph
     report["x86_64_normal_engine_artifact"] = normal_engine_artifact
@@ -4403,8 +4495,10 @@ def run_milestone0(
     pin = load_pin()
     archive = fetch_archive(pin, offline)
     x86_64_source_map: Mapping[str, Any] | None = None
+    x86_64_api_coverage: Mapping[str, Any] | None = None
     if architecture == "x86_64":
         x86_64_source_map = x86_64_source_map_contract(archive)
+        x86_64_api_coverage = x86_64_api_coverage_contract(archive)
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
         source = safe_extract(archive, Path(temporary), pin["archive_root"])
         if architecture == "x86_64":
@@ -4414,6 +4508,7 @@ def run_milestone0(
                     "AArch64 contract generation is not part of this profile"
                 )
             assert x86_64_source_map is not None
+            assert x86_64_api_coverage is not None
             source_api_inventory = x86_64_source_api_inventory(archive)
             adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
             adapted_summary = validate_adapted_test_contract(
@@ -4438,6 +4533,7 @@ def run_milestone0(
                 return {
                     "architecture_profile": "x86_64-source-contract-check",
                     "x86_64_source_api_inventory": source_api_inventory,
+                    "x86_64_api_coverage": dict(x86_64_api_coverage),
                     "x86_64_source_map": dict(x86_64_source_map),
                     "x86_64_private_test_adapter": {
                         "contract": artifact_record(X86_64_TEST_ADAPTER_CONTRACT),
@@ -4458,6 +4554,7 @@ def run_milestone0(
                 archive=archive,
                 source=source,
                 source_api_inventory=source_api_inventory,
+                source_api_coverage=x86_64_api_coverage,
                 source_map=x86_64_source_map,
                 adapter_source_contract=adapted_contract,
                 adapter_source_summary=adapted_summary,
