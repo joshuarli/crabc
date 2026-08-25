@@ -6,7 +6,6 @@ import importlib.util
 import io
 import json
 import os
-import platform
 import stat
 import sys
 import tarfile
@@ -74,9 +73,16 @@ def make_sysroot(root: Path) -> Path:
 
 class NativeBoundaryTests(unittest.TestCase):
     def test_requires_native_linux_aarch64(self) -> None:
-        with mock.patch.object(platform, "system", return_value="Darwin"):
-            with self.assertRaises(DIST.DistError):
-                DIST.require_native_aarch64()
+        completed = [
+            mock.Mock(returncode=0, stdout=b"Linux\n", stderr=b""),
+            mock.Mock(returncode=0, stdout=b"aarch64\n", stderr=b""),
+        ]
+        with mock.patch.object(DIST.subprocess, "run", side_effect=completed) as runner:
+            DIST.require_native_aarch64()
+        self.assertEqual(
+            [call.args[0] for call in runner.call_args_list],
+            [["uname", "-s"], ["uname", "-m"]],
+        )
 
 
 class ValidationTests(unittest.TestCase):
@@ -231,6 +237,54 @@ class ArchiveTests(unittest.TestCase):
                 stream.addfile(link)
             with self.assertRaises(DIST.DistError):
                 DIST.validate_archive(archive)
+
+
+class DistributionOutputTests(unittest.TestCase):
+    def test_replaces_only_stale_generated_snapshot_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            new_names = (
+                "crabc-sysroot-aarch64-111111111111.tar.xz",
+                "crabc-sysroot-aarch64-111111111111.tar.xz.sha256",
+                "crabc-sysroot-aarch64-111111111111.manifest.json",
+                "crabc-sysroot-aarch64-111111111111.smoke.json",
+            )
+            assets = []
+            for name in new_names:
+                asset = source / name
+                asset.write_bytes(f"new {name}\n".encode("ascii"))
+                assets.append(asset)
+
+            destination = root / "dist"
+            destination.mkdir()
+            old_names = tuple(name.replace("111111111111", "222222222222") for name in new_names)
+            for name in old_names:
+                (destination / name).write_bytes(f"old {name}\n".encode("ascii"))
+
+            DIST._copy_release_assets(assets, destination)
+
+            self.assertEqual(sorted(path.name for path in destination.iterdir()), sorted(new_names))
+            for asset in assets:
+                self.assertEqual((destination / asset.name).read_bytes(), asset.read_bytes())
+
+    def test_rejects_unrelated_distribution_content_without_removing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            asset = source / "crabc-sysroot-aarch64-111111111111.tar.xz"
+            asset.write_bytes(b"archive")
+            destination = root / "dist"
+            destination.mkdir()
+            unrelated = destination / "keep-me.txt"
+            unrelated.write_bytes(b"not a generated release asset")
+
+            with self.assertRaises(DIST.DistError):
+                DIST._copy_release_assets((asset,), destination)
+
+            self.assertEqual(unrelated.read_bytes(), b"not a generated release asset")
 
 
 if __name__ == "__main__":

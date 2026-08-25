@@ -16,7 +16,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import platform
 import shutil
 import stat
 import subprocess
@@ -40,6 +39,9 @@ ARCHIVE_ROOT = "crabc-sysroot"
 DEFAULT_EPOCH = 0
 SOURCE_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 ARCHIVE_NAME_PATTERN = re.compile(r"^crabc-sysroot-aarch64-([0-9a-f]{12})\.tar\.xz$")
+RELEASE_ASSET_NAME_PATTERN = re.compile(
+    r"^crabc-sysroot-aarch64-[0-9a-f]{12}\.(?:tar\.xz(?:\.sha256)?|manifest\.json|smoke\.json)$"
+)
 EMBEDDED_BUILD_MARKERS = (
     b"/workspace/",
     b"/tmp/",
@@ -103,11 +105,35 @@ class SourceIdentity:
     epoch: int
 
 
-def require_native_aarch64() -> None:
-    """Require the platform on which the crabc sysroot is supported."""
+def _uname(argument: str) -> str:
+    """Read one native-kernel identity field without inheriting a shell."""
 
-    if platform.system() != "Linux" or platform.machine() != "aarch64":
-        raise DistError("sysroot distribution requires native Linux AArch64")
+    try:
+        completed = subprocess.run(
+            ["uname", argument],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as error:
+        raise DistError(f"could not invoke uname {argument}") from error
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise DistError(f"uname {argument} failed: {detail or completed.returncode}")
+    return completed.stdout.decode("utf-8", errors="replace").strip()
+
+
+def require_native_aarch64() -> None:
+    """Assert the container's native Linux/AArch64 kernel identity exactly."""
+
+    system = _uname("-s")
+    machine = _uname("-m")
+    if system != "Linux" or machine != "aarch64":
+        raise DistError(
+            "sysroot distribution requires native Linux AArch64 "
+            f"(uname -s={system!r}, uname -m={machine!r})"
+        )
 
 
 def _relative_parts(value: str, description: str) -> PurePosixPath:
@@ -608,18 +634,62 @@ def _extract_packaged_manifest(archive: Path, archive_root: str, identity: Sourc
 
 
 def _copy_release_assets(assets: Iterable[Path], destination: Path) -> None:
-    """Copy only final, already-tested assets into the bind-mounted dist path."""
+    """Publish only one tested snapshot into the command-owned dist directory.
+
+    ``dist/`` is a generated command boundary rather than a release cache. A
+    fresh invocation must leave exactly its four snapshot assets there, so
+    stale files with the precise generated naming scheme are removed only
+    after the new, smoke-tested copies are in place.  Any other user-created
+    entry is a hard error and is never removed implicitly.
+    """
 
     if destination.exists() and (destination.is_symlink() or not destination.is_dir()):
         raise DistError(f"distribution output is not a real directory: {destination}")
-    destination.mkdir(parents=True, exist_ok=True)
-    for asset in assets:
+    selected = tuple(assets)
+    if not selected:
+        raise DistError("distribution has no final release assets to copy")
+    names = [asset.name for asset in selected]
+    if len(set(names)) != len(names):
+        raise DistError("distribution final assets have duplicate names")
+    for asset in selected:
         if not asset.is_file() or asset.is_symlink():
             raise DistError(f"release asset is not a regular file: {asset}")
+        if not RELEASE_ASSET_NAME_PATTERN.fullmatch(asset.name):
+            raise DistError(f"release asset has an invalid generated name: {asset.name}")
+
+    destination.mkdir(parents=True, exist_ok=True)
+    selected_names = set(names)
+    stale: list[Path] = []
+    unexpected: list[Path] = []
+    for existing in destination.iterdir():
+        if existing.name in selected_names:
+            if existing.is_symlink() or not existing.is_file():
+                raise DistError(f"refusing to replace non-file distribution output: {existing}")
+            continue
+        if existing.is_symlink() or not existing.is_file() or not RELEASE_ASSET_NAME_PATTERN.fullmatch(existing.name):
+            unexpected.append(existing)
+        else:
+            stale.append(existing)
+    if unexpected:
+        labels = ", ".join(str(item) for item in sorted(unexpected))
+        raise DistError(
+            "distribution output contains unrelated entries; refusing to remove them: "
+            f"{labels}"
+        )
+
+    for asset in selected:
         output = destination / asset.name
-        if output.exists() and (output.is_symlink() or not output.is_file()):
-            raise DistError(f"refusing to replace non-file distribution output: {output}")
-        shutil.copy2(asset, output)
+        temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
+        if temporary.exists() or temporary.is_symlink():
+            raise DistError(f"refusing to replace unexpected distribution temporary: {temporary}")
+        try:
+            shutil.copy2(asset, temporary)
+            os.replace(temporary, output)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            raise DistError(f"could not copy release asset into distribution output: {output}") from error
+    for existing in stale:
+        existing.unlink()
 
 
 def _run_smoke(archive: Path, identity: SourceIdentity, report: Path, timeout: float) -> dict[str, object]:
