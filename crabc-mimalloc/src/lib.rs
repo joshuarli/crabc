@@ -8,14 +8,16 @@
 //! singleton path below the metadata-alignment limit. The crate deliberately
 //! exposes no production allocator API; a default-off test-adapter feature
 //! owns the only public operation context. Private static ticket-zero and
-//! regular-key dynamic Theap attachments exist. A separate process-static
-//! page-map owner can Release-publish one global source map, and a paired
-//! sidecar can retain one caller-selected source-managed arena mapping. One
-//! crate-private ticket-zero static owner or one sequential later-thread owner
-//! may bind that exact pair to the arena's embedded `pages_main` bitmap for one
-//! complete page-engine and scoped-producer lifetime; process initialization,
-//! concurrent/general later-thread page routing, owner exit, and runtime
-//! allocation routing remain incomplete.
+//! regular-key dynamic Theap attachments exist. One bounded source-order
+//! process-main coordinator establishes the static Heap, detached metadata
+//! readiness, global PageMap, and ticket-zero roots; it does not choose
+//! options, reserve the process-shared arena, initialize pthread/TLS keys, or
+//! own process shutdown. A paired sidecar can retain one caller-selected
+//! source-managed arena mapping. One crate-private ticket-zero static owner or
+//! one sequential later-thread owner may bind that exact pair to the arena's
+//! embedded `pages_main` bitmap for one complete page-engine and
+//! scoped-producer lifetime; concurrent/general later-thread page routing,
+//! owner exit, and runtime allocation routing remain incomplete.
 //! Remote-free and one-page abandonment protocols are bounded substrates;
 //! allocation routing and terminal abandoned-page release remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
@@ -71,6 +73,7 @@ mod os;
 mod page;
 mod page_map;
 mod process_arena;
+mod process_init;
 mod process_page_map;
 mod provenance;
 mod random;

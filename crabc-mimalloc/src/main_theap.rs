@@ -38,6 +38,7 @@ use crate::compiler_tls::{
     set_fast_slot,
 };
 use crate::subproc::{
+    MainStaticBootstrapSelection, MainStaticBootstrapSelectionError,
     MainStaticTldError, MainStaticThreadLocalData, MainSubprocess,
     ThreadRegistrationLease,
 };
@@ -51,10 +52,12 @@ use crate::types::{
 };
 
 const COLD: u8 = 0;
-const INITIALIZING: u8 = 1;
-const READY: u8 = 2;
-const TORN_DOWN: u8 = 3;
-const POISONED: u8 = 4;
+const HEAP_INITIALIZING: u8 = 1;
+const HEAP_READY: u8 = 2;
+const THREAD_INITIALIZING: u8 = 3;
+const THREAD_READY: u8 = 4;
+const TORN_DOWN: u8 = 5;
+const POISONED: u8 = 6;
 
 /// One cache-aligned heap field slot within the process-static owner.
 #[repr(align(64))]
@@ -88,16 +91,17 @@ impl MainStaticTheapSlot {
 ///
 /// Its two independently cache-aligned image fields are slots within this one
 /// Rust process-static owner, rather than separate Rust/source statics. The
-/// atomic state is the only shared entry path; a successful caller obtains the
-/// unique non-Send attachment capability before either `UnsafeCell` is
-/// projected mutably.
+/// atomic state first publishes the static Heap alone, then admits the unique
+/// non-Send ticket-zero thread attachment. This preserves the source order in
+/// which `mi_heap_main_init_once` precedes `_mi_page_map_init` and only then
+/// `_mi_thread_init_with_heap` projects the static TLD/Theap images.
 pub(crate) struct MainStaticAttachmentStorage {
     state: AtomicU8,
     heap: MainStaticHeapSlot,
     theap: MainStaticTheapSlot,
     /// Serializes short mutable projections of the process-static main Heap
     /// made by later-thread attachments.  The main attachment itself mutates
-    /// the image only before it can issue a [`MainStaticHeapLease`] or after
+    /// the image only after the ticket-zero attachment publishes it or after
     /// every such lease has been relinquished through Rust's borrow boundary.
     ///
     /// This is not a replacement for the source `heap->theaps_lock`: that
@@ -114,14 +118,14 @@ pub(crate) struct MainStaticAttachmentStorage {
     inject_busy_tld_list_before_initial_attachment: AtomicU8,
 }
 
-// SAFETY: `state` serializes the unique Cold -> Initializing claim. The
-// ticket-zero `!Send` owner projects both images during initial setup and
-// terminal teardown. A live later-thread attachment can project only `heap`,
-// only while it retains `shared_heap_projection_lock` plus a borrow tied to
-// that main owner; source heap-list mutation remains under `theaps_lock`.
-// Neither slot is reused after teardown or poison. Read-only test observations
-// occur only under the same owner or one of those explicit synchronization
-// boundaries.
+// SAFETY: `state` serializes the unique Cold -> HeapInitializing -> HeapReady
+// -> ThreadInitializing claim. The ticket-zero `!Send` owner projects the
+// Theap and attached Heap only during initial setup and terminal teardown. A
+// live later-thread attachment can project only `heap`, only while it retains
+// `shared_heap_projection_lock` plus a borrow tied to that main owner; source
+// heap-list mutation remains under `theaps_lock`. Neither slot is reused
+// after teardown or poison. Read-only test observations occur only under the
+// same owner or one of those explicit synchronization boundaries.
 unsafe impl Sync for MainStaticAttachmentStorage {}
 
 impl MainStaticAttachmentStorage {
@@ -143,33 +147,58 @@ impl MainStaticAttachmentStorage {
     }
 
     #[inline]
-    fn claim_cold(&self) -> Result<(), MainStaticTheapError> {
+    pub(crate) fn global() -> &'static Self {
+        &PROCESS_MAIN_STATIC_ATTACHMENT
+    }
+
+    #[inline]
+    fn claim_cold_for_heap_foundation(&self) -> Result<(), MainStaticHeapFoundationError> {
         self.state
-            .compare_exchange(COLD, INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
+            .compare_exchange(COLD, HEAP_INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
             .map(|_| ())
             .map_err(|state| match state {
-                INITIALIZING => MainStaticTheapError::Initializing,
-                READY => MainStaticTheapError::AlreadyAttached,
-                TORN_DOWN => MainStaticTheapError::TornDown,
-                POISONED => MainStaticTheapError::Poisoned,
-                _ => MainStaticTheapError::Poisoned,
+                HEAP_INITIALIZING | THREAD_INITIALIZING => {
+                    MainStaticHeapFoundationError::Initializing
+                }
+                HEAP_READY | THREAD_READY => MainStaticHeapFoundationError::AlreadyInitialized,
+                TORN_DOWN => MainStaticHeapFoundationError::TornDown,
+                POISONED | _ => MainStaticHeapFoundationError::Poisoned,
             })
     }
 
     #[inline]
-    fn reject_non_cold_before_root_read(&self) -> Result<(), MainStaticTheapError> {
-        match self.state.load(Ordering::Acquire) {
-            COLD => Ok(()),
-            INITIALIZING => Err(MainStaticTheapError::Initializing),
-            READY => Err(MainStaticTheapError::AlreadyAttached),
-            TORN_DOWN => Err(MainStaticTheapError::TornDown),
-            POISONED | _ => Err(MainStaticTheapError::Poisoned),
-        }
+    fn claim_ready_heap_for_initial_thread(&self) -> Result<(), MainStaticTheapError> {
+        self.state
+            .compare_exchange(
+                HEAP_READY,
+                THREAD_INITIALIZING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .map(|_| ())
+            .map_err(|state| match state {
+                COLD => MainStaticTheapError::HeapNotInitialized,
+                HEAP_INITIALIZING | THREAD_INITIALIZING => MainStaticTheapError::Initializing,
+                THREAD_READY => MainStaticTheapError::AlreadyAttached,
+                HEAP_READY => MainStaticTheapError::Initializing,
+                TORN_DOWN => MainStaticTheapError::TornDown,
+                POISONED | _ => MainStaticTheapError::Poisoned,
+            })
     }
 
     #[inline]
-    fn mark_ready(&self) {
-        self.state.store(READY, Ordering::Release);
+    fn mark_heap_ready(&self) {
+        self.state.store(HEAP_READY, Ordering::Release);
+    }
+
+    #[inline]
+    fn mark_thread_ready(&self) {
+        self.state.store(THREAD_READY, Ordering::Release);
+    }
+
+    #[inline]
+    fn state_is_heap_ready(&self) -> bool {
+        self.state.load(Ordering::Acquire) == HEAP_READY
     }
 
     #[inline]
@@ -183,11 +212,18 @@ impl MainStaticAttachmentStorage {
     }
 
     #[inline]
+    unsafe fn heap_mut_for_foundation(&self) -> &mut Heap {
+        // SAFETY: the caller owns the sole COLD -> HEAP_INITIALIZING
+        // transition and has not yet exposed any static-Heap projection.
+        unsafe { &mut *self.heap.image.get() }
+    }
+
+    #[inline]
     unsafe fn images_mut(&self) -> (&mut Heap, &mut Theap) {
         // SAFETY: the caller owns the ticket-zero current-thread attachment
-        // before any shared heap lease can exist, or it is doing terminal
-        // teardown after the borrow-tied later attachments have all gone.
-        // Both slots have distinct storage.
+        // while it is initializing or doing terminal teardown. Both slots
+        // have distinct storage and the Heap foundation was published before
+        // this transition.
         unsafe { (&mut *self.heap.image.get(), &mut *self.theap.image.get()) }
     }
 
@@ -222,6 +258,74 @@ impl MainStaticAttachmentStorage {
         self.inject_busy_tld_list_before_initial_attachment
             .swap(0, Ordering::Relaxed)
             != 0
+    }
+}
+
+/// A failure while publishing the source-static main Heap before PageMap or
+/// ticket-zero thread initialization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainStaticHeapFoundationError {
+    /// The selected static bootstrap belongs to another subprocess identity.
+    SubprocessMismatch,
+    Initializing,
+    AlreadyInitialized,
+    TornDown,
+    Poisoned,
+}
+
+/// A stable proof that the static source main Heap exists, but no thread TLD,
+/// Theap, compiler-TLS root, process PageMap, or arena has been published by
+/// this object alone.
+#[derive(Clone, Copy)]
+pub(crate) struct MainStaticHeapFoundation {
+    storage: &'static MainStaticAttachmentStorage,
+    subprocess: &'static MainSubprocess,
+}
+
+impl MainStaticHeapFoundation {
+    /// Initializes only source `mi_process_heap_main` in its final static
+    /// slot. The mutable selection remains live so any later process-init
+    /// failure becomes terminal instead of reopening ticket zero.
+    pub(crate) fn initialize(
+        storage: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        selection: &mut MainStaticBootstrapSelection,
+    ) -> Result<Self, MainStaticHeapFoundationError> {
+        if !core::ptr::eq(selection.subprocess().as_ptr(), subprocess.as_ptr()) {
+            return Err(MainStaticHeapFoundationError::SubprocessMismatch);
+        }
+        storage.claim_cold_for_heap_foundation()?;
+        // SAFETY: the successful state transition grants the sole mutable
+        // projection of the final static Heap before any root or TLD exists.
+        let heap = unsafe { storage.heap_mut_for_foundation() };
+        // `mi_heap_main_init_once` uses `_mi_memid_create(MI_MEM_STATIC)`,
+        // not `_mi_memid_create_static`: source heap provenance is kind-only
+        // with a zero union/flags.
+        heap.initialize_main_static(subprocess, MemoryId::static_kind_only());
+        storage.mark_heap_ready();
+        selection.commit_heap_foundation();
+        Ok(Self { storage, subprocess })
+    }
+
+    #[inline]
+    pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
+        self.subprocess
+    }
+
+    #[inline]
+    fn storage(self) -> &'static MainStaticAttachmentStorage {
+        self.storage
+    }
+
+    #[inline]
+    fn matches_selection(self, selection: &MainStaticBootstrapSelection) -> bool {
+        core::ptr::eq(self.subprocess.as_ptr(), selection.subprocess().as_ptr())
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_heap_is_initialized(self) -> bool {
+        self.storage.state_is_heap_ready()
     }
 }
 
@@ -276,8 +380,8 @@ impl<'main> MainStaticHeapLease<'main> {
 
     /// Acquires the Rust aliasing guard for one short source heap operation.
     ///
-    /// The underlying source heap remains `READY` for the complete lease
-    /// lifetime.  The atomic check is retained so unsafe/manual lifecycle
+    /// The underlying source heap remains thread-ready for the complete lease
+    /// lifetime. The atomic check is retained so unsafe/manual lifecycle
     /// integrations fail closed instead of projecting a retired image.
     pub(crate) fn lock_heap(self) -> Result<MainStaticHeapGuard<'main>, MainStaticHeapLeaseError> {
         let lock = self
@@ -285,7 +389,7 @@ impl<'main> MainStaticHeapLease<'main> {
             .shared_heap_projection_lock
             .lock()
             .map_err(MainStaticHeapLeaseError::Lock)?;
-        if self.storage.state.load(Ordering::Acquire) != READY {
+        if self.storage.state.load(Ordering::Acquire) != THREAD_READY {
             drop(lock);
             return Err(MainStaticHeapLeaseError::Inactive);
         }
@@ -302,7 +406,7 @@ impl<'main> MainStaticHeapLease<'main> {
     /// list or ownership registry.
     #[inline]
     pub(crate) fn note_later_theap_attached(self) -> Result<(), MainStaticHeapLeaseError> {
-        if self.storage.state.load(Ordering::Acquire) != READY {
+        if self.storage.state.load(Ordering::Acquire) != THREAD_READY {
             return Err(MainStaticHeapLeaseError::Inactive);
         }
         self.storage
@@ -377,10 +481,18 @@ pub(crate) enum MainStaticTheapError {
     /// The dynamic, fast, default, or cached root was already changed. This
     /// is checked before state claim and before the source ticket is issued.
     RootsNotPristine,
+    /// The source static Heap foundation has not been initialized. A
+    /// ticket-zero TLD/Theap cannot cross this process-startup boundary.
+    HeapNotInitialized,
     Initializing,
     AlreadyAttached,
     TornDown,
     Poisoned,
+    HeapFoundation(MainStaticHeapFoundationError),
+    BootstrapSelection(MainStaticBootstrapSelectionError),
+    /// Default and fast TLS roots were published, but the Rust first-ticket
+    /// selector could not publish completion. The static image is retained.
+    BootstrapPublication,
     NotFirstTicket,
     MainStaticTld(MainStaticTldError),
     TheapInit(TheapMainStaticInitError),
@@ -424,72 +536,81 @@ pub(crate) struct MainStaticTheapAttachment {
 }
 
 impl MainStaticTheapAttachment {
-    /// Attaches the actual process-static main TLD to the process-static main
-    /// heap/theap pair.
-    ///
-    /// # Safety
-    ///
-    /// The caller must own this thread's allocator lifecycle and the
-    /// process-bootstrap selection of this `MainSubprocess`'s sole ticket
-    /// zero. In particular, it must call this path before any generic
-    /// [`crate::tld::ThreadLocalDataOwner`] could consume that ticket. No
-    /// shared process-init authority arbitrates those generic and static
-    /// choices in this slice. It must not create a competing TLD or mutate any
-    /// compiler-TLS root while this capability is live, move the capability to
-    /// another thread, retain raw aliases to its static images, or skip
-    /// [`Self::teardown`]. This is a bounded first-ticket path, not a
-    /// replacement for later dynamic TLD and first-class heap attachment.
-    pub(crate) unsafe fn begin() -> Result<Self, MainStaticTheapError> {
-        // SAFETY: forwarded to the common static-store constructor. The
-        // process singleton and process-main identity have matching lifetime.
-        unsafe {
-            Self::begin_with_storage(
-                &PROCESS_MAIN_STATIC_ATTACHMENT,
-                MainSubprocess::global(),
-            )
+    /// Validates the current-thread and compiler-TLS conditions which must
+    /// hold before process initialization reserves the source ticket-zero
+    /// branch. This deliberately changes no source storage or ticket count.
+    pub(crate) fn preflight_current_roots() -> Result<(), MainStaticTheapError> {
+        current_thread_identity().ok_or(MainStaticTheapError::InvalidCurrentThread)?;
+        if !roots_are_pristine_for_main_static_attachment() {
+            return Err(MainStaticTheapError::RootsNotPristine);
         }
+        i32::try_from(crate::os::numa_node())
+            .map_err(|_| MainStaticTheapError::InvalidCurrentThread)?;
+        Ok(())
     }
 
-    /// Builds the same source transition over isolated leaked test statics.
+    /// Builds the historical test-only direct transition over isolated
+    /// process-lifetime statics. Production code must instead use
+    /// `process_init::ProcessMainInitializationStorage`, which inserts the
+    /// process PageMap publication between the Heap foundation and this
+    /// ticket-zero TLD/Theap attachment.
     #[cfg(test)]
     pub(crate) unsafe fn begin_with_test_storage(
         storage: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
     ) -> Result<Self, MainStaticTheapError> {
-        // SAFETY: test callers carry the same current-thread exclusivity
-        // contract as production and retain both leaked fixtures indefinitely.
-        unsafe { Self::begin_with_storage(storage, subprocess) }
+        Self::preflight_current_roots()?;
+        let mut selection = subprocess.reserve_static_bootstrap().map_err(|error| match error {
+            MainStaticBootstrapSelectionError::FirstTicketAlreadyIssued => {
+                MainStaticTheapError::NotFirstTicket
+            }
+            other => MainStaticTheapError::BootstrapSelection(other),
+        })?;
+        let foundation = MainStaticHeapFoundation::initialize(storage, subprocess, &mut selection)
+            .map_err(MainStaticTheapError::HeapFoundation)?;
+        // SAFETY: the test owns the current-thread lifecycle and retains all
+        // leaked source-image fixtures for the attachment's whole lifetime.
+        unsafe { Self::begin_after_heap_foundation(foundation, selection) }
     }
 
-    unsafe fn begin_with_storage(
-        storage: &'static MainStaticAttachmentStorage,
-        subprocess: &'static MainSubprocess,
+    /// Attaches the source-static ticket-zero TLD/Theap only after a selected
+    /// main Heap foundation and the process coordinator's intervening work.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own this thread's allocator lifecycle, retain the
+    /// returned owner until `teardown`, and establish all source process-init
+    /// stages between `foundation` and this attachment. In particular, it
+    /// must have either published the selected process PageMap or retained an
+    /// explicit initialization failure; it must not create a competing TLD,
+    /// mutate compiler-TLS roots, move the returned owner, or retain raw
+    /// aliases to the static images.
+    pub(crate) unsafe fn begin_after_heap_foundation(
+        foundation: MainStaticHeapFoundation,
+        mut selection: MainStaticBootstrapSelection,
     ) -> Result<Self, MainStaticTheapError> {
-        let thread = current_thread_identity().ok_or(MainStaticTheapError::InvalidCurrentThread)?;
-        // A repeat or terminal process-static image is rejected before reading
-        // the live roots. That leaves a ready attachment distinguishable from
-        // a cold store with foreign roots, and neither case consumes a ticket.
-        storage.reject_non_cold_before_root_read()?;
-        // This root check deliberately precedes both static state claim and
-        // `thread_total_count` ticket issuance. A wrong root is a pure
-        // rejection: it cannot consume the source sequence or static storage.
-        if !roots_are_pristine_for_main_static_attachment() {
-            return Err(MainStaticTheapError::RootsNotPristine);
+        if !foundation.matches_selection(&selection) {
+            return Err(MainStaticTheapError::BootstrapSelection(
+                MainStaticBootstrapSelectionError::Retained,
+            ));
         }
-        // The source observes NUMA during TLD initialization, but this pure
-        // range validation has no allocation or source state effect. Keeping
-        // it before the state claim/ticket makes an impossible out-of-range
-        // observation a true pre-ticket rejection instead of stranding the
-        // static owner in INITIALIZING.
+        Self::preflight_current_roots()?;
+        let storage = foundation.storage();
+        let subprocess = foundation.subprocess();
+        let thread = current_thread_identity().ok_or(MainStaticTheapError::InvalidCurrentThread)?;
         let numa = i32::try_from(crate::os::numa_node())
             .map_err(|_| MainStaticTheapError::InvalidCurrentThread)?;
-        storage.claim_cold()?;
+        storage.claim_ready_heap_for_initial_thread()?;
 
-        let ticket = subprocess.issue_thread_ticket();
-        if !ticket.is_first_main_tld() {
+        let ticket = selection.issue_first_ticket().map_err(|error| {
             storage.mark_poisoned();
-            return Err(MainStaticTheapError::NotFirstTicket);
-        }
+            match error {
+                MainStaticBootstrapSelectionError::FirstTicketAlreadyIssued => {
+                    MainStaticTheapError::NotFirstTicket
+                }
+                other => MainStaticTheapError::BootstrapSelection(other),
+            }
+        })?;
         let (mut tld, registration) = ticket
             .initialize_and_activate_first_main_tld(thread, numa)
             .map_err(|error| {
@@ -505,16 +626,11 @@ impl MainStaticTheapAttachment {
             tld.current_mut().test_inject_busy_theaps_lock();
         }
 
-        // SAFETY: the static state is INITIALIZING and this function has not
-        // exposed a capability or TLS root. The owner fields have distinct,
+        // SAFETY: the static state is THREAD_INITIALIZING, the Heap foundation
+        // was initialized in its final slot, and this function has not exposed
+        // a TLD/Theap capability or TLS root. The owner fields have distinct,
         // independently cache-aligned final static addresses.
         let (heap, theap) = unsafe { storage.images_mut() };
-        // `mi_heap_main_init_once` uses `_mi_memid_create(MI_MEM_STATIC)`,
-        // not `_mi_memid_create_static`: heap provenance is kind-only with a
-        // zero union/flags. The source TLD and Theap keep their concrete
-        // static image memids below/inside their respective initializers.
-        let heap_memid = MemoryId::static_kind_only();
-        heap.initialize_main_static(subprocess, heap_memid);
         let theap_memid = MemoryId::static_allocation(
             core::ptr::from_mut(theap).cast(),
             size_of::<Theap>(),
@@ -544,7 +660,11 @@ impl MainStaticTheapAttachment {
         // the empty static theap and dynamic TLS remains its empty image.
         set_default_theap(theap_pointer);
         set_fast_slot(Some(theap_pointer.cast()));
-        storage.mark_ready();
+        storage.mark_thread_ready();
+        if !selection.complete_initial_thread() {
+            storage.mark_poisoned();
+            return Err(MainStaticTheapError::BootstrapPublication);
+        }
 
         Ok(Self {
             storage,
@@ -585,7 +705,7 @@ impl MainStaticTheapAttachment {
     #[inline]
     pub(crate) fn subprocess(&self) -> Result<&'static MainSubprocess, MainStaticTheapError> {
         self.ensure_current()?;
-        if self.storage.state.load(Ordering::Acquire) != READY {
+        if self.storage.state.load(Ordering::Acquire) != THREAD_READY {
             return Err(MainStaticTheapError::Poisoned);
         }
         Ok(self.subprocess)
@@ -603,7 +723,7 @@ impl MainStaticTheapAttachment {
         &self,
     ) -> Result<MainStaticHeapLease<'_>, MainStaticTheapError> {
         self.ensure_current()?;
-        if self.storage.state.load(Ordering::Acquire) != READY {
+        if self.storage.state.load(Ordering::Acquire) != THREAD_READY {
             return Err(MainStaticTheapError::Poisoned);
         }
         Ok(MainStaticHeapLease {
@@ -1101,6 +1221,39 @@ mod tests {
     }
 
     #[test]
+    fn static_heap_foundation_precedes_ticket_zero_tld_theap_and_tls_roots() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            MainStaticTheapAttachment::preflight_current_roots()
+                .expect("a fresh test thread has pristine static roots");
+            let mut selection = subprocess
+                .reserve_static_bootstrap()
+                .expect("the cold subprocess selects the static source branch");
+            let foundation = MainStaticHeapFoundation::initialize(storage, subprocess, &mut selection)
+                .expect("the source main Heap initializes before PageMap/thread setup");
+
+            assert!(foundation.test_heap_is_initialized());
+            assert_eq!(subprocess.total_thread_count(), 0);
+            assert_eq!(subprocess.live_thread_count(), 0);
+            assert!(roots_are_pristine_for_main_static_attachment());
+            let (heap, theap) = unsafe { storage.images_mut() };
+            assert!(heap.is_bound_to_main_subprocess(subprocess));
+            assert!(!theap.is_initialized());
+            assert!(theap.heap().is_null());
+
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_after_heap_foundation(foundation, selection)
+            }
+            .expect("the delayed ticket-zero source attachment succeeds");
+            assert_eq!(subprocess.total_thread_count(), 1);
+            assert_eq!(subprocess.live_thread_count(), 1);
+            owner.teardown().expect("the static owner tears down normally");
+        })
+        .join()
+        .expect("heap-foundation test thread completes");
+    }
+
+    #[test]
     fn ticket_zero_static_attachment_keeps_source_images_lists_roots_and_release_witness() {
         thread::spawn(|| {
             let (storage, subprocess) = fixture();
@@ -1181,7 +1334,7 @@ mod tests {
     }
 
     #[test]
-    fn wrong_roots_reject_before_ticket_and_repeat_rejects_after_ready() {
+    fn wrong_roots_reject_before_ticket_and_repeat_observes_published_roots() {
         thread::spawn(|| {
             let (wrong_storage, wrong_subprocess) = fixture();
             let mut foreign = Theap::empty();
@@ -1206,7 +1359,7 @@ mod tests {
             .expect("first attachment succeeds");
             assert!(matches!(
                 unsafe { MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess) },
-                Err(MainStaticTheapError::AlreadyAttached)
+                Err(MainStaticTheapError::RootsNotPristine)
             ));
             assert_eq!(subprocess.total_thread_count(), 1);
             owner.teardown().expect("first owner remains the sole teardown authority");
@@ -1216,7 +1369,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_first_ticket_poison_static_attachment_without_aliasing_or_live_count_error() {
+    fn generic_first_ticket_rejects_static_selection_without_aliasing_or_live_count_error() {
         thread::spawn(|| {
             let (storage, subprocess) = fixture();
             let metadata = MetaAllocator::test_static_owner();
@@ -1236,7 +1389,11 @@ mod tests {
                 unsafe { MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess) },
                 Err(MainStaticTheapError::NotFirstTicket)
             ));
-            assert_eq!(subprocess.total_thread_count(), 2);
+            assert_eq!(
+                subprocess.total_thread_count(),
+                1,
+                "the selector rejects static startup before it can consume a second ticket"
+            );
             assert_eq!(
                 subprocess.live_thread_count(),
                 1,
@@ -1284,7 +1441,9 @@ mod tests {
             assert!(theap.heap().is_null());
             assert!(matches!(
                 unsafe { MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess) },
-                Err(MainStaticTheapError::Poisoned)
+                Err(MainStaticTheapError::BootstrapSelection(
+                    MainStaticBootstrapSelectionError::Retained
+                ))
             ));
             assert_eq!(subprocess.total_thread_count(), 1);
             assert_eq!(subprocess.live_thread_count(), 1);

@@ -114,6 +114,14 @@ impl ProcessSharedArenaStorage {
         std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
+    /// Test-only observation that the automatic-reserve policy remains absent
+    /// from process initialization. A process coordinator must not touch this
+    /// caller-managed sidecar merely by publishing a PageMap root.
+    #[cfg(test)]
+    pub(crate) fn test_is_cold(&self) -> bool {
+        self.state.load(Ordering::Acquire) == COLD
+    }
+
     /// Installs one complete, aligned source arena into this process sidecar.
     ///
     /// The caller transfers one live mapping. On every pre-publication error,

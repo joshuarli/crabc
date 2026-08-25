@@ -393,6 +393,25 @@ impl<'main> MainHeapThreadAttachment<'main> {
         Ok(())
     }
 
+    /// Completes the old Theap/TLD half of `_mi_thread_done` after a typed
+    /// process-lived abandoned-page route has detached every remaining page.
+    ///
+    /// # Safety
+    ///
+    /// Every source-live page formerly counted by this Theap must already be
+    /// queue/direct-cache detached and represented by one typed process route
+    /// that retains its PageMap registration, matching arena bitmap/count
+    /// pair, metadata, backing slices, and final-release authority. No route
+    /// may dereference this attachment's Theap or TLD after this call. The
+    /// caller must retain every such route until its final release or an
+    /// explicit terminal state. This method intentionally cannot discover
+    /// that external route from the now-empty Theap page count.
+    pub(crate) unsafe fn finish_after_detached_process_page_route(
+        &mut self,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        self.finish_after_page_drain()
+    }
+
     fn initialize_and_publish(&mut self) -> Result<(), MainHeapThreadAttachmentError> {
         let main_heap = self.main_heap;
         let theap_pointer = {
@@ -774,6 +793,33 @@ pub(crate) struct MainHeapThreadPageDrainSession<'attachment, 'main> {
 }
 
 impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
+    /// Returns the process-static main Heap lifetime witness retained by this
+    /// still-linked later Theap. A post-exit route may keep this copy after
+    /// the Theap/TLD are detached so it can preserve the static-main
+    /// `pages_abandoned[bin]`/`abandoned_count[bin]` pairing.
+    #[inline]
+    pub(crate) fn main_heap_lease(&self) -> MainStaticHeapLease<'main> {
+        self.attachment.main_heap
+    }
+
+    /// Consumes this empty post-fast-slot session into its underlying later
+    /// attachment after source-live pages crossed into typed process routes.
+    ///
+    /// # Safety
+    ///
+    /// The caller must prove the Theap's page count, every queue, and every
+    /// direct cache are empty, and that all formerly live page state is held
+    /// by typed process routes. It must next call
+    /// [`MainHeapThreadAttachment::finish_after_detached_process_page_route`]
+    /// or retain the returned attachment terminally. No surviving route may
+    /// access this session's Theap/TLD after the conversion.
+    #[inline]
+    pub(crate) unsafe fn into_attachment_after_process_page_route(
+        self,
+    ) -> &'attachment mut MainHeapThreadAttachment<'main> {
+        self.attachment
+    }
+
     #[inline]
     fn theap(&self) -> &Theap {
         self.attachment

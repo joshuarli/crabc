@@ -42,6 +42,18 @@ const MAIN_TLD_CLAIMED: u8 = 1;
 const MAIN_TLD_LIVE: u8 = 2;
 const MAIN_TLD_RETIRED: u8 = 3;
 
+// The source relaxed `thread_total_count` is deliberately kept separate from
+// this Rust-only first-ticket selector.  Source process initialization owns
+// the startup ordering; without a selector, a generic Rust TLD constructor
+// could race the selected ticket-zero static-main path and consume its
+// immutable source storage before the process PageMap exists.
+const BOOTSTRAP_OPEN: u8 = 0;
+const BOOTSTRAP_STATIC_SELECTING: u8 = 1;
+const BOOTSTRAP_STATIC_TICKET_ISSUED: u8 = 2;
+const BOOTSTRAP_STATIC_READY: u8 = 3;
+const BOOTSTRAP_GENERIC_READY: u8 = 4;
+const BOOTSTRAP_RETAINED: u8 = 5;
+
 /// Cache-aligned backing for source-static `mi_process_tld_main`.
 ///
 /// `mi_decl_cache_align` gives this source object the normal 64-byte cache
@@ -68,6 +80,12 @@ impl MainStaticTldSlot {
 pub(crate) struct MainSubprocess {
     thread_count: AtomicUsize,
     thread_total_count: AtomicUsize,
+    /// Rust-side selection of the source sequence-zero TLD branch.
+    ///
+    /// This does not replace either source counter. It only prevents a
+    /// generic constructor from taking sequence zero while the source-shaped
+    /// process coordinator has committed to the static main image.
+    bootstrap_selection: AtomicU8,
     main_tld_state: AtomicU8,
     main_tld: UnsafeCell<MainStaticTldSlot>,
 }
@@ -82,6 +100,7 @@ impl MainSubprocess {
         Self {
             thread_count: AtomicUsize::new(0),
             thread_total_count: AtomicUsize::new(0),
+            bootstrap_selection: AtomicU8::new(BOOTSTRAP_OPEN),
             main_tld_state: AtomicU8::new(MAIN_TLD_COLD),
             main_tld: UnsafeCell::new(MainStaticTldSlot::new()),
         }
@@ -93,19 +112,106 @@ impl MainSubprocess {
         &PROCESS_MAIN_SUBPROCESS
     }
 
-    /// Issues the exact old value of source `thread_total_count.fetch_add`.
+    /// Reserves the unique source-static ticket-zero path for a process
+    /// coordinator.
+    ///
+    /// The returned linear selector prevents generic TLD construction while
+    /// source main-heap/map initialization is in progress. Dropping it before
+    /// the static heap changes returns the process to `OPEN`; every later
+    /// drop is terminal so a partial source image cannot be mistaken for an
+    /// unselected process.
+    pub(crate) fn reserve_static_bootstrap(
+        &'static self,
+    ) -> Result<MainStaticBootstrapSelection, MainStaticBootstrapSelectionError> {
+        let observed = self.bootstrap_selection.compare_exchange(
+            BOOTSTRAP_OPEN,
+            BOOTSTRAP_STATIC_SELECTING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+        match observed {
+            Ok(_) => {
+                // Every supported ticket issuer first claims the selector
+                // before it can increment the source relaxed counter. Keep a
+                // defensive check here so a future raw issuer fails closed
+                // instead of stealing a nonzero static branch.
+                if self.thread_total_count.load(Ordering::Relaxed) != 0 {
+                    self.bootstrap_selection
+                        .store(BOOTSTRAP_RETAINED, Ordering::Release);
+                    return Err(MainStaticBootstrapSelectionError::FirstTicketAlreadyIssued);
+                }
+                Ok(MainStaticBootstrapSelection {
+                    subprocess: self,
+                    heap_foundation_committed: false,
+                    completed: false,
+                    _not_send_or_sync: PhantomData,
+                })
+            }
+            Err(BOOTSTRAP_GENERIC_READY) => {
+                Err(MainStaticBootstrapSelectionError::FirstTicketAlreadyIssued)
+            }
+            Err(BOOTSTRAP_STATIC_SELECTING | BOOTSTRAP_STATIC_TICKET_ISSUED) => {
+                Err(MainStaticBootstrapSelectionError::Selecting)
+            }
+            Err(BOOTSTRAP_STATIC_READY | BOOTSTRAP_RETAINED | _) => {
+                Err(MainStaticBootstrapSelectionError::Retained)
+            }
+        }
+    }
+
+    /// Issues the exact old value of source `thread_total_count.fetch_add`
+    /// for a generic TLD constructor.
     ///
     /// This happens before any metadata allocation attempt. Dropping the
     /// resulting ticket intentionally does not roll the total count back:
     /// upstream total-thread sequencing is monotonic even when TLD creation
     /// later fails.
-    #[inline]
-    pub(crate) fn issue_thread_ticket(&'static self) -> ThreadRegistrationTicket {
-        let old = self.thread_total_count.fetch_add(1, Ordering::Relaxed);
-        ThreadRegistrationTicket {
-            subprocess: self,
-            sequence: ThreadSequence::from_previous_total_count(old),
-            _not_send_or_sync: PhantomData,
+    pub(crate) fn issue_generic_thread_ticket(
+        &'static self,
+    ) -> Result<ThreadRegistrationTicket, GenericThreadTicketError> {
+        loop {
+            match self.bootstrap_selection.load(Ordering::Acquire) {
+                BOOTSTRAP_OPEN => {
+                    // Taking sequence zero requires a selector transition
+                    // first. If a source static coordinator wins instead,
+                    // this generic path observes its explicit rejection
+                    // before it can mutate the relaxed sequence.
+                    if self.thread_total_count.load(Ordering::Relaxed) == 0 {
+                        if self
+                            .bootstrap_selection
+                            .compare_exchange(
+                                BOOTSTRAP_OPEN,
+                                BOOTSTRAP_GENERIC_READY,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_err()
+                        {
+                            continue;
+                        }
+                        let ticket = self.issue_thread_ticket_unchecked();
+                        debug_assert!(ticket.is_first_main_tld());
+                        return Ok(ticket);
+                    }
+
+                    // A nonzero sequence with an open selector can only
+                    // arise through a future raw issuer that bypassed this
+                    // module. Preserve the static slots and reject it rather
+                    // than guessing which branch owns ticket zero.
+                    self.bootstrap_selection
+                        .store(BOOTSTRAP_RETAINED, Ordering::Release);
+                    return Err(GenericThreadTicketError::BootstrapRetained);
+                }
+                BOOTSTRAP_GENERIC_READY | BOOTSTRAP_STATIC_READY => {
+                    return Ok(self.issue_thread_ticket_unchecked());
+                }
+                BOOTSTRAP_STATIC_SELECTING | BOOTSTRAP_STATIC_TICKET_ISSUED => {
+                    return Err(GenericThreadTicketError::StaticBootstrapSelecting);
+                }
+                BOOTSTRAP_RETAINED | _ => {
+                    return Err(GenericThreadTicketError::BootstrapRetained);
+                }
+            }
         }
     }
 
@@ -125,6 +231,13 @@ impl MainSubprocess {
     ) -> Result<ThreadRegistrationTicket, LaterThreadTicketError> {
         let mut observed = self.thread_total_count.load(Ordering::Relaxed);
         loop {
+            match self.bootstrap_selection.load(Ordering::Acquire) {
+                BOOTSTRAP_STATIC_SELECTING | BOOTSTRAP_STATIC_TICKET_ISSUED => {
+                    return Err(LaterThreadTicketError::StaticBootstrapSelecting);
+                }
+                BOOTSTRAP_RETAINED => return Err(LaterThreadTicketError::BootstrapRetained),
+                _ => {}
+            }
             if observed == 0 {
                 return Err(LaterThreadTicketError::FirstTicketReserved);
             }
@@ -259,9 +372,146 @@ impl MainSubprocess {
         let prior = self.thread_count.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(prior > 0, "a thread-registration lease cannot underflow");
     }
+
+    #[inline]
+    fn issue_thread_ticket_unchecked(&'static self) -> ThreadRegistrationTicket {
+        let old = self.thread_total_count.fetch_add(1, Ordering::Relaxed);
+        ThreadRegistrationTicket {
+            subprocess: self,
+            sequence: ThreadSequence::from_previous_total_count(old),
+            _not_send_or_sync: PhantomData,
+        }
+    }
 }
 
 static PROCESS_MAIN_SUBPROCESS: MainSubprocess = MainSubprocess::new();
+
+/// A selected source-static ticket-zero bootstrap path.
+///
+/// It is intentionally `!Send`/`!Sync`: the coordinator performs the
+/// static-main source transition on one current thread and must either finish
+/// its TLD/Theap publication or retain the incomplete process image.
+#[must_use = "a selected static bootstrap must finish its ticket-zero attachment or retain the process image"]
+pub(crate) struct MainStaticBootstrapSelection {
+    subprocess: &'static MainSubprocess,
+    heap_foundation_committed: bool,
+    completed: bool,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl MainStaticBootstrapSelection {
+    #[inline]
+    pub(crate) const fn subprocess(&self) -> &'static MainSubprocess {
+        self.subprocess
+    }
+
+    /// Marks the source main-heap static slot as initialized. From this point
+    /// a failed process-map or ticket-zero attachment is process-terminal.
+    #[inline]
+    pub(crate) fn commit_heap_foundation(&mut self) {
+        self.heap_foundation_committed = true;
+    }
+
+    /// Consumes source sequence zero only after the static Heap foundation
+    /// exists and before the static TLD/Theap attachment is initialized.
+    pub(crate) fn issue_first_ticket(
+        &mut self,
+    ) -> Result<ThreadRegistrationTicket, MainStaticBootstrapSelectionError> {
+        if !self.heap_foundation_committed {
+            return Err(MainStaticBootstrapSelectionError::HeapFoundationNotCommitted);
+        }
+        if self
+            .subprocess
+            .bootstrap_selection
+            .load(Ordering::Acquire)
+            != BOOTSTRAP_STATIC_SELECTING
+        {
+            return Err(MainStaticBootstrapSelectionError::Retained);
+        }
+        let ticket = self.subprocess.issue_thread_ticket_unchecked();
+        if !ticket.is_first_main_tld() {
+            self.subprocess
+                .bootstrap_selection
+                .store(BOOTSTRAP_RETAINED, Ordering::Release);
+            return Err(MainStaticBootstrapSelectionError::FirstTicketAlreadyIssued);
+        }
+        self.subprocess
+            .bootstrap_selection
+            .store(BOOTSTRAP_STATIC_TICKET_ISSUED, Ordering::Release);
+        Ok(ticket)
+    }
+
+    /// Publishes that the static TLD/Theap branch completed. Generic later
+    /// TLD construction may now issue nonzero source tickets.
+    pub(crate) fn complete_initial_thread(&mut self) -> bool {
+        let result = self.subprocess.bootstrap_selection.compare_exchange(
+            BOOTSTRAP_STATIC_TICKET_ISSUED,
+            BOOTSTRAP_STATIC_READY,
+            Ordering::Release,
+            Ordering::Acquire,
+        );
+        if result.is_ok() {
+            self.completed = true;
+            true
+        } else {
+            self.subprocess
+                .bootstrap_selection
+                .store(BOOTSTRAP_RETAINED, Ordering::Release);
+            false
+        }
+    }
+
+    /// Records an explicit retained process image before normal completion.
+    #[inline]
+    pub(crate) fn retain(mut self) {
+        self.subprocess
+            .bootstrap_selection
+            .store(BOOTSTRAP_RETAINED, Ordering::Release);
+        self.completed = true;
+    }
+}
+
+impl Drop for MainStaticBootstrapSelection {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        if self.heap_foundation_committed {
+            self.subprocess
+                .bootstrap_selection
+                .store(BOOTSTRAP_RETAINED, Ordering::Release);
+        } else {
+            // A pre-foundation selection failure is still a pure preflight
+            // outcome. Restore OPEN only if this token still owns it; a
+            // foreign state is itself terminal rather than an excuse to
+            // overwrite another selector's decision.
+            let _ = self.subprocess.bootstrap_selection.compare_exchange(
+                BOOTSTRAP_STATIC_SELECTING,
+                BOOTSTRAP_OPEN,
+                Ordering::Release,
+                Ordering::Acquire,
+            );
+        }
+    }
+}
+
+/// A refused static-main selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainStaticBootstrapSelectionError {
+    /// The static Heap must occupy its final source slot before ticket zero
+    /// can make the static TLD image observable.
+    HeapFoundationNotCommitted,
+    FirstTicketAlreadyIssued,
+    Selecting,
+    Retained,
+}
+
+/// A generic ticket cannot cross an active or retained static-main bootstrap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GenericThreadTicketError {
+    StaticBootstrapSelecting,
+    BootstrapRetained,
+}
 
 /// The source-issued old `thread_total_count` result for one TLD attempt.
 ///
@@ -282,6 +532,8 @@ pub(crate) struct ThreadRegistrationTicket {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LaterThreadTicketError {
     FirstTicketReserved,
+    StaticBootstrapSelecting,
+    BootstrapRetained,
 }
 
 impl ThreadRegistrationTicket {
@@ -412,15 +664,15 @@ mod tests {
     #[test]
     fn ticket_issues_old_relaxed_sequence_and_only_a_lease_changes_live_count() {
         let main = MainSubprocess::test_static_owner();
-        let first = main.issue_thread_ticket();
-        let second = main.issue_thread_ticket();
+        let first = main.issue_generic_thread_ticket().unwrap();
+        let second = main.issue_generic_thread_ticket().unwrap();
 
         assert_eq!(first.sequence().get(), 0);
         assert_eq!(second.sequence().get(), 1);
         assert_eq!(main.total_thread_count(), 2);
         assert_eq!(main.live_thread_count(), 0);
 
-        let ticket = main.issue_thread_ticket();
+        let ticket = main.issue_generic_thread_ticket().unwrap();
         let mut image = ThreadLocalData::detached();
         // SAFETY: this test owns a fresh local TLD image and names the exact
         // fixture subprocess/ticket before it becomes observable.
@@ -452,7 +704,7 @@ mod tests {
         ));
         assert_eq!(main.total_thread_count(), 0);
 
-        let first = main.issue_thread_ticket();
+        let first = main.issue_generic_thread_ticket().unwrap();
         assert_eq!(first.sequence().get(), 0);
         let later = main
             .issue_later_thread_ticket()
@@ -460,5 +712,57 @@ mod tests {
         assert_eq!(later.sequence().get(), 1);
         assert_eq!(main.total_thread_count(), 2);
         assert_eq!(main.live_thread_count(), 0);
+    }
+
+    #[test]
+    fn selected_static_bootstrap_blocks_generic_ticket_zero_until_it_completes_or_retains() {
+        let main = MainSubprocess::test_static_owner();
+        let mut selection = main
+            .reserve_static_bootstrap()
+            .expect("the cold subprocess selects its static branch");
+        assert!(matches!(
+            main.issue_generic_thread_ticket(),
+            Err(GenericThreadTicketError::StaticBootstrapSelecting)
+        ));
+        assert_eq!(main.total_thread_count(), 0);
+
+        selection.commit_heap_foundation();
+        let ticket = selection
+            .issue_first_ticket()
+            .expect("the selected branch alone consumes sequence zero");
+        assert_eq!(ticket.sequence().get(), 0);
+        assert!(matches!(
+            main.issue_generic_thread_ticket(),
+            Err(GenericThreadTicketError::StaticBootstrapSelecting)
+        ));
+        drop(selection);
+        assert!(matches!(
+            main.issue_generic_thread_ticket(),
+            Err(GenericThreadTicketError::BootstrapRetained)
+        ));
+        assert_eq!(main.total_thread_count(), 1);
+    }
+
+    #[test]
+    fn selected_static_bootstrap_cannot_issue_ticket_zero_before_heap_foundation() {
+        let main = MainSubprocess::test_static_owner();
+        let mut selection = main
+            .reserve_static_bootstrap()
+            .expect("the cold subprocess selects its static branch");
+
+        assert!(
+            matches!(
+                selection.issue_first_ticket(),
+                Err(MainStaticBootstrapSelectionError::HeapFoundationNotCommitted)
+            ),
+            "ticket zero remains behind the source static-Heap foundation"
+        );
+        assert_eq!(main.total_thread_count(), 0);
+        drop(selection);
+
+        let generic = main
+            .issue_generic_thread_ticket()
+            .expect("a pre-foundation selection failure leaves the subprocess cold");
+        assert_eq!(generic.sequence().get(), 0);
     }
 }

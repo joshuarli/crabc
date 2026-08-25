@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 78,
-    "item_count": 74,
+    "implemented": 80,
+    "item_count": 76,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 78
+    "unit_verified": 80
   },
-  "port_map_sha256": "9f3c509b0af116a3a4ed38239ee702d082d1a89f83d95e7749774172b5ac826c",
+  "port_map_sha256": "d7e07b08c90edb3a52dd58723c645dc99189d683fa01e874defa3496949ce622",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -199,6 +199,10 @@
       "unit_verified",
       "differential_verified"
     ],
+    "item:src/init.c:bounded-source-main-process-initialization-order": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/init.c:current-thread-unattached-tld-metadata-lifecycle": [
       "implemented",
       "unit_verified"
@@ -308,6 +312,10 @@
       "differential_verified"
     ],
     "item:src/theap.c:later-main-all-free-thread-exit-drain": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/theap.c:later-main-mapped-medium-pages-post-exit-registry": [
       "implemented",
       "unit_verified"
     ],

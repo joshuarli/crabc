@@ -13,7 +13,7 @@
 // committed/dirty/zero observations, and commit rollback),
 // `src/arena.c:911-947` (aligned page metadata selection and commitment),
 // `src/arena.c:1433-1490` (arena slice release),
-// `src/arena.c:725-778,1304-1355` (mapped abandoned-page bitmap/count
+// `src/arena.c:725-778,1304-1409` (mapped abandoned-page bitmap/count
 // publication, claim, and quiescent clear),
 // `src/arena.c:2238-2409` (default delayed arena purge scheduling and forced
 // collection), and
@@ -1465,10 +1465,11 @@ pub(crate) struct ArenaView<'arena> {
 
 /// One initialized main-heap `pages_abandoned[bin]` bitmap of a live arena.
 ///
-/// This capability binds the bitmap to its source arena and size-class bin.
-/// The abandonment substrate uses it to prevent a caller from publishing a
-/// page into an arbitrary ordinary bitmap. This accessor is main-heap only;
-/// a dynamic Heap instead receives the separate purpose-bound
+/// This bitmap-only view binds the image to its source arena and size-class
+/// bin. The abandonment substrate uses it in source-state unit tests; a
+/// production static-main owner must upgrade it to
+/// [`MainArenaMappedAbandonedPage`] so its paired Heap count cannot be lost.
+/// A dynamic Heap instead receives the separate purpose-bound
 /// `DynamicArenaMappedAbandonedPage` capability for one exact mapped page.
 pub(crate) struct ArenaAbandonedPages<'arena> {
     arena: NonNull<Arena>,
@@ -1533,6 +1534,75 @@ impl ArenaAbandonedPages<'_> {
     #[inline]
     pub(crate) fn is_published(&self, slice_index: usize) -> bool {
         self.bitmap.is_set_range(slice_index, 1) == Some(true)
+    }
+}
+
+/// One exact static-main Heap pairing for an in-place
+/// `Arena::pages_main.pages_abandoned[bin]` bitmap.
+///
+/// `arena.c:_mi_arenas_page_abandon` increments the owning Heap's relaxed
+/// `abandoned_count[bin]` immediately after it publishes this bitmap bit; its
+/// claim and unabandon paths consume that same count after their paired bit or
+/// identity transition. A bare [`ArenaAbandonedPages`] is intentionally only a
+/// bitmap view. This capability is the production static-main owner that keeps
+/// the bitmap and count inseparable.
+pub(crate) struct MainArenaMappedAbandonedPage<'arena> {
+    bitmap: ArenaAbandonedPages<'arena>,
+    heap: NonNull<Heap>,
+}
+
+impl MappedAbandonedPages for MainArenaMappedAbandonedPage<'_> {
+    #[inline]
+    fn bin(&self) -> usize { self.bitmap.bin() }
+
+    #[inline]
+    fn page_slice_index(&self, memory: MemoryId) -> Option<usize> {
+        self.bitmap.page_slice_index(memory)
+    }
+
+    #[inline]
+    fn is_clear(&self, slice_index: usize) -> bool {
+        self.bitmap.bitmap_is_clear(slice_index)
+    }
+
+    #[inline]
+    fn publish(&self, slice_index: usize) -> bool {
+        if !self.bitmap.publish(slice_index) {
+            return false;
+        }
+        // SAFETY: construction verifies that this is the static main Heap
+        // currently paired with the exact in-place arena-pages image.
+        unsafe { self.heap.as_ref() }.increment_abandoned_count(self.bitmap.bin());
+        true
+    }
+
+    #[inline]
+    fn try_claim<F>(&self, thread_sequence: usize, claim: F) -> MappedAbandonedClaim
+    where
+        F: FnMut(usize) -> AbandonedBitmapClaim,
+    {
+        let Some(slice_index) = self.bitmap.try_claim(thread_sequence, claim) else {
+            return MappedAbandonedClaim::None;
+        };
+        // SAFETY: a successful claim consumes exactly one prior publication
+        // through this same static Heap/bin pairing.
+        if unsafe { self.heap.as_ref() }.decrement_abandoned_count(self.bitmap.bin()) {
+            MappedAbandonedClaim::Claimed(slice_index)
+        } else {
+            MappedAbandonedClaim::CountDecrementFailed(slice_index)
+        }
+    }
+
+    #[inline]
+    fn clear_once_set(&self, slice_index: usize) -> bool {
+        self.bitmap.clear_once_set(slice_index)
+    }
+
+    #[inline]
+    fn decrement_after_identity_clear(&self) -> bool {
+        // SAFETY: `unabandon_mapped` has already quiesced and cleared the
+        // exact bitmap bit and identity paired to this source count.
+        unsafe { self.heap.as_ref() }.decrement_abandoned_count(self.bitmap.bin())
     }
 }
 
@@ -1925,6 +1995,32 @@ impl<'arena> ArenaView<'arena> {
             arena: self.arena,
             bin,
             bitmap,
+        })
+    }
+
+    /// Returns the sole production capability for a static-main mapped
+    /// abandoned page. It proves the main Heap still points at this arena's
+    /// embedded `pages_main` image before allowing a bitmap publication to
+    /// mutate its paired `abandoned_count` entry.
+    #[inline]
+    pub(crate) fn main_heap_abandoned_page(
+        &self,
+        heap: NonNull<Heap>,
+        bin: usize,
+    ) -> Option<MainArenaMappedAbandonedPage<'arena>> {
+        // SAFETY: the caller retains the static main Heap through its page
+        // session. This constructor only observes immutable identity and its
+        // atomic arena-pages slot before binding the counter capability.
+        let heap_ref = unsafe { heap.as_ref() };
+        let pages = NonNull::from(&self.arena().pages_main);
+        if !heap_ref.is_main_static()
+            || heap_ref.arena_pages_at(self.arena().arena_index) != Some(pages)
+        {
+            return None;
+        }
+        Some(MainArenaMappedAbandonedPage {
+            bitmap: self.abandoned_pages(bin)?,
+            heap,
         })
     }
 }

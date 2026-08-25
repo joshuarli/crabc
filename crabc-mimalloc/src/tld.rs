@@ -30,8 +30,8 @@ use crate::compiler_tls::current_thread_identity;
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
 use crate::os::{MemoryConfig, numa_node};
 use crate::subproc::{
-    LaterThreadTicketError, MainStaticThreadLocalData, MainStaticTldError, MainSubprocess,
-    ThreadRegistrationLease,
+    GenericThreadTicketError, LaterThreadTicketError, MainStaticThreadLocalData,
+    MainStaticTldError, MainSubprocess, ThreadRegistrationLease,
 };
 use crate::types::{
     LiveThreadId, MemoryKind, ThreadLocalData, ThreadLocalDataQuiesceError,
@@ -48,6 +48,12 @@ pub(crate) enum ThreadLocalDataError {
     /// The bounded dynamic-Theap selection gate observed that ticket zero is
     /// still reserved for the explicit process-static main attachment.
     FirstTicketReserved,
+    /// A source-shaped static-main process bootstrap has selected ticket zero
+    /// but has not yet completed its PageMap/TLD/Theap sequence.
+    StaticBootstrapSelecting,
+    /// A source-shaped static-main process bootstrap retained a partial
+    /// process image, so generic TLD creation cannot claim its sequence.
+    BootstrapRetained,
     /// The caller's NUMA observation cannot fit the source's signed `int`
     /// field, so no metadata allocation was attempted.
     NumaNodeOutOfRange,
@@ -116,13 +122,13 @@ impl ThreadLocalDataOwner {
     /// # Safety
     ///
     /// The caller must provide the exclusive lifecycle for this thread's
-    /// TLD and intentionally choose this generic branch as the process
-    /// bootstrap owner of `MainSubprocess` ticket zero. If the process-static
-    /// default-Theap attachment is required, the caller must instead invoke
-    /// [`crate::main_theap::MainStaticTheapAttachment::begin`] first; this
-    /// generic owner can otherwise consume ticket zero before that static
-    /// path. No shared process-init selection authority exists in this slice.
-    /// In particular, it must not construct a second live
+    /// TLD and intentionally select the generic process branch. It may own
+    /// ticket zero only while no source-static process coordinator has
+    /// selected that branch. Production ticket-zero static setup instead
+    /// uses [`crate::process_init::ProcessMainInitializationStorage`]; its
+    /// selector rejects generic construction while it is initializing or has
+    /// retained a partial static image. In particular, the caller must not
+    /// construct a second live
     /// `ThreadLocalDataOwner` for the same thread, move this owner to another
     /// thread, externally publish or retain a raw pointer to the returned
     /// TLD, or permit any concurrent reference while `teardown` may
@@ -314,7 +320,16 @@ impl ThreadLocalDataOwner {
         // Source `mi_tld_create` obtains this old value before deciding
         // static-versus-metadata storage. A later allocation failure consumes
         // the total sequence but never reaches live-count registration.
-        let ticket = subprocess.issue_thread_ticket();
+        let ticket = subprocess
+            .issue_generic_thread_ticket()
+            .map_err(|error| match error {
+                GenericThreadTicketError::StaticBootstrapSelecting => {
+                    ThreadLocalDataError::StaticBootstrapSelecting
+                }
+                GenericThreadTicketError::BootstrapRetained => {
+                    ThreadLocalDataError::BootstrapRetained
+                }
+            })?;
         let sequence = ticket.sequence();
 
         let (storage, registration) = if ticket.is_first_main_tld() {
@@ -380,8 +395,16 @@ impl ThreadLocalDataOwner {
         // metadata TLD branch.
         let ticket = subprocess
             .issue_later_thread_ticket()
-            .map_err(|LaterThreadTicketError::FirstTicketReserved| {
-                ThreadLocalDataError::FirstTicketReserved
+            .map_err(|error| match error {
+                LaterThreadTicketError::FirstTicketReserved => {
+                    ThreadLocalDataError::FirstTicketReserved
+                }
+                LaterThreadTicketError::StaticBootstrapSelecting => {
+                    ThreadLocalDataError::StaticBootstrapSelecting
+                }
+                LaterThreadTicketError::BootstrapRetained => {
+                    ThreadLocalDataError::BootstrapRetained
+                }
             })?;
         let sequence = ticket.sequence();
         debug_assert!(!ticket.is_first_main_tld());

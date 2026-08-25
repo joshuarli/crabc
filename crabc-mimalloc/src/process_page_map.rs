@@ -52,11 +52,14 @@ const POISONED: u8 = 2;
 pub(crate) struct ProcessPageMapStorage {
     state: AtomicU8,
     initialization_lock: PrivateLock,
-    /// Rust-side exclusive lifecycle boundary for the source page map's
-    /// plain entry reads and writes. This is deliberately separate from
-    /// initialization and from the source map's individual submap locks: one
-    /// bounded page engine holds it for its complete owner/producer lifetime
-    /// so it cannot manufacture a second mutable PageMap route.
+    /// Rust-side exclusion boundary for the source page map's plain entry
+    /// reads and writes. This is deliberately separate from initialization
+    /// and from the source map's individual submap locks. A normal bounded
+    /// engine holds it for its complete owner/producer lifetime. A future
+    /// source-shaped thread-exit handoff may instead transfer it to a
+    /// process-lived route which reacquires it around each complete
+    /// lookup/free/release decision; it never leaves a plain entry access
+    /// unguarded between those two forms.
     page_lifecycle_lock: PrivateLock,
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
     subprocess: AtomicPtr<MainSubprocess>,
@@ -97,6 +100,14 @@ impl ProcessPageMapStorage {
     #[cfg(test)]
     pub(crate) fn test_static_owner() -> &'static Self {
         std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
+    }
+
+    /// Test-only observation of pre-publication state. It exposes no map
+    /// reference and is used by source-order regressions to prove that a
+    /// process preflight rejection never manufactures a global root.
+    #[cfg(test)]
+    pub(crate) fn test_has_published_root(&self) -> bool {
+        self.root.load().is_some()
     }
 
     /// Initializes or obtains the process-global map for `subprocess`.
@@ -382,6 +393,46 @@ impl ProcessPageMapMutationLease {
             }
         }
     }
+
+    /// Transfers the long engine guard to one process-lived post-exit page
+    /// route.
+    ///
+    /// This is intentionally unsafe even though it performs only a private
+    /// lock release. The caller must already own a source-valid live-page
+    /// continuation that retains every registered page's metadata, arena
+    /// backing, matching Heap arena-pages image, and final release authority.
+    /// That continuation must use the returned access capability for every
+    /// plain PageMap lookup, registration, and unregistration, and must call
+    /// [`ProcessPageMapPostExitAccess::finish_after_all_pages_released`] only
+    /// after all of those pages are gone. Dropping the returned capability
+    /// before that explicit completion poisons this process root rather than
+    /// reopening it over a possibly live map entry.
+    ///
+    /// The transfer itself is the Rust ownership bridge required after
+    /// upstream has detached and freed the old Theap/TLD: source PageMap
+    /// entries remain plain, but their process-lifetime owner no longer keeps
+    /// an arbitrary-length engine borrow or its former thread metadata alive.
+    /// It is not a general PageMap escape hatch or a substitute for
+    /// `xthread_free`, abandoned-bitmap, Heap, or arena synchronization.
+    pub(crate) unsafe fn into_post_exit_access(
+        mut self,
+    ) -> Result<ProcessPageMapPostExitAccess, ProcessPageMapError> {
+        let guard = self.guard.take().ok_or(ProcessPageMapError::Poisoned)?;
+        match guard.unlock() {
+            Ok(()) => Ok(ProcessPageMapPostExitAccess {
+                storage: self.storage,
+                completed: false,
+            }),
+            Err(error) => {
+                // The Release transition occurred before the wake failure.
+                // The former engine cannot safely retain its long guard, and
+                // a later route cannot treat the map as normal after an
+                // unreported handoff wake failure.
+                self.storage.state.store(POISONED, Ordering::Release);
+                Err(ProcessPageMapError::Lock(error))
+            }
+        }
+    }
 }
 
 impl Drop for ProcessPageMapMutationLease {
@@ -392,6 +443,104 @@ impl Drop for ProcessPageMapMutationLease {
             // later caller treat the root as a fresh allocation route.
             self.storage.state.store(POISONED, Ordering::Release);
             drop(guard);
+        }
+    }
+}
+
+/// One process-lived route for page-map access after a thread owner detached.
+///
+/// Upstream abandoned pages keep their PageMap registration after their old
+/// Theap and TLD have gone away. The route therefore cannot retain
+/// [`ProcessPageMapMutationLease`]: that guard is deliberately an
+/// engine-lifetime aliasing boundary. Instead, this capability reacquires the
+/// same guard for each complete plain-entry operation. It carries no raw page
+/// pointer, arena, Heap, or free-list right by itself; its one valid consumer
+/// must retain those in a separate typed post-exit owner.
+///
+/// The explicit `finish_after_all_pages_released` transition is deliberately
+/// unsafe because the process map cannot inspect whether every registered
+/// post-exit page has truly completed its final release. An unfinished drop
+/// is terminal, matching the existing long-lifecycle lease policy.
+#[must_use = "a post-exit PageMap access route must finish after every retained page is released"]
+pub(crate) struct ProcessPageMapPostExitAccess {
+    storage: &'static ProcessPageMapStorage,
+    completed: bool,
+}
+
+impl ProcessPageMapPostExitAccess {
+    /// Runs one complete operation while holding the source-plain PageMap
+    /// entry exclusion boundary.
+    ///
+    /// A closure that obtains a page from a lookup must complete its atomic
+    /// abandoned-free/release decision before it returns. It must not leak a
+    /// raw page reference, pointer-based owner right, or a future plain map
+    /// access beyond this closure. Stable page and arena lifetime remain the
+    /// enclosing post-exit owner's separate responsibility.
+    pub(crate) fn with_page_map<R>(
+        &self,
+        operation: impl for<'map> FnOnce(&'map PageMap) -> R,
+    ) -> Result<R, ProcessPageMapError> {
+        if self.completed
+            || self.storage.state.load(Ordering::Acquire) != READY
+            || self.storage.root.load().is_none()
+        {
+            return Err(ProcessPageMapError::Poisoned);
+        }
+        let guard = self
+            .storage
+            .page_lifecycle_lock
+            .lock()
+            .map_err(ProcessPageMapError::Lock)?;
+        if self.storage.state.load(Ordering::Acquire) != READY || self.storage.root.load().is_none() {
+            let unlock = guard.unlock();
+            if let Err(error) = unlock {
+                self.storage.state.store(POISONED, Ordering::Release);
+                return Err(ProcessPageMapError::Lock(error));
+            }
+            return Err(ProcessPageMapError::Poisoned);
+        }
+
+        let result = operation(self.storage.page_map_ref());
+        match guard.unlock() {
+            Ok(()) => Ok(result),
+            Err(error) => {
+                // The closure's source operation completed before this
+                // post-Release wake failure. Its caller receives no result
+                // that could be used to continue an apparently healthy route.
+                self.storage.state.store(POISONED, Ordering::Release);
+                Err(ProcessPageMapError::Lock(error))
+            }
+        }
+    }
+
+    /// Completes the process-page-map half of a post-exit route.
+    ///
+    /// # Safety
+    ///
+    /// Every page whose live registration depended on this capability must
+    /// have completed its source terminal release: mapped identity/bitmap
+    /// removal where applicable, PageMap unregister, ordinary arena-page
+    /// clear, metadata retirement, and backing-slice/mapping release. No
+    /// `with_page_map` operation or raw page/producer relation may remain.
+    pub(crate) unsafe fn finish_after_all_pages_released(
+        mut self,
+    ) -> Result<(), ProcessPageMapError> {
+        // Acquire/release the same exclusion boundary once more so a safe
+        // caller cannot mark this route complete while one of its own prior
+        // map closures still holds a plain entry access.
+        self.with_page_map(|_| ())?;
+        self.completed = true;
+        Ok(())
+    }
+}
+
+impl Drop for ProcessPageMapPostExitAccess {
+    fn drop(&mut self) {
+        if !self.completed {
+            // A detached Theap/TLD may already be gone while its pages stay
+            // registered. Never allow another route to interpret that as a
+            // clean PageMap lifecycle.
+            self.storage.state.store(POISONED, Ordering::Release);
         }
     }
 }
@@ -496,6 +645,61 @@ mod tests {
             lease.test_retained_page_map().is_some(),
             "terminal poisoning retains the final map slot rather than exposing a new cold root"
         );
+    }
+
+    #[test]
+    fn post_exit_access_releases_the_engine_guard_but_requires_explicit_page_completion() {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let lease = storage.initialize(memory_config(), subprocess).unwrap();
+
+        let lifecycle = lease
+            .begin_page_lifecycle()
+            .expect("the exiting engine initially owns every plain map entry");
+        // SAFETY: this regression models the later owner-exit handoff. No
+        // page exists in this isolated fixture, so the explicit completion
+        // below proves the transfer does not reopen a retained route.
+        let access = unsafe { lifecycle.into_post_exit_access() }
+            .expect("the map guard transfers to the process-lived route");
+
+        assert_eq!(
+            access
+                .with_page_map(|page_map| page_map.memory_config())
+                .expect("the short access guard observes the final map"),
+            memory_config()
+        );
+        let next = lease
+            .begin_page_lifecycle()
+            .expect("the transfer releases the long engine guard between accesses");
+        next.finish()
+            .expect("the independent empty engine returns the shared guard");
+
+        // SAFETY: the fixture has no registered page or in-flight access.
+        unsafe { access.finish_after_all_pages_released() }
+            .expect("explicit all-page completion keeps the process root ready");
+        lease
+            .begin_page_lifecycle()
+            .expect("a completed post-exit route leaves the map reusable")
+            .finish()
+            .expect("the final empty lifecycle releases normally");
+    }
+
+    #[test]
+    fn dropping_unfinished_post_exit_access_poisoned_the_root() {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let lease = storage.initialize(memory_config(), subprocess).unwrap();
+        let lifecycle = lease.begin_page_lifecycle().unwrap();
+        // SAFETY: this test intentionally abandons the returned process page
+        // route to prove the conservative terminal-drop policy.
+        let access = unsafe { lifecycle.into_post_exit_access() }.unwrap();
+        drop(access);
+
+        assert!(matches!(
+            lease.begin_page_lifecycle(),
+            Err(ProcessPageMapError::Poisoned)
+        ));
+        assert!(lease.test_retained_page_map().is_some());
     }
 
     #[test]

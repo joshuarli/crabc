@@ -81,22 +81,109 @@ later engine into `MainHeapThreadProcessPageExitDrain`: source fast-slot clear
 precedes force collection of every queue (including regular and full); a page
 that becomes all-free follows the same PageMap -> bitmap -> metadata -> slice
 release order. The pass continues after an earlier live page, then retains that
-page rather than queue-detaching or abandoning it; only an all-free pass reaches
-the explicit post-drain root/list/TLD teardown. Both reject a
-foreign process pair before page mutation and terminally poison their attachment
-plus the map if unfinished. This is not a process-init coordinator: it does not
-choose source startup order, reserve a mapping, route concurrent/general
-later-thread or multiple-arena pages, traverse remaining live-page owner exit,
-or permit process destruction. Both owners remain distinct from the metadata
-allocator's private map/arena and every caller-managed map. The C static `mi_page_map_empty`
+live page rather than queue-detaching or abandoning it. Three explicit
+live-page handoffs require the drain's sole page after fast-slot clear: one
+target queue member and every other queue/direct slot empty. The full one-block
+arena singleton false-collects, queue-detaches, and unmapped-abandons while its
+exact final client free takes the existing failed-reclaim empty tail and
+performs PageMap -> `pages_main` -> metadata -> slice release. The second
+handoff accepts only a medium regular arena page with `reserved > 1` and
+`used == 1`; it force- then false-collects, queue-detaches, and publishes its
+exact main `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`.
+Its final client free takes only the source mapped empty-before-reclaim
+decision, clears the bit/identity, consumes the paired count, and performs the
+same release; a still-live result is terminally retained rather than reclaimed
+or requeued.
+
+The third handoff, `MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_to_process_route`,
+accepts one sole nonfull medium arena page with one or more live blocks. It
+preserves source force -> false collection, queue/page-count detach, and mapped
+identity/bit/count/unown publication, then retains exact arena/span/static-main
+Heap facts while `MainHeapThreadAttachment::finish_after_detached_process_page_route`
+actually tears down the former Theap/TLD. The resulting
+`MainHeapThreadProcessPageExitMappedRegularRoute` holds only those facts and a
+linear `ProcessPageMapPostExitAccess`. Each client free re-acquires the same
+map lock briefly: a nonempty result keeps PageMap registration and the paired
+bitmap/count, while the final free clears them before PageMap -> `pages_main`
+-> metadata -> slice release. The route is movable to one client-free thread,
+but is not concurrent routing, allocation-time claim, reclaim, or requeue.
+
+The bounded aggregate extension,
+`MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_pages_to_process_route`,
+now performs one source-shaped traversal over more than one live page. Its
+complete preflight leaves queue, direct-cache, and page ownership untouched
+unless every direct slot is empty and every queued member is a nonfull regular
+medium page in the paired arena (`reserved > 1`, `0 < used < reserved`);
+small, full, large, singleton/huge, unmapped, foreign, malformed, and mixed
+queues reject before any queue/page mutation. The traversal then follows
+`mi_theap_collect_abandon`: force collect, release an all-free page, false
+collect, release if it became all-free, otherwise queue/page-count detach and
+mapped identity/bit/count/unown publication. It keeps no raw page list: every
+survivor is represented by its PageMap registration plus the exact static-main
+`pages_abandoned[bin]` bit and paired `Heap::abandoned_count[bin]`. A fully
+force-collected result returns the normal drained owner. Otherwise the former
+Theap/TLD tears down and the linear
+`MainHeapThreadProcessPageExitMappedMediumPagesRoute` re-resolves each client
+free under a short PageMap lock. Only after the free tail has claimed the low
+owner bit does it select that page's bin-specific bitmap/count capability;
+this permits distinct medium bins without retaining stale page metadata. A
+nonempty free retains its pairing, while a final free clears identity/bit/count
+before PageMap -> `pages_main` -> metadata -> slice release. A fresh engine
+may serialize an independent map operation between frees, but no current
+allocator path receives a capability to adopt, reclaim, or requeue a registry
+member.
+
+An empty drain still returns for the ordinary post-drain root/list/TLD teardown;
+the process routes use their separate typed attachment finish. Every route
+rejects a foreign process pair before page mutation and terminally poisons its
+attachment plus the map if unfinished. They do not reserve a mapping, route
+concurrent/general later-thread or multiple-arena pages, permit process
+destruction, or turn the aggregate registry into general allocation-time
+abandonment policy. They remain distinct from the metadata allocator's private
+map/arena and every caller-managed map. The C static `mi_page_map_empty`
 pre-root remains absent; an unpublished map reservation failure or unfinished
 lifecycle is terminal rather than a null or fresh root.
 
+The bounded source-order process-init prerequisite is now also present.
+`process_init.rs` reserves the static ticket-zero branch only after pure
+root/current-thread preflight, publishes the static Heap foundation, readies
+the detached metadata allocator without exposing its private map/arena,
+publishes the distinct global PageMap, and only then attaches the static
+TLD/Theap and default-then-fast roots. `MainStaticBootstrapSelection` prevents
+generic ticket zero from racing that branch and requires Heap foundation before
+ticket issue. `ProcessMainReadyLease` is immutable; the coordinator does not
+choose options or OS facts, reserve the process-shared arena, create
+pthread/TLS keys, route allocation/free, or perform shutdown/fork repair.
+Preflight rejection remains cold, while every later error retains the partial
+process image rather than replaying static startup. The direct static
+attachment remains a test-only seam; production static startup must use this
+coordinator.
+
 General producer routing, concurrent/general shared/later-thread page-bearing
-ownership, nonempty or regular unmapped owner-exit pages, terminal reuse, automatic and
-multiple dynamic arenas, pthread/TLS teardown hooks, fork repair, public libc
-backend integration, performance qualification, and default promotion remain
-unfinished.
+ownership, small/full/large/unmapped/huge owner-exit pages, terminal reuse,
+automatic and multiple dynamic arenas, complete process options/TLS/shutdown,
+pthread/TLS teardown hooks, fork repair, public libc backend integration,
+performance qualification, and default promotion remain unfinished. The next
+safe lifecycle frontier is another source-shaped owner-exit page class or the
+allocation-time policy needed to reclaim an existing registry member—not a
+superficial broad abandonment loop.
+
+A fresh pinned-source audit makes that prerequisite concrete:
+`mi_theap_collect_ex(MI_ABANDON)` force-collects each queue member and then
+calls `_mi_page_abandon` for every still-live page
+(`src/theap.c:97-152`, `src/page.c:291-302`). The latter false-collects,
+detaches the page, and delegates mapped publication/count pairing or unmapped
+abandonment to `src/arena.c:1304-1409`. The current
+`PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
+process-map mutation lease only after its page count, queues, and direct roots
+are empty; an unfinished lease poisons that map owner. The post-exit transfer
+now has two narrow forms: the sole-medium route and the aggregate-medium
+registry both convert the long mutation lease into a short locked free owner,
+retain stable span/arena/Heap facts rather than the old Theap/TLD, and prove
+bitmap/count pairing through actual teardown and sequential later frees. The
+aggregate registry intentionally stops at nonfull regular medium pages. Do not
+extend it to another page shape without its source-specific publication,
+terminal-release, allocation-time claim/reclaim, and concurrency evidence.
 
 Checkpoint evidence is green: the focused
 `dynamic_theap::tests::dynamic_thread_exit_singleton_remote_free_clears_tls_then_releases_its_arena_page`,
@@ -105,22 +192,36 @@ and the raw false/force-local-list order/cycle regressions in `free_list::tests`
 the no-page shared-main regressions in `main_heap_thread::tests`, the
 process-map commit/once/lifecycle regressions in `process_page_map::tests`, the
 root-pairing regressions in `process_arena::tests`, the five bounded
-static-main page-owner regressions in `main_static_page::tests`, and the seven
+static-main page-owner regressions in `main_static_page::tests`, the sixteen
 bounded later-main page-owner regressions in `main_heap_page::tests` (including
 the joined remote-full all-free exit drain, its later-queue collection behind a
-retained live page, and the retained-live-page boundary) all pass.
-`./scripts/dev.sh test -p crabc-mimalloc` passes 355 tests; the five
-`loom_` remote-head schedules, `./scripts/dev.sh structure`, the 39
-allocator-runner unit tests, and `./scripts/dev.sh allocator --quick` also
-pass (report: `compat/reports/allocator/latest.json`). The latter followed a
-reviewed `compat/allocator/ratchet-v3.5.0.json` snapshot with 74 items and 78
+retained live page, the retained-live-page boundary, the sole-full-singleton
+final-free/reject-before-detach regressions, the sole-medium
+mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
+medium route's teardown-before-free, one-page-refusal, and cross-thread
+movement regressions, and the aggregate medium registry's two-page release,
+post-claim distinct-bin selection, and force-collection-to-drained
+regressions), and
+`abandoned::tests::mapped_one_block_owner_exit_free_retains_a_nonempty_medium_page`,
+which proves the mapped endpoint cannot reclaim or requeue a still-live page,
+the source-order process-main coordinator regressions in `process_init::tests`,
+and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
+`subproc::tests` all pass. The current `./scripts/dev.sh test -p
+crabc-mimalloc` package run passes. `./scripts/dev.sh test -p crabc-mimalloc
+--lib --features loom
+remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
+schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
+and `./scripts/dev.sh allocator --quick` also pass (report:
+`compat/reports/allocator/latest.json`). The current explicit
+`compat/allocator/run.py --check` passes after a reviewed
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 76 items and 80
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
-before broadening the newly proven post-TLS singleton case, the all-free
-later-main exit drain, or either bounded process page owner. The next frontier
-is source-shaped process initialization and a page-bearing owner-exit traversal
-that can handle remaining nonempty/live pages (including regular unmapped
-cases), then real pthread/TLS lifecycle integration—not routing that general
-policy through either bounded dynamic handoff, the no-page finish, or these
+before broadening the newly proven post-TLS singleton case, the later-main
+all-free scan/three sole-page handoffs/aggregate medium registry, or either
+bounded process page owner. The next frontier is another page-bearing
+owner-exit class or registry adoption policy, then complete process and real
+pthread/TLS lifecycle integration—not routing that general policy through either
+bounded singleton or mapped-one-block handoff, the no-page finish, or these
 sequential ticket-zero/later page-owner slices.
 
 The current upstream baseline should be **mimalloc v3.5.0**, released August 19, 2026, at tag commit `18b08671c9302247bfb682286e6bf3cc1773f801`. Upstream marks v3 as its recommended current design. Pin that exact commit and archive hash; never track `main`. ([GitHub][1])

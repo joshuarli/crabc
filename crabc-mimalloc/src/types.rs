@@ -707,6 +707,16 @@ impl Heap {
     pub(crate) fn is_bound_to_main_subprocess(&self, subprocess: &MainSubprocess) -> bool {
         core::ptr::eq(self.subprocess, subprocess.as_ptr())
     }
+
+    /// Identifies the source process-static main Heap image. This is narrower
+    /// than a generic heap identity: only this Heap may pair an arena's
+    /// in-place `pages_main` abandoned bitmap with `abandoned_count[bin]`.
+    #[inline]
+    pub(crate) fn is_main_static(&self) -> bool {
+        self.theap_slot == 1
+            && self.memid.kind() == MemoryKind::Static
+            && !self.subprocess.is_null()
+    }
 }
 
 /// A failure while manipulating the private source heap-theap list.

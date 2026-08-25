@@ -817,6 +817,36 @@ pub(crate) struct MetaAllocator {
     _pin: PhantomPinned,
 }
 
+/// An opaque readiness witness for the detached source metadata route.
+///
+/// It intentionally exposes neither the metadata PageMap nor its private
+/// arena/registry. `mi_process_theap_meta` is initialized while forming the
+/// source main Heap, but it is not the process-global PageMap or a candidate
+/// `ProcessPageArenaLease` backing.
+#[derive(Clone, Copy)]
+pub(crate) struct MetaAllocatorReady {
+    allocator: Pin<&'static MetaAllocator>,
+    config: MemoryConfig,
+    subprocess: &'static MainSubprocess,
+}
+
+impl MetaAllocatorReady {
+    #[inline]
+    pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
+        self.subprocess
+    }
+
+    #[inline]
+    pub(crate) const fn memory_config(self) -> MemoryConfig {
+        self.config
+    }
+
+    #[inline]
+    pub(crate) fn matches(self, allocator: Pin<&'static MetaAllocator>) -> bool {
+        core::ptr::eq(self.allocator.get_ref(), allocator.get_ref())
+    }
+}
+
 // SAFETY: no safe method exposes a reference into an uninitialized slot. Once
 // ready, every mutable access to the allocator/page-map/theap happens under
 // `lock`; the process-lived mapping pins all raw targets. `registry` uses its
@@ -865,6 +895,56 @@ impl MetaAllocator {
         // address, matching the static-reference requirement of its detached
         // page-map/bootstrap/allocator slots.
         unsafe { Pin::new_unchecked(owner) }
+    }
+
+    /// Observes only whether this detached metadata owner reached READY for
+    /// one exact process tuple. It deliberately exposes no allocator/map
+    /// capability and is used to prove process-startup ordering in isolated
+    /// regressions.
+    #[cfg(test)]
+    pub(crate) fn test_is_ready_for(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> bool {
+        let this = self.get_ref();
+        if this.status.load(Ordering::Acquire) != READY {
+            return false;
+        }
+        // SAFETY: READY Release-publishes this immutable final slot before
+        // the Acquire state observation above.
+        let stored_config = unsafe { *(*this.config.get()).assume_init_ref() };
+        stored_config == config
+            && core::ptr::eq(this.subprocess.load(Ordering::Acquire), subprocess.as_ptr())
+    }
+
+    /// Returns the final private PageMap slot address after metadata readiness
+    /// without turning it into a usable map reference. This proves the
+    /// process-global map stays a distinct owner.
+    #[cfg(test)]
+    pub(crate) fn test_private_page_map_address(self: Pin<&'static Self>) -> Option<usize> {
+        let this = self.get_ref();
+        (this.status.load(Ordering::Acquire) == READY)
+            .then(|| this.page_map.get().addr())
+    }
+
+    /// Ensures the detached metadata Theap/image is ready for one selected
+    /// source main subprocess without allocating a caller-visible metadata
+    /// block. This is the source `mi_process_theap_meta` ordering seam used
+    /// by process initialization: it remains a separate private map/arena
+    /// owner and never publishes through `ProcessPageMapStorage`.
+    pub(crate) fn prepare_for_main_subprocess(
+        self: Pin<&'static Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<MetaAllocatorReady, MetaError> {
+        let mut entry = self.enter()?;
+        entry.ensure_ready(config, subprocess)?;
+        Ok(MetaAllocatorReady {
+            allocator: self,
+            config,
+            subprocess,
+        })
     }
 
     /// Allocates zeroed metadata through the detached source theap.
