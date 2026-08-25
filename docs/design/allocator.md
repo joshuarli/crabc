@@ -247,8 +247,10 @@ teardown, routing or concurrency, public `mi_*` behavior or runtime, libc
 integration, backend promotion, public x86 support, or AArch64 evidence. The selected
 normal-release source surface is also
 accounted per item for native object/dynamic symbol presence, while a separate
-five-mode staged public-header gate proves selected C/C++ compile/linkability
-and ELF identity. Neither accounting nor the header gate establishes behavior,
+six-mode staged public-header gate proves selected C/C++ compile/linkability
+and ELF identity, including one C11 compile/link-only probe that instantiates
+the five base-header `*_csize` static-inline dispatch helpers. Neither
+accounting nor the header gate establishes behavior,
 Rust implementation, CMake installation, consumer execution, or public runtime
 compatibility.
 

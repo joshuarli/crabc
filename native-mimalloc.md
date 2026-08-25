@@ -472,7 +472,7 @@ contracts, reports, and status.
   forms, upstream-test coverage, behavior, and Rust implementation statuses
   into reviewed outcomes. The native selected normal-release assessment now
   classifies object/dynamic presence for 194 distinct C functions and marks
-  183 non-object source forms; separate native gates compile-link five
+  183 non-object source forms; separate native gates compile-link six
   selected staged public C/C++ forms and two selected static/archive override
   forms. Neither result establishes behavior, Rust/public-runtime support,
   CMake installation, consumer execution, or any unselected target mode;

@@ -69,10 +69,36 @@ PUBLIC_HEADER_BYTES = {
     "include/mimalloc-new-delete.h": "1bc31e20fb0340d9d071c69eaac2f07d0dfe4cdf95849ed8d91fb2bd7538d55b",
     "include/mimalloc-override.h": "21fcf61c4443341ac6bf6ea528af31dc7267e8e3456fc64bfd07704503032175",
 }
-MODES = ("c-base", "c-stats", "cxx-base", "cxx-new-delete", "c-override")
+MODES = (
+    "c-base",
+    "c-stats",
+    "c-inline-helpers",
+    "cxx-base",
+    "cxx-new-delete",
+    "c-override",
+)
 C_PROBES = {
     "c-base": "#include <mimalloc.h>\nint main(void) { void* p = mi_malloc(8); mi_free(p); return mi_version() == 0; }\n",
     "c-stats": "#include <mimalloc-stats.h>\nint main(void) { mi_stats_t stats; mi_stats_init(&stats); return mi_stats_get(&stats) ? 0 : 1; }\n",
+    # This only compile-links the five static-inline ``*_csize`` helpers at
+    # pinned ``include/mimalloc.h:398-412``. The volatile size makes both
+    # header branches compile/link inputs without running the consumer.
+    "c-inline-helpers": (
+        "#include <mimalloc.h>\n"
+        "int main(void) {\n"
+        "  volatile size_t size = 8;\n"
+        "  mi_theap_t* theap = mi_theap_get_default();\n"
+        "  void* malloced = mi_malloc_csize(size);\n"
+        "  void* zalloced = mi_zalloc_csize(size);\n"
+        "  void* theap_malloced = mi_theap_malloc_csize(theap, size);\n"
+        "  void* theap_zalloced = mi_theap_zalloc_csize(theap, size);\n"
+        "  mi_free_csize(malloced, size);\n"
+        "  mi_free_csize(zalloced, size);\n"
+        "  mi_free_csize(theap_malloced, size);\n"
+        "  mi_free_csize(theap_zalloced, size);\n"
+        "  return 0;\n"
+        "}\n"
+    ),
     "c-override": "#include <mimalloc-override.h>\nint main(void) { void* p = malloc(8); free(p); return 0; }\n",
 }
 CXX_PROBES = {

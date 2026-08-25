@@ -121,10 +121,33 @@ class HeaderModeEvidenceTests(unittest.TestCase):
         self.assertFalse(evidence.SCOPE["execution_claimed"])
         self.assertFalse(evidence.SCOPE["behavior_claimed"])
 
+    def test_c_inline_helpers_probe_instantiates_all_five_pinned_csize_helpers(self):
+        probe = evidence.C_PROBES["c-inline-helpers"]
+        for helper in (
+            "mi_malloc_csize",
+            "mi_zalloc_csize",
+            "mi_theap_malloc_csize",
+            "mi_theap_zalloc_csize",
+            "mi_free_csize",
+        ):
+            with self.subTest(helper=helper):
+                self.assertIn(f"{helper}(", probe)
+        command = evidence.consumer_command(
+            mode="c-inline-helpers",
+            c_compiler="musl-gcc",
+            cxx_compiler="g++",
+            include=Path("/include"),
+            library_directory=Path("/lib"),
+            probe=Path("/probe.c"),
+            output=Path("/output"),
+        )
+        self.assertEqual(command[1], "-std=c11")
+        self.assertFalse(evidence.SCOPE["execution_claimed"])
+
     def test_report_binds_shared_and_each_consumer_elf_identity(self):
         report = self.complete_report()
         self.assertEqual(report["status"], "passed")
-        self.assertEqual(len(report["modes"]), 5)
+        self.assertEqual(len(report["modes"]), 6)
         self.assertEqual(report["shared_library"]["elf"], evidence.EXPECTED_C_ELF)
         self.assertEqual(report["modes"][2]["elf"], evidence.EXPECTED_C_ELF)
 

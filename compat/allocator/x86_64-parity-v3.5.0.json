@@ -17,7 +17,7 @@
       "state": "available"
     },
     {
-      "claim": "On an attested native x86-64 host, builds the pinned C normal-release shared object and compile-links five selected staged public C/C++ header forms against it, recording ELF identity for the shared object and every consumer. It proves staged pinned-header compile/linkability only; it does not prove CMake configuration or installation, consumer execution or behavior, Rust implementation, public x86 runtime support, or AArch64 status.",
+      "claim": "On an attested native x86-64 host, builds the pinned C normal-release shared object and compile-links six selected staged public C/C++ header forms against it, including a C11 compile/link-only probe that instantiates the five base-header *_csize static-inline dispatch helpers, recording ELF identity for the shared object and every consumer. It proves staged pinned-header compile/linkability only; it does not prove CMake configuration or installation, consumer execution or behavior, Rust implementation, public x86 runtime support, or AArch64 status.",
       "command": "./compat/allocator/run-x86_64.sh allocator-header-modes",
       "id": "native-staged-public-header-mode-linkability",
       "native_required": true,

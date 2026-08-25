@@ -62,6 +62,7 @@
   "selected_modes": [
     "c-base",
     "c-stats",
+    "c-inline-helpers",
     "cxx-base",
     "cxx-new-delete",
     "c-override"
@@ -69,6 +70,7 @@
   "probe_sources": {
     "c-base": "3cf42cd11fa4c7d7ccb3cef4046b12aa1108b501c33be7add09ea5b9dc152b65",
     "c-stats": "a5c41990fc3447e6f43f6fc3e663e82f0c692d262d1a18bb1b11fb457d98dcbb",
+    "c-inline-helpers": "60dea163a579367fdf85f62976ce7abcfbe77970b9a80484977ff2ba1fb959e9",
     "cxx-base": "62ae7de3e48a5d5c78a1cfe945977e60a49c8938ff7e6bbfa4cc4f90760ade2b",
     "cxx-new-delete": "09959b22a7780104001cd5c464cdcc08b320b7709ca2ecbc4e18ea14ce56d4dc",
     "c-override": "35fe3f819057a84d73c1e52b0e404865fd94c42ba992ced09cd784ae9551170c"
