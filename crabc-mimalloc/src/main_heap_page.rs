@@ -1906,6 +1906,10 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
                 page_map,
             )
         };
+        #[cfg(test)]
+        let mut engine = engine;
+        #[cfg(test)]
+        engine.test_bind_page_area_commit_lease(pair);
         Ok(Self {
             engine,
             page_map_lifecycle,
@@ -5683,7 +5687,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
             .expect("a successful post-exit PageMap bridge retains its ready long lease");
         // SAFETY: all preflight proved the attachment/pair/source identities,
         // and `page_map_lifecycle` now serializes this complete target engine.
-        let mut engine = unsafe {
+        let engine = unsafe {
             PageAllocatorEngine::activate_later_main_thread(
                 session,
                 arena,
@@ -5691,6 +5695,10 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
                 page_map,
             )
         };
+        #[cfg(test)]
+        let mut engine = engine;
+        #[cfg(test)]
+        engine.test_bind_page_area_commit_lease(pair);
         match unsafe { parts.adopt_into_later_main(&mut engine, pair) } {
             Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reclaimed) => {
                 Ok(MainHeapThreadProcessPageAllocator {
@@ -10910,6 +10918,246 @@ mod tests {
             DirectSmallOnDemandExtension::PrefixCovered,
             false,
         );
+    #[test]
+    fn ordinary_reserved_medium_on_demand_commit_before_reuse() {
+        thread::spawn(|| {
+            let fault = fault::install(fault::Plan::disabled());
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_reserved_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the reserved process map and arena form one source image");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the reserved paired arena remains published for the ordinary owner");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("ordinary on-demand attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("ordinary on-demand attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
+                        .expect("the reserved attachment admits one ordinary medium page");
+                    allocator.test_enable_page_commit_on_demand();
+
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the fresh source page commits its initial medium prefix");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first medium block is PageMap-published");
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(PageKind::Medium),
+                        "the ordinary fixture selects the bounded medium page class"
+                    );
+                    assert!(
+                        page_ref.slice_pcommitted() != 0,
+                        "the reserved source page records its initial on-demand prefix"
+                    );
+                    assert!(
+                        page_ref.free_list_head().is_null(),
+                        "the initial medium prefix has no immediately reusable block"
+                    );
+                    assert!(
+                        page_ref.used() > 0 && page_ref.used() < usize::from(page_ref.reserved()),
+                        "the ordinary source page remains expandable"
+                    );
+                    let source_capacity = page_ref.capacity();
+                    let source_pcommitted = page_ref.slice_pcommitted();
+                    let source_used = page_ref.used();
+                    let source_free = page_ref.free_list_head();
+                    let bin = crate::size_class::bin(page_ref.block_size())
+                        .expect("the medium source page has one regular queue bin");
+                    let memory = page_ref.memid();
+                    let slice = memory
+                        .arena_memory()
+                        .expect("the source page belongs to the paired reserved arena")
+                        .slice_index as usize;
+                    let arena_backed = memory.kind() == MemoryKind::Arena;
+                    let reserved_mapping = !memory.initially_committed();
+                    let medium_page = crate::size_class::page_kind_for_block_size(page_ref.block_size())
+                        == Some(PageKind::Medium);
+                    let initial_prefix_present = source_pcommitted != 0;
+                    let initial_free_empty = source_free.is_null();
+                    let initial_nonfull = source_used > 0
+                        && source_used < usize::from(page_ref.reserved());
+                    let initial_used_equals_capacity = source_used == usize::from(source_capacity);
+                    let initial_queue_registered = allocator.test_queue_count(bin) == Some(1);
+                    // SAFETY: `first` is the still-live first client block;
+                    // the later direct page-area extension cannot touch it.
+                    unsafe { first.as_ptr().write(0xA5) };
+
+                    assert!(initial_queue_registered);
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                        page.as_ptr(),
+                        "the ordinary source page is registered before generic reuse"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
+                        Some(false),
+                        "the ordinary source page owns its arena bitmap member"
+                    );
+
+                    fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+                    let failed_allocation_none = allocator.allocate(request, false).is_none();
+                    assert!(
+                        failed_allocation_none,
+                        "find-generic propagates a failed page_make_immediate commit"
+                    );
+                    let failed_capacity_preserved =
+                        unsafe { page.as_ref().capacity() } == source_capacity;
+                    let failed_prefix_preserved =
+                        unsafe { page.as_ref().slice_pcommitted() } == source_pcommitted;
+                    let failed_used_preserved = unsafe { page.as_ref().used() } == source_used;
+                    let failed_free_preserved =
+                        unsafe { page.as_ref().free_list_head() } == source_free;
+                    let failed_queue_preserved = allocator.test_queue_count(bin) == Some(1);
+                    let failed_page_map_preserved =
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }
+                            == page.as_ptr();
+                    let failed_arena_bit_preserved =
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1) == Some(false);
+                    assert!(failed_capacity_preserved);
+                    assert!(failed_prefix_preserved);
+                    assert!(failed_used_preserved);
+                    assert!(failed_free_preserved);
+                    assert!(failed_queue_preserved);
+                    assert!(failed_page_map_preserved);
+                    assert!(failed_arena_bit_preserved);
+
+                    fault.set(fault::Plan::disabled());
+                    let reused = allocator
+                        .allocate(request, false)
+                        .expect("the fault-free ordinary retry commits before extending the page");
+                    assert_eq!(
+                        unsafe { allocator.test_page_for_block(reused) },
+                        page.as_ptr(),
+                        "the ordinary retry reuses the same page rather than taking a fresh page"
+                    );
+                    let retry_same_page = unsafe { allocator.test_page_for_block(reused) } == page.as_ptr();
+                    let retry_capacity = unsafe { page.as_ref().capacity() };
+                    let retry_used = unsafe { page.as_ref().used() };
+                    let retry_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
+                    let retry_capacity_grew = retry_capacity > source_capacity;
+                    let retry_prefix_grew = retry_pcommitted > source_pcommitted;
+                    let retry_queue_preserved = allocator.test_queue_count(bin) == Some(1);
+                    let retry_page_map_preserved =
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }
+                            == page.as_ptr();
+                    let retry_arena_bit_preserved =
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1) == Some(false);
+                    assert!(retry_same_page);
+                    assert!(retry_capacity_grew);
+                    assert!(retry_prefix_grew);
+                    assert!(retry_page_map_preserved);
+                    assert!(retry_arena_bit_preserved);
+                    let used_increment_one = retry_used == source_used + 1;
+                    let target_queue_registered = retry_queue_preserved;
+                    let commit_before_reuse = retry_same_page && retry_prefix_grew;
+                    // SAFETY: `first` remains the live first client block
+                    // until the matching local free below.
+                    let payload_preserved = unsafe { first.as_ptr().read() } == 0xA5;
+                    assert!(used_increment_one);
+                    assert!(target_queue_registered);
+                    assert!(commit_before_reuse);
+                    assert!(payload_preserved);
+
+                    unsafe {
+                        allocator
+                            .free(first)
+                            .expect("the initial medium block remains normally freeable");
+                        allocator
+                            .free(reused)
+                            .expect("the retried medium block remains normally freeable");
+                    }
+                    match allocator.finish() {
+                        Ok(()) => {}
+                        Err(_) => {
+                            panic!("the ordinary on-demand page lifecycle finishes after both frees")
+                        }
+                    }
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the ordinary later-thread attachment tears down after page finish");
+                    let final_page_released = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(first.as_ptr())
+                    }
+                    .is_null()
+                        && unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1) == Some(true);
+                    assert!(final_page_released, "ordinary cleanup releases the original page");
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "ordinary cleanup reopens the process-map lifecycle"
+                    );
+
+                    std::println!("CRABC_MI_ON_DEMAND_TRACE_BEGIN");
+                    std::println!("trace.on_demand.arena_backed={}", arena_backed as u8);
+                    std::println!("trace.on_demand.reserved_mapping={}", reserved_mapping as u8);
+                    std::println!("trace.on_demand.medium_page={}", medium_page as u8);
+                    std::println!("trace.on_demand.initial_prefix_present={}", initial_prefix_present as u8);
+                    std::println!("trace.on_demand.initial_free_empty={}", initial_free_empty as u8);
+                    std::println!("trace.on_demand.initial_nonfull={}", initial_nonfull as u8);
+                    std::println!("trace.on_demand.initial_used_equals_capacity={}", initial_used_equals_capacity as u8);
+                    std::println!("trace.on_demand.initial_queue_registered={}", initial_queue_registered as u8);
+                    std::println!("trace.on_demand.commit_before_reuse={}", commit_before_reuse as u8);
+                    std::println!("trace.on_demand.committed_prefix_grew={}", retry_prefix_grew as u8);
+                    std::println!("trace.on_demand.capacity_grew={}", retry_capacity_grew as u8);
+                    std::println!("trace.on_demand.used_increment_one={}", used_increment_one as u8);
+                    std::println!("trace.on_demand.target_queue_registered={}", target_queue_registered as u8);
+                    std::println!("trace.on_demand.reused_same_page={}", retry_same_page as u8);
+                    std::println!("trace.on_demand.payload_preserved={}", payload_preserved as u8);
+                    std::println!("trace.on_demand.final_page_released={}", final_page_released as u8);
+                    std::println!("trace.on_demand.initial_capacity={}", source_capacity);
+                    std::println!("trace.on_demand.initial_used={}", source_used);
+                    std::println!("trace.on_demand.initial_slice_pcommitted={}", source_pcommitted);
+                    std::println!("trace.on_demand.post_capacity={}", retry_capacity);
+                    std::println!("trace.on_demand.post_used={}", retry_used);
+                    std::println!("trace.on_demand.post_slice_pcommitted={}", retry_pcommitted);
+                    std::println!("trace.on_demand.valid={}", (arena_backed
+                        && reserved_mapping
+                        && medium_page
+                        && initial_prefix_present
+                        && initial_free_empty
+                        && initial_nonfull
+                        && initial_used_equals_capacity
+                        && initial_queue_registered
+                        && commit_before_reuse
+                        && retry_prefix_grew
+                        && retry_capacity_grew
+                        && used_increment_one
+                        && target_queue_registered
+                        && retry_same_page
+                        && payload_preserved
+                        && final_page_released) as u8);
+                    std::println!("CRABC_MI_ON_DEMAND_TRACE_END");
+                });
+                worker
+                    .join()
+                    .expect("ordinary reserved on-demand reuse remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("ordinary reserved medium on-demand fixture remains current-thread local");
     }
 
     /// Independent source model of `mi_theap_queue_first_update`'s direct

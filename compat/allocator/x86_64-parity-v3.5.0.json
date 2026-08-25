@@ -121,6 +121,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 23 address-independent values across a pinned C oracle, where only the C probe sets mi_option_page_commit_on_demand, and a private Rust test seam. One reserved medium page begins with the fixed 16 KiB/four-OS-page prefix; its first allocation exhausts that prefix, its second ordinary allocation commits before free-list extension and reuses the same page, and forced normal collection releases the page. The Rust fixture separately injects a failed direct commit and retries the same selected page, but this differential does not claim C fault-injection parity, Rust production option processing/API/policy, a fresh fallback, public mi_* behavior, public x86 runtime support, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-on-demand",
+      "id": "native-ordinary-reserved-medium-on-demand-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/on-demand.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 18 address-independent values from a real pinned-C worker pthread that allocates two same-page regular medium arena blocks, performs real mi_thread_done followed by pthread join before the consumer's public mi_free calls, and records producer_teardown_completed_before_consumer_free for that ordering while observing the selected mapped failed-reclaim/unown transition plus three terminal checks: page_map_unregistered_after_final_free, arena_page_bitmap_clear_after_final_free, and arena_slice_released_after_final_free. Rust compares only one bounded process-owned mapped regular handoff after Theap/TLD teardown and directly observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does not establish general thread exit, general routing or concurrency, adoption or reclaim, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-mapped-post-exit",
       "id": "native-mapped-post-theap-teardown-failed-reclaim-differential",

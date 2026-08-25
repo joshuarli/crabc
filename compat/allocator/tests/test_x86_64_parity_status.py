@@ -139,6 +139,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-small-direct-remote-free-differential",
                 "native-mapped-arena-same-origin-reclaim-differential",
                 "native-unmapped-full-medium-reabandon-differential",
+                "native-ordinary-reserved-medium-on-demand-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -211,6 +212,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-unmapped-full-medium-reabandon-differential"]["report"],
             "compat/reports/allocator/x86_64/unmapped-reabandon.json",
+        )
+        self.assertEqual(
+            gates["native-ordinary-reserved-medium-on-demand-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-on-demand",
+        )
+        self.assertEqual(
+            gates["native-ordinary-reserved-medium-on-demand-differential"]["report"],
+            "compat/reports/allocator/x86_64/on-demand.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
@@ -424,6 +433,21 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("initially-unmapped abandonment", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
         self.assertIn("bounded real full-medium post-Theap-teardown route", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
         self.assertIn("does not establish general abandonment/adoption or free routing", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
+        on_demand = gates["native-ordinary-reserved-medium-on-demand-differential"]["claim"]
+        for fragment in (
+            "23 address-independent values",
+            "only the C probe sets mi_option_page_commit_on_demand",
+            "16 KiB/four-OS-page prefix",
+            "second ordinary allocation commits before free-list extension",
+            "reuses the same page",
+            "failed direct commit and retries the same selected page",
+            "does not claim C fault-injection parity",
+            "Rust production option processing/API/policy",
+            "fresh fallback",
+            "public x86 runtime support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, on_demand)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])

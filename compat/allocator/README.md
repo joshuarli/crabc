@@ -81,9 +81,12 @@ commits metadata and later selected/page-metadata ranges through that exact
 owner; default Linux decommit reports no recommit requirement. Later arena
 scaling, option mutation, large-page/exclusive/NUMA policy, and page-on-demand
 routing remain absent. `ProcessPageArenaLease` has one range-checked direct
-page-area commitment operation for an already-selected source extension, but it
-does not maintain `slice_pcommitted` or own the failed-commit page-reabandon
-branch. It then proves the exact map/root/configuration/main tuple for private
+page-area commitment operation for an already-selected source extension; the
+lease itself does not maintain `slice_pcommitted` or own the failed-commit
+page-reabandon branch. Under `cfg(test)` only, a matched page engine may bind
+that lease to reproduce one source direct extension; that does not add Rust
+option processing, a public control, or production policy. It then proves the
+exact map/root/configuration/main tuple for private
 `MainStaticProcessPageAllocator`, `MainStaticFirstArenaPageAllocator`, and
 `MainHeapThreadProcessPageAllocator`
 owners. Each holds the process map's exclusive plain-entry lifecycle through
@@ -765,7 +768,19 @@ error, or other post-transfer failure is retained terminally. Non-direct-small,
 malformed or out-of-profile no-immediate direct-small metadata, full, and
 aggregate registry members remain client-free-only. The completed aggregate
 traversal's separate sole initial-medium/immediate-head outcome becomes the
-existing one-page route before that registry exists. The
+existing one-page route before that registry exists. The independent native
+x86-64 `allocator-on-demand` lane instead exercises one ordinary fresh
+reserved medium page: its first allocation exhausts the fixed four-OS-page
+prefix, then its second allocation commits the selected page area before
+free-list extension and reuses that same page. It compares 23
+address-independent success-path values with pinned C. Only the C probe sets
+`mi_option_page_commit_on_demand`; Rust uses a private `cfg(test)` seam. Its
+Rust-only failed-direct-commit assertion returns no allocation and explicitly
+retries the unchanged selected page, whereas C may retire/fall through to a
+fresh allocation at `src/page.c:845-863`. That deliberate test-only divergence
+is recorded in [`known-differences.md`](known-differences.md); this lane makes
+no C fault-injection parity, production option/API/policy, fresh-fallback,
+public x86-runtime, libc-integration, backend, or AArch64 claim. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
 only after the source mostly-used boundary. The sole full direct-small route also
@@ -1203,6 +1218,24 @@ differentials, lifecycle/stress coverage, public `mi_*` behavior, libc
 integration, or an x86 backend. Each named Rust test runs serially with
 `--locked` against an isolated disposable x86-64 target directory.
 
+The separate ordinary reserved-medium on-demand differential is also native
+x86-64 only:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-on-demand
+```
+
+It writes `compat/reports/allocator/x86_64/on-demand.json` after comparing 23
+address-independent success-path values. The C oracle alone sets
+`mi_option_page_commit_on_demand`; the Rust side uses only a private
+`cfg(test)` seam. Its Rust fault assertion deliberately preserves the selected
+page and asks the next test allocation to retry it, while pinned C may retire
+and fall through to fresh allocation. That limitation is recorded in
+[`known-differences.md`](known-differences.md), so this command does not claim
+C fault-injection parity, a production option/API/policy, fresh fallback,
+public x86 runtime support, libc integration, backend promotion, or AArch64
+evidence.
+
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
@@ -1245,6 +1278,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. It is dispatched by `allocator-mapped-reclaim` and does not claim general abandonment/adoption, public API, or AArch64 evidence. |
 | `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon. It is dispatched by `allocator-unmapped-reabandon`; Rust exercises one bounded real post-Theap-teardown full-medium route and it does not claim general routing, lifecycle, public API, or AArch64 evidence. |
+| `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 23-field pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. It is dispatched by `allocator-on-demand`; only C sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its deliberate Rust failed-commit same-page retry is not C fault-injection parity or a production option/API/policy, fresh-fallback, public-runtime, backend, or AArch64 claim. |
 | `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. It is dispatched by `allocator-mapped-post-exit`; Rust covers only one bounded process-owned mapped regular handoff and directly observes PageMap, ordinary arena-page bitmap, and free-slice bitmap release. The lane does not claim general thread exit/routing, public API, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_retired_prepass_evidence.py` and `x86_64-retired-prepass-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for one worker-local retirement, real `mi_thread_done()`/`pthread_join()` retired-page force-release, one distinct live mapped-abandoned page, and one consumer terminal free. It is dispatched by `allocator-retired-prepass`; it directly records PageMap, ordinary arena bitmap, exact slice-span, and empty-route checks, and does not claim general retirement/teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_aggregate_post_exit_evidence.py` and `x86_64-aggregate-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for exactly two distinct live nonfull medium arena pages in distinct bins: the real worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before freeing, both pages are mapped-abandoned after teardown, then a second-first selective terminal release is followed by a first-page terminal release and empty route. It is dispatched by `allocator-aggregate-post-exit`; it directly records PageMap, ordinary arena bitmap, exact slice span, and the first page's registered/bit-set/mapped-abandoned/`used == 1` state after the second-page free. It does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |

@@ -39,6 +39,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator --quick",
             "allocator-release-evidence",
             "allocator-aggregate-same-bin-still-live",
+            "allocator-on-demand",
             "allocator-unit",
             "allocator-core-unit",
         ):
@@ -49,6 +50,18 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertNotIn('"$ROOT_DIR/scripts/dev.sh"', source)
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn("crabc-libc", source)
+
+    def test_on_demand_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-on-demand)", source)
+        self.assertIn(
+            "run_in_container python3 compat/allocator/x86_64_on_demand_evidence.py --offline",
+            source,
+        )
+
+        result = self.run_launcher("allocator-on-demand", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("allocator-on-demand takes no arguments", result.stderr)
 
     def test_help_and_unsupported_command_do_not_need_docker(self) -> None:
         help_result = self.run_launcher("--help")

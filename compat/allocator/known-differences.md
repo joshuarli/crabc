@@ -7,14 +7,16 @@ The source pin is defined in
 
 ## Current status
 
-No ordinary allocation-trace difference is recorded. The current Rust crate contains source-mapped
+No successful ordinary allocation-trace difference is recorded. One test-only
+native x86-64 on-demand failed-direct-commit divergence is recorded below and
+is deliberately excluded from the C/Rust trace equivalence. The current Rust crate contains source-mapped
 foundations plus a private, explicit single-thread ordinary-allocation
 lifecycle across small, medium, large, and singleton pages. Its small path has
 exact address-independent trace parity with pinned C v3.5.0, and the AArch64
 production record has a separate 51-key exact differential slice covering
 page-kind, calloc, realloc, aligned/offset-aligned, usable-size, preservation,
 and failure. Native x86-64 evidence separately extends that private trace to
-58 keys with fixed no-padding in-place expansion; it is not AArch64 production
+75 keys with fixed no-padding in-place expansion and checked `mi_recalloc`; it is not AArch64 production
 evidence, whose expansion revalidation remains pending. This includes live
 arena-backed alignment through 64 KiB and separately
 owned OS-aligned singleton mappings below 256 MiB. The lifecycle is not
@@ -931,6 +933,38 @@ aggregate-registry adoption remain absent.
   It does not
   authorize concurrent later-thread allocation routing, a public thread
   attachment API, process shutdown, or default backend use.
+
+### `CRABC-MI-TEST-ONLY-ON-DEMAND-FAILED-COMMIT` — accepted test-only fault-path divergence
+
+- **Upstream/Rust:** the direct-extension failure branch at
+  `src/page.c:845-863`, represented only by
+  `single_thread::PageAllocatorEngine::extend_on_demand_page_before_allocation`
+  and
+  `main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse`.
+- **Category:** private native x86-64 test seam only. It has no C ABI surface,
+  public Rust API, or production page-on-demand option/policy claim.
+- **Difference:** after a failed direct extension, pinned C may retire the
+  selected page and fall through to a fresh allocation path. The Rust test seam
+  instead returns `None` without changing the selected page's committed prefix,
+  capacity, free-list, queue membership, PageMap registration, or arena bit;
+  its next test allocation explicitly retries that same page. This intentional
+  divergence isolates failure-state preservation and avoids claiming a fresh
+  fallback. The pinned C probe sets `mi_option_page_commit_on_demand` only to
+  select its successful ordinary branch; the 23-field C/Rust differential does
+  not inject a C commit fault and therefore does not establish fault-path
+  parity.
+- **Evidence:**
+  `main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse`
+  injects the Rust direct-commit failure, proves the unchanged selected-page
+  witnesses, then proves same-page retry. The checked-in
+  `x86_64-on-demand-evidence-v3.5.0.json` contract and
+  `x86_64_on_demand_evidence.py` compare only the successful ordinary C/Rust
+  trace with native x86-64 provenance.
+- **Decision/removal:** accepted solely for the private test fixture until a
+  separately reviewed source-shaped failed-extension lane proves the C retire
+  and any fresh-selection behavior, or the fixture is removed. It does not
+  authorize production option processing, a public allocator control, a
+  general retry rule, or backend promotion.
 
 ### `CRABC-MI-SHARED-MAIN-NO-PAGE-LIFECYCLE` — accepted incomplete lifecycle boundary
 

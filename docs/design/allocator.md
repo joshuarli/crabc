@@ -115,6 +115,24 @@ range-checked direct page-area commitment operation for an already-selected
 `slice_pcommitted` advancement, and failed-commit `_mi_page_abandon`
 reabandonment remain separate page-lifecycle transitions.
 
+The native x86-64 evidence fixture binds that paired lease only under
+`cfg(test)` through `PageAllocatorEngine::test_bind_page_area_commit_lease`.
+`test_enable_page_commit_on_demand` then selects one source `commit == false`
+fresh-page branch; neither capability exists in a production engine nor maps a
+Rust option parser, API, or policy. For one ordinary selected reserved medium
+page, `PageAllocatorEngine::page_make_immediate` performs the direct mapping
+before `Page::set_slice_pcommitted_after_commit` and
+`LocalFreeList::extend_count`, so the second allocation reuses the same page
+only after its prefix grows. A mapping failure returns no allocation with the
+selected page unchanged, and the test explicitly retries that same page.
+Pinned C may instead retire and fall through to fresh allocation at
+`src/page.c:845-863`; that intentional test-only divergence is recorded in
+[`known-differences.md`](../../compat/allocator/known-differences.md), not
+claimed as C fault-injection parity. The C oracle sets
+`mi_option_page_commit_on_demand` only for its own successful branch. Its
+23-field native trace establishes neither a production option nor fresh
+fallback behavior.
+
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
 present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal
 operations require `Pin<&'static MetaAllocator>`, validate the current live
@@ -830,6 +848,14 @@ likewise retains the target owner. Non-direct-small, malformed or
 out-of-profile no-immediate direct-small metadata, full, multi-member aggregate-registry, singleton,
 unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
+
+This consuming post-exit route is distinct from the ordinary native x86-64
+test fixture above. The latter begins with a fresh reserved medium page,
+exhausts its callback-committed prefix, and runs the ordinary
+`page_make_immediate` path. Its direct mapping failure deliberately preserves
+that queue member for an explicit test retry; this is narrower than the source
+failure route and is not a production page-on-demand policy, a fresh fallback,
+or a C fault-injection differential.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.

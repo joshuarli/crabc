@@ -24,7 +24,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-release-evidence | allocator-api-coverage
   allocator-header-modes | allocator-static-modes
   allocator-remote-free | allocator-direct-remote | allocator-mapped-reclaim
-  allocator-unmapped-reabandon | allocator-mapped-post-exit
+  allocator-unmapped-reabandon | allocator-on-demand | allocator-mapped-post-exit
   allocator-retired-prepass | allocator-aggregate-post-exit
   allocator-aggregate-still-live | allocator-aggregate-same-bin-still-live
   allocator-perf --smoke|--full [options]
@@ -100,7 +100,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-unmapped-reabandon|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
+    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-unmapped-reabandon|allocator-on-demand|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
         ;;
     *)
         usage >&2
@@ -175,6 +175,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "allocator-unmapped-reabandon takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/x86_64_unmapped_reabandon_evidence.py --offline
+        ;;
+    allocator-on-demand)
+        [ "$#" -eq 0 ] || fail "allocator-on-demand takes no arguments"
+        ensure_image
+        run_in_container python3 compat/allocator/x86_64_on_demand_evidence.py --offline
         ;;
     allocator-mapped-post-exit)
         [ "$#" -eq 0 ] || fail "allocator-mapped-post-exit takes no arguments"

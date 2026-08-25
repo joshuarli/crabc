@@ -229,6 +229,26 @@ enum PageToFullError {
     Collection(PageCollectError),
 }
 
+/// One result from the bounded test-only direct page-area extension seam.
+///
+/// This private seam keeps the selected page in place when its direct mapping
+/// commit fails, so the fixture may make one explicit same-page retry. That is
+/// intentionally narrower than the pinned C failure route, which may retire
+/// and fall through to fresh selection. Once a mapping commit has succeeded,
+/// however, a rejected prefix publication or free-list extension cannot be
+/// reclassified as OOM: it permanently poisons this private allocator before
+/// the error reaches the generic allocation path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PageCommitError {
+    MissingTestLease,
+    InvalidPageArea,
+    InvalidPlan,
+    Mapping(ProcessPageArenaLeaseError),
+    PrefixState,
+    Extension(FreeListError),
+    ExtensionDidNotExtend,
+}
+
 /// One terminal private failure while a generic owner-side allocation path is
 /// inspecting or collecting an active regular page.
 ///
@@ -241,6 +261,7 @@ enum PageToFullError {
 enum GenericPathError {
     Collection(PageCollectError),
     Local(FreeListError),
+    PageCommit(PageCommitError),
     Lifecycle,
 }
 
@@ -390,6 +411,11 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
     // permanent in production: the retained record prevents every later
     // public allocator operation from crossing that ownership boundary.
     collection_poison: Option<RetainedPageCollectPoison>,
+    // A successful direct page-area commit followed by a failed page-state or
+    // free-list publication leaves VM accessibility ahead of the source page
+    // image. Keep this private owner terminal rather than treating it as an
+    // ordinary fresh-page/OOM miss.
+    page_commit_poison: bool,
     // The one-shot hook fails before remote detachment, so tests alone can
     // clear the retained record and complete fixture cleanup. No production
     // recovery exists because a real failure can have ambiguous ownership.
@@ -407,6 +433,11 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
     // option.
     #[cfg(test)]
     page_commit_on_demand: bool,
+    // The public production profile deliberately has no page-on-demand
+    // option. Test fixtures alone retain the paired process mapping authority
+    // needed to reproduce the source direct page-area commit after selection.
+    #[cfg(test)]
+    page_area_commit_lease: Option<ProcessPageArenaLease>,
     // A successful explicit shutdown disarms Drop. Otherwise Drop must leave
     // a dynamic attachment terminally retained rather than discarding this
     // engine's poison/pending-release knowledge and allowing false teardown.
@@ -425,12 +456,15 @@ struct PageAllocatorEngineState<'arena, 'map> {
     thread_sequence: usize,
     pending_os_release: Option<OsAlignedPageOwner>,
     collection_poison: Option<RetainedPageCollectPoison>,
+    page_commit_poison: bool,
     #[cfg(test)]
     page_free_collect_failure_once: PageCollectFailureInjection,
     #[cfg(test)]
     last_page_to_full: Option<NonNull<Page>>,
     #[cfg(test)]
     page_commit_on_demand: bool,
+    #[cfg(test)]
+    page_area_commit_lease: Option<ProcessPageArenaLease>,
     shutdown_complete: bool,
 }
 
@@ -4649,12 +4683,15 @@ impl<'bootstrap, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             collection_poison: None,
+            page_commit_poison: false,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
             shutdown_complete: false,
         })
     }
@@ -4680,12 +4717,15 @@ impl<'bootstrap, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             collection_poison: None,
+            page_commit_poison: false,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
             shutdown_complete: false,
         })
     }
@@ -4712,12 +4752,15 @@ impl<'attach, 'heap, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             collection_poison: None,
+            page_commit_poison: false,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
             shutdown_complete: false,
         }
     }
@@ -5025,12 +5068,15 @@ impl<'arena, 'map, Session: MainStaticTheapPageSession>
             thread_sequence: 0,
             pending_os_release: None,
             collection_poison: None,
+            page_commit_poison: false,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
             shutdown_complete: false,
         }
     }
@@ -5066,26 +5112,61 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             collection_poison: None,
+            page_commit_poison: false,
             #[cfg(test)]
             page_free_collect_failure_once: PageCollectFailureInjection::None,
             #[cfg(test)]
             last_page_to_full: None,
             #[cfg(test)]
             page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
             shutdown_complete: false,
         }
+    }
+
+    /// Retains the exact paired process mapping only for a focused test seam.
+    ///
+    /// Production allocation neither stores this capability nor exposes a
+    /// page-on-demand option. The fixture proves that the chosen later-main
+    /// engine, PageMap, and arena are one process image before it can request
+    /// a source-shaped direct page-area commit after ordinary page selection.
+    #[cfg(test)]
+    pub(crate) fn test_bind_page_area_commit_lease(&mut self, pair: ProcessPageArenaLease) {
+        assert!(
+            self.page_area_commit_lease.is_none(),
+            "one private on-demand fixture binds exactly one paired mapping lease"
+        );
+        assert_eq!(
+            pair.memory_config()
+                .expect("the test pair remains configuration-ready"),
+            self.page_map.memory_config(),
+            "the test direct-commit mapping uses this engine's PageMap configuration"
+        );
+        let pair_arena = pair
+            .arena()
+            .expect("the test pair retains one published arena");
+        assert!(
+            core::ptr::eq(pair_arena.arena(), self.arena.arena()),
+            "the test direct-commit mapping uses this engine's exact arena"
+        );
+        self.page_area_commit_lease = Some(pair);
     }
 
     /// Selects one source `commit == false` fresh-regular-page branch for a
     /// focused test fixture. The production configuration has no mutable
     /// page-on-demand option; this exists only to construct one real reserved
-    /// mapping state for the bounded mapped-medium adoption transition.
+    /// mapping state for the bounded ordinary and post-exit transitions.
     #[cfg(test)]
     pub(crate) fn test_enable_page_commit_on_demand(&mut self) {
         assert_eq!(
             self.session.theap().page_count(),
             0,
             "the test-only fresh-page commitment choice precedes every page"
+        );
+        assert!(
+            self.page_area_commit_lease.is_some(),
+            "the test-only commitment choice requires paired direct mapping authority"
         );
         self.page_commit_on_demand = true;
     }
@@ -5828,18 +5909,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitMappedRegularPostExitDetach {
             session,
@@ -6165,18 +6251,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitMappedRegularPostExitDetach {
             session,
@@ -7564,18 +7655,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitFullRegularPostExitDetach {
             session,
@@ -11344,18 +11440,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         if let Some(sole) = sole_immediate_medium {
             debug_assert_eq!(detached_pages, 1);
@@ -14748,8 +14849,15 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                     Ok(false) => {
                         return Err(ThreadExitMappedRegularPostExitAdoptError::NotExpandable);
                     }
-                    Err(error) => {
+                    Err(GenericPathError::Local(error)) => {
                         return Err(ThreadExitMappedRegularPostExitAdoptError::Extension(error));
+                    }
+                    // This branch entered only after proving the source page
+                    // has the fully committed sentinel. Any non-local
+                    // extension result is therefore a retained source-state
+                    // invariant, never a new allocation candidate.
+                    Err(_) => {
+                        return Err(ThreadExitMappedRegularPostExitAdoptError::PageCommitState);
                     }
                 }
             }
@@ -28546,12 +28654,15 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                     thread_sequence: core::ptr::read(core::ptr::addr_of!((*this_ptr).thread_sequence)),
                     pending_os_release: core::ptr::read(core::ptr::addr_of!((*this_ptr).pending_os_release)),
                     collection_poison: core::ptr::read(core::ptr::addr_of!((*this_ptr).collection_poison)),
+                    page_commit_poison: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_commit_poison)),
                     #[cfg(test)]
                     page_free_collect_failure_once: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_free_collect_failure_once)),
                     #[cfg(test)]
                     last_page_to_full: core::ptr::read(core::ptr::addr_of!((*this_ptr).last_page_to_full)),
                     #[cfg(test)]
                     page_commit_on_demand: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_commit_on_demand)),
+                    #[cfg(test)]
+                    page_area_commit_lease: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_area_commit_lease)),
                     shutdown_complete: core::ptr::read(core::ptr::addr_of!((*this_ptr).shutdown_complete)),
                 },
             )
@@ -28573,12 +28684,15 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             thread_sequence: state.thread_sequence,
             pending_os_release: state.pending_os_release,
             collection_poison: state.collection_poison,
+            page_commit_poison: state.page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: state.page_free_collect_failure_once,
             #[cfg(test)]
             last_page_to_full: state.last_page_to_full,
             #[cfg(test)]
             page_commit_on_demand: state.page_commit_on_demand,
+            #[cfg(test)]
+            page_area_commit_lease: state.page_area_commit_lease,
             shutdown_complete: state.shutdown_complete,
         }
     }
@@ -28775,7 +28889,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             self.push_regular_page(bin, page);
             let block = self
                 .pop_or_extend(page, zero)
-                .map_err(GenericPathError::Local)?
+                ?
                 .ok_or(GenericPathError::Lifecycle)?;
             self.move_regular_to_full(bin, page.as_ptr(), Some(block))
                 .map_err(GenericPathError::from)?;
@@ -28804,7 +28918,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // available page. A contrary result is a local-list invariant
             // failure, not a reason to select a different page or retry OOM.
             Ok(None) => Err(GenericPathError::Lifecycle),
-            Err(error) => Err(GenericPathError::Local(error)),
+            Err(error) => Err(error),
         }
     }
 
@@ -28924,7 +29038,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             match self.page_make_immediate(candidate) {
                 Ok(true) => {}
                 Ok(false) => return Err(GenericPathError::Lifecycle),
-                Err(error) => return Err(GenericPathError::Local(error)),
+                Err(error) => return Err(error),
             }
             let queue = self
                 .session
@@ -28968,21 +29082,176 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// Extends only the source-selected candidate when it has no immediate
     /// local block. `mi_page_queue_find_free_ex` performs this after the
     /// bounded candidate search rather than while it scans the queue head.
-    fn page_make_immediate(&mut self, page: NonNull<Page>) -> Result<bool, FreeListError> {
-        // SAFETY: callers name the selected live queue page, and this method
-        // performs no queue or page-map operation while the list is borrowed.
-        let page = unsafe { &mut *page.as_ptr() };
-        // SAFETY: the selected page retains the fresh-publication local-list
-        // geometry and exclusive ownership invariant.
-        let mut free_list = unsafe { LocalFreeList::from_page(page) }?;
-        if free_list.quick_collect()? {
+    fn page_make_immediate(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<bool, GenericPathError> {
+        if self
+            .page_quick_collect(page)
+            .map_err(GenericPathError::Local)?
+        {
             return Ok(true);
         }
-        if free_list.capacity() < free_list.reserved() {
-            let _ = free_list.extend()?;
-            return free_list.quick_collect();
+        // SAFETY: the source candidate remains current and exclusively owned
+        // between the local quick collection above and this geometry read.
+        let expandable = unsafe { page.as_ref().capacity() < page.as_ref().reserved() };
+        if expandable {
+            self.extend_page_before_allocation(page)?;
+            return self
+                .page_quick_collect(page)
+                .map_err(GenericPathError::Local);
         }
         Ok(false)
+    }
+
+    /// Performs the selected page's source extension before its free-list
+    /// links become visible. Fully committed pages retain the existing scalar
+    /// operation. The only nonzero `slice_pcommitted` path is test-only and
+    /// commits its planned direct page area before publishing page metadata
+    /// and free-list capacity.
+    fn extend_page_before_allocation(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), GenericPathError> {
+        // SAFETY: callers name one selected active page while this exclusive
+        // engine owns its queue, PageMap lifecycle, and local free-list.
+        let slice_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
+        if slice_pcommitted == 0 {
+            // SAFETY: the normal committed-page path borrows no mapping or
+            // queue state while it extends the source local free list.
+            let mut free_list = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }
+                .map_err(GenericPathError::Local)?;
+            return match free_list.extend().map_err(GenericPathError::Local)? {
+                0 => Err(GenericPathError::Lifecycle),
+                _ => Ok(()),
+            };
+        }
+
+        #[cfg(test)]
+        {
+            return self.extend_on_demand_page_before_allocation(page);
+        }
+        #[cfg(not(test))]
+        {
+            let _ = page;
+            Err(GenericPathError::PageCommit(PageCommitError::MissingTestLease))
+        }
+    }
+
+    /// Ports the successful `mi_page_extend_free` direct-commit order for one
+    /// selected test-only reserved page: mapping commit, committed-prefix
+    /// publication, then free-list links and capacity. A failed mapping leaves
+    /// all page fields untouched so this bounded seam can prove explicit
+    /// same-page retry; it deliberately does not port C's separate
+    /// retire/fresh-selection failure route. A later publication failure
+    /// poisons this private engine instead of allocating a different page.
+    #[cfg(test)]
+    fn extend_on_demand_page_before_allocation(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), GenericPathError> {
+        let (capacity, reserved, block_size, slice_pcommitted, page_offset, memory, free) = {
+            // SAFETY: the caller retains exclusive ownership of this selected
+            // active page until the extension has published its local list.
+            let page_ref = unsafe { page.as_ref() };
+            (
+                page_ref.capacity(),
+                page_ref.reserved(),
+                page_ref.block_size(),
+                page_ref.slice_pcommitted(),
+                page_ref.page_offset(),
+                page_ref.memid(),
+                page_ref.free_list_head(),
+            )
+        };
+        if slice_pcommitted == 0 || !free.is_null() {
+            return Err(GenericPathError::PageCommit(PageCommitError::InvalidPageArea));
+        }
+        let pair = self
+            .page_area_commit_lease
+            .ok_or(GenericPathError::PageCommit(PageCommitError::MissingTestLease))?;
+        let arena_memory = memory
+            .arena_memory()
+            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+        if arena_memory.arena as *const _ != self.arena.arena() as *const _ {
+            return Err(GenericPathError::PageCommit(PageCommitError::InvalidPageArea));
+        }
+        let slice_index = arena_memory.slice_index as usize;
+        let slice_count = arena_memory.slice_count as usize;
+        let page_span_size = slice_count
+            .checked_mul(ARENA_SLICE_SIZE)
+            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+        let slice_start = self
+            .arena
+            .slice_start(slice_index)
+            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+        let page_start = page
+            .as_ptr()
+            .addr()
+            .checked_add(page_offset)
+            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+        let page_slice_offset = page_start
+            .checked_sub(slice_start.addr())
+            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+        let plan = page::page_area_commit_plan(
+            capacity,
+            reserved,
+            block_size,
+            slice_pcommitted,
+            self.page_map.memory_config().page_size().bytes(),
+            page_slice_offset,
+            page_span_size,
+        )
+        .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPlan))?;
+        if plan.extend == 0 {
+            return Err(GenericPathError::PageCommit(
+                PageCommitError::ExtensionDidNotExtend,
+            ));
+        }
+
+        let committed = plan.commit_size != 0;
+        if committed {
+            pair.commit_page_area(memory, plan.commit_offset, plan.commit_size)
+                .map_err(|error| GenericPathError::PageCommit(PageCommitError::Mapping(error)))?;
+            // SAFETY: the exact old..new prefix mapping commit succeeded;
+            // this engine still exclusively owns the selected live page.
+            if !unsafe {
+                (&mut *page.as_ptr())
+                    .set_slice_pcommitted_after_commit(plan.next_slice_pcommitted)
+            } {
+                self.page_commit_poison = true;
+                return Err(GenericPathError::PageCommit(PageCommitError::PrefixState));
+            }
+        }
+
+        // SAFETY: after the direct mapping transition, the planned next block
+        // range is accessible and this engine still owns the page exclusively.
+        let extension = unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) }
+            .map_err(PageCommitError::Extension)
+            .map_err(GenericPathError::PageCommit)
+            .and_then(|mut free_list| {
+                free_list
+                    .extend_count(plan.extend)
+                    .map_err(PageCommitError::Extension)
+                    .map_err(GenericPathError::PageCommit)
+            });
+        match extension {
+            Ok(extended) if extended == plan.extend => Ok(()),
+            Ok(_) => {
+                if committed {
+                    self.page_commit_poison = true;
+                }
+                Err(GenericPathError::PageCommit(
+                    PageCommitError::ExtensionDidNotExtend,
+                ))
+            }
+            Err(error) => {
+                if committed {
+                    self.page_commit_poison = true;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Allocates a zero-filled ordinary block.
@@ -29999,7 +30268,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 
     #[inline]
     fn is_collection_poisoned(&self) -> bool {
-        self.collection_poison.is_some()
+        self.collection_poison.is_some() || self.page_commit_poison
     }
 
     /// Records the first owner-side collection failure before its caller can
@@ -30096,27 +30365,41 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         &mut self,
         page: NonNull<Page>,
         zero: bool,
-    ) -> Result<Option<NonNull<u8>>, FreeListError> {
-        // SAFETY: callers name one selected or freshly published active page
-        // whose local-list and queue transitions this exclusive session owns.
-        let page = unsafe { &mut *page.as_ptr() };
-        // SAFETY: that active-page ownership supplies the initialized
-        // exclusive live-page conditions required by the borrowed free list.
-        let mut free_list = unsafe { LocalFreeList::from_page(page) }?;
-        if let Some(block) = free_list.pop(zero)? {
-            page.set_retire_expire(0);
-            return Ok(Some(block));
-        }
-        if free_list.quick_collect()? {
-            if let Some(block) = free_list.pop(zero)? {
-                page.set_retire_expire(0);
+    ) -> Result<Option<NonNull<u8>>, GenericPathError> {
+        {
+            // SAFETY: callers name one selected or freshly published active
+            // page whose local-list and queue transitions this exclusive
+            // session owns. This short borrow ends before a direct mapping
+            // commit can occur below.
+            let page_ref = unsafe { &mut *page.as_ptr() };
+            // SAFETY: that active-page ownership supplies the initialized
+            // exclusive live-page conditions required by the borrowed list.
+            let mut free_list = unsafe { LocalFreeList::from_page(page_ref) }
+                .map_err(GenericPathError::Local)?;
+            if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                page_ref.set_retire_expire(0);
                 return Ok(Some(block));
             }
+            if free_list.quick_collect().map_err(GenericPathError::Local)? {
+                if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                    page_ref.set_retire_expire(0);
+                    return Ok(Some(block));
+                }
+            }
         }
-        if free_list.capacity() < free_list.reserved() {
-            let _ = free_list.extend()?;
-            if let Some(block) = free_list.pop(zero)? {
-                page.set_retire_expire(0);
+
+        // SAFETY: the page remains selected and exclusively owned after the
+        // local-list borrow above was dropped.
+        let expandable = unsafe { page.as_ref().capacity() < page.as_ref().reserved() };
+        if expandable {
+            self.extend_page_before_allocation(page)?;
+            // SAFETY: the successful source extension has published the
+            // page's immediate free-list head before this new short borrow.
+            let page_ref = unsafe { &mut *page.as_ptr() };
+            let mut free_list = unsafe { LocalFreeList::from_page(page_ref) }
+                .map_err(GenericPathError::Local)?;
+            if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                page_ref.set_retire_expire(0);
                 return Ok(Some(block));
             }
         }

@@ -1,0 +1,126 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-on-demand-evidence",
+  "profile": "linux-x86_64-private-ordinary-reserved-medium-on-demand-commit-before-reuse",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "aarch64_status_reused": false,
+    "emulation_accepted": false,
+    "native_linux_x86_64_required": true,
+    "oracle_option_setup_only": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "reserved_medium_on_demand_reuse_only": true,
+    "failed_commit_recovery_claimed": false,
+    "production_page_on_demand_policy_claimed": false,
+    "fresh_fallback_claimed": false
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {
+      "member": "src/arena.c",
+      "start_line": 951,
+      "end_line": 1069,
+      "sha256": "b1c4e4f4c2f7d18243066233baa3070a563c51b0d55a212aeea990f8a1289fcf"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1138,
+      "end_line": 1154,
+      "sha256": "4777f29be08991a04391029e1cd4daabcc00f2e53e9e6f36f20ad69093a142ed"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 630,
+      "end_line": 706,
+      "sha256": "c2fdd18ad991b45c8bf8f8a6441f66c1c2dbfe1f5f81e60688e8e66fd32865f3"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 765,
+      "end_line": 875,
+      "sha256": "3c8a1de257b88eb5c17b54da1cca31337fc9555aaca6a1cf167f3f0f4aaa7598"
+    }
+  ],
+  "c_probe_sha256": "7cc09fdc4611170a40e8a77e48660356ceabb9ae7ff10c1ee83a3ecee958876f",
+  "rust_test": {
+    "path": "crabc-mimalloc/src/main_heap_page.rs",
+    "target_arch": "x86_64",
+    "test_filter": "main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse"
+  },
+  "trace": {
+    "begin": "CRABC_MI_ON_DEMAND_TRACE_BEGIN",
+    "end": "CRABC_MI_ON_DEMAND_TRACE_END",
+    "expected_values": {
+      "trace.on_demand.arena_backed": 1,
+      "trace.on_demand.reserved_mapping": 1,
+      "trace.on_demand.medium_page": 1,
+      "trace.on_demand.initial_prefix_present": 1,
+      "trace.on_demand.initial_free_empty": 1,
+      "trace.on_demand.initial_nonfull": 1,
+      "trace.on_demand.initial_used_equals_capacity": 1,
+      "trace.on_demand.initial_queue_registered": 1,
+      "trace.on_demand.commit_before_reuse": 1,
+      "trace.on_demand.committed_prefix_grew": 1,
+      "trace.on_demand.capacity_grew": 1,
+      "trace.on_demand.target_queue_registered": 1,
+      "trace.on_demand.reused_same_page": 1,
+      "trace.on_demand.used_increment_one": 1,
+      "trace.on_demand.payload_preserved": 1,
+      "trace.on_demand.final_page_released": 1,
+      "trace.on_demand.valid": 1,
+      "trace.on_demand.initial_capacity": 1,
+      "trace.on_demand.initial_used": 1,
+      "trace.on_demand.initial_slice_pcommitted": 4,
+      "trace.on_demand.post_capacity": 2,
+      "trace.on_demand.post_used": 2,
+      "trace.on_demand.post_slice_pcommitted": 8
+    }
+  }
+}
