@@ -134,9 +134,15 @@ detached paths still use false force. Its separate sole full-singleton handoff
 uses false force after its preflight and before queue detach, while both
 mapped-medium sole-page handoffs preserve the source force-then-false sequence
 before bitmap publication. The one-block handoff accepts only its empty final
-free; the process route can keep one sole nonfull small-or-medium page mapped
-while its linear client frees finish after the old Theap/TLD is gone. A direct
-small member is recognized by rounded source block size, preflights its exact
+free. A separate full-medium route first preserves the source full-queue
+detach and ordinary unmapped abandonment: sequential client frees remain
+unmapped while `free <= reserved / 8`, then the first below-mostly-used free
+publishes the exact static-main bitmap/count pair and subsequent frees use the
+mapped tail. Its terminal empty result still releases in PageMap ->
+`pages_main` -> metadata -> slice order after old-Theap teardown. The process
+route can keep one sole nonfull small-or-medium page mapped while its linear
+client frees finish after the old Theap/TLD is gone. A direct small member is
+recognized by rounded source block size, preflights its exact
 `pages_free_direct` range, and clears that range with queue removal before the
 former Theap page count drops; the small partial-free tail retains its source
 `reserved >= 16` invariant. Full small pages remain outside that route. The
@@ -144,8 +150,8 @@ aggregate regular-pages route applies that same source sequence to every
 qualifying small, medium, or large page, releases force-empty pages, and stores
 PageMap/bitmap registry. Its direct-small preflight accepts only the complete
 source-derived queue-head cache image and refreshes that cache during queue
-removal before the Theap count changes. Neither process route broadens the
-drain into general live-page abandonment or routing. An owner-side collection error permanently poisons this private
+removal before the Theap count changes. None of these process routes broadens
+the drain into general live-page abandonment or routing. An owner-side collection error permanently poisons this private
 allocator with the exact page, error, and any already-popped block; all later
 allocation, inspection, free, producer preparation, and collection entry
 points reject without another queue or page-map transition. A bounded one-page
@@ -285,7 +291,7 @@ drain instead clears the fixed fast slot first, force-collects every queue
 (including full), and releases pages that become all-free through PageMap
 unregistration -> `pages_main` clear -> metadata retirement -> slice release.
 That scan still retains any general live page rather than queue-detaching or
-abandoning it. Three explicit, disjoint owner-exit handoffs are available only
+abandoning it. Four explicit, disjoint owner-exit handoffs are available only
 after fast-slot clear and only when the drain has `page_count == 1`, the target
 is its sole queue member, and every other queue/direct slot is empty.
 `MainHeapThreadProcessPageExitDrain::abandon_full_singleton` accepts the full
@@ -306,8 +312,21 @@ clears the mapped identity/bit, consumes that paired count, and performs the
 same PageMap -> `pages_main` -> metadata -> slice release; a still-live page
 is terminally retained rather than reclaimed or requeued.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_medium_to_process_route` is
+the third handoff. It accepts only the sole full medium arena page in
+`BIN_FULL`, preserves force then false collection and queue/page-count detach,
+and follows source's ordinary unmapped abandonment before actually tearing down
+the old Theap/TLD. Its linear `MainHeapThreadProcessPageExitFullMediumRoute`
+keeps stable arena/Heap/span/bin witnesses under short PageMap access. Client
+frees remain unmapped through `free <= reserved / 8`; the first
+below-mostly-used free reabandons the page into its exact static-main
+`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`, after
+which the mapped failed-reclaim tail owns the final PageMap -> `pages_main` ->
+metadata -> slice release. It exposes no allocation-time claim, reclaim,
+requeue, or concurrent route.
+
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`
-is the third handoff. It accepts one sole nonfull arena page with one or more
+is the fourth handoff. It accepts one sole nonfull arena page with one or more
 live blocks when it is a medium page or any small page. The small decision uses
 the rounded source block size, not the request size. A direct small page must
 have its complete source direct-cache range point at that sole page with every

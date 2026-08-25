@@ -48,7 +48,7 @@ result may refine it only when it can prove retained ownership.
   pointer. Detached sessions, a producer registry, concurrent queue
   collection, abandonment integration beyond one consuming dynamic mapped
   regular handoff and the separately recorded later-main all-free scan plus
-  its three sole-page handoffs and bounded aggregate regular-pages traversal,
+  its four sole-page handoffs and bounded aggregate regular-pages traversal,
   general owner exit, pthread lifecycle, and
   general asynchronous/public free routing remain absent. The caller still
   proves join/quiescence before queue collection because existing queue helpers
@@ -402,7 +402,7 @@ result may refine it only when it can prove retained ownership.
   removal -> main bitmap clear -> metadata retirement -> slice release. The
   pass continues through later queues even when an earlier page remains live,
   then retains that general live page rather than queue-detaching or abandoning
-  it. Three explicit sole-page post-fast-slot handoffs require `page_count ==
+  it. Four explicit sole-page post-fast-slot handoffs require `page_count ==
   1`, the target as its sole queue member, and every other queue/direct slot
   empty. A full one-block arena singleton in `BIN_FULL` false-collects,
   detaches its queue/count, unmapped-abandons, and retains the process PageMap
@@ -415,7 +415,14 @@ result may refine it only when it can prove retained ownership.
   source mapped abandoned-free collection and accepts only its empty decision
   before reclamation: it clears the bit/identity, consumes that count, and
   performs the same terminal release. A nonempty result remains terminally
-  retained rather than reclaimed or requeued. The third handoff accepts one
+  retained rather than reclaimed or requeued. A full medium `BIN_FULL` page
+  takes a distinct process route: after force then false collection and queue/
+  count detach, source abandonment deliberately leaves it unmapped. Sequential
+  failed-reclaim frees remain unmapped while `free <= reserved / 8`; the first
+  below-mostly-used free reabandons it into its exact static-main
+  `pages_abandoned[bin]` bit/count pair, and later frees use the mapped tail
+  until the same terminal PageMap -> main bitmap -> metadata -> slice release.
+  The fourth handoff accepts one
   sole nonfull medium page or small page with one or more live blocks, tears
   down the old Theap/TLD, and returns a linear
   `ProcessPageMapPostExitAccess` route. A direct small member derives its
@@ -452,8 +459,8 @@ result may refine it only when it can prove retained ownership.
   A retired/force-empty traversal returns the ordinary drain. Fresh engines may
   serialize independent map
   operations between frees, but no current engine receives an adoption,
-  reclaim, or requeue capability for a registered route page. Full/singleton/
-  unmapped/huge/foreign pages, malformed direct-cache images, concurrent
+  reclaim, or requeue capability for a registered route page. Other
+  full/singleton/unmapped/huge/foreign pages, malformed direct-cache images, concurrent
   client-free routes, source deferred
   callbacks, arena collection, statistics merge, and retry/reuse as a normal
   allocator remain absent. A dropped unfinished engine, drain, or route
@@ -483,7 +490,12 @@ result may refine it only when it can prove retained ownership.
   mapped-bit quiescence/count consumption, empty-before-reclaim release, and
   subsequent root/list/TLD
   teardown; `later_thread_exit_mapped_one_block_handoff_rejects_before_detach_when_another_page_is_live`
-  proves the medium handoff does not skip another live page; and
+  proves the medium handoff does not skip another live page;
+  `later_thread_exit_full_medium_route_reabandons_after_mostly_used_frees`
+  proves old-Theap/TLD teardown precedes client frees, the full medium page
+  stays PageMap-routable but unmapped through its exact mostly-used threshold,
+  then publishes the paired static-main bitmap/count before its mapped tail
+  clears all terminal ownership; and
   `later_thread_exit_mapped_regular_route_tears_down_before_two_client_frees`
   proves the mapped identity/bit/count survives actual old attachment teardown,
   stays paired after the first client free, and clears before the final span
@@ -654,10 +666,11 @@ result may refine it only when it can prove retained ownership.
   release failure retains the handoff terminally. A separate raw
   `free_unmapped_after_failed_reclaim` substrate ports expected-head unown,
   conflict collection without another reclaim attempt, and terminal-empty /
-  reabandon / unown selection. Its only raw terminal-release owner is the
-  post-TLS singleton above; it does not route general policy through either
-  dynamic handoff. Regular/nonempty unmapped, non-arena, foreign, and general
-  full/singleton/huge pages still lack lifecycle integration or terminal reuse.
+  reabandon / unown selection. Its lifecycle-integrated raw terminal-release
+  owners are the post-TLS singleton above and the later-main full-medium route;
+  neither routes general policy through the dynamic handoff. Other
+  regular/nonempty unmapped, non-arena, foreign, and full/singleton/huge pages
+  still lack lifecycle integration or terminal reuse.
   Image allocation failure before
   slot publication remains retryable; any post-slot private lock/unlock/free
   ambiguity retains the known terminal owner. A nonempty image is rejected

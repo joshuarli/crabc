@@ -13,10 +13,12 @@
 // TLS/theap registration. It does not itself own raw page-map/span release:
 // `single_thread.rs` supplies that distinct authority for a bounded mapped
 // regular handoff, a sole mapped one-block later-main owner-exit handoff, one
-// sole small-or-medium later-main process route and one aggregate regular-pages
-// process registry after their Theap/TLD tears down, and one
-// post-TLS full singleton owner-exit handoff. Metadata reuse and every
-// general terminal-release route remain outside this substrate.
+// sole full-medium later-main route that first remains unmapped and then may
+// reabandon into the static-main bitmap, one sole small-or-medium later-main
+// process route and one aggregate regular-pages process registry after their
+// Theap/TLD tears down, and one post-TLS full singleton owner-exit handoff.
+// Metadata reuse and every general terminal-release route remain outside this
+// substrate.
 
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
@@ -837,14 +839,19 @@ pub(crate) unsafe fn abandon_after_collect<M: MappedAbandonedPages + ?Sized>(
 
 /// Abandons a source-unmappable page after its owner has completed the exact
 /// false-force collection and queue detach. This is the companion to
-/// [`free_unmappable_after_failed_reclaim`] for full singleton/non-bitmap
-/// thread-exit pages; a mappable regular arena page is rejected rather than
-/// silently skipping its required bitmap publication.
+/// [`free_unmappable_after_failed_reclaim`] for source-currently-unmappable
+/// thread-exit pages. That includes full regular pages: even when their
+/// size-class bin could later be mapped, `arena.c` deliberately leaves them
+/// unmapped until a failed-reclaim free crosses the mostly-used predicate. A
+/// nonfull mappable regular arena page is rejected rather than silently
+/// skipping its required bitmap publication.
 ///
 /// # Safety
 ///
 /// The caller must meet [`abandon_after_collect`]'s detached-page and stable
-/// metadata obligations, and prove that the page cannot be mapped abandoned.
+/// metadata obligations, and prove that the page is currently source-unmappable
+/// (for example, because it is full) rather than a nonfull mappable regular
+/// arena page.
 pub(crate) unsafe fn abandon_unmappable_after_collect(
     page: NonNull<Page>,
 ) -> Result<AbandonResult, AbandonError> {
