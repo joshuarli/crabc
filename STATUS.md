@@ -234,7 +234,12 @@ reabandonment decision. Their normal sequential client frees remain unmapped thr
 below-mostly-used free publishes the exact static-main `pages_abandoned[bin]`
 bit plus paired `Heap::abandoned_count[bin]`, and the mapped tail preserves
 that pairing until the same terminal release. The full-large route validates
-its complete 64-slice span before release. The sole nonfull small-or-medium
+its complete 64-slice span before release. The corresponding full non-direct-
+small and direct-small one-joined-remote predecessors remain linked in their
+ordinary bins while force collection makes them nonfull; the former keeps its
+empty direct image, while the latter clears its rounded direct range before
+page-count detach. Both immediately publish their mapped bit/count pairs and
+remain client-free-only through terminal release. The sole nonfull small-or-medium
 process route preserves the same
 mapped publication, tears down the old Theap/TLD, and routes its linear client
 frees through short PageMap access. Its sole mapped medium member may instead
@@ -431,6 +436,20 @@ arena-slice release. It rejects direct-small before collection and neither
 reclaims, adopts, requeues, scans, nor covers full medium/direct-small/large,
 multi-page, or general dynamic owner exit.
 
+`DynamicThreadExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped`
+separately preserves the source full non-direct-small branch with exactly one
+joined remote free. The sole ordinary-bin page starts with `used == reserved`;
+force collection consumes that free while retaining its queue membership with
+`used == reserved - 1`; false collection preserves it; regular-bin/page-count
+detach leaves the page nonfull; and mapped abandonment immediately publishes
+its dynamic bitmap/count pair. The returned
+`DynamicThreadExitFullNonDirectSmallHandoff` starts mapped and consumes
+sequential failed-reclaim frees only, clearing that pair before the ordinary
+arena release. Its source direct-cache update is a no-op because the rounded
+block size exceeds `SMALL_SIZE_MAX` and the full preflight requires an empty
+direct image. It does not add multiple frees, direct-small or other classes,
+reclaim, adoption, requeue, scans, or general dynamic owner exit.
+
 `DynamicThreadExitDrain::abandon_full_direct_small` is a seventh, separate
 dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
 page only in its ordinary regular bin, with `block_size <= SMALL_SIZE_MAX`,
@@ -495,8 +514,8 @@ then arena slices—and returns the drained engine; an existing owner remains a
 terminal handoff. Separately, `free_unmapped_after_failed_reclaim` remains the
 source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
-singleton above, the separate dynamic full-medium, full non-direct-small, and
-full direct-small handoffs, and the bounded later-main normal full-medium,
+singleton above, the separate dynamic full-medium, full-large,
+full-non-direct-small, and full direct-small handoffs, and the bounded later-main normal full-medium,
 full-large, and full non-direct-small process routes are its lifecycle-integrated raw-release
 callers; other regular or
 nonempty unmapped pages, general producer routing, terminal reuse, multi-arena dynamic heap
@@ -526,14 +545,15 @@ one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
   dynamic owner-exit singleton, full-medium, full-large, full-non-direct-small, and
-  full-direct-small normal unmapped-to-mapped handoffs, two one-joined-remote
-  full-medium/full-large immediate-mapped predecessors, and sole mapped
+  full-direct-small normal unmapped-to-mapped handoffs, three one-joined-remote
+  full-medium/full-large/full-non-direct-small immediate-mapped predecessors, and sole mapped
 medium/large/non-direct-small/direct-small
 one-block handoffs: clearing the regular backing prevents reclaim; the singleton
   final free takes the raw failed-reclaim all-free release, the four normal
   full routes cross the source mostly-used boundary before dynamic bitmap
-  publication, and the medium/large one-remote full routes map immediately
-  after source force/false collection and `BIN_FULL` detach. Each mapped
+  publication, and the medium/large `BIN_FULL` plus non-direct-small ordinary-
+  bin one-remote full routes map immediately after source force/false
+  collection and queue detach. Each mapped
   endpoint clears its dynamic bitmap/count before terminal arena release. The raw
 protocol remains
 otherwise unintegrated: regular/nonempty pages, general producer routing,

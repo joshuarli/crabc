@@ -129,6 +129,20 @@ arena-slice release. It rejects direct small before collection and cannot
 reclaim, adopt, requeue, scan, or cover full medium/direct-small/large,
 multi-page, or general dynamic thread-exit state.
 
+`DynamicThreadExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped`
+captures the separate dynamic full non-direct-small branch with exactly one
+joined remote free. Force collection changes the still-linked sole ordinary-bin
+member to `used == reserved - 1`; false collection preserves it;
+regular-bin/page-count detachment leaves the page nonfull; then mapped
+abandonment immediately publishes the exact heap-local bitmap/count pair. The
+returned `DynamicThreadExitFullNonDirectSmallHandoff` starts mapped and accepts
+only sequential failed-reclaim client frees, clearing the pair before the
+ordinary arena release. The source direct-cache update is a no-op because the
+class requires an empty direct image above `SMALL_SIZE_MAX`. This does not
+broaden normal unmapped full non-direct-small abandonment to multiple frees,
+direct-small or other page classes, reclaim, adoption, requeue, scanning, or a
+general dynamic owner-exit traversal.
+
 The raw owner-local free-list substrate now also ports that source force-only
 append: it validates the deferred local chain, appends the old immediate head,
 and rejects a malformed cycle before relinking. Ordinary regular/full callers
@@ -442,6 +456,11 @@ and `dynamic_thread_exit_full_large_one_remote_force_collect_route_retains_colle
 `dynamic_thread_exit_full_non_direct_small_handoff_rejects_direct_small_before_detach`,
 `dynamic_thread_exit_full_non_direct_small_handoff_refuses_stale_direct_cache_before_detach`,
 and `dynamic_thread_exit_full_non_direct_small_handoff_retains_collection_failure`,
+`dynamic_thread_exit_full_non_direct_small_one_remote_force_collects_to_mapped_handoff_then_releases`,
+`dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_rejects_regular_non_direct_small_before_detach`,
+`dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_rejects_full_direct_small_before_detach`,
+`dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_refuses_stale_direct_cache_before_detach`,
+and `dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_retains_collection_failure`,
 `dynamic_thread_exit_full_direct_small_handoff_reabandons_after_partial_head_lag_then_releases`,
 `dynamic_thread_exit_full_direct_small_handoff_refuses_stale_rounded_direct_cache_before_detach`,
 `dynamic_thread_exit_full_direct_small_handoff_rejects_non_direct_small_before_detach`,
@@ -501,17 +520,17 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 461 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 466 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 98 items and 102
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 99 items and 103
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-direct-small or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately

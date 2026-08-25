@@ -675,6 +675,20 @@ dynamic ordinary bit -> metadata -> arena-slice release. It rejects direct
 small before collection, and it neither reclaims, adopts, requeues, scans, nor
 covers full medium/direct-small/large, multi-page, or general traversal state.
 
+`DynamicThreadExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped`
+is the separate source branch for that same sole full non-direct-small
+ordinary-bin member when exactly one joined remote free exists before owner
+exit. Force collection leaves the member linked with `used == reserved - 1`;
+false collection preserves that geometry; regular-bin/page-count removal then
+immediately publishes the matching dynamic bitmap/count pair. The source
+direct-cache update remains a no-op because every direct slot is empty and the
+rounded block size exceeds `SMALL_SIZE_MAX`. Its
+`DynamicThreadExitFullNonDirectSmallHandoff` starts mapped and allows only
+sequential failed-reclaim client frees through its ordinary one-slice terminal
+release. It does not add normal full-page unmapped abandonment, multiple frees,
+direct-small or other classes, reclaim, adoption, requeue, scans, or general
+dynamic owner-exit traversal.
+
 `DynamicThreadExitDrain::abandon_full_direct_small` is a seventh, separate
 source-unmapped dynamic handoff. It accepts only the drain's sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with
@@ -778,7 +792,7 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs and the separate dynamic full-medium,
+OS-aligned singleton handoffs and the separate dynamic full-medium, full-large,
 full-non-direct-small, and full-direct-small handoffs above; all other
 initially-unmapped pages retain the raw terminal decision for a later
 lifecycle. A test-only Loom model executes the

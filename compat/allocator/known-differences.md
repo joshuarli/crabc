@@ -881,6 +881,18 @@ aggregate-registry adoption remain absent.
   -> metadata -> slice release. It rejects direct-small before collection and
   does not cover full medium/direct-small/large, multiple pages, reclaim,
   adoption, requeue, scanning, or a general dynamic owner-exit traversal.
+  `DynamicThreadExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped`
+  separately ports the exact source full non-direct-small branch with one
+  already joined remote free: force collection keeps the sole ordinary-bin
+  member linked while changing it to `used == reserved - 1`; false collection
+  preserves that geometry; regular-bin/page-count detach leaves it nonfull;
+  and mapped abandonment immediately publishes the exact dynamic bitmap/count
+  pair. Its `DynamicThreadExitFullNonDirectSmallHandoff` begins mapped and
+  permits only sequential failed-reclaim client frees, which clear that pair
+  before the ordinary arena release. The direct-cache image remains empty, so
+  source's update is a no-op. Multiple frees, normal full-page unmapped
+  abandonment, direct-small or other classes, reclaim, adoption, requeue,
+  scanning, and general dynamic owner-exit traversal remain absent.
   `DynamicThreadExitDrain::abandon_full_direct_small` is a seventh, separate
   sequential dynamic owner-exit endpoint for the drain's sole full
   `MemoryKind::Arena` small page in its ordinary bin. It requires
@@ -1022,6 +1034,17 @@ aggregate-registry adoption remain absent.
   and stale-cache refusal before collection, the exact unmapped-to-mapped
   mostly-used threshold, dynamic bitmap/count cleanup before terminal arena
   release, wholly pre-detach sole-page refusal, and retained collection failure.
+  `dynamic_thread_exit_full_non_direct_small_one_remote_force_collects_to_mapped_handoff_then_releases`,
+  `dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_rejects_regular_non_direct_small_before_detach`,
+  `dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_rejects_full_direct_small_before_detach`,
+  `dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_refuses_stale_direct_cache_before_detach`,
+  and `dynamic_thread_exit_full_non_direct_small_one_remote_force_collect_route_retains_collection_failure`
+  prove the distinct exact-one-joined-remote ordinary-bin branch: force
+  collection changes the still-linked full non-direct-small member to
+  `used == reserved - 1`, mapped abandonment retains its complete one-slice
+  PageMap span, regular/non-direct-small and full direct-small inputs reject
+  before mutation, a stale direct image rejects before detachment, and injected
+  collection failure retains the post-TLS drain.
   `dynamic_thread_exit_full_direct_small_handoff_reabandons_after_partial_head_lag_then_releases`,
   `dynamic_thread_exit_full_direct_small_handoff_refuses_stale_rounded_direct_cache_before_detach`,
   `dynamic_thread_exit_full_direct_small_handoff_rejects_non_direct_small_before_detach`,
