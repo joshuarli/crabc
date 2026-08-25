@@ -452,12 +452,12 @@
     },
     {
       "id": "local-and-remote-free",
-      "source_scope": "Owner-local free and selected cross-thread deferred-list collection transitions.",
+      "source_scope": "Owner-local free, live-owner cross-thread publication, and selected deferred-list collection transitions.",
       "source_anchor": {
         "member": "src/free.c",
-        "start_line": 223,
+        "start_line": 62,
         "end_line": 410,
-        "sha256": "365ca63926b945414ac5978417ff624bfad76d1e5c59064aa315f1f466b695ad"
+        "sha256": "ad90d30052cf318aacc1d86320d4ecee8425c53df2d3c20801afcf74ad4f7fc5"
       },
       "rust_modules": [
         "crabc_mimalloc::abandoned",
@@ -466,8 +466,11 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "The engine has bounded local, remote-free, and abandonment substrates, not general asynchronous public free routing or complete thread exit.",
+      "difference": "The engine has bounded local, remote-free, and abandonment substrates. One 25-field native C/Rust differential proves two quiescent live-owner publications and owner-side collection, not general asynchronous public free routing, abandonment, or complete thread exit.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
+        "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_remote_free_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/free_list.rs",
         "crabc-mimalloc/src/remote_free.rs",
@@ -686,12 +689,12 @@
     },
     {
       "id": "page-lifecycle",
-      "source_scope": "Page initialization, block allocation, collection, retirement, and selected terminal transitions.",
+      "source_scope": "Page initialization, block allocation, live-owner remote collection, retirement, and selected terminal transitions.",
       "source_anchor": {
         "member": "src/page.c",
-        "start_line": 709,
+        "start_line": 150,
         "end_line": 1117,
-        "sha256": "44d448e14c4605c04c8b1ff3c77cbb9427bf4c0e82b45ab5edb82917f07bb2db"
+        "sha256": "06a01defb4e81dd0b48053c7f0864d6e8769f46222173d246dd7bc032d10a051"
       },
       "rust_modules": [
         "crabc_mimalloc::abandoned",
@@ -701,8 +704,11 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions, not general page routing or complete owner-exit traversal.",
+      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions. One 25-field native C/Rust differential proves the quiescent live-owner xthread detach and local-free merge, not general page routing or complete owner-exit traversal.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
+        "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_remote_free_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/free_list.rs",
         "crabc-mimalloc/src/page.rs",
@@ -898,6 +904,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "2374f2af4d2a82552cbc0f479e69535575a55b9b8833a7faedc3630784df33a0"
+    "units_sha256": "2264a658725f64220789cac93f7c01a9998bc1e6e06b715e2d25dc90e2ba1934"
   }
 }

@@ -153,7 +153,13 @@ reallocation, aligned and offset-aligned allocation, usable size, preservation,
 and invalid-size failure. The native x86-64 evidence lane separately extends
 its private trace to 75 fields with fixed no-padding `mi_expand` and checked
 `mi_recalloc` growth, zero-product, and overflow-preservation cases; native
-AArch64 revalidation of that extension remains pending. Those operations are
+AArch64 revalidation of that extension remains pending. A separate native
+x86-64-only 25-field C/Rust differential records two live-owner publications
+from one quiescent `pthread`, then the pinned private owner false collector.
+It proves only owner-bit preservation, LIFO publication, exact used-count, and
+the post-join detach/local-free merge; it is not general remote-free routing or
+concurrent collection, abandonment, thread teardown, public API, libc
+integration, backend, or AArch64 evidence. Those operations are
 live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
 64 KiB and below the 256 MiB metadata limit. Failed terminal unmaps retain one

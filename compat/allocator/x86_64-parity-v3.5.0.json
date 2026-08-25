@@ -65,6 +65,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 25 address-independent values from exactly two live-owner mi_free publications by one quiescent pthread and the pinned private owner false collector, _mi_page_free_collect(page, false). It proves only source-specific owner-bit preservation, LIFO publication, exact used-count transition, and post-join detach/local-free merge. It is private engine evidence, not general remote-free routing or concurrent collection, abandonment, thread teardown, public mi_* API, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./scripts/dev-amd64.sh allocator-remote-free",
+      "id": "native-live-owner-remote-free-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/live-owner-remote-free.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, runs five named crate-private fault-injection state-preservation regressions covering selected Map, Commit, Unmap, and Decommit points. It does not establish general fault-injection or misuse parity, syscall interposition, lifecycle/stress coverage, C-oracle differential behavior, public mi_* behavior, libc integration, or a backend.",
       "command": "./scripts/dev-amd64.sh allocator-fault",
       "id": "native-bounded-fault-injection",
@@ -156,7 +164,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models) and five bounded crate-private fault-injection state-preservation regressions are recorded, but general remote-free routing, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, and one separate 25-field native C/Rust quiescent live-owner remote-free protocol differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

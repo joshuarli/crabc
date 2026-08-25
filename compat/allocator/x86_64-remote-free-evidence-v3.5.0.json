@@ -1,0 +1,124 @@
+{
+  "c_probe_sha256": "acd145cc5aca2d88b185c27a0743c6034a8bafcabaff9958284cfe0f3864a529",
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "format": 1,
+  "profile": "linux-x86_64-private-live-owner-remote-free-differential",
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "rust_test": {
+    "path": "crabc-mimalloc/src/remote_free.rs",
+    "target_arch": "x86_64",
+    "test_filter": "remote_free::tests::x86_64_live_owner_remote_free_trace_matches_pinned_c_protocol"
+  },
+  "schema": "crabc-mimalloc-x86_64-live-owner-remote-free-evidence",
+  "scope": {
+    "aarch64_status_reused": false,
+    "abandoned_or_thread_teardown_claimed": false,
+    "emulation_accepted": false,
+    "native_linux_x86_64_required": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false
+  },
+  "source_anchors": [
+    {
+      "end_line": 97,
+      "member": "src/free.c",
+      "sha256": "6dc25419bcef550d5626841cfc8d3121526ceaaa3698bf215c16bfa5de665bd6",
+      "start_line": 62
+    },
+    {
+      "end_line": 249,
+      "member": "src/free.c",
+      "sha256": "e755fc43b602a94ee89305924c28fcdbea5901bbccc2927c6cf5aa77f9e43942",
+      "start_line": 223
+    },
+    {
+      "end_line": 201,
+      "member": "src/page.c",
+      "sha256": "01d8f3f6a09d7d7b30e9e4f90f59c6738954fe5231d8fe9dac1ef5d0f96b967a",
+      "start_line": 150
+    },
+    {
+      "end_line": 418,
+      "member": "include/mimalloc/types.h",
+      "sha256": "efa7121eecd1146792f7eff5fd7b730daac15e124fe6a3d94457d81644d460cd",
+      "start_line": 388
+    }
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "trace": {
+    "begin": "CRABC_MI_LIVE_OWNER_REMOTE_FREE_TRACE_BEGIN",
+    "end": "CRABC_MI_LIVE_OWNER_REMOTE_FREE_TRACE_END",
+    "expected_values": {
+      "trace.live_owner_remote.collected_count": 2,
+      "trace.live_owner_remote.collected_head_empty": 1,
+      "trace.live_owner_remote.collected_head_owned": 1,
+      "trace.live_owner_remote.collected_lifo": 1,
+      "trace.live_owner_remote.collected_local_count": 2,
+      "trace.live_owner_remote.collected_used": 0,
+      "trace.live_owner_remote.initial_capacity_ge_used": 1,
+      "trace.live_owner_remote.initial_head_empty": 1,
+      "trace.live_owner_remote.initial_head_owned": 1,
+      "trace.live_owner_remote.initial_live_owner_associated": 1,
+      "trace.live_owner_remote.initial_remote_count": 0,
+      "trace.live_owner_remote.initial_used": 2,
+      "trace.live_owner_remote.list_cycle_free": 1,
+      "trace.live_owner_remote.post_collect_remote_count": 0,
+      "trace.live_owner_remote.post_join_remote_count": 2,
+      "trace.live_owner_remote.producer_count": 2,
+      "trace.live_owner_remote.published_actual_live_count": 0,
+      "trace.live_owner_remote.published_head_is_latest": 1,
+      "trace.live_owner_remote.published_head_owned": 1,
+      "trace.live_owner_remote.published_latest_predecessor_is_first": 1,
+      "trace.live_owner_remote.published_nonempty": 1,
+      "trace.live_owner_remote.published_remote_count": 2,
+      "trace.live_owner_remote.published_used_unchanged": 1,
+      "trace.live_owner_remote.same_page": 1,
+      "trace.live_owner_remote.valid": 1
+    }
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

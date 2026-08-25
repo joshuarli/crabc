@@ -135,6 +135,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-private-adapter-performance",
                 "native-tls-codegen",
                 "native-bounded-lifecycle-concurrency",
+                "native-live-owner-remote-free-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-bounded-fault-injection",
                 "native-allocator-unit",
@@ -167,6 +168,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-bounded-lifecycle-concurrency"]["report"],
             "compat/reports/allocator/x86_64/lifecycle-concurrency.json",
+        )
+        self.assertEqual(
+            gates["native-live-owner-remote-free-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-remote-free",
+        )
+        self.assertEqual(
+            gates["native-live-owner-remote-free-differential"]["report"],
+            "compat/reports/allocator/x86_64/live-owner-remote-free.json",
         )
         self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
@@ -202,6 +211,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("12 selected tests", gates["native-bounded-lifecycle-concurrency"]["claim"])
         self.assertIn("not general process/thread lifecycle", gates["native-bounded-lifecycle-concurrency"]["claim"])
         self.assertIn("general fault-injection or misuse parity", gates["native-bounded-lifecycle-concurrency"]["claim"])
+        self.assertIn("25 address-independent values", gates["native-live-owner-remote-free-differential"]["claim"])
+        self.assertIn("quiescent pthread", gates["native-live-owner-remote-free-differential"]["claim"])
+        self.assertIn("_mi_page_free_collect(page, false)", gates["native-live-owner-remote-free-differential"]["claim"])
+        self.assertIn("not general remote-free routing", gates["native-live-owner-remote-free-differential"]["claim"])
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])
@@ -242,6 +255,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("no whole-engine", lanes["performance-qualification"]["reason"])
         self.assertIn("Eight bounded private Rust lifecycle/concurrency lanes", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("five bounded crate-private fault-injection", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("25-field native C/Rust quiescent live-owner", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])
 
         boundary = self.contract["ledger_boundary"]

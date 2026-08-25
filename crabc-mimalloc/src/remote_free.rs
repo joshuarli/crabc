@@ -906,6 +906,197 @@ mod tests {
         assert_eq!(page.0.remote_free_test_local_chain_len(BLOCKS + 1), BLOCKS);
     }
 
+    /// Emits the fixed, address-independent native x86-64 differential
+    /// record for the live-owner `mi_free_block_mt` publication and
+    /// `mi_page_thread_free_collect` merge.  The matching pinned-C probe
+    /// creates its two publications through one quiescent `pthread` and then
+    /// calls the private owner collector; this test uses the same stable
+    /// two-block protocol under the test-only scoped sharing proof.
+    ///
+    /// It deliberately does not exercise public allocation routing,
+    /// abandoned-page ownership, page retirement, or thread teardown.  The
+    /// test page remains live and owner-associated until its worker joins and
+    /// the sole owner has completed the collection.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_live_owner_remote_free_trace_matches_pinned_c_protocol() {
+        const PRODUCER_COUNT: usize = 2;
+        let page = ConcurrentTestPage(Page::remote_free_test_page(4, PRODUCER_COUNT));
+        let mut blocks = [TestBlock([0; 16]), TestBlock([0; 16])];
+
+        let initial_head = page.0.remote_free_test_head();
+        let initial_used = page.0.remote_free_test_used();
+        // SAFETY: the test wrapper owns this initialized page for the whole
+        // scoped protocol and this read projects only its atomic producer
+        // fields before any worker starts.
+        let initial_producer_state = unsafe { Page::remote_free_producer_state_at(page.page_pointer()) };
+        let initial_live_owner_associated = producer_has_live_thread_identity(&initial_producer_state);
+        let initial_remote_count = usize::from(!thread_free_block(initial_head).is_null());
+        assert_eq!(initial_head, 1, "the test page begins owner-marked and empty");
+        assert_eq!(initial_used, PRODUCER_COUNT);
+        assert!(initial_live_owner_associated);
+        assert_eq!(initial_remote_count, 0);
+
+        // The worker owns only its two blocks and the remote atomic
+        // projection.  It completes both publications before the owner
+        // derives any owner-only list or accounting projection.
+        thread::scope(|scope| {
+            let page = &page;
+            let worker_blocks = &mut blocks;
+            scope.spawn(move || {
+                let first = worker_blocks[0].pointer();
+                let second = worker_blocks[1].pointer();
+                // SAFETY: the scoped owner pins the test page and both blocks
+                // for this entire worker lifetime; each block is published
+                // exactly once and no owner-local field is touched here.
+                unsafe {
+                    push(page.page_pointer(), first)
+                        .expect("the first live-owner remote publication succeeds");
+                    push(page.page_pointer(), second)
+                        .expect("the second live-owner remote publication succeeds");
+                }
+            });
+        });
+
+        let first = blocks[0].pointer();
+        let second = blocks[1].pointer();
+        let published_head = page.0.remote_free_test_head();
+        let published_head_block = NonNull::new(thread_free_block(published_head))
+            .expect("both worker publications leave a nonempty remote head");
+        // SAFETY: the two joined worker publications initialized this exact
+        // source-format list before their release CAS operations.
+        let published_predecessor = unsafe { block_next(published_head_block) };
+        let published_first_link = NonNull::new(published_predecessor)
+            .expect("the newest publication links to the first publication");
+        // SAFETY: the first worker block is the terminal source-format node.
+        let published_tail_is_empty = unsafe { block_next(published_first_link) }.is_null();
+        let published_remote_count = 1 + usize::from(!published_predecessor.is_null());
+        let published_head_is_latest = published_head_block.as_ptr().cast::<u8>() == second.as_ptr();
+        let published_latest_predecessor_is_first = published_predecessor.cast::<u8>() == first.as_ptr();
+        let published_nonempty = !thread_free_block(published_head).is_null();
+        let published_used_unchanged = page.0.remote_free_test_used() == initial_used;
+        let published_actual_live_count = page
+            .0
+            .remote_free_test_used()
+            .checked_sub(published_remote_count)
+            .expect("the detached remote count cannot exceed source used accounting");
+
+        assert_eq!(published_head & 1, 1, "publication retains the owner bit");
+        assert!(published_head_is_latest);
+        assert!(published_latest_predecessor_is_first);
+        assert!(published_tail_is_empty);
+        assert!(published_nonempty);
+        assert_eq!(published_remote_count, PRODUCER_COUNT);
+        assert!(published_used_unchanged);
+        assert_eq!(published_actual_live_count, 0);
+
+        // SAFETY: the worker joined, this is the sole live owner, and the
+        // test page plus both published blocks stay valid until this exact
+        // detach-and-local-merge completes.
+        let collected_count = unsafe { collect(page.page_pointer()) }
+            .expect("owner collection preserves the live-page protocol");
+        let collected_head = page.0.remote_free_test_head();
+        let collected_local = NonNull::new(page.0.remote_free_test_local_free())
+            .expect("the collected two-block list becomes local_free");
+        // SAFETY: collection made this bounded local list owner-only.
+        let collected_predecessor = unsafe { block_next(collected_local) };
+        let collected_first_link = NonNull::new(collected_predecessor)
+            .expect("the collected local list retains both publications");
+        // SAFETY: the first publication remains the terminal local node.
+        let collected_tail_is_empty = unsafe { block_next(collected_first_link) }.is_null();
+        let collected_local_count = 1 + usize::from(!collected_predecessor.is_null());
+        let collected_lifo = collected_local.as_ptr().cast::<u8>() == second.as_ptr()
+            && collected_predecessor.cast::<u8>() == first.as_ptr()
+            && collected_tail_is_empty;
+        let collected_head_owned = collected_head & 1 == 1;
+        let collected_head_empty = thread_free_block(collected_head).is_null();
+        let post_collect_remote_count = usize::from(!thread_free_block(collected_head).is_null());
+        let list_cycle_free = published_tail_is_empty && collected_tail_is_empty;
+        let valid = page.0.remote_free_test_used() == 0
+            && collected_count == PRODUCER_COUNT
+            && collected_head_owned
+            && collected_head_empty
+            && collected_local_count == PRODUCER_COUNT
+            && collected_lifo
+            && list_cycle_free;
+
+        assert!(valid, "the bounded owner collection must preserve every trace invariant");
+
+        std::println!("CRABC_MI_LIVE_OWNER_REMOTE_FREE_TRACE_BEGIN");
+        std::println!("trace.live_owner_remote.producer_count={PRODUCER_COUNT}");
+        std::println!("trace.live_owner_remote.same_page=1");
+        std::println!(
+            "trace.live_owner_remote.initial_live_owner_associated={}",
+            u8::from(initial_live_owner_associated),
+        );
+        std::println!("trace.live_owner_remote.initial_used={initial_used}");
+        std::println!(
+            "trace.live_owner_remote.initial_capacity_ge_used={}",
+            u8::from(4 >= initial_used),
+        );
+        std::println!(
+            "trace.live_owner_remote.initial_head_owned={}",
+            u8::from(initial_head & 1 == 1),
+        );
+        std::println!(
+            "trace.live_owner_remote.initial_head_empty={}",
+            u8::from(thread_free_block(initial_head).is_null()),
+        );
+        std::println!("trace.live_owner_remote.initial_remote_count={initial_remote_count}");
+        std::println!(
+            "trace.live_owner_remote.published_used_unchanged={}",
+            u8::from(published_used_unchanged),
+        );
+        std::println!(
+            "trace.live_owner_remote.published_head_owned={}",
+            u8::from(published_head & 1 == 1),
+        );
+        std::println!(
+            "trace.live_owner_remote.published_head_is_latest={}",
+            u8::from(published_head_is_latest),
+        );
+        std::println!(
+            "trace.live_owner_remote.published_latest_predecessor_is_first={}",
+            u8::from(published_latest_predecessor_is_first),
+        );
+        std::println!(
+            "trace.live_owner_remote.published_nonempty={}",
+            u8::from(published_nonempty),
+        );
+        std::println!(
+            "trace.live_owner_remote.published_remote_count={published_remote_count}",
+        );
+        std::println!(
+            "trace.live_owner_remote.post_join_remote_count={published_remote_count}",
+        );
+        std::println!(
+            "trace.live_owner_remote.published_actual_live_count={published_actual_live_count}",
+        );
+        std::println!("trace.live_owner_remote.collected_count={collected_count}");
+        std::println!(
+            "trace.live_owner_remote.collected_used={}",
+            page.0.remote_free_test_used(),
+        );
+        std::println!(
+            "trace.live_owner_remote.collected_head_owned={}",
+            u8::from(collected_head_owned),
+        );
+        std::println!(
+            "trace.live_owner_remote.collected_head_empty={}",
+            u8::from(collected_head_empty),
+        );
+        std::println!(
+            "trace.live_owner_remote.post_collect_remote_count={post_collect_remote_count}",
+        );
+        std::println!(
+            "trace.live_owner_remote.collected_local_count={collected_local_count}",
+        );
+        std::println!("trace.live_owner_remote.collected_lifo={}", u8::from(collected_lifo));
+        std::println!("trace.live_owner_remote.list_cycle_free={}", u8::from(list_cycle_free));
+        std::println!("trace.live_owner_remote.valid={}", u8::from(valid));
+        std::println!("CRABC_MI_LIVE_OWNER_REMOTE_FREE_TRACE_END");
+    }
+
     #[test]
     fn owner_collection_races_a_producer_without_losing_or_double_collecting_blocks() {
         const BLOCKS: usize = 128;

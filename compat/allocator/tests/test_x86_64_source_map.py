@@ -141,6 +141,27 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("caller-managed private single-thread lifecycle", ordinary["difference"])
         self.assertGreaterEqual(ordinary["source_anchor"]["end_line"], 483)
 
+    def test_remote_free_scopes_record_only_the_bounded_native_differential(self) -> None:
+        remote = next(
+            unit for unit in self.contract["units"] if unit["id"] == "local-and-remote-free"
+        )
+        page = next(unit for unit in self.contract["units"] if unit["id"] == "page-lifecycle")
+        for unit in (remote, page):
+            with self.subTest(unit=unit["id"]):
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn("25-field native C/Rust differential", unit["difference"])
+                self.assertIn(
+                    "compat/allocator/x86_64_remote_free_evidence.py", unit["evidence"]
+                )
+                self.assertIn(
+                    "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
+                    unit["evidence"],
+                )
+        self.assertLessEqual(remote["source_anchor"]["start_line"], 62)
+        self.assertLessEqual(page["source_anchor"]["start_line"], 150)
+        self.assertIn("not general asynchronous public free routing", remote["difference"])
+        self.assertIn("not general page routing", page["difference"])
+
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(
             unit

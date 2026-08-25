@@ -36,6 +36,14 @@ below-half, exact-fit, oversize, and state-preservation cases plus checked
 outcomes. This remains private engine evidence, not public allocator API or
 AArch64 production evidence.
 
+It also has one separate 25-field native C/Rust differential for two
+live-owner remote-free publications from one quiescent `pthread` followed by
+the pinned private owner false collector. It proves only the source-specific
+owner-bit, LIFO, exact-used-count, and post-join local-list merge transition;
+it is not general remote-free routing or concurrent collection, abandonment,
+thread teardown, public `mi_*` API, libc integration, backend, or AArch64
+evidence.
+
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free
 small, medium, large, singleton, aligned, and offset-aligned blocks from a

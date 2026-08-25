@@ -477,9 +477,11 @@ contracts, reports, and status.
   source map and ledger, record every intentional difference, and add native
   pinned-C differential evidence for each completed behavior.
 - [ ] Broaden the eight bounded lifecycle/concurrency lanes (12 selected tests,
-  including five finite Loom models) and five bounded fault-state regressions
-  into init/done, general remote free, abandonment/adoption, pthread/TLS/fork,
-  fault/misuse isolation, remaining upstream tests, and stress evidence.
+  including five finite Loom models), five bounded fault-state regressions, and
+  one 25-field quiescent live-owner pinned-C/Rust differential into init/done,
+  general remote free or concurrent collection, abandonment/adoption,
+  pthread/TLS/fork, fault/misuse isolation, remaining upstream tests, and stress
+  evidence.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
   measurements into qualified whole-engine performance evidence.
 

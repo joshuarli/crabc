@@ -936,6 +936,25 @@ linked shared object. Its report is
 evidence only: it does not add public x86 `crabc`, libc, or ldso support and
 does not reuse AArch64 status.
 
+The dedicated live-owner remote-free differential is likewise native x86-only:
+
+```sh
+./scripts/dev-amd64.sh allocator-remote-free
+```
+
+It compiles a private `mimalloc/internal.h` C probe against the pinned release
+source set, uses exactly two `mi_free` calls from one quiescent `pthread` to
+select the live-owner cross-thread route, joins that worker, and invokes the
+exact private owner false collector. It compares its 25 address-independent
+protocol values with one isolated Rust test and writes
+`compat/reports/allocator/x86_64/live-owner-remote-free.json`. The probe proves
+only owner-bit preservation, LIFO publication, exact used-count transition,
+and post-join detach/local-free merge. It does not prove general remote-free
+routing or concurrent collection, abandonment, thread teardown, public
+`mi_*` API, libc integration, a backend, or AArch64 behavior. Like the native
+release gate, it runs offline against the verified archive cache populated by
+the x86 `allocator --quick` lane.
+
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
 
@@ -1017,6 +1036,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
 | `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
 | `x86_64_release_evidence.py` and `x86_64-release-evidence-v3.5.0.json` | Native x86-64-only C release-mode, ELF identity, object-symbol, and dynamic-symbol evidence. It is dispatched by `allocator-release-evidence`; it does not claim public x86 support or reuse AArch64 status. |
+| `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. It is dispatched by `allocator-remote-free` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
