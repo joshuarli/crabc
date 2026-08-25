@@ -243,17 +243,28 @@ rejects non-large before collection and does not cover full
 medium/non-direct-small/direct-small, multi-page, reclaim/adoption/requeue, or
 general owner-exit traversal.
 
-`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped` is
-the distinct dynamic full-large branch where exactly one remote client has
+`DynamicThreadExitDrain::abandon_full_medium_after_force_collect_to_mapped` is
+the distinct dynamic full-medium branch where exactly one remote client has
 already joined before owner exit. Force collection changes the still-linked,
 still-full `BIN_FULL` member to `used == reserved - 1`; false collection keeps
 that geometry; removal clears the full flag; and mapped abandonment publishes
 the exact heap-local bitmap/count pair immediately. Its
+`DynamicThreadExitFullMediumHandoff` starts mapped and accepts only sequential
+failed-reclaim client frees, clearing that pair before the ordinary arena
+release. It does not generalize normal full-medium abandonment to multiple
+frees, another class, reclaim, adoption, requeue, scans, or general owner-exit
+traversal.
+
+`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped` is
+the corresponding dynamic full-large branch. Its one joined remote free takes
+the same still-linked full member to `used == reserved - 1`, then false
+collection, full-queue removal, and mapped abandonment publish the exact
+heap-local bitmap/count pair immediately. Its
 `DynamicThreadExitFullLargeHandoff` starts mapped and accepts only sequential
-failed-reclaim client frees, clearing that pair before the same complete
-64-slice release. It does not generalize normal full-large abandonment to
-multiple frees, another class, reclaim, adoption, requeue, scans, or general
-owner-exit traversal.
+failed-reclaim client frees, clearing that pair before the complete 64-slice
+release. Neither branch generalizes normal full-page abandonment to multiple
+frees, another class, reclaim, adoption, requeue, scans, or general owner-exit
+traversal.
 
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth,
 source-unmapped dynamic endpoint. It admits only the sole full

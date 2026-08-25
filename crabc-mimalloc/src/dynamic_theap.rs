@@ -41,11 +41,12 @@
 //! dynamic bitmap/count pair only after the source mostly-used boundary. The
 //! direct-small partial collector retains its just-published head, so its
 //! transition occurs one free later than the normal classes. Separately, one
-//! full large `BIN_FULL` page with exactly one joined remote free becomes
-//! nonfull during source force collection and publishes its matching dynamic
-//! bitmap/count pair immediately after full-queue detachment; its returned
-//! full-large handoff starts mapped and remains client-free-only. All general
-//! dynamic owner-exit traversal remains outside this module.
+//! full medium or large `BIN_FULL` page with exactly one joined remote free
+//! becomes nonfull during source force collection and publishes its matching
+//! dynamic bitmap/count pair immediately after full-queue detachment; each
+//! returned handoff starts mapped and remains client-free-only, while large
+//! retains its complete 64-slice terminal span. All general dynamic owner-exit
+//! traversal remains outside this module.
 //! It does implement the one
 //! owner-only cached-Theap root/reference pair which follows regular-slot
 //! publication in `src/heap.c:_mi_heap_theap_get_or_init`.
@@ -3635,6 +3636,390 @@ mod tests {
                 Ok(handoff) => {
                     core::mem::forget(handoff);
                     panic!("the injected collection failure cannot abandon the full large page");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(unsafe { drain.test_page_for_block(blocks[1]) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() as usize }, reserved);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_one_remote_force_collects_to_mapped_handoff_then_releases() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one dynamic medium page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the medium page remains PageMap-published before thread exit");
+            let page_ref = unsafe { page.as_ref() };
+            let memory = page_ref.memid();
+            let bin = crate::size_class::bin(page_ref.block_size())
+                .expect("the full medium page has one source bin");
+            let reserved = page_ref.reserved() as usize;
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                Some(crate::types::PageKind::Medium)
+            );
+            assert!(reserved > 1, "the medium source page has a joined-free predecessor");
+            let mut blocks = Vec::with_capacity(reserved);
+            blocks.push(first);
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the medium page reaches its source full state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+                blocks.push(block);
+            }
+            assert_eq!(unsafe { page.as_ref().used() }, reserved);
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            // Preserve one source remote free until `MI_ABANDON` force
+            // collection. `blocks[0]` is no longer a client alias after
+            // publication; `blocks[1]` remains the exact live witness for
+            // the source page-abandon call.
+            let producer = unsafe { allocator.begin_remote_free(blocks[0]) }
+                .expect("the full medium page admits one joined remote producer");
+            thread::scope(|scope| {
+                let publisher = scope.spawn(move || producer.publish());
+                match publisher.join().expect("the remote producer joins") {
+                    Ok(()) => {}
+                    Err((producer, error)) => {
+                        let original = producer.cancel();
+                        panic!("the remote client publishes before owner exit {original:?}: {error:?}");
+                    }
+                }
+            });
+            assert_eq!(unsafe { page.as_ref().used() }, reserved);
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: force collection consumes the one already joined remote
+            // block. The other entries remain the exact live client set of
+            // this sole full medium page and are transferred linearly below.
+            let mut handoff = match unsafe {
+                drain.abandon_full_medium_after_force_collect_to_mapped(blocks[1])
+            } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitFullMediumAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("one joined remote medium free enters the dynamic mapped handoff: {error:?}");
+                }
+                Err(DynamicThreadExitFullMediumAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("one joined remote medium free does not retain a terminal owner: {error:?}");
+                }
+            };
+            assert_eq!(handoff.test_page_count(), 0);
+            assert_eq!(handoff.test_page_for_block(blocks[1]), page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() }, reserved - 1);
+            assert!(
+                !crate::types::page_queue::page_is_in_full(unsafe { page.as_ref() }),
+                "full-queue removal clears the source full flag after force collection"
+            );
+            assert_eq!(handoff.test_abandoned_count(), Some(1));
+            assert!(handoff.test_dynamic_abandoned_page_is_set());
+            let (slice_start, span_size) = handoff
+                .test_arena_span()
+                .expect("the mapped full-medium handoff retains its complete arena span");
+            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+                assert_eq!(
+                    handoff.test_page_map_entry(slice_start.wrapping_add(offset)),
+                    page.as_ptr(),
+                    "mapped abandonment retains every medium PageMap slice"
+                );
+            }
+
+            for block in blocks.iter().copied().skip(1).take(reserved - 2) {
+                // SAFETY: the handoff remains linear and each selected block
+                // remains live after the one force-collected remote free.
+                handoff = match unsafe { handoff.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullMediumFreeResult::StillLive(handoff)) => handoff,
+                    Ok(DynamicThreadExitFullMediumFreeResult::Released(drain)) => {
+                        core::mem::forget(drain);
+                        panic!("a nonfinal mapped medium free cannot release the page");
+                    }
+                    Err(DynamicThreadExitFullMediumRemoteFreeFailure::Rejected {
+                        handoff,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullMediumRemoteFreeFailure::Terminal {
+                        handoff,
+                        error,
+                    }) => {
+                        core::mem::forget(handoff);
+                        panic!("the mapped full-medium free remains source-shaped: {error:?}");
+                    }
+                };
+                assert_eq!(handoff.test_abandoned_count(), Some(1));
+            }
+            let last = *blocks.last().expect("the full medium page has a last live block");
+            // SAFETY: the remote source block was force-collected, so `last`
+            // is now the final live client and must clear the exact mapped
+            // bitmap/count pair before the complete arena release.
+            let drain = match unsafe { handoff.remote_free_after_thread_exit(last) } {
+                Ok(DynamicThreadExitFullMediumFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullMediumFreeResult::StillLive(handoff)) => {
+                    core::mem::forget(handoff);
+                    panic!("the final mapped medium free releases the arena page");
+                }
+                Err(DynamicThreadExitFullMediumRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicThreadExitFullMediumRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the final mapped medium free releases its dynamic arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(first) }.is_null());
+            assert_eq!(drain.test_page_count(), 0);
+            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(memory));
+            assert!(drain.finish());
+            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+                assert!(unsafe { page_map.checked_lookup(slice_start.wrapping_add(offset)) }.is_null());
+            }
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_one_remote_force_collect_route_rejects_regular_medium_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one regular dynamic medium page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the regular medium page remains PageMap-published before thread exit");
+            let bin = crate::size_class::bin(unsafe { page.as_ref().block_size() })
+                .expect("the regular medium page has one source bin");
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+            assert_eq!(allocator.queue_count(bin), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: `first` remains a current allocation in a nonfull
+            // regular medium page. The full-origin force-collected route must
+            // reject before it sees any source remote-free state or detaches
+            // the ordinary queue member.
+            let drain = match unsafe {
+                drain.abandon_full_medium_after_force_collect_to_mapped(first)
+            } {
+                Err(DynamicThreadExitFullMediumAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullMediumAbandonError::NotFullMedium,
+                }) => drain,
+                Err(DynamicThreadExitFullMediumAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("regular-medium admission rejects before collection: {error:?}");
+                }
+                Err(DynamicThreadExitFullMediumAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("regular-medium admission rejects before detachment: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("a regular medium page cannot enter the force-collected handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_one_remote_force_collect_route_rejects_full_large_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = MEDIUM_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one dynamic large page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the large page remains PageMap-published before thread exit");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the large page reaches its source full state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+            }
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: `first` remains a current allocation in a full large
+            // page. The force-collected medium admission must reject before it
+            // observes or mutates any source remote-free state.
+            let drain = match unsafe {
+                drain.abandon_full_medium_after_force_collect_to_mapped(first)
+            } {
+                Err(DynamicThreadExitFullMediumAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullMediumAbandonError::NotFullMedium,
+                }) => drain,
+                Err(DynamicThreadExitFullMediumAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("full-medium class admission rejects before collection: {error:?}");
+                }
+                Err(DynamicThreadExitFullMediumAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("full-medium class admission rejects before detachment: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("a full large page cannot enter the force-collected medium handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() as usize }, reserved);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_medium_one_remote_force_collect_route_retains_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one dynamic medium page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the medium page remains PageMap-published before thread exit");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            let mut blocks = Vec::with_capacity(reserved);
+            blocks.push(first);
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the medium page reaches its source full state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+                blocks.push(block);
+            }
+            let producer = unsafe { allocator.begin_remote_free(blocks[0]) }
+                .expect("the full medium page admits one joined remote producer");
+            thread::scope(|scope| {
+                let publisher = scope.spawn(move || producer.publish());
+                match publisher.join().expect("the remote producer joins") {
+                    Ok(()) => {}
+                    Err((producer, error)) => {
+                        let original = producer.cancel();
+                        panic!("the remote client publishes before owner exit {original:?}: {error:?}");
+                    }
+                }
+            });
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: the seam fails source force collection before it can
+            // consume the already joined remote block or detach BIN_FULL.
+            let drain = match unsafe {
+                drain.abandon_full_medium_after_force_collect_to_mapped(blocks[1])
+            } {
+                Err(DynamicThreadExitFullMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitFullMediumAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitFullMediumAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullMediumAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("injected force-collection failure retains the dynamic drain: {error:?}");
+                }
+                Err(DynamicThreadExitFullMediumAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("collection fails before a terminal force-collected handoff: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("the injected collection failure cannot abandon the full medium page");
                 }
             };
             assert!(drain.test_has_collection_poison());

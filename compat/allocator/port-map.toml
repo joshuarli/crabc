@@ -668,6 +668,21 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/theap.c"
+name = "dynamic-thread-exit-full-medium-one-remote-force-collect-to-mapped-handoff"
+source_region = "dynamic post-TLS regular-slot clear from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; the one-joined-remote `MI_ABANDON` force/false branch from src/theap.c:85-124 and src/page.c:214-243,263-275,291-303; full-queue detach from src/page-queue.c:252-274; dynamic Heap arena bitmap/count publication and terminal arena release from src/arena.c:1201-1231,1304-1424; and the mapped failed-reclaim tail from src/free.c:440-475"
+rust_module = "crabc_mimalloc::dynamic_theap, crabc_mimalloc::single_thread, crabc_mimalloc::arena, and crabc_mimalloc::abandoned"
+rust_item = "DynamicTheapPageDrainSession::mapped_abandoned_page_during_drain; DynamicThreadExitDrain::abandon_full_medium_after_force_collect_to_mapped; DynamicThreadExitFullMediumHandoff::remote_free_after_thread_exit; DynamicArenaMappedAbandonedPage; abandoned::{abandon_after_collect,free_mapped_after_failed_reclaim}; and PageAllocatorEngine::release_queue_detached_abandoned_arena_page"
+intentional_difference = "This is one sequential current-thread dynamic owner-exit branch only: after the dynamic regular TLS slot has cleared, it accepts a sole full `MemoryKind::Arena` medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, no direct-cache entry, and exactly one already joined remote free. Source force collection consumes that one free while the page remains linked and marked full, proving `used == reserved - 1`; false collection preserves that geometry; full-queue/page-count detach clears the full flag; then mapped abandonment immediately publishes the exact heap-local bitmap/count pair. The existing full-medium handoff begins in its mapped state and permits only sequential failed-reclaim client frees, which clear the pair before PageMap -> dynamic ordinary bit -> metadata -> arena-slice release. Multiple joined frees, normal full-page unmapped abandonment, other page classes, reclaim of the departed Theap, adoption, requeue, bitmap scans, producers, concurrent or multiple-page routing, and public lifecycle integration remain absent."
+tests = ["crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/types.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/theap.c"
 name = "dynamic-thread-exit-full-large-unmapped-to-mapped-handoff"
 source_region = "dynamic post-TLS regular-slot clear from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; source force/false collection and full-page abandonment from src/theap.c:89-152 and src/page.c:291-303; full-queue detach from src/page-queue.c:252-274; dynamic Heap arena bitmap/count publication and complete large-span release from src/arena.c:1304-1424; and the unmapped then mapped normal failed-reclaim tails from src/free.c:372-418,479-515"
 rust_module = "crabc_mimalloc::dynamic_theap, crabc_mimalloc::single_thread, crabc_mimalloc::arena, and crabc_mimalloc::abandoned"
@@ -1880,10 +1895,10 @@ upstream = "src/arena.c"
 name = "bounded-page-abandonment-adoption-and-remote-owner-protocol"
 # Here, later-main "full ... routes" mean the normal source MI_ABANDON
 # branches. The four dedicated later-main one-joined-remote predecessors and
-# the separate dynamic full-large one-joined-remote predecessor are explicit
-# exceptions: force collection makes them nonfull, false collection removes
-# the source member, and they immediately publish the mapped regular state;
-# full large retains its complete 64-slice span.
+# the separate dynamic full-medium and full-large one-joined-remote
+# predecessors are explicit exceptions: force collection makes them nonfull,
+# false collection removes the source member, and they immediately publish the
+# mapped regular state; full large retains its complete 64-slice span.
 source_region = "src/page.c:245-302 _mi_page_free_collect_partly/_mi_page_abandon/_mi_theap_page_reclaim; src/page-queue.c:204-330 direct-cache update and queue mutation; src/arena.c:631-778,951-1153,1183-1204,1240-1298,1304-1355,1383-1424 mi_abandoned_page_unown/mi_arena_try_claim_abandoned/_mi_arenas_page_abandon/_unabandon/_page_free; and src/free.c:372-514 mi_free_try_collect_mt including expected-head unown"
 rust_module = "crabc_mimalloc::abandoned, crabc_mimalloc::arena, crabc_mimalloc::bitmap, crabc_mimalloc::remote_free, crabc_mimalloc::single_thread, crabc_mimalloc::main_heap_page, crabc_mimalloc::process_page_map, and crabc_mimalloc::types"
 rust_item = "abandon_after_collect/try_adopt_retained/free_mapped_and_reclaim/free_mapped_one_block_to_empty/free_mapped_direct_one_block_to_empty/free_mapped_after_failed_reclaim/free_mapped_after_failed_reclaim_select_map/free_unmapped_after_failed_reclaim/abandon_unmappable_after_collect/free_unmappable_after_failed_reclaim/AdoptedPage, ArenaAbandonedPages, MainArenaMappedAbandonedPage, and UnmappableAbandonedPages, DynamicMappedPageHandoff, DynamicThreadExitSingletonHandoff, DynamicThreadExitFullMediumHandoff/DynamicThreadExitFullLargeHandoff/DynamicThreadExitFullNonDirectSmallHandoff/DynamicThreadExitFullDirectSmallHandoff, DynamicThreadExitMappedOneBlockHandoff, ThreadExitSingletonHandoff, ThreadExitMappedOneBlockHandoff, ThreadExitFullNonDirectSmallPostExitParts/ThreadExitFullDirectSmallPostExitParts, ThreadExitMappedRegularPostExitParts, ThreadExitMappedRegularPagesPostExitParts, MainHeapThreadProcessPageExitFullNonDirectSmallRoute/MainHeapThreadProcessPageExitFullDirectSmallRoute, MainHeapThreadProcessPageExitMappedRegularRoute, MainHeapThreadProcessPageExitMappedRegularPagesRoute, small partial and full abandoned remote collection, generic and expected-head owner unown transitions, queue-detached mapped and post-TLS singleton, full-medium/full-large/full-non-direct-small/full-direct-small, mapped-one-block, later-main singleton, full-large/full-non-direct-small/full-direct-small, sole-route, and aggregate-regular-pages all-free arena release, and disjoint atomic/owner page projections"

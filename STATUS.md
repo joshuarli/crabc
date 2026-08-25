@@ -392,6 +392,17 @@ arena release. This one route neither reclaims, adopts, requeues, scans, nor
 covers full medium/non-direct-small/direct-small, multi-page, or general
 dynamic owner exit.
 
+`DynamicThreadExitDrain::abandon_full_medium_after_force_collect_to_mapped`
+separately preserves the source full-medium branch with exactly one joined
+remote free. The sole `BIN_FULL` page starts with `used == reserved`; force
+collection consumes that free but leaves the member linked and marked full with
+`used == reserved - 1`; false collection preserves it; full-queue/page-count
+detach clears the full flag; and mapped abandonment immediately publishes its
+dynamic bitmap/count pair. The returned `DynamicThreadExitFullMediumHandoff`
+starts mapped and consumes sequential failed-reclaim frees only, clearing that
+pair before the ordinary arena release. It does not add multiple frees, other
+classes, reclaim, adoption, requeue, scans, or general dynamic owner exit.
+
 `DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped`
 separately preserves the source full-large branch with exactly one joined
 remote free. The sole `BIN_FULL` page starts with `used == reserved`; force
@@ -514,13 +525,16 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-dynamic owner-exit singleton, full-medium, full-large, full-non-direct-small, and
-full-direct-small unmapped-to-mapped handoffs, and sole mapped
+  dynamic owner-exit singleton, full-medium, full-large, full-non-direct-small, and
+  full-direct-small normal unmapped-to-mapped handoffs, two one-joined-remote
+  full-medium/full-large immediate-mapped predecessors, and sole mapped
 medium/large/non-direct-small/direct-small
 one-block handoffs: clearing the regular backing prevents reclaim; the singleton
-final free takes the raw failed-reclaim all-free release, all four full routes cross
-the source mostly-used boundary before dynamic bitmap publication, and each
-mapped endpoint clears its dynamic bitmap/count before terminal arena release. The raw
+  final free takes the raw failed-reclaim all-free release, the four normal
+  full routes cross the source mostly-used boundary before dynamic bitmap
+  publication, and the medium/large one-remote full routes map immediately
+  after source force/false collection and `BIN_FULL` detach. Each mapped
+  endpoint clears its dynamic bitmap/count before terminal arena release. The raw
 protocol remains
 otherwise unintegrated: regular/nonempty pages, general producer routing,
 terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,

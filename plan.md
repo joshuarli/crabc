@@ -94,17 +94,24 @@ metadata -> complete 64-slice arena release. It cannot reclaim, adopt,
 requeue, scan, or cover full medium/non-direct-small/direct-small, multi-page,
 or general dynamic thread-exit state.
 
-`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped`
-now captures the separate dynamic full-large source branch with exactly one
+`DynamicThreadExitDrain::abandon_full_medium_after_force_collect_to_mapped`
+now captures the separate dynamic full-medium source branch with exactly one
 joined remote free. Force collection changes the still-linked, still-full sole
 `BIN_FULL` member to `used == reserved - 1`; false collection preserves it;
 full-queue/page-count detachment clears the full flag; then mapped abandonment
 immediately publishes the exact heap-local bitmap/count pair. The returned
-`DynamicThreadExitFullLargeHandoff` starts mapped and accepts only sequential
-failed-reclaim client frees, clearing the pair before the complete 64-slice
-release. This does not broaden the normal unmapped full-large endpoint to
+`DynamicThreadExitFullMediumHandoff` starts mapped and accepts only sequential
+failed-reclaim client frees, clearing the pair before the ordinary arena
+release. This does not broaden the normal unmapped full-medium endpoint to
 multiple frees, other page classes, reclaim, adoption, requeue, scanning, or a
 general dynamic owner-exit traversal.
+
+`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped`
+captures the corresponding dynamic full-large branch with the same one-remote
+force/false/detach/mapped sequence. Its returned
+`DynamicThreadExitFullLargeHandoff` retains the complete 64-slice terminal
+release. Neither branch broadens normal full-page abandonment or general
+dynamic owner-exit traversal.
 
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, disjoint
 dynamic owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena`
@@ -494,17 +501,17 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 454 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 461 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 96 items and 100
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 98 items and 102
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-large/full-large-one-remote-mapped/full-non-direct-small/full-direct-small or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-direct-small or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately
