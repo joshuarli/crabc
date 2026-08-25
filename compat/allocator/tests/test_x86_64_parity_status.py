@@ -140,6 +140,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-mapped-arena-same-origin-reclaim-differential",
                 "native-unmapped-full-medium-reabandon-differential",
                 "native-ordinary-reserved-medium-on-demand-differential",
+                "native-reserved-small-direct-on-demand-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -220,6 +221,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-ordinary-reserved-medium-on-demand-differential"]["report"],
             "compat/reports/allocator/x86_64/on-demand.json",
+        )
+        self.assertEqual(
+            gates["native-reserved-small-direct-on-demand-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-direct-on-demand",
+        )
+        self.assertEqual(
+            gates["native-reserved-small-direct-on-demand-differential"]["report"],
+            "compat/reports/allocator/x86_64/direct-on-demand.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
@@ -448,6 +457,21 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, on_demand)
+        direct_on_demand = gates["native-reserved-small-direct-on-demand-differential"]["claim"]
+        for fragment in (
+            "44 address-independent values",
+            "only the C probe sets mi_option_page_commit_on_demand",
+            "1024-byte small direct-cache page",
+            "allocation nine falls through generic queue search",
+            "16 to 24 extension",
+            "complete direct-cache image",
+            "does not claim C fault-injection parity",
+            "Rust production option processing/API/policy",
+            "fresh fallback",
+            "public x86 runtime support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, direct_on_demand)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])

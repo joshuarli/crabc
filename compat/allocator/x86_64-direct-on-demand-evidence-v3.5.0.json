@@ -1,0 +1,189 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-direct-on-demand-evidence",
+  "profile": "linux-x86_64-private-reserved-small-direct-on-demand-prefix-boundaries",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "aarch64_status_reused": false,
+    "emulation_accepted": false,
+    "native_linux_x86_64_required": true,
+    "oracle_option_setup_only": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "reserved_small_direct_on_demand_extensions_only": true,
+    "failed_commit_recovery_claimed": false,
+    "production_page_on_demand_policy_claimed": false,
+    "fresh_fallback_claimed": false
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {
+      "member": "src/alloc.c",
+      "start_line": 29,
+      "end_line": 58,
+      "sha256": "ebecab0a27c74739c146a986504e36e8361dbac617a78071cc97ef8d3e67602a"
+    },
+    {
+      "member": "src/alloc.c",
+      "start_line": 132,
+      "end_line": 159,
+      "sha256": "7e0bfe74a463bbe348abe76b053d33a413c8b808222f64f77b921a51a6f13b78"
+    },
+    {
+      "member": "src/alloc.c",
+      "start_line": 204,
+      "end_line": 214,
+      "sha256": "1cc8fd1bdc079b0fc4fc4d3ac4f9fbbdc81cb73dbd700b2958e7012100973723"
+    },
+    {
+      "member": "include/mimalloc/internal.h",
+      "start_line": 650,
+      "end_line": 655,
+      "sha256": "6388823e5d1e066d764c6d2f506a1f852325be603eac748877f5411dec492fcc"
+    },
+    {
+      "member": "src/page-queue.c",
+      "start_line": 204,
+      "end_line": 244,
+      "sha256": "4216ce3f998d0a8c3891e0c89e1feaa34aff407d10e14135e68334ce833d6e6b"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 630,
+      "end_line": 706,
+      "sha256": "c2fdd18ad991b45c8bf8f8a6441f66c1c2dbfe1f5f81e60688e8e66fd32865f3"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 709,
+      "end_line": 758,
+      "sha256": "b2cfe8e2b1154751399e9c71b8782883e4f19f5bfe73bd36766a9c368deb72f1"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 765,
+      "end_line": 875,
+      "sha256": "3c8a1de257b88eb5c17b54da1cca31337fc9555aaca6a1cf167f3f0f4aaa7598"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 879,
+      "end_line": 917,
+      "sha256": "b9a8d102ea3285c4f0283e7379d621f36dde91728a5daa3306e764e979a949b6"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 951,
+      "end_line": 1069,
+      "sha256": "b1c4e4f4c2f7d18243066233baa3070a563c51b0d55a212aeea990f8a1289fcf"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1138,
+      "end_line": 1154,
+      "sha256": "4777f29be08991a04391029e1cd4daabcc00f2e53e9e6f36f20ad69093a142ed"
+    }
+  ],
+  "c_probe_sha256": "a82e204329abf2b7b89d89ab18654c6555a09d5289a6daf4e0a9739aba65ec36",
+  "rust_test": {
+    "path": "crabc-mimalloc/src/main_heap_page.rs",
+    "target_arch": "x86_64",
+    "test_filter": "main_heap_page::tests::ordinary_reserved_small_direct_on_demand_extensions_follow_source_prefix_boundaries"
+  },
+  "trace": {
+    "begin": "CRABC_MI_ON_DEMAND_DIRECT_TRACE_BEGIN",
+    "end": "CRABC_MI_ON_DEMAND_DIRECT_TRACE_END",
+    "expected_values": {
+      "trace.on_demand_direct.arena_backed": 1,
+      "trace.on_demand_direct.reserved_mapping": 1,
+      "trace.on_demand_direct.small_direct_page": 1,
+      "trace.on_demand_direct.initial_prefix_four_os_pages": 1,
+      "trace.on_demand_direct.initial_capacity_eight": 1,
+      "trace.on_demand_direct.initial_direct_range_registered": 1,
+      "trace.on_demand_direct.initial_queue_registered": 1,
+      "trace.on_demand_direct.initial_page_map_registered": 1,
+      "trace.on_demand_direct.initial_arena_bit_set": 1,
+      "trace.on_demand_direct.first_eight_direct_head": 1,
+      "trace.on_demand_direct.first_eight_same_page": 1,
+      "trace.on_demand_direct.eighth_full_prefix": 1,
+      "trace.on_demand_direct.ninth_same_page": 1,
+      "trace.on_demand_direct.ninth_zero_commit": 1,
+      "trace.on_demand_direct.ninth_capacity_sixteen": 1,
+      "trace.on_demand_direct.ninth_used_nine": 1,
+      "trace.on_demand_direct.second_direct_head": 1,
+      "trace.on_demand_direct.sixteenth_full_prefix": 1,
+      "trace.on_demand_direct.seventeenth_same_page": 1,
+      "trace.on_demand_direct.seventeenth_commit_before_extension": 1,
+      "trace.on_demand_direct.seventeenth_capacity_twenty_four": 1,
+      "trace.on_demand_direct.seventeenth_used_seventeen": 1,
+      "trace.on_demand_direct.direct_range_after_commit": 1,
+      "trace.on_demand_direct.queue_registered_after_commit": 1,
+      "trace.on_demand_direct.page_map_registered_after_commit": 1,
+      "trace.on_demand_direct.arena_bit_set_after_commit": 1,
+      "trace.on_demand_direct.payload_preserved": 1,
+      "trace.on_demand_direct.final_page_released": 1,
+      "trace.on_demand_direct.initial_capacity": 8,
+      "trace.on_demand_direct.initial_used": 1,
+      "trace.on_demand_direct.initial_slice_pcommitted": 4,
+      "trace.on_demand_direct.eighth_capacity": 8,
+      "trace.on_demand_direct.eighth_used": 8,
+      "trace.on_demand_direct.eighth_slice_pcommitted": 4,
+      "trace.on_demand_direct.ninth_capacity": 16,
+      "trace.on_demand_direct.ninth_used": 9,
+      "trace.on_demand_direct.ninth_slice_pcommitted": 4,
+      "trace.on_demand_direct.sixteenth_capacity": 16,
+      "trace.on_demand_direct.sixteenth_used": 16,
+      "trace.on_demand_direct.sixteenth_slice_pcommitted": 4,
+      "trace.on_demand_direct.seventeenth_capacity": 24,
+      "trace.on_demand_direct.seventeenth_used": 17,
+      "trace.on_demand_direct.seventeenth_slice_pcommitted": 8,
+      "trace.on_demand_direct.valid": 1
+    }
+  }
+}

@@ -11160,6 +11160,441 @@ mod tests {
         .expect("ordinary reserved medium on-demand fixture remains current-thread local");
     }
 
+    #[test]
+    fn ordinary_reserved_small_direct_on_demand_extensions_follow_source_prefix_boundaries() {
+        thread::spawn(|| {
+            let _fault = fault::install(fault::Plan::disabled());
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_reserved_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the reserved process map and arena form one source image");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the reserved paired arena remains published for the direct owner");
+                    let mut attachment = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("direct on-demand attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("direct on-demand attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut attachment, pair)
+                        .expect("the reserved attachment admits one direct small page");
+                    allocator.test_enable_page_commit_on_demand();
+
+                    let request = SMALL_SIZE_MAX;
+                    let mut blocks = [NonNull::dangling(); 17];
+                    blocks[0] = allocator
+                        .allocate(request, false)
+                        .expect("the fresh direct request commits its four-OS-page prefix");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(blocks[0]) })
+                        .expect("the first direct block is PageMap-published");
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(PageKind::Small),
+                        "the boundary request selects the bounded small page class"
+                    );
+                    assert_eq!(
+                        page_ref.block_size(),
+                        SMALL_SIZE_MAX,
+                        "the direct request retains its exact frozen size class"
+                    );
+                    assert_eq!(
+                        page_ref.capacity(),
+                        8,
+                        "the fresh four-OS-page prefix initializes eight direct blocks"
+                    );
+                    assert_eq!(
+                        page_ref.slice_pcommitted(),
+                        4,
+                        "the fresh prefix records four native OS pages"
+                    );
+                    assert_eq!(page_ref.used(), 1);
+                    let initial_capacity = page_ref.capacity();
+                    let initial_used = page_ref.used();
+                    let initial_pcommitted = page_ref.slice_pcommitted();
+                    let bin = crate::size_class::bin(page_ref.block_size())
+                        .expect("the direct source page has one regular queue bin");
+                    let direct_index = crate::invariants::word_count(page_ref.block_size())
+                        .expect("the direct source page has one direct-cache index");
+                    let (direct_start, direct_end) = source_direct_cache_range(page_ref.block_size());
+                    assert_eq!(direct_index, direct_end);
+                    let memory = page_ref.memid();
+                    let slice = memory
+                        .arena_memory()
+                        .expect("the direct page belongs to the paired reserved arena")
+                        .slice_index as usize;
+                    let arena_backed = memory.kind() == MemoryKind::Arena;
+                    let reserved_mapping = !memory.initially_committed();
+                    let small_direct_page = crate::size_class::page_kind_for_block_size(
+                        page_ref.block_size(),
+                    ) == Some(PageKind::Small)
+                        && page_ref.block_size() == SMALL_SIZE_MAX;
+                    let initial_prefix_four_os_pages = initial_pcommitted == 4;
+                    let initial_capacity_eight = initial_capacity == 8;
+                    let initial_queue_registered = allocator.test_queue_count(bin) == Some(1);
+                    let initial_page_map_registered = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(blocks[0].as_ptr())
+                    } == page.as_ptr();
+                    let initial_arena_bit_set = unsafe { arena.pages() }
+                        .unwrap()
+                        .is_clear_range(slice, 1)
+                        == Some(false);
+                    let initial_direct_range_registered = (0..PAGES_DIRECT).all(|index| {
+                        let expected = if index >= direct_start && index <= direct_end {
+                            page.as_ptr()
+                        } else {
+                            EMPTY_PAGE.as_ptr()
+                        };
+                        allocator.test_direct_page(index) == Some(expected)
+                    });
+                    assert!(initial_queue_registered);
+                    assert!(initial_page_map_registered);
+                    assert!(initial_arena_bit_set);
+                    assert!(initial_direct_range_registered);
+                    // SAFETY: this exact first direct block remains live until
+                    // the matching local free after the page-area commit.
+                    unsafe { blocks[0].as_ptr().write(0xA5) };
+
+                    let mut first_eight_direct_head = true;
+                    for block in blocks.iter_mut().take(8).skip(1) {
+                        first_eight_direct_head &= allocator.test_direct_page(direct_index)
+                            == Some(page.as_ptr())
+                            && !unsafe { page.as_ref().free_list_head() }.is_null();
+                        *block = allocator
+                            .allocate(request, false)
+                            .expect("the initial direct prefix supplies its exact eight blocks");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(*block) },
+                            page.as_ptr(),
+                            "each initial direct allocation remains in the source page"
+                        );
+                    }
+                    let first_eight_same_page = blocks
+                        .iter()
+                        .take(8)
+                        .all(|block| unsafe { allocator.test_page_for_block(*block) } == page.as_ptr());
+                    let eighth_capacity = unsafe { page.as_ref().capacity() };
+                    let eighth_used = unsafe { page.as_ref().used() };
+                    let eighth_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
+                    let eighth_free_empty = unsafe { page.as_ref().free_list_head() }.is_null();
+                    let eighth_full_prefix = eighth_capacity == 8
+                        && eighth_used == 8
+                        && eighth_pcommitted == 4
+                        && eighth_free_empty;
+                    assert!(first_eight_direct_head);
+                    assert!(first_eight_same_page);
+                    assert!(eighth_full_prefix);
+                    assert_eq!(allocator.test_direct_page(direct_index), Some(page.as_ptr()));
+
+                    // A direct-cache miss on the exhausted eighth block uses
+                    // the normal generic queue search. The next eight
+                    // 1-KiB blocks already fit the committed 16-KiB prefix,
+                    // so source extends the list without another mapping.
+                    blocks[8] = allocator
+                        .allocate(request, false)
+                        .expect("the ninth direct request falls through and extends the same page");
+                    assert_eq!(
+                        unsafe { allocator.test_page_for_block(blocks[8]) },
+                        page.as_ptr(),
+                        "the ninth request reuses the source direct page after generic extension"
+                    );
+                    let ninth_capacity = unsafe { page.as_ref().capacity() };
+                    let ninth_used = unsafe { page.as_ref().used() };
+                    let ninth_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
+                    let ninth_same_page = unsafe { allocator.test_page_for_block(blocks[8]) }
+                        == page.as_ptr();
+                    let ninth_zero_commit = ninth_pcommitted == eighth_pcommitted;
+                    let ninth_capacity_sixteen = ninth_capacity == 16;
+                    let ninth_used_nine = ninth_used == 9;
+                    assert!(ninth_same_page);
+                    assert!(ninth_zero_commit);
+                    assert!(ninth_capacity_sixteen);
+                    assert!(ninth_used_nine);
+
+                    let mut second_direct_head = true;
+                    for block in blocks.iter_mut().take(16).skip(9) {
+                        second_direct_head &= allocator.test_direct_page(direct_index)
+                            == Some(page.as_ptr())
+                            && !unsafe { page.as_ref().free_list_head() }.is_null();
+                        *block = allocator
+                            .allocate(request, false)
+                            .expect("the extended direct prefix supplies blocks ten through sixteen");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(*block) },
+                            page.as_ptr(),
+                            "each second-prefix direct allocation remains in the source page"
+                        );
+                    }
+                    let sixteenth_capacity = unsafe { page.as_ref().capacity() };
+                    let sixteenth_used = unsafe { page.as_ref().used() };
+                    let sixteenth_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
+                    let sixteenth_free_empty = unsafe { page.as_ref().free_list_head() }.is_null();
+                    let sixteenth_full_prefix = sixteenth_capacity == 16
+                        && sixteenth_used == 16
+                        && sixteenth_pcommitted == 4
+                        && sixteenth_free_empty;
+                    assert!(second_direct_head);
+                    assert!(sixteenth_full_prefix);
+                    assert_eq!(allocator.test_direct_page(direct_index), Some(page.as_ptr()));
+
+                    // The seventeenth direct miss again reaches generic
+                    // search, but its 16 -> 24 extension crosses the current
+                    // prefix. The private test seam must commit before it
+                    // publishes the enlarged free list.
+                    blocks[16] = allocator
+                        .allocate(request, false)
+                        .expect("the seventeenth direct request commits before extending");
+                    assert_eq!(
+                        unsafe { allocator.test_page_for_block(blocks[16]) },
+                        page.as_ptr(),
+                        "the seventeenth request remains in the same direct page"
+                    );
+                    let seventeenth_capacity = unsafe { page.as_ref().capacity() };
+                    let seventeenth_used = unsafe { page.as_ref().used() };
+                    let seventeenth_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
+                    let seventeenth_same_page = unsafe { allocator.test_page_for_block(blocks[16]) }
+                        == page.as_ptr();
+                    let seventeenth_commit_before_extension = seventeenth_pcommitted == 8
+                        && seventeenth_pcommitted > sixteenth_pcommitted;
+                    let seventeenth_capacity_twenty_four = seventeenth_capacity == 24;
+                    let seventeenth_used_seventeen = seventeenth_used == 17;
+                    let direct_range_after_commit = (0..PAGES_DIRECT).all(|index| {
+                        let expected = if index >= direct_start && index <= direct_end {
+                            page.as_ptr()
+                        } else {
+                            EMPTY_PAGE.as_ptr()
+                        };
+                        allocator.test_direct_page(index) == Some(expected)
+                    });
+                    let queue_registered_after_commit = allocator.test_queue_count(bin) == Some(1);
+                    let page_map_registered_after_commit = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(blocks[16].as_ptr())
+                    } == page.as_ptr();
+                    let arena_bit_set_after_commit = unsafe { arena.pages() }
+                        .unwrap()
+                        .is_clear_range(slice, 1)
+                        == Some(false);
+                    // SAFETY: the original client block stays live and lies
+                    // before both on-demand extension boundaries.
+                    let payload_preserved = unsafe { blocks[0].as_ptr().read() } == 0xA5;
+                    assert!(seventeenth_same_page);
+                    assert!(seventeenth_commit_before_extension);
+                    assert!(seventeenth_capacity_twenty_four);
+                    assert!(seventeenth_used_seventeen);
+                    assert!(direct_range_after_commit);
+                    assert!(queue_registered_after_commit);
+                    assert!(page_map_registered_after_commit);
+                    assert!(arena_bit_set_after_commit);
+                    assert!(payload_preserved);
+                    assert!(blocks.iter().all(|block| unsafe {
+                        allocator.test_page_for_block(*block) == page.as_ptr()
+                    }));
+
+                    for block in &blocks {
+                        // SAFETY: each array element is one distinct current
+                        // local allocation from the selected direct page.
+                        unsafe { allocator.free(*block) }
+                            .expect("every direct on-demand block remains normally freeable");
+                    }
+                    match allocator.finish() {
+                        Ok(()) => {}
+                        Err(_) => {
+                            panic!("the direct on-demand page lifecycle finishes after every local free")
+                        }
+                    }
+                    attachment
+                        .finish_after_user_destructors()
+                        .expect("the direct attachment tears down after page finish");
+                    let final_page_released = unsafe {
+                        page_map.page_map().unwrap().checked_lookup(blocks[0].as_ptr())
+                    }
+                    .is_null()
+                        && unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1) == Some(true);
+                    assert!(final_page_released, "direct cleanup releases the original page");
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "direct cleanup reopens the process-map lifecycle"
+                    );
+
+                    std::println!("CRABC_MI_ON_DEMAND_DIRECT_TRACE_BEGIN");
+                    std::println!("trace.on_demand_direct.arena_backed={}", arena_backed as u8);
+                    std::println!(
+                        "trace.on_demand_direct.reserved_mapping={}",
+                        reserved_mapping as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.small_direct_page={}",
+                        small_direct_page as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.initial_prefix_four_os_pages={}",
+                        initial_prefix_four_os_pages as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.initial_capacity_eight={}",
+                        initial_capacity_eight as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.initial_direct_range_registered={}",
+                        initial_direct_range_registered as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.initial_queue_registered={}",
+                        initial_queue_registered as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.initial_page_map_registered={}",
+                        initial_page_map_registered as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.initial_arena_bit_set={}",
+                        initial_arena_bit_set as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.first_eight_direct_head={}",
+                        first_eight_direct_head as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.first_eight_same_page={}",
+                        first_eight_same_page as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.eighth_full_prefix={}",
+                        eighth_full_prefix as u8
+                    );
+                    std::println!("trace.on_demand_direct.ninth_same_page={}", ninth_same_page as u8);
+                    std::println!("trace.on_demand_direct.ninth_zero_commit={}", ninth_zero_commit as u8);
+                    std::println!(
+                        "trace.on_demand_direct.ninth_capacity_sixteen={}",
+                        ninth_capacity_sixteen as u8
+                    );
+                    std::println!("trace.on_demand_direct.ninth_used_nine={}", ninth_used_nine as u8);
+                    std::println!(
+                        "trace.on_demand_direct.second_direct_head={}",
+                        second_direct_head as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.sixteenth_full_prefix={}",
+                        sixteenth_full_prefix as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.seventeenth_same_page={}",
+                        seventeenth_same_page as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.seventeenth_commit_before_extension={}",
+                        seventeenth_commit_before_extension as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.seventeenth_capacity_twenty_four={}",
+                        seventeenth_capacity_twenty_four as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.seventeenth_used_seventeen={}",
+                        seventeenth_used_seventeen as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.direct_range_after_commit={}",
+                        direct_range_after_commit as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.queue_registered_after_commit={}",
+                        queue_registered_after_commit as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.page_map_registered_after_commit={}",
+                        page_map_registered_after_commit as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.arena_bit_set_after_commit={}",
+                        arena_bit_set_after_commit as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.payload_preserved={}",
+                        payload_preserved as u8
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.final_page_released={}",
+                        final_page_released as u8
+                    );
+                    std::println!("trace.on_demand_direct.initial_capacity={initial_capacity}");
+                    std::println!("trace.on_demand_direct.initial_used={initial_used}");
+                    std::println!("trace.on_demand_direct.initial_slice_pcommitted={initial_pcommitted}");
+                    std::println!("trace.on_demand_direct.eighth_capacity={eighth_capacity}");
+                    std::println!("trace.on_demand_direct.eighth_used={eighth_used}");
+                    std::println!("trace.on_demand_direct.eighth_slice_pcommitted={eighth_pcommitted}");
+                    std::println!("trace.on_demand_direct.ninth_capacity={ninth_capacity}");
+                    std::println!("trace.on_demand_direct.ninth_used={ninth_used}");
+                    std::println!("trace.on_demand_direct.ninth_slice_pcommitted={ninth_pcommitted}");
+                    std::println!("trace.on_demand_direct.sixteenth_capacity={sixteenth_capacity}");
+                    std::println!("trace.on_demand_direct.sixteenth_used={sixteenth_used}");
+                    std::println!("trace.on_demand_direct.sixteenth_slice_pcommitted={sixteenth_pcommitted}");
+                    std::println!("trace.on_demand_direct.seventeenth_capacity={seventeenth_capacity}");
+                    std::println!("trace.on_demand_direct.seventeenth_used={seventeenth_used}");
+                    std::println!(
+                        "trace.on_demand_direct.seventeenth_slice_pcommitted={seventeenth_pcommitted}"
+                    );
+                    std::println!(
+                        "trace.on_demand_direct.valid={}",
+                        (arena_backed
+                            && reserved_mapping
+                            && small_direct_page
+                            && initial_prefix_four_os_pages
+                            && initial_capacity_eight
+                            && initial_direct_range_registered
+                            && initial_queue_registered
+                            && initial_page_map_registered
+                            && initial_arena_bit_set
+                            && first_eight_direct_head
+                            && first_eight_same_page
+                            && eighth_full_prefix
+                            && ninth_same_page
+                            && ninth_zero_commit
+                            && ninth_capacity_sixteen
+                            && ninth_used_nine
+                            && second_direct_head
+                            && sixteenth_full_prefix
+                            && seventeenth_same_page
+                            && seventeenth_commit_before_extension
+                            && seventeenth_capacity_twenty_four
+                            && seventeenth_used_seventeen
+                            && direct_range_after_commit
+                            && queue_registered_after_commit
+                            && page_map_registered_after_commit
+                            && arena_bit_set_after_commit
+                            && payload_preserved
+                            && final_page_released) as u8
+                    );
+                    std::println!("CRABC_MI_ON_DEMAND_DIRECT_TRACE_END");
+                });
+                worker
+                    .join()
+                    .expect("ordinary reserved direct on-demand reuse remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("ordinary reserved small direct on-demand fixture remains current-thread local");
+    }
+
     /// Independent source model of `mi_theap_queue_first_update`'s direct
     /// range. This test-side calculation intentionally uses the frozen queue
     /// table rather than `PageAllocatorEngine`'s helper, so the route fixture

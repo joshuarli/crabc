@@ -857,6 +857,20 @@ that queue member for an explicit test retry; this is narrower than the source
 failure route and is not a production page-on-demand policy, a fresh fallback,
 or a C fault-injection differential.
 
+The separate native x86-64 `allocator-direct-on-demand` differential uses the
+same private `cfg(test)` seam on one fresh reserved 1024-byte small
+direct-cache page. It fills the fixed capacity-eight/four-OS-page prefix, lets
+allocation nine fall through the exhausted direct head to the generic queue
+and extend to capacity sixteen without a mapping, then lets allocation
+seventeen cross the prefix and extend to capacity twenty-four with the prefix
+at eight OS pages. Its pinned-C/Rust trace additionally checks the complete
+direct-cache range, queue, PageMap, arena bit, payload, and forced normal
+release. The pinned source anchors establish the direct-commit-before-
+free-list-extension algorithm; the fixed trace is only a poststate witness,
+not temporal instrumentation. C alone selects the option and no Rust
+production option/API/policy, fault-injection parity, fresh fallback, public
+x86 runtime, or AArch64 support is claimed.
+
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.
 Its complete non-mutating structural preflight requires every direct slot to
