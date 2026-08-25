@@ -689,6 +689,20 @@ release. It does not add normal full-page unmapped abandonment, multiple frees,
 direct-small or other classes, reclaim, adoption, requeue, scans, or general
 dynamic owner-exit traversal.
 
+`DynamicThreadExitDrain::abandon_full_direct_small_after_force_collect_to_mapped`
+is the separate source branch for that same sole full direct-small ordinary-bin
+member when exactly one joined remote free exists before owner exit. Force
+collection leaves the member linked with `used == reserved - 1`; false
+collection preserves that geometry; regular-bin removal clears its complete
+rounded direct-cache range before page-count detachment; then mapped
+abandonment immediately publishes the matching dynamic bitmap/count pair. Its
+`DynamicThreadExitFullDirectSmallHandoff` starts mapped and allows only
+sequential failed-reclaim client frees through the source partial collector,
+which clears that pair before its ordinary one-slice terminal release. It does
+not add normal full-page unmapped abandonment, multiple frees, non-direct-small
+or other classes, reclaim, adoption, requeue, scans, or general dynamic
+owner-exit traversal.
+
 `DynamicThreadExitDrain::abandon_full_direct_small` is a seventh, separate
 source-unmapped dynamic handoff. It accepts only the drain's sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with

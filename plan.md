@@ -496,8 +496,8 @@ allocation-adoption refusal, one-slice client-free release, pre-mutation
 direct-small refusal, and terminal collection-failure retention; the
 full-direct-small one-joined-remote
 force-collection predecessor's immediate mapped publication, direct-range
-clear-before-count-detach, client-free-only adoption refusal, one-slice
-terminal release, stale-cache preflight refusal, and terminal
+clear-before-count-detach, one-slice terminal release, regular/non-direct
+class and stale-cache preflight refusals, and terminal
 collection-failure retention; the
 full non-direct-small route's ordinary-bin detach, threshold-adjacent
 unmapped-to-mapped transition, and terminal release, the full direct-small
@@ -520,17 +520,17 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 466 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 471 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 99 items and 103
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 100 items and 104
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately

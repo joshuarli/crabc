@@ -1045,6 +1045,18 @@ aggregate-registry adoption remain absent.
   PageMap span, regular/non-direct-small and full direct-small inputs reject
   before mutation, a stale direct image rejects before detachment, and injected
   collection failure retains the post-TLS drain.
+  `dynamic_thread_exit_full_direct_small_one_remote_force_collects_to_mapped_handoff_then_releases`,
+  `dynamic_thread_exit_full_direct_small_one_remote_force_collect_route_rejects_regular_direct_small_before_detach`,
+  `dynamic_thread_exit_full_direct_small_one_remote_force_collect_route_rejects_full_non_direct_small_before_detach`,
+  `dynamic_thread_exit_full_direct_small_one_remote_force_collect_route_refuses_stale_direct_cache_before_detach`,
+  and `dynamic_thread_exit_full_direct_small_one_remote_force_collect_route_retains_collection_failure`
+  prove the distinct exact-one-joined-remote ordinary-bin branch: force
+  collection changes the still-linked full direct-small member to
+  `used == reserved - 1`, direct-range clearing precedes page-count detach,
+  mapped abandonment retains its complete one-slice PageMap span, regular
+  direct-small and full non-direct-small inputs reject before mutation, a stale
+  direct image rejects before detachment, and injected collection failure
+  retains the post-TLS drain.
   `dynamic_thread_exit_full_direct_small_handoff_reabandons_after_partial_head_lag_then_releases`,
   `dynamic_thread_exit_full_direct_small_handoff_refuses_stale_rounded_direct_cache_before_detach`,
   `dynamic_thread_exit_full_direct_small_handoff_rejects_non_direct_small_before_detach`,

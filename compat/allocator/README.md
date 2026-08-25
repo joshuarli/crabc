@@ -294,6 +294,20 @@ because the class has an empty direct image and a rounded size above
 abandonment to multiple frees, direct-small or other classes, reclaim,
 adoption, requeue, scans, or general owner-exit traversal.
 
+`DynamicThreadExitDrain::abandon_full_direct_small_after_force_collect_to_mapped`
+is the distinct dynamic full direct-small branch where exactly one remote
+client has already joined before owner exit. Force collection changes the
+still-linked ordinary-bin member to `used == reserved - 1`; false collection
+keeps that geometry; regular-bin removal clears its complete rounded
+direct-cache range before page-count detach; and mapped abandonment publishes
+the exact heap-local bitmap/count pair immediately. Its
+`DynamicThreadExitFullDirectSmallHandoff` starts mapped and accepts only
+sequential failed-reclaim client frees through the source partial collector,
+clearing that pair before the ordinary arena release. It does not generalize
+normal full direct-small abandonment to multiple frees, non-direct-small or
+other classes, reclaim, adoption, requeue, scans, or general owner-exit
+traversal.
+
 `DynamicThreadExitDrain::abandon_full_direct_small` is a seventh,
 source-unmapped dynamic endpoint. It admits only the sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with

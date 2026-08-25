@@ -545,15 +545,16 @@ one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
   dynamic owner-exit singleton, full-medium, full-large, full-non-direct-small, and
-  full-direct-small normal unmapped-to-mapped handoffs, three one-joined-remote
-  full-medium/full-large/full-non-direct-small immediate-mapped predecessors, and sole mapped
+  full-direct-small normal unmapped-to-mapped handoffs, four one-joined-remote
+  full-medium/full-large/full-non-direct-small/full-direct-small immediate-mapped predecessors, and sole mapped
 medium/large/non-direct-small/direct-small
 one-block handoffs: clearing the regular backing prevents reclaim; the singleton
   final free takes the raw failed-reclaim all-free release, the four normal
   full routes cross the source mostly-used boundary before dynamic bitmap
-  publication, and the medium/large `BIN_FULL` plus non-direct-small ordinary-
-  bin one-remote full routes map immediately after source force/false
-  collection and queue detach. Each mapped
+  publication, and the medium/large `BIN_FULL` plus non-direct-small/direct-
+  small ordinary-bin one-remote full routes map immediately after source
+  force/false collection and queue detach, with direct-small clearing its
+  rounded cache range before count detach. Each mapped
   endpoint clears its dynamic bitmap/count before terminal arena release. The raw
 protocol remains
 otherwise unintegrated: regular/nonempty pages, general producer routing,
