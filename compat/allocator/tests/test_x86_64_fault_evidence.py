@@ -91,6 +91,16 @@ class CargoCommandTests(unittest.TestCase):
                 "external-arena-decommit-retry-state",
             ],
         )
+        self.assertEqual(
+            [lane.fault_points for lane in EVIDENCE.TEST_LANES],
+            [
+                ("Commit",),
+                ("Map", "Commit"),
+                ("Unmap",),
+                ("Commit", "Unmap"),
+                ("Decommit",),
+            ],
+        )
         observed_points = {point for lane in EVIDENCE.TEST_LANES for point in lane.fault_points}
         self.assertEqual(observed_points, set(EVIDENCE.FAULT_POINT_COVERAGE))
 

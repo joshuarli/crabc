@@ -79,7 +79,7 @@ TEST_LANES = (
     FaultLane(
         identifier="native-mapping-commit-selected-ordinal",
         test_filter="os::tests::fault_injection_fails_the_selected_ordinal_without_a_hidden_retry",
-        fault_points=("Map", "Commit", "Unmap"),
+        fault_points=("Commit",),
         expected_pass_count=1,
         state_preservation=(
             "the selected second mapping operation fails at commit without a hidden retry or fallback",
