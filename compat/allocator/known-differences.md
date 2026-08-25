@@ -810,6 +810,22 @@ aggregate-registry adoption remain absent.
   -> metadata -> slice release. It rejects direct-small before collection and
   does not cover full medium/direct-small/large, multiple pages, reclaim,
   adoption, requeue, scanning, or a general dynamic owner-exit traversal.
+  `DynamicThreadExitDrain::abandon_full_direct_small` is a sixth, separate
+  sequential dynamic owner-exit endpoint for the drain's sole full
+  `MemoryKind::Arena` small page in its ordinary bin. It requires
+  `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == reserved`,
+  `!page_is_in_full`, and its complete rounded direct-cache range naming that
+  sole page while every other slot is empty. It force- then false-collects,
+  removes the regular queue member, clears the complete range before page-count
+  detach, and ordinary-unmapped abandons. Its linear
+  `DynamicThreadExitFullDirectSmallHandoff` takes the partial failed-reclaim
+  collector: the retained just-published head delays the reabandon-to-mapped
+  threshold by one client free relative to the normal full-page paths. The
+  mapped tail clears the exact dynamic bitmap/count pair before PageMap ->
+  dynamic ordinary-bit -> metadata -> slice release. A stale direct image,
+  non-direct small, additional page, or collection fault cannot evade its
+  separate source boundary; it adds no reclaim, adoption, requeue, scanning,
+  multi-page, or general dynamic owner-exit traversal.
   Separately, `DynamicThreadExitMappedOneBlockHandoff` admits only one sole
   nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
   with `reserved > 1`, `used == 1`, and one regular queue member.
@@ -847,8 +863,8 @@ aggregate-registry adoption remain absent.
   `free_unmapped_after_failed_reclaim` substrate ports expected-head unown,
   conflict collection without another reclaim attempt, and terminal-empty /
   reabandon / unown selection. Its lifecycle-integrated raw terminal-release
-  owners are the post-TLS arena/OS singleton, full-medium, and
-  full-non-direct-small handoffs above and the later-main full-medium,
+  owners are the post-TLS arena/OS singleton, full-medium,
+  full-non-direct-small, and full-direct-small handoffs above and the later-main full-medium,
   full-large, and full-non-direct-small routes;
   none routes
   general policy through the dynamic handoff. Other regular/nonempty unmapped,
@@ -911,6 +927,15 @@ aggregate-registry adoption remain absent.
   and stale-cache refusal before collection, the exact unmapped-to-mapped
   mostly-used threshold, dynamic bitmap/count cleanup before terminal arena
   release, wholly pre-detach sole-page refusal, and retained collection failure.
+  `dynamic_thread_exit_full_direct_small_handoff_reabandons_after_partial_head_lag_then_releases`,
+  `dynamic_thread_exit_full_direct_small_handoff_refuses_stale_rounded_direct_cache_before_detach`,
+  `dynamic_thread_exit_full_direct_small_handoff_rejects_non_direct_small_before_detach`,
+  `dynamic_thread_exit_full_direct_small_handoff_rejects_before_detach_when_another_page_is_live`,
+  and `dynamic_thread_exit_full_direct_small_handoff_retains_collection_failure`
+  prove the complete rounded-cache preflight and clear-before-count ordering,
+  partial-head one-free mapping lag, class and sole-page refusals before
+  mutation, dynamic bitmap/count cleanup before terminal release, and retained
+  collection poison.
   `dynamic_thread_exit_mapped_one_block_handoff_releases_after_its_final_free`,
   `dynamic_thread_exit_mapped_one_block_handoff_rejects_before_detach_when_another_page_is_live`,
   and `dynamic_thread_exit_mapped_one_block_handoff_retains_collection_failure`

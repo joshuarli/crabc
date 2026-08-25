@@ -31,13 +31,17 @@
 //! and takes the failed-reclaim all-free tail. The OS branch links the exact
 //! page through this dynamic Heap's private `os_abandoned_pages` list before
 //! common unown, then removes it before clipped map/metadata/mapping release.
-//! Two separate full regular handoffs remain initially unmapped after source
-//! force then false collection: medium detaches from `BIN_FULL`, while
-//! non-direct small requires `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`
-//! and detaches from its ordinary bin with every direct-cache slot empty. Each
-//! accepts sequential failed-reclaim frees only, publishing its exact dynamic
-//! bitmap/count pair only after the source mostly-used boundary; direct small
-//! and all general dynamic owner-exit traversal remain outside this module.
+//! Three separate full regular handoffs remain initially unmapped after source
+//! force then false collection: medium detaches from `BIN_FULL`; non-direct
+//! small requires `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and
+//! detaches from its ordinary bin with every direct-cache slot empty; and
+//! direct small requires `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and
+//! its complete rounded direct-cache range, which clears before count detach.
+//! Each accepts sequential failed-reclaim frees only, publishing its exact
+//! dynamic bitmap/count pair only after the source mostly-used boundary. The
+//! direct-small partial collector retains its just-published head, so its
+//! transition occurs one free later than the normal classes; all general
+//! dynamic owner-exit traversal remains outside this module.
 //! It does implement the one
 //! owner-only cached-Theap root/reference pair which follows regular-slot
 //! publication in `src/heap.c:_mi_heap_theap_get_or_init`.
@@ -1704,6 +1708,10 @@ mod tests {
         DynamicThreadExitFullMediumAbandonFailure,
         DynamicThreadExitFullMediumFreeResult,
         DynamicThreadExitFullMediumRemoteFreeFailure,
+        DynamicThreadExitFullDirectSmallAbandonError,
+        DynamicThreadExitFullDirectSmallAbandonFailure,
+        DynamicThreadExitFullDirectSmallFreeResult,
+        DynamicThreadExitFullDirectSmallRemoteFreeFailure,
         DynamicThreadExitFullNonDirectSmallAbandonError,
         DynamicThreadExitFullNonDirectSmallAbandonFailure,
         DynamicThreadExitFullNonDirectSmallFreeResult,
@@ -3629,6 +3637,595 @@ mod tests {
                     drain.test_direct_page(index),
                     Some(crate::types::EMPTY_PAGE.as_ptr()),
                     "non-direct small collection failure preserves the empty source direct-cache image"
+                );
+            }
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_direct_small_handoff_reabandons_after_partial_head_lag_then_releases() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_SIZE_MAX;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one dynamic direct-small page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the direct-small page remains PageMap-published before thread exit");
+            let page_ref = unsafe { page.as_ref() };
+            let memory = page_ref.memid();
+            let bin = crate::size_class::bin(page_ref.block_size())
+                .expect("the full direct-small page has one source bin");
+            let reserved = page_ref.reserved() as usize;
+            assert_eq!(memory.kind(), MemoryKind::Arena);
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                Some(crate::types::PageKind::Small)
+            );
+            assert!(page_ref.block_size() <= SMALL_SIZE_MAX);
+            assert!(reserved >= 16, "the partial collector keeps its source floor");
+            let mut blocks = Vec::with_capacity(reserved);
+            blocks.push(first);
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the direct-small page reaches its source full state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+                blocks.push(block);
+            }
+            assert_eq!(unsafe { page.as_ref().used() }, reserved);
+            assert_eq!(allocator.queue_count(bin), Some(1));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            let direct_before = (0..PAGES_DIRECT)
+                .map(|index| allocator.direct_page(index))
+                .collect::<Vec<_>>();
+            assert!(
+                direct_before.iter().any(|direct| *direct == Some(page.as_ptr())),
+                "the full direct-small page retains its rounded source direct-cache range"
+            );
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+
+            // SAFETY: the vector holds every live allocation in this one full
+            // direct-small page. The post-TLS drain retains the exact source
+            // map, rounded cache image, dynamic arena image, and page
+            // ownership through the sequential failed-reclaim frees below.
+            let mut handoff = match unsafe { drain.abandon_full_direct_small(blocks[0]) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullDirectSmallAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the sole full direct-small page enters its dynamic unmapped handoff: {error:?}");
+                }
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("full direct-small abandonment does not retain a terminal owner: {error:?}");
+                }
+            };
+            assert_eq!(handoff.test_page_count(), 0);
+            assert_eq!(handoff.test_page_for_block(blocks[0]), page.as_ptr());
+            assert_eq!(handoff.test_abandoned_count(), Some(0));
+            assert!(handoff.test_dynamic_abandoned_page_is_clear());
+            let (slice_start, span_size) = handoff
+                .test_arena_span()
+                .expect("the full direct-small handoff retains its complete arena span");
+            for index in 0..PAGES_DIRECT {
+                assert_eq!(
+                    handoff.test_direct_page(index),
+                    Some(crate::types::EMPTY_PAGE.as_ptr()),
+                    "direct-small queue detachment clears its complete rounded cache before page-count removal"
+                );
+            }
+
+            // The partial collector deliberately retains its just-published
+            // head. Therefore the source remains unmapped for one additional
+            // free relative to the normal full-page collector.
+            let unmapped_frees = reserved / 8 + 1;
+            assert!(unmapped_frees + 1 < reserved);
+            for block in blocks.iter().copied().take(unmapped_frees) {
+                // SAFETY: each loop iteration transfers one still-live
+                // canonical client allocation exactly once to its linear
+                // failed-reclaim handoff.
+                handoff = match unsafe { handoff.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullDirectSmallFreeResult::StillLive(handoff)) => handoff,
+                    Ok(DynamicThreadExitFullDirectSmallFreeResult::Released(drain)) => {
+                        core::mem::forget(drain);
+                        panic!("the partial-head mostly-used prefix cannot release the full direct-small page");
+                    }
+                    Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Rejected {
+                        handoff,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Terminal {
+                        handoff,
+                        error,
+                    }) => {
+                        core::mem::forget(handoff);
+                        panic!("the unmapped full direct-small free remains source-shaped: {error:?}");
+                    }
+                };
+            }
+            assert_eq!(handoff.test_abandoned_count(), Some(0));
+            assert!(handoff.test_dynamic_abandoned_page_is_clear());
+
+            // This next free consumes past the retained partial head and is
+            // the exact source unmapped-to-mapped reabandon boundary.
+            handoff = match unsafe {
+                handoff.remote_free_after_thread_exit(blocks[unmapped_frees])
+            } {
+                Ok(DynamicThreadExitFullDirectSmallFreeResult::StillLive(handoff)) => handoff,
+                Ok(DynamicThreadExitFullDirectSmallFreeResult::Released(drain)) => {
+                    core::mem::forget(drain);
+                    panic!("the direct-small reabandon boundary leaves live client blocks");
+                }
+                Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Rejected {
+                    handoff,
+                    error,
+                })
+                | Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the full direct-small reabandon boundary succeeds: {error:?}");
+                }
+            };
+            assert_eq!(handoff.test_abandoned_count(), Some(1));
+            assert!(handoff.test_dynamic_abandoned_page_is_set());
+
+            for block in blocks
+                .iter()
+                .copied()
+                .skip(unmapped_frees + 1)
+                .take(reserved - unmapped_frees - 2)
+            {
+                // SAFETY: the handoff remains linear and each selected block
+                // is still live until this source-shaped remote free.
+                handoff = match unsafe { handoff.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullDirectSmallFreeResult::StillLive(handoff)) => handoff,
+                    Ok(DynamicThreadExitFullDirectSmallFreeResult::Released(drain)) => {
+                        core::mem::forget(drain);
+                        panic!("the penultimate full direct-small frees leave one block live");
+                    }
+                    Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Rejected {
+                        handoff,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Terminal {
+                        handoff,
+                        error,
+                    }) => {
+                        core::mem::forget(handoff);
+                        panic!("the mapped full direct-small free remains source-shaped: {error:?}");
+                    }
+                };
+            }
+            let last = *blocks.last().expect("the full page has one final allocation");
+            // SAFETY: `last` is now the handoff's exact final live client
+            // allocation, so the mapped tail must clear its paired dynamic
+            // bit/count and release the complete arena span.
+            let drain = match unsafe { handoff.remote_free_after_thread_exit(last) } {
+                Ok(DynamicThreadExitFullDirectSmallFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullDirectSmallFreeResult::StillLive(handoff)) => {
+                    core::mem::forget(handoff);
+                    panic!("the final full direct-small free releases its arena span");
+                }
+                Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Rejected {
+                    handoff,
+                    error,
+                })
+                | Err(DynamicThreadExitFullDirectSmallRemoteFreeFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the final full direct-small free releases its dynamic arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(first) }.is_null());
+            assert_eq!(drain.test_page_count(), 0);
+            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(memory));
+            for index in 0..PAGES_DIRECT {
+                assert_eq!(
+                    drain.test_direct_page(index),
+                    Some(crate::types::EMPTY_PAGE.as_ptr()),
+                    "terminal release cannot manufacture a direct-cache entry"
+                );
+            }
+            assert!(drain.finish());
+            assert!(unsafe { page_map.checked_lookup(first.as_ptr()) }.is_null());
+            for offset in (0..span_size).step_by(crate::config::ARENA_SLICE_SIZE) {
+                assert!(unsafe {
+                    page_map.checked_lookup(slice_start.wrapping_add(offset))
+                }
+                .is_null());
+            }
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_direct_small_handoff_refuses_stale_rounded_direct_cache_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_SIZE_MAX, false)
+                .expect("the fixture creates one dynamic direct-small page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the direct-small page remains PageMap-published");
+            let bin = crate::size_class::bin(unsafe { page.as_ref().block_size() })
+                .expect("the full direct-small page has one source bin");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(SMALL_SIZE_MAX, false)
+                    .expect("the direct-small page reaches its full source state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+            }
+            let direct_before = (0..PAGES_DIRECT)
+                .map(|index| allocator.direct_page(index))
+                .collect::<Vec<_>>();
+            let stale_index = direct_before
+                .iter()
+                .position(|direct| *direct == Some(page.as_ptr()))
+                .expect("the direct-small page owns at least one rounded direct-cache entry");
+            assert!(
+                allocator.set_direct_page_for_test(stale_index, crate::types::EMPTY_PAGE.as_ptr()),
+                "the focused corruption seam changes one rounded direct-cache slot"
+            );
+            let stale_image = (0..PAGES_DIRECT)
+                .map(|index| allocator.direct_page(index))
+                .collect::<Vec<_>>();
+            assert_ne!(stale_image, direct_before);
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: `first` remains live in the full direct-small page, but
+            // its deliberately stale rounded cache image must reject before
+            // source collection, queue removal, or page-count mutation.
+            let drain = match unsafe { drain.abandon_full_direct_small(first) } {
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullDirectSmallAbandonError::NotOnlyPage,
+                }) => drain,
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullDirectSmallAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("stale direct-cache refusal is wholly pre-collection: {error:?}");
+                }
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("stale direct-cache refusal is pre-detach: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("a stale rounded direct-cache image must not enter the full handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() as usize }, reserved);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+            for (index, expected) in stale_image.into_iter().enumerate() {
+                assert_eq!(
+                    drain.test_direct_page(index),
+                    expected,
+                    "stale direct-cache refusal preserves the complete source cache image"
+                );
+            }
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_direct_small_handoff_rejects_non_direct_small_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_SIZE_MAX + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one dynamic non-direct small page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the non-direct small page remains PageMap-published");
+            let bin = crate::size_class::bin(unsafe { page.as_ref().block_size() })
+                .expect("the full non-direct small page has one source bin");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the non-direct small page reaches its full source state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+            }
+            for index in 0..PAGES_DIRECT {
+                assert_eq!(
+                    allocator.direct_page(index),
+                    Some(crate::types::EMPTY_PAGE.as_ptr()),
+                    "the non-direct small page leaves every direct-cache slot empty"
+                );
+            }
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: `first` is live in a full non-direct small page. The
+            // direct route must reject that class before collection or detach.
+            let drain = match unsafe { drain.abandon_full_direct_small(first) } {
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullDirectSmallAbandonError::NotFullDirectSmall,
+                }) => drain,
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullDirectSmallAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("non-direct class rejection is wholly pre-collection: {error:?}");
+                }
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("non-direct class rejection is pre-detach: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("a non-direct small page must not enter the direct full handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() as usize }, reserved);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+            for index in 0..PAGES_DIRECT {
+                assert_eq!(
+                    drain.test_direct_page(index),
+                    Some(crate::types::EMPTY_PAGE.as_ptr()),
+                    "non-direct class rejection preserves the empty direct-cache image"
+                );
+            }
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_direct_small_handoff_rejects_before_detach_when_another_page_is_live() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_SIZE_MAX, false)
+                .expect("the fixture creates one dynamic direct-small page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the direct-small page remains PageMap-published");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(SMALL_SIZE_MAX, false)
+                    .expect("the direct-small page reaches its full source state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+            }
+            let direct_before = (0..PAGES_DIRECT)
+                .map(|index| allocator.direct_page(index))
+                .collect::<Vec<_>>();
+            let other = allocator
+                .allocate(LARGE_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates another live arena page");
+            let other_page = unsafe { allocator.page_for_block(other) };
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: `first` names a full direct-small page, but `other`
+            // proves this bounded source traversal cannot detach it early.
+            let drain = match unsafe { drain.abandon_full_direct_small(first) } {
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullDirectSmallAbandonError::NotOnlyPage,
+                }) => drain,
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullDirectSmallAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the full direct-small sole-page check is wholly pre-collection: {error:?}");
+                }
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the full direct-small sole-page check is pre-detach: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("a second live page must block the dynamic full direct-small handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(other) }, other_page);
+            assert_eq!(unsafe { page.as_ref().used() as usize }, reserved);
+            assert_eq!(drain.test_page_count(), 2);
+            for (index, expected) in direct_before.into_iter().enumerate() {
+                assert_eq!(
+                    drain.test_direct_page(index),
+                    expected,
+                    "the sole-page refusal preserves the complete rounded direct-cache image"
+                );
+            }
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_direct_small_handoff_retains_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(SMALL_SIZE_MAX, false)
+                .expect("the fixture creates one dynamic direct-small page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the direct-small page remains PageMap-published");
+            let bin = crate::size_class::bin(unsafe { page.as_ref().block_size() })
+                .expect("the full direct-small page has one source bin");
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(SMALL_SIZE_MAX, false)
+                    .expect("the direct-small page reaches its full source state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+            }
+            let direct_before = (0..PAGES_DIRECT)
+                .map(|index| allocator.direct_page(index))
+                .collect::<Vec<_>>();
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: `first` remains current in the full direct-small page.
+            // The deterministic source force-collection failure occurs before
+            // direct-cache, queue, or count mutation and retains the poisoned
+            // post-TLS drain rather than offering an ordinary retry.
+            let drain = match unsafe { drain.abandon_full_direct_small(first) } {
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitFullDirectSmallAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullDirectSmallAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("injected full direct-small collection failure retains the dynamic drain: {error:?}");
+                }
+                Err(DynamicThreadExitFullDirectSmallAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("collection fails before a terminal full direct-small handoff: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("the injected collection failure cannot abandon the full direct-small page");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() as usize }, reserved);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+            for (index, expected) in direct_before.into_iter().enumerate() {
+                assert_eq!(
+                    drain.test_direct_page(index),
+                    expected,
+                    "direct-small collection failure preserves the complete source cache image"
                 );
             }
 

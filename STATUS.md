@@ -388,6 +388,24 @@ arena-slice release. It rejects direct-small before collection and neither
 reclaims, adopts, requeues, scans, nor covers full medium/direct-small/large,
 multi-page, or general dynamic owner exit.
 
+`DynamicThreadExitDrain::abandon_full_direct_small` is a sixth, separate
+dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
+page only in its ordinary regular bin, with `block_size <= SMALL_SIZE_MAX`,
+`reserved >= 16`, `used == reserved`, `!page_is_in_full`, and its complete
+rounded direct-cache range naming the page while every other direct slot is
+empty. Source force -> false collection -> ordinary-bin removal clears that
+range before page-count detach, then ordinary unmapped abandonment. Its linear
+`DynamicThreadExitFullDirectSmallHandoff` uses the source partial
+failed-reclaim collector: the retained just-published head keeps the page
+unmapped for one additional client free before the below-mostly-used boundary
+publishes the matching dynamic `pages_abandoned[bin]` bit plus
+`Heap::abandoned_count[bin]`. The mapped tail clears that pair before PageMap
+-> dynamic ordinary bit -> metadata -> arena-slice release. A stale cache
+range, non-direct small, additional page, or collection failure cannot bypass
+the pre-detach contract. This one route neither reclaims, adopts, requeues,
+scans, nor covers full medium/non-direct-small/large, multi-page, or general
+dynamic owner exit.
+
 A separate `DynamicThreadExitMappedOneBlockHandoff` accepts only a sole,
 nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
 with `reserved > 1`, `used == 1`, and one regular queue member. The medium
@@ -432,9 +450,9 @@ then arena slices—and returns the drained engine; an existing owner remains a
 terminal handoff. Separately, `free_unmapped_after_failed_reclaim` remains the
 source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
-singleton above, the separate dynamic full-medium and full non-direct-small
-handoffs, and the bounded later-main normal full-medium, full-large, and full
-non-direct-small process routes are its lifecycle-integrated raw-release
+singleton above, the separate dynamic full-medium, full non-direct-small, and
+full direct-small handoffs, and the bounded later-main normal full-medium,
+full-large, and full non-direct-small process routes are its lifecycle-integrated raw-release
 callers; other regular or
 nonempty unmapped pages, general producer routing, terminal reuse, multi-arena dynamic heap
 support, and general heap destruction remain absent.
@@ -462,10 +480,11 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-dynamic owner-exit singleton, full-medium and full-non-direct-small
-unmapped-to-mapped handoffs, and sole mapped medium/non-direct-small/direct-small
+dynamic owner-exit singleton, full-medium, full-non-direct-small, and
+full-direct-small unmapped-to-mapped handoffs, and sole mapped
+medium/non-direct-small/direct-small
 one-block handoffs: clearing the regular backing prevents reclaim; the singleton
-final free takes the raw failed-reclaim all-free release, both full routes cross
+final free takes the raw failed-reclaim all-free release, all three full routes cross
 the source mostly-used boundary before dynamic bitmap publication, and each
 mapped endpoint clears its dynamic bitmap/count before terminal arena release. The raw
 protocol remains
@@ -474,7 +493,7 @@ terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,
 and reusable abandoned-page lifetime remain absent.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
-full-medium/full-large/full-non-direct-small routes, sole small-or-medium
+full-medium/full-large/full-non-direct-small/full-direct-small routes, sole small-or-medium
 route, and regular-pages aggregate, allocation-time
 claim/reclaim/requeue after later-thread exit beyond the exact sole mapped
 medium handoff, general dynamic heap/Theap

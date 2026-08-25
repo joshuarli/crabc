@@ -395,6 +395,11 @@ and `dynamic_thread_exit_full_medium_handoff_retains_collection_failure`,
 `dynamic_thread_exit_full_non_direct_small_handoff_rejects_direct_small_before_detach`,
 `dynamic_thread_exit_full_non_direct_small_handoff_refuses_stale_direct_cache_before_detach`,
 and `dynamic_thread_exit_full_non_direct_small_handoff_retains_collection_failure`,
+`dynamic_thread_exit_full_direct_small_handoff_reabandons_after_partial_head_lag_then_releases`,
+`dynamic_thread_exit_full_direct_small_handoff_refuses_stale_rounded_direct_cache_before_detach`,
+`dynamic_thread_exit_full_direct_small_handoff_rejects_non_direct_small_before_detach`,
+`dynamic_thread_exit_full_direct_small_handoff_rejects_before_detach_when_another_page_is_live`,
+and `dynamic_thread_exit_full_direct_small_handoff_retains_collection_failure`,
 `dynamic_thread_exit_force_collects_a_retired_regular_page_after_tls_clear`,
 and the raw false/force-local-list order/cycle regressions in `free_list::tests`,
 the no-page shared-main regressions in `main_heap_thread::tests`, the
@@ -434,17 +439,17 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 439 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 90 items and 94
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 91 items and 95
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-non-direct-small or mapped-one-block-medium/non-direct-small/direct-small cases, the later-main
+full-medium/full-non-direct-small/full-direct-small or mapped-one-block-medium/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately

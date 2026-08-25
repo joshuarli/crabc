@@ -620,6 +620,25 @@ dynamic ordinary bit -> metadata -> arena-slice release. It rejects direct
 small before collection, and it neither reclaims, adopts, requeues, scans, nor
 covers full medium/direct-small/large, multi-page, or general traversal state.
 
+`DynamicThreadExitDrain::abandon_full_direct_small` is a sixth, separate
+source-unmapped dynamic handoff. It accepts only the drain's sole full
+`MemoryKind::Arena` small page in its ordinary regular bin, with
+`block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == reserved`,
+`!page_is_in_full`, and its complete rounded source direct-cache range naming
+the page while every other direct slot is empty. Force then false collection
+precedes ordinary-bin removal; that removal clears the entire rounded range
+before the Theap page-count decrement, then ordinary abandoned unown leaves
+the page unmapped. `DynamicThreadExitFullDirectSmallHandoff` uses the source
+partial failed-reclaim collector for each sequential client free. Its retained
+just-published head delays the unmapped-to-mapped transition by one client free
+relative to the normal full-page classes; the later mapped tail clears the
+matching heap-local `pages_abandoned[bin]` bit plus paired
+`Heap::abandoned_count[bin]` before PageMap -> dynamic ordinary bit ->
+metadata -> arena-slice release. A stale range, non-direct small, additional
+page, or collection fault cannot cross the pre-detach boundary. This endpoint
+neither reclaims, adopts, requeues, scans, nor covers full medium/non-direct
+small/large, multi-page, or general dynamic owner exit.
+
 The same drain has three separately bounded mapped endpoints,
 `DynamicThreadExitDrain::abandon_mapped_one_block` for a medium page,
 `DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small` for a
@@ -702,9 +721,10 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs and the separate dynamic full-medium and full
-non-direct-small handoffs above; all other initially-unmapped pages retain the
-raw terminal decision for a later lifecycle. A test-only Loom model executes the
+OS-aligned singleton handoffs and the separate dynamic full-medium,
+full-non-direct-small, and full-direct-small handoffs above; all other
+initially-unmapped pages retain the raw terminal decision for a later
+lifecycle. A test-only Loom model executes the
 live-owner remote-head publication/detach loops and the abandoned
 owner-claim/unown races under bounded schedules; deterministic native
 regressions cover the bitmap-field quiescence and full one-page abandonment
