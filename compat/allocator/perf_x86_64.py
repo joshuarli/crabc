@@ -60,9 +60,14 @@ EXPECTED_ELF = {
     "endianness": "little",
     "machine": "Advanced Micro Devices X86-64",
 }
-RELEASE_FLAGS = (
+FIXTURE_RELEASE_FLAGS = (
     "-O3",
     "-DNDEBUG",
+)
+PINNED_C_SOURCE_CONFIGURATION_FLAGS = (
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1",
     "-DMI_BUILD_RELEASE=1",
     "-DMI_DEBUG=0",
     "-DMI_STAT=0",
@@ -434,21 +439,26 @@ def parse_native_static_libraries(output: str) -> list[str]:
     return libraries
 
 
-def build_pinned_c_fixture(
-    compiler: str, readelf: str, source: Path, build_root: Path
-) -> tuple[Path, dict[str, Any]]:
-    binary = build_root / "pinned-c-fixture"
-    command = [
+def fixture_compiler_prefix(compiler: str) -> list[str]:
+    """Return the release-mode flags shared by the C and Rust fixture code."""
+
+    return [
         compiler,
         "-std=c11",
         "-fPIE",
         "-pie",
         "-fno-builtin",
         "-ftls-model=initial-exec",
-        "-DMI_SHARED_LIB",
-        "-DMI_SHARED_LIB_EXPORT",
-        "-DMI_LIBC_MUSL=1",
-        *RELEASE_FLAGS,
+        *FIXTURE_RELEASE_FLAGS,
+    ]
+
+
+def pinned_c_fixture_command(compiler: str, source: Path, binary: Path) -> list[str]:
+    """Build the shared fixture with pinned C source configuration only."""
+
+    return [
+        *fixture_compiler_prefix(compiler),
+        *PINNED_C_SOURCE_CONFIGURATION_FLAGS,
         "-I",
         str(FIXTURE_ROOT),
         "-I",
@@ -460,20 +470,12 @@ def build_pinned_c_fixture(
         "-o",
         str(binary),
     ]
-    build = command_record(command, cwd=source)
-    require_success(build, "pinned C private-adapter fixture build")
-    return binary, {
-        "build_command": command,
-        "configuration_flags": list(RELEASE_FLAGS),
-        "executable": audit_executable(readelf, binary),
-    }
 
 
-def build_rust_fixture(
-    compiler: str, readelf: str, nm: str, build_root: Path
-) -> tuple[Path, dict[str, Any]]:
-    cargo_target = build_root / "rust-target"
-    cargo_command = [
+def rust_adapter_cargo_command(cargo_target: Path) -> list[str]:
+    """Build the Rust adapter independently in Cargo's release profile."""
+
+    return [
         "cargo",
         "rustc",
         "--locked",
@@ -490,24 +492,15 @@ def build_rust_fixture(
         "--",
         "--print=native-static-libs",
     ]
-    cargo = command_record(cargo_command, cwd=ROOT)
-    require_success(cargo, "Rust private test-adapter static library build")
-    native_libraries = parse_native_static_libraries(str(cargo["stdout"]) + "\n" + str(cargo["stderr"]))
-    if native_libraries != list(EXPECTED_RUST_NATIVE_STATIC_LIBRARIES):
-        raise HarnessError("Rust adapter native static library contract changed")
-    static_library = cargo_target / RUST_TARGET / "release/libcrabc_mimalloc_test_adapter.a"
-    expected_symbols = adapter_header_symbols()
-    observed_symbols = archive_prefixed_symbols(nm, static_library)
-    if observed_symbols != expected_symbols:
-        raise HarnessError("Rust adapter static archive no longer exposes exactly the private prefixed symbols")
-    binary = build_root / "rust-private-adapter-fixture"
-    fixture_command = [
-        compiler,
-        "-std=c11",
-        "-fPIE",
-        "-pie",
-        "-fno-builtin",
-        "-ftls-model=initial-exec",
+
+
+def rust_fixture_command(
+    compiler: str, static_library: Path, native_libraries: Sequence[str], binary: Path
+) -> list[str]:
+    """Build the shared fixture with the same release flags as the C lane."""
+
+    return [
+        *fixture_compiler_prefix(compiler),
         "-I",
         str(FIXTURE_ROOT),
         "-I",
@@ -521,12 +514,47 @@ def build_rust_fixture(
         "-o",
         str(binary),
     ]
+
+
+def build_pinned_c_fixture(
+    compiler: str, readelf: str, source: Path, build_root: Path
+) -> tuple[Path, dict[str, Any]]:
+    binary = build_root / "pinned-c-fixture"
+    command = pinned_c_fixture_command(compiler, source, binary)
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C private-adapter fixture build")
+    return binary, {
+        "build_command": command,
+        "fixture_release_flags": list(FIXTURE_RELEASE_FLAGS),
+        "pinned_c_source_configuration_flags": list(PINNED_C_SOURCE_CONFIGURATION_FLAGS),
+        "executable": audit_executable(readelf, binary),
+    }
+
+
+def build_rust_fixture(
+    compiler: str, readelf: str, nm: str, build_root: Path
+) -> tuple[Path, dict[str, Any]]:
+    cargo_target = build_root / "rust-target"
+    cargo_command = rust_adapter_cargo_command(cargo_target)
+    cargo = command_record(cargo_command, cwd=ROOT)
+    require_success(cargo, "Rust private test-adapter static library build")
+    native_libraries = parse_native_static_libraries(str(cargo["stdout"]) + "\n" + str(cargo["stderr"]))
+    if native_libraries != list(EXPECTED_RUST_NATIVE_STATIC_LIBRARIES):
+        raise HarnessError("Rust adapter native static library contract changed")
+    static_library = cargo_target / RUST_TARGET / "release/libcrabc_mimalloc_test_adapter.a"
+    expected_symbols = adapter_header_symbols()
+    observed_symbols = archive_prefixed_symbols(nm, static_library)
+    if observed_symbols != expected_symbols:
+        raise HarnessError("Rust adapter static archive no longer exposes exactly the private prefixed symbols")
+    binary = build_root / "rust-private-adapter-fixture"
+    fixture_command = rust_fixture_command(compiler, static_library, native_libraries, binary)
     fixture = command_record(fixture_command, cwd=ROOT)
     require_success(fixture, "Rust private-adapter fixture build")
     return binary, {
         "adapter_header": file_record(TEST_ADAPTER_HEADER),
         "cargo_command": cargo_command,
         "executable": audit_executable(readelf, binary),
+        "fixture_release_flags": list(FIXTURE_RELEASE_FLAGS),
         "native_static_libraries": native_libraries,
         "static_archive": artifact_record(static_library),
         "static_archive_prefixed_symbols": observed_symbols,
@@ -1218,7 +1246,8 @@ def run(arguments: argparse.Namespace) -> Path:
     pin = load_pin()
     archive = fetch_archive(pin, offline=arguments.offline)
     report["inputs"] = {
-        "c_release_flags": list(RELEASE_FLAGS),
+        "fixture_release_flags": list(FIXTURE_RELEASE_FLAGS),
+        "pinned_c_source_configuration_flags": list(PINNED_C_SOURCE_CONFIGURATION_FLAGS),
         "cargo_lock": file_record(ROOT / "Cargo.lock"),
         "cargo_release_profile": release_profile(ROOT),
         "fixture": {

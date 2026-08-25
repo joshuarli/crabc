@@ -82,6 +82,38 @@ class BatchResultTests(unittest.TestCase):
         )
 
 
+class FixtureBuildCommandTests(unittest.TestCase):
+    def test_shared_fixture_release_flags_are_identical_for_both_backend_commands(self) -> None:
+        c_command = perf.pinned_c_fixture_command(
+            "musl-gcc", Path("/pinned-mimalloc"), Path("/build/pinned-c-fixture")
+        )
+        rust_command = perf.rust_fixture_command(
+            "musl-gcc",
+            Path("/build/libcrabc_mimalloc_test_adapter.a"),
+            ["-lgcc_s", "-lc"],
+            Path("/build/rust-private-adapter-fixture"),
+        )
+        cargo_command = perf.rust_adapter_cargo_command(Path("/build/rust-target"))
+
+        self.assertEqual(perf.FIXTURE_RELEASE_FLAGS, ("-O3", "-DNDEBUG"))
+        self.assertEqual(
+            [flag for flag in c_command if flag in perf.FIXTURE_RELEASE_FLAGS],
+            list(perf.FIXTURE_RELEASE_FLAGS),
+        )
+        self.assertEqual(
+            [flag for flag in rust_command if flag in perf.FIXTURE_RELEASE_FLAGS],
+            list(perf.FIXTURE_RELEASE_FLAGS),
+        )
+        self.assertTrue(
+            all(flag in c_command for flag in perf.PINNED_C_SOURCE_CONFIGURATION_FLAGS)
+        )
+        self.assertTrue(
+            all(flag not in rust_command for flag in perf.PINNED_C_SOURCE_CONFIGURATION_FLAGS)
+        )
+        self.assertIn("--release", cargo_command)
+        self.assertEqual(cargo_command[cargo_command.index("--target") + 1], perf.RUST_TARGET)
+
+
 class ReportContractTests(unittest.TestCase):
     def test_x86_report_path_is_allocator_local_and_label_checked(self) -> None:
         self.assertEqual(
