@@ -39,17 +39,22 @@ completes the separate cached-root/list/key teardown. This neither scans,
 reclaims, requeues, nor generalizes the OS list, and is not general production
 free routing or a general thread-exit traversal.
 
-The same post-TLS drain now has one separate mapped regular endpoint:
+The same post-TLS drain now has two separate mapped regular endpoints.
 `DynamicThreadExitDrain::abandon_mapped_one_block` accepts exactly one sole,
-nonfull `MemoryKind::Arena` medium page with `reserved > 1`, `used == 1`, one
-regular queue member, and no other queue/direct entry. It retains the dynamic
-arena-pages image after TLS clear solely to form that exact heap-local
-`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`
-capability. Source force then false collection precedes queue/page-count
-detach, mapped identity/bit/count publication, and unown. Its
-`DynamicThreadExitMappedOneBlockHandoff` admits only its exact final client
-free: source mapped collection becomes empty before any reclaim branch, clears
-that dynamic bit/count pair, then releases PageMap -> dynamic ordinary bit ->
+nonfull `MemoryKind::Arena` medium page; its sibling
+`DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small` accepts
+only a small page with `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`.
+Both require `reserved > 1`, `used == 1`, one regular queue member, and no
+other queue/direct entry. The non-direct-small class therefore has an empty
+source direct-cache image; direct-small remains explicitly refused before
+collection or detach. They retain the dynamic arena-pages image after TLS
+clear solely to form that exact heap-local `pages_abandoned[bin]` bit plus
+paired `Heap::abandoned_count[bin]` capability. Source force then false
+collection precedes queue/page-count detach, mapped identity/bit/count
+publication, and unown. `DynamicThreadExitMappedOneBlockHandoff` retains the
+private source-class witness and admits only its exact final client free: the
+normal mapped collector becomes empty before any reclaim branch, clears that
+dynamic bit/count pair, then releases PageMap -> dynamic ordinary bit ->
 metadata -> arena slices. It cannot reclaim the departed Theap, requeue,
 adopt, scan, accept a second free, or generalize dynamic owner exit.
 
@@ -394,10 +399,10 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 86 items and 90
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 87 items and 91
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-mapped-one-block-medium cases, the later-main all-free scan/eight sole-page
+mapped-one-block-medium/non-direct-small cases, the later-main all-free scan/eight sole-page
 handoffs/aggregate regular-pages registry, or either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately
 proven aggregate-registry policy, then complete process and real

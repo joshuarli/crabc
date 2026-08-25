@@ -428,10 +428,11 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
 ///
 /// The source checks whether the page is empty immediately after its partial
 /// or ordinary collection and before it enters the reclaim branch. A sole
-/// medium page with one current client block must therefore reach `Empty`.
-/// If it does not, this narrow helper retains the acquired low owner bit and
-/// returns [`AbandonError::MappedPageNotEmpty`] rather than manufacturing a
-/// reclaim, requeue, or general abandoned-page policy.
+/// non-direct small or medium page with one current client block must
+/// therefore reach `Empty`. If it does not, this narrow helper retains the
+/// acquired low owner bit and returns [`AbandonError::MappedPageNotEmpty`]
+/// rather than manufacturing a reclaim, requeue, or general abandoned-page
+/// policy.
 ///
 /// # Safety
 ///
@@ -459,19 +460,23 @@ pub(crate) unsafe fn free_mapped_one_block_to_empty<M: MappedAbandonedPages + ?S
     if !is_owned(&state) || source_thread_identity(&state) != THREAD_ID_ABANDONED_MAPPED {
         return Err(AbandonError::NotAbandoned);
     }
-    // This owner-exit endpoint deliberately accepts medium pages only. The
-    // direct-cache small path and all regular live-page reclamation remain
-    // distinct later work; the explicit check also prevents a synthetic page
-    // from reaching the ordinary collector under the wrong source geometry.
-    if size_class::page_kind_for_block_size(state.block_size) != Some(crate::types::PageKind::Medium)
-        || state.block_size <= crate::config::SMALL_SIZE_MAX
+    // This owner-exit endpoint deliberately accepts only source classes that
+    // take `free.c`'s normal collector: medium pages and small pages strictly
+    // above the direct-cache boundary. Direct-small's partial collector and
+    // all regular live-page reclamation remain distinct work; the explicit
+    // check also prevents synthetic geometry from reaching the wrong source
+    // collection path.
+    if !matches!(
+        size_class::page_kind_for_block_size(state.block_size),
+        Some(crate::types::PageKind::Small | crate::types::PageKind::Medium)
+    ) || state.block_size <= crate::config::SMALL_SIZE_MAX
         || state.reserved <= 1
     {
         return Err(AbandonError::InvalidPageGeometry);
     }
 
-    // A medium page uses the ordinary source collector. It runs before the
-    // all-free decision and before any source reclaim branch.
+    // Both admitted classes use the ordinary source collector. It runs before
+    // the all-free decision and before any source reclaim branch.
     unsafe { remote_free::collect_abandoned(page) }.map_err(AbandonError::RemoteFree)?;
 
     if !page_is_empty(&state) {

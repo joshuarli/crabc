@@ -143,7 +143,7 @@ that link. The bounded later-main all-free exit drain invokes that true-force
 operation only after its fixed fast-slot clear; ordinary regular/full and
 detached paths still use false force. Its separate sole full-singleton handoff
 uses false force after its preflight and before queue detach, while both
-mapped-medium sole-page handoffs preserve the source force-then-false sequence
+mapped-one-block sole-page handoffs preserve the source force-then-false sequence
 before bitmap publication. The full-origin medium branch retains that origin
 after force collection, so it remains client-free-only rather than borrowing
 the separate initially-nonfull medium adoption/requeue authority. The one-block
@@ -590,20 +590,24 @@ generalize that OS list. Because the regular backing is already clear, source
 reclaim cannot find the Theap. A drained attachment alone can then resume
 cached-root/list/key teardown.
 
-The same drain has one separately bounded mapped endpoint,
-`DynamicThreadExitDrain::abandon_mapped_one_block`. It accepts only one sole,
-nonfull `MemoryKind::Arena` medium page with `reserved > 1`, `used == 1`, a
-single regular queue member, and no other queue/direct entry. Its retained
+The same drain has two separately bounded mapped endpoints,
+`DynamicThreadExitDrain::abandon_mapped_one_block` for a medium page and
+`DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small` for a
+small page with `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`. Each
+accepts only one sole, nonfull `MemoryKind::Arena` page with `reserved > 1`,
+`used == 1`, a single regular queue member, and no other queue/direct entry.
+The non-direct-small class consequently has an empty direct-cache image;
+direct-small remains refused before force collection or detach. Its retained
 dynamic arena image can form only that page's matching heap-local
 `pages_abandoned[bin]` bit and paired `Heap::abandoned_count[bin]`; it is not a
 post-TLS allocation or reclaim capability. Source force then false collection
 precedes queue/page-count detach and mapped identity/bit/count/unown
-publication. `DynamicThreadExitMappedOneBlockHandoff` receives only the exact
-final client free: the source mapped collector becomes empty before any reclaim
-branch, clears the dynamic bit/count pair, then releases the queue-detached
-PageMap span -> dynamic ordinary bit -> metadata -> arena slices. It cannot
-adopt, requeue, scan, reclaim the departed Theap, or handle multiple pages or
-frees.
+publication. `DynamicThreadExitMappedOneBlockHandoff` retains that source-class
+witness and receives only the exact final client free: the normal mapped
+collector becomes empty before any reclaim branch, clears the dynamic bit/count
+pair, then releases the queue-detached PageMap span -> dynamic ordinary bit ->
+metadata -> arena slices. It cannot adopt, requeue, scan, reclaim the departed
+Theap, or handle multiple pages or frees.
 
 On the first fresh dynamic arena page, that same session lazily creates one
 private `DynamicArenaPagesOwner`. Before allocating it proves that the
@@ -638,8 +642,9 @@ also retains the engine rather than exposing normal free/allocation. Full,
 non-singleton huge, non-arena, foreign, and ordinary abandoning-session pages
 remain rejected. The sole singleton exceptions are the post-TLS arena and
 OS-aligned owner-exit handoffs above; neither is normal abandoned routing or a
-general thread-exit page traversal. The separate post-TLS mapped-medium
-one-block handoff above likewise has no adoption/reclaim/requeue or general
+general thread-exit page traversal. The separate post-TLS mapped
+medium/non-direct-small one-block handoffs above likewise have no
+adoption/reclaim/requeue or general
 dynamic traversal. General producer routing, multiple arena images, OS-list
 traversal/reclaim/requeue, and general heap destruction remain deferred.
 

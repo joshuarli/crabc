@@ -48,11 +48,12 @@
 // drain first force-collects already-retired all-free pages, then owns one full
 // one-block arena or OS-aligned singleton through source queue detach,
 // unmapped abandonment, failed reclaim, and all-free release. It separately
-// owns one sole nonfull medium arena page through force/false collection,
-// dynamic bitmap/count publication, and an exact final empty-before-reclaim
-// release. The OS form stays in the dynamic Heap's private list between source
-// abandon/unabandon; neither form is a general owner-exit traversal or
-// remote-free route.
+// owns one sole nonfull medium or non-direct-small arena page through
+// force/false collection, dynamic bitmap/count publication, and an exact
+// final empty-before-reclaim release. The non-direct-small class lies above
+// the direct-cache boundary; direct-small remains excluded. The OS form stays
+// in the dynamic Heap's private list between source abandon/unabandon; neither
+// form is a general owner-exit traversal or remote-free route.
 // The separately bounded later-main drain force-scans all-free pages, then
 // admits eight sole-page handoffs: a full arena singleton; an OS-aligned
 // singleton linked only between source non-arena abandon/unabandon; one medium
@@ -410,8 +411,9 @@ pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
 /// general allocator: source thread exit has already cleared the Heap's
 /// dynamic regular slot. Its finishing boundary force-collects existing
 /// retired all-free pages. Its live-page operations are deliberately limited
-/// to the exact full-singleton and mapped-medium-one-block handoffs needed to
-/// prove that later remote frees cannot reclaim the departed Theap.
+/// to the exact full-singleton and mapped-one-block medium or non-direct-small
+/// handoffs needed to prove that later remote frees cannot reclaim the
+/// departed Theap.
 #[must_use = "a dynamic thread-exit drain must release or retain its page before attachment teardown"]
 pub(crate) struct DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map> {
     engine: PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>,
@@ -431,19 +433,50 @@ pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map
     terminal: bool,
 }
 
-/// One queue-detached mapped-abandoned medium page with exactly one live
-/// client block at dynamic post-TLS owner exit. The token retains the draining
-/// attachment's source Theap/TLD/Heap, dynamic arena-page image, PageMap, and
-/// client block until that exact final free clears its paired dynamic
-/// bitmap/count entry and releases the arena span, or terminally retains the
-/// state. It deliberately cannot reclaim, requeue, or allocate from the page.
+/// One queue-detached mapped-abandoned medium or non-direct small page with
+/// exactly one live client block at dynamic post-TLS owner exit. The token
+/// retains the draining attachment's source Theap/TLD/Heap, dynamic arena-page
+/// image, PageMap, and client block until that exact final free clears its
+/// paired dynamic bitmap/count entry and releases the arena span, or terminally
+/// retains the state. It deliberately cannot reclaim, requeue, or allocate
+/// from the page. Its private source class keeps direct-small pages outside the
+/// shared terminal-free implementation.
 #[must_use = "a dynamic mapped one-block owner-exit handoff must be consumed or terminally retained"]
 pub(crate) struct DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
     bin: usize,
     memory: MemoryId,
+    class: DynamicThreadExitMappedOneBlockClass,
     terminal: bool,
+}
+
+/// The exact source page class admitted by the dynamic mapped-one-block
+/// handoff. Keeping this witness in the token prevents a later final free
+/// from treating direct-small geometry as its non-direct sibling merely
+/// because both are `PageKind::Small`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DynamicThreadExitMappedOneBlockClass {
+    Medium,
+    NonDirectSmall,
+}
+
+impl DynamicThreadExitMappedOneBlockClass {
+    #[inline]
+    fn matches(self, page: &Page) -> bool {
+        let block_size = page.block_size();
+        match self {
+            Self::Medium => {
+                size_class::page_kind_for_block_size(block_size) == Some(PageKind::Medium)
+                    && block_size > SMALL_SIZE_MAX
+            }
+            Self::NonDirectSmall => {
+                size_class::page_kind_for_block_size(block_size) == Some(PageKind::Small)
+                    && block_size > SMALL_SIZE_MAX
+                    && block_size <= SMALL_MAX_OBJ_SIZE
+            }
+        }
+    }
 }
 
 /// The backing ownership that stays coupled to one queue-detached singleton
@@ -5773,8 +5806,67 @@ impl<'attach, 'heap, 'arena, 'map>
     /// returned handoff consumes this exact block once or is terminally
     /// retained.
     pub(crate) unsafe fn abandon_mapped_one_block(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitMappedOneBlockAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        // SAFETY: this public medium spelling preserves the caller's exact
+        // one-live-block contract while the private class token keeps its
+        // final free constrained to the same source geometry.
+        unsafe {
+            self.abandon_mapped_one_block_for_class(
+                block,
+                DynamicThreadExitMappedOneBlockClass::Medium,
+            )
+        }
+    }
+
+    /// Maps one exact nonfull dynamic non-direct small page with one live
+    /// client block after source thread exit cleared its regular TLS slot.
+    ///
+    /// This admits only a rounded small block size strictly above
+    /// `SMALL_SIZE_MAX`, so its source direct-cache range is empty. Direct
+    /// small pages, medium pages through the sibling API, full pages, and any
+    /// additional queue or direct-cache state remain outside this endpoint.
+    /// The returned handoff cannot reclaim the departed Theap, requeue the
+    /// page, scan a bitmap, or accept a second free.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the sole current canonical allocation in one active,
+    /// nonfull non-direct small arena page owned by this exact drain. No
+    /// producer may survive, and every client alias must remain valid only
+    /// until the returned handoff consumes this exact block once or is
+    /// terminally retained.
+    pub(crate) unsafe fn abandon_mapped_one_block_non_direct_small(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitMappedOneBlockAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        // SAFETY: this public non-direct-small spelling preserves the
+        // caller's exact one-live-block contract and records that class in
+        // the handoff before its final free can mutate page state.
+        unsafe {
+            self.abandon_mapped_one_block_for_class(
+                block,
+                DynamicThreadExitMappedOneBlockClass::NonDirectSmall,
+            )
+        }
+    }
+
+    /// Performs the shared source force/false-collection, queue-detach, and
+    /// mapped-abandon sequence after a public entry point fixed the exact page
+    /// class that may cross it. Both admitted classes lie above the direct
+    /// cache boundary; preserving that fact in `class` keeps the shared code
+    /// from widening to direct-small geometry.
+    unsafe fn abandon_mapped_one_block_for_class(
         mut self,
         block: NonNull<u8>,
+        class: DynamicThreadExitMappedOneBlockClass,
     ) -> Result<
         DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>,
         DynamicThreadExitMappedOneBlockAbandonFailure<'attach, 'heap, 'arena, 'map>,
@@ -5827,8 +5919,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitMappedOneBlockAbandonError::NotMappedOneBlock,
             ));
         };
-        if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Medium)
-            || page_ref.block_size() <= SMALL_SIZE_MAX
+        if !class.matches(page_ref)
             || bin >= ARENA_BIN_COUNT
             || bin == BIN_FULL
             || page_ref.reserved() <= 1
@@ -5961,8 +6052,8 @@ impl<'attach, 'heap, 'arena, 'map>
             ));
         }
         // SAFETY: false collection completed while the page remains
-        // queue-linked; the handoff admits only the same medium one-block
-        // geometry.
+        // queue-linked; the handoff admits only the same class-specific
+        // one-block geometry selected by its public source boundary.
         let after_collect = unsafe { page.as_ref() };
         let same_arena_memory = match (after_collect.memid().arena_memory(), memory.arena_memory()) {
             (Some(actual), Some(expected)) => {
@@ -5972,10 +6063,9 @@ impl<'attach, 'heap, 'arena, 'map>
             }
             _ => false,
         };
-        if size_class::page_kind_for_block_size(after_collect.block_size()) != Some(PageKind::Medium)
+        if !class.matches(after_collect)
             || size_class::bin(after_collect.block_size()) != Some(bin)
             || !same_arena_memory
-            || after_collect.block_size() <= SMALL_SIZE_MAX
             || after_collect.reserved() <= 1
             || after_collect.used() != 1
             || page_is_in_full(after_collect)
@@ -6005,13 +6095,15 @@ impl<'attach, 'heap, 'arena, 'map>
                     page,
                     bin,
                     memory,
+                    class,
                     terminal: true,
                 },
                 error: DynamicThreadExitMappedOneBlockAbandonError::Queue,
             });
         }
-        // This is a no-op for a medium page, but preserves the source
-        // queue-remove boundary and keeps an invalid stale direct image from
+        // Both represented source classes lie strictly above the direct-cache
+        // boundary, so this is a source no-op. Keeping the update call at the
+        // queue-remove boundary prevents an invalid stale direct image from
         // becoming hidden.
         self.engine.update_direct_cache(bin);
 
@@ -6034,6 +6126,7 @@ impl<'attach, 'heap, 'arena, 'map>
                         page,
                         bin,
                         memory,
+                        class,
                         terminal: true,
                     },
                     error: DynamicThreadExitMappedOneBlockAbandonError::MissingDynamicArenaPages,
@@ -6046,6 +6139,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 page,
                 bin,
                 memory,
+                class,
                 terminal: false,
             }),
             Ok(outcome) => Err(DynamicThreadExitMappedOneBlockAbandonFailure::Terminal {
@@ -6054,6 +6148,7 @@ impl<'attach, 'heap, 'arena, 'map>
                     page,
                     bin,
                     memory,
+                    class,
                     terminal: true,
                 },
                 error: DynamicThreadExitMappedOneBlockAbandonError::UnexpectedAbandonOutcome(
@@ -6066,6 +6161,7 @@ impl<'attach, 'heap, 'arena, 'map>
                     page,
                     bin,
                     memory,
+                    class,
                     terminal: true,
                 },
                 error: DynamicThreadExitMappedOneBlockAbandonError::Abandon(error),
@@ -6112,6 +6208,12 @@ impl<'attach, 'heap, 'arena, 'map>
     #[inline]
     pub(crate) fn test_queue_count(&self, bin: usize) -> Option<usize> {
         self.engine.session.queue(bin).map(|queue| queue.count())
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.engine.session.direct_page(index)
     }
 
     #[cfg(test)]
@@ -6333,8 +6435,9 @@ impl<'attach, 'heap, 'arena, 'map>
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>
 {
-    /// Frees the handoff's exact one live medium block and admits only the
-    /// source all-free result before any abandoned-page reclamation branch.
+    /// Frees the handoff's exact one live medium or non-direct small block and
+    /// admits only the source all-free result before any abandoned-page
+    /// reclamation branch.
     ///
     /// The dynamic page drain exists only after its regular TLS slot cleared,
     /// so the original Theap cannot be reclaimed through that slot. This
@@ -6345,8 +6448,10 @@ impl<'attach, 'heap, 'arena, 'map>
     /// # Safety
     ///
     /// `block` must be the exact once-live allocation transferred by
-    /// [`DynamicThreadExitDrain::abandon_mapped_one_block`]. It must not have
-    /// been freed, republished, or accessed through any alias after this call.
+    /// [`DynamicThreadExitDrain::abandon_mapped_one_block`] or
+    /// [`DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small`].
+    /// It must not have been freed, republished, or accessed through any alias
+    /// after this call.
     pub(crate) unsafe fn remote_free_to_empty(
         mut self,
         block: NonNull<u8>,
@@ -6388,9 +6493,8 @@ impl<'attach, 'heap, 'arena, 'map>
         if self.bin >= ARENA_BIN_COUNT
             || !exact_memory
             || page_ref.memid().kind() != MemoryKind::Arena
-            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Medium)
+            || !self.class.matches(page_ref)
             || size_class::bin(page_ref.block_size()) != Some(self.bin)
-            || page_ref.block_size() <= SMALL_SIZE_MAX
             || page_ref.reserved() <= 1
             || page_ref.used() != 1
             || page_is_in_full(page_ref)
@@ -6441,9 +6545,10 @@ impl<'attach, 'heap, 'arena, 'map>
             ));
         };
 
-        // The sole-medium/one-live-block handoff proves that source collection
-        // reaches the empty decision before the mapped-page reclaim branch.
-        // This helper therefore cannot return a requeued/reclaimed live page.
+        // The sole class-specific one-live-block handoff proves that source
+        // normal collection reaches the empty decision before the mapped-page
+        // reclaim branch. This helper therefore cannot return a
+        // requeued/reclaimed live page.
         match unsafe { abandoned::free_mapped_one_block_to_empty(self.page, canonical_block, &map) } {
             Ok(abandoned::MappedAbandonedFreeToEmptyResult::Empty) => {
                 if self
@@ -6489,6 +6594,12 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the handoff retains the only PageMap lifecycle capability;
         // this test witness neither exposes nor mutates page metadata.
         unsafe { self.drain.engine.page_for_block(block) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.drain.engine.session.direct_page(index)
     }
 
     #[cfg(test)]

@@ -360,17 +360,22 @@ all-free release. The OS form additionally links/removes its exact dynamic
 metadata -> mapping release.
 
 A separate `DynamicThreadExitMappedOneBlockHandoff` accepts only a sole,
-nonfull `MemoryKind::Arena` medium page with `reserved > 1`, `used == 1`, one
-regular queue member, and no other queue/direct entry. It keeps the post-TLS
-dynamic arena image only long enough to form the exact heap-local
-`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`. Source
-force then false collection precedes queue/page-count detach and mapped
-identity/bit/count/unown publication. Its exact final free reaches empty
-before any source reclaim branch, clears the dynamic bit/count pair, then
-releases PageMap -> dynamic ordinary bit -> metadata -> arena slices. Neither
-dynamic handoff scans, reclaims, adopts, requeues, accepts a second free, or
-generalizes thread exit. Only an empty drain may resume the existing
-cached-root/list/key teardown.
+nonfull `MemoryKind::Arena` medium or non-direct-small page with `reserved >
+1`, `used == 1`, one regular queue member, and no other queue/direct entry.
+The medium endpoint remains
+`DynamicThreadExitDrain::abandon_mapped_one_block`; the non-direct-small
+endpoint is `DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small`
+and requires `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`. Its class
+witness leaves direct-small explicitly refused before collection or queue
+detach. The handoff keeps the post-TLS dynamic arena image only long enough to
+form the exact heap-local `pages_abandoned[bin]` bit plus paired
+`Heap::abandoned_count[bin]`. Source force then false collection precedes
+queue/page-count detach and mapped identity/bit/count/unown publication. Its
+exact final free reaches empty through the normal collector before any source
+reclaim branch, clears the dynamic bit/count pair, then releases PageMap ->
+dynamic ordinary bit -> metadata -> arena slices. Neither dynamic handoff
+scans, reclaims, adopts, requeues, accepts a second free, or generalizes thread
+exit. Only an empty drain may resume the existing cached-root/list/key teardown.
 
 The first fresh page in that private non-abandoning dynamic session now owns
 one exact source-shaped heap-local `mi_arena_pages_t` image. Creation first
@@ -421,10 +426,11 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-dynamic owner-exit singleton and one sole mapped medium one-block handoff:
-clearing the regular backing prevents reclaim; the singleton final free takes
-the raw failed-reclaim all-free release, while the mapped endpoint clears its
-dynamic bitmap/count before terminal arena release. The raw protocol remains
+dynamic owner-exit singleton and sole mapped medium/non-direct-small one-block
+handoffs: clearing the regular backing prevents reclaim; the singleton final
+free takes the raw failed-reclaim all-free release, while either mapped
+endpoint clears its dynamic bitmap/count before terminal arena release. The raw
+protocol remains
 otherwise unintegrated: regular/nonempty pages, general producer routing,
 terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,
 and reusable abandoned-page lifetime remain absent.
