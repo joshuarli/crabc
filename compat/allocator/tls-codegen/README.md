@@ -34,3 +34,21 @@ This proves the exact bounded rlib codegen shape, not production integration.
 Rust has no per-static TLS-model attribute: the initial-exec choice is a crate
 codegen setting. The private `crabc-libc` bridge applies it target-wide, and
 the sealed sysroot separately audits the final linked allocator/runtime ELF.
+
+## Native x86-64 proof path
+
+The x86-64 proof is intentionally a separate runner so target-specific ELF
+relocations and register evidence cannot be confused with the AArch64 judge.
+Run it in the native amd64 laboratory (the wrapper refuses non-x86-64 hosts):
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-tls
+```
+
+The native runner requires the `x86_64-unknown-linux-musl` target, validates
+an ELF64 little-endian x86-64 relocatable object, and requires every private
+root to use `R_X86_64_GOTTPOFF`. Each named witness must directly read `%fs:0`;
+the ownership-identity witness must have no TLS relocation, while the root
+witnesses must retain the x86-64 initial-exec relocation. The report is written
+separately to
+`compat/reports/allocator/tls-codegen-x86_64.json`.
