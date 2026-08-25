@@ -717,6 +717,192 @@ impl Heap {
             && self.memid.kind() == MemoryKind::Static
             && !self.subprocess.is_null()
     }
+
+    /// Returns the private non-arena abandoned-list head while an external
+    /// test already holds the static-main heap projection guard.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_abandoned_page_head(&self) -> *mut Page {
+        self.os_abandoned_pages
+    }
+
+    /// Links one non-arena abandoned page at this Heap's private OS-list
+    /// head.
+    ///
+    /// This is the insertion half of pinned mimalloc v3.5.0
+    /// `src/arena.c:_mi_arenas_page_abandon`'s non-arena branch.  The paired
+    /// removal below is the same source's `_mi_arenas_page_unabandon` branch.
+    /// The caller must retain the live page metadata for `page`, every page
+    /// already linked from this Heap's head, and this Heap for the whole call.
+    /// It must also have selected the non-arena abandonment branch; this
+    /// intrusive-list primitive neither classifies pages nor changes their
+    /// abandoned identity.
+    ///
+    /// Unlike the unchecked C link writes, this bounded Rust boundary rejects
+    /// a linked candidate, a foreign page, or a malformed current head before
+    /// making any change. It deliberately does not search for or repair a
+    /// separately registered page owner.
+    #[inline]
+    pub(crate) fn push_os_abandoned_page(
+        &mut self,
+        page: &mut Page,
+    ) -> Result<(), HeapOsAbandonedPageListError> {
+        let guard = self
+            .os_abandoned_pages_lock
+            .lock()
+            .map_err(HeapOsAbandonedPageListError::Lock)?;
+        let heap = core::ptr::from_ref(self).cast_mut();
+        let page_pointer = core::ptr::from_mut(page);
+
+        // SAFETY: `page` is a live unique metadata reference. The caller's
+        // documented list-lifetime proof keeps the prior head and its
+        // immediate successor live while the private lock serializes all
+        // intrusive OS-list changes for this Heap.
+        let result = unsafe {
+            if !core::ptr::eq(page.heap, heap) {
+                Err(HeapOsAbandonedPageListError::HeapMismatch)
+            } else if !page.prev.is_null() || !page.next.is_null() {
+                Err(HeapOsAbandonedPageListError::NodeLinked)
+            } else {
+                let head = self.os_abandoned_pages;
+                if head.is_null() {
+                    page.prev = null_mut();
+                    page.next = null_mut();
+                    self.os_abandoned_pages = page_pointer;
+                    Ok(())
+                } else if head == page_pointer
+                    || !core::ptr::eq((*head).heap, heap)
+                    || !(*head).prev.is_null()
+                {
+                    Err(HeapOsAbandonedPageListError::Head)
+                } else {
+                    let head_next = (*head).next;
+                    if !head_next.is_null()
+                        && (!core::ptr::eq((*head_next).heap, heap)
+                            || (*head_next).prev != head)
+                    {
+                        Err(HeapOsAbandonedPageListError::Head)
+                    } else {
+                        // Preserve the source link order after every local
+                        // ownership relation has been validated.
+                        page.prev = null_mut();
+                        page.next = head;
+                        (*head).prev = page_pointer;
+                        self.os_abandoned_pages = page_pointer;
+                        Ok(())
+                    }
+                }
+            }
+        };
+
+        match (result, guard.unlock()) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) | (Err(_), Err(error)) => {
+                Err(HeapOsAbandonedPageListError::Lock(error))
+            }
+            (Err(error), Ok(())) => Err(error),
+        }
+    }
+
+    /// Unlinks one exact member from this Heap's private OS-abandoned-page
+    /// list.
+    ///
+    /// This is the removal half of pinned mimalloc v3.5.0
+    /// `src/arena.c:_mi_arenas_page_unabandon`'s non-arena branch. The caller
+    /// retains live metadata for `page`, this Heap, and all already-linked
+    /// adjacent pages. It must hold the page's higher-level abandonment owner
+    /// transition; this method only performs the locked list mutation and
+    /// clears the removed page's two intrusive links.
+    ///
+    /// The direct predecessor/successor and current-head relations are all
+    /// validated before writes. A foreign, absent, or malformed member is
+    /// rejected with every existing link preserved rather than being silently
+    /// spliced into a different list.
+    #[inline]
+    pub(crate) fn remove_os_abandoned_page(
+        &mut self,
+        page: &mut Page,
+    ) -> Result<(), HeapOsAbandonedPageListError> {
+        let guard = self
+            .os_abandoned_pages_lock
+            .lock()
+            .map_err(HeapOsAbandonedPageListError::Lock)?;
+        let heap = core::ptr::from_ref(self).cast_mut();
+        let page_pointer = core::ptr::from_mut(page);
+
+        // SAFETY: `page` is a live unique metadata reference. The caller's
+        // documented list-lifetime proof keeps every direct neighbor live,
+        // and the private heap lock serializes their link updates.
+        let result = unsafe {
+            if !core::ptr::eq(page.heap, heap) {
+                Err(HeapOsAbandonedPageListError::HeapMismatch)
+            } else {
+                let head = self.os_abandoned_pages;
+                if head.is_null()
+                    || !core::ptr::eq((*head).heap, heap)
+                    || !(*head).prev.is_null()
+                {
+                    Err(HeapOsAbandonedPageListError::Membership)
+                } else {
+                    let head_next = (*head).next;
+                    if !head_next.is_null()
+                        && (!core::ptr::eq((*head_next).heap, heap)
+                            || (*head_next).prev != head)
+                    {
+                        Err(HeapOsAbandonedPageListError::Head)
+                    } else {
+                        let previous = page.prev;
+                        let next = page.next;
+                        if previous.is_null() {
+                            if head != page_pointer {
+                                Err(HeapOsAbandonedPageListError::Membership)
+                            } else if !next.is_null()
+                                && (!core::ptr::eq((*next).heap, heap)
+                                    || (*next).prev != page_pointer)
+                            {
+                                Err(HeapOsAbandonedPageListError::Successor)
+                            } else {
+                                self.os_abandoned_pages = next;
+                                if !next.is_null() {
+                                    (*next).prev = null_mut();
+                                }
+                                page.next = null_mut();
+                                page.prev = null_mut();
+                                Ok(())
+                            }
+                        } else if previous == page_pointer
+                            || !core::ptr::eq((*previous).heap, heap)
+                            || (*previous).next != page_pointer
+                        {
+                            Err(HeapOsAbandonedPageListError::Predecessor)
+                        } else if !next.is_null()
+                            && (next == page_pointer
+                                || !core::ptr::eq((*next).heap, heap)
+                                || (*next).prev != page_pointer)
+                        {
+                            Err(HeapOsAbandonedPageListError::Successor)
+                        } else {
+                            (*previous).next = next;
+                            if !next.is_null() {
+                                (*next).prev = previous;
+                            }
+                            page.next = null_mut();
+                            page.prev = null_mut();
+                            Ok(())
+                        }
+                    }
+                }
+            }
+        };
+
+        match (result, guard.unlock()) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) | (Err(_), Err(error)) => {
+                Err(HeapOsAbandonedPageListError::Lock(error))
+            }
+            (Err(error), Ok(())) => Err(error),
+        }
+    }
 }
 
 /// A failure while manipulating the private source heap-theap list.
@@ -724,6 +910,27 @@ impl Heap {
 pub(crate) enum HeapTheapListError {
     Busy,
     Membership,
+    Lock(crabc_core::Errno),
+}
+
+/// A rejected mutation of the private `heap->os_abandoned_pages` list.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeapOsAbandonedPageListError {
+    /// The supplied live page belongs to another Heap.
+    HeapMismatch,
+    /// Insertion requires both intrusive page links to be clear.
+    NodeLinked,
+    /// Removal did not name this Heap's head or a locally linked member.
+    Membership,
+    /// The current head has foreign or inconsistent local links.
+    Head,
+    /// The candidate's predecessor is foreign, self-referential, or does not
+    /// name the candidate as its successor.
+    Predecessor,
+    /// The candidate's successor is foreign, self-referential, or does not
+    /// name the candidate as its predecessor.
+    Successor,
+    /// The allocator-private lock acquisition or release failed.
     Lock(crabc_core::Errno),
 }
 
@@ -3919,6 +4126,137 @@ mod tests {
         assert_eq!(offset_of!(Theap, memid), 3_712);
         assert_eq!(size_of::<Theap>(), 3_736);
         assert_eq!(align_of::<Theap>(), 8);
+    }
+
+    fn os_abandoned_test_page(heap: &Heap) -> Page {
+        let mut page = Page::empty();
+        page.heap = core::ptr::from_ref(heap).cast_mut();
+        page
+    }
+
+    #[test]
+    fn os_abandoned_page_list_inserts_empty_page_at_head() {
+        let mut heap = Heap::bootstrap_empty();
+        let mut page = os_abandoned_test_page(&heap);
+        let page_pointer = core::ptr::addr_of_mut!(page);
+
+        assert_eq!(heap.push_os_abandoned_page(&mut page), Ok(()));
+        assert_eq!(heap.os_abandoned_pages, page_pointer);
+        assert!(page.prev.is_null());
+        assert!(page.next.is_null());
+    }
+
+    #[test]
+    fn os_abandoned_page_list_keeps_two_node_order_and_clears_removed_links() {
+        let mut heap = Heap::bootstrap_empty();
+        let mut first = os_abandoned_test_page(&heap);
+        let mut second = os_abandoned_test_page(&heap);
+        let first_pointer = core::ptr::addr_of_mut!(first);
+        let second_pointer = core::ptr::addr_of_mut!(second);
+
+        assert_eq!(heap.push_os_abandoned_page(&mut first), Ok(()));
+        assert_eq!(heap.push_os_abandoned_page(&mut second), Ok(()));
+        assert_eq!(heap.os_abandoned_pages, second_pointer);
+        assert!(second.prev.is_null());
+        assert_eq!(second.next, first_pointer);
+        assert_eq!(first.prev, second_pointer);
+        assert!(first.next.is_null());
+
+        assert_eq!(heap.remove_os_abandoned_page(&mut first), Ok(()));
+        assert_eq!(heap.os_abandoned_pages, second_pointer);
+        assert!(second.prev.is_null());
+        assert!(second.next.is_null());
+        assert!(first.prev.is_null());
+        assert!(first.next.is_null());
+
+        assert_eq!(heap.remove_os_abandoned_page(&mut second), Ok(()));
+        assert!(heap.os_abandoned_pages.is_null());
+        assert!(second.prev.is_null());
+        assert!(second.next.is_null());
+    }
+
+    #[test]
+    fn os_abandoned_page_list_rejects_foreign_and_absent_nodes_without_repair() {
+        let mut heap = Heap::bootstrap_empty();
+        let mut foreign_heap = Heap::bootstrap_empty();
+        let mut member = os_abandoned_test_page(&heap);
+        let mut foreign = os_abandoned_test_page(&foreign_heap);
+        let mut absent = os_abandoned_test_page(&heap);
+        let member_pointer = core::ptr::addr_of_mut!(member);
+
+        assert_eq!(heap.push_os_abandoned_page(&mut member), Ok(()));
+        assert_eq!(
+            heap.remove_os_abandoned_page(&mut foreign),
+            Err(HeapOsAbandonedPageListError::HeapMismatch)
+        );
+        assert_eq!(
+            heap.remove_os_abandoned_page(&mut absent),
+            Err(HeapOsAbandonedPageListError::Membership)
+        );
+        assert_eq!(heap.os_abandoned_pages, member_pointer);
+        assert!(member.prev.is_null());
+        assert!(member.next.is_null());
+
+        assert_eq!(heap.remove_os_abandoned_page(&mut member), Ok(()));
+        assert_eq!(
+            heap.remove_os_abandoned_page(&mut member),
+            Err(HeapOsAbandonedPageListError::Membership)
+        );
+        assert!(heap.os_abandoned_pages.is_null());
+        assert!(member.prev.is_null());
+        assert!(member.next.is_null());
+    }
+
+    #[test]
+    fn os_abandoned_page_list_rejects_malformed_predecessor_without_repair() {
+        let mut heap = Heap::bootstrap_empty();
+        let mut tail = os_abandoned_test_page(&heap);
+        let mut middle = os_abandoned_test_page(&heap);
+        let mut head = os_abandoned_test_page(&heap);
+        let mut forged_predecessor = os_abandoned_test_page(&heap);
+        let tail_pointer = core::ptr::addr_of_mut!(tail);
+        let middle_pointer = core::ptr::addr_of_mut!(middle);
+        let head_pointer = core::ptr::addr_of_mut!(head);
+        let forged_pointer = core::ptr::addr_of_mut!(forged_predecessor);
+
+        assert_eq!(heap.push_os_abandoned_page(&mut tail), Ok(()));
+        assert_eq!(heap.push_os_abandoned_page(&mut middle), Ok(()));
+        assert_eq!(heap.push_os_abandoned_page(&mut head), Ok(()));
+        tail.prev = forged_pointer;
+
+        assert_eq!(
+            heap.remove_os_abandoned_page(&mut tail),
+            Err(HeapOsAbandonedPageListError::Predecessor)
+        );
+        assert_eq!(heap.os_abandoned_pages, head_pointer);
+        assert_eq!(head.next, middle_pointer);
+        assert_eq!(middle.next, tail_pointer);
+        assert_eq!(tail.prev, forged_pointer);
+        assert!(forged_predecessor.next.is_null());
+    }
+
+    #[test]
+    fn os_abandoned_page_list_rejects_malformed_successor_without_repair() {
+        let mut heap = Heap::bootstrap_empty();
+        let mut tail = os_abandoned_test_page(&heap);
+        let mut head = os_abandoned_test_page(&heap);
+        let mut forged_successor = os_abandoned_test_page(&heap);
+        let tail_pointer = core::ptr::addr_of_mut!(tail);
+        let head_pointer = core::ptr::addr_of_mut!(head);
+        let forged_pointer = core::ptr::addr_of_mut!(forged_successor);
+
+        assert_eq!(heap.push_os_abandoned_page(&mut tail), Ok(()));
+        assert_eq!(heap.push_os_abandoned_page(&mut head), Ok(()));
+        tail.next = forged_pointer;
+
+        assert_eq!(
+            heap.remove_os_abandoned_page(&mut tail),
+            Err(HeapOsAbandonedPageListError::Successor)
+        );
+        assert_eq!(heap.os_abandoned_pages, head_pointer);
+        assert_eq!(head.next, tail_pointer);
+        assert_eq!(tail.next, forged_pointer);
+        assert!(forged_successor.prev.is_null());
     }
 
     #[test]

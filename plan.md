@@ -91,13 +91,22 @@ later engine into `MainHeapThreadProcessPageExitDrain`: source fast-slot clear
 precedes force collection of every queue (including regular and full); a page
 that becomes all-free follows the same PageMap -> bitmap -> metadata -> slice
 release order. The pass continues after an earlier live page, then retains that
-live page rather than queue-detaching or abandoning it. Seven explicit
+live page rather than queue-detaching or abandoning it. Eight explicit
 live-page handoffs require the drain's sole page after fast-slot clear: one
 target queue member and every other queue/direct slot empty. The full one-block
 arena singleton false-collects, queue-detaches, and unmapped-abandons while its
 exact final client free takes the existing failed-reclaim empty tail and
 performs PageMap -> `pages_main` -> metadata -> slice release. The second
-handoff accepts only a medium regular arena page with `reserved > 1` and
+handoff accepts one sole OS-aligned singleton in `BIN_FULL`, even when its
+single object's ordinary size class is small. It validates the exact clipped
+PageMap/alias provenance, queue-detaches, links the still-owned page into the
+source `Heap::os_abandoned_pages` list, then unmapped-abandons it. Its final
+free removes that exact list member before PageMap unregistration, secondary
+alias clearing, primary metadata retirement, and mapping reclaim; an injected
+`munmap` failure retains the unique published mapping owner terminally in the
+later attachment. It neither scans, reclaims, requeues, nor generalizes the
+OS list. The third handoff accepts only a medium regular arena page with
+`reserved > 1` and
 `used == 1`; it force- then false-collects, queue-detaches, and publishes its
 exact main `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`.
 Its final client free takes only the source mapped empty-before-reclaim
@@ -105,7 +114,7 @@ decision, clears the bit/identity, consumes the paired count, and performs the
 same release; a still-live result is terminally retained rather than reclaimed
 or requeued.
 
-The third and fourth handoffs,
+The fourth and fifth handoffs,
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_to_process_route` and
 `MainHeapThreadProcessPageExitDrain::abandon_full_large_to_process_route`,
 accept one sole full medium or large arena page in `BIN_FULL`. They preserve
@@ -122,7 +131,7 @@ before that terminal release. They provide no reclaim, requeue, allocation-time
 adoption, concurrent client-free routing, or another full-regular owner-exit
 shape.
 
-The fifth handoff,
+The sixth handoff,
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`,
 accepts one sole full small arena page only when its rounded `block_size`
 exceeds `SMALL_SIZE_MAX`. That is source's non-direct full-small shape: it
@@ -136,7 +145,7 @@ PageMap -> `pages_main` -> metadata -> slice release after old-Theap/TLD
 teardown. It does not admit direct full small pages, mixed traversal,
 allocation-time adoption, reclaim, requeue, or concurrent frees.
 
-The sixth handoff,
+The seventh handoff,
 `MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_to_process_route`,
 accepts one sole full small arena page only when its rounded `block_size` is at
 most `SMALL_SIZE_MAX`. This is the complementary source direct full-small
@@ -154,7 +163,7 @@ The mapped tail retains the same one-slice PageMap -> `pages_main` -> metadata
 full small pages, mixed traversal, allocation-time adoption, reclaim, requeue,
 or concurrent frees.
 
-The seventh handoff,
+The eighth handoff,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`,
 accepts one sole nonfull arena page with one or more live blocks when it is a
 medium page or any small page. A direct small member is classified by rounded
@@ -164,7 +173,7 @@ must be empty. Queue removal then clears that exact range before the Theap
 page-count decrement. A direct small page retains the source `reserved >= 16`
 partial-collection invariant; this nonfull route excludes full small pages
 through `used < reserved`, since they can remain in a regular queue. The
-separate fifth and sixth handoffs above own the non-direct and direct
+separate sixth and seventh handoffs above own the non-direct and direct
 full-small classes. This
 handoff preserves
 source force -> false collection, queue/direct/page-count detach, and mapped
@@ -270,7 +279,7 @@ attachment remains a test-only seam; production static startup must use this
 coordinator.
 
 General producer routing, concurrent/general shared/later-thread page-bearing
-ownership, full/singleton/unmapped/huge owner-exit pages and behavior beyond
+ownership, remaining full/singleton/unmapped/huge owner-exit pages and behavior beyond
 the bounded sole full-medium/full-large/full-non-direct-small/full-direct-small routes, sole
 small-or-medium route (apart from its exact mapped-medium consuming handoff),
 and aggregate regular-pages registry, terminal reuse, automatic and multiple
@@ -290,7 +299,7 @@ deferred-callback edge, `mi_theap_collect_ex(MI_ABANDON)` first calls
 and calls `_mi_page_abandon` for every still-live page
 (`src/theap.c:97-152`, `src/page.c:414-518,291-302`). The latter
 false-collects, detaches the page, and delegates mapped publication/count
-pairing or unmapped abandonment to `src/arena.c:1304-1409`. The current
+pairing or unmapped abandonment to `src/arena.c:1304-1424`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit
@@ -354,10 +363,10 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 82 items and 86
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 83 items and 87
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
-all-free scan/seven sole-page handoffs/aggregate regular-pages registry, or either
+all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or either
 bounded process page owner. The next frontier is another page-bearing
 owner-exit class or a separately proven aggregate-registry policy, then complete
 process and real

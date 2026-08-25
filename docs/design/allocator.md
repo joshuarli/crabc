@@ -314,7 +314,7 @@ drain instead clears the fixed fast slot first, force-collects every queue
 (including full), and releases pages that become all-free through PageMap
 unregistration -> `pages_main` clear -> metadata retirement -> slice release.
 That scan still retains any general live page rather than queue-detaching or
-abandoning it. Four explicit, disjoint owner-exit handoffs are available only
+abandoning it. Eight explicit, disjoint owner-exit handoffs are available only
 after fast-slot clear and only when the drain has `page_count == 1`, the target
 is its sole queue member, and every other queue/direct slot is empty.
 `MainHeapThreadProcessPageExitDrain::abandon_full_singleton` accepts the full
@@ -322,6 +322,14 @@ one-block arena singleton (`BIN_FULL`), false-collects, queue-detaches, and
 unmapped-abandons it while retaining its PageMap lifecycle lease and
 registration. Its exact final client free takes the raw failed-reclaim empty
 result, then performs PageMap -> `pages_main` -> metadata -> slice release.
+The same handoff also accepts one sole OS-aligned singleton in `BIN_FULL`,
+regardless of the ordinary size class of its one object. It validates the
+complete clipped PageMap/alias release witness, links the still-owned page in
+the source `Heap::os_abandoned_pages` list before unowning it, then removes
+that exact member before PageMap unregister -> alias clear -> primary retire
+-> mapping reclaim. A failed `munmap` retains the unique published mapping
+owner terminally in the later attachment; this does not add OS-list scanning,
+reclaim, requeue, or reuse.
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_one_block` accepts only a
 medium regular arena page with `reserved > 1`, `used == 1`, no direct-cache
 entry, and a main-arena abandoned bitmap for its exact regular bin. It first
@@ -337,7 +345,7 @@ is terminally retained rather than reclaimed or requeued.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_to_process_route` and
 `MainHeapThreadProcessPageExitDrain::abandon_full_large_to_process_route` are
-the third and fourth handoffs. They accept only the sole full medium or large
+the fourth and fifth handoffs. They accept only the sole full medium or large
 arena page in `BIN_FULL`, preserve force then false collection and
 queue/page-count detach, and follow source's ordinary unmapped abandonment
 before actually tearing down the old Theap/TLD. Their linear
@@ -352,7 +360,7 @@ route validates the complete 64-slice PageMap span before terminal release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`
-is the fifth handoff. It accepts only a sole full `PageKind::Small` arena page
+is the sixth handoff. It accepts only a sole full `PageKind::Small` arena page
 with rounded `block_size > SMALL_SIZE_MAX`. Unlike the
 medium/large `BIN_FULL` shapes, pinned `page.c:766-832` retains this full small
 page in its ordinary regular bin, so the transition verifies that exact queue,
@@ -365,7 +373,7 @@ does not accept direct full small pages, mixed pages, adoption, reclaim,
 requeue, or concurrent frees.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_to_process_route`
-is the sixth handoff. It accepts only a sole full `PageKind::Small` arena page
+is the seventh handoff. It accepts only a sole full `PageKind::Small` arena page
 with rounded `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and
 `used == reserved`. Pinned direct allocation leaves this full page in its
 ordinary regular bin rather than `BIN_FULL`, so preflight requires its complete
@@ -380,7 +388,7 @@ static-main bitmap/count pair until the same one-slice PageMap -> `pages_main`
 requeue, adoption, mixed traversal, or concurrent free routing.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`
-is the seventh handoff. It accepts one sole nonfull arena page with one or more
+is the eighth handoff. It accepts one sole nonfull arena page with one or more
 live blocks when it is a medium page or any small page. The small decision uses
 the rounded source block size, not the request size. A direct small page must
 have its complete source direct-cache range point at that sole page with every
@@ -400,7 +408,7 @@ linear route; the final free clears that pairing before the PageMap ->
 `pages_main` -> metadata -> slice release. The route is movable to a client
 free thread but is not shareable as concurrent routes. Every full small page
 remains outside this nonfull sole route, checked by `used < reserved` because
-it can remain in a regular queue; the fifth and sixth handoffs own the
+it can remain in a regular queue; the sixth and seventh handoffs own the
 non-direct and direct full-small counterparts.
 
 One deliberately consuming allocation-time edge is now complete for this

@@ -48,7 +48,7 @@ result may refine it only when it can prove retained ownership.
   pointer. Detached sessions, a producer registry, concurrent queue
   collection, abandonment integration beyond one consuming dynamic mapped
   regular handoff and the separately recorded later-main all-free scan plus
-  its seven sole-page handoffs and bounded aggregate regular-pages traversal,
+  its eight sole-page handoffs and bounded aggregate regular-pages traversal,
   general owner exit, pthread lifecycle, and
   general asynchronous/public free routing remain absent. The caller still
   proves join/quiescence before queue collection because existing queue helpers
@@ -428,13 +428,20 @@ result may refine it only when it can prove retained ownership.
   removal -> main bitmap clear -> metadata retirement -> slice release. The
   pass continues through later queues even when an earlier page remains live,
   then retains that general live page rather than queue-detaching or abandoning
-  it. Seven explicit sole-page post-fast-slot handoffs require `page_count ==
+  it. Eight explicit sole-page post-fast-slot handoffs require `page_count ==
   1`, the target as its sole queue member, and every other queue/direct slot
   empty. A full one-block arena singleton in `BIN_FULL` false-collects,
   detaches its queue/count, unmapped-abandons, and retains the process PageMap
   lifecycle plus registration through its exact final free; only the raw
   failed-reclaim empty result may perform PageMap removal -> main bitmap clear
-  -> metadata retirement -> slice release. A medium regular arena page with
+  -> metadata retirement -> slice release. A sole OS-aligned singleton in
+  `BIN_FULL` may have a small ordinary block size but retains `MemoryKind::Os`,
+  one reserved/used block, and the complete clipped PageMap/alias witness. It
+  links into `Heap::os_abandoned_pages` before common unown, removes that exact
+  member before terminal PageMap -> alias -> primary-metadata -> mapping
+  release, and retains a failed `munmap` owner terminally in the later
+  attachment. It supplies no OS-list scan, reclaim, requeue, or reuse. A
+  medium regular arena page with
   `reserved > 1` and `used == 1` force- then false-collects, detaches its
   regular queue/count, and publishes its exact main `pages_abandoned[bin]` bit
   plus paired static `Heap::abandoned_count[bin]`. Its exact final free follows
@@ -450,11 +457,11 @@ result may refine it only when it can prove retained ownership.
   `pages_abandoned[bin]` bit/count pair, and later frees use the mapped tail
   until the same terminal PageMap -> main bitmap -> metadata -> slice release.
   The full-large route additionally proves its complete 64-slice span before
-  that release. The fifth handoff accepts one full non-direct small page only
+  that release. The sixth handoff accepts one full non-direct small page only
   when its rounded `block_size > SMALL_SIZE_MAX`: unlike the `BIN_FULL` medium
   and large shapes, it remains in its ordinary small bin, has no direct-cache
   range, and takes the ordinary collector. It follows the same
-  unmapped-through-mostly-used and later mapped-tail state machine. The sixth
+  unmapped-through-mostly-used and later mapped-tail state machine. The seventh
   handoff accepts the complementary full direct small page: its rounded
   `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and `used == reserved`
   retain it in the ordinary small bin with its complete rounded direct-cache
@@ -462,7 +469,7 @@ result may refine it only when it can prove retained ownership.
   clears that range before page-count detach, then preserves ordinary unmapped
   abandonment; its partial collector retains the just-published atomic head,
   producing the pinned one-head free-count lag before the later
-  below-mostly-used mapped publication. The seventh handoff accepts one
+  below-mostly-used mapped publication. The eighth handoff accepts one
   sole nonfull medium page or small page with one or more live blocks, tears
   down the old Theap/TLD, and returns a linear
   `ProcessPageMapPostExitAccess` route. A direct small member derives its
@@ -471,7 +478,7 @@ result may refine it only when it can prove retained ownership.
   the range during queue removal before page-count detach. It requires the
   source partial-collection `reserved >= 16` invariant. This nonfull route
   excludes full small pages before source collection through the explicit
-  `used < reserved` guard; the distinct fifth and sixth handoffs above own the
+  `used < reserved` guard; the distinct sixth and seventh handoffs above own the
   source non-direct and direct full-small shapes.
 
   One explicit consuming allocation-time edge is complete for the sole route

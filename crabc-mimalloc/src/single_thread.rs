@@ -50,10 +50,11 @@
 // abandonment, failed reclaim, and all-free release; it is not a general
 // owner-exit traversal or remote-free route.
 // The separately bounded later-main drain force-scans all-free pages, then
-// admits six sole-page handoffs: the same unmapped full singleton shape, one
-// medium regular page with one live block, full medium and full large
-// `BIN_FULL` pages, one full non-direct small page in its ordinary regular
-// queue, and one nonfull small-or-medium page with one or more live blocks.
+// admits eight sole-page handoffs: a full arena singleton; an OS-aligned
+// singleton linked only between source non-arena abandon/unabandon; one medium
+// regular page with one live block; full medium and full large `BIN_FULL`
+// pages; full non-direct and direct small pages in their ordinary regular
+// queues; and one nonfull small-or-medium page with one or more live blocks.
 // Each full route remains unmapped through source's mostly-used boundary
 // before it may reabandon to the static-main bitmap/count pair. The one-block handoff uses
 // the static main `pages_abandoned[bin]` image plus paired
@@ -123,7 +124,10 @@ use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::remote_free::{self, RemoteFreeError};
 use crate::size_class;
 use crate::subproc::MainSubprocess;
-use crate::types::{EMPTY_PAGE, LiveThreadId, MemoryId, MemoryKind, Page, PageKind, Theap};
+use crate::types::{
+    EMPTY_PAGE, HeapOsAbandonedPageListError, LiveThreadId, MemoryId, MemoryKind, Page,
+    PageKind, Theap,
+};
 use crate::types::page_queue::{
     page_is_in_full, page_queue_enqueue_from_full_metadata,
     page_queue_enqueue_from_metadata, page_queue_push_metadata,
@@ -420,8 +424,23 @@ pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map
     terminal: bool,
 }
 
-/// One queue-detached arena singleton whose source thread-exit transition has
-/// made the original Theap unavailable for reclamation.
+/// The backing ownership that stays coupled to one queue-detached singleton
+/// after its source thread-exit transition made the original Theap unavailable
+/// for reclamation.
+///
+/// Arena singletons retain the ordinary `pages_main` release path. An
+/// OS-aligned singleton instead remains in the source Heap's private
+/// `os_abandoned_pages` list between `_mi_arenas_page_abandon` and
+/// `_mi_arenas_page_unabandon`; no general OS-list reclaim or traversal is
+/// exposed by this bounded handoff.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThreadExitSingletonBacking {
+    Arena,
+    Os,
+}
+
+/// One queue-detached arena or OS-aligned singleton whose source thread-exit
+/// transition has made the original Theap unavailable for reclamation.
 ///
 /// Construction is private to dedicated post-TLS/fast-slot drain
 /// specializations. The current later-main wrapper uses this shared storage;
@@ -434,6 +453,7 @@ pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map
 pub(crate) struct ThreadExitSingletonHandoff<'arena, 'map, Session: TheapPageSession> {
     engine: PageAllocatorEngine<'arena, 'map, Session>,
     page: NonNull<Page>,
+    backing: ThreadExitSingletonBacking,
     terminal: bool,
 }
 
@@ -632,13 +652,13 @@ pub(crate) struct ThreadExitMappedRegularPagesPostExitTeardownTerminal<'attachme
 }
 
 /// A source-boundary refusal while one post-TLS/fast-slot owner abandons its
-/// sole full arena singleton.
+/// sole full arena or OS-aligned singleton.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadExitSingletonAbandonError {
     Collection,
     Unmapped,
     ForeignPage,
-    NonArena,
+    UnsupportedMemory(MemoryKind),
     NotFullSingleton,
     /// The current drain owns additional queue/direct/page state, so it
     /// cannot skip source traversal order by detaching one singleton early.
@@ -646,6 +666,8 @@ pub(crate) enum ThreadExitSingletonAbandonError {
     NotActiveFull,
     InvalidBlock,
     Queue,
+    MainHeap(MainStaticHeapLeaseError),
+    OsAbandonedList(HeapOsAbandonedPageListError),
     UnexpectedAbandonOutcome(AbandonResult),
     Abandon(AbandonError),
 }
@@ -680,6 +702,8 @@ pub(crate) enum ThreadExitSingletonRemoteFreeError {
     Unmapped,
     InvalidBlock,
     Release,
+    MainHeap(MainStaticHeapLeaseError),
+    OsAbandonedList(HeapOsAbandonedPageListError),
     UnexpectedFreeOutcome(abandoned::UnmappedAbandonedFreeResult),
     Abandon(AbandonError),
 }
@@ -3227,17 +3251,22 @@ impl<'attachment, 'main, 'arena, 'map>
 ///
 /// # Safety
 ///
-/// `block` must be the sole current allocation in one active full arena
-/// singleton of `engine`. No scoped producer may survive. The caller must use
-/// this only after its concrete source thread-exit root transition, so the
-/// later [`ThreadExitSingletonHandoff::remote_free_after_failed_reclaim`]
-/// cannot reclaim the departed owner.
-unsafe fn abandon_full_singleton_after_thread_exit<'arena, 'map, Session: TheapPageSession>(
-    mut engine: PageAllocatorEngine<'arena, 'map, Session>,
+/// `block` must be the sole current allocation in one active full arena or
+/// OS-aligned singleton of `engine`. No scoped producer may survive. The
+/// caller must use this only after its concrete source thread-exit root
+/// transition, so the later
+/// [`ThreadExitSingletonHandoff::remote_free_after_failed_reclaim`] cannot
+/// reclaim the departed owner.
+unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, 'map>(
+    mut engine: PageAllocatorEngine<
+        'arena,
+        'map,
+        MainHeapThreadPageDrainSession<'attachment, 'main>,
+    >,
     block: NonNull<u8>,
 ) -> Result<
-    ThreadExitSingletonHandoff<'arena, 'map, Session>,
-    ThreadExitSingletonAbandonFailure<'arena, 'map, Session>,
+    ThreadExitSingletonHandoff<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+    ThreadExitSingletonAbandonFailure<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
 > {
     let reject = |engine, error| ThreadExitSingletonAbandonFailure::Rejected { engine, error };
     let retained = |engine, error| ThreadExitSingletonAbandonFailure::RetainedEngine {
@@ -3260,11 +3289,31 @@ unsafe fn abandon_full_singleton_after_thread_exit<'arena, 'map, Session: TheapP
     if !engine.owns_page(page_ref) || page_ref.heap() != engine.session.theap().heap() {
         return Err(reject(engine, ThreadExitSingletonAbandonError::ForeignPage));
     }
-    if page_ref.memid().kind() != MemoryKind::Arena {
-        return Err(reject(engine, ThreadExitSingletonAbandonError::NonArena));
-    }
-    if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Singleton)
-        || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+    let backing_kind = match page_ref.memid().kind() {
+        MemoryKind::Arena => ThreadExitSingletonBacking::Arena,
+        MemoryKind::Os => ThreadExitSingletonBacking::Os,
+        memory => {
+            return Err(reject(
+                engine,
+                ThreadExitSingletonAbandonError::UnsupportedMemory(memory),
+            ));
+        }
+    };
+    let singleton_class_matches = match backing_kind {
+        // An arena singleton is selected by its object-size class and uses
+        // the source huge queue.
+        ThreadExitSingletonBacking::Arena => {
+            size_class::page_kind_for_block_size(page_ref.block_size()) == Some(PageKind::Singleton)
+                && size_class::bin(page_ref.block_size()) == Some(BIN_HUGE)
+        }
+        // `alloc-aligned.c` deliberately routes an OS-aligned singleton
+        // through `BIN_FULL` even when its one object has a small or regular
+        // block size. Its non-arena MemoryId plus one-reserved geometry is the
+        // source class; reclassifying it by normal arena page size would
+        // reject the actual OS singleton route.
+        ThreadExitSingletonBacking::Os => true,
+    };
+    if !singleton_class_matches
         || page_ref.reserved() != 1
         || page_ref.used() != 1
         || !page_is_in_full(page_ref)
@@ -3301,12 +3350,16 @@ unsafe fn abandon_full_singleton_after_thread_exit<'arena, 'map, Session: TheapP
         return Err(reject(engine, ThreadExitSingletonAbandonError::NotOnlyPage));
     }
 
-    // `release_span` proves every map entry and the full singleton arena
+    // `release_span` proves every map entry and the full singleton backing
     // geometry before source collection and queue detachment. A leading-slice
     // lookup cannot stand in for the later all-free unregister obligation.
-    if !matches!(engine.release_span(page.as_ptr()), Some(ReleaseSpan::Arena { .. })) {
-        return Err(reject(engine, ThreadExitSingletonAbandonError::Unmapped));
-    }
+    let backing = match (backing_kind, engine.release_span(page.as_ptr())) {
+        (ThreadExitSingletonBacking::Arena, Some(ReleaseSpan::Arena { .. }))
+        | (ThreadExitSingletonBacking::Os, Some(ReleaseSpan::Os(_))) => backing_kind,
+        (ThreadExitSingletonBacking::Arena | ThreadExitSingletonBacking::Os, _) => {
+            return Err(reject(engine, ThreadExitSingletonAbandonError::Unmapped));
+        }
+    };
     if !engine.page_is_active_queue_member(BIN_FULL, page) {
         return Err(reject(engine, ThreadExitSingletonAbandonError::NotActiveFull));
     }
@@ -3353,6 +3406,7 @@ unsafe fn abandon_full_singleton_after_thread_exit<'arena, 'map, Session: TheapP
             handoff: ThreadExitSingletonHandoff {
                 engine,
                 page,
+                backing,
                 terminal: true,
             },
             error: ThreadExitSingletonAbandonError::Queue,
@@ -3360,18 +3414,40 @@ unsafe fn abandon_full_singleton_after_thread_exit<'arena, 'map, Session: TheapP
     }
 
     // A full singleton's high source bin is not eligible for `pages_abandoned`.
-    // Consume the associated identity only after queue/count detachment, and
-    // leave its atomic low owner bit clear for the exact failed-reclaim free.
+    // For an OS-aligned singleton, source `_mi_arenas_page_abandon` first
+    // links the still-owned page into `heap->os_abandoned_pages`, then the
+    // common unown transition consumes the associated identity. Keep that
+    // ordering exact: a list failure after queue detachment is terminal, not
+    // permission to skip the source list or choose an arena release path.
+    if backing == ThreadExitSingletonBacking::Os {
+        if let Err(error) = engine.push_os_abandoned_singleton(page) {
+            return Err(ThreadExitSingletonAbandonFailure::Terminal {
+                handoff: ThreadExitSingletonHandoff {
+                    engine,
+                    page,
+                    backing,
+                    terminal: true,
+                },
+                error,
+            });
+        }
+    }
+
+    // Consume the associated identity only after queue/count detachment and
+    // the OS-list insertion, and leave its atomic low owner bit clear for the
+    // exact failed-reclaim free.
     match unsafe { abandoned::abandon_unmappable_after_collect(page) } {
         Ok(AbandonResult::UnownedUnmapped) => Ok(ThreadExitSingletonHandoff {
             engine,
             page,
+            backing,
             terminal: false,
         }),
         Ok(outcome) => Err(ThreadExitSingletonAbandonFailure::Terminal {
             handoff: ThreadExitSingletonHandoff {
                 engine,
                 page,
+                backing,
                 terminal: true,
             },
             error: ThreadExitSingletonAbandonError::UnexpectedAbandonOutcome(outcome),
@@ -3380,10 +3456,71 @@ unsafe fn abandon_full_singleton_after_thread_exit<'arena, 'map, Session: TheapP
             handoff: ThreadExitSingletonHandoff {
                 engine,
                 page,
+                backing,
                 terminal: true,
             },
             error: ThreadExitSingletonAbandonError::Abandon(error),
         }),
+    }
+}
+
+impl<'attachment, 'main, 'arena, 'map>
+    PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>
+{
+    /// Preserves the non-arena half of `_mi_arenas_page_abandon` before the
+    /// common abandoned-owner transition clears the page's low owner bit.
+    fn push_os_abandoned_singleton(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), ThreadExitSingletonAbandonError> {
+        let main_heap = self.session.main_heap_lease();
+        let mut heap = main_heap
+            .lock_heap()
+            .map_err(ThreadExitSingletonAbandonError::MainHeap)?;
+        // SAFETY: the source full-queue detachment retained this exact live
+        // metadata page, and this engine has the only handoff mutation path.
+        // The static heap guard serializes the page's `heap` list projection.
+        let linked = unsafe {
+            heap.heap_mut()
+                .push_os_abandoned_page(&mut *page.as_ptr())
+        };
+        let unlock = heap.unlock();
+        match (linked, unlock) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) | (Err(_), Err(error)) => Err(
+                ThreadExitSingletonAbandonError::MainHeap(MainStaticHeapLeaseError::Lock(error)),
+            ),
+            (Err(error), Ok(())) => Err(ThreadExitSingletonAbandonError::OsAbandonedList(error)),
+        }
+    }
+
+    /// Preserves `_mi_arenas_page_unabandon`'s non-arena list removal before
+    /// the final OS mapping release clears metadata and unmaps the span.
+    fn remove_os_abandoned_singleton(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), ThreadExitSingletonRemoteFreeError> {
+        let main_heap = self.session.main_heap_lease();
+        let mut heap = main_heap
+            .lock_heap()
+            .map_err(ThreadExitSingletonRemoteFreeError::MainHeap)?;
+        // SAFETY: the all-free source result claimed this exact formerly
+        // abandoned page before release. It remains live until list removal
+        // and the following PageMap -> alias -> metadata -> mapping tail.
+        let removed = unsafe {
+            heap.heap_mut()
+                .remove_os_abandoned_page(&mut *page.as_ptr())
+        };
+        let unlock = heap.unlock();
+        match (removed, unlock) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) | (Err(_), Err(error)) => Err(
+                ThreadExitSingletonRemoteFreeError::MainHeap(MainStaticHeapLeaseError::Lock(error)),
+            ),
+            (Err(error), Ok(())) => {
+                Err(ThreadExitSingletonRemoteFreeError::OsAbandonedList(error))
+            }
+        }
     }
 }
 
@@ -3654,7 +3791,19 @@ unsafe fn abandon_mapped_one_block_after_thread_exit<'arena, 'map, Session: Thea
     }
 }
 
-impl<'arena, 'map, Session: TheapPageSession> ThreadExitSingletonHandoff<'arena, 'map, Session> {
+impl<'attachment, 'main, 'arena, 'map>
+    ThreadExitSingletonHandoff<
+        'arena,
+        'map,
+        MainHeapThreadPageDrainSession<'attachment, 'main>,
+    >
+{
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_has_pending_os_release(&self) -> bool {
+        self.engine.has_pending_os_release()
+    }
+
     /// Frees the handoff's exact sole client block after the concrete source
     /// thread-exit transition made owner reclamation impossible.
     ///
@@ -3667,8 +3816,12 @@ impl<'arena, 'map, Session: TheapPageSession> ThreadExitSingletonHandoff<'arena,
         mut self,
         block: NonNull<u8>,
     ) -> Result<
-        PageAllocatorEngine<'arena, 'map, Session>,
-        ThreadExitSingletonRemoteFreeFailure<'arena, 'map, Session>,
+        PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+        ThreadExitSingletonRemoteFreeFailure<
+            'arena,
+            'map,
+            MainHeapThreadPageDrainSession<'attachment, 'main>,
+        >,
     > {
         let reject = |handoff, error| ThreadExitSingletonRemoteFreeFailure::Rejected {
             handoff,
@@ -3696,12 +3849,12 @@ impl<'arena, 'map, Session: TheapPageSession> ThreadExitSingletonHandoff<'arena,
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
-        if preflight.is_err()
-            || !matches!(
-                self.engine.release_span(self.page.as_ptr()),
-                Some(ReleaseSpan::Arena { .. })
-            )
-        {
+        let span_matches_backing = matches!(
+            (self.backing, self.engine.release_span(self.page.as_ptr())),
+            (ThreadExitSingletonBacking::Arena, Some(ReleaseSpan::Arena { .. }))
+                | (ThreadExitSingletonBacking::Os, Some(ReleaseSpan::Os(_)))
+        );
+        if preflight.is_err() || !span_matches_backing {
             return Err(reject(self, ThreadExitSingletonRemoteFreeError::InvalidBlock));
         }
 
@@ -3711,10 +3864,27 @@ impl<'arena, 'map, Session: TheapPageSession> ThreadExitSingletonHandoff<'arena,
         // failed-reclaim tail and its all-free terminal release.
         match unsafe { abandoned::free_unmappable_after_failed_reclaim(self.page, canonical_block) } {
             Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
-                if self
-                    .engine
-                    .release_queue_detached_abandoned_arena_page(self.page)
-                {
+                if self.backing == ThreadExitSingletonBacking::Os {
+                    // `_mi_arenas_page_unabandon` removes the non-arena page
+                    // from `heap->os_abandoned_pages` before the common
+                    // terminal page release. A removal error retains the
+                    // exact all-free handoff rather than leaving an
+                    // untracked mapping release right.
+                    if let Err(error) = self.engine.remove_os_abandoned_singleton(self.page) {
+                        self.terminal = true;
+                        return Err(terminal(self, error));
+                    }
+                }
+
+                let released = match self.backing {
+                    ThreadExitSingletonBacking::Arena => self
+                        .engine
+                        .release_queue_detached_abandoned_arena_page(self.page),
+                    ThreadExitSingletonBacking::Os => self
+                        .engine
+                        .release_queue_detached_abandoned_os_page(self.page),
+                };
+                if released && self.engine.pending_os_release.is_none() {
                     Ok(self.engine)
                 } else {
                     self.terminal = true;
@@ -7570,6 +7740,78 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // SAFETY: map and ordinary page-image removal now precede return of
         // this exact one outstanding external-arena span.
         unsafe { release_arena_slices(memory) }
+    }
+
+    /// Completes the non-arena `_mi_arenas_page_unabandon` then
+    /// `_mi_arenas_page_free` tail for one all-free OS-aligned singleton.
+    ///
+    /// The caller has already removed `page` from its source Heap's private
+    /// `os_abandoned_pages` list. This method deliberately has no OS-list
+    /// scan, reclaim, or requeue capability: it only validates the exact
+    /// queue-detached singleton and preserves the terminal order PageMap
+    /// unregister -> secondary aliases -> primary retirement -> mapping
+    /// reclaim. A failed `munmap` retains its unique published owner in the
+    /// existing engine slot so the handoff remains terminal rather than
+    /// inventing a second release path.
+    fn release_queue_detached_abandoned_os_page(&mut self, page: NonNull<Page>) -> bool {
+        let Some(ReleaseSpan::Os(published)) = self.release_span(page.as_ptr()) else {
+            return false;
+        };
+        // SAFETY: the consuming singleton handoff retains exclusive metadata
+        // ownership until this method has completed or recorded its terminal
+        // OS-release owner.
+        let page_ref = unsafe { page.as_ref() };
+        if page_ref.used() != 0 || !page_ref.is_queue_detached() {
+            return false;
+        }
+        let layout = published.layout();
+        let expected_memory = published.memory_id();
+        // SAFETY: `release_span` proved the exact complete clipped map range
+        // is still published to this primary page. Queue/list removal already
+        // made no source queue or abandoned-list reader eligible.
+        if unsafe {
+            self.page_map.unregister_range(
+                published.slice_start().as_ptr(),
+                layout.page_map_size(),
+            )
+        }
+        .is_err()
+        {
+            return false;
+        }
+        // SAFETY: page-map lookup is gone before the secondary aligned
+        // metadata aliases are cleared, while the primary remains live.
+        if unsafe { !published.clear_secondary_metadata() } {
+            return false;
+        }
+        // SAFETY: the all-free result, queue detachment, OS-list removal, and
+        // map/alias removal are all predecessors to retiring this primary.
+        let Some(retired) = (unsafe { self.session.retire_page(&mut *page.as_ptr()) }) else {
+            return false;
+        };
+        let Some(retired_os) = retired.os_memory() else {
+            return false;
+        };
+        let Some(expected_os) = expected_memory.os_memory() else {
+            return false;
+        };
+        if !retired.is_os()
+            || retired_os.base != expected_os.base
+            || retired_os.size != expected_os.size
+            || retired.initially_committed() != expected_memory.initially_committed()
+            || retired.initially_zero() != expected_memory.initially_zero()
+        {
+            return false;
+        }
+        // SAFETY: this token retains the unique published mapping release
+        // right after every visible page/metadata predecessor is gone.
+        match unsafe { published.reclaim() } {
+            Ok(()) => true,
+            Err(failure) => {
+                self.park_pending_os_release(failure.into_owner());
+                true
+            }
+        }
     }
 
     /// Validates every arena or OS-aligned page-map fact needed for terminal

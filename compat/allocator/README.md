@@ -14,7 +14,8 @@ map, one bounded source-order process-main coordinator, one separately owned
 process-static page-map publication root plus one caller-selected
 process-shared arena sidecar and bounded ticket-zero and later-thread page
 engines over their matched pair, including one all-free later-main exit drain
-and its seven sole-page handoffs (a full arena singleton, a mapped medium
+and its eight sole-page handoffs (a full arena singleton, an OS-aligned
+singleton linked through `Heap::os_abandoned_pages` until its final release, a mapped medium
 one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
 reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
@@ -69,7 +70,7 @@ in-place `pages_main` bitmap into the shared static main Heap, and completes
 normal fresh/release ordering through map, bitmap, metadata, and slices. It
 chooses no reserve policy, does not model the C `mi_page_map_empty` pre-root,
 and has no concurrent/general later-thread page routing, general owner exit
-beyond the recorded all-free later-main scan, its seven sole-page handoffs, and
+beyond the recorded all-free later-main scan, its eight sole-page handoffs, and
 the bounded aggregate regular-pages traversal, teardown, or public routing.
 Only the explicit consuming sole-medium handoff can turn a detached route's
 short PageMap access back into one long later-main lifecycle; ordinary route

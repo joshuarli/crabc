@@ -26,8 +26,9 @@
 //! source-shaped `_mi_thread_done` boundary: a consuming exit drain clears the
 //! fixed main fast slot, force-collects every queue, and releases only pages
 //! that become all-free before returning to attachment root/list/TLD teardown.
-//! Seven disjoint sole-page exceptions retain their PageMap/arena ownership
-//! through final client frees: a full singleton, a mapped one-block medium,
+//! Eight disjoint sole-page exceptions retain their PageMap/arena ownership
+//! through final client frees: a full arena singleton, an OS-aligned
+//! singleton, a mapped one-block medium,
 //! full medium and full large pages, full non-direct and direct small pages,
 //! and a nonfull small-or-medium page. The full regular cases begin unmapped
 //! and reabandon into the static-main bitmap only after source's mostly-used
@@ -135,10 +136,10 @@ pub(crate) struct MainHeapThreadProcessPageExitDrain<'attachment, 'main> {
     page_map_lifecycle: ProcessPageMapMutationLease,
 }
 
-/// One sole full arena singleton detached by the later-main post-fast-slot
-/// owner-exit drain. It retains the same exclusive process PageMap lifecycle
-/// lease until its exact final client free has released the registered span or
-/// the source state is terminally retained.
+/// One sole full arena or OS-aligned singleton detached by the later-main
+/// post-fast-slot owner-exit drain. It retains the same exclusive process
+/// PageMap lifecycle lease until its exact final client free has released the
+/// registered span or the source state is terminally retained.
 #[must_use = "a later-main singleton handoff must release or retain its page explicitly"]
 pub(crate) struct MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main> {
     handoff: ThreadExitSingletonHandoff<
@@ -1148,10 +1149,11 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
     ///
     /// # Safety
     ///
-    /// `block` must be the sole current allocation in one full arena singleton
-    /// owned by this exact post-fast-slot drain. No scoped producer may remain,
-    /// and all client aliases must remain live only until the handoff's exact
-    /// final-free operation or terminal retention.
+    /// `block` must be the sole current allocation in one full arena or
+    /// OS-aligned singleton owned by this exact post-fast-slot drain. No
+    /// scoped producer may remain, and all client aliases must remain live
+    /// only until the handoff's exact final-free operation or terminal
+    /// retention.
     pub(crate) unsafe fn abandon_full_singleton(
         self,
         block: NonNull<u8>,
@@ -1858,6 +1860,12 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
 }
 
 impl<'attachment, 'main> MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main> {
+    #[cfg(test)]
+    #[inline]
+    fn test_has_pending_os_release(&self) -> bool {
+        self.handoff.test_has_pending_os_release()
+    }
+
     /// Performs the handoff's one final client free. The source fast-root
     /// transition already made the departed later Theap unavailable for
     /// reclamation; only the raw failed-reclaim all-free result is admitted.
@@ -2923,6 +2931,7 @@ mod tests {
     use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::meta::MetaAllocator;
     use crate::os::{fault, MapAccess, Mapping, MemoryConfig, PageSize};
+    use crate::os_page::PublishedOsAlignedPage;
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
@@ -3456,6 +3465,332 @@ mod tests {
         })
         .join()
         .expect("later singleton handoff fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_os_aligned_singleton_handoff_releases_after_its_final_free() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later OS-singleton source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later OS-singleton source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits one later page engine");
+                    let block = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the later owner creates one source OS-aligned singleton");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                        .expect("the OS singleton stays PageMap-published before thread exit");
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(page_ref.reserved(), 1);
+                    assert_eq!(page_ref.used(), 1);
+                    assert!(page_ref.memid().is_os());
+                    let published = unsafe { PublishedOsAlignedPage::from_page(config, page) }
+                        .expect("the source OS singleton retains its complete terminal-release token");
+                    assert!(unsafe {
+                        published.page_map_entries_match(
+                            page_map.page_map().expect("the process PageMap remains published"),
+                        )
+                    });
+
+                    let drain = match allocator.begin_thread_exit_drain() {
+                        Ok(drain) => drain,
+                        Err(MainHeapThreadProcessPageExitDrainFailure::Retained {
+                            allocator,
+                            error,
+                        }) => {
+                            core::mem::forget(allocator);
+                            panic!("thread exit clears the main fast slot before OS-singleton collection: {error:?}");
+                        }
+                    };
+                    assert!(
+                        fast_slot_peek().is_none(),
+                        "the source fast root clears before OS-singleton abandonment"
+                    );
+
+                    // SAFETY: `block` is the sole current allocation in the
+                    // exact full OS-aligned singleton retained by this
+                    // post-fast-slot process-map lifecycle.
+                    let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                        Ok(handoff) => handoff,
+                        Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Rejected {
+                            drain,
+                            error,
+                        })
+                        | Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::RetainedDrain {
+                            drain,
+                            error,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("the OS-aligned singleton enters the owner-exit handoff: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Terminal {
+                            handoff,
+                            error,
+                        }) => {
+                            core::mem::forget(handoff);
+                            panic!("OS-singleton abandonment does not retain a terminal owner: {error:?}");
+                        }
+                    };
+                    assert!(unsafe {
+                        published.page_map_entries_match(
+                            page_map.page_map().expect("the process PageMap remains published"),
+                        )
+                    });
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable through OS abandonment");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after OS-list observation");
+                        head
+                    };
+                    assert_eq!(
+                        abandoned_head,
+                        page.as_ptr(),
+                        "source OS abandonment links the detached singleton before it clears the low owner"
+                    );
+
+                    // SAFETY: this is the handoff's exact once-live client
+                    // allocation. The cleared fixed fast slot is the bounded
+                    // source proof that the one reclaim attempt must fail.
+                    let drain = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                        Ok(drain) => drain,
+                        Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Rejected {
+                            handoff,
+                            error,
+                        })
+                        | Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Terminal {
+                            handoff,
+                            error,
+                        }) => {
+                            core::mem::forget(handoff);
+                            panic!("the OS-singleton final free releases its sole page: {error:?}");
+                        }
+                    };
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable through OS release");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after OS-list removal observation");
+                        head
+                    };
+                    assert!(
+                        abandoned_head.is_null(),
+                        "source OS release removes the all-free singleton from the private list before unmap"
+                    );
+                    assert!(matches!(drain.finish(), Ok(())));
+                    for offset in (0..published.layout().page_map_size())
+                        .step_by(crate::config::ARENA_SLICE_SIZE)
+                    {
+                        assert!(unsafe {
+                            page_map
+                                .page_map()
+                                .expect("the process PageMap remains published")
+                                .checked_lookup(published.slice_start().as_ptr().wrapping_add(offset))
+                        }
+                        .is_null());
+                    }
+                    owner
+                        .finish_after_page_drain()
+                        .expect("the all-free OS singleton returns to source root/list/TLD teardown");
+                });
+                worker
+                    .join()
+                    .expect("later OS-singleton handoff remains current-thread local");
+            });
+
+            main.teardown()
+                .expect("the static main owner retires after the OS-singleton handoff");
+        })
+        .join()
+        .expect("later OS-singleton handoff fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_os_aligned_singleton_handoff_retains_failed_unmap_terminally() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let fault = fault::install(fault::Plan::disabled());
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later failed-unmap source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later failed-unmap source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits one later page engine");
+                    let block = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the later owner creates one source OS-aligned singleton");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                        .expect("the OS singleton remains PageMap-published before thread exit");
+                    let published = unsafe { PublishedOsAlignedPage::from_page(config, page) }
+                        .expect("the source OS singleton retains its complete terminal-release token");
+                    let drain = match allocator.begin_thread_exit_drain() {
+                        Ok(drain) => drain,
+                        Err(MainHeapThreadProcessPageExitDrainFailure::Retained {
+                            allocator,
+                            error,
+                        }) => {
+                            core::mem::forget(allocator);
+                            panic!("thread exit clears the main fast slot before failed OS release: {error:?}");
+                        }
+                    };
+                    let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                        Ok(handoff) => handoff,
+                        Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Rejected {
+                            drain,
+                            error,
+                        })
+                        | Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::RetainedDrain {
+                            drain,
+                            error,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("the OS singleton enters the failed-unmap handoff: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Terminal {
+                            handoff,
+                            error,
+                        }) => {
+                            core::mem::forget(handoff);
+                            panic!("OS abandonment unexpectedly retained terminal ownership: {error:?}");
+                        }
+                    };
+
+                    fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+                    // SAFETY: this remains the handoff's exact once-live
+                    // client block. The source fast-root proof still makes
+                    // the one reclaim attempt fail before terminal release.
+                    let handoff = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                        Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Terminal {
+                            handoff,
+                            error: ThreadExitSingletonRemoteFreeError::Release,
+                        }) => handoff,
+                        Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Terminal {
+                            handoff,
+                            error,
+                        }) => {
+                            core::mem::forget(handoff);
+                            panic!("failed OS unmap retains the exact release terminal: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Rejected {
+                            handoff,
+                            error,
+                        }) => {
+                            core::mem::forget(handoff);
+                            panic!("the exact OS singleton final free is not rejected: {error:?}");
+                        }
+                        Ok(drain) => {
+                            core::mem::forget(drain);
+                            panic!("the configured OS unmap failure must retain its handoff");
+                        }
+                    };
+                    assert_eq!(
+                        fault.observed(),
+                        1,
+                        "the terminal OS release attempts exactly one source unmap"
+                    );
+                    fault.set(fault::Plan::disabled());
+                    assert!(
+                        handoff.test_has_pending_os_release(),
+                        "failed unmap retains the unique published mapping owner in the handoff engine"
+                    );
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable through failed OS release");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after failed-release list observation");
+                        head
+                    };
+                    assert!(
+                        abandoned_head.is_null(),
+                        "the source list removal precedes the failed terminal unmap"
+                    );
+                    for offset in (0..published.layout().page_map_size())
+                        .step_by(crate::config::ARENA_SLICE_SIZE)
+                    {
+                        assert!(unsafe {
+                            page_map
+                                .page_map()
+                                .expect("the process PageMap remains published")
+                                .checked_lookup(published.slice_start().as_ptr().wrapping_add(offset))
+                        }
+                        .is_null());
+                    }
+
+                    // Dropping the terminal handoff moves the raw published
+                    // mapping owner into the later attachment and latches it.
+                    // This slice has no public retry lifecycle for that owner,
+                    // so retain this isolated fixture rather than destroying
+                    // a still-mapped source object in Drop.
+                    drop(handoff);
+                    assert!(matches!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::Poisoned)
+                    ));
+                    core::mem::forget(owner);
+                });
+                worker
+                    .join()
+                    .expect("failed OS-singleton handoff remains current-thread local");
+            });
+
+            // The terminal attachment retains its published mapping owner;
+            // source main teardown must not run across that unfinished owner.
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("failed OS-singleton handoff fixture remains current-thread local");
     }
 
     #[test]

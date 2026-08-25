@@ -68,8 +68,10 @@ process-static main heap/default-Theap attachment; one no-page later-thread
 attachment to that shared main Heap; one process-static page-map root
 publication owner plus one caller-selected, process-shared single-arena
 sidecar; bounded ticket-zero and later-thread page engines over that matched
-process pair; one all-free later-main thread-exit drain; seven sole-page
-later-main owner-exit handoffs (a full arena singleton, a mapped medium page
+process pair; one all-free later-main thread-exit drain; eight sole-page
+later-main owner-exit handoffs (a full arena singleton, an OS-aligned
+singleton that links through `Heap::os_abandoned_pages` and removes that list
+member before clipped PageMap/alias/metadata/mapping release, a mapped medium page
 with one live block, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that remain unmapped until
 their mostly-used free boundary then reabandon to the static-main bitmap, and a sole nonfull
@@ -172,13 +174,18 @@ fast slot, force-collects every queue (including full), and releases only pages
 that become all-free through PageMap removal -> `pages_main` clear -> metadata
 retirement -> slice release. The pass continues beyond an earlier live page,
 then retains that post-fast-slot owner instead of queue-detaching or abandoning
-the general live page. Seven explicit sole-page exceptions remain after
+the general live page. Eight explicit sole-page exceptions remain after
 fast-slot clear, each requiring no other queue/direct/page state. The full
 one-block arena singleton false-collects, detaches, and unmapped-abandons while
 retaining its PageMap lifecycle and registration through its exact final client
 free; that failed-reclaim empty result performs PageMap removal -> `pages_main`
-clear -> metadata retirement -> slice release. The separate medium regular
-page exception requires `reserved > 1` and `used == 1`, force- then
+clear -> metadata retirement -> slice release. The OS-aligned singleton
+exception permits the source `BIN_FULL` route even for a
+small ordinary block size: it links its one `MemoryKind::Os` page in
+`Heap::os_abandoned_pages` before unown, removes it before clipped PageMap ->
+alias -> metadata -> mapping release, and retains an injected failed-unmap
+owner terminally. It provides no OS-list search, reuse, or general routing.
+The separate medium regular page exception requires `reserved > 1` and `used == 1`, force- then
 false-collects, detaches, and publishes its exact main
 `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`. Its final
 client free takes only the source mapped empty-before-reclaim outcome, clears
