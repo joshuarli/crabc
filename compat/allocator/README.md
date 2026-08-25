@@ -19,7 +19,7 @@ singleton linked through `Heap::os_abandoned_pages` until its final release, a m
 one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
 reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
-route with exact full-medium, full-non-direct-small, and full-direct-small
+route with exact full-medium, full-large, full-non-direct-small, and full-direct-small
 one-joined-remote-free force-collection predecessors) plus
 one aggregate regular small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
@@ -360,13 +360,15 @@ preflight-bounded full-singleton failed-reclaim handoff, one sole-medium
 mapped empty-before-reclaim handoff, four full source-unmapped routes (medium,
 large, non-direct small, and direct small), and one sole nonfull small-or-medium process
 route whose linear client frees begin after actual old Theap/TLD teardown. Its
-separate full-medium, full-non-direct-small, and full-direct-small predecessors
-each accept one joined remote free only: force collection makes the full source
-page `reserved - 1` used, then false collection removes the retained source
-member and immediately publishes the mapped regular state before old-Theap/TLD
-teardown. The medium page stays linked in `BIN_FULL`; the non-direct-small page
-stays in its ordinary bin with an empty direct-cache image; and the direct-small
-page clears its exact rounded direct-cache range before page-count detach.
+separate full-medium, full-large, full-non-direct-small, and
+full-direct-small predecessors each accept one joined remote free only: force
+collection makes the full source page `reserved - 1` used, then false
+collection removes the retained source member and immediately publishes the
+mapped regular state before old-Theap/TLD teardown. The medium and large pages
+stay linked in `BIN_FULL`; the non-direct-small page stays in its ordinary bin
+with an empty direct-cache image; and the direct-small page clears its exact
+rounded direct-cache range before page-count detach. The large mapped route
+retains its complete 64-slice terminal-release proof.
 A fresh later-main owner may explicitly consume only a sole mapped medium page
 that entered source owner exit already nonfull. All force-collected full-origin
 predecessors stay client-free-only even though their final geometry

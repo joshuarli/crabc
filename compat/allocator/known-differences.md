@@ -600,6 +600,19 @@ aggregate-registry adoption remain absent.
   `later_thread_exit_full_medium_force_collect_route_retains_a_collection_failure`
   proves a force-collector failure records terminal drain poison rather than
   fabricating a retry; and
+  `later_thread_exit_full_large_force_collects_to_client_free_only_mapped_process_route`
+  proves one joined remote free is collected while the large page remains
+  linked in `BIN_FULL`, then source removes that full member, immediately
+  publishes the mapped large bit/count, tears down the old Theap/TLD, rejects
+  allocation-time adoption before a fresh target can claim/requeue its bitmap
+  member, retains all 64 PageMap slices through sequential client frees, and
+  releases them in source order;
+  `later_thread_exit_full_large_force_collect_route_rejects_a_regular_large_before_mutation`
+  proves the distinct nonfull large entry shape leaves its regular queue/map
+  and full flag untouched, while
+  `later_thread_exit_full_large_force_collect_route_retains_a_collection_failure`
+  proves a force-collector failure records terminal drain poison rather than
+  fabricating a retry; and
   `later_thread_exit_full_non_direct_small_force_collects_to_client_free_only_mapped_process_route`
   proves one joined remote free makes the sole full ordinary-bin non-direct
   small page nonfull during force collection, then source retains its empty

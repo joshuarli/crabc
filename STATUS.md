@@ -91,12 +91,12 @@ with one live block, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that remain unmapped until
 their mostly-used free boundary then reabandon to the static-main bitmap, and a sole nonfull
 small-or-medium page whose process-owned route survives old-Theap/TLD teardown,
-including exact full-medium, full-non-direct-small, and full-direct-small
-predecessors where one joined remote free is force-collected before immediate
-mapped publication (the medium page remains in `BIN_FULL`; the non-direct-small
-page remains in its ordinary bin with every direct slot empty; the direct-small
-page remains in its ordinary bin until its rounded direct-cache range is
-cleared during removal));
+including exact full-medium, full-large, full-non-direct-small, and
+full-direct-small predecessors where one joined remote free is force-collected
+before immediate mapped publication (the medium and large pages remain in
+`BIN_FULL`; the non-direct-small page remains in its ordinary bin with every
+direct slot empty; the direct-small page remains in its ordinary bin until its
+rounded direct-cache range is cleared during removal));
 and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
 through sequential client frees. A fresh later-main owner can explicitly
@@ -214,18 +214,22 @@ false-collects, detaches, and publishes its exact main
 client free takes only the source mapped empty-before-reclaim outcome, clears
 that bit/identity, consumes the paired count, and performs the same terminal
 release; a still-live result is terminally retained rather than reclaimed or
-requeued. Full medium and full large `BIN_FULL` exceptions force- then
+requeued. Normal full medium and full large `BIN_FULL` exceptions force- then
 false-collect, queue/page-count-detach, and deliberately become ordinary
-unmapped abandonment before old-Theap/TLD teardown. The full non-direct small
-exception follows the same tail but detaches from its ordinary small size bin,
-requires `block_size > SMALL_SIZE_MAX`, has no direct-cache range, and uses the
-ordinary failed-reclaim collector. The full direct small exception is the
-complementary ordinary-bin shape: it requires `block_size <= SMALL_SIZE_MAX`,
-`reserved >= 16`, `used == reserved`, and the complete rounded source
-direct-cache range with every other slot empty. Queue removal clears that range
-before page-count detach. Its partial collector retains the just-published
-atomic head, so the source free count has its one-head lag before the same
-below-mostly-used reabandonment decision. Their sequential client frees remain unmapped through
+unmapped abandonment before old-Theap/TLD teardown. Their separately bounded
+one-joined-remote predecessors collect exactly one free while remaining linked
+in `BIN_FULL`, then the same removal clears the full flag and immediately
+publishes the mapped bit/count pair; the large mapped route retains its full
+64-slice terminal-release proof. The full non-direct small exception follows
+the normal unmapped tail but detaches from its ordinary small size bin, requires
+`block_size > SMALL_SIZE_MAX`, has no direct-cache range, and uses the ordinary
+failed-reclaim collector. The full direct small exception is the complementary
+ordinary-bin shape: it requires `block_size <= SMALL_SIZE_MAX`, `reserved >=
+16`, `used == reserved`, and the complete rounded source direct-cache range
+with every other slot empty. Queue removal clears that range before page-count
+detach. Its partial collector retains the just-published atomic head, so the
+source free count has its one-head lag before the same below-mostly-used
+reabandonment decision. Their normal sequential client frees remain unmapped through
 `free <= reserved / 8`; the first
 below-mostly-used free publishes the exact static-main `pages_abandoned[bin]`
 bit plus paired `Heap::abandoned_count[bin]`, and the mapped tail preserves

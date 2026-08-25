@@ -368,15 +368,16 @@ small-or-medium route, and aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
 span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
 pairing through actual teardown and sequential later frees. The sole mapped
-regular route additionally has three source-specific full-page predecessors:
-exactly one joined remote free makes either the sole medium `BIN_FULL` page,
-the sole non-direct-small ordinary-bin page, or the sole direct-small
+regular route additionally has four source-specific full-page predecessors:
+exactly one joined remote free makes either the sole medium or large `BIN_FULL`
+page, the sole non-direct-small ordinary-bin page, or the sole direct-small
 ordinary-bin page nonfull during force collection. False collection removes
-that same source member; the non-direct-small branch retains the empty
-direct-cache image, while the direct-small branch clears its rounded range
-before page-count detach. All three immediately publish the ordinary mapped
-bit/count pair before old-Theap/TLD teardown. They are not general full-page
-traversals. All full-origin predecessors remain client-free-only even though their final geometry is
+that same source member; the large branch retains its complete 64-slice span,
+the non-direct-small branch retains the empty direct-cache image, while the
+direct-small branch clears its rounded range before page-count detach. All four
+immediately publish the ordinary mapped bit/count pair before old-Theap/TLD
+teardown. They are not general full-page traversals. All full-origin
+predecessors remain client-free-only even though their final geometry is
 nonfull. Only the separately completed source-initially-nonfull sole
 mapped-medium route has the explicit inverse bridge into one fresh
 later-main mutation lease. Its bounded reserved-prefix fixture
@@ -420,7 +421,11 @@ mapped tails (including the full-large route's 64-slice terminal release), the
 full-medium one-joined-remote force-collection predecessor's immediate mapped
 publication, client-free-only allocation-adoption refusal, eight-slice
 client-free release, pre-mutation regular-medium refusal, and terminal
-collection-failure retention; the full-non-direct-small one-joined-remote
+collection-failure retention; the full-large one-joined-remote force-collection
+predecessor's immediate mapped publication, client-free-only
+allocation-adoption refusal, complete 64-slice client-free release,
+pre-mutation regular-large refusal, and terminal collection-failure retention;
+the full-non-direct-small one-joined-remote
 force-collection predecessor's immediate mapped publication, client-free-only
 allocation-adoption refusal, one-slice client-free release, pre-mutation
 direct-small refusal, and terminal collection-failure retention; the
@@ -450,17 +455,17 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 445 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 448 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 93 items and 97
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 94 items and 98
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-non-direct-small/full-direct-small or mapped-one-block-medium/non-direct-small/direct-small cases, the later-main
+full-medium/full-large/full-non-direct-small/full-direct-small or mapped-one-block-medium/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately
