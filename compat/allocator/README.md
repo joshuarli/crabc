@@ -265,8 +265,8 @@ map/bitmap/fresh/release/producer ordering plus the all-free scan, one
 preflight-bounded full-singleton failed-reclaim handoff, one sole-medium
 mapped empty-before-reclaim handoff, and one sole nonfull medium process route
 whose linear client frees begin after actual old Theap/TLD teardown, plus one
-all-medium source-order aggregate traversal whose force-empty result remains
-an ordinary drain. It still does not claim a general thread lifecycle,
+all-medium source-order aggregate traversal whose retired/force-empty result
+remains an ordinary drain. It still does not claim a general thread lifecycle,
 abandonment traversal, or `pthread`
 integration claim. The compiler-TLS codegen probe proves hidden
 initial-exec AArch64 root access and direct thread-pointer identity without a

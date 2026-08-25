@@ -182,21 +182,24 @@ mapped publication, tears down the old Theap/TLD, and routes its linear client
 frees through short PageMap access.
 
 `abandon_mapped_medium_pages_to_process_route` is the next bounded source
-traversal: before its first force collection, every queue member must be a
-nonfull medium arena page and every direct slot must be empty. It then follows
-`mi_theap_page_collect` / `_mi_page_abandon` per page: force-collect, release
+traversal: before any mutation, every direct slot must be empty and every queue
+member must be a nonfull medium arena page. An empty member is admitted only
+when normal local free left its source retirement countdown nonzero. The route
+then ports `_mi_theap_collect_retired(theap, true)`'s regular-bin pass, so an
+already-empty retired span releases before the remaining
+`mi_theap_page_collect` / `_mi_page_abandon` decisions: force-collect, release
 pages made all-free, false-collect still-live pages, queue/page-count detach,
 and publish the exact static-main mapped identity/bit/count pair. Its typed
 aggregate registry retains no old-Theap pointer or raw page list; every later
 linear client free re-resolves one PageMap entry, selects its bin only after
 the source low owner-bit claim, preserves map/bit/count while nonempty, and
 performs the terminal PageMap -> `pages_main` -> metadata -> slice release on
-empty. If force collection empties every page, it returns the ordinary drain.
-Fresh engines may serialize independent PageMap operations between client
-frees, but no current path can adopt, reclaim, or requeue a registered route
-page. Small/full/large/unmapped/huge/foreign pages, concurrent client routes,
-deferred callbacks, arena collection, and retry/reuse as a normal allocator
-remain outside this owner. Only an empty drain permits
+empty. If retirement/force collection empties every page, it returns the
+ordinary drain. Fresh engines may serialize independent PageMap operations
+between client frees, but no current path can adopt, reclaim, or requeue a
+registered route page. Small/full/large/unmapped/huge/foreign pages,
+concurrent client routes, deferred callbacks, arena collection, and retry/reuse
+as a normal allocator remain outside this owner. Only an empty drain permits
 `finish_after_page_drain` to reset default/cached, detach its shared heap list
 member before its TLD list member, and retire metadata/TLD. A force/release
 failure or root/list mismatch remains terminally retained; this is not general

@@ -1884,17 +1884,90 @@ impl<'attachment, 'main, 'arena, 'map>
         })
     }
 
+    /// Ports the retired-page portion of
+    /// `src/page.c:_mi_theap_collect_retired(theap, true)` that precedes the
+    /// aggregate mapped-medium route's normal page traversal.
+    ///
+    /// The source `MI_ABANDON` path runs this pass after deferred callbacks
+    /// and before it visits ordinary/full queues. This bounded route has no
+    /// deferred-callback capability, but it must still force-release an
+    /// already-empty, locally retired regular page before deciding which live
+    /// pages enter its process registry. The shared-main later Theap is
+    /// constructed in the normal `allow_page_abandon` mode, so the source's
+    /// non-abandoning full-queue branch is unreachable here; running the
+    /// generic [`Self::collect_retired`] helper would incorrectly add its
+    /// arena-purge work to an `MI_ABANDON` transition.
+    ///
+    /// The caller first proves the entire queue image has only the supported
+    /// medium shape, permitting an empty member only when its source retirement
+    /// countdown is nonzero. Therefore a prepass release failure retains this
+    /// post-fast-slot drain rather than mutating an otherwise rejected mixed
+    /// page-class image.
+    fn collect_retired_before_mapped_medium_route(
+        &mut self,
+    ) -> Result<(), ThreadExitMappedMediumPagesPostExitAbandonError> {
+        debug_assert!(
+            self.session.theap().allows_page_abandon(),
+            "the shared-main later Theap has the source abandoning option image"
+        );
+
+        let (minimum, maximum) = self.session.retired_bounds();
+        self.session.reset_retired_bounds();
+        if minimum >= BIN_FULL || minimum > maximum {
+            return Ok(());
+        }
+
+        for bin in minimum..=maximum {
+            let mut page = match self.session.queue(bin) {
+                Some(queue) => queue.first(),
+                None => return Err(ThreadExitMappedMediumPagesPostExitAbandonError::Queue),
+            };
+            let mut visited = 0usize;
+            while !page.is_null() && visited < RETIRE_MAX_PAGES {
+                visited += 1;
+                let page_nonnull = match NonNull::new(page) {
+                    Some(page) => page,
+                    None => return Err(ThreadExitMappedMediumPagesPostExitAbandonError::Queue),
+                };
+                // SAFETY: the structural preflight retains exclusive queue
+                // ownership. Preserve the successor before source release can
+                // retire this page's metadata and arena span.
+                let next = unsafe { page_nonnull.as_ref().next() };
+                let expire = unsafe { page_nonnull.as_ref().retire_expire() };
+                if expire == 0 {
+                    break;
+                }
+                if unsafe { page_nonnull.as_ref().used() } == 0 {
+                    // `_mi_page_try_retire` decrements first, even when the
+                    // forced source branch immediately frees the page.
+                    unsafe { (*page_nonnull.as_ptr()).set_retire_expire(expire - 1) };
+                    if !self.release_page(bin, page_nonnull.as_ptr()) {
+                        return Err(ThreadExitMappedMediumPagesPostExitAbandonError::Release);
+                    }
+                } else {
+                    // A page revived before this source pass is no longer
+                    // retired; the later normal traversal still validates and
+                    // abandons it as one live medium page.
+                    unsafe { (*page_nonnull.as_ptr()).set_retire_expire(0) };
+                }
+                page = next;
+            }
+        }
+        Ok(())
+    }
+
     /// Traverses every live mapped medium page of this post-fast-slot later
     /// owner in the same source order as `_mi_theap_collect_abandon`.
     ///
-    /// The preflight is intentionally complete and non-mutating: every
-    /// current queue member must be a nonfull medium arena page that can use
-    /// the static main Heap's exact bitmap/count pairing, and every direct
-    /// slot must be empty. Only then does the traversal force-collect each
-    /// page, release pages that become all-free, false-collect and detach
-    /// still-live pages, and publish each mapped-abandoned identity. The
-    /// aggregate process route is a typed registry over those source PageMap
-    /// and bitmap entries, not a local list of raw page pointers.
+    /// A complete non-mutating structural preflight requires every current
+    /// queue member to be a nonfull medium arena page that can use the static
+    /// main Heap's exact bitmap/count pairing, and every direct slot to be
+    /// empty. It admits an empty member only when that page is source-retired.
+    /// The source retired-page prepass then releases those spans before the
+    /// normal traversal force-collects, false-collects and detaches each
+    /// remaining live page for mapped-abandoned publication. The aggregate
+    /// process route is a typed registry over those source PageMap and bitmap
+    /// entries, not a local list of raw page pointers.
     ///
     /// It deliberately has no allocation-time claim, reclaim/requeue, or
     /// concurrent client-free policy. The caller must retain its linear route
@@ -1928,11 +2001,13 @@ impl<'attachment, 'main, 'arena, 'map>
             ));
         }
 
-        // Before source force collection can change local ownership, prove
-        // that *every* page has the one bounded mapped-medium route. This is
-        // the aggregate registry boundary: it rejects full/small/large/OS
-        // pages and malformed queue images without partially detaching an
-        // earlier member.
+        // Before source retirement or force collection can change local
+        // ownership, prove that *every* page has the one bounded
+        // mapped-medium route. This is the aggregate registry boundary: it
+        // rejects full/small/large/OS pages and malformed queue images without
+        // partially detaching an earlier member. A zero-used member is valid
+        // only when normal local free left it in the source retired state; the
+        // following source-order prepass must release it before live routing.
         let expected_page_count = self.session.theap().page_count();
         let mut observed_page_count = 0usize;
         for queue_bin in 0..BIN_COUNT {
@@ -1980,7 +2055,7 @@ impl<'attachment, 'main, 'arena, 'map>
                     || bin >= ARENA_BIN_COUNT
                     || bin == BIN_FULL
                     || page_ref.reserved() <= 1
-                    || page_ref.used() == 0
+                    || (page_ref.used() == 0 && page_ref.retire_expire() == 0)
                     || page_ref.used() >= usize::from(page_ref.reserved())
                     || page_is_in_full(page_ref)
                 {
@@ -2038,6 +2113,15 @@ impl<'attachment, 'main, 'arena, 'map>
                     ThreadExitMappedMediumPagesPostExitAbandonError::Queue,
                 ));
             }
+        }
+
+        // `mi_theap_collect_ex(MI_ABANDON)` releases tracked retired regular
+        // pages before it visits queues for the force/abandon decision. Keep
+        // this separate from `collect_retired`: abandoning a later owner must
+        // not run its generic arena-purge pass. A failed release may already
+        // have changed queue/map/arena ownership, so retain this drain.
+        if let Err(error) = self.collect_retired_before_mapped_medium_route() {
+            return Err(retained(self, error));
         }
 
         let mut detached_pages = 0usize;

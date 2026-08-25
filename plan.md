@@ -111,18 +111,23 @@ but is not concurrent routing, allocation-time claim, reclaim, or requeue.
 The bounded aggregate extension,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_pages_to_process_route`,
 now performs one source-shaped traversal over more than one live page. Its
-complete preflight leaves queue, direct-cache, and page ownership untouched
-unless every direct slot is empty and every queued member is a nonfull regular
-medium page in the paired arena (`reserved > 1`, `0 < used < reserved`);
-small, full, large, singleton/huge, unmapped, foreign, malformed, and mixed
-queues reject before any queue/page mutation. The traversal then follows
-`mi_theap_collect_abandon`: force collect, release an all-free page, false
-collect, release if it became all-free, otherwise queue/page-count detach and
-mapped identity/bit/count/unown publication. It keeps no raw page list: every
-survivor is represented by its PageMap registration plus the exact static-main
-`pages_abandoned[bin]` bit and paired `Heap::abandoned_count[bin]`. A fully
-force-collected result returns the normal drained owner. Otherwise the former
-Theap/TLD tears down and the linear
+complete structural preflight leaves queue, direct-cache, and page ownership
+untouched unless every direct slot is empty and every queued member is a
+nonfull regular medium page in the paired arena: live members require
+`reserved > 1` and `0 < used < reserved`, while an empty member is admitted
+only with a nonzero source retirement countdown. Small, full, large,
+singleton/huge, unmapped, foreign, malformed, and mixed queues reject before
+any queue/page mutation. After that refusal boundary it ports
+`_mi_theap_collect_retired(theap, true)`: tracked empty retired pages release
+through the ordinary PageMap -> `pages_main` -> metadata -> slice path before
+the remaining traversal follows `mi_theap_collect_abandon`'s force collect,
+all-free release, false collect, and otherwise queue/page-count detach plus
+mapped identity/bit/count/unown publication. It does not add the absent
+deferred-callback, arena-collection, or stats-merge work. It keeps no raw page
+list: every survivor is represented by its PageMap registration plus the exact
+static-main `pages_abandoned[bin]` bit and paired
+`Heap::abandoned_count[bin]`. A fully retired/force-collected result returns
+the normal drained owner. Otherwise the former Theap/TLD tears down and the linear
 `MainHeapThreadProcessPageExitMappedMediumPagesRoute` re-resolves each client
 free under a short PageMap lock. Only after the free tail has claimed the low
 owner bit does it select that page's bin-specific bitmap/count capability;
@@ -168,12 +173,13 @@ safe lifecycle frontier is another source-shaped owner-exit page class or the
 allocation-time policy needed to reclaim an existing registry member—not a
 superficial broad abandonment loop.
 
-A fresh pinned-source audit makes that prerequisite concrete:
-`mi_theap_collect_ex(MI_ABANDON)` force-collects each queue member and then
-calls `_mi_page_abandon` for every still-live page
-(`src/theap.c:97-152`, `src/page.c:291-302`). The latter false-collects,
-detaches the page, and delegates mapped publication/count pairing or unmapped
-abandonment to `src/arena.c:1304-1409`. The current
+A fresh pinned-source audit makes that prerequisite concrete: after its absent
+deferred-callback edge, `mi_theap_collect_ex(MI_ABANDON)` first calls
+`_mi_theap_collect_retired(theap, true)`, then force-collects each queue member
+and calls `_mi_page_abandon` for every still-live page
+(`src/theap.c:97-152`, `src/page.c:414-518,291-302`). The latter
+false-collects, detaches the page, and delegates mapped publication/count
+pairing or unmapped abandonment to `src/arena.c:1304-1409`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit transfer
@@ -192,7 +198,7 @@ and the raw false/force-local-list order/cycle regressions in `free_list::tests`
 the no-page shared-main regressions in `main_heap_thread::tests`, the
 process-map commit/once/lifecycle regressions in `process_page_map::tests`, the
 root-pairing regressions in `process_arena::tests`, the five bounded
-static-main page-owner regressions in `main_static_page::tests`, the sixteen
+static-main page-owner regressions in `main_static_page::tests`, the seventeen
 bounded later-main page-owner regressions in `main_heap_page::tests` (including
 the joined remote-full all-free exit drain, its later-queue collection behind a
 retained live page, the retained-live-page boundary, the sole-full-singleton
@@ -200,8 +206,8 @@ final-free/reject-before-detach regressions, the sole-medium
 mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
 medium route's teardown-before-free, one-page-refusal, and cross-thread
 movement regressions, and the aggregate medium registry's two-page release,
-post-claim distinct-bin selection, and force-collection-to-drained
-regressions), and
+retired-page prepass, post-claim distinct-bin selection, and
+force-collection-to-drained regressions), and
 `abandoned::tests::mapped_one_block_owner_exit_free_retains_a_nonempty_medium_page`,
 which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,

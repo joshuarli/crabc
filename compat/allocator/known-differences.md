@@ -421,22 +421,24 @@ result may refine it only when it can prove retained ownership.
 
   `abandon_mapped_medium_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
-  preflight rejects before mutation unless every queued page is a nonfull
-  medium arena page and every direct slot is empty. It then preserves source
+  structural preflight rejects before mutation unless every direct slot is
+  empty and every queued page is a nonfull medium arena page; it accepts an
+  empty page only with a nonzero source retirement countdown. It then ports
+  `_mi_theap_collect_retired(theap, true)`'s regular-bin release before source
   force collection, ordinary all-free release, false collection, queue/page
-  detach, and mapped identity/bit/count/unown for each survivor. Its typed
+  detach, and mapped identity/bit/count/unown for each live survivor. Its typed
   registry retains no old-Theap pointer or raw page list: PageMap registration
   plus the exact static-main bitmap/count pair are membership, and the count
   decreases only after a full PageMap -> main bitmap -> metadata -> slice
   release. A free chooses its bin only after acquiring the source low owner
-  bit; a nonempty result keeps the pairing, and a force-empty traversal returns
-  the ordinary drain. Fresh engines may serialize independent map operations
-  between frees, but no current engine receives an adoption, reclaim, or
-  requeue capability for a registered route page. Small/full/large/unmapped/
-  huge/foreign pages, concurrent client-free routes, source deferred callbacks,
-  arena collection, statistics merge, and retry/reuse as a normal allocator
-  remain absent. A dropped unfinished engine, drain, or route poisons its owner
-  rather than fabricating cleanup.
+  bit; a nonempty result keeps the pairing, and a retired/force-empty traversal
+  returns the ordinary drain. Fresh engines may serialize independent map
+  operations between frees, but no current engine receives an adoption,
+  reclaim, or requeue capability for a registered route page. Small/full/large/
+  unmapped/huge/foreign pages, concurrent client-free routes, source deferred
+  callbacks, arena collection, statistics merge, and retry/reuse as a normal
+  allocator remain absent. A dropped unfinished engine, drain, or route
+  poisons its owner rather than fabricating cleanup.
 - **Evidence:**
   `main_heap_page::tests::later_thread_page_engine_uses_the_static_main_heap_and_in_place_arena_bitmap`
   proves exact shared Heap/later Theap identity, `pages_main` publication, map
@@ -474,6 +476,9 @@ result may refine it only when it can prove retained ownership.
   `later_thread_exit_mapped_medium_pages_route_tears_down_and_releases_two_pages`
   proves one aggregate registry keeps two PageMap/bitmap/count memberships
   paired across a still-live free, one-page release, and last-page release;
+  `later_thread_exit_mapped_medium_pages_route_releases_retired_page_before_live_route`
+  proves a normally retired all-free medium span releases before the remaining
+  live medium page becomes a post-exit registry member;
   `later_thread_exit_mapped_medium_pages_route_selects_each_page_bin_after_claim`
   proves two distinct medium bins select their paired static-main capability
   only after the source low owner-bit claim; and

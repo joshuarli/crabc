@@ -318,23 +318,29 @@ free thread but is not shareable as concurrent routes.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.
-Its complete non-mutating preflight requires every queued page to be a nonfull
-medium arena page and every direct slot to be empty. It then preserves the
-source visit order for each page: force-collect, immediately release an
-all-free page, false-collect a still-live page, then queue/page-count detach
-and mapped identity/bit/count publication. `ThreadExitMappedMediumPagesPostExitParts`
-is the resulting fixed-capacity registry: membership remains in each page's
-PageMap registration and exact `pages_abandoned[bin]`/`abandoned_count[bin]`
-pair, while its `remaining_pages` count tracks only spans that have not yet
-completed terminal release. It contains neither raw page pointers nor a
-former-Theap borrow. After actual old-Theap/TLD teardown, each consuming free
-briefly locks the map, acquires the source low owner bit before deriving that
-page's bin/capability, and either returns the still-live route, releases one
-page, or releases the last page and completes the map route. A force-empty
-traversal returns the ordinary drain instead of creating an empty registry.
-Fresh engines may serialize independent PageMap operations between frees, but
-the current engine surface exposes no allocation-time adoption, reclaim, or
-requeue capability for a registered aggregate member.
+Its complete non-mutating structural preflight requires every direct slot to
+be empty and every queued page to be a nonfull medium arena page. A zero-used
+page is accepted only when normal local free left its source retirement
+countdown nonzero; unsupported/mixed images still reject before mutation. It
+then ports `_mi_theap_collect_retired(theap, true)`'s regular-bin portion,
+releasing those already-empty retired spans before the normal source visit
+order for each remaining page: force-collect, immediately release an all-free
+page, false-collect a still-live page, then queue/page-count detach and mapped
+identity/bit/count publication. This narrow `MI_ABANDON` edge deliberately
+does not turn on the absent deferred-callback, arena-collection, or stats-merge
+work. `ThreadExitMappedMediumPagesPostExitParts` is the resulting fixed-capacity
+registry: membership remains in each page's PageMap registration and exact
+`pages_abandoned[bin]`/`abandoned_count[bin]` pair, while its `remaining_pages`
+count tracks only spans that have not yet completed terminal release. It
+contains neither raw page pointers nor a former-Theap borrow. After actual
+old-Theap/TLD teardown, each consuming free briefly locks the map, acquires the
+source low owner bit before deriving that page's bin/capability, and either
+returns the still-live route, releases one page, or releases the last page and
+completes the map route. A retired/force-empty traversal returns the ordinary
+drain instead of creating an empty registry. Fresh engines may serialize
+independent PageMap operations between frees, but the current engine surface
+exposes no allocation-time adoption, reclaim, or requeue capability for a
+registered aggregate member.
 
 Other live-page states are rejected before aggregate detach: small, full,
 large, unmapped, huge, foreign, or direct-cache state remain separate work.

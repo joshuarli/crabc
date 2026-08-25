@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-360,377-421,448-481`,
-// `src/theap.c:89-152`, `src/page.c:214-243`,
+// `src/theap.c:89-152`, `src/page.c:214-302,414-518`,
 // `src/arena.c:674-723,781-821,951-1114,1240-1282`, and
 // `src/page-map.c:228-365`.
 
@@ -30,10 +30,11 @@
 //! unmapped-abandoned, a sole medium regular page with one live block becomes
 //! mapped-abandoned and must become empty before reclaim, and a sole nonfull
 //! medium page with one or more live blocks becomes a typed process route
-//! before the old Theap/TLD tears down. A fourth, aggregate exception now
-//! source-traverses every live nonfull medium arena page only when *all* live
-//! pages satisfy that shape: it releases pages made empty by force collection
-//! and registers every survivor in one linear process route. Each route free
+//! before the old Theap/TLD tears down. A fourth, aggregate exception first
+//! force-releases tracked retired regular pages, then source-traverses every
+//! remaining live nonfull medium arena page only when every queued member has
+//! that supported shape: it releases pages made empty by force collection and
+//! registers every survivor in one linear process route. Each route free
 //! serializes its plain PageMap operation briefly, but neither route exposes
 //! allocation-time claiming, reclaim/requeue, concurrent client-free routing,
 //! or full/small/large/unmapped/huge owner-exit handling. Source deferred
@@ -3005,6 +3006,170 @@ mod tests {
         })
         .join()
         .expect("multi-page post-exit route fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_medium_pages_route_releases_retired_page_before_live_route() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the paired arena remains published through the route");
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the retirement fixture");
+                    let retired = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the fixture creates a first medium page");
+                    let retired_page = NonNull::new(unsafe { allocator.test_page_for_block(retired) })
+                        .expect("the first medium page is PageMap-published");
+                    let live = allocator
+                        .allocate(MEDIUM_MAX_OBJ_SIZE / 2, false)
+                        .expect("the fixture creates a live medium page in another bin");
+                    let live_page = NonNull::new(unsafe { allocator.test_page_for_block(live) })
+                        .expect("the live medium page is PageMap-published");
+                    assert_ne!(
+                        retired_page, live_page,
+                        "the retirement fixture keeps an all-free and live page independently queued"
+                    );
+                    assert_ne!(
+                        crate::size_class::bin(unsafe { retired_page.as_ref().block_size() }),
+                        crate::size_class::bin(unsafe { live_page.as_ref().block_size() }),
+                        "distinct medium bins prevent the live allocation from reviving the retired page"
+                    );
+                    let retired_memory = unsafe { retired_page.as_ref().memid() };
+                    let retired_slice = retired_memory
+                        .arena_memory()
+                        .expect("the retired medium page belongs to the paired arena")
+                        .slice_index as usize;
+
+                    // SAFETY: this is the first medium page's one current
+                    // local allocation. Its normal free leaves a source
+                    // retired page in the queue, while the other bin remains
+                    // live for the post-exit process route.
+                    unsafe { allocator.free(retired) }
+                        .expect("the ordinary local free retires the empty medium page");
+                    assert_eq!(unsafe { retired_page.as_ref().used() }, 0);
+                    assert_ne!(
+                        unsafe { retired_page.as_ref().retire_expire() },
+                        0,
+                        "ordinary local free leaves this empty regular page retired"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(retired.as_ptr()) },
+                        retired_page.as_ptr(),
+                        "retirement retains the PageMap span until the source thread-exit prepass"
+                    );
+                    assert_eq!(unsafe { live_page.as_ref().used() }, 1);
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                            core::mem::forget(drain);
+                            panic!("one live medium page still requires a process route")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::Rejected {
+                            drain,
+                            error,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("the retired-page source prepass releases before the live medium route: {error:?}")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::RetainedDrain {
+                            drain,
+                            error,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("retired-page collection retains only a failed source transition: {error:?}")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::Teardown {
+                            terminal,
+                            ..
+                        }) => {
+                            core::mem::forget(terminal);
+                            panic!("the retired-page prepass still tears down the old Theap/TLD")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::PageMap {
+                            parts,
+                            error,
+                        }) => {
+                            core::mem::forget(parts);
+                            panic!("the live page transfers its short PageMap route: {error:?}")
+                        }
+                    };
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the route tears down the old Theap/TLD after source retirement"
+                    );
+                    assert_eq!(route.test_remaining_pages(), 1);
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(retired.as_ptr()) }.is_null(),
+                        "the retired page releases before the live page is published into the route"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(retired_slice, 1),
+                        Some(true),
+                        "the source retirement prepass clears the retired page's ordinary arena bit"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(live.as_ptr()) },
+                        live_page.as_ptr(),
+                        "only the live medium page remains PageMap-registered for its client free"
+                    );
+
+                    match unsafe { route.remote_free_after_thread_exit(live) } {
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {}
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
+                        | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                            core::mem::forget(route);
+                            panic!("the one live routed page releases after its final client free")
+                        }
+                        Err(_) => panic!("the final live client releases through the aggregate route"),
+                    }
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "the live route's final release reopens the process map after retirement"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the retired-page aggregate fixture remains local to its later owner");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("retired-page aggregate fixture remains current-thread local");
     }
 
     #[test]
