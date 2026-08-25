@@ -468,20 +468,23 @@ contracts, reports, and status.
 ### Remaining native x86-64 allocator-parity work
 
 - [ ] Resolve the target-local source API/mode/test/symbol coverage ledger's
-  remaining CMake and mode-dependent forms, C/C++ inline/override forms, test
-  coverage, behavior, and Rust implementation statuses into reviewed outcomes.
-  The native selected normal-release assessment now classifies object/dynamic
-  presence for 194 distinct C functions and marks 183 non-object source forms,
-  but it does not establish their behavior, Rust/public-runtime support, or
-  any unselected target mode; never reuse AArch64 statuses.
+  remaining CMake and mode-dependent forms, unselected C/C++ inline/override
+  forms, upstream-test coverage, behavior, and Rust implementation statuses
+  into reviewed outcomes. The native selected normal-release assessment now
+  classifies object/dynamic presence for 194 distinct C functions and marks
+  183 non-object source forms; a separate native gate compile-links five
+  selected staged public C/C++ forms. Neither result establishes behavior,
+  Rust/public-runtime support, CMake installation, consumer execution, or any
+  unselected target mode; never reuse AArch64 statuses.
 - [ ] Close the source-applicable engine behavior holes identified by the x86
   source map and ledger, record every intentional difference, and add native
   pinned-C differential evidence for each completed behavior.
 - [ ] Broaden the eight bounded lifecycle/concurrency lanes (12 selected tests,
   including five finite Loom models), five bounded fault-state regressions, the
-  25-field quiescent live-owner pinned-C/Rust differential, and the 28-field
-  real small direct-page remote-free/reuse differential into init/done, general
-  remote free or concurrent collection, abandonment/adoption, pthread/TLS/fork,
+  25-field quiescent live-owner pinned-C/Rust differential, the 28-field real
+  small direct-page remote-free/reuse differential, and the 8-field mapped
+  arena same-origin reclaim differential into init/done, general remote free
+  or concurrent collection, abandonment/adoption, pthread/TLS/fork,
   fault/misuse isolation, remaining upstream tests, and stress evidence.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
   measurements into qualified whole-engine performance evidence.

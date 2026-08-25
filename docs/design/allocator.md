@@ -166,10 +166,18 @@ one joined `pthread` remote free, and the owner direct-cache miss falling
 through the regular queue search to detach and reuse that exact block. This is
 one private small direct-page route only, not general allocation/free routing,
 concurrent collection, abandonment, thread teardown, public API, libc
-integration, backend, or AArch64 evidence. The selected normal-release source
-surface is also accounted per item for native object/dynamic symbol presence;
-that accounting does not establish behavior, Rust implementation, or public
-runtime compatibility.
+integration, backend, or AArch64 evidence. A third native x86-only
+eight-field C/Rust differential creates one arena-backed mapped page with two
+same-page live blocks, applies the source queue-detach abandonment transition,
+and frees one block through the same-origin reclaim path while the survivor
+keeps the page nonempty. It proves only mapped abandonment clearing,
+re-association, and requeue for that one route—not general abandonment/adoption
+or cross-thread reclaim. The selected normal-release source surface is also
+accounted per item for native object/dynamic symbol presence, while a separate
+five-mode staged public-header gate proves selected C/C++ compile/linkability
+and ELF identity. Neither accounting nor the header gate establishes behavior,
+Rust implementation, CMake installation, consumer execution, or public runtime
+compatibility.
 
 Those operations are
 live in the private lifecycle,

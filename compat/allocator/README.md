@@ -952,6 +952,20 @@ only selected-release mode and symbol presence; it does not establish behavior,
 Rust implementation coverage, a public `mi_*` API, libc/loader integration,
 or public x86 runtime support.
 
+Selected staged public-header C/C++ compile/linkability has a distinct native
+gate:
+
+```sh
+./scripts/dev-amd64.sh allocator-header-modes
+```
+
+It builds the pinned C normal-release shared object, stages the exact four
+public header byte streams, then compile-links five selected C/C++ consumer
+forms and records x86-64 ELF identity for every artifact. The report is
+`compat/reports/allocator/x86_64/header-mode-evidence.json`. This is not a
+CMake configure/install proof and it does not execute consumers or claim their
+behavior, Rust implementation, public x86 runtime support, or AArch64 status.
+
 The dedicated live-owner remote-free differential is likewise native x86-only:
 
 ```sh
@@ -986,6 +1000,21 @@ compare 28 address-independent values in
 this private direct-page route, not general allocation/free routing or
 concurrent collection, abandonment, thread teardown, public `mi_*` behavior,
 libc integration, a backend, or AArch64 evidence.
+
+One mapped-arena same-origin reclaim transition has its own native private
+differential:
+
+```sh
+./scripts/dev-amd64.sh allocator-mapped-reclaim
+```
+
+Its pinned-C fixture queue-detaches one arena-backed mapped page with two
+same-page live blocks, then frees one through `mi_free`; the survivor keeps the
+page nonempty while the same-origin reclaim clears mapped abandonment and
+requeues the page. It compares eight address-independent values with one Rust
+test and writes `compat/reports/allocator/x86_64/mapped-reclaim.json`. It does
+not prove general abandonment/adoption, cross-thread reclaim, public `mi_*`
+behavior, libc integration, a backend, or AArch64 evidence.
 
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
@@ -1069,8 +1098,10 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
 | `x86_64_release_evidence.py` and `x86_64-release-evidence-v3.5.0.json` | Native x86-64-only C release-mode, ELF identity, object-symbol, and dynamic-symbol evidence. It is dispatched by `allocator-release-evidence`; it does not claim public x86 support or reuse AArch64 status. |
 | `x86_64_api_native_coverage.py` and `x86_64-api-native-coverage-v3.5.0.json` | Native x86-64-only selected-release per-source-form object/dynamic-symbol assessment. It is dispatched by `allocator-api-coverage`; it does not claim behavior, Rust implementation, public API, or runtime compatibility. |
+| `x86_64_header_mode_evidence.py` and `x86_64-header-mode-evidence-v3.5.0.json` | Native x86-64-only staged public-header C/C++ compile/link evidence for five selected forms plus the linked pinned C shared object. It is dispatched by `allocator-header-modes`; it does not validate CMake installation, execute consumers, or claim behavior/public runtime support. |
 | `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. It is dispatched by `allocator-remote-free` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
+| `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. It is dispatched by `allocator-mapped-reclaim` and does not claim general abandonment/adoption, public API, or AArch64 evidence. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |

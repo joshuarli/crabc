@@ -1,0 +1,88 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-header-mode-evidence",
+  "profile": "linux-x86_64-pinned-mimalloc-normal-release-staged-public-headers",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "system": "linux",
+    "rust_target": "x86_64-unknown-linux-musl"
+  },
+  "upstream": {
+    "version": "3.5.0",
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305"
+  },
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "cxx_tool": {
+    "driver": "g++",
+    "runtime": "native-image-musl"
+  },
+  "public_header_bytes": {
+    "include/mimalloc.h": "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5",
+    "include/mimalloc-stats.h": "7bc3c522d9a5203b27464179177845f3c09eea4453b82545d20ce61a711a9a1e",
+    "include/mimalloc-new-delete.h": "1bc31e20fb0340d9d071c69eaac2f07d0dfe4cdf95849ed8d91fb2bd7538d55b",
+    "include/mimalloc-override.h": "21fcf61c4443341ac6bf6ea528af31dc7267e8e3456fc64bfd07704503032175"
+  },
+  "selected_modes": [
+    "c-base",
+    "c-stats",
+    "cxx-base",
+    "cxx-new-delete",
+    "c-override"
+  ],
+  "probe_sources": {
+    "c-base": "3cf42cd11fa4c7d7ccb3cef4046b12aa1108b501c33be7add09ea5b9dc152b65",
+    "c-stats": "a5c41990fc3447e6f43f6fc3e663e82f0c692d262d1a18bb1b11fb457d98dcbb",
+    "cxx-base": "62ae7de3e48a5d5c78a1cfe945977e60a49c8938ff7e6bbfa4cc4f90760ade2b",
+    "cxx-new-delete": "09959b22a7780104001cd5c464cdcc08b320b7709ca2ecbc4e18ea14ce56d4dc",
+    "c-override": "35fe3f819057a84d73c1e52b0e404865fd94c42ba992ced09cd784ae9551170c"
+  },
+  "scope": {
+    "native_linux_x86_64_required": true,
+    "public_crabc_support": false,
+    "public_x86_libc_or_ldso_support": false,
+    "behavior_claimed": false,
+    "rust_claimed": false,
+    "execution_claimed": false,
+    "cmake_mode_claimed": false,
+    "cmake_install_claimed": false,
+    "staged_pinned_public_headers_only": true,
+    "emulation_accepted": false
+  }
+}

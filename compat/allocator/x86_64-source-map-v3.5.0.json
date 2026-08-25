@@ -452,29 +452,34 @@
     },
     {
       "id": "local-and-remote-free",
-      "source_scope": "Owner-local free, live-owner cross-thread publication, and selected deferred-list collection transitions.",
+      "source_scope": "Owner-local free, live-owner cross-thread publication, and selected abandoned-page collection/reclaim transitions.",
       "source_anchor": {
         "member": "src/free.c",
         "start_line": 62,
-        "end_line": 410,
-        "sha256": "ad90d30052cf318aacc1d86320d4ecee8425c53df2d3c20801afcf74ad4f7fc5"
+        "end_line": 515,
+        "sha256": "17e3f36c02be63e47e1866e33df00a60ccefbb9595d9ae449a92edca3eaa168f"
       },
       "rust_modules": [
         "crabc_mimalloc::abandoned",
+        "crabc_mimalloc::dynamic_theap",
         "crabc_mimalloc::free_list",
         "crabc_mimalloc::remote_free",
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "The engine has bounded local, remote-free, and abandonment substrates. A 25-field native C/Rust differential proves two quiescent live-owner publications and owner-side collection; a separate 28-field native C/Rust differential proves real small direct-cache remote publication, owner collection, and exact reuse. Neither proves general asynchronous public free routing, abandonment, or complete thread exit.",
+      "difference": "The engine has bounded local, remote-free, and abandonment substrates. A 25-field native C/Rust differential proves two quiescent live-owner publications and owner-side collection; a separate 28-field native C/Rust differential proves real small direct-cache remote publication, owner collection, and exact reuse; and an 8-field native C/Rust differential proves one arena-backed mapped page queue-detach, same-origin mi_free reclaim, re-association, and nonempty requeue. None proves general asynchronous public free routing, abandonment, or complete thread exit.",
       "evidence": [
         "compat/allocator/tests/test_x86_64_direct_remote_evidence.py",
+        "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
         "compat/allocator/x86_64-direct-remote-evidence-v3.5.0.json",
+        "compat/allocator/x86_64-mapped-reclaim-evidence-v3.5.0.json",
         "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
         "compat/allocator/x86_64_direct_remote_evidence.py",
+        "compat/allocator/x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/x86_64_remote_free_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
+        "crabc-mimalloc/src/dynamic_theap.rs",
         "crabc-mimalloc/src/free_list.rs",
         "crabc-mimalloc/src/remote_free.rs",
         "crabc-mimalloc/src/single_thread.rs"
@@ -482,23 +487,28 @@
     },
     {
       "id": "arena-lifecycle",
-      "source_scope": "Selected external-arena metadata, page registration, and exact release paths.",
+      "source_scope": "Selected external-arena metadata, page registration, mapped abandonment/reclaim, and exact release paths.",
       "source_anchor": {
         "member": "src/arena.c",
         "start_line": 674,
-        "end_line": 1282,
-        "sha256": "b3f3a3e424033b3149d9268e70d5c22283e195d45bbdad7dd10e72d782260cee"
+        "end_line": 1409,
+        "sha256": "964c0f89eab4a252bf4e338e882302766789210eb70cac3843a0471958069fa8"
       },
       "rust_modules": [
         "crabc_mimalloc::arena",
+        "crabc_mimalloc::dynamic_theap",
         "crabc_mimalloc::os_page",
         "crabc_mimalloc::process_arena",
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "Rust supports bounded caller-supplied arena ownership and selected release transitions; registry-wide reservation and multi-arena policy are absent.",
+      "difference": "Rust supports bounded caller-supplied arena ownership and selected release transitions. An 8-field native C/Rust differential additionally proves one arena-backed mapped-abandon bitmap transition followed by same-origin nonempty reclaim and requeue. Registry-wide reservation, multi-arena policy, and general abandonment/adoption remain absent.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
+        "compat/allocator/x86_64-mapped-reclaim-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_mapped_reclaim_evidence.py",
         "crabc-mimalloc/src/arena.rs",
+        "crabc-mimalloc/src/dynamic_theap.rs",
         "crabc-mimalloc/src/os_page.rs",
         "crabc-mimalloc/src/process_arena.rs",
         "crabc-mimalloc/src/single_thread.rs"
@@ -707,15 +717,19 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions. A 25-field native C/Rust differential proves the quiescent live-owner xthread detach and local-free merge; a separate 28-field native C/Rust differential proves a real small direct-cache page exhausting its local list, remote publication, owner collection, and exact reuse. Neither proves general page routing or complete owner-exit traversal.",
+      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions. A 25-field native C/Rust differential proves the quiescent live-owner xthread detach and local-free merge; a separate 28-field native C/Rust differential proves a real small direct-cache page exhausting its local list, remote publication, owner collection, and exact reuse; and an 8-field native C/Rust differential proves one mapped arena page's nonempty same-origin reclaim and queue restoration. None proves general page routing or complete owner-exit traversal.",
       "evidence": [
         "compat/allocator/tests/test_x86_64_direct_remote_evidence.py",
+        "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
         "compat/allocator/x86_64-direct-remote-evidence-v3.5.0.json",
+        "compat/allocator/x86_64-mapped-reclaim-evidence-v3.5.0.json",
         "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
         "compat/allocator/x86_64_direct_remote_evidence.py",
+        "compat/allocator/x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/x86_64_remote_free_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
+        "crabc-mimalloc/src/dynamic_theap.rs",
         "crabc-mimalloc/src/free_list.rs",
         "crabc-mimalloc/src/page.rs",
         "crabc-mimalloc/src/remote_free.rs",
@@ -910,6 +924,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "24e4f9f6a9aebf2b839c8b31af261d25734ee35e2c482a48220440004740ee96"
+    "units_sha256": "9d0d7be245af4cac0698a51081ccaa45e368be76e4f8e7fd199430cb96fbc0ca"
   }
 }

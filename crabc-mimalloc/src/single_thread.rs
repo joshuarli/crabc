@@ -4722,6 +4722,24 @@ impl<'attach, 'heap, 'arena, 'map>
         }
     }
 
+    /// Test-only exact regular-queue witness for a reclaimed dynamic page.
+    /// The fixed differential fixture owns the only page in this bin, so the
+    /// pinned C probe requires both queue cardinality and head membership.
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_regular_queue_contains_only(
+        &self,
+        bin: usize,
+        page: NonNull<Page>,
+    ) -> bool {
+        let Some(queue) = self.session.queue(bin) else {
+            return false;
+        };
+        queue.count() == 1
+            && queue.first() == page.as_ptr()
+            && queue.last() == page.as_ptr()
+            && self.page_is_active_queue_member(bin, page)
+    }
+
     /// Begins the bounded dynamic thread-exit page-drain transition.
     ///
     /// This consumes the ordinary dynamic page engine before it clears the
@@ -28425,6 +28443,23 @@ impl<'attach, 'heap, 'arena, 'map>
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_bin(&self) -> usize { self.bin }
+
+    /// Test-only counterpart of the C free path's associated-Theap lookup.
+    /// `page.theap` alone is insufficient: abandonment deliberately retains
+    /// the old pointer, while C obtains the current Theap through this page's
+    /// Heap-keyed dynamic TLS slot.
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_associated_theap_is_current(&mut self, expected: *mut Theap) -> bool {
+        // SAFETY: this test-only read occurs while the handoff owns the
+        // registered, initialized page metadata and its dynamic session.
+        let page_uses_session_heap = unsafe { self.page.as_ref().heap() }
+            == self.engine.session.theap().heap();
+        page_uses_session_heap
+            && self
+                .engine
+                .session
+                .test_dynamic_regular_slot_names_theap(expected)
+    }
 
     #[cfg(test)]
     pub(crate) fn test_dynamic_abandoned_page_is_set(&self) -> bool {

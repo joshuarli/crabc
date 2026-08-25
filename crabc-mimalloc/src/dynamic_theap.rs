@@ -1370,6 +1370,27 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         Some((header, layout, image_memory, owner.page_is_set(memory)))
     }
 
+    /// Test-only equivalent of the pinned `_mi_page_associated_theap_peek`
+    /// lookup for this attachment's regular dynamic-TLS slot. The caller
+    /// separately proves that its page names this attachment's Heap, so this
+    /// verifies the current heap-key lookup rather than merely preserving the
+    /// page's stale origin pointer through abandonment.
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_regular_slot_names_theap(&mut self, theap: *mut Theap) -> bool {
+        let Some(binding) = self.attachment.binding.as_ref() else {
+            return false;
+        };
+        if !binding.slot_bound {
+            return false;
+        }
+        let key = binding.key();
+        self.attachment
+            .backing
+            .as_mut()
+            .and_then(|backing| backing.get(key).ok())
+            == Some(theap.cast())
+    }
+
 }
 
 /// A post-TLS, pre-list-detach page owner used only by the bounded
@@ -1863,7 +1884,9 @@ mod tests {
         DynamicThreadExitSingletonRemoteFreeFailure,
     };
     use crate::tld::ThreadLocalDataOwner;
-    use crate::types::{BIN_BLOCK_SIZES, MemoryKind};
+    use crate::types::{
+        BIN_BLOCK_SIZES, MemoryKind, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
+    };
     use core::ptr::null_mut;
     use std::alloc::{Layout, alloc_zeroed, dealloc};
     use std::boxed::Box;
@@ -2361,6 +2384,134 @@ mod tests {
             // the source remote free was collected into owner-local state.
             unsafe { allocator.free(second) }
                 .expect("the reclaimed page accepts its remaining local allocation");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_mapped_reclaim_trace_matches_pinned_c_protocol() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            // This is the pinned C probe's `MI_SMALL_SIZE_MAX + 1024` request:
+            // it selects a medium arena page, while still allowing two live
+            // blocks to share one page during the reclaiming free.
+            let request = SMALL_SIZE_MAX + 1024;
+            let first = allocator
+                .allocate(request, false)
+                .expect("first native mapped-reclaim medium allocation");
+            let survivor = allocator
+                .allocate(request, false)
+                .expect("survivor keeps the mapped-reclaim page live");
+            let page = unsafe { allocator.page_for_block(first) };
+            assert!(!page.is_null());
+            let free_block_is_same_page = unsafe { allocator.page_for_block(first) }
+                == unsafe { allocator.page_for_block(survivor) };
+            assert!(free_block_is_same_page);
+            assert_eq!(unsafe { allocator.page_for_block(survivor) }, page);
+            let memory = unsafe { (*page).memid() };
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the medium allocation has a regular size-class bin");
+            let original_theap = unsafe { (*page).theap() };
+
+            assert_eq!(memory.kind(), MemoryKind::Arena);
+            // SAFETY: both blocks are live allocations of this exact active
+            // page and no producer token exists during the consuming handoff.
+            let mut handoff = match unsafe { allocator.abandon_mapped_regular(first) } {
+                Ok(handoff) => handoff,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the native mapped medium page enters the handoff");
+                }
+            };
+            let arena_backed = memory.kind() == MemoryKind::Arena;
+            let mapped_before_free = handoff.test_dynamic_abandoned_page_is_set();
+            let abandoned_before_free = unsafe { (*page).abandoned_test_thread_id() }
+                == THREAD_ID_ABANDONED_MAPPED;
+            let origin_theap_present = unsafe { (*page).theap() } == original_theap
+                && handoff.test_dynamic_associated_theap_is_current(original_theap);
+
+            // SAFETY: `first` is exactly once live in the handoff and the
+            // survivor remains live, so the page metadata remains valid after
+            // source-shaped remote-free collection and same-origin reclaim.
+            let mut allocator = match unsafe { handoff.remote_free_and_reclaim(first) } {
+                Ok(allocator) => allocator,
+                Err(DynamicMappedRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicMappedRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("same-origin mapped medium remote free reclaims: {error:?}");
+                }
+            };
+            let reclaimed_after_free = unsafe { (*page).theap() } == allocator.theap_identity();
+            let abandoned_after_free = matches!(
+                unsafe { (*page).abandoned_test_thread_id() },
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let medium_page = unsafe { (*page).block_size() } > SMALL_SIZE_MAX
+                && unsafe { (*page).block_size() } <= MEDIUM_MAX_OBJ_SIZE;
+            let nonempty_page = unsafe { (*page).used() } > 0;
+            let queue_state = allocator.test_dynamic_abandoned_page_is_clear(bin, memory)
+                && allocator.test_dynamic_regular_queue_contains_only(
+                    bin,
+                    NonNull::new(page).expect("reclaimed page is non-null"),
+                );
+            let valid = arena_backed
+                && mapped_before_free
+                && abandoned_before_free
+                && origin_theap_present
+                && free_block_is_same_page
+                && medium_page
+                && nonempty_page
+                && reclaimed_after_free
+                && !abandoned_after_free
+                && queue_state;
+
+            std::println!("CRABC_MI_MAPPED_RECLAIM_TRACE_BEGIN");
+            std::println!(
+                "trace.mapped_reclaim.arena_backed={}",
+                arena_backed as u8
+            );
+            std::println!(
+                "trace.mapped_reclaim.mapped_before_free={}",
+                mapped_before_free as u8
+            );
+            std::println!(
+                "trace.mapped_reclaim.abandoned_before_free={}",
+                abandoned_before_free as u8
+            );
+            std::println!(
+                "trace.mapped_reclaim.origin_theap_present={}",
+                origin_theap_present as u8
+            );
+            std::println!(
+                "trace.mapped_reclaim.free_block_is_same_page={}",
+                free_block_is_same_page as u8
+            );
+            std::println!(
+                "trace.mapped_reclaim.reclaimed_after_free={}",
+                reclaimed_after_free as u8
+            );
+            std::println!(
+                "trace.mapped_reclaim.abandoned_after_free={}",
+                abandoned_after_free as u8
+            );
+            std::println!("trace.mapped_reclaim.valid={}", valid as u8);
+            std::println!("CRABC_MI_MAPPED_RECLAIM_TRACE_END");
+            assert!(valid, "native mapped-reclaim trace diverged from pinned C");
+
+            // SAFETY: reclaim restored the page to its original local owner;
+            // the survivor is the one remaining live client allocation.
+            unsafe { allocator.free(survivor) }
+                .expect("the reclaimed page accepts its survivor allocation");
             assert!(matches!(allocator.finish(), Ok(())));
             DynamicPageFixtureOutcome::TearDown
         });

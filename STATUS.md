@@ -50,10 +50,16 @@ joined/quiescent `pthread` remote free, and the owner direct-cache miss falling
 through the regular queue search to collect and reuse that exact block. Its
 selected normal-release source API assessment also records per-item native
 object/dynamic-symbol presence for 194 distinct C functions and marks 183
-non-object source forms explicitly. Neither result claims general routing or
-concurrent collection, behavior or Rust implementation parity, abandonment,
-thread teardown, public API/runtime support, libc integration, backend
-promotion, or AArch64 evidence.
+non-object source forms explicitly. A separate eight-field C/Rust differential
+now covers one arena-backed mapped page's queue-detach abandonment and
+same-origin nonempty `mi_free` reclaim/requeue transition. A separate
+five-mode staged public-header gate compile-links selected C/C++ forms against
+the pinned C release shared object and records all ELF identities. These
+bounded results do not claim general routing or concurrent collection,
+behavior or Rust implementation parity, general abandonment/adoption,
+cross-thread reclaim, CMake installation, consumer execution, thread teardown,
+public API/runtime support, libc integration, backend promotion, or AArch64
+evidence.
 
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free

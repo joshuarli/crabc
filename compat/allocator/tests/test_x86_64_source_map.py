@@ -146,11 +146,13 @@ class X86_64SourceMapTests(unittest.TestCase):
             unit for unit in self.contract["units"] if unit["id"] == "local-and-remote-free"
         )
         page = next(unit for unit in self.contract["units"] if unit["id"] == "page-lifecycle")
+        arena = next(unit for unit in self.contract["units"] if unit["id"] == "arena-lifecycle")
         for unit in (remote, page):
             with self.subTest(unit=unit["id"]):
                 self.assertEqual(unit["status"], "partial")
                 self.assertIn("25-field native C/Rust differential", unit["difference"])
                 self.assertIn("28-field native C/Rust differential", unit["difference"])
+                self.assertIn("8-field native C/Rust differential", unit["difference"])
                 self.assertIn(
                     "compat/allocator/x86_64_remote_free_evidence.py", unit["evidence"]
                 )
@@ -165,10 +167,21 @@ class X86_64SourceMapTests(unittest.TestCase):
                     "compat/allocator/tests/test_x86_64_direct_remote_evidence.py",
                     unit["evidence"],
                 )
+                self.assertIn(
+                    "compat/allocator/x86_64_mapped_reclaim_evidence.py", unit["evidence"]
+                )
+                self.assertIn(
+                    "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
+                    unit["evidence"],
+                )
         self.assertLessEqual(remote["source_anchor"]["start_line"], 62)
+        self.assertGreaterEqual(remote["source_anchor"]["end_line"], 515)
         self.assertLessEqual(page["source_anchor"]["start_line"], 150)
-        self.assertIn("Neither proves general asynchronous public free routing", remote["difference"])
-        self.assertIn("Neither proves general page routing", page["difference"])
+        self.assertIn("None proves general asynchronous public free routing", remote["difference"])
+        self.assertIn("None proves general page routing", page["difference"])
+        self.assertGreaterEqual(arena["source_anchor"]["end_line"], 1409)
+        self.assertIn("mapped-abandon bitmap transition", arena["difference"])
+        self.assertIn("compat/allocator/x86_64_mapped_reclaim_evidence.py", arena["evidence"])
 
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(

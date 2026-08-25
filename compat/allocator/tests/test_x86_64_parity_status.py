@@ -137,8 +137,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-bounded-lifecycle-concurrency",
                 "native-live-owner-remote-free-differential",
                 "native-small-direct-remote-free-differential",
+                "native-mapped-arena-same-origin-reclaim-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
+                "native-staged-public-header-mode-linkability",
                 "native-bounded-fault-injection",
                 "native-allocator-unit",
             },
@@ -188,6 +190,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "compat/reports/allocator/x86_64/small-direct-remote.json",
         )
         self.assertEqual(
+            gates["native-mapped-arena-same-origin-reclaim-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-mapped-reclaim",
+        )
+        self.assertEqual(
+            gates["native-mapped-arena-same-origin-reclaim-differential"]["report"],
+            "compat/reports/allocator/x86_64/mapped-reclaim.json",
+        )
+        self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
             "compat/reports/allocator/x86_64/fault-injection.json",
         )
@@ -207,6 +217,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-release-api-mode-object-symbol-assessment"]["report"],
             "compat/reports/allocator/x86_64/api-native-coverage.json",
         )
+        self.assertEqual(
+            gates["native-staged-public-header-mode-linkability"]["command"],
+            "./scripts/dev-amd64.sh allocator-header-modes",
+        )
+        self.assertEqual(
+            gates["native-staged-public-header-mode-linkability"]["report"],
+            "compat/reports/allocator/x86_64/header-mode-evidence.json",
+        )
         self.assertIn("preprocessor", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("object", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("default-visible", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
@@ -214,6 +232,8 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("194 distinct source-declared C functions", gates["native-release-api-mode-object-symbol-assessment"]["claim"])
         self.assertIn("not-an-object-symbol", gates["native-release-api-mode-object-symbol-assessment"]["claim"])
         self.assertIn("does not claim declaration behavior", gates["native-release-api-mode-object-symbol-assessment"]["claim"])
+        self.assertIn("five selected staged public C/C++ header forms", gates["native-staged-public-header-mode-linkability"]["claim"])
+        self.assertIn("does not prove CMake configuration or installation", gates["native-staged-public-header-mode-linkability"]["claim"])
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
@@ -239,6 +259,9 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("28 address-independent values", gates["native-small-direct-remote-free-differential"]["claim"])
         self.assertIn("small direct-cache page", gates["native-small-direct-remote-free-differential"]["claim"])
         self.assertIn("not general allocation/free routing", gates["native-small-direct-remote-free-differential"]["claim"])
+        self.assertIn("eight address-independent values", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
+        self.assertIn("same-origin mi_free reclaim", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
+        self.assertIn("not general abandonment/adoption", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])
