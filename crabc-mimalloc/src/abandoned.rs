@@ -440,9 +440,9 @@ enum MappedOneBlockOwnerExitCollector {
 ///
 /// The source checks whether the page is empty immediately after ordinary
 /// collection and before it enters the reclaim branch. A sole non-direct
-/// small or medium page with one current client block must therefore reach
-/// `Empty`. If it does not, this narrow helper retains the acquired low owner
-/// bit and returns [`AbandonError::MappedPageNotEmpty`] rather than
+/// small, medium, or large page with one current client block must therefore
+/// reach `Empty`. If it does not, this narrow helper retains the acquired low
+/// owner bit and returns [`AbandonError::MappedPageNotEmpty`] rather than
 /// manufacturing a reclaim, requeue, or general abandoned-page policy.
 ///
 /// # Safety
@@ -536,13 +536,19 @@ unsafe fn free_mapped_one_block_to_empty_with_collector<M: MappedAbandonedPages 
     }
     // Select only the exact source branch proved by the higher-level handoff.
     // Normal one-block endpoints remain strictly above the direct-cache
-    // boundary; the direct-small endpoint retains the partial collector and
-    // its `reserved >= 16` precondition as a separately named contract.
+    // boundary, with their caller retaining the source-specific small,
+    // medium, or large span proof. The direct-small endpoint retains the
+    // partial collector and its `reserved >= 16` precondition as a separately
+    // named contract.
     let geometry_matches_collector = match collector {
         MappedOneBlockOwnerExitCollector::Normal => {
             matches!(
                 size_class::page_kind_for_block_size(state.block_size),
-                Some(crate::types::PageKind::Small | crate::types::PageKind::Medium)
+                Some(
+                    crate::types::PageKind::Small
+                        | crate::types::PageKind::Medium
+                        | crate::types::PageKind::Large
+                )
             ) && state.block_size > crate::config::SMALL_SIZE_MAX
                 && state.reserved > 1
         }

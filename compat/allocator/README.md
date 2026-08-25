@@ -274,12 +274,13 @@ non-direct small, another page, and a collection failure before or at their
 respective source boundaries, and it does not cover full medium/non-direct
 small/large, multi-page, reclaim/adoption/requeue, or general traversal.
 
-Three separate mapped endpoints accept only a sole nonfull `MemoryKind::Arena`
+Four separate mapped endpoints accept only a sole nonfull `MemoryKind::Arena`
 page with `reserved > 1`, `used == 1`, and one regular queue member.
 `DynamicThreadExitDrain::abandon_mapped_one_block` admits the medium class;
-`abandon_mapped_one_block_non_direct_small` admits only
-`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, whose direct-cache image
-is empty; and `abandon_mapped_one_block_direct_small` admits only
+`abandon_mapped_one_block_large` admits only a large page and retains its
+complete 64-slice span; `abandon_mapped_one_block_non_direct_small` admits
+only `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, whose direct-cache
+image is empty; and `abandon_mapped_one_block_direct_small` admits only
 `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and its complete rounded
 source direct-cache range. The direct-small preflight rejects a stale range
 before collection or detach, and source queue removal clears the exact range
@@ -287,9 +288,10 @@ before page-count detach. Each endpoint force- then false-collects and
 publishes that exact dynamic `pages_abandoned[bin]` bit plus paired
 `Heap::abandoned_count[bin]`. Its class-carrying handoff admits only the exact
 final free, which reaches empty before any reclaim branch—through the normal
-collector for medium/non-direct small or the partial collector for direct
+collector for medium/large/non-direct small or the partial collector for direct
 small—clears that bit/count, and releases PageMap -> dynamic ordinary bit ->
-metadata -> arena slices. It does not reclaim the departed Theap, adopt,
+metadata -> arena slices. The large endpoint validates all 64 PageMap entries
+before that terminal release. It does not reclaim the departed Theap, adopt,
 requeue, scan, or accept multiple pages or frees.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular and

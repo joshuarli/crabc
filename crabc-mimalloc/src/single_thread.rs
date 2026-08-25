@@ -48,9 +48,9 @@
 // drain first force-collects already-retired all-free pages, then owns one full
 // one-block arena or OS-aligned singleton through source queue detach,
 // unmapped abandonment, failed reclaim, and all-free release. It separately
-// owns one sole nonfull medium, non-direct-small, or direct-small arena page
-// through force/false collection, dynamic bitmap/count publication, and an
-// exact final empty-before-reclaim release. It also owns one sole full medium
+// owns one sole nonfull medium, large, non-direct-small, or direct-small arena
+// page through force/false collection, dynamic bitmap/count publication, and
+// an exact final empty-before-reclaim release. It also owns one sole full medium
 // or large arena page through source-unmapped abandonment, the mostly-used
 // unmapped-to-mapped failed-reclaim boundary, and all-free release. The large
 // route retains its complete 64-slice arena span; the non-direct-small class
@@ -421,9 +421,9 @@ pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
 /// dynamic regular slot. Its finishing boundary force-collects existing
 /// retired all-free pages. Its live-page operations are deliberately limited
 /// to the exact full-singleton, full-medium, full-large, full non-direct-small,
-/// full-direct-small, and mapped-one-block medium, non-direct-small, or direct-
-/// small handoffs needed to prove that later remote frees cannot reclaim the
-/// departed Theap.
+/// full-direct-small, and mapped-one-block medium, large, non-direct-small, or
+/// direct-small handoffs needed to prove that later remote frees cannot reclaim
+/// the departed Theap.
 #[must_use = "a dynamic thread-exit drain must release or retain its page before attachment teardown"]
 pub(crate) struct DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map> {
     engine: PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>,
@@ -528,15 +528,15 @@ enum DynamicThreadExitFullRegularState {
     Mapped,
 }
 
-/// One queue-detached mapped-abandoned medium, non-direct small, or direct
-/// small page with exactly one live client block at dynamic post-TLS owner
-/// exit. The token retains the draining attachment's source Theap/TLD/Heap,
-/// dynamic arena-page image, PageMap, and client block until that exact final
-/// free clears its paired dynamic bitmap/count entry and releases the arena
-/// span, or terminally retains the state. It deliberately cannot reclaim,
-/// requeue, or allocate from the page. Its private source class keeps the
-/// direct-small partial collector and rounded cache contract distinct from the
-/// normal-collector siblings.
+/// One queue-detached mapped-abandoned medium, large, non-direct small, or
+/// direct small page with exactly one live client block at dynamic post-TLS
+/// owner exit. The token retains the draining attachment's source
+/// Theap/TLD/Heap, dynamic arena-page image, PageMap, and client block until
+/// that exact final free clears its paired dynamic bitmap/count entry and
+/// releases the arena span, or terminally retains the state. It deliberately
+/// cannot reclaim, requeue, or allocate from the page. Its private source class
+/// keeps the large span geometry and direct-small partial collector/rounded
+/// cache contract distinct from the normal-collector siblings.
 #[must_use = "a dynamic mapped one-block owner-exit handoff must be consumed or terminally retained"]
 pub(crate) struct DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
@@ -554,6 +554,7 @@ pub(crate) struct DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena,
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DynamicThreadExitMappedOneBlockClass {
     Medium,
+    Large,
     NonDirectSmall,
     DirectSmall,
 }
@@ -566,6 +567,9 @@ impl DynamicThreadExitMappedOneBlockClass {
             Self::Medium => {
                 size_class::page_kind_for_block_size(block_size) == Some(PageKind::Medium)
                     && block_size > SMALL_SIZE_MAX
+            }
+            Self::Large => {
+                size_class::page_kind_for_block_size(block_size) == Some(PageKind::Large)
             }
             Self::NonDirectSmall => {
                 size_class::page_kind_for_block_size(block_size) == Some(PageKind::Small)
@@ -8498,6 +8502,41 @@ impl<'attach, 'heap, 'arena, 'map>
         }
     }
 
+    /// Maps one exact nonfull dynamic large page with one live client block
+    /// after source thread exit cleared its regular TLS slot.
+    ///
+    /// This admits only a `PageKind::Large` arena page in its ordinary regular
+    /// bin. The source normal collector and mapped all-free tail apply, but
+    /// the handoff retains the large page's complete 64-slice span through
+    /// final release. Medium and small pages through their sibling APIs,
+    /// full/singleton pages, and any additional queue or direct-cache state
+    /// remain outside this endpoint.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the sole current canonical allocation in one active,
+    /// nonfull large arena page owned by this exact drain. No producer may
+    /// survive, and every client alias must remain valid only until the
+    /// returned handoff consumes this exact block once or is terminally
+    /// retained.
+    pub(crate) unsafe fn abandon_mapped_one_block_large(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitMappedOneBlockAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        // SAFETY: this public large spelling fixes the complete source span
+        // geometry before the shared preflight can mutate queue, page-count,
+        // or mapped-abandon state.
+        unsafe {
+            self.abandon_mapped_one_block_for_class(
+                block,
+                DynamicThreadExitMappedOneBlockClass::Large,
+            )
+        }
+    }
+
     /// Maps one exact nonfull dynamic non-direct small page with one live
     /// client block after source thread exit cleared its regular TLS slot.
     ///
@@ -8664,6 +8703,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 }
             }
             DynamicThreadExitMappedOneBlockClass::Medium
+            | DynamicThreadExitMappedOneBlockClass::Large
             | DynamicThreadExitMappedOneBlockClass::NonDirectSmall => None,
         };
 
@@ -10401,6 +10441,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 abandoned::free_mapped_direct_one_block_to_empty(self.page, canonical_block, &map)
             },
             DynamicThreadExitMappedOneBlockClass::Medium
+            | DynamicThreadExitMappedOneBlockClass::Large
             | DynamicThreadExitMappedOneBlockClass::NonDirectSmall => unsafe {
                 abandoned::free_mapped_one_block_to_empty(self.page, canonical_block, &map)
             },

@@ -427,10 +427,11 @@ scans, nor covers full medium/non-direct-small/large, multi-page, or general
 dynamic owner exit.
 
 A separate `DynamicThreadExitMappedOneBlockHandoff` accepts only a sole,
-nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
-with `reserved > 1`, `used == 1`, and one regular queue member. The medium
-endpoint remains `DynamicThreadExitDrain::abandon_mapped_one_block`; the
-non-direct-small endpoint is
+nonfull `MemoryKind::Arena` medium, large, non-direct-small, or direct-small
+page with `reserved > 1`, `used == 1`, and one regular queue member. The
+medium endpoint remains `DynamicThreadExitDrain::abandon_mapped_one_block`;
+the large endpoint is `DynamicThreadExitDrain::abandon_mapped_one_block_large`
+and retains its complete 64-slice span; the non-direct-small endpoint is
 `DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small` and
 requires `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` with an empty
 direct-cache image; the direct-small endpoint is
@@ -443,12 +444,13 @@ only long enough to form the exact heap-local `pages_abandoned[bin]` bit plus
 paired `Heap::abandoned_count[bin]`. Source force then false collection
 precedes queue/page-count detach and mapped identity/bit/count/unown
 publication. Its exact final free reaches empty before any source reclaim
-branch—through the normal collector for medium/non-direct small and the
+branch—through the normal collector for medium/large/non-direct small and the
 partial collector for direct small—clears the dynamic bit/count pair, then
-releases PageMap -> dynamic ordinary bit -> metadata -> arena slices. Neither
-dynamic handoff scans, reclaims, adopts, requeues, accepts a second free, or
-generalizes thread exit. Only an empty drain may resume the existing
-cached-root/list/key teardown.
+releases PageMap -> dynamic ordinary bit -> metadata -> arena slices. The
+large endpoint validates the complete 64-slice PageMap span before that
+terminal release. Neither dynamic handoff scans, reclaims, adopts, requeues,
+accepts a second free, or generalizes thread exit. Only an empty drain may
+resume the existing cached-root/list/key teardown.
 
 The first fresh page in that private non-abandoning dynamic session now owns
 one exact source-shaped heap-local `mi_arena_pages_t` image. Creation first
@@ -502,9 +504,9 @@ result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
 dynamic owner-exit singleton, full-medium, full-large, full-non-direct-small, and
 full-direct-small unmapped-to-mapped handoffs, and sole mapped
-medium/non-direct-small/direct-small
+medium/large/non-direct-small/direct-small
 one-block handoffs: clearing the regular backing prevents reclaim; the singleton
-final free takes the raw failed-reclaim all-free release, all three full routes cross
+final free takes the raw failed-reclaim all-free release, all four full routes cross
 the source mostly-used boundary before dynamic bitmap publication, and each
 mapped endpoint clears its dynamic bitmap/count before terminal arena release. The raw
 protocol remains

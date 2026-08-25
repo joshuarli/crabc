@@ -882,9 +882,11 @@ aggregate-registry adoption remain absent.
   separate source boundary; it adds no reclaim, adoption, requeue, scanning,
   multi-page, or general dynamic owner-exit traversal.
   Separately, `DynamicThreadExitMappedOneBlockHandoff` admits only one sole
-  nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
-  with `reserved > 1`, `used == 1`, and one regular queue member.
+  nonfull `MemoryKind::Arena` medium, large, non-direct-small, or direct-small
+  page with `reserved > 1`, `used == 1`, and one regular queue member.
   `DynamicThreadExitDrain::abandon_mapped_one_block` remains medium-only;
+  `abandon_mapped_one_block_large` admits only `PageKind::Large` and retains
+  the complete 64-slice terminal span;
   `abandon_mapped_one_block_non_direct_small` requires
   `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and an empty direct-cache
   image; `abandon_mapped_one_block_direct_small` requires
@@ -894,11 +896,11 @@ aggregate-registry adoption remain absent.
   detach. Its source-class witness preserves force -> false collection ->
   queue/page-count detach -> dynamic bitmap/count/unown order. Its exact final
   free reaches empty before any reclaim branch—through the normal collector for
-  medium/non-direct small or the partial collector for direct small—clears that
-  dynamic `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`,
-  then releases PageMap -> dynamic ordinary-bit -> metadata -> slice release.
-  It cannot reclaim the departed Theap, adopt, requeue, scan, or represent a
-  second page or free.
+  medium/large/non-direct small or the partial collector for direct small—
+  clears that dynamic `pages_abandoned[bin]` bit plus paired
+  `Heap::abandoned_count[bin]`, then releases PageMap -> dynamic ordinary-bit
+  -> metadata -> slice release. It cannot reclaim the departed Theap, adopt,
+  requeue, scan, or represent a second page or free.
   Its first dynamic arena page first proves the registry-published arena's
   non-null subprocess identity equals the attachment's selected main
   subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
@@ -918,7 +920,7 @@ aggregate-registry adoption remain absent.
   `free_unmapped_after_failed_reclaim` substrate ports expected-head unown,
   conflict collection without another reclaim attempt, and terminal-empty /
   reabandon / unown selection. Its lifecycle-integrated raw terminal-release
-  owners are the post-TLS arena/OS singleton, full-medium,
+  owners are the post-TLS arena/OS singleton, full-medium, full-large,
   full-non-direct-small, and full-direct-small handoffs above and the later-main full-medium,
   full-large, and full-non-direct-small routes;
   none routes
@@ -1002,7 +1004,12 @@ aggregate-registry adoption remain absent.
   and `dynamic_thread_exit_mapped_one_block_handoff_retains_collection_failure`
   prove the medium class's dynamic bitmap/count publication and terminal
   release, wholly pre-detach sole-page refusal, and retained post-TLS
-  collection failure. The corresponding
+  collection failure. The large-specific
+  `dynamic_thread_exit_mapped_one_block_large_handoff_releases_its_complete_span_after_final_free`,
+  `dynamic_thread_exit_mapped_one_block_large_handoff_rejects_medium_before_detach`,
+  and `dynamic_thread_exit_mapped_one_block_large_handoff_retains_collection_failure`
+  prove the large-only preflight, normal-collector bitmap/count cleanup, full
+  64-slice PageMap release, and retained collection failure. The corresponding
   `dynamic_thread_exit_mapped_one_block_non_direct_small_handoff_releases_after_its_final_free`,
   `dynamic_thread_exit_mapped_one_block_non_direct_small_handoff_rejects_direct_small_before_detach`,
   and `dynamic_thread_exit_mapped_one_block_non_direct_small_handoff_retains_collection_failure`

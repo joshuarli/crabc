@@ -670,8 +670,9 @@ page, or collection fault cannot cross the pre-detach boundary. This endpoint
 neither reclaims, adopts, requeues, scans, nor covers full medium/non-direct
 small/large, multi-page, or general dynamic owner exit.
 
-The same drain has three separately bounded mapped endpoints,
+The same drain has four separately bounded mapped endpoints,
 `DynamicThreadExitDrain::abandon_mapped_one_block` for a medium page,
+`DynamicThreadExitDrain::abandon_mapped_one_block_large` for a large page,
 `DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small` for a
 small page with `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, and
 `DynamicThreadExitDrain::abandon_mapped_one_block_direct_small` for a small
@@ -686,11 +687,12 @@ dynamic arena image can form only that page's matching heap-local
 post-TLS allocation or reclaim capability. Source force then false collection
 precedes queue/page-count detach and mapped identity/bit/count/unown
 publication. `DynamicThreadExitMappedOneBlockHandoff` retains that source-class
-witness and receives only the exact final client free: medium/non-direct small
-use the normal collector, while direct small consumes the partial collector
-head; each becomes empty before any reclaim branch, clears the dynamic
-bit/count pair, then releases the queue-detached PageMap span -> dynamic
-ordinary bit -> metadata -> arena slices. It cannot adopt, requeue, scan,
+witness and receives only the exact final client free: medium, large, and
+non-direct small use the normal collector, while direct small consumes the
+partial collector head; each becomes empty before any reclaim branch, clears
+the dynamic bit/count pair, then releases the queue-detached PageMap span ->
+dynamic ordinary bit -> metadata -> arena slices. The large route validates
+its complete 64-slice span before that release. It cannot adopt, requeue, scan,
 reclaim the departed Theap, or handle multiple pages or frees.
 
 On the first fresh dynamic arena page, that same session lazily creates one
@@ -727,8 +729,8 @@ non-singleton huge, non-arena, foreign, and ordinary abandoning-session pages
 remain rejected. The sole singleton exceptions are the post-TLS arena and
 OS-aligned owner-exit handoffs above; neither is normal abandoned routing or a
 general thread-exit page traversal. The separate post-TLS mapped
-medium/non-direct-small/direct-small one-block handoffs above likewise have no
-adoption/reclaim/requeue or general
+medium/large/non-direct-small/direct-small one-block handoffs above likewise
+have no adoption/reclaim/requeue or general
 dynamic traversal. General producer routing, multiple arena images, OS-list
 traversal/reclaim/requeue, and general heap destruction remain deferred.
 

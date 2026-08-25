@@ -2617,6 +2617,252 @@ mod tests {
     }
 
     #[test]
+    fn dynamic_thread_exit_mapped_one_block_large_handoff_releases_its_complete_span_after_final_free() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(MEDIUM_MAX_OBJ_SIZE + WORD_SIZE, false)
+                .expect("the dynamic fixture allocates one regular large page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the regular large page remains PageMap-published before thread exit");
+            let page_ref = unsafe { page.as_ref() };
+            let memory = page_ref.memid();
+            let arena_memory = memory
+                .arena_memory()
+                .expect("the dynamic large page retains arena provenance");
+            let slice_start = unsafe { ArenaView::from_ptr(arena_memory.arena) }
+                .and_then(|arena| arena.slice_start(arena_memory.slice_index as usize))
+                .expect("the dynamic large span begins in its published arena");
+            let span_size = arena_memory.slice_count as usize * ARENA_SLICE_SIZE;
+            let bin = crate::size_class::bin(page_ref.block_size())
+                .expect("the regular large page has one source bin");
+            assert_eq!(memory.kind(), MemoryKind::Arena);
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                Some(crate::types::PageKind::Large)
+            );
+            assert_eq!(
+                span_size / ARENA_SLICE_SIZE,
+                64,
+                "the large handoff retains its complete source span"
+            );
+            assert!(page_ref.reserved() > 1);
+            assert_eq!(page_ref.used(), 1);
+            assert_eq!(allocator.queue_count(bin), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+
+            // SAFETY: `block` is the exact sole live allocation in this sole
+            // nonfull large page. The dynamic drain retains its source
+            // post-TLS map/image/page authority through the final free.
+            let handoff = match unsafe { drain.abandon_mapped_one_block_large(block) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitMappedOneBlockAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the one-block large page enters the dynamic owner-exit handoff: {error:?}");
+                }
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("mapped abandonment does not retain a terminal owner: {error:?}");
+                }
+            };
+            assert_eq!(handoff.test_page_count(), 0);
+            assert_eq!(handoff.test_page_for_block(block), page.as_ptr());
+            assert_eq!(handoff.test_abandoned_count(), Some(1));
+            assert!(handoff.test_dynamic_abandoned_page_is_set());
+
+            // SAFETY: this is the handoff's exact once-live client block. Its
+            // normal mapped-free path reaches all-free before reclaim and
+            // releases every PageMap entry in the 64-slice large span.
+            let drain = match unsafe { handoff.remote_free_to_empty(block) } {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitMappedOneBlockRemoteFreeFailure::Rejected {
+                    handoff,
+                    error,
+                })
+                | Err(DynamicThreadExitMappedOneBlockRemoteFreeFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the mapped one-block large final free releases its dynamic arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(block) }.is_null());
+            assert_eq!(drain.test_page_count(), 0);
+            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(memory));
+            assert!(drain.finish());
+            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+                assert!(unsafe {
+                    page_map.checked_lookup(slice_start.wrapping_add(offset))
+                }
+                .is_null());
+            }
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_one_block_large_handoff_rejects_medium_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates the medium boundary page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the medium page remains PageMap-published before thread exit");
+            let page_ref = unsafe { page.as_ref() };
+            let bin = crate::size_class::bin(page_ref.block_size())
+                .expect("the medium page has one source bin");
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                Some(crate::types::PageKind::Medium)
+            );
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: `block` is a live medium allocation. The large-only
+            // route must refuse it before force collection, queue detach, or
+            // dynamic bitmap/count publication.
+            let drain = match unsafe { drain.abandon_mapped_one_block_large(block) } {
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitMappedOneBlockAbandonError::NotMappedOneBlock,
+                }) => drain,
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitMappedOneBlockAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("medium refusal is wholly pre-collection: {error:?}");
+                }
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("medium refusal is pre-detach: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("a medium page must not enter the large handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(block) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+
+            // General dynamic post-TLS traversal remains outside this slice.
+            // Retain the unchanged owner after proving class refusal did not
+            // detach or abandon the medium page.
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_mapped_one_block_large_handoff_retains_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(MEDIUM_MAX_OBJ_SIZE + WORD_SIZE, false)
+                .expect("the fixture creates one large page for source collection");
+            let page = unsafe { allocator.page_for_block(block) };
+            let page_ref = unsafe { &*page };
+            let bin = crate::size_class::bin(page_ref.block_size())
+                .expect("the large page has one source bin");
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                Some(crate::types::PageKind::Large)
+            );
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: `block` remains the sole live large allocation. The
+            // one-shot seam fails source force collection before queue
+            // detachment, so the post-TLS drain—not a retryable live
+            // allocator—must retain it.
+            let drain = match unsafe { drain.abandon_mapped_one_block_large(block) } {
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitMappedOneBlockAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitMappedOneBlockAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("injected source collection failure retains the dynamic drain: {error:?}");
+                }
+                Err(DynamicThreadExitMappedOneBlockAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("collection fails before a terminal mapped handoff: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("the injected collection failure cannot abandon the large page");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(unsafe { drain.test_page_for_block(block) }, page);
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
     fn dynamic_thread_exit_mapped_one_block_handoff_rejects_before_detach_when_another_page_is_live() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let session = owner
