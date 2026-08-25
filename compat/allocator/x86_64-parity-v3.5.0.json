@@ -1,0 +1,148 @@
+{
+  "evidence_gates": [
+    {
+      "claim": "Builds and inspects only the separately compiled, pinned mimalloc C oracle. It does not claim a Rust adapter, Rust/C differential trace, or public allocator support.",
+      "command": "./scripts/dev-amd64.sh allocator --quick",
+      "id": "native-c-oracle",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/latest.json",
+      "state": "available"
+    },
+    {
+      "claim": "Proves the private compiler-TLS roots and direct x86-64 TLS access model; it does not prove process/thread lifecycle parity.",
+      "command": "./scripts/dev-amd64.sh allocator-tls",
+      "id": "native-tls-codegen",
+      "native_required": true,
+      "report": "compat/reports/allocator/tls-codegen-x86_64.json",
+      "state": "available"
+    },
+    {
+      "claim": "Exercises the native `%fs:0` thread-pointer identity boundary used by the allocator TLS owner.",
+      "command": "./scripts/dev-amd64.sh cargo test -p crabc-core --lib",
+      "id": "native-thread-pointer-unit",
+      "native_required": true,
+      "state": "available"
+    },
+    {
+      "claim": "Exercises the allocator engine's selected x86-64 configuration, including its one 4 KiB base-page profile.",
+      "command": "./scripts/dev-amd64.sh cargo test -p crabc-mimalloc --lib --quiet",
+      "id": "native-allocator-unit",
+      "native_required": true,
+      "state": "available"
+    }
+  ],
+  "facts": [
+    {
+      "id": "max-vabits",
+      "rust_source": {
+        "path": "crabc-mimalloc/src/config.rs",
+        "required_text": "#[cfg(target_arch = \"x86_64\")]\npub(crate) const MAX_VABITS: usize = 47;"
+      },
+      "upstream_source": "include/mimalloc/bits.h: MI_ARCH_X64 selects MI_MAX_VABITS = 47",
+      "value": 47
+    },
+    {
+      "id": "page-map-shift",
+      "rust_source": {
+        "path": "crabc-mimalloc/src/config.rs",
+        "required_text": "assert_eq!(PAGE_MAP_SHIFT, 18);"
+      },
+      "upstream_source": "include/mimalloc/bits.h: MI_PAGE_MAP_SHIFT = MI_MAX_VABITS - 13 - 16",
+      "value": 18
+    },
+    {
+      "id": "base-page-size-bytes",
+      "rust_source": {
+        "path": "crabc-mimalloc/src/os.rs",
+        "required_text": "assert_eq!(PageSize::new(4 * 1024).unwrap().bytes(), 4 * 1024);\n        #[cfg(target_arch = \"aarch64\")]\n        for bytes in [16 * 1024, 64 * 1024] {\n            assert_eq!(PageSize::new(bytes).unwrap().bytes(), bytes);\n        }\n        #[cfg(target_arch = \"x86_64\")]\n        for bytes in [16 * 1024, 64 * 1024] {\n            assert!(PageSize::new(bytes).is_none());\n        }"
+      },
+      "upstream_source": "include/mimalloc/prim/unix/prim.c: native Linux x86-64 base-page observation",
+      "value": 4096
+    },
+    {
+      "id": "thread-pointer-identity",
+      "rust_source": {
+        "path": "crabc-core/src/thread.rs",
+        "required_text": "\"mov {thread_pointer}, fs:[0]\""
+      },
+      "upstream_source": "include/mimalloc/prim-tls.h: Linux x86-64 direct `%fs:0` thread-pointer identity",
+      "value": {
+        "offset_bytes": 0,
+        "segment": "fs"
+      }
+    }
+  ],
+  "excludes": [
+    "public crabc platform support",
+    "a generic architecture portability contract",
+    "allocator backend promotion"
+  ],
+  "format": 1,
+  "implementation_state": "incomplete",
+  "kind": "mimalloc-target-parity-status",
+  "ledger_boundary": {
+    "aarch64_contracts_not_mirrored": [
+      "compat/allocator/api-v3.5.0.json",
+      "compat/allocator/adapted-tests-v3.5.0.json",
+      "compat/allocator/port-map.toml",
+      "compat/allocator/ratchet-v3.5.0.json"
+    ],
+    "reason": "Those checked-in ledgers encode AArch64 production API, adapter, dependency, and verification claims. Copying their fields into an x86-64 file before target-specific evidence exists would falsely claim parity.",
+    "status": "intentionally-not-mirrored"
+  },
+  "not_yet_covered_lanes": [
+    {
+      "id": "rust-layout-and-trace-differential",
+      "reason": "The native x86-64 C oracle records C layouts and traces, but it deliberately leaves target-specific Rust layout and trace comparison unclaimed.",
+      "state": "not_covered"
+    },
+    {
+      "id": "test-adapter-and-public-mi-api",
+      "reason": "The checked-in adapter and public API contract remain AArch64-specific; crabc-mimalloc exposes no production C allocator API on x86-64.",
+      "state": "not_covered"
+    },
+    {
+      "id": "production-dependency-graph",
+      "reason": "The audited production dependency graph is currently fixed to aarch64-unknown-linux-musl and has no x86-64 target-specific contract.",
+      "state": "not_covered"
+    },
+    {
+      "id": "general-thread-lifecycle-and-stress",
+      "reason": "General remote-free routing, process/thread teardown, abandonment/adoption lifecycle, and pthread stress remain incomplete allocator work.",
+      "state": "not_covered"
+    },
+    {
+      "id": "libc-backend-promotion-and-public-crabc-support",
+      "reason": "This profile neither selects the Rust engine as a libc backend nor establishes public crabc x86-64 support.",
+      "state": "not_covered"
+    },
+    {
+      "id": "performance-qualification",
+      "reason": "No matched native x86-64 Rust-versus-pinned-C allocator performance qualification is recorded.",
+      "state": "not_covered"
+    }
+  ],
+  "native_only": true,
+  "profile": "linux-x86_64-mimalloc-parity",
+  "public_support": false,
+  "scope": "A target-local evidence and implementation ledger for the pinned crabc-mimalloc engine on native Linux/x86-64 little-endian.",
+  "target": {
+    "architecture": "x86_64",
+    "base_page_size_bytes": 4096,
+    "endianness": "little",
+    "kernel_baseline": "5.10",
+    "max_vabits": 47,
+    "page_map_shift": 18,
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux",
+    "tls_identity": {
+      "offset_bytes": 0,
+      "segment": "fs"
+    }
+  },
+  "upstream": {
+    "project": "mimalloc",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}
