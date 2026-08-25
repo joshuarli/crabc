@@ -892,8 +892,9 @@ Run it only through the architecture-aware native dispatcher:
 The runner rejects emulation by requiring both the native x86-64 guest and
 the dispatcher's native-host provenance. Its report is
 `compat/reports/allocator/x86_64/latest.json` and its profile is
-`x86_64-native-c-oracle`: the lane checks the target-local source declaration
-inventory; the exact unfeatured x86 normal dependency graph (including
+`x86_64-native-c-oracle`: the lane checks the target-local declaration
+inventory and source-only API/mode/test/symbol coverage ledger; the exact
+unfeatured x86 normal dependency graph (including
 `cpufeatures` and no selected `libc` package); and a fresh, lockfile-verified
 `#![no_std]` release `rlib`. The workspace release profile uses fat LTO, so
 that normal-library artifact's codegen member is recorded as LLVM bitcode,
@@ -938,8 +939,22 @@ finite Loom head-protocol models) in
 `compat/reports/allocator/x86_64/lifecycle-concurrency.json`. It is evidence
 for only those listed compiler-TLS, private-key, and remote-head transitions;
 it is not general process/thread lifecycle, client routing,
-abandonment/adoption, pthread callback, fault-injection, or whole-allocator
-stress evidence.
+abandonment/adoption, pthread callback, general fault-injection or misuse
+parity, or whole-allocator stress evidence.
+
+The separate bounded fault-injection judge is also native x86-only:
+
+```sh
+./scripts/dev-amd64.sh allocator-fault
+```
+
+It records five named crate-private state-preservation regressions at selected
+Map, Commit, Unmap, and Decommit points in
+`compat/reports/allocator/x86_64/fault-injection.json`. It does not establish
+general fault-injection or misuse parity, syscall interposition, C-oracle
+differentials, lifecycle/stress coverage, public `mi_*` behavior, libc
+integration, or an x86 backend. Each named Rust test runs serially with
+`--locked` against an isolated disposable x86-64 target directory.
 
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
@@ -963,6 +978,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | --- | --- |
 | `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, and C++ conveniences; every item records its Linux/AArch64 classification, reason, profile, C-oracle release-symbol disposition, and crabc-libc export policy. Native x86-64 parity requires a separate architecture-qualified inventory. |
 | `x86_64-api-v3.5.0.json` | Target-local, source-only inventory of the pinned base `mimalloc.h` `mi_decl_export` declarations. It does not claim object exports, adapter coverage, implementation, or public integration. |
+| `x86_64-api-coverage-v3.5.0.json` and `x86_64_api_coverage.py` | Target-local source-only ledger for the pinned installed headers, source-form modes, test inputs, and symbol dispositions. Target-mode, object-symbol, behavior, and implementation statuses remain explicitly unassessed. |
 | `x86_64-source-map-v3.5.0.json` and `x86_64_source_map.py` | Target-local pinned-source mapping and ratchet foundation for 34 x86-relevant source units. Its statuses remain explicitly incomplete and never reuse the AArch64 port-map/ratchet. |
 | `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
 | `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and AArch64 native link contract for pinned upstream `test-api.c`. |
@@ -975,6 +991,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
 | `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its seven lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
+| `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
 

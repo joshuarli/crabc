@@ -135,6 +135,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-private-adapter-performance",
                 "native-tls-codegen",
                 "native-bounded-lifecycle-concurrency",
+                "native-bounded-fault-injection",
                 "native-allocator-unit",
             },
         )
@@ -166,6 +167,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-bounded-lifecycle-concurrency"]["report"],
             "compat/reports/allocator/x86_64/lifecycle-concurrency.json",
         )
+        self.assertEqual(
+            gates["native-bounded-fault-injection"]["report"],
+            "compat/reports/allocator/x86_64/fault-injection.json",
+        )
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
@@ -179,6 +184,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("seven named private Rust lifecycle/concurrency lanes", gates["native-bounded-lifecycle-concurrency"]["claim"])
         self.assertIn("11 selected tests", gates["native-bounded-lifecycle-concurrency"]["claim"])
         self.assertIn("not general process/thread lifecycle", gates["native-bounded-lifecycle-concurrency"]["claim"])
+        self.assertIn("general fault-injection or misuse parity", gates["native-bounded-lifecycle-concurrency"]["claim"])
+        self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
+        self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
+        self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])
 
     def test_native_thread_pointer_unit_is_an_implementation_regression(self) -> None:
         regressions = {
@@ -214,8 +223,9 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertTrue(all(lane["state"] == "not_covered" for lane in lanes.values()))
         self.assertIn("Bounded native private-adapter", lanes["performance-qualification"]["reason"])
         self.assertIn("no whole-engine", lanes["performance-qualification"]["reason"])
-        self.assertIn("Seven bounded private Rust lanes", lanes["general-thread-lifecycle-and-stress"]["reason"])
-        self.assertIn("fault injection", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("Seven bounded private Rust lifecycle/concurrency lanes", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("five bounded crate-private fault-injection", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])
 
         boundary = self.contract["ledger_boundary"]
         self.assertEqual(boundary["status"], "intentionally-not-mirrored")
