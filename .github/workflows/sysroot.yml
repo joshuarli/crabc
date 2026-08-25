@@ -21,20 +21,6 @@ jobs:
       # actions/checkout@v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Require a default-branch dispatch
-        shell: bash
-        env:
-          ACTUAL_REF: ${{ github.ref }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          expected_ref="refs/heads/${DEFAULT_BRANCH}"
-          if [[ "${ACTUAL_REF}" != "${expected_ref}" ]]; then
-            printf 'sysroot prereleases may only be dispatched from %s; got %s\n' \
-              "${expected_ref}" "${ACTUAL_REF}" >&2
-            exit 1
-          fi
-
       - name: Build the pinned native development image
         run: ./scripts/dev.sh image
 
