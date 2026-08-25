@@ -137,6 +137,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 29 address-independent values for one ordinary arena-backed 33-byte offset-aligned request (64-byte alignment, offset 7). The private trace observes interior-base recovery, adjusted usable size, the aligned ceil-half boundary and same-pointer reuse, replacement preservation, zeroed growth, and terminal PageMap/arena-page/slice release. This is private native engine evidence only; it does not claim a public mi_* API, public x86 libc/ldso/runtime support, AArch64 evidence, or general aligned allocation/reallocation coverage.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-aligned-overalloc-realloc",
+      "id": "native-aligned-overalloc-realloc-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/aligned-overalloc-realloc.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 40 address-independent values across a pinned normal-release C fixture and one private Rust test. It fills one 1025-byte ordinary regular-small arena page (1280-byte class, 51 blocks, one slice), locally frees every block to retire it with retire_expire == 16, lets the next generic same-Theap allocation quick-collect and reuse a just-freed block on the same page, then locally retires it and force-collects the exact queue, PageMap, arena-page bit, and slice release. This is only same-thread/same-Theap private engine evidence for that ordinary regular-small route; it does not establish general retirement or lifecycle, remote/concurrent collection, abandonment, thread teardown, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-regular-small",
       "id": "native-regular-small-retire-quick-collect-release-differential",

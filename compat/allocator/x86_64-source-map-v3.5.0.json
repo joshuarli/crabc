@@ -421,8 +421,11 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "Rust models selected arena and OS-aligned ownership paths; public C entry points and general concurrent arena search remain absent.",
+      "difference": "Rust models selected arena and OS-aligned ownership paths. A separate 29-value native x86-64 private differential covers one ordinary arena-backed 33-byte offset-aligned request (64-byte alignment, offset 7), interior-base recovery, adjusted usable size, aligned ceil-half reuse, replacement preservation, zeroed growth, and terminal PageMap/arena-page/slice release. Public C entry points and general concurrent arena search remain absent.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_aligned_overalloc_realloc_evidence.py",
+        "compat/allocator/x86_64-aligned-overalloc-realloc-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_aligned_overalloc_realloc_evidence.py",
         "crabc-mimalloc/src/aligned.rs",
         "crabc-mimalloc/src/os_page.rs",
         "crabc-mimalloc/src/single_thread.rs"
@@ -1118,6 +1121,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "a2661b7b39adb2fc3117701e8946b2c7ee924774dc42773e3bc6368edb9f99c4"
+    "units_sha256": "b28375fe88cbc569a610620f6a3f92f53228cf3188fbc73f8b248bf60a798239"
   }
 }

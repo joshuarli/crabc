@@ -1268,6 +1268,24 @@ the trace itself is poststate evidence only. It does not claim C
 fault-injection parity, fresh fallback, public x86 runtime support, libc
 integration, backend promotion, or AArch64 evidence.
 
+The separate aligned over-allocation/reallocation differential is also native
+x86-64 only:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-aligned-overalloc-realloc
+```
+
+It writes `compat/reports/allocator/x86_64/aligned-overalloc-realloc.json`
+after comparing 29 address-independent values from pinned C and one private
+Rust test. The fixture is limited to one ordinary arena-backed 33-byte
+offset-aligned request (64-byte alignment, offset 7). It observes
+interior-base recovery, adjusted usable size, the aligned ceil-half reuse
+boundary, replacement preservation, zeroed growth, and terminal PageMap,
+arena-page, and slice release. This is private native x86 engine evidence
+only; it does not claim a public `mi_*` API, public x86 libc/ldso/runtime
+support, general aligned allocation/reallocation coverage, or AArch64
+evidence.
+
 The separate ordinary regular-small retirement differential is also native
 x86-64 only:
 

@@ -172,6 +172,14 @@ and invalid-size failure. The native x86-64 evidence lane separately extends
 its private trace to 75 fields with fixed no-padding `mi_expand` and checked
 `mi_recalloc` growth, zero-product, and overflow-preservation cases; native
 AArch64 revalidation of that extension remains pending. A separate native
+x86-only 29-field C/Rust differential covers one ordinary arena-backed
+33-byte offset-aligned allocation (64-byte alignment, offset 7). It records
+interior-base recovery, adjusted usable size, the aligned ceil-half reuse
+boundary, replacement preservation, zeroed growth, and terminal PageMap,
+arena-page, and slice release. This is private native x86 engine evidence only:
+it does not claim a public `mi_*` API, public x86 libc/ldso/runtime support,
+general aligned allocation/reallocation coverage, or AArch64 evidence. AArch64
+status is unchanged by this x86-only trace. A separate native
 x86-64-only 25-field C/Rust differential records two live-owner publications
 from one quiescent `pthread`, then the pinned private owner false collector.
 It proves only owner-bit preservation, LIFO publication, exact used-count, and
@@ -1576,7 +1584,8 @@ behavior claim. Its separate 13-field unmapped-full-medium differential uses a
 real pinned-C full-queue page and public `mi_free` to observe the source
 threshold reabandon/map publication tail. The Rust record intentionally models
 only `abandoned::free_unmapped_after_failed_reclaim` after the reclaim decision
-has failed, using synthetic metadata; it is not a Rust full-medium routing,
+has failed, using synthetic metadata; it is not a Rust full-medium routing
+claim for this cited x86 differential,
 owner-exit, general abandonment, or public API claim. A separate 18-field
 post-Theap-teardown lane uses a real pinned-C worker `mi_thread_done()` followed
 by `pthread_join()` before consumer `mi_free`, and observes PageMap, ordinary

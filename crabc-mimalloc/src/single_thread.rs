@@ -6593,18 +6593,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitMappedRegularPostExitDetach {
             session,
@@ -34149,6 +34154,275 @@ mod tests {
             .unwrap();
             assert!(unsafe { bytes_equal(zero_offset, zero_offset_usable, 0x2b) });
             unsafe { allocator.free(zero_offset).unwrap() };
+        });
+    }
+
+    /// Emits one address-independent native x86-64 record for the bounded
+    /// in-arena aligned over-allocation and reallocation route. This is
+    /// private evidence for the pinned allocator engine: it does not claim
+    /// public x86 support, general aligned lifecycle coverage, or a portable
+    /// allocation policy.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_aligned_overalloc_realloc_trace_matches_pinned_c_protocol() {
+        with_allocator(|allocator| {
+            const REQUEST: usize = 33;
+            const ALIGNMENT: usize = 64;
+            const OFFSET: usize = 7;
+            const SEED: u8 = 0x96;
+            const GROW_SEED: u8 = 0x47;
+
+            let original = allocator
+                .allocate_aligned_at(REQUEST, ALIGNMENT, OFFSET)
+                .unwrap();
+            let original_page = NonNull::new(unsafe { allocator.page_for_block(original) }).unwrap();
+            let original_page_ref = unsafe { original_page.as_ref() };
+            let original_page_start = unsafe { original_page_ref.start() };
+            let original_block_size = original_page_ref.block_size();
+            let original_block_base = aligned::recover_block_start(
+                original.as_ptr().addr(),
+                original_page_start.addr(),
+                original_block_size,
+            )
+            .unwrap();
+            let original_pointer_offset = original
+                .as_ptr()
+                .addr()
+                .checked_sub(original_page_start.addr())
+                .unwrap();
+            let original_base_offset = original_block_base
+                .checked_sub(original_page_start.addr())
+                .unwrap();
+            let original_interior_adjustment = original
+                .as_ptr()
+                .addr()
+                .checked_sub(original_block_base)
+                .unwrap();
+            let original_usable = unsafe { allocator.usable_size(original) }.unwrap();
+            let original_alignment = original
+                .as_ptr()
+                .addr()
+                .wrapping_add(OFFSET)
+                & (ALIGNMENT - 1)
+                == 0;
+            let original_arena_backed = original_page_ref.memid().kind() == MemoryKind::Arena;
+            let original_has_interior = original_page_ref.has_interior_pointers();
+            let original_base_recovered = original_block_base != original.as_ptr().addr()
+                && original_base_offset + original_interior_adjustment == original_pointer_offset
+                && aligned::usable_size(
+                    original_block_size,
+                    original_block_base,
+                    original_block_base,
+                ) == Some(original_block_size);
+
+            assert!(original_arena_backed);
+            assert!(original_has_interior);
+            assert!(original_alignment);
+            assert!(original_base_recovered);
+            assert_eq!(original_usable, original_block_size - original_interior_adjustment);
+            assert!(original_usable >= REQUEST);
+            unsafe { write_bytes(original, original_usable, SEED) };
+
+            let ceil_half = original_usable - original_usable / 2;
+            let reused = unsafe {
+                allocator.reallocate_aligned_at(Some(original), ceil_half, ALIGNMENT, OFFSET)
+            }
+            .unwrap();
+            let reused_usable = unsafe { allocator.usable_size(reused) }.unwrap();
+            let reused_same_pointer = reused == original;
+            let reused_alignment = reused
+                .as_ptr()
+                .addr()
+                .wrapping_add(OFFSET)
+                & (ALIGNMENT - 1)
+                == 0;
+            assert!(reused_same_pointer);
+            assert!(reused_alignment);
+            assert_eq!(reused_usable, original_usable);
+
+            let one_below = ceil_half - 1;
+            let replacement = unsafe {
+                allocator.reallocate_aligned_at(Some(reused), one_below, ALIGNMENT, OFFSET)
+            }
+            .unwrap();
+            let replacement_page = NonNull::new(unsafe { allocator.page_for_block(replacement) }).unwrap();
+            let replacement_page_ref = unsafe { replacement_page.as_ref() };
+            let replacement_page_start = unsafe { replacement_page_ref.start() };
+            let replacement_block_base = aligned::recover_block_start(
+                replacement.as_ptr().addr(),
+                replacement_page_start.addr(),
+                replacement_page_ref.block_size(),
+            )
+            .unwrap();
+            let replacement_base_offset = replacement_block_base
+                .checked_sub(replacement_page_start.addr())
+                .unwrap();
+            let replacement_interior_adjustment = replacement
+                .as_ptr()
+                .addr()
+                .checked_sub(replacement_block_base)
+                .unwrap();
+            let replacement_usable = unsafe { allocator.usable_size(replacement) }.unwrap();
+            let replacement_alignment = replacement
+                .as_ptr()
+                .addr()
+                .wrapping_add(OFFSET)
+                & (ALIGNMENT - 1)
+                == 0;
+            let replacement_preserved = unsafe { bytes_equal(replacement, one_below, SEED) };
+            let replacement_arena_backed = replacement_page_ref.memid().kind() == MemoryKind::Arena;
+            assert_ne!(replacement, reused);
+            assert!(replacement_alignment);
+            assert!(replacement_arena_backed);
+            assert!(replacement_preserved);
+            assert_eq!(replacement_usable, replacement_page_ref.block_size() - replacement_interior_adjustment);
+            assert_eq!(replacement_base_offset + replacement_interior_adjustment,
+                replacement.as_ptr().addr() - replacement_page_start.addr());
+
+            unsafe { write_bytes(replacement, replacement_usable, GROW_SEED) };
+            let grow_request = replacement_usable + 17;
+            let grown = unsafe {
+                allocator.reallocate_aligned_zeroed_at(
+                    Some(replacement),
+                    grow_request,
+                    ALIGNMENT,
+                    OFFSET,
+                )
+            }
+            .unwrap();
+            let grown_page = NonNull::new(unsafe { allocator.page_for_block(grown) }).unwrap();
+            let grown_page_ref = unsafe { grown_page.as_ref() };
+            let grown_page_start = unsafe { grown_page_ref.start() };
+            let grown_block_base = aligned::recover_block_start(
+                grown.as_ptr().addr(),
+                grown_page_start.addr(),
+                grown_page_ref.block_size(),
+            )
+            .unwrap();
+            let grown_base_offset = grown_block_base.checked_sub(grown_page_start.addr()).unwrap();
+            let grown_interior_adjustment = grown
+                .as_ptr()
+                .addr()
+                .checked_sub(grown_block_base)
+                .unwrap();
+            let grown_usable = unsafe { allocator.usable_size(grown) }.unwrap();
+            let grown_alignment = grown
+                .as_ptr()
+                .addr()
+                .wrapping_add(OFFSET)
+                & (ALIGNMENT - 1)
+                == 0;
+            let grown_prefix_preserved = unsafe { bytes_equal(grown, replacement_usable, GROW_SEED) };
+            let grown_tail_zeroed = unsafe {
+                bytes_equal(
+                    NonNull::new(grown.as_ptr().wrapping_add(replacement_usable)).unwrap(),
+                    grown_usable - replacement_usable,
+                    0,
+                )
+            };
+            let grown_arena_backed = grown_page_ref.memid().kind() == MemoryKind::Arena;
+            let grown_memory = grown_page_ref.memid().arena_memory().unwrap();
+            let grown_slice_index = grown_memory.slice_index as usize;
+            let grown_slice_count = grown_memory.slice_count as usize;
+            let grown_slice_start = allocator.arena.slice_start(grown_slice_index).unwrap();
+            let grown_span_size = grown_slice_count * ARENA_SLICE_SIZE;
+            let grown_bin = size_class::bin(grown_page_ref.block_size()).unwrap();
+
+            assert_ne!(grown, replacement);
+            assert!(grown_arena_backed);
+            assert!(grown_alignment);
+            assert!(grown_usable >= grow_request);
+            assert!(grown_prefix_preserved);
+            assert!(grown_tail_zeroed);
+            assert_eq!(grown_usable, grown_page_ref.block_size() - grown_interior_adjustment);
+            assert_eq!(grown_base_offset + grown_interior_adjustment,
+                grown.as_ptr().addr() - grown_page_start.addr());
+
+            // The final client free retires this ordinary arena page; forced
+            // collection completes the source PageMap -> arena bitmap ->
+            // exact slice-span release order.
+            unsafe { allocator.free(grown).unwrap() };
+            assert!(allocator.collect_retired(true));
+            let release_queue_empty = allocator.queue_count(grown_bin) == Some(0);
+            let release_page_count_zero = allocator.session.theap().page_count() == 0;
+            let release_map_clear = unsafe { allocator.page_map.checked_lookup(grown.as_ptr()) }.is_null();
+            let release_span_map_clear = (0..grown_span_size)
+                .step_by(ARENA_SLICE_SIZE)
+                .all(|offset| unsafe {
+                    allocator
+                        .page_map
+                        .checked_lookup(grown_slice_start.wrapping_add(offset))
+                        .is_null()
+                });
+            let release_arena_page_clear = unsafe { allocator.arena.pages() }
+                .unwrap()
+                .is_clear_range(grown_slice_index, grown_slice_count)
+                == Some(true);
+            let release_slices_free = unsafe { allocator.arena.slices_free() }
+                .unwrap()
+                .is_set_range(grown_slice_index, grown_slice_count)
+                == Some(true);
+            let valid = original_arena_backed
+                && original_has_interior
+                && original_alignment
+                && original_base_recovered
+                && original_interior_adjustment == 57
+                && original_block_size == 96
+                && original_usable == 39
+                && original_usable >= REQUEST
+                && reused_same_pointer
+                && reused_alignment
+                && ceil_half == 20
+                && replacement_arena_backed
+                && replacement_alignment
+                && replacement_preserved
+                && one_below == 19
+                && replacement_usable == 71
+                && grown_arena_backed
+                && grown_alignment
+                && grown_prefix_preserved
+                && grown_tail_zeroed
+                && grow_request == 88
+                && grown_usable == 103
+                && release_queue_empty
+                && release_page_count_zero
+                && release_map_clear
+                && release_span_map_clear
+                && release_arena_page_clear
+                && release_slices_free;
+            assert!(valid, "aligned over-allocation trace diverged from the private source route");
+
+            std::println!("CRABC_MI_ALIGNED_OVERALLOC_REALLOC_TRACE_BEGIN");
+            std::println!("trace.aligned_overalloc.request={REQUEST}");
+            std::println!("trace.aligned_overalloc.alignment={ALIGNMENT}");
+            std::println!("trace.aligned_overalloc.offset={OFFSET}");
+            std::println!("trace.aligned_overalloc.arena_backed={}", u8::from(original_arena_backed));
+            std::println!("trace.aligned_overalloc.interior_pointer={}", u8::from(original_has_interior));
+            std::println!("trace.aligned_overalloc.normalized_alignment={}", u8::from(original_alignment));
+            std::println!("trace.aligned_overalloc.base_recovered={}", u8::from(original_base_recovered));
+            std::println!("trace.aligned_overalloc.adjust={original_interior_adjustment}");
+            std::println!("trace.aligned_overalloc.block_size={original_block_size}");
+            std::println!("trace.aligned_overalloc.usable={original_usable}");
+            std::println!("trace.aligned_overalloc.ceil_half={ceil_half}");
+            std::println!("trace.aligned_overalloc.reuse_same_pointer={}", u8::from(reused_same_pointer));
+            std::println!("trace.aligned_overalloc.reuse_alignment={}", u8::from(reused_alignment));
+            std::println!("trace.aligned_overalloc.replacement_request={one_below}");
+            std::println!("trace.aligned_overalloc.replacement_distinct={}", u8::from(replacement != reused));
+            std::println!("trace.aligned_overalloc.replacement_alignment={}", u8::from(replacement_alignment));
+            std::println!("trace.aligned_overalloc.replacement_preserved={}", u8::from(replacement_preserved));
+            std::println!("trace.aligned_overalloc.replacement_usable={replacement_usable}");
+            std::println!("trace.aligned_overalloc.growth_request={grow_request}");
+            std::println!("trace.aligned_overalloc.growth_distinct={}", u8::from(grown != replacement));
+            std::println!("trace.aligned_overalloc.growth_alignment={}", u8::from(grown_alignment));
+            std::println!("trace.aligned_overalloc.growth_preserved={}", u8::from(grown_prefix_preserved));
+            std::println!("trace.aligned_overalloc.growth_zero_tail={}", u8::from(grown_tail_zeroed));
+            std::println!("trace.aligned_overalloc.growth_usable={grown_usable}");
+            std::println!("trace.aligned_overalloc.final_map_clear={}", u8::from(release_map_clear));
+            std::println!("trace.aligned_overalloc.final_span_map_clear={}", u8::from(release_span_map_clear));
+            std::println!("trace.aligned_overalloc.final_arena_page_clear={}", u8::from(release_arena_page_clear));
+            std::println!("trace.aligned_overalloc.final_slices_free={}", u8::from(release_slices_free));
+            std::println!("trace.aligned_overalloc.valid={}", u8::from(valid));
+            std::println!("CRABC_MI_ALIGNED_OVERALLOC_REALLOC_TRACE_END");
         });
     }
 

@@ -25,6 +25,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-header-modes | allocator-static-modes
   allocator-remote-free | allocator-direct-remote | allocator-mapped-reclaim
   allocator-unmapped-reabandon | allocator-on-demand | allocator-direct-on-demand
+  allocator-aligned-overalloc-realloc
   allocator-regular-small
   allocator-medium-full-retire
   allocator-full-non-direct-small-force-collect-post-exit
@@ -105,7 +106,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-regular-small|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
+    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
         ;;
     *)
         usage >&2
@@ -190,6 +191,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "allocator-direct-on-demand takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/x86_64_direct_on_demand_evidence.py --offline
+        ;;
+    allocator-aligned-overalloc-realloc)
+        [ "$#" -eq 0 ] || fail "allocator-aligned-overalloc-realloc takes no arguments"
+        ensure_image
+        run_in_container python3 compat/allocator/x86_64_aligned_overalloc_realloc_evidence.py --offline
         ;;
     allocator-regular-small)
         [ "$#" -eq 0 ] || fail "allocator-regular-small takes no arguments"

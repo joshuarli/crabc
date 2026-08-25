@@ -142,6 +142,27 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertLessEqual(ordinary["source_anchor"]["start_line"], 204)
         self.assertGreaterEqual(ordinary["source_anchor"]["end_line"], 483)
 
+    def test_aligned_allocation_scope_records_bounded_overalloc_realloc_evidence(self) -> None:
+        aligned = next(
+            unit for unit in self.contract["units"] if unit["id"] == "aligned-allocation-paths"
+        )
+        self.assertEqual(aligned["status"], "partial")
+        self.assertIn("29-value native x86-64 private differential", aligned["difference"])
+        for evidence in (
+            "compat/allocator/x86_64_aligned_overalloc_realloc_evidence.py",
+            "compat/allocator/x86_64-aligned-overalloc-realloc-evidence-v3.5.0.json",
+            "compat/allocator/tests/test_x86_64_aligned_overalloc_realloc_evidence.py",
+        ):
+            self.assertIn(evidence, aligned["evidence"])
+        for fragment in (
+            "33-byte offset-aligned request",
+            "interior-base recovery",
+            "aligned ceil-half reuse",
+            "zeroed growth",
+            "terminal PageMap/arena-page/slice release",
+        ):
+            self.assertIn(fragment, aligned["difference"])
+
     def test_regular_small_differential_maps_each_selected_engine_boundary(self) -> None:
         units = {
             unit["id"]: unit

@@ -5687,7 +5687,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
             .expect("a successful post-exit PageMap bridge retains its ready long lease");
         // SAFETY: all preflight proved the attachment/pair/source identities,
         // and `page_map_lifecycle` now serializes this complete target engine.
-        let engine = unsafe {
+        let mut engine = unsafe {
             PageAllocatorEngine::activate_later_main_thread(
                 session,
                 arena,
@@ -5695,8 +5695,6 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
                 page_map,
             )
         };
-        #[cfg(test)]
-        let mut engine = engine;
         #[cfg(test)]
         engine.test_bind_page_area_commit_lease(pair);
         match unsafe { parts.adopt_into_later_main(&mut engine, pair) } {

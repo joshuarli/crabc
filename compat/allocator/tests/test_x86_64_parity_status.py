@@ -141,6 +141,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-unmapped-full-medium-reabandon-differential",
                 "native-ordinary-reserved-medium-on-demand-differential",
                 "native-reserved-small-direct-on-demand-differential",
+                "native-aligned-overalloc-realloc-differential",
                 "native-regular-small-retire-quick-collect-release-differential",
                 "native-medium-full-to-regular-retire-force-release-differential",
                 "native-full-non-direct-small-force-collect-post-exit-differential",
@@ -233,6 +234,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-reserved-small-direct-on-demand-differential"]["report"],
             "compat/reports/allocator/x86_64/direct-on-demand.json",
+        )
+        self.assertEqual(
+            gates["native-aligned-overalloc-realloc-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-aligned-overalloc-realloc",
+        )
+        self.assertEqual(
+            gates["native-aligned-overalloc-realloc-differential"]["report"],
+            "compat/reports/allocator/x86_64/aligned-overalloc-realloc.json",
         )
         self.assertEqual(
             gates["native-regular-small-retire-quick-collect-release-differential"]["command"],
@@ -521,6 +530,24 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, direct_on_demand)
+        aligned_overalloc = gates["native-aligned-overalloc-realloc-differential"]["claim"]
+        for fragment in (
+            "29 address-independent values",
+            "ordinary arena-backed 33-byte offset-aligned request",
+            "64-byte alignment, offset 7",
+            "interior-base recovery",
+            "adjusted usable size",
+            "aligned ceil-half boundary",
+            "same-pointer reuse",
+            "replacement preservation",
+            "zeroed growth",
+            "terminal PageMap/arena-page/slice release",
+            "private native engine evidence only",
+            "public mi_* API",
+            "public x86 libc/ldso/runtime support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, aligned_overalloc)
         regular_small = gates[
             "native-regular-small-retire-quick-collect-release-differential"
         ]["claim"]

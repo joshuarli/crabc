@@ -41,6 +41,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-aggregate-same-bin-still-live",
             "allocator-on-demand",
             "allocator-direct-on-demand",
+            "allocator-aligned-overalloc-realloc",
             "allocator-regular-small",
             "allocator-medium-full-retire",
             "allocator-full-non-direct-small-force-collect-post-exit",
@@ -79,6 +80,18 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         result = self.run_launcher("allocator-direct-on-demand", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-direct-on-demand takes no arguments", result.stderr)
+
+    def test_aligned_overalloc_realloc_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-aligned-overalloc-realloc)", source)
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_aligned_overalloc_realloc_evidence.py --offline",
+            source,
+        )
+        result = self.run_launcher("allocator-aligned-overalloc-realloc", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("allocator-aligned-overalloc-realloc takes no arguments", result.stderr)
 
     def test_regular_small_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
