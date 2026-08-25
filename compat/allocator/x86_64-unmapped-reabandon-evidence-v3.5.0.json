@@ -24,8 +24,7 @@
     "public_mi_api_claimed": false,
     "public_x86_libc_or_ldso_support": false,
     "real_pinned_c_mi_free_trigger": true,
-    "rust_full_medium_routing_claimed": false,
-    "rust_synthetic_failed_reclaim_tail_only": true,
+    "rust_full_medium_routing_claimed": true,
     "unmapped_full_page_reabandon_only": true
   },
   "compile_definitions": [
@@ -97,9 +96,9 @@
   ],
   "c_probe_sha256": "2f55995210640db950a890a94be42edf498f76b4c7981270eea5bb395ff7b365",
   "rust_test": {
-    "path": "crabc-mimalloc/src/abandoned.rs",
+    "path": "crabc-mimalloc/src/main_heap_page.rs",
     "target_arch": "x86_64",
-    "test_filter": "abandoned::tests::x86_64_unmapped_reabandon_trace_matches_pinned_c_protocol_tail"
+    "test_filter": "main_heap_page::tests::later_thread_exit_full_medium_route_reabandons_after_mostly_used_frees"
   },
   "trace": {
     "begin": "CRABC_MI_UNMAPPED_REABANDON_TRACE_BEGIN",

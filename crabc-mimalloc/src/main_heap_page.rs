@@ -4219,6 +4219,17 @@ impl<'main> MainHeapThreadProcessPageExitFullMediumRoute<'main> {
         self.parts.test_abandoned_count()
     }
 
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_source_state_is_unowned(&self) -> bool {
+        self.parts.test_source_state_is_unowned()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_mapped_abandoned_page_is_set(&self) -> bool {
+        self.parts.test_mapped_abandoned_page_is_set()
+    }
 }
 
 impl<'main> MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
@@ -11730,6 +11741,10 @@ mod tests {
         .expect("full non-direct-small process-route refusal fixture remains current-thread local");
     }
 
+    /// Exercises the real full-medium post-exit route. Native x86 evidence
+    /// selects this exact test with `--nocapture` and compares the scalar
+    /// trace below with the pinned C route; ordinary test runs retain the
+    /// same lifecycle assertions without granting any public x86 behavior.
     #[test]
     fn later_thread_exit_full_medium_route_reabandons_after_mostly_used_frees() {
         thread::spawn(|| {
@@ -11804,10 +11819,15 @@ mod tests {
                         "a full medium page enters the source full queue"
                     );
                     let memory = page_ref.memid();
+                    let arena_backed = memory.arena_memory().is_some();
                     let slice = memory
                         .arena_memory()
                         .expect("the full medium page belongs to the paired arena")
                         .slice_index as usize;
+                    let medium_page = crate::size_class::page_kind_for_block_size(
+                        page_ref.block_size(),
+                    ) == Some(crate::types::PageKind::Medium);
+                    let initially_full = page_ref.used() == capacity;
 
                     let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
                         let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
@@ -11833,10 +11853,14 @@ mod tests {
                         page.as_ptr(),
                         "the initially unmapped full page remains PageMap-routable after teardown"
                     );
+                    let initially_unmapped = !route.test_is_mapped();
                     assert!(
-                        !route.test_is_mapped(),
+                        initially_unmapped,
                         "a full medium page begins source-abandoned without a bitmap publication"
                     );
+                    let abandoned_before_free = initially_unmapped
+                        && route.test_source_state_is_unowned()
+                        && route.test_abandoned_count() == Some(0);
                     assert_eq!(
                         route.test_abandoned_count(),
                         Some(0),
@@ -11864,6 +11888,10 @@ mod tests {
                         index += 1;
                     }
 
+                    let pretransition_remained_unmapped = !route.test_is_mapped()
+                        && route.test_source_state_is_unowned()
+                        && route.test_abandoned_count() == Some(0);
+
                     route = match unsafe { route.remote_free_after_thread_exit(blocks[index]) } {
                         Ok(MainHeapThreadProcessPageExitFullMediumFreeResult::StillLive(route)) => {
                             route
@@ -11873,11 +11901,82 @@ mod tests {
                         }
                         Err(_) => panic!("the first below-mostly-used free reabandons the page to mapped"),
                     };
+                    let reabandon_threshold_crossed = index + 1 > capacity / 8;
+                    let reabandoned_mapped_after_free = route.test_is_mapped();
                     assert!(
-                        route.test_is_mapped(),
+                        reabandoned_mapped_after_free,
                         "the source reabandons the page into the static-main bitmap below mostly used"
                     );
                     assert_eq!(route.test_abandoned_count(), Some(1));
+                    let abandoned_after_free = route.test_source_state_is_unowned();
+                    let bitmap_published_after = route.test_mapped_abandoned_page_is_set();
+                    let page_still_live = index + 1 < capacity;
+                    let unowned_after_free = route.test_source_state_is_unowned();
+                    let valid = arena_backed
+                        && medium_page
+                        && initially_full
+                        && initially_unmapped
+                        && abandoned_before_free
+                        && pretransition_remained_unmapped
+                        && reabandon_threshold_crossed
+                        && reabandoned_mapped_after_free
+                        && abandoned_after_free
+                        && bitmap_published_after
+                        && page_still_live
+                        && unowned_after_free;
+
+                    std::println!("CRABC_MI_UNMAPPED_REABANDON_TRACE_BEGIN");
+                    std::println!(
+                        "trace.unmapped_reabandon.arena_backed={}",
+                        arena_backed as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.medium_page={}",
+                        medium_page as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.initially_full={}",
+                        initially_full as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.initially_unmapped={}",
+                        initially_unmapped as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.abandoned_before_free={}",
+                        abandoned_before_free as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.pretransition_remained_unmapped={}",
+                        pretransition_remained_unmapped as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.reabandon_threshold_crossed={}",
+                        reabandon_threshold_crossed as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.reabandoned_mapped_after_free={}",
+                        reabandoned_mapped_after_free as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.abandoned_after_free={}",
+                        abandoned_after_free as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.bitmap_published_after={}",
+                        bitmap_published_after as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.page_still_live={}",
+                        page_still_live as u8
+                    );
+                    std::println!(
+                        "trace.unmapped_reabandon.unowned_after_free={}",
+                        unowned_after_free as u8
+                    );
+                    std::println!("trace.unmapped_reabandon.valid={}", valid as u8);
+                    std::println!("CRABC_MI_UNMAPPED_REABANDON_TRACE_END");
+                    assert!(valid, "real full-medium route diverged from pinned C trace");
                     index += 1;
 
                     while index + 1 < capacity {

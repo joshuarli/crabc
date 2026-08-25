@@ -485,7 +485,7 @@ contracts, reports, and status.
   25-field quiescent live-owner pinned-C/Rust differential, the 28-field real
   small direct-page remote-free/reuse differential, the 8-field mapped arena
   same-origin reclaim differential, the 13-field initially-unmapped full-medium
-  reabandon differential with its synthetic Rust tail, and the completed
+  reabandon differential with its bounded real Rust post-Theap-teardown route, and the completed
   18-field post-Theap-teardown mapped failed-reclaim/unown differential with
   `pthread_join()` ordering and terminal PageMap, ordinary arena-page bitmap,
   and exact eight-slice-span release checks into init/done, general remote free

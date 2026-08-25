@@ -60,7 +60,7 @@ two-mode static gate observes every selected static archive member and the
 compile/linking. A separate 13-field C/Rust differential covers one real C
 full-medium arena page forced from the full queue to unmapped abandonment, then
 through the `mi_free` threshold that republishes its mapped bitmap; its Rust
-side is explicitly only the deterministic synthetic failed-reclaim tail.
+side exercises the same bounded real post-Theap-teardown full-medium route.
 A separate 18-field C/Rust differential uses a real pinned-C worker `pthread`
 to run `mi_thread_done()` and return; the consumer calls `pthread_join()`
 before its two public `mi_free` calls. It records the selected mapped failed-reclaim/unown

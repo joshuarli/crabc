@@ -12774,12 +12774,50 @@ impl<'main, 'arena> ThreadExitFullRegularPostExitParts<'main, 'arena> {
         matches!(self.state, ThreadExitFullRegularPostExitState::Mapped)
     }
 
+    /// Returns the source ownership fact encoded by this bounded route.
+    ///
+    /// Both retained states are produced only after the failed-reclaim helper
+    /// has released the page's low owner bit: `Unmapped` is the still-mostly-
+    /// used result and `Mapped` is the bitmap-published result.  Keep this as
+    /// a state witness instead of rereading ordinary page fields after the
+    /// old Theap/TLD has gone away.
+    #[cfg(test)]
+    pub(crate) const fn test_source_state_is_unowned(&self) -> bool {
+        matches!(
+            self.state,
+            ThreadExitFullRegularPostExitState::Unmapped
+                | ThreadExitFullRegularPostExitState::Mapped
+        )
+    }
+
     #[cfg(test)]
     pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
         let mut heap = self.main_heap.lock_heap().ok()?;
         let count = heap.heap_mut().abandoned_count(self.bin);
         heap.unlock().ok()?;
         count
+    }
+
+    /// Observes the exact static-main abandoned bitmap paired with this
+    /// route's bin and arena slice. This is test-only because normal route
+    /// consumers must not receive a general bitmap capability.
+    #[cfg(test)]
+    pub(crate) fn test_mapped_abandoned_page_is_set(&self) -> bool {
+        let Some(slice) = self
+            .memory
+            .arena_memory()
+            .map(|memory| memory.slice_index as usize)
+        else {
+            return false;
+        };
+        let Some(mut heap) = self.main_heap.lock_heap().ok() else {
+            return false;
+        };
+        let published = self
+            .arena
+            .main_heap_abandoned_page(NonNull::from(heap.heap_mut()), self.bin)
+            .is_some_and(|map| !crate::abandoned::MappedAbandonedPages::is_clear(&map, slice));
+        published && heap.unlock().is_ok()
     }
 }
 

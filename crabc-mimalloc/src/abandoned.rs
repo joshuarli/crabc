@@ -2696,19 +2696,12 @@ mod tests {
         assert_eq!(page.remote_free_test_used(), 13);
     }
 
-    /// Emits the address-independent counterpart to the bounded native C
-    /// unmapped-full-page reabandon fixture. The C side fills a real medium
-    /// arena page, disables reclaim-on-free, abandons its full queue entry,
-    /// and uses public `mi_free` calls to cross the source eighth threshold.
-    ///
-    /// This Rust fixture intentionally starts after the failed reclaim
-    /// decision. The current private Rust engine has no matching native
-    /// full-medium owner-exit/free-routing harness, so it models only the
-    /// deterministic `free.c` failed-reclaim tail on caller-owned synthetic
-    /// page metadata.
-    #[cfg(target_arch = "x86_64")]
+    /// Keeps the raw `free.c` failed-reclaim tail independently regression-
+    /// tested on synthetic metadata. The native x86 differential selects the
+    /// real full-medium post-Theap-teardown route in `main_heap_page`; this
+    /// unit test is deliberately only a low-level tail invariant.
     #[test]
-    fn x86_64_unmapped_reabandon_trace_matches_pinned_c_protocol_tail() {
+    fn unmapped_reabandon_failed_reclaim_tail_crosses_source_threshold() {
         let block_size = crate::config::SMALL_MAX_OBJ_SIZE + core::mem::size_of::<Block>();
         let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
         assert!(bin < ARENA_BIN_COUNT);
@@ -2780,43 +2773,7 @@ mod tests {
             && page_still_live
             && unowned_after_free;
 
-        std::println!("CRABC_MI_UNMAPPED_REABANDON_TRACE_BEGIN");
-        std::println!("trace.unmapped_reabandon.arena_backed={}", arena_backed as u8);
-        std::println!("trace.unmapped_reabandon.medium_page={}", medium_page as u8);
-        std::println!("trace.unmapped_reabandon.initially_full={}", initially_full as u8);
-        std::println!(
-            "trace.unmapped_reabandon.initially_unmapped={}",
-            initially_unmapped as u8
-        );
-        std::println!(
-            "trace.unmapped_reabandon.abandoned_before_free={}",
-            abandoned_before_free as u8
-        );
-        std::println!(
-            "trace.unmapped_reabandon.pretransition_remained_unmapped={}",
-            pretransition_remained_unmapped as u8
-        );
-        std::println!(
-            "trace.unmapped_reabandon.reabandon_threshold_crossed={}",
-            reabandon_threshold_crossed as u8
-        );
-        std::println!(
-            "trace.unmapped_reabandon.reabandoned_mapped_after_free={}",
-            reabandoned_mapped_after_free as u8
-        );
-        std::println!(
-            "trace.unmapped_reabandon.abandoned_after_free={}",
-            abandoned_after_free as u8
-        );
-        std::println!(
-            "trace.unmapped_reabandon.bitmap_published_after={}",
-            bitmap_published_after as u8
-        );
-        std::println!("trace.unmapped_reabandon.page_still_live={}", page_still_live as u8);
-        std::println!("trace.unmapped_reabandon.unowned_after_free={}", unowned_after_free as u8);
-        std::println!("trace.unmapped_reabandon.valid={}", valid as u8);
-        std::println!("CRABC_MI_UNMAPPED_REABANDON_TRACE_END");
-        assert!(valid, "native unmapped-reabandon trace diverged from pinned C tail");
+        assert!(valid, "synthetic failed-reclaim tail violates the source threshold");
     }
 
     #[test]

@@ -38,8 +38,8 @@ class SchemaTests(unittest.TestCase):
             ],
         )
         self.assertTrue(schema["scope"]["real_pinned_c_mi_free_trigger"])
-        self.assertTrue(schema["scope"]["rust_synthetic_failed_reclaim_tail_only"])
-        self.assertFalse(schema["scope"]["rust_full_medium_routing_claimed"])
+        self.assertTrue(schema["scope"]["rust_full_medium_routing_claimed"])
+        self.assertNotIn("rust_synthetic_failed_reclaim_tail_only", schema["scope"])
 
     def test_schema_rejects_probe_scope_or_anchor_drift(self):
         mutations = (
@@ -160,7 +160,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(report["comparison"], {"compared_value_count": 13, "status": "matched"})
         self.assertTrue(report["scope"]["unmapped_full_page_reabandon_only"])
-        self.assertTrue(report["scope"]["rust_synthetic_failed_reclaim_tail_only"])
+        self.assertTrue(report["scope"]["rust_full_medium_routing_claimed"])
         self.assertFalse(report["scope"]["general_free_routing_claimed"])
         self.assertEqual(report["c_probe"]["elf"], evidence.EXPECTED_C_ELF)
         self.assertIn("--locked", report["rust_probe"]["cargo_command"])
@@ -171,7 +171,7 @@ class ReportTests(unittest.TestCase):
             (lambda value: value["c_probe"].update({"elf": {}}), "C ELF identity"),
             (lambda value: value["c_probe"].update({"source_sha256": "0" * 64}), "C source hash"),
             (lambda value: value["rust_probe"]["cargo_command"].remove("--locked"), "Rust command drifted"),
-            (lambda value: value["scope"].update({"rust_full_medium_routing_claimed": True}), "source or private boundary"),
+            (lambda value: value["scope"].update({"rust_full_medium_routing_claimed": False}), "source or private boundary"),
             (lambda value: value["rust_probe"].update({"passed_test_count": True}), "Rust selection"),
         )
         for mutate, message in mutations:

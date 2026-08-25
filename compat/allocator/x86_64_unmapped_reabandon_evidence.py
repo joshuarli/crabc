@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Differentially prove one unmapped-full-page reabandon tail on native x86-64.
+"""Differentially prove one real unmapped-full-page route on native x86-64.
 
 The pinned-C fixture forces a fresh arena Theap to disable reclaim-on-free and
 full-page abandonment, fills one medium arena page, and source-abandons that
 full-queue member. Public ``mi_free`` calls then take the pinned failed-reclaim
 tail until the exact eighth threshold republishes the nonempty page as mapped.
-The Rust side deliberately models only that deterministic private tail on
-synthetic metadata: it does not claim a native Rust full-medium routing or
-thread-exit path.
+The Rust side fills one real medium arena page, transfers its full queue entry
+through the bounded post-Theap-teardown route, and consumes the same threshold
+with sequential client frees. It remains one private linear route, not general
+thread exit, free routing, or abandonment/adoption.
 
 This is bounded private allocator-engine evidence only. It does not establish
 general abandonment/adoption, general free routing, public ``mi_*`` behavior,
@@ -32,9 +33,9 @@ RUNNER_PATH = ROOT / "compat/allocator/run.py"
 SCHEMA_PATH = ROOT / "compat/allocator/x86_64-unmapped-reabandon-evidence-v3.5.0.json"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/unmapped-reabandon.json"
 LOCKFILE = ROOT / "Cargo.lock"
-RUST_TEST_SOURCE = ROOT / "crabc-mimalloc/src/abandoned.rs"
+RUST_TEST_SOURCE = ROOT / "crabc-mimalloc/src/main_heap_page.rs"
 TARGET = "x86_64-unknown-linux-musl"
-RUST_TEST_FILTER = "abandoned::tests::x86_64_unmapped_reabandon_trace_matches_pinned_c_protocol_tail"
+RUST_TEST_FILTER = "main_heap_page::tests::later_thread_exit_full_medium_route_reabandons_after_mostly_used_frees"
 TRACE_BEGIN = "CRABC_MI_UNMAPPED_REABANDON_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_UNMAPPED_REABANDON_TRACE_END"
 NORMALIZED_EVIDENCE_ROOT = "<temporary-evidence-root>"
@@ -74,8 +75,7 @@ EXPECTED_SCOPE = {
     "public_mi_api_claimed": False,
     "public_x86_libc_or_ldso_support": False,
     "real_pinned_c_mi_free_trigger": True,
-    "rust_full_medium_routing_claimed": False,
-    "rust_synthetic_failed_reclaim_tail_only": True,
+    "rust_full_medium_routing_claimed": True,
     "unmapped_full_page_reabandon_only": True,
 }
 EXPECTED_COMPILE_DEFINITIONS = (
