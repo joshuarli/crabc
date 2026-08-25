@@ -70,8 +70,8 @@ publication owner plus one caller-selected, process-shared single-arena
 sidecar; bounded ticket-zero and later-thread page engines over that matched
 process pair; one all-free later-main thread-exit drain; three sole-page
 later-main owner-exit handoffs (a full arena singleton, a mapped medium page
-with one live block, and a sole nonfull medium page whose process-owned route
-survives old Theap/TLD teardown); and one aggregate medium-and-large post-exit
+with one live block, and a sole nonfull non-direct small-or-medium page whose
+process-owned route survives old Theap/TLD teardown); and one aggregate medium-and-large post-exit
 registry that can route every qualifying surviving medium-or-large page
 through sequential client frees.
 The regular owner uses the process-static metadata allocator for the exact
@@ -177,9 +177,10 @@ false-collects, detaches, and publishes its exact main
 client free takes only the source mapped empty-before-reclaim outcome, clears
 that bit/identity, consumes the paired count, and performs the same terminal
 release; a still-live result is terminally retained rather than reclaimed or
-requeued. The older sole nonfull-medium process route preserves the same
-mapped publication, tears down the old Theap/TLD, and routes its linear client
-frees through short PageMap access.
+requeued. The older sole nonfull non-direct-small-or-medium process route
+preserves the same mapped publication, tears down the old Theap/TLD, and
+routes its linear client frees through short PageMap access. Direct-cache and
+full small pages remain excluded from that route.
 
 `abandon_mapped_medium_large_pages_to_process_route` is the bounded
 source-traversal extension: before any mutation, every direct slot must be
@@ -326,9 +327,10 @@ attachment teardown. The raw protocol remains otherwise unintegrated:
 regular/nonempty pages, general producer routing, terminal reuse, actual
 process/thread lifecycle hooks, full teardown traversal, and reusable
 abandoned-page lifetime remain absent.
-Process state, general allocator TLS lifecycle, small/full/singleton/unmapped/
-huge later-thread owner exit beyond the bounded medium-and-large aggregate,
-allocation-time claim/reclaim/requeue after later-thread exit, general dynamic heap/Theap
+Process state, general allocator TLS lifecycle, direct-small/full/singleton/
+unmapped/huge later-thread owner exit beyond the bounded non-direct-small-or-
+medium sole route and medium-and-large aggregate, allocation-time
+claim/reclaim/requeue after later-thread exit, general dynamic heap/Theap
 attachment and remote-free routing, complete concurrency modeling and stress,
 libc integration, the remaining upstream suites, and performance promotion
 gates remain open.

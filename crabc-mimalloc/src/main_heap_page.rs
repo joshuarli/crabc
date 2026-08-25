@@ -6,6 +6,7 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-360,377-421,448-481`,
 // `src/theap.c:89-152`, `src/page.c:214-302,414-518`,
+// `src/page-queue.c:204-304`,
 // `src/arena.c:674-723,781-821,951-1114,1183-1204,1240-1282`, and
 // `src/page-map.c:228-365`.
 
@@ -29,8 +30,9 @@
 //! through final client frees: a sole full singleton becomes
 //! unmapped-abandoned, a sole medium regular page with one live block becomes
 //! mapped-abandoned and must become empty before reclaim, and a sole nonfull
-//! medium page with one or more live blocks becomes a typed process route
-//! before the old Theap/TLD tears down. A fourth, aggregate exception first
+//! non-direct small-or-medium page with one or more live blocks becomes a
+//! typed process route before the old Theap/TLD tears down. A fourth,
+//! aggregate exception first
 //! force-releases tracked retired regular pages, then source-traverses every
 //! remaining live nonfull medium-or-large arena page only when every queued
 //! member has that supported shape: it releases pages made empty by force
@@ -130,7 +132,8 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment
     page_map_lifecycle: ProcessPageMapMutationLease,
 }
 
-/// One sole nonfull medium page that outlives its former later Theap/TLD.
+/// One sole nonfull non-direct small-or-medium page that outlives its former
+/// later Theap/TLD.
 ///
 /// The source abandonment transition has already detached the page from every
 /// old queue/direct/page-count owner, and `page_map_access` now serializes the
@@ -744,20 +747,23 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
-    /// Transfers one sole nonfull medium page into the first true process
-    /// post-exit route. On success the old later Theap/TLD has already been
-    /// detached and freed; later client frees use only short process PageMap
-    /// access plus stable main-Heap/arena facts.
+    /// Transfers one sole nonfull non-direct small-or-medium page into the
+    /// first true process post-exit route. On success the old later Theap/TLD
+    /// has already been detached and freed; later client frees use only short
+    /// process PageMap access plus stable main-Heap/arena facts. For a small
+    /// page, non-direct means its rounded source block size exceeds
+    /// `SMALL_SIZE_MAX`, rather than merely its request size doing so.
     ///
     /// # Safety
     ///
     /// `block` must be one exact current canonical allocation in the sole
-    /// medium regular page owned by this post-fast-slot drain. No producer may
-    /// survive. Every client alias in that page must remain live only until
-    /// the returned route consumes it exactly once or the route is retained
-    /// terminally. This first route is linear and does not provide general
-    /// concurrent frees, allocation-time reclaim, or a multi-page traversal.
-    pub(crate) unsafe fn abandon_mapped_medium_to_process_route(
+    /// non-direct small-or-medium regular page owned by this post-fast-slot
+    /// drain. No producer may survive. Every client alias in that page must
+    /// remain live only until the returned route consumes it exactly once or
+    /// is retained terminally. This first route is linear and does not provide
+    /// general concurrent frees, allocation-time reclaim, or a multi-page
+    /// traversal.
+    pub(crate) unsafe fn abandon_mapped_non_direct_small_or_medium_to_process_route(
         self,
         block: NonNull<u8>,
     ) -> Result<
@@ -771,7 +777,9 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         // SAFETY: this wrapper's draining session proves the fixed-fast-slot
         // source boundary; its caller supplies the exact live-page/block
         // proof required by the specialized queue-detach transition.
-        let detach = match unsafe { engine.abandon_mapped_medium_to_process_route(block) } {
+        let detach = match unsafe {
+            engine.abandon_mapped_non_direct_small_or_medium_to_process_route(block)
+        } {
             Ok(detach) => detach,
             Err(ThreadExitMappedRegularPostExitAbandonFailure::Rejected { engine, error }) => {
                 return Err(
@@ -1275,7 +1283,7 @@ mod tests {
     use crate::compiler_tls::fast_slot_peek;
     use crate::config::{
         ARENA_ALIGNMENT, ARENA_MIN_SIZE, LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE,
-        SMALL_MAX_OBJ_SIZE,
+        SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
     };
     use crate::main_heap_thread::{
         MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
@@ -2544,7 +2552,7 @@ mod tests {
                         }
                     };
                     let route = match unsafe {
-                        drain.abandon_mapped_medium_to_process_route(first)
+                        drain.abandon_mapped_non_direct_small_or_medium_to_process_route(first)
                     } {
                         Ok(route) => route,
                         Err(_) => panic!(
@@ -2618,6 +2626,438 @@ mod tests {
         .expect("post-exit mapped regular route fixture remains current-thread local");
     }
 
+    fn assert_non_direct_small_regular_route(request: usize) {
+        thread::spawn(move || {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the paired arena remains published through the route");
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the non-direct small post-exit route");
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the fixture creates one non-direct small regular page");
+                    let second = allocator
+                        .allocate(request, false)
+                        .expect("the fixture keeps two client blocks live in that page");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first client block is PageMap-published");
+                    assert_eq!(
+                        unsafe { allocator.test_page_for_block(second) },
+                        page.as_ptr(),
+                        "the fixture keeps both client blocks in the same non-direct small page"
+                    );
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(crate::types::PageKind::Small),
+                        "the request stays in the small source page class"
+                    );
+                    assert!(
+                        page_ref.block_size() > SMALL_SIZE_MAX,
+                        "the small page bypasses the source direct-cache threshold"
+                    );
+                    assert!(
+                        page_ref.used() < usize::from(page_ref.reserved()),
+                        "the small page stays nonfull before its owner exits"
+                    );
+                    let memory = page_ref.memid();
+                    let slice = memory
+                        .arena_memory()
+                        .expect("the regular page belongs to the paired arena")
+                        .slice_index as usize;
+
+                    let drain = match allocator.begin_thread_exit_drain() {
+                        Ok(drain) => drain,
+                        Err(MainHeapThreadProcessPageExitDrainFailure::Retained {
+                            allocator,
+                            error,
+                        }) => {
+                            core::mem::forget(allocator);
+                            panic!("thread exit reaches its post-fast-slot drain: {error:?}");
+                        }
+                    };
+                    let route = match unsafe {
+                        drain.abandon_mapped_non_direct_small_or_medium_to_process_route(first)
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "the sole nonfull non-direct small page crosses into the process-owned post-exit route"
+                        ),
+                    };
+
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the route releases the old Theap/TLD before any client free"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                        page.as_ptr(),
+                        "the detached small page remains PageMap-routable after TLD teardown"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
+                        Some(false),
+                        "the ordinary main-arena bit remains live until the final client free"
+                    );
+                    assert_eq!(route.test_abandoned_count(), Some(1));
+
+                    let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
+                            route
+                        }
+                        Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {
+                            panic!("one of two client frees cannot release the small page")
+                        }
+                        Err(_) => panic!("the first client free stays routed after TLD teardown"),
+                    };
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(second.as_ptr()) },
+                        page.as_ptr(),
+                        "the first client free leaves the still-live small page registered"
+                    );
+                    assert_eq!(route.test_abandoned_count(), Some(1));
+
+                    match unsafe { route.remote_free_after_thread_exit(second) } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {}
+                        Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
+                            core::mem::forget(route);
+                            panic!("the second client free releases the now-empty small page")
+                        }
+                        Err(_) => panic!("the final client free releases the detached small page"),
+                    }
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
+                        "the final release unregisters the full PageMap span"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
+                        Some(true),
+                        "the final release clears the ordinary main-arena bit before slice return"
+                    );
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "the completed post-exit route reopens an empty process-map lifecycle"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("post-exit non-direct small client frees remain local to the later owner fixture");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("post-exit non-direct small route fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_regular_route_tears_down_before_two_non_direct_small_client_frees() {
+        assert_non_direct_small_regular_route(SMALL_SIZE_MAX + WORD_SIZE);
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_regular_route_accepts_non_direct_small_upper_boundary() {
+        assert_non_direct_small_regular_route(SMALL_MAX_OBJ_SIZE);
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_regular_route_refuses_direct_small_before_detach() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the direct-small refusal fixture");
+                    let block = allocator
+                        .allocate(SMALL_SIZE_MAX, false)
+                        .expect("the fixture creates one source direct-cache small page");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                        .expect("the direct small page remains PageMap-published before thread exit");
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(crate::types::PageKind::Small),
+                        "the refusal fixture starts in the small source class"
+                    );
+                    assert!(
+                        page_ref.block_size() <= SMALL_SIZE_MAX,
+                        "the fixture remains in the source direct-cache range"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let drain = match unsafe {
+                        drain.abandon_mapped_non_direct_small_or_medium_to_process_route(block)
+                    } {
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::Rejected {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            assert_eq!(
+                                error,
+                                ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
+                                "a direct-cache small page rejects before source collection or detachment"
+                            );
+                            drain
+                        }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::RetainedDrain {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            core::mem::forget(drain);
+                            panic!("the direct-cache boundary rejects before a source transition: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::Teardown {
+                            terminal,
+                            ..
+                        }) => {
+                            core::mem::forget(terminal);
+                            panic!("the direct-cache boundary rejects before Theap/TLD teardown");
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::PageMap {
+                            parts,
+                            error,
+                        }) => {
+                            core::mem::forget(parts);
+                            panic!("the direct-cache boundary rejects before PageMap-route transfer: {error:?}");
+                        }
+                        Ok(route) => {
+                            core::mem::forget(route);
+                            panic!("a direct-cache small page cannot cross into the process route");
+                        }
+                    };
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) },
+                        page.as_ptr(),
+                        "the direct-small refusal leaves PageMap publication untouched"
+                    );
+                    assert_eq!(unsafe { page.as_ref().used() }, 1);
+
+                    drop(drain);
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::Poisoned),
+                        "dropping the rejected drain cannot imitate process-route teardown"
+                    );
+                    core::mem::forget(owner);
+                });
+                worker
+                    .join()
+                    .expect("the direct-small refusal remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("direct-small process-route refusal fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_regular_route_refuses_full_non_direct_small_before_detach() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the full non-direct-small refusal fixture");
+                    let request = SMALL_SIZE_MAX + WORD_SIZE;
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the fixture creates one non-direct small regular page");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the small page remains PageMap-published before thread exit");
+                    let capacity = unsafe { page.as_ref().reserved() as usize };
+                    assert!(capacity > 1, "the small page has a full-state boundary");
+                    let mut blocks = std::vec::Vec::with_capacity(capacity);
+                    blocks.push(first);
+                    while blocks.len() < capacity {
+                        let block = allocator
+                            .allocate(request, false)
+                            .expect("the fixture fills the non-direct small page");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(block) },
+                            page.as_ptr(),
+                            "the fixture fills exactly one non-direct small page"
+                        );
+                        blocks.push(block);
+                    }
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(crate::types::PageKind::Small),
+                        "the full page remains in the admitted small source class"
+                    );
+                    assert!(
+                        page_ref.block_size() > SMALL_SIZE_MAX,
+                        "the full page bypasses the source direct-cache threshold"
+                    );
+                    assert_eq!(
+                        page_ref.used(),
+                        usize::from(page_ref.reserved()),
+                        "the fixture reaches the source full object count"
+                    );
+                    assert!(
+                        !crate::types::page_queue::page_is_in_full(page_ref),
+                        "small full pages may remain in their regular queue, so count validation is required"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let drain = match unsafe {
+                        drain.abandon_mapped_non_direct_small_or_medium_to_process_route(first)
+                    } {
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::Rejected {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            assert_eq!(
+                                error,
+                                ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
+                                "a full non-direct small page rejects before source collection or detachment"
+                            );
+                            drain
+                        }
+                        Err(
+                            MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::RetainedDrain {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            core::mem::forget(drain);
+                            panic!("the full small boundary rejects before a source transition: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::Teardown {
+                            terminal,
+                            ..
+                        }) => {
+                            core::mem::forget(terminal);
+                            panic!("the full small boundary rejects before Theap/TLD teardown");
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::PageMap {
+                            parts,
+                            error,
+                        }) => {
+                            core::mem::forget(parts);
+                            panic!("the full small boundary rejects before PageMap-route transfer: {error:?}");
+                        }
+                        Ok(route) => {
+                            core::mem::forget(route);
+                            panic!("a full non-direct small page cannot cross into the process route");
+                        }
+                    };
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                        page.as_ptr(),
+                        "the full-small refusal leaves PageMap publication untouched"
+                    );
+                    assert_eq!(
+                        unsafe { page.as_ref().used() },
+                        capacity,
+                        "the full-small refusal leaves the source object count untouched"
+                    );
+
+                    drop(drain);
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::Poisoned),
+                        "dropping the rejected drain cannot imitate process-route teardown"
+                    );
+                    core::mem::forget(owner);
+                });
+                worker
+                    .join()
+                    .expect("the full non-direct-small refusal remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("full non-direct-small process-route refusal fixture remains current-thread local");
+    }
+
     #[test]
     fn later_thread_exit_mapped_regular_route_refuses_another_live_page_before_detach() {
         thread::spawn(|| {
@@ -2669,7 +3109,7 @@ mod tests {
                         }
                     };
                     let drain = match unsafe {
-                        drain.abandon_mapped_medium_to_process_route(regular)
+                        drain.abandon_mapped_non_direct_small_or_medium_to_process_route(regular)
                     } {
                         Err(
                             MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure::Rejected {
@@ -2781,7 +3221,7 @@ mod tests {
                         panic!("thread exit enters its post-fast-slot drain: {error:?}");
                     });
                     let route = match unsafe {
-                        drain.abandon_mapped_medium_to_process_route(first)
+                        drain.abandon_mapped_non_direct_small_or_medium_to_process_route(first)
                     } {
                         Ok(route) => route,
                         Err(_) => panic!("the sole medium page enters the movable process route"),

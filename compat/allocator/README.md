@@ -15,7 +15,8 @@ process-static page-map publication root plus one caller-selected
 process-shared arena sidecar and bounded ticket-zero and later-thread page
 engines over their matched pair, including one all-free later-main exit drain
 and its three sole-page handoffs (a full arena singleton, a mapped medium
-one-block page, and a nonfull mapped medium post-exit client-free route) plus
+one-block page, and a nonfull mapped non-direct small-or-medium post-exit
+client-free route) plus
 one aggregate medium-and-large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
@@ -257,15 +258,17 @@ Except for these bounded owner-side collection routes, one post-TLS
 full-singleton terminal release, bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
 all-free exit drain plus its full-singleton, mapped-medium-one-block, and
-sole mapped-medium post-exit client-free handoffs and aggregate medium-and-large
+sole mapped non-direct-small-or-medium post-exit client-free handoffs and
+aggregate medium-and-large
 post-exit registry, these pieces are
 not yet wired into general
 allocation/free routing, integrated allocator TLS/process/thread teardown,
 terminal page release, or metadata reuse. The later page owner proves normal
 map/bitmap/fresh/release/producer ordering plus the all-free scan, one
 preflight-bounded full-singleton failed-reclaim handoff, one sole-medium
-mapped empty-before-reclaim handoff, and one sole nonfull medium process route
-whose linear client frees begin after actual old Theap/TLD teardown, plus one
+mapped empty-before-reclaim handoff, and one sole nonfull non-direct
+small-or-medium process route whose linear client frees begin after actual old
+Theap/TLD teardown, plus one
 medium-and-large source-order aggregate traversal whose retired/force-empty
 result remains an ordinary drain. It still does not claim a general thread
 lifecycle, abandonment traversal, or `pthread`

@@ -433,7 +433,8 @@ pub(crate) struct ThreadExitMappedOneBlockHandoff<'arena, 'map, Session: TheapPa
 ///
 /// Unlike [`ThreadExitMappedOneBlockHandoff`], this intentionally carries no
 /// engine and no page pointer. Its sole role is to bridge one exactly
-/// queue-detached, mapped-abandoned medium page into a process-owned route.
+/// queue-detached, mapped-abandoned non-direct small-or-medium page into a
+/// process-owned route.
 /// The final route re-resolves the page under a short PageMap guard for every
 /// client free, so it cannot retain a Rust borrow of the departed Theap.
 #[must_use = "a detached mapped regular page must become a process route or remain terminally retained"]
@@ -1566,8 +1567,8 @@ impl<'attachment, 'main, 'arena, 'map>
         unsafe { abandon_mapped_one_block_after_thread_exit(self, block) }
     }
 
-    /// Detaches one sole nonfull medium arena page into a process-owned route
-    /// after the fixed main fast slot has cleared.
+    /// Detaches one sole nonfull non-direct small-or-medium arena page into a
+    /// process-owned route after the fixed main fast slot has cleared.
     ///
     /// This is the first route that actually releases the old later
     /// Theap/TLD while client blocks remain live. It deliberately accepts one
@@ -1575,17 +1576,19 @@ impl<'attachment, 'main, 'arena, 'map>
     /// `_mi_theap_collect_abandon`, `_mi_page_abandon`'s false collection,
     /// queue/page-count detach, mapped identity/bitmap/count publication,
     /// then transfer to a short process PageMap route. It does not yet claim
-    /// allocation-time bitmap adoption, requeue/reclaim, small/large pages,
-    /// multiple pages, or concurrent client-free routing.
+    /// allocation-time bitmap adoption, requeue/reclaim, direct-small or
+    /// large pages, multiple pages, or concurrent client-free routing.
+    /// A small page is non-direct only when its rounded source `block_size`
+    /// exceeds `SMALL_SIZE_MAX`; request size alone is not the boundary.
     ///
     /// # Safety
     ///
     /// `block` must be one current canonical allocation in the exact sole
-    /// medium regular page owned by this draining engine. No scoped producer
-    /// may survive. Every client alias in that page must remain valid only
-    /// through the returned process route or an explicitly retained terminal
-    /// owner.
-    pub(crate) unsafe fn abandon_mapped_medium_to_process_route(
+    /// non-direct small-or-medium regular page owned by this draining engine.
+    /// No scoped producer may survive. Every client alias in that page must
+    /// remain valid only through the returned process route or an explicitly
+    /// retained terminal owner.
+    pub(crate) unsafe fn abandon_mapped_non_direct_small_or_medium_to_process_route(
         mut self,
         block: NonNull<u8>,
     ) -> Result<
@@ -1635,12 +1638,16 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
             ));
         };
-        if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Medium)
+        if !matches!(
+            size_class::page_kind_for_block_size(page_ref.block_size()),
+            Some(PageKind::Small | PageKind::Medium)
+        )
             || page_ref.block_size() <= SMALL_SIZE_MAX
             || bin >= ARENA_BIN_COUNT
             || bin == BIN_FULL
             || page_ref.reserved() <= 1
             || page_ref.used() == 0
+            || page_ref.used() >= usize::from(page_ref.reserved())
             || page_is_in_full(page_ref)
         {
             return Err(reject(
@@ -1754,11 +1761,15 @@ impl<'attachment, 'main, 'arena, 'map>
         }
         // SAFETY: both source collectors completed under the exclusive drain.
         let after_collect = unsafe { page.as_ref() };
-        if size_class::page_kind_for_block_size(after_collect.block_size()) != Some(PageKind::Medium)
+        if !matches!(
+            size_class::page_kind_for_block_size(after_collect.block_size()),
+            Some(PageKind::Small | PageKind::Medium)
+        )
             || size_class::bin(after_collect.block_size()) != Some(bin)
             || after_collect.block_size() <= SMALL_SIZE_MAX
             || after_collect.reserved() <= 1
             || after_collect.used() == 0
+            || after_collect.used() >= usize::from(after_collect.reserved())
             || page_is_in_full(after_collect)
         {
             return Err(retained(
@@ -1785,9 +1796,9 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitMappedRegularPostExitAbandonError::Queue,
             ));
         }
-        // Medium pages have no direct cache entry, but preserve the normal
-        // queue-remove boundary in case a stale image would otherwise hide a
-        // broken source invariant.
+        // The admitted small subset is above the direct-cache threshold, as
+        // are medium pages, but preserve the normal queue-remove boundary in
+        // case a stale image would otherwise hide a broken source invariant.
         self.update_direct_cache(bin);
 
         let abandoned = match self.main_heap_abandoned_page(bin) {
