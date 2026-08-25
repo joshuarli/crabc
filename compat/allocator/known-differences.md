@@ -771,7 +771,7 @@ aggregate-registry adoption remain absent.
   remains bounded private routing, not a general dynamic allocation,
   abandonment, pthread, fork, or process lifecycle. After the regular backing
   is cleared, its `DrainingPages` owner first force-collects an already-retired
-  all-free regular page. Its one additional live-page transition is a full
+  all-free regular page. Its singleton live-page transition is a full
   one-block dynamic arena or OS-aligned singleton, false-collected, detached
   from `BIN_FULL`, unmapped-abandoned, and retained until its exact client free
   takes the failed-reclaim all-free release. The OS form is exactly
@@ -785,6 +785,15 @@ aggregate-registry adoption remain absent.
   `reserved == used == 1`, no-producer proof; the raw free-list primitive
   separately ports and tests it without broadening this drain. The successful
   drain then permits the existing cached-root/list/key teardown.
+  Separately, `DynamicThreadExitMappedOneBlockHandoff` admits only one sole
+  nonfull `MemoryKind::Arena` medium page with `reserved > 1`, `used == 1`, one
+  regular queue member, and no other queue/direct entry. It preserves source
+  force -> false collection -> queue/page-count detach -> dynamic
+  bitmap/count/unown order. Its exact final free clears that dynamic
+  `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]` before
+  PageMap -> dynamic ordinary-bit -> metadata -> slice release. It cannot
+  reclaim the departed Theap, adopt, requeue, scan, or represent a second page
+  or free.
   Its first dynamic arena page first proves the registry-published arena's
   non-null subprocess identity equals the attachment's selected main
   subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
@@ -851,6 +860,11 @@ aggregate-registry adoption remain absent.
   regressions prove the dynamic Heap list insertion/removal order, pre-detach
   refusal, clipped PageMap removal, and terminal failed-`munmap` owner
   retention.
+  `dynamic_thread_exit_mapped_one_block_handoff_releases_after_its_final_free`,
+  `dynamic_thread_exit_mapped_one_block_handoff_rejects_before_detach_when_another_page_is_live`,
+  and `dynamic_thread_exit_mapped_one_block_handoff_retains_collection_failure`
+  prove dynamic bitmap/count publication and terminal release, the wholly
+  pre-detach sole-page refusal, and retained post-TLS collection failure.
   `dynamic_thread_exit_force_collects_a_retired_regular_page_after_tls_clear`
   proves the post-TLS force-retirement release happens before that same
   teardown. The image-boundary regressions

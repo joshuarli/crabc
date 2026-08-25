@@ -663,6 +663,20 @@ impl DynamicArenaPagesOwner {
     pub(crate) fn test_image(&self) -> Option<(NonNull<ArenaPages>, ArenaPagesLayout, MemoryId)> {
         Some((self.header_pointer()?, self.layout, self.allocation.as_ref()?.memory_id()))
     }
+
+    /// Test-only raw observation of one dynamic `pages_abandoned[bin]` bit.
+    /// Production callers must instead form [`DynamicArenaMappedAbandonedPage`]
+    /// so the ordinary page-image publication remains part of their capability
+    /// proof. The terminal release test needs this narrower witness precisely
+    /// after that ordinary bit has been cleared.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_abandoned_page_is_clear(&self, bin: usize, memory: MemoryId) -> bool {
+        let Some(slice_index) = self.slice_index(memory) else {
+            return false;
+        };
+        self.with_abandoned(bin, |pages| pages.is_clear_range(slice_index, 1)) == Some(Some(true))
+    }
 }
 
 /// One exact mapped regular dynamic page that may be published to its one

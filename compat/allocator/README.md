@@ -216,10 +216,19 @@ no-producer proof excludes invoking the source force-only local-list append;
 `free_list::collect_local` separately ports and tests that raw operation, which
 the separately recorded later-main all-free exit drain uses without broadening
 this dynamic traversal.
+One separate mapped endpoint accepts only a sole nonfull `MemoryKind::Arena`
+medium page with `reserved > 1`, `used == 1`, one regular queue member, and no
+other queue/direct entry. It force- then false-collects, queue/page-count
+detaches, and publishes that exact dynamic `pages_abandoned[bin]` bit plus
+paired `Heap::abandoned_count[bin]`. Its handoff admits only the exact final
+free, which becomes empty before any reclaim branch, clears that bit/count, and
+releases PageMap -> dynamic ordinary bit -> metadata -> arena slices. It does
+not reclaim the departed Theap, adopt, requeue, scan, or accept multiple pages
+or frees.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular and
-post-TLS singleton handoffs, pthread/process hooks, complete subprocess
-layout/lifecycle, and C pthread-mutex layout claims remain absent. A
+post-TLS singleton/mapped-one-block handoffs, pthread/process hooks, complete
+subprocess layout/lifecycle, and C pthread-mutex layout claims remain absent. A
 first dynamic arena page additionally creates a private
 `DynamicArenaPagesOwner`: after proving the registry-published arena's
 non-null subprocess identity equals the attachment's selected main subprocess,

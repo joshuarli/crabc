@@ -23,7 +23,7 @@ and terminal-empty/reabandon/unown selection. Its first lifecycle owner is now
 also complete, but deliberately only for one source-reachable case:
 `DynamicThreadExitDrain` clears a private dynamic Theap's regular TLS backing,
 retains its cached root/lists/page map/arena image, and first force-collects an
-already-retired all-free regular page. Its only live-page transition accepts one
+already-retired all-free regular page. Its singleton live-page transition accepts one
 full one-block arena or OS-aligned singleton. The arena form keeps the existing
 heap-local ordinary-bit, metadata, and arena-slice release tail.
 `DynamicThreadExitSingletonHandoff` handles the OS form as one
@@ -38,6 +38,20 @@ source force-only local-list append is unreachable for either
 completes the separate cached-root/list/key teardown. This neither scans,
 reclaims, requeues, nor generalizes the OS list, and is not general production
 free routing or a general thread-exit traversal.
+
+The same post-TLS drain now has one separate mapped regular endpoint:
+`DynamicThreadExitDrain::abandon_mapped_one_block` accepts exactly one sole,
+nonfull `MemoryKind::Arena` medium page with `reserved > 1`, `used == 1`, one
+regular queue member, and no other queue/direct entry. It retains the dynamic
+arena-pages image after TLS clear solely to form that exact heap-local
+`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`
+capability. Source force then false collection precedes queue/page-count
+detach, mapped identity/bit/count publication, and unown. Its
+`DynamicThreadExitMappedOneBlockHandoff` admits only its exact final client
+free: source mapped collection becomes empty before any reclaim branch, clears
+that dynamic bit/count pair, then releases PageMap -> dynamic ordinary bit ->
+metadata -> arena slices. It cannot reclaim the departed Theap, requeue,
+adopt, scan, accept a second free, or generalize dynamic owner exit.
 
 The raw owner-local free-list substrate now also ports that source force-only
 append: it validates the deferred local chain, appends the old immediate head,
@@ -380,13 +394,13 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 85 items and 89
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 86 items and 90
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
-before broadening the newly proven post-TLS arena/OS-singleton cases, the later-main
-all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or either
-bounded process page owner. The next frontier is another page-bearing
-owner-exit class or a separately proven aggregate-registry policy, then complete
-process and real
+before broadening the newly proven post-TLS arena/OS-singleton or
+mapped-one-block-medium cases, the later-main all-free scan/eight sole-page
+handoffs/aggregate regular-pages registry, or either bounded process page owner.
+The next frontier is another page-bearing owner-exit class or a separately
+proven aggregate-registry policy, then complete process and real
 pthread/TLS lifecycle integration—not a generic allocation-time scan routed
 through a bounded singleton, mapped-one-block handoff, no-page finish, or these
 sequential ticket-zero/later page-owner slices.

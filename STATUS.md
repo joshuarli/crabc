@@ -331,17 +331,31 @@ Its post-TLS `DrainingPages` state is now also a bounded source owner-exit
 state, not an alternate allocator. It clears the regular dynamic backing before
 page abandonment while retaining the cached root, TLD/Heap list membership,
 PageMap, and heap-local arena image. `DynamicThreadExitDrain` first
-force-collects an already-retired all-free regular page. Its only live-page
-transition admits one full one-block arena singleton; the source force-only
-local-list append is unreachable under its `reserved == used == 1` and
-no-producer proof. The raw local-list substrate now separately ports and tests
-that force append, including cycle rejection before relinking; the separately
-recorded later-main all-free exit drain invokes it, but no current page-engine
-lifecycle invokes it for a general traversal. Its consuming handoff queue-detaches and unmapped-abandons
-that page, then a final client free necessarily fails reclaim through the
-cleared regular slot and owns the raw all-free release: PageMap span unregister,
-exact dynamic ordinary-bit clear, metadata retirement, and arena-slice release.
-Only an empty drain may resume the existing cached-root/list/key teardown.
+force-collects an already-retired all-free regular page. Its singleton
+transition admits one full one-block arena or OS-aligned page; the source
+force-only local-list append is unreachable under its `reserved == used == 1`
+and no-producer proof. The raw local-list substrate now separately ports and
+tests that force append, including cycle rejection before relinking; the
+separately recorded later-main all-free exit drain invokes it, but no current
+page-engine lifecycle invokes it for a general traversal. The singleton
+handoff queue-detaches and unmapped-abandons its page, then a final client free
+necessarily fails reclaim through the cleared regular slot and owns its raw
+all-free release. The OS form additionally links/removes its exact dynamic
+`Heap::os_abandoned_pages` member around clipped PageMap -> alias -> primary
+metadata -> mapping release.
+
+A separate `DynamicThreadExitMappedOneBlockHandoff` accepts only a sole,
+nonfull `MemoryKind::Arena` medium page with `reserved > 1`, `used == 1`, one
+regular queue member, and no other queue/direct entry. It keeps the post-TLS
+dynamic arena image only long enough to form the exact heap-local
+`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`. Source
+force then false collection precedes queue/page-count detach and mapped
+identity/bit/count/unown publication. Its exact final free reaches empty
+before any source reclaim branch, clears the dynamic bit/count pair, then
+releases PageMap -> dynamic ordinary bit -> metadata -> arena slices. Neither
+dynamic handoff scans, reclaims, adopts, requeues, accepts a second free, or
+generalizes thread exit. Only an empty drain may resume the existing
+cached-root/list/key teardown.
 
 The first fresh page in that private non-abandoning dynamic session now owns
 one exact source-shaped heap-local `mi_arena_pages_t` image. Creation first
@@ -392,12 +406,13 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-dynamic owner-exit singleton: clearing the regular backing prevents reclaim,
-and its final free takes the raw failed-reclaim all-free release before
-attachment teardown. The raw protocol remains otherwise unintegrated:
-regular/nonempty pages, general producer routing, terminal reuse, actual
-process/thread lifecycle hooks, full teardown traversal, and reusable
-abandoned-page lifetime remain absent.
+dynamic owner-exit singleton and one sole mapped medium one-block handoff:
+clearing the regular backing prevents reclaim; the singleton final free takes
+the raw failed-reclaim all-free release, while the mapped endpoint clears its
+dynamic bitmap/count before terminal arena release. The raw protocol remains
+otherwise unintegrated: regular/nonempty pages, general producer routing,
+terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,
+and reusable abandoned-page lifetime remain absent.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
 full-medium/full-large/full-non-direct-small routes, sole small-or-medium
