@@ -62,8 +62,8 @@ full-medium arena page forced from the full queue to unmapped abandonment, then
 through the `mi_free` threshold that republishes its mapped bitmap; its Rust
 side is explicitly only the deterministic synthetic failed-reclaim tail.
 A separate 18-field C/Rust differential uses a real pinned-C worker `pthread`
-to perform `mi_thread_done()` followed by `pthread_join()` before the consumer's
-two public `mi_free` calls. It records the selected mapped failed-reclaim/unown
+to run `mi_thread_done()` and return; the consumer calls `pthread_join()`
+before its two public `mi_free` calls. It records the selected mapped failed-reclaim/unown
 transition and terminal checks for
 `page_map_unregistered_after_final_free`,
 `arena_page_bitmap_clear_after_final_free`, and
@@ -82,8 +82,20 @@ plus an empty route. This is a narrow private native x86 engine antecedent and
 does not claim general retirement, teardown, routing or concurrency, public
 `mi_*` behavior, libc integration, backend promotion, public x86 support, or
 AArch64 evidence.
+A separate 25-field native x86-only C/Rust differential covers exactly two
+distinct live nonfull medium arena pages in distinct bins. The real worker runs
+`mi_thread_done()` and returns; the consumer calls `pthread_join()` before any
+free. Both selected pages are mapped-abandoned after teardown. The consumer
+frees the second page first and
+records only its PageMap unregister, ordinary arena-page bitmap clear, and
+exact slice-span release while the first remains PageMap-registered,
+arena-bitmap-set, mapped-abandoned, and `used == 1`; the final consumer free
+releases the first page and records an empty route. This is a narrow private
+native x86 engine trace, not general teardown, routing or concurrency, public
+`mi_*` behavior or runtime, libc integration, backend promotion, public x86
+support, or AArch64 evidence.
 These bounded results do not claim general routing or concurrent collection,
-behavior or Rust implementation parity, a Rust full-medium route, general
+general behavior or Rust implementation parity, a Rust full-medium route, general
 abandonment/adoption, cross-thread reclaim, general thread teardown, CMake
 installation, consumer execution, public API/runtime support, libc integration,
 backend promotion, public x86 support, or AArch64 evidence.

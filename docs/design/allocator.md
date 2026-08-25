@@ -173,8 +173,8 @@ and frees one block through the same-origin reclaim path while the survivor
 keeps the page nonempty. It proves only mapped abandonment clearing,
 re-association, and requeue for that one route—not general abandonment/adoption
 or cross-thread reclaim. A further native x86-only 18-field C/Rust differential
-uses a worker `pthread` that performs real `mi_thread_done()` and `pthread_join()`
-before the consumer performs two public `mi_free` calls. It records the
+uses a worker `pthread` that runs real `mi_thread_done()` and returns; the
+consumer calls `pthread_join()` before it performs two public `mi_free` calls. It records the
 selected mapped failed-reclaim/unown transition and terminal checks for
 `page_map_unregistered_after_final_free`,
 `arena_page_bitmap_clear_after_final_free`, and
@@ -193,7 +193,21 @@ slice-span release, live mapped-abandoned state, terminal PageMap/ordinary
 bitmap/exact slice-span release, and an empty route. This remains private
 native x86 engine evidence only: it does not establish general retirement,
 teardown, routing or concurrency, public `mi_*` behavior, libc integration,
-backend promotion, public x86 support, or AArch64 evidence. The selected
+backend promotion, public x86 support, or AArch64 evidence. A native x86-only
+track additionally has a 25-field aggregate post-exit
+differential for exactly two distinct live nonfull medium arena pages in
+distinct bins. Its real worker runs `mi_thread_done()` and returns; the
+consumer calls `pthread_join()` before freeing. Both selected pages are
+mapped-abandoned after teardown. The consumer frees
+the second page first, directly observing only that page's PageMap unregister,
+ordinary arena-page bitmap clear, and exact slice-span release while the first
+remains PageMap-registered, arena-bitmap-set, mapped-abandoned, and
+`used == 1`. The final consumer free releases the first page and records an
+empty route.
+Rust compares only this bounded private aggregate post-exit traversal. It does
+not establish general teardown, routing or concurrency, public `mi_*` behavior
+or runtime, libc integration, backend promotion, public x86 support, or
+AArch64 evidence. The selected
 normal-release source surface is also
 accounted per item for native object/dynamic symbol presence, while a separate
 five-mode staged public-header gate proves selected C/C++ compile/linkability
@@ -1469,6 +1483,14 @@ release observations; it does not claim general thread exit, routing/concurrency
 adoption/reclaim, public behavior, backend, public x86, or AArch64 support.
 The retired-page prepass is only a narrow antecedent to broader
 retirement/teardown/routing work, not a general lifecycle result.
+The separate 25-field aggregate post-exit lane is likewise bounded: it starts
+with exactly two distinct live nonfull medium pages in distinct bins: one real
+worker runs `mi_thread_done()` and returns, then the consumer calls
+`pthread_join()` before proving only the second-first selective terminal release while the
+first page remains
+registered, bit-set, mapped-abandoned, and `used == 1`, followed by the first
+terminal release and empty route. It is not general teardown, routing,
+concurrency, public API/runtime, backend, public x86, or AArch64 evidence.
 
 The port preserves mimalloc v3.5.0's algorithms, data structures, memory
 orderings, lifecycle behavior, and valid-program observable behavior until

@@ -141,6 +141,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-unmapped-full-medium-reabandon-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
+                "native-two-live-page-aggregate-post-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
@@ -226,6 +227,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "compat/reports/allocator/x86_64/retired-prepass.json",
         )
         self.assertEqual(
+            gates["native-two-live-page-aggregate-post-exit-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-aggregate-post-exit",
+        )
+        self.assertEqual(
+            gates["native-two-live-page-aggregate-post-exit-differential"]["report"],
+            "compat/reports/allocator/x86_64/aggregate-post-exit.json",
+        )
+        self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
             "compat/reports/allocator/x86_64/fault-injection.json",
         )
@@ -300,6 +309,28 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, retired)
+        aggregate = gates["native-two-live-page-aggregate-post-exit-differential"][
+            "claim"
+        ]
+        for fragment in (
+            "25 address-independent values",
+            "two distinct live nonfull medium arena pages",
+            "distinct bins",
+            "worker runs real mi_thread_done() and returns; the consumer calls pthread_join()",
+            "both selected pages are mapped-abandoned",
+            "consumer frees the second page first",
+            "PageMap unregister",
+            "ordinary arena-page bitmap clear",
+            "exact slice-span release",
+            "first remains PageMap-registered",
+            "arena-bitmap-set",
+            "used == 1",
+            "empty route",
+            "does not establish general teardown",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, aggregate)
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])

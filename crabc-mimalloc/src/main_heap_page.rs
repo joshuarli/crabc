@@ -18884,6 +18884,461 @@ mod tests {
         .expect("retired prepass trace fixture remains current-thread local");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_aggregate_post_exit_trace_matches_pinned_c_protocol() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let paired_arena = process_arena
+                .arena()
+                .expect("the paired arena remains published through the aggregate route");
+            let paired_arena_address = core::ptr::from_ref(paired_arena.arena())
+                .expose_provenance();
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the aggregate fixture");
+
+                    // These two sizes select distinct source medium bins. Keeping one
+                    // client live in each page makes the source aggregate traversal
+                    // publish two independent mapped-abandoned pages.
+                    let first = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the fixture creates the first live medium page");
+                    let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first live medium page is PageMap-published");
+                    let second = allocator
+                        .allocate(MEDIUM_MAX_OBJ_SIZE / 2, false)
+                        .expect("the fixture creates the second live medium page");
+                    let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
+                        .expect("the second live medium page is PageMap-published");
+
+                    // Save only stable geometry and exposed client addresses before
+                    // either terminal release. No stale page or allocation pointer is
+                    // dereferenced after its corresponding page is released.
+                    let first_memory = unsafe { first_page.as_ref().memid() };
+                    let second_memory = unsafe { second_page.as_ref().memid() };
+                    let first_arena_memory = first_memory
+                        .arena_memory()
+                        .expect("the first page belongs to the paired arena");
+                    let second_arena_memory = second_memory
+                        .arena_memory()
+                        .expect("the second page belongs to the paired arena");
+                    let first_slice = first_arena_memory.slice_index as usize;
+                    let first_slice_count = first_arena_memory.slice_count as usize;
+                    let second_slice = second_arena_memory.slice_index as usize;
+                    let second_slice_count = second_arena_memory.slice_count as usize;
+                    let first_bin = crate::size_class::bin(unsafe {
+                        first_page.as_ref().block_size()
+                    })
+                    .expect("the first medium page has a source bin");
+                    let second_bin = crate::size_class::bin(unsafe {
+                        second_page.as_ref().block_size()
+                    })
+                    .expect("the second medium page has a source bin");
+                    let first_page_identity = first_page.as_ptr().expose_provenance();
+                    let second_page_identity = second_page.as_ptr().expose_provenance();
+                    let arena_backed = first_memory.kind() == MemoryKind::Arena
+                        && second_memory.kind() == MemoryKind::Arena;
+                    let both_medium = crate::size_class::page_kind_for_block_size(unsafe {
+                        first_page.as_ref().block_size()
+                    }) == Some(PageKind::Medium)
+                        && crate::size_class::page_kind_for_block_size(unsafe {
+                            second_page.as_ref().block_size()
+                        }) == Some(PageKind::Medium);
+                    let distinct_pages = first_page != second_page;
+                    let distinct_bins = first_bin != second_bin;
+                    let first_used_one_before_exit = unsafe { first_page.as_ref().used() } == 1;
+                    let second_used_one_before_exit = unsafe { second_page.as_ref().used() } == 1;
+                    let first_nonfull_before_exit = unsafe {
+                        first_page.as_ref().used()
+                            < usize::from(first_page.as_ref().reserved())
+                    };
+                    let second_nonfull_before_exit = unsafe {
+                        second_page.as_ref().used()
+                            < usize::from(second_page.as_ref().reserved())
+                    };
+                    let nonempty_slice_spans = first_slice_count != 0 && second_slice_count != 0;
+                    let bins_fit_paired_arena = first_bin < crate::config::ARENA_BIN_COUNT
+                        && second_bin < crate::config::ARENA_BIN_COUNT;
+                    let pages_share_paired_arena = first_arena_memory
+                        .arena
+                        .expose_provenance()
+                        == paired_arena_address
+                        && second_arena_memory.arena.expose_provenance() == paired_arena_address;
+                    let first_address = first.as_ptr().expose_provenance();
+                    let second_address = second.as_ptr().expose_provenance();
+                    assert!(
+                        arena_backed
+                            && both_medium
+                            && distinct_pages
+                            && distinct_bins
+                            && first_used_one_before_exit
+                            && second_used_one_before_exit
+                            && first_nonfull_before_exit
+                            && second_nonfull_before_exit
+                            && nonempty_slice_spans
+                            && bins_fit_paired_arena
+                            && pages_share_paired_arena,
+                        "the aggregate fixture keeps exactly two nonfull medium pages in the paired arena"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                            core::mem::forget(drain);
+                            panic!("two live medium pages cannot become an empty drain")
+                        }
+                        Err(_) => panic!("the source-shaped aggregate traversal publishes both medium pages"),
+                    };
+                    assert_eq!(
+                        route.test_remaining_pages(),
+                        2,
+                        "the aggregate registry retains both distinct live medium pages"
+                    );
+
+                    let producer_teardown_completed_before_consumer_free = matches!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown)
+                    );
+                    assert!(producer_teardown_completed_before_consumer_free);
+
+                    (
+                        route,
+                        first_address,
+                        second_address,
+                        first_page_identity,
+                        second_page_identity,
+                        first_slice,
+                        first_slice_count,
+                        second_slice,
+                        second_slice_count,
+                        first_bin,
+                        second_bin,
+                        arena_backed,
+                        both_medium,
+                        distinct_pages,
+                        distinct_bins,
+                        first_used_one_before_exit,
+                        second_used_one_before_exit,
+                        first_nonfull_before_exit,
+                        second_nonfull_before_exit,
+                        nonempty_slice_spans,
+                        bins_fit_paired_arena,
+                        pages_share_paired_arena,
+                        producer_teardown_completed_before_consumer_free,
+                    )
+                });
+                let (
+                    route,
+                    first_address,
+                    second_address,
+                    first_page_identity,
+                    second_page_identity,
+                    first_slice,
+                    first_slice_count,
+                    second_slice,
+                    second_slice_count,
+                    first_bin,
+                    second_bin,
+                    arena_backed,
+                    both_medium,
+                    distinct_pages,
+                    distinct_bins,
+                    first_used_one_before_exit,
+                    second_used_one_before_exit,
+                    first_nonfull_before_exit,
+                    second_nonfull_before_exit,
+                    nonempty_slice_spans,
+                    bins_fit_paired_arena,
+                    pages_share_paired_arena,
+                    producer_teardown_completed_before_consumer_free,
+                ) = worker
+                    .join()
+                    .expect("the aggregate route transfers to the joined consumer");
+                let arena = paired_arena;
+
+                // The producer has exited and `join` has completed. Resolve both
+                // still-live page identities through the short map before any page
+                // metadata read so an unexpected early release cannot become a
+                // stale-page dereference in this test fixture.
+                let first_page_after_teardown = unsafe {
+                    page_map
+                        .page_map()
+                        .unwrap()
+                        .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                            first_address,
+                        ))
+                };
+                let second_page_after_teardown = unsafe {
+                    page_map
+                        .page_map()
+                        .unwrap()
+                        .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                            second_address,
+                        ))
+                };
+                let first_page_map_registered_after_teardown = !first_page_after_teardown.is_null()
+                    && first_page_after_teardown.expose_provenance() == first_page_identity;
+                let second_page_map_registered_after_teardown = !second_page_after_teardown.is_null()
+                    && second_page_after_teardown.expose_provenance() == second_page_identity;
+                if !first_page_map_registered_after_teardown
+                    || !second_page_map_registered_after_teardown
+                {
+                    core::mem::forget(route);
+                    panic!("the joined consumer observes both live pages through their exact PageMap identities");
+                }
+                let first_page = NonNull::new(first_page_after_teardown)
+                    .expect("the first PageMap identity remains non-null after teardown");
+                let second_page = NonNull::new(second_page_after_teardown)
+                    .expect("the second PageMap identity remains non-null after teardown");
+                let first_arena_page_bitmap_set_after_teardown = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(first_slice, 1)
+                    == Some(true);
+                let second_arena_page_bitmap_set_after_teardown = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(second_slice, 1)
+                    == Some(true);
+                let first_mapped_abandoned_after_teardown = unsafe {
+                    first_page.as_ref().abandoned_test_thread_id()
+                } == THREAD_ID_ABANDONED_MAPPED;
+                let second_mapped_abandoned_after_teardown = unsafe {
+                    second_page.as_ref().abandoned_test_thread_id()
+                } == THREAD_ID_ABANDONED_MAPPED;
+                if !first_arena_page_bitmap_set_after_teardown
+                    || !second_arena_page_bitmap_set_after_teardown
+                    || !first_mapped_abandoned_after_teardown
+                    || !second_mapped_abandoned_after_teardown
+                {
+                    core::mem::forget(route);
+                    panic!("the joined consumer observes both pages mapped-abandoned before its first free");
+                }
+
+                // Reconstitute the exact still-live second client pointer from
+                // its exposed address only for the consuming free. The first
+                // page remains the survivor after this source aggregate result.
+                let second_for_free = NonNull::new(
+                    core::ptr::with_exposed_provenance_mut(second_address),
+                )
+                .expect("the second client address remains non-null until its free");
+                let route = match unsafe { route.remote_free_after_thread_exit(second_for_free) } {
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                        route
+                    }
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                        core::mem::forget(route);
+                        panic!("the only second-page client releases that page")
+                    }
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                        panic!("the still-live first page prevents aggregate terminal release")
+                    }
+                    Err(_) => panic!("the second client free releases one aggregate page"),
+                };
+                assert_eq!(
+                    route.test_remaining_pages(),
+                    1,
+                    "one release leaves the first page in the aggregate registry"
+                );
+                let second_page_map_unregistered_after_first_free = unsafe {
+                    page_map
+                        .page_map()
+                        .unwrap()
+                        .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                            second_address,
+                        ))
+                }
+                .is_null();
+                let second_arena_page_bitmap_clear_after_first_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_clear_range(second_slice, 1)
+                    == Some(true);
+                let second_arena_slice_released_after_first_free = unsafe { arena.slices_free() }
+                    .expect("the arena free-slice bitmap remains available")
+                    .is_set_range(second_slice, second_slice_count)
+                    == Some(true);
+                let first_page_after_second_free = unsafe {
+                    page_map
+                        .page_map()
+                        .unwrap()
+                        .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                            first_address,
+                        ))
+                };
+                let first_page_map_registered_after_second_free = !first_page_after_second_free.is_null()
+                    && first_page_after_second_free.expose_provenance() == first_page_identity;
+                if !first_page_map_registered_after_second_free {
+                    core::mem::forget(route);
+                    panic!("the first survivor remains mapped before its consumer free");
+                }
+                let first_page_after_second_free = NonNull::new(first_page_after_second_free)
+                    .expect("the first surviving PageMap identity remains non-null");
+                let first_arena_page_bitmap_set_after_second_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(first_slice, 1)
+                    == Some(true);
+                let first_mapped_abandoned_after_second_free = unsafe {
+                    first_page_after_second_free.as_ref().abandoned_test_thread_id()
+                } == THREAD_ID_ABANDONED_MAPPED;
+                let first_used_one_after_second_free = unsafe { first_page_after_second_free.as_ref().used() } == 1;
+                if !second_page_map_unregistered_after_first_free
+                    || !second_arena_page_bitmap_clear_after_first_free
+                    || !second_arena_slice_released_after_first_free
+                    || !first_arena_page_bitmap_set_after_second_free
+                    || !first_mapped_abandoned_after_second_free
+                    || !first_used_one_after_second_free
+                {
+                    core::mem::forget(route);
+                    panic!("the first consumer free releases only the second aggregate page");
+                }
+
+                let first_for_free = NonNull::new(
+                    core::ptr::with_exposed_provenance_mut(first_address),
+                )
+                .expect("the first client address remains non-null until its final free");
+                match unsafe { route.remote_free_after_thread_exit(first_for_free) } {
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {}
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
+                    | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                        core::mem::forget(route);
+                        panic!("the final first-page free releases every aggregate route page")
+                    }
+                    Err(_) => panic!("the final first-page free reaches aggregate terminal release"),
+                }
+                let first_page_map_unregistered_after_final_free = unsafe {
+                    page_map
+                        .page_map()
+                        .unwrap()
+                        .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                            first_address,
+                        ))
+                }
+                .is_null();
+                let first_arena_page_bitmap_clear_after_final_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_clear_range(first_slice, 1)
+                    == Some(true);
+                let first_arena_slice_released_after_final_free = unsafe { arena.slices_free() }
+                    .expect("the arena free-slice bitmap remains available")
+                    .is_set_range(first_slice, first_slice_count)
+                    == Some(true);
+                let (first_abandoned_count, second_abandoned_count) = {
+                    let mut heap = main_heap
+                        .lock_heap()
+                        .expect("the shared main heap remains live after aggregate release");
+                    let first_count = heap
+                        .heap_mut()
+                        .abandoned_count(first_bin)
+                        .expect("the first medium bin has a paired abandoned counter");
+                    let second_count = heap
+                        .heap_mut()
+                        .abandoned_count(second_bin)
+                        .expect("the second medium bin has a paired abandoned counter");
+                    heap.unlock()
+                        .expect("the static heap projection unlocks after aggregate count observation");
+                    (first_count, second_count)
+                };
+                let page_map_reopened_after_final_free = matches!(
+                    page_map.begin_page_lifecycle().and_then(|lease| lease.finish()),
+                    Ok(())
+                );
+                let route_empty_after_final_free = first_abandoned_count == 0
+                    && second_abandoned_count == 0
+                    && page_map_reopened_after_final_free;
+
+                let valid = arena_backed
+                    && both_medium
+                    && distinct_pages
+                    && distinct_bins
+                    && first_used_one_before_exit
+                    && second_used_one_before_exit
+                    && first_nonfull_before_exit
+                    && second_nonfull_before_exit
+                    && nonempty_slice_spans
+                    && bins_fit_paired_arena
+                    && pages_share_paired_arena
+                    && producer_teardown_completed_before_consumer_free
+                    && first_page_map_registered_after_teardown
+                    && second_page_map_registered_after_teardown
+                    && first_arena_page_bitmap_set_after_teardown
+                    && second_arena_page_bitmap_set_after_teardown
+                    && first_mapped_abandoned_after_teardown
+                    && second_mapped_abandoned_after_teardown
+                    && second_page_map_unregistered_after_first_free
+                    && second_arena_page_bitmap_clear_after_first_free
+                    && second_arena_slice_released_after_first_free
+                    && first_page_map_registered_after_second_free
+                    && first_arena_page_bitmap_set_after_second_free
+                    && first_mapped_abandoned_after_second_free
+                    && first_used_one_after_second_free
+                    && first_page_map_unregistered_after_final_free
+                    && first_arena_page_bitmap_clear_after_final_free
+                    && first_arena_slice_released_after_final_free
+                    && route_empty_after_final_free;
+
+                    std::println!("CRABC_MI_AGGREGATE_POST_EXIT_TRACE_BEGIN");
+                    std::println!("trace.aggregate_post_exit.arena_backed={}", arena_backed as u8);
+                    std::println!("trace.aggregate_post_exit.both_medium={}", both_medium as u8);
+                    std::println!("trace.aggregate_post_exit.distinct_pages={}", distinct_pages as u8);
+                    std::println!("trace.aggregate_post_exit.distinct_bins={}", distinct_bins as u8);
+                    std::println!("trace.aggregate_post_exit.first_used_one_before_exit={}", first_used_one_before_exit as u8);
+                    std::println!("trace.aggregate_post_exit.second_used_one_before_exit={}", second_used_one_before_exit as u8);
+                    std::println!("trace.aggregate_post_exit.producer_teardown_completed_before_consumer_free={}", producer_teardown_completed_before_consumer_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_page_map_registered_after_teardown={}", first_page_map_registered_after_teardown as u8);
+                    std::println!("trace.aggregate_post_exit.second_page_map_registered_after_teardown={}", second_page_map_registered_after_teardown as u8);
+                    std::println!("trace.aggregate_post_exit.first_arena_page_bitmap_set_after_teardown={}", first_arena_page_bitmap_set_after_teardown as u8);
+                    std::println!("trace.aggregate_post_exit.second_arena_page_bitmap_set_after_teardown={}", second_arena_page_bitmap_set_after_teardown as u8);
+                    std::println!("trace.aggregate_post_exit.first_mapped_abandoned_after_teardown={}", first_mapped_abandoned_after_teardown as u8);
+                    std::println!("trace.aggregate_post_exit.second_mapped_abandoned_after_teardown={}", second_mapped_abandoned_after_teardown as u8);
+                    std::println!("trace.aggregate_post_exit.second_page_map_unregistered_after_first_free={}", second_page_map_unregistered_after_first_free as u8);
+                    std::println!("trace.aggregate_post_exit.second_arena_page_bitmap_clear_after_first_free={}", second_arena_page_bitmap_clear_after_first_free as u8);
+                    std::println!("trace.aggregate_post_exit.second_arena_slice_released_after_first_free={}", second_arena_slice_released_after_first_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_page_map_registered_after_second_free={}", first_page_map_registered_after_second_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_arena_page_bitmap_set_after_second_free={}", first_arena_page_bitmap_set_after_second_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_mapped_abandoned_after_second_free={}", first_mapped_abandoned_after_second_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_used_one_after_second_free={}", first_used_one_after_second_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_page_map_unregistered_after_final_free={}", first_page_map_unregistered_after_final_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_arena_page_bitmap_clear_after_final_free={}", first_arena_page_bitmap_clear_after_final_free as u8);
+                    std::println!("trace.aggregate_post_exit.first_arena_slice_released_after_final_free={}", first_arena_slice_released_after_final_free as u8);
+                    std::println!("trace.aggregate_post_exit.route_empty_after_final_free={}", route_empty_after_final_free as u8);
+                    std::println!("trace.aggregate_post_exit.valid={}", valid as u8);
+                    std::println!("CRABC_MI_AGGREGATE_POST_EXIT_TRACE_END");
+                    assert!(valid, "aggregate post-exit trace diverged from pinned C");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("aggregate post-exit trace fixture remains current-thread local");
+    }
+
     #[test]
     fn later_thread_exit_mapped_regular_pages_route_rejects_malformed_direct_image_before_mutation() {
         thread::spawn(|| {

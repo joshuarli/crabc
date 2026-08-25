@@ -497,9 +497,13 @@ contracts, reports, and status.
   or routing work. A completed 21-field retired-page prepass is only a narrow
   antecedent: it covers one real worker-local `mi_free` retirement, real
   `mi_thread_done()`/join force-release, one distinct live-page mapped handoff,
-  and one terminal consumer free. Broader retirement, teardown, routing,
-  concurrency, public API/runtime, backend, and architecture qualification
-  remain open.
+  and one terminal consumer free. A completed 25-field aggregate post-exit
+  trace is likewise narrow: exactly two distinct live nonfull medium pages in
+  distinct bins survive a worker `mi_thread_done()`/return and consumer join;
+  the consumer frees the second first while the first remains registered/bit-set/mapped-abandoned/
+  `used == 1`, then frees the first and observes an empty route. Broader
+  retirement, teardown, routing, concurrency, public API/runtime, backend,
+  and architecture qualification remain open.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
   measurements into qualified whole-engine performance evidence.
 
