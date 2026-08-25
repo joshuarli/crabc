@@ -3,6 +3,9 @@
 # Isolated output directory for the Rust-native performance fixture.
 /compat/perf/native/target/
 Cargo.lock
+# `builtins` is an isolated Cargo project whose release build requires this
+# exact committed resolution for its standalone `--locked` source-build lane.
+!builtins/Cargo.lock
 
 # Integration test compiled binaries
 /tests/fixtures/hello
