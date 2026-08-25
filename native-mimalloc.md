@@ -453,6 +453,32 @@ allocation-time, producer, and concurrent routing remain absent. The dynamic
 and later-main mixed-size regressions prove independent sequential terminal
 release alongside the existing same-size, sole-page, and collection-failure
 boundaries.
+## Scope amendment — 2026-08-25
+
+The user has explicitly reopened a native Linux/x86-64 little-endian
+`crabc-mimalloc` parity lane. This amendment changes only the fixed
+allocator's validation target. The public `crabc` runtime and production
+allocator integration remain Linux/AArch64; x86 work is private evidence only,
+must run on native x86-64 Linux, must not use AArch64 emulation, and must not
+introduce a generic portability layer or claim public x86 support/default
+promotion. The AArch64-only production statements below remain authoritative
+for that production profile; new x86 work must use architecture-qualified
+contracts, reports, and status.
+
+### Remaining native x86 parity work
+
+- [ ] Add an architecture-qualified x86-64 API inventory, source map, and
+  ratchet; do not merge x86 statuses into the AArch64 allocator contracts.
+- [ ] Complete target-specific layout/configuration, TLS, dependency-graph,
+  and Rust-vs-pinned-C differential evidence for the selected x86 profile.
+- [ ] Port and verify only the source-applicable x86 profile; preserve the
+  pinned mimalloc algorithms and record every target-specific difference.
+- [ ] Add native x86-64 stress, fault-injection, and performance/memory
+  evidence, with reports isolated from AArch64 evidence.
+- [ ] Keep x86 parity separate from libc allocator readiness, public `crabc`
+  support, and any default-backend promotion decision.
+
+## Handoff — 2026-08-25
 
 The paired mixed-size regressions pass in the native Linux/AArch64 container,
 together with the complete `crabc-mimalloc` library suite, the remote-free
@@ -1518,7 +1544,9 @@ Supported production platform:
 
 Explicitly out of scope:
 
-- x86-64, RISC-V, macOS, Windows, or generic portability scaffolding.
+- x86-64 public/runtime support, RISC-V, macOS, Windows, or generic
+  portability scaffolding. The allocator-only native x86-64 parity exception
+  is defined by the scope amendment above.
 - mimalloc v1 or v2 compatibility.
 - A novel allocator design.
 - Replacing mimalloc algorithms with more idiomatic but materially different
@@ -1539,7 +1567,9 @@ The project has five separate outcomes. Track them independently.
 A. Pure-Rust engine
 
 `crabc-mimalloc` implements the Linux/AArch64-applicable mimalloc v3.5.0
-allocator engine in Rust:
+allocator engine in Rust. The reopened native x86-64 profile validates the
+same fixed engine against x86-64 source applicability, but does not add public
+allocator integration:
 
 - `#![no_std]`
 - no dependency on `alloc`
@@ -1573,7 +1603,9 @@ The C ABI policy remains in `crabc-libc`. The allocator engine must not own
 C. mimalloc feature parity
 
 All public v3.5.0 interfaces and compile-time modes applicable to
-Linux/AArch64 are mechanically inventoried and assigned an explicit status.
+Linux/AArch64 are mechanically inventoried and assigned an explicit status;
+the reopened x86-64 parity profile requires a separate architecture-qualified
+inventory and status.
 
 Do not manually guess the public API from memory. Derive the inventory from
 the pinned `include/mimalloc.h`, related public headers, option declarations,
@@ -1618,7 +1650,8 @@ that with a narrowly defined exception:
 - the work is compatibility engineering, not allocator research.
 - upstream algorithms, data structures, memory orderings, and observable
   behavior are preserved until parity is established.
-- Linux/AArch64 is the only implementation target.
+- Linux/AArch64 is the only production integration target; the allocator-only
+  native x86-64 parity profile is evidence-only.
 - no speculative architecture abstraction is accepted.
 - algorithmic divergence requires a written design note, differential
   evidence, and performance evidence.
@@ -3410,7 +3443,7 @@ mechanically and without relying on prose optimism:
 - Can the exact C oracle and all reports be reproduced offline?
 - Does the default crabc artifact contain any C mimalloc code?
 
-The most important element is the **two-stage notion of completion**. The Rust backend can become suitable for crabc’s ordinary `malloc` ABI before every optional arena, subprocess, visitation, and secure-mode API is finished. But the project should continue until the machine-readable v3.5.0 ledger reaches full Linux/AArch64-applicable parity. Conversely, even 100% API coverage is insufficient to justify making it default until the thread, fork, memory-use, and non-inferiority gates pass.
+The most important element is the **two-stage notion of completion**. The Rust backend can become suitable for crabc’s ordinary `malloc` ABI before every optional arena, subprocess, visitation, and secure-mode API is finished. But the project should continue until the machine-readable v3.5.0 ledger reaches full Linux/AArch64-applicable parity and the separately reopened native x86-64 parity track has its own complete architecture-qualified evidence. Conversely, even 100% API coverage is insufficient to justify making it default until the thread, fork, memory-use, and non-inferiority gates pass; x86 parity alone never makes an x86 backend public or default.
 
 [1]: https://github.com/microsoft/mimalloc/releases/tag/v3.5.0 "https://github.com/microsoft/mimalloc/releases/tag/v3.5.0"
 [2]: https://microsoft.github.io/mimalloc/group__heap.html "https://microsoft.github.io/mimalloc/group__heap.html"

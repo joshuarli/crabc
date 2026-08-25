@@ -1,10 +1,13 @@
 # Allocator-port evidence contract
 
 This directory owns the reproducible source, inventory, C-oracle, and later
-Rust/C evidence for the Linux/AArch64 little-endian semantic port of pinned
-mimalloc v3.5.0. It does not authorize allocator
-invention, a cross-platform abstraction, or a runtime allocator-selection
-system. The immutable source and licensing record are in
+Rust/C evidence for the Linux/AArch64 production-oriented semantic port of
+pinned mimalloc v3.5.0 and its explicitly reopened native Linux/x86-64
+little-endian parity profile. The x86-64 profile is evidence-only: it does not
+authorize public x86 `crabc` support, public allocator integration,
+default-backend promotion, AArch64 emulation, allocator invention, a
+cross-platform abstraction, or a runtime allocator-selection system. The
+immutable source and licensing record are in
 [`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md); the design
 boundary is in [`docs/design/allocator.md`](../../docs/design/allocator.md).
 
@@ -879,6 +882,17 @@ and Cargo's production-graph judge excludes the entire Loom graph. Both
 performance modes likewise remain explicitly unavailable; these status-3
 results are not skips and must not become successful placeholders.
 
+The native x86-64 quick lane is separate from the AArch64 allocator gate.
+Run it through the architecture-aware native x86-64 dispatcher, or directly
+with `python3 compat/allocator/run.py --quick --architecture x86_64` while
+that dispatcher is being wired. Its report is
+`compat/reports/allocator/x86_64/latest.json` and its profile is
+`x86_64-native-c-oracle`: the lane combines the pinned native C oracle with
+direct Rust-engine configuration/layout, small/fundamental trace, and
+x86-64 TLS-codegen evidence. It still does not claim the C test adapter,
+production dependency-graph, libc integration, stress, or performance lanes,
+so it is not full x86 mimalloc parity or public x86 `crabc` support.
+
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
@@ -898,16 +912,16 @@ snapshot after review; the normal gate never updates its own baseline.
 
 | Path | Contract |
 | --- | --- |
-| `api-v3.5.0.json` | Deterministic, source-audited public-header inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, and C++ conveniences; every item records its Linux/AArch64 classification, reason, profile, C-oracle release-symbol disposition, and crabc-libc export policy. |
+| `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, and C++ conveniences; every item records its Linux/AArch64 classification, reason, profile, C-oracle release-symbol disposition, and crabc-libc export policy. Native x86-64 parity requires a separate architecture-qualified inventory. |
 | `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
 | `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and native link contract for pinned upstream `test-api.c`. |
 | `adapted/test-api-m4.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, six-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including one scoped worker round trip. |
 | `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
-| `port-map.toml` | Source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. |
-| `ratchet-v3.5.0.json` | Reviewed inventory hashes, counts, and non-regression baseline. |
-| `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences. |
+| `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
+| `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
+| `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
 
 Generated reports are measurements and remain ignored. The checked-in
 contracts are review inputs; linking a symbol, parsing a declaration, or
@@ -948,7 +962,8 @@ Record these outcomes independently:
 | Track | Required question |
 | --- | --- |
 | libc allocator readiness | Can the Rust engine back crabc's `malloc` family while preserving the existing C ABI, interposition, `errno`, failure, alignment, zero-size, and output-preservation rules? |
-| mimalloc v3.5.0 parity | Is every public Linux/AArch64-applicable `mi_*` API and compile-time mode derived from the pinned headers, symbols, declarations, and upstream tests accounted for? |
+| mimalloc v3.5.0 AArch64 parity | Is every public Linux/AArch64-applicable `mi_*` API and compile-time mode derived from the pinned headers, symbols, declarations, and upstream tests accounted for? |
+| mimalloc v3.5.0 x86-64 parity | Is every selected native Linux/x86-64-applicable `mi_*` API and compile-time mode separately accounted for and verified against native C, without implying public x86 `crabc` support? |
 
 Passing the first track does not assert the second, and basic malloc/free tests
 do not pass either track by themselves.

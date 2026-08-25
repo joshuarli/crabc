@@ -309,16 +309,27 @@ plan.
 
 ## Configuration profile
 
-The only frozen production profile in Milestone 0 is Linux/AArch64
+The frozen production-oriented profile in Milestone 0 is Linux/AArch64
 little-endian with Linux >= 5.10 and valid Linux/AArch64 page sizes; 4-KiB page
-size is not assumed. The engine is `#![no_std]`, uses neither `alloc`
-nor libc, compiles no C/C++, and has no native build script.
+size is not assumed. The user has explicitly reopened a second native
+Linux/x86-64 little-endian parity profile for this fixed port. The x86-64
+profile is evidence-only: it does not make x86-64 a supported `crabc`
+platform, provide public allocator integration, or authorize default-backend
+promotion, and it must run on native x86-64 Linux without AArch64 emulation.
+Both profiles' engines are `#![no_std]`, use neither `alloc` nor libc, compile
+no C/C++, and have no native build script.
+
+The source-to-Rust mapping above remains a reviewable translation ledger, not
+a claim that every row is complete on both profiles. Rows naming
+Linux/AArch64 constants, AArch64 TLS, or Linux/AArch64 applicability are
+production-profile records; x86-64 parity requires its own target-qualified
+classification and evidence.
 
 Actual mimalloc v3.5.0 configuration options, public API modes, and
-Linux/AArch64 applicability must be mechanically inventoried from the pinned
-headers, declarations, symbols, and upstream tests before they are selected.
-No undocumented configuration default or feature reduction is implied by this
-document.
+Linux/AArch64 and native Linux/x86-64 parity applicability must be mechanically
+inventoried from the pinned headers, declarations, symbols, and upstream tests
+before they are selected. No undocumented configuration default or feature
+reduction is implied by this document.
 
 ## Intentional deviations
 
@@ -345,8 +356,8 @@ valid-program result. The Miri host model is test instrumentation rather than
 a production backend. The port must preserve upstream behavior until a
 deviation is entered in
 [`compat/allocator/known-differences.md`](../compat/allocator/known-differences.md)
-with its design note, exact-C differential evidence, and Linux/AArch64
-performance evidence.
+with its design note, exact-C differential evidence, and performance evidence
+for the selected native architecture profile.
 
 The required crabc integration boundaries are not engine divergences:
 `crabc-libc` owns C ABI and `errno`; `crabc-mimalloc` remains errno-free; and
@@ -361,7 +372,9 @@ through public pthread APIs.
    a source, public-API, and configuration diff against v3.5.0.
 4. Review license notices and update the source-to-Rust mapping for every
    affected translation.
-5. Re-run the complete correctness, differential, and Linux/AArch64
-   performance/memory evidence before any promotion claim.
+5. Re-run the complete correctness, differential, and native profile-specific
+   performance/memory evidence before any promotion claim. The x86-64 parity
+   profile cannot by itself produce a public `crabc` support or allocator
+   promotion claim.
 
 A later tag is not evidence that this fixed-port contract has changed.

@@ -59,6 +59,13 @@ Implement the cleanest correct AArch64 design first.
 
 Keep these concepts distinct.
 
+The user has explicitly reopened one allocator-only exception: `crabc-mimalloc`
+may be built and parity-tested on native Linux/x86-64 little-endian against
+the pinned mimalloc C oracle. This is an evidence and compatibility profile for
+the fixed allocator port, not a supported x86 `crabc` platform. It does not
+authorize x86 libc, loader, or `crabc-rs` promotion, x86 public allocator
+integration, AArch64 emulation, or a generic portability layer.
+
 ---
 
 ## 2. Establish a Linux kernel MSRV
@@ -179,8 +186,10 @@ compatibility engineering, not an allocator-design project:
 
 - Preserve upstream algorithms, data structures, memory orderings, lifecycle
   behavior, and valid-program observable behavior until parity is established.
-- Implement only Linux/AArch64 little-endian. Do not add architecture or
-  operating-system abstractions for a possible port.
+- The production integration profile is Linux/AArch64 little-endian. The
+  explicitly reopened native Linux/x86-64 little-endian profile is limited to
+  this fixed port's parity evidence; do not add architecture or operating-
+  system abstractions for a possible port.
 - An algorithmic divergence needs a written design note, deterministic
   differential evidence, and performance evidence before it is accepted.
 - The exact pinned C implementation remains a mandatory test and differential

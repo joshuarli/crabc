@@ -1,11 +1,16 @@
 # Project status
 
 The general Linux/AArch64 little-endian runtime profile is closed. One active,
-narrowly scoped compatibility program is open: the provenance-preserving Rust
-semantic port of fixed mimalloc v3.5.0 defined by
+narrowly scoped compatibility program is open on two explicit profiles: the
+Linux/AArch64 production-oriented track and the native Linux/x86-64
+little-endian parity/evidence track. The x86-64 track does not reopen public
+`crabc` platform support, x86 libc/loader/`crabc-rs` support, public allocator
+integration, or default-backend promotion. Both tracks are the
+provenance-preserving Rust semantic port of fixed mimalloc v3.5.0 defined by
 [`docs/design/allocator.md`](docs/design/allocator.md) and measured through
 [`compat/allocator/README.md`](compat/allocator/README.md). It does not reopen
-allocator invention or another platform. [`COMPATIBILITY.md`](COMPATIBILITY.md)
+allocator invention, emulation, or a generic portability layer.
+[`COMPATIBILITY.md`](COMPATIBILITY.md)
 remains the generated record of current compatibility evidence and
 measurements; it is not edited by hand.
 

@@ -1389,11 +1389,15 @@ readiness or promotion claim follows from this slice.
 
 ## Scope boundary
 
-The port is Linux/AArch64 little-endian only, with Linux 5.10 as the kernel
-floor and support for valid Linux/AArch64 page sizes. It must be `#![no_std]`,
-must not depend on `alloc` or libc, and must not compile C or C++ in the
-production allocator. No x86-64, RISC-V, macOS, Windows, big-endian,
-32-bit, or portability scaffold is in scope.
+The production integration profile is Linux/AArch64 little-endian, with Linux
+5.10 as the kernel floor and support for valid Linux/AArch64 page sizes. The
+user has explicitly reopened a second, native Linux/x86-64 little-endian
+parity profile for the fixed allocator port. That profile is evidence-only:
+it has no public `crabc` allocator integration or default-promotion claim,
+must run on native x86-64 Linux, and must not use AArch64 emulation. RISC-V,
+macOS, Windows, big-endian, 32-bit, and portability scaffolds remain out of
+scope. Both allocator profiles must be `#![no_std]`, must not depend on
+`alloc` or libc, and must not compile C or C++ in the production allocator.
 
 The port preserves mimalloc v3.5.0's algorithms, data structures, memory
 orderings, lifecycle behavior, and valid-program observable behavior until
@@ -1403,8 +1407,8 @@ requires all of the following before acceptance:
 
 - a written design note explaining the upstream behavior and the divergence;
 - deterministic differential evidence against the exact pinned C source; and
-- Linux/AArch64 performance and memory evidence showing that the divergence is
-  justified.
+- performance and memory evidence on the same native architecture profile
+  showing that the divergence is justified.
 
 The pinned C implementation remains the mandatory source, differential, and
 performance oracle after it is removed from the production dependency graph.
@@ -1423,7 +1427,7 @@ The approved dependency is
 `chacha20 = "=0.10.1"` with default features disabled and only `legacy` plus
 `zeroize` enabled. `zeroize = "=1.9.0"`, also with defaults disabled, is a
 direct dependency so the source's temporary key and output-block cleanup use
-its compiler-resistant primitive. The selected Linux/AArch64 external graph
+its compiler-resistant primitive. The selected production Linux/AArch64 external graph
 is nine packages total:
 `chacha20`, `cfg-if`, `cipher`, `block-buffer`, `hybrid-array`, `typenum`,
 `crypto-common`, `inout`, and `zeroize`. None has a build script or native
@@ -1485,8 +1489,11 @@ but its external assembly path is PowerPC64-only and does not compile native
 code for Linux/AArch64. Cargo metadata traversal continues to admit only normal
 production edges from `crabc-mimalloc`, so Loom and its complete graph are absent
 from allocator production builds and have no production `no_std`, native-code,
-or fat-LTO consequence. `scripts/check_structure.py` pins this test boundary and
-rejects any additional allocator dev-dependency.
+or fat-LTO consequence. The native x86-64 profile requires the same dependency
+graph to be checked independently for `x86_64-unknown-linux-musl`; passing that
+check does not make the x86 profile a production backend.
+`scripts/check_structure.py` pins this test boundary and rejects any
+additional allocator dev-dependency.
 
 ## Ownership and integration boundary
 
@@ -1514,19 +1521,25 @@ implementation becomes the default only in a final isolated promotion change.
 
 ## Evidence and promotion
 
-Track two outcomes separately:
+Track the outcomes separately for each architecture profile:
 
-1. readiness to back crabc's `malloc` family without changing its C ABI; and
+1. AArch64 readiness to back crabc's `malloc` family without changing its C
+   ABI;
 2. parity for every Linux/AArch64-applicable public mimalloc v3.5.0 `mi_*`
-   interface and compile-time mode.
+   interface and compile-time mode; and
+3. native x86-64 parity for the explicitly selected mimalloc profile.
 
-Neither outcome follows from basic allocation tests. Promotion requires focused
+The x86-64 parity outcome is never a libc-readiness or public-platform
+outcome. It cannot promote an x86 allocator backend or change the public
+Linux/AArch64 support boundary.
+
+No outcome follows from basic allocation tests. Promotion requires focused
 invariants, layout/configuration probes, upstream-test evidence, deterministic
 C differential traces, concurrency-model evidence, fault injection,
 process-isolated misuse tests, pthread/TLS/fork and ABI/interposition tests,
 and real-program/corpus evidence. It also requires C-vs-Rust throughput,
 latency, RSS, virtual-mapping, startup, and allocation-path evidence on the
-same Linux/AArch64 measurement contract. See
+same native architecture measurement contract. See
 [`compat/allocator/README.md`](../../compat/allocator/README.md) and
 [`docs/design/performance.md`](performance.md).
 
