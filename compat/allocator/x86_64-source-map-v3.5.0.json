@@ -1,0 +1,903 @@
+{
+  "format": 1,
+  "kind": "mimalloc-x86_64-engine-source-map",
+  "maturity": "source-map-ratchet-foundation",
+  "profile": "linux-x86_64-mimalloc-engine-parity",
+  "target_context": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "source": {
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
+    "members": [
+      {
+        "member": "include/mimalloc.h",
+        "sha256": "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5",
+        "line_count": 730
+      },
+      {
+        "member": "include/mimalloc-stats.h",
+        "sha256": "7bc3c522d9a5203b27464179177845f3c09eea4453b82545d20ce61a711a9a1e",
+        "line_count": 171
+      },
+      {
+        "member": "include/mimalloc/track.h",
+        "sha256": "e7d94cae6b36f92b934b76aa3d24854845710e798654bdd29cef90e13e0f161e",
+        "line_count": 150
+      },
+      {
+        "member": "include/mimalloc/bits.h",
+        "sha256": "c308d398617d7bfc120aeb27347974b53f9ef10768e81b7b9275b0796fff2e39",
+        "line_count": 354
+      },
+      {
+        "member": "include/mimalloc/atomic.h",
+        "sha256": "106b267e98ccc5e01b48252c9742584cd5c914f309e7f4a4413ad85e65063d41",
+        "line_count": 560
+      },
+      {
+        "member": "include/mimalloc/types.h",
+        "sha256": "6a81148760be95f8fc8a2b7694f29e0f1f153b4c871ddd808e63cb0bbb9c3bae",
+        "line_count": 804
+      },
+      {
+        "member": "include/mimalloc/internal.h",
+        "sha256": "4fd7b1dd450989b1a8a5b4cb54e163a36d932bbf7e341abcd882763251252852",
+        "line_count": 1503
+      },
+      {
+        "member": "include/mimalloc/prim.h",
+        "sha256": "1987e8e2eedc07bb181bf2a11a27bec80a5309c32cfa66a56900fb4cbb64b172",
+        "line_count": 136
+      },
+      {
+        "member": "include/mimalloc/prim-tls.h",
+        "sha256": "46d871923b38c9463da985c54503cd5cb64bb2c91008f3d35bcbaae2a11c31c2",
+        "line_count": 424
+      },
+      {
+        "member": "src/alloc.c",
+        "sha256": "fd4b4a86af93754227137a43c84e84f846d0ff0fd7046a264396a80c95e5c1a9",
+        "line_count": 976
+      },
+      {
+        "member": "src/alloc-aligned.c",
+        "sha256": "3546ff6046c384f050cde21e9f3f314b6dc7d4ba1f1b462960a5a38672b898ba",
+        "line_count": 462
+      },
+      {
+        "member": "src/alloc-posix.c",
+        "sha256": "a6dcdef4694964c972e6cf37f197f93c95f321566a3b5ccc1761129257255e93",
+        "line_count": 184
+      },
+      {
+        "member": "src/alloc-override.c",
+        "sha256": "64c145ff98af7ed0a2d4049b0c7ab7adeae816237990e73919cf11d387a8f831",
+        "line_count": 407
+      },
+      {
+        "member": "src/free.c",
+        "sha256": "c08e7a702ddeafea1b5c07610b3224148dd0012b90cfb6a8ec53069d0df35b82",
+        "line_count": 817
+      },
+      {
+        "member": "src/arena.c",
+        "sha256": "5d9aa2dc06fa6e942d6a46eb4748b0c10c81f96c2ed50042412a9e66fd6f4d7a",
+        "line_count": 2753
+      },
+      {
+        "member": "src/bitmap.c",
+        "sha256": "c8dde3533b9803380fb948f86288ccf0a812a858aae7fca727e3b05e681d08b4",
+        "line_count": 2002
+      },
+      {
+        "member": "src/bitmap.h",
+        "sha256": "24f12651b02b8e375da998a0956dca861dffb8dfcb307a6fdd1d5b6c75a3eae5",
+        "line_count": 344
+      },
+      {
+        "member": "src/heap.c",
+        "sha256": "c788b309cf5208f72679b81b00f0a68b59b8c01da6bebc891d3e4154857d0989",
+        "line_count": 304
+      },
+      {
+        "member": "src/init.c",
+        "sha256": "e22486042ba132e002822315ccd4b24738fc3a151fc14172e5e45426e8add299",
+        "line_count": 662
+      },
+      {
+        "member": "src/libc.c",
+        "sha256": "7cd5cbbe56d70fb5f232757a763f694c0bd847e99a71b70bd9d345707f4bbd8c",
+        "line_count": 572
+      },
+      {
+        "member": "src/options.c",
+        "sha256": "760c694c7663a18ae9745deb969215544d682c15fedd87ffe2645c6d31d5ba30",
+        "line_count": 696
+      },
+      {
+        "member": "src/os.c",
+        "sha256": "8410b04c2d5b37e59fff1854364fed1fba873133b064cfe02083277038388548",
+        "line_count": 944
+      },
+      {
+        "member": "src/page-map.c",
+        "sha256": "ff3509ae3d4185e9cb2a95e1f35daba3329e998bac917ac7938f1bf06dba0f78",
+        "line_count": 517
+      },
+      {
+        "member": "src/page-queue.c",
+        "sha256": "3e7dfd68c012914cba0d5aeb436b04988222e8f7f9631f81ae2789f4b6620dd2",
+        "line_count": 423
+      },
+      {
+        "member": "src/page.c",
+        "sha256": "f7b1c3c0725b425516e22cf49d3ff7e03b708732fdba4bd1f4c759484d52593c",
+        "line_count": 1117
+      },
+      {
+        "member": "src/random.c",
+        "sha256": "c833eaf89ebd73c05a47a5ea8b439f4cc8a7ec5b87f85ddad4ddb72640d1c34e",
+        "line_count": 260
+      },
+      {
+        "member": "src/stats.c",
+        "sha256": "ce57c5f21ea2366f5d50591fbe6617de1493fd9e048452562df171ae0d20e1d3",
+        "line_count": 847
+      },
+      {
+        "member": "src/static.c",
+        "sha256": "e5c04d7ef0bf92b48c9e0e8d1b3d1c5b59271fc0f0dafd7547949ceaf2120ba4",
+        "line_count": 44
+      },
+      {
+        "member": "src/subproc.c",
+        "sha256": "39ab44c15b0dd91a53268fd52590d681e3c62e1930144b9392db0fde44439054",
+        "line_count": 327
+      },
+      {
+        "member": "src/theap.c",
+        "sha256": "2f1a4fddb96cb2da91433221976a0a3b6b8c923c0c38c9bc20b4f2420cb3e845",
+        "line_count": 724
+      },
+      {
+        "member": "src/threadlocal.c",
+        "sha256": "b3f140f7fbfa2ce8796dc397626b3a768285e2a17533cae8f0dbb19e4e4831f2",
+        "line_count": 316
+      },
+      {
+        "member": "src/prim/prim.c",
+        "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229",
+        "line_count": 76
+      },
+      {
+        "member": "src/prim/prim-tls.c",
+        "sha256": "4970ab233c499a1080db2fa77386439cd35a029a9be7ce25eef817e281ad8d70",
+        "line_count": 252
+      },
+      {
+        "member": "src/prim/unix/prim.c",
+        "sha256": "8efeac14a9952aa7c3117ce2d9d801f93692bda6cd80e09a51ddca398d7ac774",
+        "line_count": 1065
+      }
+    ]
+  },
+  "boundary": {
+    "native_execution": "not-assessed",
+    "public_c_api": "excluded",
+    "public_runtime_integration": "excluded",
+    "source_map_scope": "private-engine-evidence-only"
+  },
+  "status_model": {
+    "implemented": "A reviewed bounded source anchor has a current Rust implementation and local source or test evidence; it is not a claim about the whole upstream member or allocator parity.",
+    "partial": "Current Rust modules cover only the named source scope; unrepresented paths remain outside this row.",
+    "not-started": "The named source scope has no current Rust engine module or evidence.",
+    "inapplicable": "The named source scope is excluded from this private x86-64 engine evidence boundary; no Rust module or behavior claim is made."
+  },
+  "overall": {
+    "status": "incomplete",
+    "reason": "A deterministic source map can record ownership and bounded implementation state, but it cannot establish full engine parity.",
+    "not_evidence": [
+      "complete engine behavioral parity",
+      "native C/Rust differential coverage for every mapped behavior",
+      "public C allocator API or runtime integration",
+      "stress, lifecycle, and performance qualification"
+    ]
+  },
+  "units": [
+    {
+      "id": "public-c-api-surface",
+      "source_scope": "Base mi_decl_export allocation, lifecycle, and prefixed API declarations.",
+      "source_anchor": {
+        "member": "include/mimalloc.h",
+        "start_line": 109,
+        "end_line": 220,
+        "sha256": "9ff74aaa28842c83323a04c173eab894b612c35515f35895ebbe9e688fcee959"
+      },
+      "rust_modules": [],
+      "status": "not-started",
+      "difference": "The private test adapter is not a public mi_* API; source declarations are separately inventoried and no x86-64 runtime export is claimed.",
+      "evidence": []
+    },
+    {
+      "id": "statistics-types-and-api",
+      "source_scope": "Statistics structures, counters, and public statistics declarations.",
+      "source_anchor": {
+        "member": "include/mimalloc-stats.h",
+        "start_line": 30,
+        "end_line": 171,
+        "sha256": "ee790eadfc94e6b503d6e921cd16f83a807228ca34e38f9d624db04a6dc3d174"
+      },
+      "rust_modules": [],
+      "status": "not-started",
+      "difference": "No Rust statistics subsystem or public statistics API is mapped in this engine evidence profile.",
+      "evidence": []
+    },
+    {
+      "id": "tracking-hooks",
+      "source_scope": "Optional tracking-tool hook macros.",
+      "source_anchor": {
+        "member": "include/mimalloc/track.h",
+        "start_line": 1,
+        "end_line": 150,
+        "sha256": "e7d94cae6b36f92b934b76aa3d24854845710e798654bdd29cef90e13e0f161e"
+      },
+      "rust_modules": [],
+      "status": "inapplicable",
+      "difference": "The fixed normal profile does not include a tracking-tool subsystem, so these opt-in hooks are outside this private engine boundary.",
+      "evidence": []
+    },
+    {
+      "id": "x86-64-width-and-bit-operations",
+      "source_scope": "x86-64 virtual-address selection, word geometry, and scalar bit helper definitions.",
+      "source_anchor": {
+        "member": "include/mimalloc/bits.h",
+        "start_line": 49,
+        "end_line": 145,
+        "sha256": "167f3fa0110b96d0511d1d772dfb6768748d43badda7ed1dca60eabb1de6a76a"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::bits",
+        "crabc_mimalloc::config"
+      ],
+      "status": "implemented",
+      "difference": "Rust integer intrinsics replace compiler builtin selection; the fixed x86-64 configuration records 47 virtual-address bits and its derived page-map geometry.",
+      "evidence": [
+        "crabc-mimalloc/src/bits.rs",
+        "crabc-mimalloc/src/config.rs"
+      ]
+    },
+    {
+      "id": "atomic-operation-facade",
+      "source_scope": "C11 word and pointer atomic operation/order macros used by mapped engine paths.",
+      "source_anchor": {
+        "member": "include/mimalloc/atomic.h",
+        "start_line": 65,
+        "end_line": 157,
+        "sha256": "d705153b5a1a6e8aa67c832443e053beb8abca527fba8e05884db3775e434e61"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::atomic",
+        "crabc_mimalloc::lock",
+        "crabc_mimalloc::once"
+      ],
+      "status": "partial",
+      "difference": "Concrete Rust atomics preserve selected ordering pairs, while generic C macro forms and all source lifecycle consumers remain outside this scope.",
+      "evidence": [
+        "crabc-mimalloc/src/atomic.rs",
+        "crabc-mimalloc/src/lock.rs",
+        "crabc-mimalloc/src/once.rs"
+      ]
+    },
+    {
+      "id": "core-layouts-and-configuration",
+      "source_scope": "Default configuration controls and early internal layout declarations.",
+      "source_anchor": {
+        "member": "include/mimalloc/types.h",
+        "start_line": 35,
+        "end_line": 250,
+        "sha256": "f0450d53f157b9dfac5f295eb5e8c9935668743049b57fc0feb5d2129aee94c9"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::config",
+        "crabc_mimalloc::tld",
+        "crabc_mimalloc::types"
+      ],
+      "status": "partial",
+      "difference": "Rust records source-shaped internal layouts and the selected x86-64 default configuration, not a C ABI or every source layout tail.",
+      "evidence": [
+        "crabc-mimalloc/src/config.rs",
+        "crabc-mimalloc/src/tld.rs",
+        "crabc-mimalloc/src/types.rs"
+      ]
+    },
+    {
+      "id": "internal-engine-invariants",
+      "source_scope": "Page-map indexing and two-level page-map geometry helpers.",
+      "source_anchor": {
+        "member": "include/mimalloc/internal.h",
+        "start_line": 678,
+        "end_line": 758,
+        "sha256": "4873509617703b478780c273056c0d1a404427be5450939909734d390b89d189"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::invariants",
+        "crabc_mimalloc::page_map",
+        "crabc_mimalloc::provenance"
+      ],
+      "status": "partial",
+      "difference": "Typed Rust invariants cover selected arithmetic and ownership checks, while the broad internal helper surface is not represented here.",
+      "evidence": [
+        "crabc-mimalloc/src/invariants.rs",
+        "crabc-mimalloc/src/page_map.rs",
+        "crabc-mimalloc/src/provenance.rs"
+      ]
+    },
+    {
+      "id": "primitive-interface",
+      "source_scope": "OS memory configuration and primitive operation interface.",
+      "source_anchor": {
+        "member": "include/mimalloc/prim.h",
+        "start_line": 25,
+        "end_line": 136,
+        "sha256": "6ac73188cce5e2b7d7052ab2b45fb410c274032a5e311593693fd23ce4f87cd7"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::os"
+      ],
+      "status": "partial",
+      "difference": "Rust calls the fixed Linux primitive boundary through crabc-core rather than implementing the upstream portable C interface wholesale.",
+      "evidence": [
+        "crabc-mimalloc/src/os.rs"
+      ]
+    },
+    {
+      "id": "tls-interface-and-thread-identity",
+      "source_scope": "Local TLS model, thread identity, and default or cached theap access declarations.",
+      "source_anchor": {
+        "member": "include/mimalloc/prim-tls.h",
+        "start_line": 14,
+        "end_line": 275,
+        "sha256": "84547dfd8ea3eb6d26d22bc0f6aba4aef730eb87fc23edea5dab8ff6767e6550"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::compiler_tls",
+        "crabc_mimalloc::thread_local"
+      ],
+      "status": "partial",
+      "difference": "Five private roots and direct x86-64 fs-zero identity are mapped; generic TLS models, public APIs, and complete lifecycle hooks are not.",
+      "evidence": [
+        "crabc-mimalloc/src/compiler_tls.rs",
+        "crabc-mimalloc/src/thread_local.rs"
+      ]
+    },
+    {
+      "id": "ordinary-allocation-paths",
+      "source_scope": "Ordinary small allocation, zeroing, counted allocation, and reallocation entry paths.",
+      "source_anchor": {
+        "member": "src/alloc.c",
+        "start_line": 209,
+        "end_line": 476,
+        "sha256": "3202bfa66fd72cfc5c503fa43c7a487c6f3a2b678e542a75051b4dd64f8ad5d2"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::alloc",
+        "crabc_mimalloc::free_list",
+        "crabc_mimalloc::single_thread"
+      ],
+      "status": "partial",
+      "difference": "The mapped engine is a caller-managed private single-thread lifecycle, not general public allocation routing or process-owned allocation.",
+      "evidence": [
+        "crabc-mimalloc/src/alloc.rs",
+        "crabc-mimalloc/src/free_list.rs",
+        "crabc-mimalloc/src/single_thread.rs"
+      ]
+    },
+    {
+      "id": "aligned-allocation-paths",
+      "source_scope": "Aligned and offset-aligned allocation, usable-size, and reallocation paths.",
+      "source_anchor": {
+        "member": "src/alloc-aligned.c",
+        "start_line": 279,
+        "end_line": 462,
+        "sha256": "d05b6cef12e24d425d353425e5867d25a635606dcc844e8a760dff00baaa5e6f"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::aligned",
+        "crabc_mimalloc::os_page",
+        "crabc_mimalloc::single_thread"
+      ],
+      "status": "partial",
+      "difference": "Rust models selected arena and OS-aligned ownership paths; public C entry points and general concurrent arena search remain absent.",
+      "evidence": [
+        "crabc-mimalloc/src/aligned.rs",
+        "crabc-mimalloc/src/os_page.rs",
+        "crabc-mimalloc/src/single_thread.rs"
+      ]
+    },
+    {
+      "id": "posix-allocation-extensions",
+      "source_scope": "POSIX and Unix allocation extension definitions.",
+      "source_anchor": {
+        "member": "src/alloc-posix.c",
+        "start_line": 34,
+        "end_line": 184,
+        "sha256": "8c7913165632bac3597d004320e3bf7643f3c2675ece9e1a0cff14f8b803ee84"
+      },
+      "rust_modules": [],
+      "status": "not-started",
+      "difference": "The x86-64 evidence lane has no public C allocator boundary, errno policy, or POSIX extension implementation.",
+      "evidence": []
+    },
+    {
+      "id": "allocator-interposition",
+      "source_scope": "C and C++ allocator interposition or alias definitions.",
+      "source_anchor": {
+        "member": "src/alloc-override.c",
+        "start_line": 13,
+        "end_line": 407,
+        "sha256": "6f18f3b8023d091bcc3ba0d9e957e2d12ab7dd9426829383030ddd6c70e7a711"
+      },
+      "rust_modules": [],
+      "status": "inapplicable",
+      "difference": "Public allocator interposition is explicitly excluded from the private x86-64 engine evidence boundary.",
+      "evidence": []
+    },
+    {
+      "id": "local-and-remote-free",
+      "source_scope": "Owner-local free and selected cross-thread deferred-list collection transitions.",
+      "source_anchor": {
+        "member": "src/free.c",
+        "start_line": 223,
+        "end_line": 410,
+        "sha256": "365ca63926b945414ac5978417ff624bfad76d1e5c59064aa315f1f466b695ad"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::abandoned",
+        "crabc_mimalloc::free_list",
+        "crabc_mimalloc::remote_free",
+        "crabc_mimalloc::single_thread"
+      ],
+      "status": "partial",
+      "difference": "The engine has bounded local, remote-free, and abandonment substrates, not general asynchronous public free routing or complete thread exit.",
+      "evidence": [
+        "crabc-mimalloc/src/abandoned.rs",
+        "crabc-mimalloc/src/free_list.rs",
+        "crabc-mimalloc/src/remote_free.rs",
+        "crabc-mimalloc/src/single_thread.rs"
+      ]
+    },
+    {
+      "id": "arena-lifecycle",
+      "source_scope": "Selected external-arena metadata, page registration, and exact release paths.",
+      "source_anchor": {
+        "member": "src/arena.c",
+        "start_line": 674,
+        "end_line": 1282,
+        "sha256": "b3f3a3e424033b3149d9268e70d5c22283e195d45bbdad7dd10e72d782260cee"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::arena",
+        "crabc_mimalloc::os_page",
+        "crabc_mimalloc::process_arena",
+        "crabc_mimalloc::single_thread"
+      ],
+      "status": "partial",
+      "difference": "Rust supports bounded caller-supplied arena ownership and selected release transitions; registry-wide reservation and multi-arena policy are absent.",
+      "evidence": [
+        "crabc-mimalloc/src/arena.rs",
+        "crabc-mimalloc/src/os_page.rs",
+        "crabc-mimalloc/src/process_arena.rs",
+        "crabc-mimalloc/src/single_thread.rs"
+      ]
+    },
+    {
+      "id": "bitmap-algorithms",
+      "source_scope": "Bitmap claim visitation and ordinary lowest-bit claim paths.",
+      "source_anchor": {
+        "member": "src/bitmap.c",
+        "start_line": 1340,
+        "end_line": 1420,
+        "sha256": "6e012a2b4ee3d5080008324e841f633b3979dfcdabb98c8da1b51f148ebb07d9"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::abandoned",
+        "crabc_mimalloc::bitmap"
+      ],
+      "status": "partial",
+      "difference": "Rust has bounded bitmap claims for mapped ownership protocols, not all generic visitor and statistics paths.",
+      "evidence": [
+        "crabc-mimalloc/src/abandoned.rs",
+        "crabc-mimalloc/src/bitmap.rs"
+      ]
+    },
+    {
+      "id": "bitmap-layout",
+      "source_scope": "Bitmap chunk, flexible layout, and claim declarations.",
+      "source_anchor": {
+        "member": "src/bitmap.h",
+        "start_line": 94,
+        "end_line": 224,
+        "sha256": "b385450127b6c92da20c0d8068b1e02af77f78c3a433dc7bbb54591c7bca8539"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::bitmap"
+      ],
+      "status": "partial",
+      "difference": "Rust exposes lifetime-bound bitmap views instead of a general raw flexible-array API.",
+      "evidence": [
+        "crabc-mimalloc/src/bitmap.rs"
+      ]
+    },
+    {
+      "id": "heap-lifecycle",
+      "source_scope": "Heap creation, attachment, and selected heap release transitions.",
+      "source_anchor": {
+        "member": "src/heap.c",
+        "start_line": 128,
+        "end_line": 304,
+        "sha256": "f3d3705fbaa2b942ace94781d9ec7074973d47fe9847b240f0995708b8ae79f4"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::dynamic_theap",
+        "crabc_mimalloc::main_heap_thread",
+        "crabc_mimalloc::main_theap",
+        "crabc_mimalloc::types"
+      ],
+      "status": "partial",
+      "difference": "One bounded static owner and private dynamic attachment are mapped; first-class heap APIs, general routing, and full release policy are not.",
+      "evidence": [
+        "crabc-mimalloc/src/dynamic_theap.rs",
+        "crabc-mimalloc/src/main_heap_thread.rs",
+        "crabc-mimalloc/src/main_theap.rs",
+        "crabc-mimalloc/src/types.rs"
+      ]
+    },
+    {
+      "id": "process-and-thread-initialization",
+      "source_scope": "Process bootstrap, ticket selection, and thread initialization or teardown ordering.",
+      "source_anchor": {
+        "member": "src/init.c",
+        "start_line": 151,
+        "end_line": 662,
+        "sha256": "370ba3f351cc27f738f56f823bf46f5554080caf57e5c0fc56d556d78ca880c2"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::bootstrap",
+        "crabc_mimalloc::dynamic_theap",
+        "crabc_mimalloc::main_heap_thread",
+        "crabc_mimalloc::main_theap",
+        "crabc_mimalloc::process_init",
+        "crabc_mimalloc::subproc"
+      ],
+      "status": "partial",
+      "difference": "Rust models reviewed bounded initialization lifecycles, not loader integration, pthread callbacks, fork repair, or general shutdown.",
+      "evidence": [
+        "crabc-mimalloc/src/bootstrap.rs",
+        "crabc-mimalloc/src/dynamic_theap.rs",
+        "crabc-mimalloc/src/main_heap_thread.rs",
+        "crabc-mimalloc/src/main_theap.rs",
+        "crabc-mimalloc/src/process_init.rs",
+        "crabc-mimalloc/src/subproc.rs"
+      ]
+    },
+    {
+      "id": "c-support-and-once",
+      "source_scope": "Non-allocating byte or string support and once-related helpers.",
+      "source_anchor": {
+        "member": "src/libc.c",
+        "start_line": 65,
+        "end_line": 180,
+        "sha256": "6751ce44f4fe99b393a821764270eaf9763724aa0551a8766b733f2478af1484"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::once",
+        "crabc_mimalloc::support"
+      ],
+      "status": "partial",
+      "difference": "Rust maps selected allocation-free support operations and once state, not the complete C formatting and environment helper surface.",
+      "evidence": [
+        "crabc-mimalloc/src/once.rs",
+        "crabc-mimalloc/src/support.rs"
+      ]
+    },
+    {
+      "id": "option-processing",
+      "source_scope": "Runtime option initialization, parsing, output, and public option APIs.",
+      "source_anchor": {
+        "member": "src/options.c",
+        "start_line": 20,
+        "end_line": 696,
+        "sha256": "44685412442a9670ca07ce7da6e615a05fbcee835c8090b01fc31620d1f66a02"
+      },
+      "rust_modules": [],
+      "status": "not-started",
+      "difference": "No configurable option subsystem or public option API is part of this private engine evidence profile.",
+      "evidence": []
+    },
+    {
+      "id": "os-allocation-policy",
+      "source_scope": "OS allocation-size policy, mapping policy, and default-theap OS allocation paths.",
+      "source_anchor": {
+        "member": "src/os.c",
+        "start_line": 88,
+        "end_line": 944,
+        "sha256": "d4ceecfb970078f364a4719b39c1ca52bc65374f822b47163e2533d23b99dacd"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::os",
+        "crabc_mimalloc::os_page"
+      ],
+      "status": "partial",
+      "difference": "Rust maps selected fixed Linux allocation and release policy, while option-driven policy and general default-theap routing are absent.",
+      "evidence": [
+        "crabc-mimalloc/src/os.rs",
+        "crabc-mimalloc/src/os_page.rs"
+      ]
+    },
+    {
+      "id": "page-map-lifecycle",
+      "source_scope": "Page-map initialization, publication, lookup, rollback, and destruction paths.",
+      "source_anchor": {
+        "member": "src/page-map.c",
+        "start_line": 40,
+        "end_line": 517,
+        "sha256": "19850c040cf1941cbede37f73fe1f12ee7df62b2b38961a36d393ade5be41876"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::main_static_page",
+        "crabc_mimalloc::page_map",
+        "crabc_mimalloc::process_page_map"
+      ],
+      "status": "partial",
+      "difference": "Rust maps bounded process and static page-map ownership; general global initialization and concurrent consumers remain unclaimed.",
+      "evidence": [
+        "crabc-mimalloc/src/main_static_page.rs",
+        "crabc-mimalloc/src/page_map.rs",
+        "crabc-mimalloc/src/process_page_map.rs"
+      ]
+    },
+    {
+      "id": "page-queue-kernels",
+      "source_scope": "Intrusive page-queue insertion, removal, and queue accounting kernels.",
+      "source_anchor": {
+        "member": "src/page-queue.c",
+        "start_line": 277,
+        "end_line": 423,
+        "sha256": "ad0627832b3895d70ce6f8258f6d9a141b5f7cb0216856d517c1a978e71360ac"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::single_thread",
+        "crabc_mimalloc::types"
+      ],
+      "status": "partial",
+      "difference": "Rust confines selected queue transitions to private engine sessions and does not expose a general heap queue API.",
+      "evidence": [
+        "crabc-mimalloc/src/single_thread.rs",
+        "crabc-mimalloc/src/types.rs"
+      ]
+    },
+    {
+      "id": "page-lifecycle",
+      "source_scope": "Page initialization, block allocation, collection, retirement, and selected terminal transitions.",
+      "source_anchor": {
+        "member": "src/page.c",
+        "start_line": 709,
+        "end_line": 1117,
+        "sha256": "44d448e14c4605c04c8b1ff3c77cbb9427bf4c0e82b45ab5edb82917f07bb2db"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::abandoned",
+        "crabc_mimalloc::free_list",
+        "crabc_mimalloc::page",
+        "crabc_mimalloc::remote_free",
+        "crabc_mimalloc::single_thread"
+      ],
+      "status": "partial",
+      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions, not general page routing or complete owner-exit traversal.",
+      "evidence": [
+        "crabc-mimalloc/src/abandoned.rs",
+        "crabc-mimalloc/src/free_list.rs",
+        "crabc-mimalloc/src/page.rs",
+        "crabc-mimalloc/src/remote_free.rs",
+        "crabc-mimalloc/src/single_thread.rs"
+      ]
+    },
+    {
+      "id": "random-state",
+      "source_scope": "Random context initialization, weak fallback, output, and split state transitions.",
+      "source_anchor": {
+        "member": "src/random.c",
+        "start_line": 11,
+        "end_line": 260,
+        "sha256": "49f2fba50c2ca45d136bba6fde826cbae19eac0bc330c7d1b0ae2698f9f29292"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::random"
+      ],
+      "status": "partial",
+      "difference": "Rust uses the reviewed chacha20 primitive rather than copied C cryptography and does not claim complete process-lifecycle integration.",
+      "evidence": [
+        "crabc-mimalloc/src/random.rs"
+      ]
+    },
+    {
+      "id": "statistics-collection",
+      "source_scope": "Thread and process statistics maintenance and reporting.",
+      "source_anchor": {
+        "member": "src/stats.c",
+        "start_line": 20,
+        "end_line": 847,
+        "sha256": "2f1bb4ddd180ae8349352dc6ba13443fd7a14f3572eb67f809a1959676a31c9a"
+      },
+      "rust_modules": [],
+      "status": "not-started",
+      "difference": "No statistics collection or reporting subsystem is mapped in this engine evidence profile.",
+      "evidence": []
+    },
+    {
+      "id": "static-c-amalgamation",
+      "source_scope": "C static-library amalgamation include assembly.",
+      "source_anchor": {
+        "member": "src/static.c",
+        "start_line": 19,
+        "end_line": 44,
+        "sha256": "2a0ce462658c70ce646ba04347dd89cb2d868c84a7ae4173b7f4edf86efca6d2"
+      },
+      "rust_modules": [],
+      "status": "inapplicable",
+      "difference": "Rust has a module graph rather than a C amalgamation translation unit, so this build assembly has no Rust source-unit counterpart.",
+      "evidence": []
+    },
+    {
+      "id": "subprocess-lifecycle",
+      "source_scope": "Main subprocess identity, counters, and selected ticket or initialization transitions.",
+      "source_anchor": {
+        "member": "src/subproc.c",
+        "start_line": 95,
+        "end_line": 327,
+        "sha256": "2014768c194854b587d674ff49b7a5cf996a90166dc0d61603b4679179824645"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::meta",
+        "crabc_mimalloc::subproc",
+        "crabc_mimalloc::tld"
+      ],
+      "status": "partial",
+      "difference": "Rust provides one bounded process-static identity and ticket substrate, not general subprocess creation, statistics, or teardown.",
+      "evidence": [
+        "crabc-mimalloc/src/meta.rs",
+        "crabc-mimalloc/src/subproc.rs",
+        "crabc-mimalloc/src/tld.rs"
+      ]
+    },
+    {
+      "id": "thread-local-heap-lifecycle",
+      "source_scope": "Theap initialization, queue ownership, and selected collection or destruction ordering.",
+      "source_anchor": {
+        "member": "src/theap.c",
+        "start_line": 236,
+        "end_line": 724,
+        "sha256": "aeae7863e4db1fb5a1f4d9d47c1bc3124fdd60a1b588ed30d683e93698d5b8ec"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::bootstrap",
+        "crabc_mimalloc::dynamic_theap",
+        "crabc_mimalloc::main_theap",
+        "crabc_mimalloc::single_thread",
+        "crabc_mimalloc::types"
+      ],
+      "status": "partial",
+      "difference": "Rust maps explicit bounded Theap sessions, not general cached switching, public heap APIs, or all thread teardown paths.",
+      "evidence": [
+        "crabc-mimalloc/src/bootstrap.rs",
+        "crabc-mimalloc/src/dynamic_theap.rs",
+        "crabc-mimalloc/src/main_theap.rs",
+        "crabc-mimalloc/src/single_thread.rs",
+        "crabc-mimalloc/src/types.rs"
+      ]
+    },
+    {
+      "id": "thread-local-storage-lifecycle",
+      "source_scope": "Dynamic TLS key expansion, per-thread backing, and selected root publication or teardown.",
+      "source_anchor": {
+        "member": "src/threadlocal.c",
+        "start_line": 23,
+        "end_line": 316,
+        "sha256": "fa000a0bf8870aad2e047d06e909405a87d0431a2564b7a76d11a24e60dc8553"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::compiler_tls",
+        "crabc_mimalloc::dynamic_theap",
+        "crabc_mimalloc::owned_tls_key_registry",
+        "crabc_mimalloc::thread_local"
+      ],
+      "status": "partial",
+      "difference": "Rust maps a private regular-key backing and bounded root transitions, not a public TLS API or full process and thread lifecycle.",
+      "evidence": [
+        "crabc-mimalloc/src/compiler_tls.rs",
+        "crabc-mimalloc/src/dynamic_theap.rs",
+        "crabc-mimalloc/src/owned_tls_key_registry.rs",
+        "crabc-mimalloc/src/thread_local.rs"
+      ]
+    },
+    {
+      "id": "platform-primitive-dispatch",
+      "source_scope": "Platform primitive dispatcher and compiler-support fallback glue.",
+      "source_anchor": {
+        "member": "src/prim/prim.c",
+        "start_line": 1,
+        "end_line": 76,
+        "sha256": "241b1087a0e22609de71b2deba6c771135dd37e756ea89ba79b5900165b4f229"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::os"
+      ],
+      "status": "partial",
+      "difference": "Rust selects its fixed Linux implementation at compile time and does not reproduce the upstream multi-platform dispatcher.",
+      "evidence": [
+        "crabc-mimalloc/src/os.rs"
+      ]
+    },
+    {
+      "id": "platform-tls-roots",
+      "source_scope": "Compiler-TLS root definitions and default or cached root setters.",
+      "source_anchor": {
+        "member": "src/prim/prim-tls.c",
+        "start_line": 13,
+        "end_line": 252,
+        "sha256": "3df7d11ae0d7dda11d29aa15c2d92f32bd186f1124f6cc6bb0be2aecd22c7684"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::compiler_tls"
+      ],
+      "status": "partial",
+      "difference": "Rust retains private initial-exec evidence roots and selected stores, not source-compatible symbols or complete lifecycle integration.",
+      "evidence": [
+        "crabc-mimalloc/src/compiler_tls.rs"
+      ]
+    },
+    {
+      "id": "linux-unix-primitives",
+      "source_scope": "Linux Unix memory, process, clock, scheduler, and entropy primitive implementations.",
+      "source_anchor": {
+        "member": "src/prim/unix/prim.c",
+        "start_line": 250,
+        "end_line": 1065,
+        "sha256": "4df5c37add87f3707312417978f48652fec50c636d7eea0fab0a7133acdafaf8"
+      },
+      "rust_modules": [
+        "crabc_mimalloc::os",
+        "crabc_mimalloc::os_page"
+      ],
+      "status": "partial",
+      "difference": "Rust uses direct fixed Linux syscalls and records selected fallback policy, not the full Unix portability implementation.",
+      "evidence": [
+        "crabc-mimalloc/src/os.rs",
+        "crabc-mimalloc/src/os_page.rs"
+      ]
+    }
+  ],
+  "ratchet": {
+    "metadata_sha256": "36c7d7ec282ba72afdab0d2480efa4992fc9b511c47d8f330e37f09779bf2d7c",
+    "source_member_count": 34,
+    "source_members_sha256": "b1efc03256ba0fe0084fbc6190ea9f1ef3d01e2d0de55a17a427dc7f6c3d4f70",
+    "status_counts": {
+      "implemented": 1,
+      "inapplicable": 3,
+      "not-started": 5,
+      "partial": 25
+    },
+    "unfinished_unit_count": 30,
+    "unit_count": 34,
+    "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
+    "units_sha256": "9e34d7fb4297c86a5a620d9e0b581400d95ec83fdb58466b6d58cc43eac3473c"
+  }
+}
