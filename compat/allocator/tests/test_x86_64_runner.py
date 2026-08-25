@@ -41,6 +41,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-aggregate-same-bin-still-live",
             "allocator-on-demand",
             "allocator-direct-on-demand",
+            "allocator-regular-small",
             "allocator-unit",
             "allocator-core-unit",
         ):
@@ -75,6 +76,18 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         result = self.run_launcher("allocator-direct-on-demand", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-direct-on-demand takes no arguments", result.stderr)
+
+    def test_regular_small_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-regular-small)", source)
+        self.assertIn(
+            "run_in_container python3 compat/allocator/x86_64_regular_small_evidence.py --offline",
+            source,
+        )
+
+        result = self.run_launcher("allocator-regular-small", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("allocator-regular-small takes no arguments", result.stderr)
 
     def test_help_and_unsupported_command_do_not_need_docker(self) -> None:
         help_result = self.run_launcher("--help")

@@ -139,7 +139,44 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("no-padding mi_expand", ordinary["difference"])
         self.assertIn("mi_recalloc", ordinary["difference"])
         self.assertIn("caller-managed private single-thread lifecycle", ordinary["difference"])
+        self.assertLessEqual(ordinary["source_anchor"]["start_line"], 204)
         self.assertGreaterEqual(ordinary["source_anchor"]["end_line"], 483)
+
+    def test_regular_small_differential_maps_each_selected_engine_boundary(self) -> None:
+        units = {
+            unit["id"]: unit
+            for unit in self.contract["units"]
+            if unit["id"]
+            in {
+                "ordinary-allocation-paths",
+                "local-and-remote-free",
+                "arena-lifecycle",
+                "page-map-lifecycle",
+                "page-queue-kernels",
+                "page-lifecycle",
+                "thread-local-heap-lifecycle",
+            }
+        }
+        self.assertEqual(len(units), 7)
+        for unit in units.values():
+            with self.subTest(unit=unit["id"]):
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn(
+                    "compat/allocator/x86_64_regular_small_evidence.py",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/x86_64-regular-small-evidence-v3.5.0.json",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/tests/test_x86_64_regular_small_evidence.py",
+                    unit["evidence"],
+                )
+        self.assertIn("1025-byte generic request", units["ordinary-allocation-paths"]["difference"])
+        self.assertIn("saved address and exact one-slice span", units["page-map-lifecycle"]["difference"])
+        self.assertIn("queue stay single-member", units["page-queue-kernels"]["difference"])
+        self.assertLessEqual(units["thread-local-heap-lifecycle"]["source_anchor"]["start_line"], 123)
 
     def test_remote_free_scopes_record_both_bounded_native_differentials(self) -> None:
         remote = next(
@@ -159,6 +196,10 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("25-field native C/Rust differential", unit["difference"])
                 self.assertIn("46-field native C/Rust differential", unit["difference"])
                 self.assertIn("53-field native C/Rust differential", unit["difference"])
+                self.assertIn("40-field native C/Rust differential", unit["difference"])
+                self.assertIn("1025-byte ordinary regular-small arena page", unit["difference"])
+                self.assertIn("quick-collect", unit["difference"])
+                self.assertIn("same-Theap", unit["difference"])
                 self.assertIn(
                     "compat/allocator/x86_64_aggregate_post_exit_evidence.py",
                     unit["evidence"],
@@ -247,7 +288,19 @@ class X86_64SourceMapTests(unittest.TestCase):
                     "compat/allocator/tests/test_x86_64_retired_prepass_evidence.py",
                     unit["evidence"],
                 )
-        self.assertLessEqual(remote["source_anchor"]["start_line"], 62)
+                self.assertIn(
+                    "compat/allocator/x86_64_regular_small_evidence.py",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/x86_64-regular-small-evidence-v3.5.0.json",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/tests/test_x86_64_regular_small_evidence.py",
+                    unit["evidence"],
+                )
+        self.assertLessEqual(remote["source_anchor"]["start_line"], 44)
         self.assertGreaterEqual(remote["source_anchor"]["end_line"], 515)
         self.assertLessEqual(page["source_anchor"]["start_line"], 150)
         self.assertIn("None proves general asynchronous public free routing", remote["difference"])
@@ -262,6 +315,9 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("25-field C/Rust differential", arena["difference"])
         self.assertIn("46-field C/Rust differential", arena["difference"])
         self.assertIn("53-field C/Rust differential", arena["difference"])
+        self.assertIn("40-field C/Rust differential", arena["difference"])
+        self.assertIn("ordinary regular-small arena page", arena["difference"])
+        self.assertIn("ordinary arena bitmap/exact slice release", arena["difference"])
         self.assertIn("compat/allocator/x86_64_mapped_post_exit_evidence.py", arena["evidence"])
         self.assertIn("compat/allocator/x86_64_retired_prepass_evidence.py", arena["evidence"])
         self.assertIn("compat/allocator/x86_64_aggregate_post_exit_evidence.py", arena["evidence"])
@@ -284,6 +340,17 @@ class X86_64SourceMapTests(unittest.TestCase):
         )
         self.assertIn(
             "compat/allocator/tests/test_x86_64_aggregate_same_bin_still_live_evidence.py",
+            arena["evidence"],
+        )
+        self.assertIn(
+            "compat/allocator/x86_64_regular_small_evidence.py", arena["evidence"]
+        )
+        self.assertIn(
+            "compat/allocator/x86_64-regular-small-evidence-v3.5.0.json",
+            arena["evidence"],
+        )
+        self.assertIn(
+            "compat/allocator/tests/test_x86_64_regular_small_evidence.py",
             arena["evidence"],
         )
         for terminal_field in (
@@ -349,6 +416,20 @@ class X86_64SourceMapTests(unittest.TestCase):
             )
             self.assertIn("Theap/TLD teardown", unit["difference"])
             self.assertIn("compat/allocator/x86_64_mapped_post_exit_evidence.py", unit["evidence"])
+
+        self.assertLessEqual(theap["source_anchor"]["start_line"], 123)
+        self.assertIn("40-field native differential", theap["difference"])
+        self.assertIn("same-Theap 1025-byte ordinary regular-small page", theap["difference"])
+        self.assertIn("generic quick-collect/same-page reuse", theap["difference"])
+        self.assertIn("compat/allocator/x86_64_regular_small_evidence.py", theap["evidence"])
+        self.assertIn(
+            "compat/allocator/x86_64-regular-small-evidence-v3.5.0.json",
+            theap["evidence"],
+        )
+        self.assertIn(
+            "compat/allocator/tests/test_x86_64_regular_small_evidence.py",
+            theap["evidence"],
+        )
 
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(

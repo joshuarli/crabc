@@ -141,6 +141,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-unmapped-full-medium-reabandon-differential",
                 "native-ordinary-reserved-medium-on-demand-differential",
                 "native-reserved-small-direct-on-demand-differential",
+                "native-regular-small-retire-quick-collect-release-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -229,6 +230,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-reserved-small-direct-on-demand-differential"]["report"],
             "compat/reports/allocator/x86_64/direct-on-demand.json",
+        )
+        self.assertEqual(
+            gates["native-regular-small-retire-quick-collect-release-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-regular-small",
+        )
+        self.assertEqual(
+            gates["native-regular-small-retire-quick-collect-release-differential"]["report"],
+            "compat/reports/allocator/x86_64/regular-small.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
@@ -473,6 +482,25 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, direct_on_demand)
+        regular_small = gates[
+            "native-regular-small-retire-quick-collect-release-differential"
+        ]["claim"]
+        for fragment in (
+            "40 address-independent values",
+            "1025-byte ordinary regular-small arena page",
+            "1280-byte class, 51 blocks, one slice",
+            "retire_expire == 16",
+            "generic same-Theap allocation quick-collect and reuse",
+            "same page",
+            "force-collects the exact queue, PageMap, arena-page bit, and slice release",
+            "same-thread/same-Theap private engine evidence",
+            "does not establish general retirement or lifecycle",
+            "remote/concurrent collection",
+            "public mi_* behavior",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, regular_small)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])
@@ -515,6 +543,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("five bounded crate-private fault-injection", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("25-field native C/Rust quiescent live-owner", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("28-field real small direct-page", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("40-field same-Theap ordinary regular-small", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("13-field unmapped full-medium reabandon", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])
 

@@ -32213,6 +32213,213 @@ mod tests {
         });
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_regular_small_retire_quick_collect_reuse_and_force_release_trace_matches_pinned_c() {
+        with_allocator(|allocator| {
+            std::println!("CRABC_MI_REGULAR_SMALL_TRACE_BEGIN");
+            // 1025 is just beyond the direct-small range, but remains an
+            // ordinary regular small page rather than a singleton.
+            let request = SMALL_SIZE_MAX + 1;
+            let bin = size_class::bin(request).unwrap();
+            let first = allocator.allocate(request, false).unwrap();
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            let page_ptr = page.as_ptr();
+            // SAFETY: `first` is current and keeps this regular page mapped
+            // while its source geometry and arena span are recorded.
+            let (block_size, capacity, memory, arena_backed) = unsafe {
+                let page_ref = page.as_ref();
+                assert_eq!(size_class::page_kind_for_block_size(page_ref.block_size()), Some(PageKind::Small));
+                assert!(page_ref.block_size() > SMALL_SIZE_MAX);
+                (
+                    page_ref.block_size(),
+                    page_ref.reserved() as usize,
+                    page_ref.memid().arena_memory().unwrap(),
+                    page_ref.memid().kind() == MemoryKind::Arena,
+                )
+            };
+            assert!(capacity > 1);
+            let slice_index = memory.slice_index as usize;
+            let slice_count = memory.slice_count as usize;
+            let slice_start = allocator.arena.slice_start(slice_index).unwrap();
+            let span_size = slice_count * ARENA_SLICE_SIZE;
+            assert!(arena_backed);
+            std::println!("trace.regular_small.request={request}");
+            std::println!("trace.regular_small.block_size={block_size}");
+            std::println!("trace.regular_small.capacity={capacity}");
+            std::println!("trace.regular_small.slice_count={slice_count}");
+            std::println!("trace.regular_small.arena_backed={}", u8::from(arena_backed));
+            let mut blocks = Vec::with_capacity(capacity);
+            blocks.push(first);
+            while blocks.len() < capacity {
+                let block = allocator.allocate(request, false).unwrap();
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page_ptr);
+                blocks.push(block);
+            }
+            // Filling the page leaves no immediate blocks; frees therefore
+            // accumulate on `local_free` until the final free retires it.
+            let filled_used = unsafe { page.as_ref().used() };
+            let filled_free_empty = unsafe { page.as_ref().remote_free_test_free().is_null() };
+            let filled_local_empty = unsafe { page.as_ref().remote_free_test_local_free().is_null() };
+            let filled_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let filled_queue_count = allocator.queue_count(bin).unwrap();
+            let filled_page_count = allocator.session.theap().page_count();
+            assert_eq!(filled_used, capacity);
+            assert!(filled_free_empty && filled_local_empty && filled_remote_empty);
+            assert_eq!(filled_queue_count, 1);
+            assert_eq!(filled_page_count, 1);
+            for block in blocks.iter().copied() {
+                // SAFETY: each filled-page block is returned exactly once.
+                unsafe { allocator.free(block).unwrap() };
+            }
+            let retired_queue_count = allocator.queue_count(bin).unwrap();
+            let retired_page_count = allocator.session.theap().page_count();
+            let retired_used = unsafe { page.as_ref().used() };
+            let retired_expire = unsafe { page.as_ref().retire_expire() };
+            let retired_local_free = unsafe { !page.as_ref().remote_free_test_local_free().is_null() };
+            let retired_free_empty = unsafe { page.as_ref().remote_free_test_free().is_null() };
+            let retired_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let retired_map_published = unsafe { allocator.page_map.checked_lookup(first.as_ptr()) == page_ptr };
+            let retired_arena_page_set = unsafe { allocator.arena.pages() }
+                .unwrap()
+                .is_set_range(slice_index, slice_count)
+                == Some(true);
+            let retired_slices_unreleased = unsafe { allocator.arena.slices_free() }
+                .unwrap()
+                .is_clear_range(slice_index, slice_count)
+                == Some(true);
+            assert_eq!(retired_queue_count, 1);
+            assert_eq!(retired_page_count, 1);
+            assert_eq!(retired_used, 0);
+            assert_eq!(retired_expire, RETIRE_CYCLES);
+            assert!(retired_local_free && retired_free_empty && retired_remote_empty);
+            assert!(retired_map_published && retired_arena_page_set && retired_slices_unreleased);
+            std::println!("trace.regular_small.filled.used={filled_used}");
+            std::println!("trace.regular_small.filled.free_empty={}", u8::from(filled_free_empty));
+            std::println!("trace.regular_small.filled.local_empty={}", u8::from(filled_local_empty));
+            std::println!("trace.regular_small.filled.remote_empty={}", u8::from(filled_remote_empty));
+            std::println!("trace.regular_small.filled.queue_count={filled_queue_count}");
+            std::println!("trace.regular_small.filled.page_count={filled_page_count}");
+            std::println!("trace.regular_small.retired.queue_count={retired_queue_count}");
+            std::println!("trace.regular_small.retired.page_count={retired_page_count}");
+            std::println!("trace.regular_small.retired.used={retired_used}");
+            std::println!("trace.regular_small.retired.expire={retired_expire}");
+            std::println!("trace.regular_small.retired.free_empty={}", u8::from(retired_free_empty));
+            std::println!("trace.regular_small.retired.local_nonempty={}", u8::from(retired_local_free));
+            std::println!("trace.regular_small.retired.remote_empty={}", u8::from(retired_remote_empty));
+            std::println!("trace.regular_small.retired.map_published={}", u8::from(retired_map_published));
+            std::println!("trace.regular_small.retired.arena_page_set={}", u8::from(retired_arena_page_set));
+            std::println!("trace.regular_small.retired.slices_unreleased={}", u8::from(retired_slices_unreleased));
+
+            let reused = allocator.allocate(request, false).unwrap();
+            let reused_from_freed_set = blocks.contains(&reused);
+            let reused_same_page = unsafe { allocator.page_for_block(reused) == page_ptr };
+            assert!(reused_from_freed_set);
+            assert!(reused_same_page);
+            let reused_used = unsafe { page.as_ref().used() };
+            let reused_expire = unsafe { page.as_ref().retire_expire() };
+            let reused_local_free_clear = unsafe { page.as_ref().remote_free_test_local_free().is_null() };
+            let reused_free_nonempty = unsafe { !page.as_ref().remote_free_test_free().is_null() };
+            let reused_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let reused_queue_count = allocator.queue_count(bin).unwrap();
+            assert_eq!(reused_used, 1);
+            assert_eq!(reused_expire, 0);
+            assert!(reused_local_free_clear && reused_free_nonempty && reused_remote_empty);
+            assert_eq!(reused_queue_count, 1);
+            std::println!("trace.regular_small.reuse.same_page={}", u8::from(reused_same_page));
+            std::println!("trace.regular_small.reuse.from_freed_set={}", u8::from(reused_from_freed_set));
+            std::println!("trace.regular_small.reuse.used={reused_used}");
+            std::println!("trace.regular_small.reuse.expire={reused_expire}");
+            std::println!("trace.regular_small.reuse.free_nonempty={}", u8::from(reused_free_nonempty));
+            std::println!("trace.regular_small.reuse.local_empty={}", u8::from(reused_local_free_clear));
+            std::println!("trace.regular_small.reuse.remote_empty={}", u8::from(reused_remote_empty));
+            std::println!("trace.regular_small.reuse.queue_count={reused_queue_count}");
+
+            // Return the quick-collected block and force the retired page
+            // through its complete queue/map/arena span release.
+            unsafe { allocator.free(reused).unwrap() };
+            let second_retire_used = unsafe { page.as_ref().used() };
+            let second_retire_expire = unsafe { page.as_ref().retire_expire() };
+            let second_retire_free_nonempty = unsafe { !page.as_ref().remote_free_test_free().is_null() };
+            let second_retire_local_nonempty = unsafe { !page.as_ref().remote_free_test_local_free().is_null() };
+            assert_eq!(second_retire_used, 0);
+            assert_eq!(second_retire_expire, RETIRE_CYCLES);
+            assert!(second_retire_free_nonempty && second_retire_local_nonempty);
+            assert!(allocator.collect_retired(true));
+            let release_queue_count = allocator.queue_count(bin).unwrap();
+            let release_page_count = allocator.session.theap().page_count();
+            assert_eq!(release_queue_count, 0);
+            assert_eq!(release_page_count, 0);
+            let map_cleared = unsafe { allocator.page_map.checked_lookup(reused.as_ptr()) }.is_null();
+            assert!(map_cleared);
+            let mut span_map_cleared = true;
+            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+                span_map_cleared &= unsafe {
+                    allocator.page_map.checked_lookup(slice_start.wrapping_add(offset))
+                }
+                .is_null();
+            }
+            assert!(span_map_cleared);
+            let arena_page_clear = unsafe { allocator.arena.pages() }
+                .unwrap()
+                .is_clear_range(slice_index, slice_count)
+                == Some(true);
+            let slices_free = unsafe { allocator.arena.slices_free() }
+                .unwrap()
+                .is_set_range(slice_index, slice_count)
+                == Some(true);
+            assert!(arena_page_clear && slices_free);
+            let valid = arena_backed
+                && filled_used == capacity
+                && filled_free_empty
+                && filled_local_empty
+                && filled_remote_empty
+                && filled_queue_count == 1
+                && filled_page_count == 1
+                && retired_queue_count == 1
+                && retired_page_count == 1
+                && retired_used == 0
+                && retired_expire == RETIRE_CYCLES
+                && retired_local_free
+                && retired_free_empty
+                && retired_remote_empty
+                && retired_map_published
+                && retired_arena_page_set
+                && retired_slices_unreleased
+                && reused_same_page
+                && reused_from_freed_set
+                && reused_used == 1
+                && reused_expire == 0
+                && reused_free_nonempty
+                && reused_local_free_clear
+                && reused_remote_empty
+                && reused_queue_count == 1
+                && second_retire_used == 0
+                && second_retire_expire == RETIRE_CYCLES
+                && second_retire_free_nonempty
+                && second_retire_local_nonempty
+                && release_queue_count == 0
+                && release_page_count == 0
+                && map_cleared
+                && span_map_cleared
+                && arena_page_clear
+                && slices_free;
+            assert!(valid, "regular small trace diverged from pinned C");
+            std::println!("trace.regular_small.second_retire.used={second_retire_used}");
+            std::println!("trace.regular_small.second_retire.expire={second_retire_expire}");
+            std::println!("trace.regular_small.second_retire.free_nonempty={}", u8::from(second_retire_free_nonempty));
+            std::println!("trace.regular_small.second_retire.local_nonempty={}", u8::from(second_retire_local_nonempty));
+            std::println!("trace.regular_small.release.queue_count={release_queue_count}");
+            std::println!("trace.regular_small.release.page_count={release_page_count}");
+            std::println!("trace.regular_small.release.map_clear={}", u8::from(map_cleared));
+            std::println!("trace.regular_small.release.span_map_clear={}", u8::from(span_map_cleared));
+            std::println!("trace.regular_small.release.arena_page_clear={}", u8::from(arena_page_clear));
+            std::println!("trace.regular_small.release.slices_free={}", u8::from(slices_free));
+            std::println!("trace.regular_small.valid={}", u8::from(valid));
+            std::println!("CRABC_MI_REGULAR_SMALL_TRACE_END");
+        });
+    }
+
     #[test]
     fn all_small_good_size_boundaries_select_the_source_direct_cache_page() {
         with_allocator(|allocator| {

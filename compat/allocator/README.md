@@ -1268,6 +1268,25 @@ the trace itself is poststate evidence only. It does not claim C
 fault-injection parity, fresh fallback, public x86 runtime support, libc
 integration, backend promotion, or AArch64 evidence.
 
+The separate ordinary regular-small retirement differential is also native
+x86-64 only:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-regular-small
+```
+
+It writes `compat/reports/allocator/x86_64/regular-small.json` after comparing
+40 address-independent values across pinned C and one private Rust test. It
+fills one 1025-byte ordinary regular-small arena page (1280-byte class, 51
+blocks, one slice), locally retires it with `retire_expire == 16`, lets the
+next generic same-Theap allocation quick-collect and reuse a just-freed block
+on the same page, then force-collects the second retired state through queue,
+PageMap, ordinary arena-page bitmap, and exact slice release. It is only
+same-thread/same-Theap private engine evidence for that route; it does not
+establish general retirement or lifecycle, remote/concurrent collection,
+abandonment, thread teardown, public `mi_*` behavior, libc integration,
+backend promotion, public x86 support, or AArch64 evidence.
+
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
@@ -1312,6 +1331,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon. It is dispatched by `allocator-unmapped-reabandon`; Rust exercises one bounded real post-Theap-teardown full-medium route and it does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 23-field pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. It is dispatched by `allocator-on-demand`; only C sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its deliberate Rust failed-commit same-page retry is not C fault-injection parity or a production option/API/policy, fresh-fallback, public-runtime, backend, or AArch64 claim. |
 | `x86_64_direct_on_demand_evidence.py` and `x86_64-direct-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 44-field pinned-C/Rust differential for one reserved 1024-byte small direct-cache page: direct exhaustion at eight objects, generic zero-commit extension at allocation nine, and direct prefix growth before the allocation-seventeen extension. It is dispatched by `allocator-direct-on-demand`; C alone sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its source-anchored poststate trace does not claim C fault-injection parity, a production option/API/policy, fresh fallback, public runtime, backend, or AArch64 evidence. |
+| `x86_64_regular_small_evidence.py` and `x86_64-regular-small-evidence-v3.5.0.json` | Native x86-64-only private 40-field pinned-C/Rust differential for one 1025-byte ordinary regular-small arena page: a 1280-byte 51-block one-slice class locally retires at 16, the next same-Theap generic allocation quick-collects/reuses a just-freed same-page block, and forced collection verifies queue/PageMap/ordinary arena bitmap/exact slice release. It is dispatched by `allocator-regular-small`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. It is dispatched by `allocator-mapped-post-exit`; Rust covers only one bounded process-owned mapped regular handoff and directly observes PageMap, ordinary arena-page bitmap, and free-slice bitmap release. The lane does not claim general thread exit/routing, public API, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_retired_prepass_evidence.py` and `x86_64-retired-prepass-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for one worker-local retirement, real `mi_thread_done()`/`pthread_join()` retired-page force-release, one distinct live mapped-abandoned page, and one consumer terminal free. It is dispatched by `allocator-retired-prepass`; it directly records PageMap, ordinary arena bitmap, exact slice-span, and empty-route checks, and does not claim general retirement/teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_aggregate_post_exit_evidence.py` and `x86_64-aggregate-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for exactly two distinct live nonfull medium arena pages in distinct bins: the real worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before freeing, both pages are mapped-abandoned after teardown, then a second-first selective terminal release is followed by a first-page terminal release and empty route. It is dispatched by `allocator-aggregate-post-exit`; it directly records PageMap, ordinary arena bitmap, exact slice span, and the first page's registered/bit-set/mapped-abandoned/`used == 1` state after the second-page free. It does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |

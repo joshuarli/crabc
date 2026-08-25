@@ -137,6 +137,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 40 address-independent values across a pinned normal-release C fixture and one private Rust test. It fills one 1025-byte ordinary regular-small arena page (1280-byte class, 51 blocks, one slice), locally frees every block to retire it with retire_expire == 16, lets the next generic same-Theap allocation quick-collect and reuse a just-freed block on the same page, then locally retires it and force-collects the exact queue, PageMap, arena-page bit, and slice release. This is only same-thread/same-Theap private engine evidence for that ordinary regular-small route; it does not establish general retirement or lifecycle, remote/concurrent collection, abandonment, thread teardown, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-regular-small",
+      "id": "native-regular-small-retire-quick-collect-release-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/regular-small.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 18 address-independent values from a real pinned-C worker pthread that allocates two same-page regular medium arena blocks, performs real mi_thread_done followed by pthread join before the consumer's public mi_free calls, and records producer_teardown_completed_before_consumer_free for that ordering while observing the selected mapped failed-reclaim/unown transition plus three terminal checks: page_map_unregistered_after_final_free, arena_page_bitmap_clear_after_final_free, and arena_slice_released_after_final_free. Rust compares only one bounded process-owned mapped regular handoff after Theap/TLD teardown and directly observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does not establish general thread exit, general routing or concurrency, adoption or reclaim, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-mapped-post-exit",
       "id": "native-mapped-post-theap-teardown-failed-reclaim-differential",
@@ -268,7 +276,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, and one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, one 40-field same-Theap ordinary regular-small retire/quick-collect/force-release differential, and one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

@@ -1,0 +1,204 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-regular-small-evidence",
+  "profile": "linux-x86_64-private-regular-small-retire-quick-collect-force-release",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "aarch64_status_reused": false,
+    "emulation_accepted": false,
+    "forced_retired_release_only": true,
+    "general_lifecycle_claimed": false,
+    "general_retirement_claimed": false,
+    "native_linux_x86_64_required": true,
+    "ordinary_regular_small_page_only": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "quick_collect_reuse_only": true,
+    "single_theap_same_thread_only": true
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {
+      "member": "include/mimalloc.h",
+      "start_line": 122,
+      "end_line": 123,
+      "sha256": "254ce29a1c8187dae3f5cccd5f98bbf7f71f448f68cbb5e822dd6f74f291778c"
+    },
+    {
+      "member": "include/mimalloc/types.h",
+      "start_line": 430,
+      "end_line": 449,
+      "sha256": "9befd05f3264611334cec9745bbd1de88fe83f01b4a1c7f2b9beadb3e6badb5f"
+    },
+    {
+      "member": "include/mimalloc/types.h",
+      "start_line": 731,
+      "end_line": 740,
+      "sha256": "d898791180decb2ddb76eca0a7373a68e2437cce514c35d10b674fbb3d6e4988"
+    },
+    {
+      "member": "src/alloc.c",
+      "start_line": 204,
+      "end_line": 240,
+      "sha256": "d9e591aba82a335db52a1a97e3a5fe8ba080d1bc29ea2b91960cb07f33306164"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 980,
+      "end_line": 998,
+      "sha256": "4d66fd65bb721890af00061539085a8a10b6c8226c4da8fcf21d874ac084aa74"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1053,
+      "end_line": 1064,
+      "sha256": "e2063beb8a77f1bf35554b3ad7fb761362d2c430434867c68a67b7f7315c2371"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1183,
+      "end_line": 1204,
+      "sha256": "09e82c9f0473e73a9fad065943d41fdab4b85faf570274bddbac77aee3b6860a"
+    },
+    {
+      "member": "src/free.c",
+      "start_line": 44,
+      "end_line": 56,
+      "sha256": "de6d94667e1d6b127947a347660b35b4eaf1480751da492154de4a1e48f43e13"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 203,
+      "end_line": 212,
+      "sha256": "eeb1ec81e87ae341ec1828f2d56c033b4fa0d60c707da4ca10d4c3a4b27d706c"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 424,
+      "end_line": 457,
+      "sha256": "70a97877d51e5ca85aee8e74e61e293ebddd7676e214035abb83f5a30608078c"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 481,
+      "end_line": 518,
+      "sha256": "a9b7636f8fbec09a0fe97d482c7d66f89bb1be0a1c0118047b8b5ac5dcb1f0a7"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 879,
+      "end_line": 917,
+      "sha256": "b9a8d102ea3285c4f0283e7379d621f36dde91728a5daa3306e764e979a949b6"
+    },
+    {
+      "member": "src/theap.c",
+      "start_line": 123,
+      "end_line": 165,
+      "sha256": "a84d17ad1b74eb93e79bb3b756f099fd60fe611eda6279c17db283c44cccc1bb"
+    },
+    {
+      "member": "src/page-map.c",
+      "start_line": 460,
+      "end_line": 515,
+      "sha256": "c752c966d40e6ebd16795295a1a87d3b8a762cdfc4ba752aa3a043df44dfb495"
+    }
+  ],
+  "c_probe_sha256": "b1e76dbcf0e24c7c3d5c7fd5513fb9c908db283f5aa19b875f04c1b20563e137",
+  "rust_test": {
+    "path": "crabc-mimalloc/src/single_thread.rs",
+    "target_arch": "x86_64",
+    "test_filter": "single_thread::tests::x86_64_regular_small_retire_quick_collect_reuse_and_force_release_trace_matches_pinned_c"
+  },
+  "trace": {
+    "begin": "CRABC_MI_REGULAR_SMALL_TRACE_BEGIN",
+    "end": "CRABC_MI_REGULAR_SMALL_TRACE_END",
+    "expected_values": {
+      "trace.regular_small.request": 1025,
+      "trace.regular_small.block_size": 1280,
+      "trace.regular_small.capacity": 51,
+      "trace.regular_small.slice_count": 1,
+      "trace.regular_small.arena_backed": 1,
+      "trace.regular_small.filled.used": 51,
+      "trace.regular_small.filled.free_empty": 1,
+      "trace.regular_small.filled.local_empty": 1,
+      "trace.regular_small.filled.remote_empty": 1,
+      "trace.regular_small.filled.queue_count": 1,
+      "trace.regular_small.filled.page_count": 1,
+      "trace.regular_small.retired.queue_count": 1,
+      "trace.regular_small.retired.page_count": 1,
+      "trace.regular_small.retired.used": 0,
+      "trace.regular_small.retired.expire": 16,
+      "trace.regular_small.retired.free_empty": 1,
+      "trace.regular_small.retired.local_nonempty": 1,
+      "trace.regular_small.retired.remote_empty": 1,
+      "trace.regular_small.retired.map_published": 1,
+      "trace.regular_small.retired.arena_page_set": 1,
+      "trace.regular_small.retired.slices_unreleased": 1,
+      "trace.regular_small.reuse.same_page": 1,
+      "trace.regular_small.reuse.from_freed_set": 1,
+      "trace.regular_small.reuse.used": 1,
+      "trace.regular_small.reuse.expire": 0,
+      "trace.regular_small.reuse.free_nonempty": 1,
+      "trace.regular_small.reuse.local_empty": 1,
+      "trace.regular_small.reuse.remote_empty": 1,
+      "trace.regular_small.reuse.queue_count": 1,
+      "trace.regular_small.second_retire.used": 0,
+      "trace.regular_small.second_retire.expire": 16,
+      "trace.regular_small.second_retire.free_nonempty": 1,
+      "trace.regular_small.second_retire.local_nonempty": 1,
+      "trace.regular_small.release.queue_count": 0,
+      "trace.regular_small.release.page_count": 0,
+      "trace.regular_small.release.map_clear": 1,
+      "trace.regular_small.release.span_map_clear": 1,
+      "trace.regular_small.release.arena_page_clear": 1,
+      "trace.regular_small.release.slices_free": 1,
+      "trace.regular_small.valid": 1
+    }
+  }
+}

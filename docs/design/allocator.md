@@ -185,6 +185,16 @@ through the regular queue search to detach and reuse that exact block. This is
 one private small direct-page route only, not general allocation/free routing,
 concurrent collection, abandonment, thread teardown, public API, libc
 integration, backend, or AArch64 evidence. A third native x86-only
+40-field C/Rust differential fills one 1025-byte ordinary regular-small arena
+page (1280-byte class, 51 blocks, one slice), locally retires every block at
+`retire_expire == 16`, lets the next generic same-Theap allocation
+quick-collect and reuse one just-freed block on the same page, then
+force-collects the second retired state through queue, PageMap, ordinary
+arena-page bitmap, and exact slice release. It is only same-thread/same-Theap
+private engine evidence for that route, not general retirement or lifecycle,
+remote/concurrent collection, abandonment, thread teardown, public `mi_*`
+behavior, libc integration, backend promotion, public x86 support, or AArch64
+evidence. A fourth native x86-only
 eight-field C/Rust differential creates one arena-backed mapped page with two
 same-page live blocks, applies the source queue-detach abandonment transition,
 and frees one block through the same-origin reclaim path while the survivor
