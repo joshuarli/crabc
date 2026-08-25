@@ -45,16 +45,19 @@
 //! route. Each route free serializes its plain PageMap operation briefly. One
 //! explicit consuming edge additionally reclaims a sole mapped medium route,
 //! or a sole direct-small route with either an immediate local free block, an
-//! exhausted fully committed scalar-extension shape, or an exact exhausted
-//! on-demand page-area-commit shape, that entered source owner exit already
-//! nonfull into a fresh later-main engine: it claims that
+//! exhausted fully committed scalar-extension shape, an exact exhausted
+//! prefix-covered extension shape, or an exact exhausted on-demand
+//! page-area-commit shape, that entered source owner exit already nonfull into
+//! a fresh later-main engine: it claims that
 //! exact bitmap member and requeues it at the source tail. Non-direct-small,
 //! other no-immediate direct-small shapes, full medium,
 //! large, and full small origins remain client-free-only.
 //! Its test-only real reserved on-demand medium and direct-small prefixes
-//! commit their next page area directly before extension; a direct-commit
-//! failure reabandons that same candidate for its one consuming retry. It has
-//! no automatic allocation scan or fresh-page fallback.
+//! take a direct page-area commitment only when their exact extension plan has
+//! a positive delta; a prefix-covered direct-small extension instead preserves
+//! its prefix count. A direct-commit failure reabandons that same candidate for
+//! its one consuming retry. It has no automatic allocation scan or fresh-page
+//! fallback.
 //! Non-direct-small, other no-immediate direct-small,
 //! full, aggregate, concurrent, singleton, unmapped, and huge adoption remain
 //! absent, as do source deferred callbacks and arena collection.
@@ -183,8 +186,9 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment
 /// client block. It also admits one explicit consuming allocation-time
 /// handoff: only a sole mapped medium page, or a sole direct-small page with
 /// either an immediate local free block, the exact fully committed scalar
-/// extension shape, or the exact exhausted on-demand page-area-commit shape,
-/// that entered source owner exit already nonfull may
+/// extension shape, the exact exhausted prefix-covered extension shape, or
+/// the exact exhausted on-demand page-area-commit shape, that entered source
+/// owner exit already nonfull may
 /// transfer into a fresh later-main owner, claim its exact static-main bitmap
 /// member, and requeue at the source tail. Non-direct small pages,
 /// other no-immediate direct-small cases, and every
@@ -369,10 +373,10 @@ pub(crate) enum MainHeapThreadProcessPageAllocatorBeginError {
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// Only a source-initially-nonfull medium or direct-small page with an
     /// immediate local free block, exact fully committed scalar-extension
-    /// shape, or exact on-demand page-area-commit shape has the completed
-    /// adoption proof. Non-direct-small pages, other no-immediate cases, and
-    /// every force-collected full origin retain their post-exit client-free
-    /// route.
+    /// shape, exact prefix-covered extension shape, or exact on-demand
+    /// page-area-commit shape has the completed adoption proof.
+    /// Non-direct-small pages, other no-immediate cases, and every
+    /// force-collected full origin retain their post-exit client-free route.
     SourceNotInitiallyNonfullAdoptable,
     Pair(ProcessPageArenaLeaseError),
     Attachment(MainHeapThreadAttachmentError),
@@ -2784,7 +2788,8 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// Consumes this one mapped regular post-exit route into a fresh
     /// later-main page engine when it has a completed initially-nonfull
     /// medium, immediate-head direct-small, fully committed scalar-extension
-    /// direct-small, or exact on-demand page-area-commit direct-small shape.
+    /// direct-small, prefix-covered extension direct-small, or exact on-demand
+    /// page-area-commit direct-small shape.
     ///
     /// The source route is intentionally explicit rather than an allocation
     /// search: it transfers the same PageMap access capability to the new
@@ -5686,9 +5691,21 @@ mod tests {
         assert_later_thread_exit_mapped_medium_on_demand_adoption(true);
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum DirectSmallOnDemandExtension {
+        PrefixCovered,
+        RequiresPageAreaCommit,
+    }
+
     fn assert_later_thread_exit_mapped_direct_small_on_demand_adoption(
+        extension: DirectSmallOnDemandExtension,
         fail_first_page_area_commit: bool,
     ) {
+        assert!(
+            !fail_first_page_area_commit
+                || extension == DirectSmallOnDemandExtension::RequiresPageAreaCommit,
+            "only the direct OS-commit source shape can exercise its commit-failure tail"
+        );
         thread::spawn(move || {
             let fault = fault::install(fault::Plan::disabled());
             let config = memory_config();
@@ -5766,6 +5783,8 @@ mod tests {
                     )
                     .expect("the direct-small source span is fixed")
                         * crate::config::ARENA_SLICE_SIZE;
+                    let requires_page_area_commit =
+                        extension == DirectSmallOnDemandExtension::RequiresPageAreaCommit;
                     let extension_plan = loop {
                         while !unsafe { page.as_ref().free_list_head() }.is_null() {
                             let block = source_allocator
@@ -5790,16 +5809,16 @@ mod tests {
                         )
                         .expect("the exhausted direct-small prefix has one valid extension");
                         assert!(plan.extend > 0, "the nonfull source page remains expandable");
-                        if plan.commit_size > 0 {
+                        if (plan.commit_size != 0) == requires_page_area_commit {
                             break plan;
                         }
                         let block = source_allocator
                             .allocate(request, false)
-                            .expect("a fully covered source extension remains on the exact direct-small page");
+                            .expect("the other source extension shape remains on the exact direct-small page");
                         assert_eq!(
                             unsafe { source_allocator.test_page_for_block(block) },
                             page.as_ptr(),
-                            "a source extension within its committed prefix cannot take a second page"
+                            "advancing to the requested direct-small extension boundary cannot take a second page"
                         );
                         client_blocks.push(block);
                     };
@@ -5808,7 +5827,7 @@ mod tests {
                         page_ref.free_list_head().is_null()
                             && page_ref.used() == usize::from(page_ref.capacity())
                             && page_ref.capacity() < page_ref.reserved(),
-                        "the source stops at the direct-small page-area commitment boundary while nonfull"
+                        "the source stops at the requested direct-small extension boundary while nonfull"
                     );
                     let source_capacity = page_ref.capacity();
                     let source_pcommitted = page_ref.slice_pcommitted();
@@ -5830,10 +5849,18 @@ mod tests {
                             "the source owns exactly its complete rounded direct-small cache range"
                         );
                     }
-                    assert!(
-                        extension_plan.commit_size > 0,
-                        "the selected direct-small exhaustion point requires source page-area commitment"
+                    assert_eq!(
+                        extension_plan.commit_size != 0,
+                        requires_page_area_commit,
+                        "the selected direct-small exhaustion point has the requested source commitment shape"
                     );
+                    if !requires_page_area_commit {
+                        assert_eq!(
+                            extension_plan.next_slice_pcommitted,
+                            source_pcommitted,
+                            "the prefix-covered source plan retains its recorded committed-page count"
+                        );
+                    }
 
                     let drain = source_allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
                         let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
@@ -5869,6 +5896,9 @@ mod tests {
                     let target_theap = target
                         .test_theap_pointer()
                         .expect("the fresh target Theap remains live for source reassociation");
+                    if !requires_page_area_commit {
+                        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+                    }
                     let mut target_allocator = if fail_first_page_area_commit {
                         fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
                         let reabandoned = match route.adopt_into_later_main(&mut target, pair) {
@@ -6016,20 +6046,30 @@ mod tests {
                                     error,
                                     ..
                                 },
-                            ) => panic!("the fault-free direct-small mapping commit cannot reabandon: {error:?}"),
+                            ) => panic!("the fault-free direct-small source extension cannot reabandon: {error:?}"),
                         }
                     };
+                    if !requires_page_area_commit {
+                        fault.set(fault::Plan::disabled());
+                    }
 
                     let page_ref = unsafe { page.as_ref() };
                     assert_eq!(
                         page_ref.slice_pcommitted(),
                         extension_plan.next_slice_pcommitted,
-                        "successful direct-small commitment publishes its new OS-page count"
+                        "successful direct-small extension publishes its source OS-page count"
                     );
+                    if !requires_page_area_commit {
+                        assert_eq!(
+                            page_ref.slice_pcommitted(),
+                            source_pcommitted,
+                            "a prefix-covered source extension must not perform a direct OS commit"
+                        );
+                    }
                     assert_eq!(
                         page_ref.capacity(),
                         source_capacity + extension_plan.extend,
-                        "direct-small commitment precedes exactly one source free-list extension"
+                        "the direct-small source extension publishes exactly one new free-list range"
                     );
                     assert!(!page_ref.free_list_head().is_null());
                     assert_eq!(target_allocator.test_queue_count(bin), Some(1));
@@ -6095,12 +6135,26 @@ mod tests {
 
     #[test]
     fn later_thread_exit_mapped_direct_small_on_demand_commits_before_reuse() {
-        assert_later_thread_exit_mapped_direct_small_on_demand_adoption(false);
+        assert_later_thread_exit_mapped_direct_small_on_demand_adoption(
+            DirectSmallOnDemandExtension::RequiresPageAreaCommit,
+            false,
+        );
     }
 
     #[test]
     fn later_thread_exit_mapped_direct_small_on_demand_reabandons_after_commit_failure_then_retries() {
-        assert_later_thread_exit_mapped_direct_small_on_demand_adoption(true);
+        assert_later_thread_exit_mapped_direct_small_on_demand_adoption(
+            DirectSmallOnDemandExtension::RequiresPageAreaCommit,
+            true,
+        );
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_direct_small_on_demand_prefix_covered_extension_reuses_without_commit() {
+        assert_later_thread_exit_mapped_direct_small_on_demand_adoption(
+            DirectSmallOnDemandExtension::PrefixCovered,
+            false,
+        );
     }
 
     /// Independent source model of `mi_theap_queue_first_update`'s direct

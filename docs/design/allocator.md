@@ -454,6 +454,10 @@ accepts either an exact `PageKind::Medium` route, or an exact
 `PageKind::Small` direct-cache route whose source force/false collection left
 an immediate local free block, the exhausted fully committed scalar-extension
 shape (`free` null, `capacity < reserved`, and `slice_pcommitted == 0`), or
+the separately proven exhausted prefix-covered extension shape (`free` null,
+`capacity < reserved`, `slice_pcommitted != 0`, and a
+`page_area_commit_plan` with nonzero `extend`, zero `commit_size`, and an
+unchanged next prefix count), or
 the separately proven exhausted on-demand page-area-commit shape (`free` null,
 `capacity < reserved`, `slice_pcommitted != 0`, and a
 `page_area_commit_plan` with nonzero `extend` and `commit_size`). Both require a fresh
@@ -476,18 +480,23 @@ medium page (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs scalar
 `mi_page_extend_free` free-list/capacity mutation after that tail restoration.
 The direct-small branch accepts its immediate head, the exact exhausted fully
-committed scalar-extension shape, or the exact exhausted page-area-commit
-shape. The latter restores the direct-cache range before page-count increment,
-then performs the same source direct commitment before it publishes the new
-prefix count or free-list/capacity state. Other no-immediate direct-small
-shapes, including a nonzero prefix whose next extension needs no direct commit,
-stay client-free-only.
+committed scalar-extension shape, the exact exhausted prefix-covered extension
+shape, or the exact exhausted page-area-commit shape. A prefix-covered plan
+restores the direct-cache range before page-count increment, retains its
+recorded prefix count, and publishes the source free-list/capacity extension
+without a direct mapping operation. The page-area-commit shape instead performs
+the same source direct commitment before it publishes the new prefix count or
+free-list/capacity state. Other unproven no-immediate direct-small shapes stay
+client-free-only.
 The bounded test-only `commit == false` seam creates one actual reserved medium
 or direct-small page with the source initial callback-committed prefix. For the
-nonzero-prefix case, `page_area_commit_plan` separates OS-page counts from byte ranges, then
-the paired retained mapping performs the direct `_mi_os_commit`-shape extension
-before `Page::set_slice_pcommitted_after_commit` or
-`LocalFreeList::extend_count` may publish state. If that commit fails,
+commit-requiring nonzero-prefix case, `page_area_commit_plan` separates OS-page
+counts from byte ranges, then the paired retained mapping performs the direct
+`_mi_os_commit`-shape extension before
+`Page::set_slice_pcommitted_after_commit` or `LocalFreeList::extend_count` may
+publish state. The separate prefix-covered fixture arms that commit fault before
+adoption; its success proves the zero-delta plan skips the mapping operation
+while still extending the source free list. If a direct commit fails,
 `reabandon_after_page_commit_failure` follows source false collection, queue
 detach, direct-cache/page-count repair, and mapped identity/bit/count/unown
 publication. The resulting consuming owner can retry only the same candidate

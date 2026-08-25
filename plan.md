@@ -295,10 +295,10 @@ linear `ProcessPageMapPostExitAccess`. Each client free re-acquires the same
 map lock briefly: a nonempty result keeps PageMap registration and the paired
 bitmap/count, while the final free clears them before PageMap -> `pages_main`
 -> metadata -> slice release. The route is movable to one client-free thread.
-Four explicit consuming allocation-time edges are now complete for the sole
-mapped nonfull medium form and its immediate-head, exhausted-fully-committed
-scalar-extension, and exact on-demand page-area-commit direct-small
-counterparts:
+Five explicit consuming allocation-time edges are now complete for the sole
+mapped nonfull medium form and its direct-small immediate-head,
+exhausted-fully-committed scalar-extension, exhausted prefix-covered extension,
+and exact on-demand page-area-commit counterparts:
 `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
 requires an exact matching fresh later-main attachment/process pair (same
 subprocess, frozen configuration, stable PageMap root, static main Heap, and
@@ -309,24 +309,29 @@ fresh Theap/thread, collects live state, and restores source queue-tail order.
 A direct-small target restores its complete rounded direct-cache range before
 target page-count increment and immediately allocates from that exact page.
 Its exhausted fully committed scalar-extension shape then extends after that
-tail restoration; its exact on-demand shape performs the direct page-area
-commit before prefix-count/free-list/capacity publication.
+tail restoration; its exact prefix-covered shape retains the recorded prefix
+and extends without a direct mapping operation; its exact on-demand shape
+performs the direct page-area commit before prefix-count/free-list/capacity
+publication.
 The medium branch accepts either an immediate head or an exhausted nonfull
 medium page (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs the scalar source
 `mi_page_extend_free` list/capacity transition after tail insertion. The
 bounded test-only `commit == false` seam instead constructs actual reserved
 medium and direct-small pages with source initial callback-committed prefixes.
-Their nonzero-prefix paths derive the source OS-page count and byte-range plan, then
-uses the paired retained mapping for direct `_mi_os_commit`-shape commitment
-before it writes `slice_pcommitted` or its free list. An injected direct-commit
-failure repeats false collection, queue detach, direct-cache/page-count repair,
-and mapped identity/bit/count/unown publication; the retained owner can retry
-only that same candidate through its existing long lifecycle. This does not
-add a production page-on-demand option, a generic fresh fallback, or a bitmap
-scan. A bitmap miss, malformed state, scalar extension error, or any other
-post-transfer error remains terminally retained.
-Non-direct-small, other no-immediate direct-small cases, full, singleton,
+Their nonzero-prefix paths derive the source OS-page count and byte-range plan:
+the exact prefix-covered direct-small plan retains its prefix and directly
+extends the free list, while a positive mapping delta uses the paired retained
+mapping for direct `_mi_os_commit`-shape commitment before it writes
+`slice_pcommitted` or its free list. An injected direct-commit failure repeats
+false collection, queue detach, direct-cache/page-count repair, and mapped
+identity/bit/count/unown publication; the retained owner can retry only that
+same candidate through its existing long lifecycle. The prefix-covered fixture
+arms that fault before adoption, proving its zero-delta plan cannot enter the
+mapping path. This does not add a production page-on-demand option, a generic
+fresh fallback, or a bitmap scan. A bitmap miss, malformed state, scalar
+extension error, or any other post-transfer error remains terminally retained.
+Non-direct-small, other unproven no-immediate direct-small cases, full, singleton,
 unmapped, huge, foreign, aggregate-registry, automatic-
 scanning, and concurrent adoption remain deliberately absent.
 
@@ -519,8 +524,9 @@ the sole mapped-medium route's immediate and exhausted-fully-committed
 fresh-owner adoption, scalar capacity-extension, real reserved-prefix direct
 page-area commitment, failed-commit mapped reabandonment/same-candidate retry;
 the direct-small immediate-head, exhausted-fully-committed scalar-extension,
-and reserved-prefix page-area-commit fresh-owner reclaim/reuse regressions
-(including failed-commit direct-cache repair and same-candidate retry); and the aggregate
+reserved-prefix-covered no-commit extension, and reserved-prefix page-area-
+commit fresh-owner reclaim/reuse regressions (including failed-commit
+direct-cache repair and same-candidate retry); and the aggregate
 regular-pages registry's mixed small/medium/large
 release, retired-large prepass, malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
@@ -531,21 +537,21 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 475 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 476 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 103 items and 107
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 104 items and 108
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
 full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
-The next local frontier is a separately proven other direct-small no-immediate
-source shape, or a separately proven aggregate-registry
+The next local frontier is a separately proven additional direct-small
+no-immediate source shape, or a separately proven aggregate-registry
 policy, then complete process and real pthread/TLS lifecycle integration—not a
 generic allocation-time scan routed through a bounded singleton,
 mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later
