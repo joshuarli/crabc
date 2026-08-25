@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import sys
 import tarfile
 import tempfile
@@ -110,6 +111,46 @@ class ArchiveTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_native_x86_64_profile_records_its_musl_target_boundary(self) -> None:
+        self.assertEqual(RUNNER.X86_64_RUST_TARGET, "x86_64-unknown-linux-musl")
+        self.assertEqual(RUNNER.X86_64_INTERPRETER, "ld-musl-x86_64.so.1")
+        self.assertEqual(
+            RUNNER.X86_64_TARGET_METADATA["expected_dynamic_dependencies"],
+            ["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+        )
+        self.assertEqual(
+            RUNNER.X86_64_ORACLE_REPORT_ROOT,
+            RUNNER.REPORT_ROOT / "x86_64",
+        )
+
+    def test_parser_selects_x86_64_without_changing_the_default(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CRABC_DEV_ARCH", None)
+            with mock.patch.object(sys, "argv", ["run.py", "--quick"]):
+                self.assertEqual(RUNNER.parse_arguments().architecture, "aarch64")
+        with mock.patch.dict(os.environ, {"CRABC_DEV_ARCH": "x86_64"}, clear=False):
+            with mock.patch.object(sys, "argv", ["run.py", "--quick"]):
+                self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
+        with mock.patch.dict(os.environ, {"CRABC_DEV_ARCH": ""}, clear=False):
+            with mock.patch.object(sys, "argv", ["run.py", "--quick", "--arch", "x86_64"]):
+                self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
+            with mock.patch.object(sys, "argv", ["run.py", "--quick", "--x86-64"]):
+                self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
+
+    def test_parser_does_not_allow_x86_64_to_claim_later_adapter_lanes(self) -> None:
+        with mock.patch.object(
+            sys, "argv", ["run.py", "--full", "--architecture", "x86_64"]
+        ):
+            with self.assertRaises(SystemExit):
+                RUNNER.parse_arguments()
+
+    def test_native_architecture_gate_rejects_non_native_x86_64(self) -> None:
+        with mock.patch.object(RUNNER.platform, "system", return_value="Linux"), mock.patch.object(
+            RUNNER.platform, "machine", return_value="aarch64"
+        ):
+            with self.assertRaisesRegex(RUNNER.HarnessError, "native Linux/x86-64"):
+                RUNNER.require_native_x86_64()
+
     def test_production_dependency_graph_is_exact_and_build_code_free(self) -> None:
         report = RUNNER.validate_production_dependency_graph(production_dependency_metadata())
         self.assertEqual(report["target"], "aarch64-unknown-linux-musl")

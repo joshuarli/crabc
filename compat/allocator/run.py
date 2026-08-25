@@ -59,6 +59,23 @@ PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 
 PRODUCTION_RUST_TARGET = "aarch64-unknown-linux-musl"
+X86_64_RUST_TARGET = "x86_64-unknown-linux-musl"
+X86_64_INTERPRETER = "ld-musl-x86_64.so.1"
+X86_64_ORACLE_REPORT_ROOT = REPORT_ROOT / "x86_64"
+
+# The checked-in allocator contracts and Rust adapter are intentionally still
+# AArch64 contracts.  This explicit native x86-64 profile therefore stops at
+# the pinned C oracle: it records the target assumptions needed to compile and
+# inspect that oracle without pretending that an AArch64 adapter is portable.
+X86_64_TARGET_METADATA: Mapping[str, Any] = {
+    "architecture": "x86_64",
+    "target": X86_64_RUST_TARGET,
+    "interpreter": X86_64_INTERPRETER,
+    "expected_dynamic_dependencies": [
+        "libc.musl-x86_64.so.1",
+        "libgcc_s.so.1",
+    ],
+}
 CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
 EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS: Mapping[str, str] = {
     "crabc-mimalloc": "0.3.0",
@@ -1937,6 +1954,23 @@ def require_native_aarch64() -> None:
         raise HarnessError("allocator C oracle requires the pinned native Linux/AArch64 development image")
 
 
+def require_native_x86_64() -> None:
+    if platform.system() != "Linux" or platform.machine() != "x86_64":
+        raise HarnessError(
+            "x86-64 allocator C oracle requires the native Linux/x86-64 development image; "
+            "emulation is not accepted"
+        )
+
+
+def require_native_architecture(architecture: str) -> None:
+    if architecture == "aarch64":
+        require_native_aarch64()
+    elif architecture == "x86_64":
+        require_native_x86_64()
+    else:
+        raise HarnessError(f"unsupported allocator oracle architecture: {architecture}")
+
+
 def require_tool(name: str) -> str:
     resolved = shutil.which(name)
     if resolved is None:
@@ -2613,8 +2647,17 @@ def pending_fundamental_trace_comparison() -> dict[str, str]:
     }
 
 
-def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: Sequence[str]) -> dict[str, Any]:
-    profile_dir = REPORT_ROOT / "oracle" / name
+def build_profile(
+    compiler: str,
+    readelf: str,
+    source: Path,
+    name: str,
+    flags: Sequence[str],
+    *,
+    report_root: Path = REPORT_ROOT,
+    architecture: str = "aarch64",
+) -> dict[str, Any]:
+    profile_dir = report_root / "oracle" / name
     profile_dir.mkdir(parents=True, exist_ok=True)
     artifact = profile_dir / "libmimalloc.so"
     command = profile_command(compiler, source, artifact, flags)
@@ -2655,8 +2698,16 @@ def build_profile(compiler: str, readelf: str, source: Path, name: str, flags: S
     header = command_record((readelf, "-h", str(artifact)), cwd=source)
     require_success(header, f"pinned C ELF header probe {name}")
     header_text = str(header["stdout"])
-    if "AArch64" not in header_text or "little endian" not in header_text:
-        raise HarnessError(f"C oracle artifact is not little-endian AArch64: {artifact}")
+    machine_marker = {
+        "aarch64": "AArch64",
+        "x86_64": "Advanced Micro Devices X86-64",
+    }.get(architecture)
+    if machine_marker is None:
+        raise HarnessError(f"unsupported allocator oracle architecture: {architecture}")
+    if machine_marker not in header_text or "little endian" not in header_text:
+        raise HarnessError(
+            f"C oracle artifact is not little-endian {architecture}: {artifact}"
+        )
     result = {
         "artifact": artifact_record(artifact),
         "build": {"command": command, "stderr": build["stderr"]},
@@ -3299,8 +3350,16 @@ def run_runtime_ticket_zero_adapter_fixture(
     }
 
 
-def milestone0_report(pin: Mapping[str, str], archive: Path, source: Path, profiles: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+def milestone0_report(
+    pin: Mapping[str, str],
+    archive: Path,
+    source: Path,
+    profiles: Mapping[str, Any],
+    *,
+    architecture: str = "aarch64",
+    target_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    report = {
         "c_oracle": {
             "build_strategy": "direct compilation of the pinned CMake mi_sources list; the pinned development image intentionally does not contain CMake",
             "compiler": compiler_version("musl-gcc", source),
@@ -3321,6 +3380,77 @@ def milestone0_report(pin: Mapping[str, str], archive: Path, source: Path, profi
         },
         "target": {"architecture": platform.machine(), "system": platform.system()},
     }
+    if architecture != "aarch64":
+        if target_metadata is None:
+            raise HarnessError("non-AArch64 allocator report lacks target metadata")
+        report["target"] = dict(target_metadata) | {
+            "system": platform.system(),
+            "native_machine": platform.machine(),
+        }
+    return report
+
+
+def run_x86_64_oracle(
+    *,
+    pin: Mapping[str, str],
+    archive: Path,
+    source: Path,
+    contracts: Mapping[Path, Mapping[str, Any]],
+    port_map: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Run only the native x86-64 pinned C-oracle lane.
+
+    The AArch64 API/adapter contracts remain the production contract.  This
+    lane deliberately proves source identity, C layouts/traces, ELF machine
+    identity, and the x86-64 musl target assumptions while leaving the
+    target-dependent Rust adapter and dependency graph unclaimed.
+    """
+
+    require_native_x86_64()
+    compiler = require_tool("musl-gcc")
+    readelf = require_tool("readelf")
+    profiles = {
+        name: build_profile(
+            compiler,
+            readelf,
+            source,
+            name,
+            flags,
+            report_root=X86_64_ORACLE_REPORT_ROOT,
+            architecture="x86_64",
+        )
+        for name, flags in CONFIGURATION_PROFILES.items()
+    }
+    release_symbol_contract = validate_release_symbol_contract(
+        contracts[API_CONTRACT], profiles["release"]["symbols"]
+    )
+    report = milestone0_report(
+        pin,
+        archive,
+        source,
+        profiles,
+        architecture="x86_64",
+        target_metadata=X86_64_TARGET_METADATA,
+    )
+    report["architecture_profile"] = "x86_64-native-c-oracle"
+    report["contracts"] = {
+        relative(path): payload["summary"] for path, payload in contracts.items()
+    }
+    report["port_map"] = port_map_counts(port_map)
+    report["release_symbol_contract"] = release_symbol_contract
+    report["unsupported_lanes"] = {
+        "rust_adapter": (
+            "not run: the checked-in adapter contract is target-specific to "
+            "AArch64 and this profile owns only native x86-64 C-oracle evidence"
+        ),
+        "production_dependency_graph": (
+            "not run: the production graph contract is target-specific to "
+            f"{PRODUCTION_RUST_TARGET}"
+        ),
+    }
+    output = X86_64_ORACLE_REPORT_ROOT / "latest.json"
+    write_json(output, report)
+    return report
 
 
 def run_milestone0(
@@ -3329,7 +3459,14 @@ def run_milestone0(
     generate_contracts: bool,
     check_only: bool,
     include_test_adapter: bool = False,
+    architecture: str = "aarch64",
 ) -> dict[str, Any]:
+    if architecture not in {"aarch64", "x86_64"}:
+        raise HarnessError(f"unsupported allocator oracle architecture: {architecture}")
+    if architecture == "x86_64" and not check_only:
+        # Refuse an accidental foreign/emulated invocation before downloading
+        # or compiling anything for the native-only profile.
+        require_native_x86_64()
     pin = load_pin()
     archive = fetch_archive(pin, offline)
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
@@ -3339,6 +3476,26 @@ def run_milestone0(
             write_contracts(contracts)
         else:
             check_contracts(contracts)
+        port_map = load_port_map()
+        check_ratchet(port_map)
+        if architecture == "x86_64":
+            if check_only:
+                return {
+                    "architecture_profile": "x86_64-native-c-oracle",
+                    "contracts": {
+                        relative(path): payload["summary"]
+                        for path, payload in contracts.items()
+                    },
+                    "port_map": port_map_counts(port_map),
+                    "status": "checked",
+                }
+            return run_x86_64_oracle(
+                pin=pin,
+                archive=archive,
+                source=source,
+                contracts=contracts,
+                port_map=port_map,
+            )
         adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
         adapted_summary = validate_adapted_test_contract(
             adapted_contract,
@@ -3355,8 +3512,6 @@ def run_milestone0(
             runtime_ticket_zero_contract,
             RUNTIME_TICKET_ZERO_ADAPTER_HEADER.read_text(encoding="utf-8"),
         )
-        port_map = load_port_map()
-        check_ratchet(port_map)
         if check_only:
             return {
                 "adapted_test_contract": adapted_summary,
@@ -3366,7 +3521,7 @@ def run_milestone0(
                 "port_map": port_map_counts(port_map),
                 "status": "checked",
             }
-        require_native_aarch64()
+        require_native_architecture(architecture)
         compiler = require_tool("musl-gcc")
         readelf = require_tool("readelf")
         profiles = {
@@ -3440,12 +3595,40 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--generate-contracts", action="store_true", help="write deterministic checked-in API and upstream-test contracts")
     parser.add_argument("--snapshot-ratchet", action="store_true", help="write the reviewed allocator ratchet after contracts are current")
     parser.add_argument("--check", action="store_true", help="check contracts, source map, and ratchets without compiling C")
+    architecture = parser.add_mutually_exclusive_group()
+    architecture.add_argument(
+        "--architecture",
+        "--arch",
+        choices=("aarch64", "x86_64"),
+        help="native oracle architecture (default: aarch64)",
+    )
+    architecture.add_argument(
+        "--x86-64",
+        "--x86_64",
+        dest="architecture",
+        action="store_const",
+        const="x86_64",
+        help="explicit native Linux/x86-64 C-oracle profile",
+    )
+    # The architecture-specific Docker wrappers export CRABC_DEV_ARCH.  Keep
+    # direct invocation's historical AArch64 default, while allowing
+    # `scripts/dev-amd64.sh allocator --quick` to select the explicit x86-64
+    # lane without reusing an AArch64 report or target assumption.
+    parser.set_defaults(
+        architecture=(
+            "x86_64" if os.environ.get("CRABC_DEV_ARCH") == "x86_64" else "aarch64"
+        )
+    )
     arguments = parser.parse_args()
     if not any((arguments.quick, arguments.full, arguments.perf_smoke, arguments.perf_full, arguments.generate_contracts, arguments.snapshot_ratchet, arguments.check)):
         parser.error("choose --quick, --full, --perf-smoke, --perf-full, --generate-contracts, --snapshot-ratchet, or --check")
     if arguments.generate_contracts or arguments.snapshot_ratchet:
         if arguments.quick or arguments.full or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
+    if arguments.architecture == "x86_64" and (
+        arguments.full or arguments.perf_smoke or arguments.perf_full
+    ):
+        parser.error("the native x86-64 profile supports only --quick or --check")
     return arguments
 
 
@@ -3471,6 +3654,7 @@ def main() -> int:
                 offline=arguments.offline,
                 generate_contracts=False,
                 check_only=True,
+                architecture=arguments.architecture,
             )
             print(json.dumps(result, sort_keys=True))
             return 0
@@ -3479,6 +3663,7 @@ def main() -> int:
             generate_contracts=False,
             check_only=False,
             include_test_adapter=arguments.full,
+            architecture=arguments.architecture,
         )
         if arguments.full:
             raise MilestoneUnavailable(
@@ -3488,7 +3673,12 @@ def main() -> int:
             raise MilestoneUnavailable(
                 "allocator performance is unavailable: Milestone 9 requires comparable C and Rust opaque allocator boundaries plus Milestone 8 integrated crabc backends; the current private one-thread engine is not a benchmark boundary."
             )
-        print(REPORT_ROOT / "latest.json")
+        output = (
+            X86_64_ORACLE_REPORT_ROOT / "latest.json"
+            if arguments.architecture == "x86_64"
+            else REPORT_ROOT / "latest.json"
+        )
+        print(output)
         return 0
     except MilestoneUnavailable as error:
         print(f"UNMET MILESTONE: {error}", file=sys.stderr)
