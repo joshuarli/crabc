@@ -772,13 +772,19 @@ aggregate-registry adoption remain absent.
   abandonment, pthread, fork, or process lifecycle. After the regular backing
   is cleared, its `DrainingPages` owner first force-collects an already-retired
   all-free regular page. Its one additional live-page transition is a full
-  one-block dynamic arena singleton, false-collected, detached from `BIN_FULL`,
-  unmapped-abandoned, and retained until its exact client free takes the
-  failed-reclaim all-free release. The source force-only local-list append is
-  unreachable under the `reserved == used == 1`, no-producer proof; the raw
-  free-list primitive separately ports and tests it without broadening this
-  drain. The successful drain then permits the existing cached-root/list/key
-  teardown.
+  one-block dynamic arena or OS-aligned singleton, false-collected, detached
+  from `BIN_FULL`, unmapped-abandoned, and retained until its exact client free
+  takes the failed-reclaim all-free release. The OS form is exactly
+  `MemoryKind::Os` with `reserved == used == 1`; it may have a small ordinary
+  block size, links the still-owned page into this dynamic Heap's
+  `os_abandoned_pages` list before common unown, and removes that exact member
+  before clipped PageMap -> alias -> primary-metadata -> mapping release. A
+  failed `munmap` retains the unique published owner terminally in the dynamic
+  attachment. It supplies no OS-list traversal, reclaim, requeue, or reuse.
+  The source force-only local-list append is unreachable under the
+  `reserved == used == 1`, no-producer proof; the raw free-list primitive
+  separately ports and tests it without broadening this drain. The successful
+  drain then permits the existing cached-root/list/key teardown.
   Its first dynamic arena page first proves the registry-published arena's
   non-null subprocess identity equals the attachment's selected main
   subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
@@ -798,10 +804,10 @@ aggregate-registry adoption remain absent.
   `free_unmapped_after_failed_reclaim` substrate ports expected-head unown,
   conflict collection without another reclaim attempt, and terminal-empty /
   reabandon / unown selection. Its lifecycle-integrated raw terminal-release
-  owners are the post-TLS singleton above and the later-main full-medium,
-  full-large, and full-non-direct-small routes; none routes general policy
-  through the dynamic handoff. Other
-  regular/nonempty unmapped, non-arena, foreign, and full/singleton/huge pages
+  owners are the post-TLS arena/OS singleton handoffs above and the later-main
+  full-medium, full-large, and full-non-direct-small routes; none routes
+  general policy through the dynamic handoff. Other regular/nonempty unmapped,
+  other non-arena, foreign, and full/singleton/huge pages
   still lack lifecycle integration or terminal reuse.
   Image allocation failure before
   slot publication remains retryable; any post-slot private lock/unlock/free
@@ -834,9 +840,17 @@ aggregate-registry adoption remain absent.
   prove the separate failed-reclaim tail's reabandon, terminal-empty, expected
   head, and conflict-collection decisions. The dynamic
   `dynamic_thread_exit_singleton_remote_free_clears_tls_then_releases_its_arena_page`
-  regression proves regular-slot clearing precedes abandonment, failed reclaim
-  is real rather than injected, raw all-free release clears the full PageMap
-  span and dynamic ordinary bit, and attachment teardown can then finish.
+  regression proves regular-slot clearing precedes arena abandonment, failed
+  reclaim is real rather than injected, raw all-free release clears the full
+  PageMap span and dynamic ordinary bit, and attachment teardown can then
+  finish. The dynamic
+  `dynamic_thread_exit_os_aligned_singleton_handoff_releases_after_its_final_free`,
+  `dynamic_thread_exit_os_aligned_singleton_handoff_rejects_unmapped_pointer_before_detach`,
+  and
+  `dynamic_thread_exit_os_aligned_singleton_handoff_retains_failed_unmap_terminally`
+  regressions prove the dynamic Heap list insertion/removal order, pre-detach
+  refusal, clipped PageMap removal, and terminal failed-`munmap` owner
+  retention.
   `dynamic_thread_exit_force_collects_a_retired_regular_page_after_tls_clear`
   proves the post-TLS force-retirement release happens before that same
   teardown. The image-boundary regressions

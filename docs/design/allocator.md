@@ -574,14 +574,20 @@ the dynamic arena image, and the PageMap until its pages are resolved. The
 current drain is intentionally one source-reachable owner-exit case rather than
 a traversal: its finishing boundary force-collects an already-retired all-free
 regular page, and its only live-page transition accepts a full one-block arena
-singleton. That singleton's `reserved == used == 1` and no-producer proof makes
-the outer source force collector's local-list append unreachable; the
-`_mi_page_abandon` false collection still precedes queue detach. The returned
-singleton handoff can receive only its exact client free. Because the regular
-backing is already clear, source reclaim cannot find the Theap; the raw
-failed-reclaim tail makes the singleton empty, then the handoff owns
-PageMap-span unregister, heap-local ordinary-bit clear, metadata retirement,
-and arena-slice release. A drained attachment alone can then resume
+or OS-aligned singleton. Both forms retain `reserved == used == 1` and the
+no-producer proof that makes the outer source force collector's local-list
+append unreachable; `_mi_page_abandon` false collection still precedes queue
+detach. The arena form follows the existing PageMap-span unregister,
+heap-local ordinary-bit clear, metadata retirement, and arena-slice release.
+The OS form is exactly one `MemoryKind::Os` page in `BIN_FULL`; its ordinary
+block size may be small. After queue/page-count detach it links the still-owned
+page into the dynamic Heap's `os_abandoned_pages` list before common unown.
+Its exact client free removes that member before clipped PageMap unregister,
+secondary alias clear, primary metadata retirement, and mapping reclaim. A
+failed `munmap` parks the unique published mapping owner terminally in the
+attachment. The returned handoff cannot scan, reclaim, requeue, or otherwise
+generalize that OS list. Because the regular backing is already clear, source
+reclaim cannot find the Theap. A drained attachment alone can then resume
 cached-root/list/key teardown.
 
 On the first fresh dynamic arena page, that same session lazily creates one
@@ -615,10 +621,11 @@ all four succeed does it expose the drained engine. An existing abandoned owner
 or a later release failure remains terminal; forgetting or post-claim failure
 also retains the engine rather than exposing normal free/allocation. Full,
 non-singleton huge, non-arena, foreign, and ordinary abandoning-session pages
-remain rejected. The sole singleton exception is the post-TLS owner-exit
-handoff above; it is neither normal abandoned routing nor a general thread-exit
-page traversal. General producer routing, multiple arena images, and general
-heap destruction remain deferred.
+remain rejected. The sole singleton exceptions are the post-TLS arena and
+OS-aligned owner-exit handoffs above; neither is normal abandoned routing or a
+general thread-exit page traversal. General producer routing, multiple arena
+images, OS-list traversal/reclaim/requeue, and general heap destruction remain
+deferred.
 
 `PrivateLock` preserves the TLD field's private-lock meaning but is not a
 byte-identical pthread mutex, so no C `sizeof(mi_tld_t)` claim is made.
@@ -639,9 +646,9 @@ source reclaim decision has failed: it preserves a small partial head through
 the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
-release or reuse a page. Its sole raw-release owner is the post-TLS full
-singleton handoff above; all other initially-unmapped pages retain the raw
-terminal decision for a later lifecycle. A test-only Loom model executes the
+release or reuse a page. Its raw-release owners are the post-TLS arena and
+OS-aligned singleton handoffs above; all other initially-unmapped pages retain
+the raw terminal decision for a later lifecycle. A test-only Loom model executes the
 live-owner remote-head publication/detach loops and the abandoned
 owner-claim/unown races under bounded schedules; deterministic native
 regressions cover the bitmap-field quiescence and full one-page abandonment

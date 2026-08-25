@@ -46,9 +46,10 @@
 // `allow_collect` remote free, returning it after exact all-free arena release
 // or retaining it for other terminal outcomes. A separate post-TLS dynamic
 // drain first force-collects already-retired all-free pages, then owns one
-// full one-block arena singleton through source queue detach, unmapped
-// abandonment, failed reclaim, and all-free release; it is not a general
-// owner-exit traversal or remote-free route.
+// full one-block arena or OS-aligned singleton through source queue detach,
+// unmapped abandonment, failed reclaim, and all-free release. The OS form
+// stays in the dynamic Heap's private list between source abandon/unabandon;
+// neither form is a general owner-exit traversal or remote-free route.
 // The separately bounded later-main drain force-scans all-free pages, then
 // admits eight sole-page handoffs: a full arena singleton; an OS-aligned
 // singleton linked only between source non-arena abandon/unabandon; one medium
@@ -413,14 +414,17 @@ pub(crate) struct DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map> {
     engine: PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>,
 }
 
-/// One queue-detached arena singleton abandoned by a dynamic thread-exit
-/// drain. The token retains the pre-list-detach Theap/TLD/Heap/arena-image
-/// owner until its one source failed-reclaim free either releases the page or
-/// records a terminal state for a later general lifecycle implementation.
+/// One queue-detached arena or OS-aligned singleton abandoned by a dynamic
+/// thread-exit drain. The token retains the pre-list-detach Theap/TLD/Heap/
+/// arena-image owner until its one source failed-reclaim free either releases
+/// the page or records a terminal state for a later general lifecycle
+/// implementation. An OS singleton stays linked in its dynamic Heap's
+/// private list between abandonment and final release.
 #[must_use = "an owner-exit singleton handoff must be consumed or terminally retained"]
 pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
+    backing: ThreadExitSingletonBacking,
     terminal: bool,
 }
 
@@ -1197,19 +1201,20 @@ pub(crate) enum DynamicThreadExitDrainFailure<'attach, 'heap, 'arena, 'map> {
 }
 
 /// One source-boundary refusal while a draining dynamic owner abandons its
-/// exact full singleton. `Rejected` is pre-detach; `RetainedDrain` has already
-/// poisoned a false-force collection, while `Terminal` retains a page that
-/// crossed queue/identity ownership.
+/// exact full arena or OS-aligned singleton. `Rejected` is pre-detach;
+/// `RetainedDrain` has already poisoned a false-force collection, while
+/// `Terminal` retains a page that crossed queue/identity ownership.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DynamicThreadExitSingletonAbandonError {
     Collection,
     Unmapped,
     ForeignPage,
-    NonArena,
+    UnsupportedMemory(MemoryKind),
     NotFullSingleton,
     NotActiveFull,
     InvalidBlock,
     Queue,
+    OsAbandonedList(HeapOsAbandonedPageListError),
     UnexpectedAbandonOutcome(AbandonResult),
     Abandon(AbandonError),
 }
@@ -1239,6 +1244,7 @@ pub(crate) enum DynamicThreadExitSingletonRemoteFreeError {
     Unmapped,
     InvalidBlock,
     Release,
+    OsAbandonedList(HeapOsAbandonedPageListError),
     UnexpectedFreeOutcome(abandoned::UnmappedAbandonedFreeResult),
     Abandon(AbandonError),
 }
@@ -5413,17 +5419,49 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
 }
 
 impl<'attach, 'heap, 'arena, 'map>
+    PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>
+{
+    /// Preserves the non-arena half of `_mi_arenas_page_abandon` for the
+    /// caller-pinned dynamic Heap before common abandonment clears the page's
+    /// low owner state.
+    fn push_os_abandoned_singleton(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), DynamicThreadExitSingletonAbandonError> {
+        // SAFETY: the caller preflighted this exact live full OS singleton,
+        // retained its dynamic Heap through the drain, and has not yet made
+        // the common abandonment transition consume its source identity.
+        unsafe { self.session.push_os_abandoned_singleton(page) }
+            .map_err(DynamicThreadExitSingletonAbandonError::OsAbandonedList)
+    }
+
+    /// Preserves `_mi_arenas_page_unabandon` for the caller-pinned dynamic
+    /// Heap before final clipped OS map/metadata/mapping release.
+    fn remove_os_abandoned_singleton(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), DynamicThreadExitSingletonRemoteFreeError> {
+        // SAFETY: the all-free handoff has claimed this exact still-live list
+        // member and retains it through the immediately following terminal
+        // OS release.
+        unsafe { self.session.remove_os_abandoned_singleton(page) }
+            .map_err(DynamicThreadExitSingletonRemoteFreeError::OsAbandonedList)
+    }
+}
+
+impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>
 {
-    /// Abandons one exact full arena singleton after the dynamic regular TLS
-    /// slot has been cleared for thread exit.
+    /// Abandons one exact full arena or OS-aligned singleton after the dynamic
+    /// regular TLS slot has been cleared for thread exit.
     ///
     /// This is the one owner-exit branch for which the current bounded
     /// lifecycle has both sides of the source handoff: a full singleton cannot
     /// enter `pages_abandoned`, and its later sole remote free must therefore
     /// take `free.c:mi_free_try_collect_mt`'s failed-reclaim all-free tail.
-    /// No general page traversal, nonempty owner-exit page, or producer route
-    /// is exposed by this drain capability.
+    /// An OS singleton follows the source Heap list insertion/removal around
+    /// that common path. No general page traversal, nonempty owner-exit page,
+    /// OS-list reclaim, or producer route is exposed by this drain capability.
     ///
     /// # Safety
     ///
@@ -5466,21 +5504,45 @@ impl<'attach, 'heap, 'arena, 'map>
         {
             return Err(reject(self, DynamicThreadExitSingletonAbandonError::ForeignPage));
         }
-        if page_ref.memid().kind() != MemoryKind::Arena {
-            return Err(reject(self, DynamicThreadExitSingletonAbandonError::NonArena));
-        }
-        if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Singleton)
-            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+        let backing = match page_ref.memid().kind() {
+            MemoryKind::Arena => ThreadExitSingletonBacking::Arena,
+            MemoryKind::Os => ThreadExitSingletonBacking::Os,
+            memory => {
+                return Err(reject(
+                    self,
+                    DynamicThreadExitSingletonAbandonError::UnsupportedMemory(memory),
+                ));
+            }
+        };
+        // An arena singleton is source-classified by its high singleton bin.
+        // An OS-aligned singleton instead reaches BIN_FULL after its one
+        // allocation fills it, and its ordinary block size can be small or
+        // regular; never force it through the arena PageKind/BIN_HUGE shape.
+        let singleton_shape_matches_backing = match backing {
+            ThreadExitSingletonBacking::Arena => {
+                size_class::page_kind_for_block_size(page_ref.block_size())
+                    == Some(PageKind::Singleton)
+                    && size_class::bin(page_ref.block_size()) == Some(BIN_HUGE)
+            }
+            ThreadExitSingletonBacking::Os => true,
+        };
+        if !singleton_shape_matches_backing
             || page_ref.reserved() != 1
             || page_ref.used() != 1
             || !page_is_in_full(page_ref)
         {
             return Err(reject(self, DynamicThreadExitSingletonAbandonError::NotFullSingleton));
         }
-        // `release_span` proves every map entry and singleton arena geometry
-        // before source collection and queue detach. A leading-slice lookup is
-        // not enough: the eventual all-free path unregisters this full span.
-        if !matches!(self.engine.release_span(page.as_ptr()), Some(ReleaseSpan::Arena { .. })) {
+        // `release_span` proves every map entry and source-specific release
+        // geometry before collection and queue detach. A leading-slice lookup
+        // is not enough: the eventual all-free path unregisters the complete
+        // arena span or clipped OS range.
+        let span_matches_backing = matches!(
+            (backing, self.engine.release_span(page.as_ptr())),
+            (ThreadExitSingletonBacking::Arena, Some(ReleaseSpan::Arena { .. }))
+                | (ThreadExitSingletonBacking::Os, Some(ReleaseSpan::Os(_)))
+        );
+        if !span_matches_backing {
             return Err(reject(self, DynamicThreadExitSingletonAbandonError::Unmapped));
         }
         if !self.engine.page_is_active_queue_member(BIN_FULL, page) {
@@ -5544,27 +5606,48 @@ impl<'attach, 'heap, 'arena, 'map>
                 handoff: DynamicThreadExitSingletonHandoff {
                     drain: self,
                     page,
+                    backing,
                     terminal: true,
                 },
                 error: DynamicThreadExitSingletonAbandonError::Queue,
             });
         }
 
-        // The high singleton bin is not eligible for arena bitmap mapping.
-        // This consumes the source associated identity only after queue/count
-        // removal and leaves its low atomic owner bit clear for the later
-        // failed-reclaim free to claim.
+        // Neither source full-singleton shape is eligible for the mapped
+        // arena-abandon route. Before common unown, the source non-arena
+        // branch links the exact OS singleton into its dynamic Heap's private
+        // list. A failure after queue/count detachment is terminal: the
+        // caller may not skip that list mutation or choose the arena release.
+        if backing == ThreadExitSingletonBacking::Os {
+            if let Err(error) = self.engine.push_os_abandoned_singleton(page) {
+                return Err(DynamicThreadExitSingletonAbandonFailure::Terminal {
+                    handoff: DynamicThreadExitSingletonHandoff {
+                        drain: self,
+                        page,
+                        backing,
+                        terminal: true,
+                    },
+                    error,
+                });
+            }
+        }
+
+        // Consume the source associated identity only after queue/count
+        // detachment and OS-list insertion, leaving its low atomic owner bit
+        // clear for the later failed-reclaim free to claim.
         let abandoned = unsafe { abandoned::abandon_unmappable_after_collect(page) };
         match abandoned {
             Ok(AbandonResult::UnownedUnmapped) => Ok(DynamicThreadExitSingletonHandoff {
                 drain: self,
                 page,
+                backing,
                 terminal: false,
             }),
             Ok(outcome) => Err(DynamicThreadExitSingletonAbandonFailure::Terminal {
                 handoff: DynamicThreadExitSingletonHandoff {
                     drain: self,
                     page,
+                    backing,
                     terminal: true,
                 },
                 error: DynamicThreadExitSingletonAbandonError::UnexpectedAbandonOutcome(outcome),
@@ -5573,6 +5656,7 @@ impl<'attach, 'heap, 'arena, 'map>
                 handoff: DynamicThreadExitSingletonHandoff {
                     drain: self,
                     page,
+                    backing,
                     terminal: true,
                 },
                 error: DynamicThreadExitSingletonAbandonError::Abandon(error),
@@ -5617,6 +5701,12 @@ impl<'attach, 'heap, 'arena, 'map>
 
     #[cfg(test)]
     #[inline]
+    pub(crate) fn test_queue_count(&self, bin: usize) -> Option<usize> {
+        self.engine.session.queue(bin).map(|queue| queue.count())
+    }
+
+    #[cfg(test)]
+    #[inline]
     pub(crate) unsafe fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
         // SAFETY: this is a read-only test witness while the drain owns the
         // page map and no raw page lifetime escapes it.
@@ -5627,6 +5717,12 @@ impl<'attach, 'heap, 'arena, 'map>
     #[inline]
     pub(crate) fn test_dynamic_arena_page_is_clear(&self, memory: MemoryId) -> bool {
         self.engine.session.test_dynamic_arena_page_is_clear(memory)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_abandoned_page_head(&self) -> *mut Page {
+        self.engine.session.test_os_abandoned_page_head()
     }
 }
 
@@ -5639,7 +5735,9 @@ impl<'attach, 'heap, 'arena, 'map>
     /// The handoff cannot route a nonempty page back into normal allocation:
     /// that needs the broader abandoned-owner lifecycle. For this one-block
     /// singleton, the source collector must make the page all-free and the
-    /// handoff owns the exact PageMap/arena-image release capability.
+    /// handoff owns the exact arena or OS PageMap/release capability. The OS
+    /// branch removes its exact dynamic Heap list member before it clears the
+    /// clipped map and metadata aliases or reclaims the mapping.
     ///
     /// # Safety
     ///
@@ -5680,12 +5778,12 @@ impl<'attach, 'heap, 'arena, 'map>
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
-        if preflight.is_err()
-            || !matches!(
-                self.drain.engine.release_span(self.page.as_ptr()),
-                Some(ReleaseSpan::Arena { .. })
-            )
-        {
+        let span_matches_backing = matches!(
+            (self.backing, self.drain.engine.release_span(self.page.as_ptr())),
+            (ThreadExitSingletonBacking::Arena, Some(ReleaseSpan::Arena { .. }))
+                | (ThreadExitSingletonBacking::Os, Some(ReleaseSpan::Os(_)))
+        );
+        if preflight.is_err() || !span_matches_backing {
             return Err(reject(self, DynamicThreadExitSingletonRemoteFreeError::InvalidBlock));
         }
 
@@ -5698,11 +5796,28 @@ impl<'attach, 'heap, 'arena, 'map>
         };
         match result {
             Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
-                if self
-                    .drain
-                    .engine
-                    .release_queue_detached_abandoned_arena_page(self.page)
-                {
+                if self.backing == ThreadExitSingletonBacking::Os {
+                    // `_mi_arenas_page_unabandon` removes the non-arena page
+                    // from its source dynamic Heap list before the common
+                    // terminal page release. Preserve a removal failure as a
+                    // terminal handoff rather than losing the mapping right.
+                    if let Err(error) = self.drain.engine.remove_os_abandoned_singleton(self.page) {
+                        self.terminal = true;
+                        return Err(terminal(self, error));
+                    }
+                }
+
+                let released = match self.backing {
+                    ThreadExitSingletonBacking::Arena => self
+                        .drain
+                        .engine
+                        .release_queue_detached_abandoned_arena_page(self.page),
+                    ThreadExitSingletonBacking::Os => self
+                        .drain
+                        .engine
+                        .release_queue_detached_abandoned_os_page(self.page),
+                };
+                if released && self.drain.engine.pending_os_release.is_none() {
                     Ok(self.drain)
                 } else {
                     self.terminal = true;
@@ -5739,6 +5854,36 @@ impl<'attach, 'heap, 'arena, 'map>
     #[inline]
     pub(crate) fn test_dynamic_regular_slot_is_clear(&self) -> bool {
         self.drain.engine.session.test_dynamic_regular_slot_is_clear()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_has_pending_os_release(&self) -> bool {
+        self.drain.engine.has_pending_os_release()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_abandoned_page_head(&self) -> *mut Page {
+        self.drain.engine.session.test_os_abandoned_page_head()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_page_map_entries_match(
+        &self,
+        published: &PublishedOsAlignedPage,
+    ) -> bool {
+        self.drain.engine.test_os_page_map_entries_match(published)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_page_map_entries_are_clear(
+        &self,
+        published: &PublishedOsAlignedPage,
+    ) -> bool {
+        self.drain.engine.test_os_page_map_entries_are_clear(published)
     }
 }
 
@@ -7179,6 +7324,38 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     #[cfg(test)]
     pub(crate) fn has_pending_os_release(&self) -> bool {
         self.pending_os_release.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_os_page_map_entries_match(
+        &self,
+        published: &PublishedOsAlignedPage,
+    ) -> bool {
+        // The caller's allocator or handoff owns the only page-map mutation
+        // capability for this exact published singleton while it observes the
+        // source clipped range.
+        unsafe { published.page_map_entries_match(self.page_map) }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_os_page_map_entries_are_clear(
+        &self,
+        published: &PublishedOsAlignedPage,
+    ) -> bool {
+        for offset in (0..published.layout().page_map_size()).step_by(ARENA_SLICE_SIZE) {
+            // The same bounded test ownership proof serializes these
+            // read-only post-release observations.
+            if unsafe {
+                self.page_map
+                    .checked_lookup(published.slice_start().as_ptr().wrapping_add(offset))
+            }
+            .is_null()
+            {
+                continue;
+            }
+            return false;
+        }
+        true
     }
 
     /// Collects source-retired regular pages and one external-arena purge pass.

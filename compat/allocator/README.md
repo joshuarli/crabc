@@ -156,18 +156,24 @@ no-page teardown. It can also consume a live engine into a post-fast-slot drain
 that force-collects every queue (including full), releases only all-free pages
 in PageMap -> `pages_main` -> metadata -> slice order, and finishes that pass
 even if an earlier page remains live. It then retains the post-fast-slot owner
-rather than abandoning a general live page. Two separate explicit handoffs
-require the drain's sole page with every other queue/direct slot empty. The
-full one-block arena singleton false-collects, queue-detaches, and
-unmapped-abandons while preserving the PageMap registration/lifecycle lease;
-its final client free takes the raw failed-reclaim empty result and releases
-PageMap -> `pages_main` -> metadata -> slice. The medium regular-page handoff
-requires `reserved > 1` and `used == 1`, runs source force then false
-collection, queue-detaches, and publishes the exact main
-`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`. Its final
-free accepts only source's empty-before-reclaim result, clears that mapped
-identity/bit, consumes the paired count, and performs the same release; a
-nonempty result is terminal rather than reclaimed or requeued.
+rather than abandoning a general live page. Eight explicit, disjoint handoffs
+require the drain's sole page with every other queue/direct slot empty: a full
+one-block arena singleton, an OS-aligned singleton, a mapped one-block medium
+page, full medium and full large `BIN_FULL` pages, full non-direct-small and
+direct-small regular-bin pages, and a nonfull small-or-medium page. The full
+arena singleton false-collects, queue-detaches, and unmapped-abandons while
+preserving the PageMap registration/lifecycle lease; its final client free
+takes the raw failed-reclaim empty result and releases PageMap ->
+`pages_main` -> metadata -> slice. The OS form instead links/removes its exact
+`Heap::os_abandoned_pages` member around clipped PageMap -> alias -> primary
+metadata -> mapping release and retains a failed `munmap` owner terminally.
+The mapped one-block medium handoff requires `reserved > 1` and `used == 1`,
+runs source force then false collection, queue-detaches, and publishes the
+exact main `pages_abandoned[bin]` bit plus paired
+`Heap::abandoned_count[bin]`; its final free accepts only the source
+empty-before-reclaim result. The other full and nonfull routes preserve their
+separately recorded source shape/predicate, map/count, and terminal-release
+boundaries; none adds general abandoned-page routing, reclaim, or requeue.
 Every other live-page state rejects before detach. Only an empty drain permits the attachment's separate
 root/list/TLD teardown. A force/release failure remains terminally retained.
 This admits overlapping no-page owners but only one sequential page owner;
@@ -196,13 +202,20 @@ and transfers any pending OS release owner into that retained attachment.
 This is bounded private routing, not general dynamic allocation or remote-free
 concurrency. After clearing its regular backing, it has one distinct
 `DrainingPages` owner-exit state: it first force-collects an already-retired
-all-free regular page, while a full one-block arena singleton may be
-queue-detached and unmapped-abandoned so its exact final client free takes the
-raw failed-reclaim all-free release before cached-root/list/key teardown. Its
-`reserved == used == 1` and no-producer proof excludes invoking the source
-force-only local-list append for that live singleton; `free_list::collect_local`
-separately ports and tests that raw operation, which the separately recorded
-later-main all-free exit drain uses without broadening this dynamic traversal.
+all-free regular page, while a full one-block arena or OS-aligned singleton may
+be queue-detached and unmapped-abandoned so its exact final client free takes
+the raw failed-reclaim all-free release before cached-root/list/key teardown.
+The OS form is exactly `MemoryKind::Os`, `reserved == used == 1`, and
+`BIN_FULL`; it links the still-owned page through the dynamic Heap's
+`os_abandoned_pages` list before common unown, then removes that exact member
+before clipped PageMap -> alias -> primary-metadata -> mapping release. A
+failed `munmap` retains the unique mapping owner terminally. The arena form
+continues to use the dynamic ordinary-bit/slice release tail. Neither form
+adds OS-list traversal, reclaim, or requeue. Their `reserved == used == 1` and
+no-producer proof excludes invoking the source force-only local-list append;
+`free_list::collect_local` separately ports and tests that raw operation, which
+the separately recorded later-main all-free exit drain uses without broadening
+this dynamic traversal.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular and
 post-TLS singleton handoffs, pthread/process hooks, complete subprocess
@@ -228,7 +241,7 @@ release—and returns the drained engine; an existing owner remains terminal.
 Separately, the source-shaped initially-unmapped failed-reclaim substrate
 selects terminal-empty, reabandonment, or unownership after its expected-head
 CAS/conflict collection. It has raw page-span release authority only through
-the post-TLS full-singleton handoff above, not as general free routing. General
+the post-TLS arena/OS-singleton handoffs above, not as general free routing. General
 producer routing, regular/nonempty unmapped lifecycle integration, terminal
 reuse, and general abandonment routing remain absent. The private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
@@ -268,7 +281,7 @@ quiescence, abandonment publication, adoption versus a remote producer,
 ownership-release races, scoped producer cancellation/admission, regular
 generic/direct collection, and the joined full-page release/unfull branches.
 Except for these bounded owner-side collection routes, one post-TLS
-full-singleton terminal release, bounded ticket-zero and sequential later
+arena/OS-singleton terminal release, bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
 all-free exit drain plus its full-singleton, mapped-medium-one-block, full
 medium/full-large/full-non-direct-small/full-direct-small, and sole mapped small-or-medium

@@ -718,8 +718,9 @@ impl Heap {
             && !self.subprocess.is_null()
     }
 
-    /// Returns the private non-arena abandoned-list head while an external
-    /// test already holds the static-main heap projection guard.
+    /// Returns the private non-arena abandoned-list head while a test holds
+    /// the source Heap projection or otherwise proves that no concurrent
+    /// private-list mutation can occur.
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_os_abandoned_page_head(&self) -> *mut Page {

@@ -26,9 +26,12 @@
 //! fresh/rollback/release use that image rather than `Arena::pages_main`. Its
 //! post-TLS `DynamicTheapPageDrainSession` first force-collects already-retired
 //! all-free pages, then has one further source-shaped live owner exit: a full
-//! one-block arena singleton can be queue-detached, abandoned, and released
-//! only when its later client free sees the cleared regular slot and takes the
-//! failed-reclaim all-free tail. It does implement the one
+//! one-block arena or OS-aligned singleton can be queue-detached, abandoned,
+//! and released only when its later client free sees the cleared regular slot
+//! and takes the failed-reclaim all-free tail. The OS branch links the exact
+//! page through this dynamic Heap's private `os_abandoned_pages` list before
+//! common unown, then removes it before clipped map/metadata/mapping release.
+//! It does implement the one
 //! owner-only cached-Theap root/reference pair which follows regular-slot
 //! publication in `src/heap.c:_mi_heap_theap_get_or_init`.
 
@@ -59,8 +62,8 @@ use crate::subproc::MainSubprocess;
 use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner, ThreadLocalKey};
 use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
 use crate::types::{
-    DynamicTheapPageMode, Heap, MemoryId, Page, PageQueue, Theap, TheapDynamicInitError,
-    TheapOwner, ThreadLocalTheapListError,
+    DynamicTheapPageMode, Heap, HeapOsAbandonedPageListError, MemoryId, Page, PageQueue,
+    Theap, TheapDynamicInitError, TheapOwner, ThreadLocalTheapListError,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1343,6 +1346,70 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
             .as_ref()
             .is_some_and(|owner| !owner.page_is_set(memory))
     }
+
+    /// Links one queue-detached OS-aligned singleton into this dynamic
+    /// attachment's source Heap before common abandonment clears its low
+    /// owner state.
+    ///
+    /// The page-drain session retains the unique pinned Heap borrow and the
+    /// source Theap/TLD/page-map owner. Its caller has already proved that
+    /// `page` is this Heap's live full singleton, so this narrow boundary
+    /// delegates only the private intrusive-list mutation and its lock to
+    /// [`Heap::push_os_abandoned_page`].
+    ///
+    /// # Safety
+    ///
+    /// `page` must be live dynamic metadata owned by this exact pinned Heap,
+    /// with both intrusive OS-list links clear. The caller must retain that
+    /// metadata through the paired removal or terminal retained owner.
+    pub(crate) unsafe fn push_os_abandoned_singleton(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), HeapOsAbandonedPageListError> {
+        // SAFETY: the dynamic attachment retains this unique, address-stable
+        // Heap borrow for the whole page-drain session. The caller's source
+        // preflight retains the exact live page metadata until its terminal
+        // handoff completes.
+        let heap = unsafe { Pin::get_unchecked_mut(self.attachment.heap.as_mut()) };
+        // SAFETY: forwarded from this method's dynamic page-drain ownership
+        // proof; Heap serializes its private OS-list mutation internally.
+        unsafe { heap.push_os_abandoned_page(&mut *page.as_ptr()) }
+    }
+
+    /// Removes one exact all-free OS-aligned singleton from this dynamic
+    /// attachment's private Heap list before the terminal mapping release.
+    ///
+    /// The consuming owner-exit handoff retains the live metadata and has
+    /// already claimed its sole final free. This method deliberately performs
+    /// no traversal or reclamation beyond the source list removal.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be the exact live member of this dynamic Heap's private
+    /// OS-abandoned list, retained through the following terminal release.
+    pub(crate) unsafe fn remove_os_abandoned_singleton(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), HeapOsAbandonedPageListError> {
+        // SAFETY: the attachment's pinned Heap and the exact live page remain
+        // retained by the consuming page-drain handoff through this removal.
+        let heap = unsafe { Pin::get_unchecked_mut(self.attachment.heap.as_mut()) };
+        // SAFETY: forwarded from this method's all-free handoff proof; Heap
+        // serializes its private OS-list mutation internally.
+        unsafe { heap.remove_os_abandoned_page(&mut *page.as_ptr()) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_os_abandoned_page_head(&self) -> *mut Page {
+        // The dynamic fixture holds this attachment exclusively and creates
+        // no concurrent OS-list mutation path while it observes a handoff.
+        self.attachment
+            .heap
+            .as_ref()
+            .get_ref()
+            .test_os_abandoned_page_head()
+    }
 }
 
 impl theap_page_session_sealed::Sealed for DynamicTheapPageSession<'_, '_> {}
@@ -1583,12 +1650,15 @@ mod tests {
         dynamic_backing_peek, is_empty_dynamic_backing, set_cached_theap,
     };
     use crate::os::{PageSize, fault};
+    use crate::os_page::PublishedOsAlignedPage;
     use crate::page_map::PageMap;
     use crate::single_thread::{
         DynamicMappedAbandonError, DynamicMappedAbandonFailure,
         DynamicMappedRemoteFreeFailure,
         DynamicTheapAllocator, DynamicThreadExitDrainFailure,
+        DynamicThreadExitSingletonAbandonError,
         DynamicThreadExitSingletonAbandonFailure,
+        DynamicThreadExitSingletonRemoteFreeError,
         DynamicThreadExitSingletonRemoteFreeFailure,
     };
     use crate::tld::ThreadLocalDataOwner;
@@ -2115,6 +2185,277 @@ mod tests {
             assert!(drain.test_dynamic_arena_page_is_clear(memory));
             assert!(drain.finish());
             DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_os_aligned_singleton_handoff_releases_after_its_final_free() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the dynamic fixture allocates one OS-aligned singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the OS singleton remains PageMap-published before thread exit");
+            let page_ref = unsafe { page.as_ref() };
+            assert_eq!(page_ref.reserved(), 1);
+            assert_eq!(page_ref.used(), 1);
+            assert!(page_ref.memid().is_os());
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+            let published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), page) }
+                .expect("the OS singleton retains its complete terminal-release token");
+            assert!(allocator.test_os_page_map_entries_match(&published));
+
+            // The source clears the dynamic regular TLS backing before it
+            // abandons pages during `mi_thread_theaps_done`. That makes this
+            // page's later free fail the one reclaim attempt without
+            // pretending that its original Theap is still live.
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+            assert!(drain.test_cached_root_still_names_the_draining_theap());
+
+            // SAFETY: `block` is the sole current allocation in the exact
+            // full OS-aligned singleton retained by this post-TLS dynamic
+            // page-drain lifecycle.
+            let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
+                    core::mem::forget(drain);
+                    panic!("the OS-aligned singleton enters the owner-exit handoff: {error:?}");
+                }
+                Err(DynamicThreadExitSingletonAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("OS-singleton abandonment does not retain a terminal owner: {error:?}");
+                }
+            };
+            assert_eq!(handoff.test_page_count(), 0);
+            assert!(handoff.test_os_page_map_entries_match(&published));
+            assert_eq!(
+                handoff.test_os_abandoned_page_head(),
+                page.as_ptr(),
+                "source OS abandonment links the detached singleton before it clears the low owner"
+            );
+
+            // SAFETY: this is the handoff's exact once-live client
+            // allocation. The cleared regular TLS slot is the bounded source
+            // proof that the one reclaim attempt must fail.
+            let drain = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the OS-singleton final free releases its sole page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(block) }.is_null());
+            assert_eq!(drain.test_page_count(), 0);
+            assert!(
+                drain.test_os_abandoned_page_head().is_null(),
+                "source OS release removes the all-free singleton from the private list before unmap"
+            );
+            assert!(drain.finish());
+            for offset in (0..published.layout().page_map_size())
+                .step_by(crate::config::ARENA_SLICE_SIZE)
+            {
+                assert!(unsafe {
+                    page_map.checked_lookup(published.slice_start().as_ptr().wrapping_add(offset))
+                }
+                .is_null());
+            }
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_os_aligned_singleton_handoff_rejects_unmapped_pointer_before_detach() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the dynamic fixture allocates one OS-aligned singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the OS singleton remains PageMap-published before thread exit");
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the regular TLS slot before OS preflight: {error:?}");
+                }
+            };
+
+            // SAFETY: this deliberately unmapped non-null pointer is only a
+            // pre-detach error witness; the drain must preserve the actual
+            // OS singleton and return its complete source owner unchanged.
+            let drain = match unsafe { drain.abandon_full_singleton(NonNull::dangling()) } {
+                Err(DynamicThreadExitSingletonAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitSingletonAbandonError::Unmapped,
+                }) => drain,
+                Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
+                    core::mem::forget(drain);
+                    panic!("an unmapped pointer is rejected before dynamic OS detachment: {error:?}");
+                }
+                Err(DynamicThreadExitSingletonAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("an unmapped pointer cannot create a terminal OS handoff: {error:?}");
+                }
+                Ok(handoff) => {
+                    core::mem::forget(handoff);
+                    panic!("an unmapped pointer cannot enter the OS singleton handoff");
+                }
+            };
+            assert_eq!(unsafe { drain.test_page_for_block(block) }, page.as_ptr());
+            assert_eq!(drain.test_page_count(), 1);
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+            let page_ref = unsafe { page.as_ref() };
+            assert_eq!(page_ref.reserved(), 1);
+            assert_eq!(page_ref.used(), 1);
+
+            // SAFETY: the actual client allocation remains live and exactly
+            // once-owned after the rejected pre-detach observation.
+            let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
+                    core::mem::forget(drain);
+                    panic!("the preserved OS singleton still enters its handoff: {error:?}");
+                }
+                Err(DynamicThreadExitSingletonAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the preserved OS singleton does not retain terminal ownership: {error:?}");
+                }
+            };
+            // SAFETY: this is the exact client allocation transferred by the
+            // valid handoff immediately after its rejected preflight attempt.
+            let drain = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the preserved OS singleton still releases after its final free: {error:?}");
+                }
+            };
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_os_aligned_singleton_handoff_retains_failed_unmap_terminally() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let fault = fault::install(fault::Plan::disabled());
+            let block = allocator
+                .allocate_aligned(7, 128 * crate::config::KIB)
+                .expect("the dynamic fixture allocates one OS-aligned singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the OS singleton remains PageMap-published before thread exit");
+            let published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), page) }
+                .expect("the OS singleton retains its complete terminal-release token");
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the regular TLS slot before failed OS release: {error:?}");
+                }
+            };
+            let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
+                    core::mem::forget(drain);
+                    panic!("the OS singleton enters the failed-unmap handoff: {error:?}");
+                }
+                Err(DynamicThreadExitSingletonAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("OS abandonment unexpectedly retained terminal ownership: {error:?}");
+                }
+            };
+
+            fault.set(fault::Plan::at(
+                fault::Point::Unmap,
+                1,
+                crabc_core::Errno::NOMEM,
+            ));
+            // SAFETY: this remains the handoff's exact once-live client
+            // block. The source TLS-detach proof still makes the one reclaim
+            // attempt fail before terminal release.
+            let handoff = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal {
+                    handoff,
+                    error: DynamicThreadExitSingletonRemoteFreeError::Release,
+                }) => handoff,
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("failed OS unmap retains the exact release terminal: {error:?}");
+                }
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Rejected { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the exact OS singleton final free is not rejected: {error:?}");
+                }
+                Ok(drain) => {
+                    core::mem::forget(drain);
+                    panic!("the configured OS unmap failure must retain its handoff");
+                }
+            };
+            assert_eq!(
+                fault.observed(),
+                1,
+                "the terminal OS release attempts exactly one source unmap"
+            );
+            fault.set(fault::Plan::disabled());
+            assert!(
+                handoff.test_has_pending_os_release(),
+                "failed unmap retains the unique published mapping owner in the handoff engine"
+            );
+            assert!(
+                handoff.test_os_abandoned_page_head().is_null(),
+                "the source list removal precedes the failed terminal unmap"
+            );
+            assert!(handoff.test_os_page_map_entries_are_clear(&published));
+
+            // Dropping the terminal handoff moves the raw published mapping
+            // owner into the dynamic attachment and latches it. This slice
+            // deliberately exposes no retry lifecycle for that owner.
+            drop(handoff);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            assert!(
+                owner.terminal_os_release.is_some(),
+                "terminal Drop transfers the unique OS release owner into the retained attachment"
+            );
+            DynamicPageFixtureOutcome::RetainTerminal
         });
     }
 
