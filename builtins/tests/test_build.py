@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import tempfile
 import unittest
 
@@ -42,6 +43,20 @@ class BuildContractTests(unittest.TestCase):
         self.assertEqual(set(upstream["required_features"]), BUILD.UPSTREAM_REQUIRED_FEATURES)
         self.assertEqual(set(upstream["forbidden_features"]), BUILD.UPSTREAM_FORBIDDEN_FEATURES)
         self.assertTrue(upstream["locked_resolution"])
+
+    def test_standalone_locked_resolution_is_committed(self) -> None:
+        """Cargo's standalone `--locked` build must not rely on a local file."""
+
+        completed = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", "Cargo.lock"],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout.strip(), "Cargo.lock")
 
     def test_source_build_feature_parser_rejects_feature_drift(self) -> None:
         target = pathlib.Path("/tmp/crabc-source-build-target")
