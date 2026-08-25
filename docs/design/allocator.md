@@ -139,7 +139,12 @@ full-queue detach and ordinary unmapped abandonment. A separate full
 non-direct-small route preserves that same unmapped tail while detaching from
 its ordinary small bin instead of `BIN_FULL`; it requires
 `block_size > SMALL_SIZE_MAX`, has no direct-cache image, and takes the
-ordinary failed-reclaim collector.
+ordinary failed-reclaim collector. The complementary full direct-small route
+also remains in its ordinary bin, but requires `block_size <= SMALL_SIZE_MAX`,
+`reserved >= 16`, `used == reserved`, and its complete rounded
+`pages_free_direct` range. Queue removal clears that range before page-count
+detach, and its failed-reclaim partial collector retains the just-published
+atomic head before the source free count reaches the mostly-used boundary.
 Sequential client frees remain unmapped while `free <= reserved / 8`, then the
 first below-mostly-used free publishes the exact static-main bitmap/count pair
 and subsequent frees use the mapped tail. Their terminal empty results still
@@ -152,7 +157,7 @@ recognized by rounded source block size, preflights its exact
 `pages_free_direct` range, and clears that range with queue removal before the
 former Theap page count drops; the small partial-free tail retains its source
 `reserved >= 16` invariant. Full small pages remain outside that nonfull route;
-the dedicated route above admits only the non-direct full-small shape. The
+the dedicated routes above admit the direct and non-direct full-small shapes. The
 aggregate regular-pages route applies that same source sequence to every
 qualifying small, medium, or large page, releases force-empty pages, and stores
 PageMap/bitmap registry. Its direct-small preflight accepts only the complete
@@ -348,8 +353,23 @@ bitmap/count reabandonment, and the existing one-slice terminal release. It
 does not accept direct full small pages, mixed pages, adoption, reclaim,
 requeue, or concurrent frees.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_to_process_route`
+is the sixth handoff. It accepts only a sole full `PageKind::Small` arena page
+with rounded `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and
+`used == reserved`. Pinned direct allocation leaves this full page in its
+ordinary regular bin rather than `BIN_FULL`, so preflight requires its complete
+rounded `pages_free_direct` range to name the sole page and every other direct
+slot to be empty. It preserves force then false collection, regular-queue
+removal, direct-cache clear before page-count detach, and ordinary unmapped
+abandonment before old-Theap/TLD teardown. Its free.c partial collector retains
+the just-published atomic head, so the exact source mostly-used decision occurs
+after that one-head accounting lag. The resulting mapped tail keeps the exact
+static-main bitmap/count pair until the same one-slice PageMap -> `pages_main`
+-> metadata -> slice release. It exposes no allocation-time claim, reclaim,
+requeue, adoption, mixed traversal, or concurrent free routing.
+
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`
-is the sixth handoff. It accepts one sole nonfull arena page with one or more
+is the seventh handoff. It accepts one sole nonfull arena page with one or more
 live blocks when it is a medium page or any small page. The small decision uses
 the rounded source block size, not the request size. A direct small page must
 have its complete source direct-cache range point at that sole page with every
@@ -369,8 +389,8 @@ linear route; the final free clears that pairing before the PageMap ->
 `pages_main` -> metadata -> slice release. The route is movable to a client
 free thread but is not shareable as concurrent routes. Every full small page
 remains outside this nonfull sole route, checked by `used < reserved` because
-it can remain in a regular queue; the fifth handoff owns only its non-direct
-full-small counterpart.
+it can remain in a regular queue; the fifth and sixth handoffs own the
+non-direct and direct full-small counterparts.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.

@@ -68,11 +68,11 @@ process-static main heap/default-Theap attachment; one no-page later-thread
 attachment to that shared main Heap; one process-static page-map root
 publication owner plus one caller-selected, process-shared single-arena
 sidecar; bounded ticket-zero and later-thread page engines over that matched
-process pair; one all-free later-main thread-exit drain; six sole-page
+process pair; one all-free later-main thread-exit drain; seven sole-page
 later-main owner-exit handoffs (a full arena singleton, a mapped medium page
-with one live block, full medium and full large `BIN_FULL` pages plus one full
-non-direct small regular-bin page that remain unmapped until their mostly-used
-free boundary then reabandon to the static-main bitmap, and a sole nonfull
+with one live block, full medium and full large `BIN_FULL` pages plus full
+non-direct-small and direct-small regular-bin pages that remain unmapped until
+their mostly-used free boundary then reabandon to the static-main bitmap, and a sole nonfull
 small-or-medium page whose process-owned route survives old-Theap/TLD teardown);
 and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
@@ -168,7 +168,7 @@ fast slot, force-collects every queue (including full), and releases only pages
 that become all-free through PageMap removal -> `pages_main` clear -> metadata
 retirement -> slice release. The pass continues beyond an earlier live page,
 then retains that post-fast-slot owner instead of queue-detaching or abandoning
-the general live page. Six explicit sole-page exceptions remain after
+the general live page. Seven explicit sole-page exceptions remain after
 fast-slot clear, each requiring no other queue/direct/page state. The full
 one-block arena singleton false-collects, detaches, and unmapped-abandons while
 retaining its PageMap lifecycle and registration through its exact final client
@@ -185,7 +185,13 @@ false-collect, queue/page-count-detach, and deliberately become ordinary
 unmapped abandonment before old-Theap/TLD teardown. The full non-direct small
 exception follows the same tail but detaches from its ordinary small size bin,
 requires `block_size > SMALL_SIZE_MAX`, has no direct-cache range, and uses the
-ordinary failed-reclaim collector. Their sequential client frees remain unmapped through
+ordinary failed-reclaim collector. The full direct small exception is the
+complementary ordinary-bin shape: it requires `block_size <= SMALL_SIZE_MAX`,
+`reserved >= 16`, `used == reserved`, and the complete rounded source
+direct-cache range with every other slot empty. Queue removal clears that range
+before page-count detach. Its partial collector retains the just-published
+atomic head, so the source free count has its one-head lag before the same
+below-mostly-used reabandonment decision. Their sequential client frees remain unmapped through
 `free <= reserved / 8`; the first
 below-mostly-used free publishes the exact static-main `pages_abandoned[bin]`
 bit plus paired `Heap::abandoned_count[bin]`, and the mapped tail preserves
@@ -197,8 +203,8 @@ frees through short PageMap access. A direct small member must prove the exact
 rounded source direct-cache range before collection; queue removal clears that
 range before page-count detach. The route retains the source `reserved >= 16`
 small partial-collection invariant and excludes full small pages through its
-explicit `used < reserved` guard; the separate full-small exception above owns
-only the non-direct class.
+explicit `used < reserved` guard; the separate full-small exceptions above own
+the direct and non-direct classes.
 
 `abandon_mapped_regular_pages_to_process_route` is the bounded source-traversal
 extension: before any mutation, every direct slot must match its source queue

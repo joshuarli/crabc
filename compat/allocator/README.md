@@ -14,10 +14,10 @@ map, one bounded source-order process-main coordinator, one separately owned
 process-static page-map publication root plus one caller-selected
 process-shared arena sidecar and bounded ticket-zero and later-thread page
 engines over their matched pair, including one all-free later-main exit drain
-and its six sole-page handoffs (a full arena singleton, a mapped medium
-one-block page, full medium and full large `BIN_FULL` pages plus one full
-non-direct small regular-bin page that begin unmapped and reabandon after the
-source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
+and its seven sole-page handoffs (a full arena singleton, a mapped medium
+one-block page, full medium and full large `BIN_FULL` pages plus full
+non-direct-small and direct-small regular-bin pages that begin unmapped and
+reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
 client-free route) plus
 one aggregate regular small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
@@ -61,7 +61,7 @@ in-place `pages_main` bitmap into the shared static main Heap, and completes
 normal fresh/release ordering through map, bitmap, metadata, and slices. It
 chooses no reserve policy, does not model the C `mi_page_map_empty` pre-root,
 and has no concurrent/general later-thread page routing, general owner exit
-beyond the recorded all-free later-main scan, its six sole-page handoffs, and
+beyond the recorded all-free later-main scan, its seven sole-page handoffs, and
 the bounded aggregate regular-pages traversal, teardown, or public routing.
 The coordinator deliberately does not reserve this shared arena or supply a
 full process lifecycle. An unpublished
@@ -259,7 +259,7 @@ Except for these bounded owner-side collection routes, one post-TLS
 full-singleton terminal release, bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
 all-free exit drain plus its full-singleton, mapped-medium-one-block, full
-medium/full-large/full-non-direct-small, and sole mapped small-or-medium
+medium/full-large/full-non-direct-small/full-direct-small, and sole mapped small-or-medium
 post-exit client-free handoffs and
 aggregate regular-pages
 post-exit registry, these pieces are
@@ -268,12 +268,17 @@ allocation/free routing, integrated allocator TLS/process/thread teardown,
 terminal page release, or metadata reuse. The later page owner proves normal
 map/bitmap/fresh/release/producer ordering plus the all-free scan, one
 preflight-bounded full-singleton failed-reclaim handoff, one sole-medium
-mapped empty-before-reclaim handoff, three full source-unmapped routes (medium,
-large, and non-direct small), and one sole nonfull small-or-medium process
+mapped empty-before-reclaim handoff, four full source-unmapped routes (medium,
+large, non-direct small, and direct small), and one sole nonfull small-or-medium process
 route whose linear client frees begin after actual old Theap/TLD teardown. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
-only after the source mostly-used boundary. The nonfull route's direct-small member
+only after the source mostly-used boundary. The full direct-small route also
+detaches from its regular bin, but requires `block_size <= SMALL_SIZE_MAX`,
+`reserved >= 16`, `used == reserved`, and its complete rounded direct-cache
+range; queue removal clears that range before page-count detach, and its
+partial collector keeps the just-published head through the source accounting
+lag. The nonfull route's direct-small member
 validates and clears the exact rounded source direct-cache range before that
 teardown; its `used < reserved` guard excludes full small pages. The
 separate regular-pages source-order aggregate traversal validates the complete

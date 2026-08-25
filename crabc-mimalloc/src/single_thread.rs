@@ -556,6 +556,15 @@ pub(crate) type ThreadExitFullNonDirectSmallPostExitParts<'main, 'arena> =
 pub(crate) type ThreadExitFullNonDirectSmallPostExitTeardownTerminal<'attachment, 'main, 'arena> =
     ThreadExitFullRegularPostExitTeardownTerminal<'attachment, 'main, 'arena>;
 
+/// A full direct small page uses the same detached full-regular state owner,
+/// but its entry preflight and direct-cache removal remain separately named.
+pub(crate) type ThreadExitFullDirectSmallPostExitDetach<'attachment, 'main, 'arena> =
+    ThreadExitFullRegularPostExitDetach<'attachment, 'main, 'arena>;
+pub(crate) type ThreadExitFullDirectSmallPostExitParts<'main, 'arena> =
+    ThreadExitFullRegularPostExitParts<'main, 'arena>;
+pub(crate) type ThreadExitFullDirectSmallPostExitTeardownTerminal<'attachment, 'main, 'arena> =
+    ThreadExitFullRegularPostExitTeardownTerminal<'attachment, 'main, 'arena>;
+
 /// Every mapped regular arena page detached by one source-order
 /// `_mi_theap_collect_abandon` traversal, before the former later Theap/TLD
 /// is torn down.
@@ -888,6 +897,44 @@ pub(crate) type ThreadExitFullNonDirectSmallPostExitFreeOutcome =
     ThreadExitFullRegularPostExitFreeOutcome;
 pub(crate) type ThreadExitFullNonDirectSmallPostExitFreeError =
     ThreadExitFullRegularPostExitFreeError;
+
+/// Full direct small keeps a distinct source boundary from non-direct small:
+/// its full page remains in the ordinary bin and carries the complete rounded
+/// direct-cache image, while its failed-reclaim tail takes the small partial
+/// collector.
+pub(crate) type ThreadExitFullDirectSmallPostExitAbandonError =
+    ThreadExitFullRegularPostExitAbandonError;
+pub(crate) type ThreadExitFullDirectSmallPostExitAbandonFailure<'attachment, 'main, 'arena, 'map> =
+    ThreadExitFullRegularPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>;
+pub(crate) type ThreadExitFullDirectSmallPostExitFreeOutcome =
+    ThreadExitFullRegularPostExitFreeOutcome;
+pub(crate) type ThreadExitFullDirectSmallPostExitFreeError =
+    ThreadExitFullRegularPostExitFreeError;
+
+/// The source queue/cache class for one full regular post-exit route.
+///
+/// `PageKind` alone cannot represent this boundary: full direct and
+/// non-direct small pages both remain in their ordinary bins, but only direct
+/// small owns a rounded `pages_free_direct` image and uses free.c's partial
+/// collector after exit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FullRegularPostExitClass {
+    Medium,
+    Large,
+    NonDirectSmall,
+    DirectSmall,
+}
+
+impl FullRegularPostExitClass {
+    #[inline]
+    const fn page_kind(self) -> PageKind {
+        match self {
+            Self::Medium => PageKind::Medium,
+            Self::Large => PageKind::Large,
+            Self::NonDirectSmall | Self::DirectSmall => PageKind::Small,
+        }
+    }
+}
 
 /// A source-boundary refusal while a later-main post-fast-slot drain prepares
 /// its complete mapped regular-page owner-exit traversal. `Rejected` is
@@ -2120,10 +2167,10 @@ impl<'attachment, 'main, 'arena, 'map>
     /// # Safety
     ///
     /// `block` must be one exact current canonical allocation in the sole full
-    /// `expected_kind` page owned by this post-fast-slot drain. For
-    /// `PageKind::Small`, it must be non-direct (`block_size > SMALL_SIZE_MAX`)
-    /// and therefore takes free.c's ordinary collector rather than the
-    /// direct-sized partial-collection branch.
+    /// source queue/cache class owned by this post-fast-slot drain. Full
+    /// non-direct small takes free.c's ordinary collector; full direct small
+    /// retains its exact rounded direct-cache image and takes the direct-sized
+    /// partial-collection branch.
     /// No scoped producer may survive, and every client alias must remain live
     /// only until the returned route consumes it exactly once or is retained
     /// terminally. In particular, no pre-existing local or remote free may
@@ -2131,7 +2178,7 @@ impl<'attachment, 'main, 'arena, 'map>
     unsafe fn abandon_full_regular_to_process_route(
         mut self,
         block: NonNull<u8>,
-        expected_kind: PageKind,
+        expected_class: FullRegularPostExitClass,
     ) -> Result<
         ThreadExitFullRegularPostExitDetach<'attachment, 'main, 'arena>,
         ThreadExitFullRegularPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>,
@@ -2142,15 +2189,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if !matches!(
-            expected_kind,
-            PageKind::Small | PageKind::Medium | PageKind::Large
-        ) {
-            return Err(reject(
-                self,
-                ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
-            ));
-        }
+        let expected_kind = expected_class.page_kind();
         if self.is_collection_poisoned() || self.pending_os_release.is_some() {
             return Err(reject(
                 self,
@@ -2188,17 +2227,28 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
             ));
         };
-        let is_non_direct_small = expected_kind == PageKind::Small;
-        if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(expected_kind)
-            || bin >= ARENA_BIN_COUNT
-            || bin == BIN_FULL
-            || page_ref.reserved() <= 1
-            || page_ref.used() != usize::from(page_ref.reserved())
-            || (is_non_direct_small
-                && (page_ref.block_size() <= SMALL_SIZE_MAX
-                    || page_is_in_full(page_ref)))
-            || (!is_non_direct_small && !page_is_in_full(page_ref))
-        {
+        let full_class_matches = |candidate: &Page| {
+            size_class::page_kind_for_block_size(candidate.block_size()) == Some(expected_kind)
+                && size_class::bin(candidate.block_size()) == Some(bin)
+                && bin < ARENA_BIN_COUNT
+                && bin != BIN_FULL
+                && candidate.reserved() > 1
+                && candidate.used() == usize::from(candidate.reserved())
+                && match expected_class {
+                    FullRegularPostExitClass::Medium | FullRegularPostExitClass::Large => {
+                        page_is_in_full(candidate)
+                    }
+                    FullRegularPostExitClass::NonDirectSmall => {
+                        candidate.block_size() > SMALL_SIZE_MAX && !page_is_in_full(candidate)
+                    }
+                    FullRegularPostExitClass::DirectSmall => {
+                        candidate.block_size() <= SMALL_SIZE_MAX
+                            && candidate.reserved() >= 16
+                            && !page_is_in_full(candidate)
+                    }
+                }
+        };
+        if !full_class_matches(page_ref) {
             return Err(reject(
                 self,
                 ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
@@ -2206,11 +2256,32 @@ impl<'attachment, 'main, 'arena, 'map>
         }
 
         // The source visitor must not skip another page. Full medium and
-        // large pages reside in `BIN_FULL`; a full non-direct small page
-        // remains in its ordinary size bin. The latter has no direct-cache
-        // range, so every direct-cache slot remains the source empty-page
-        // value before collection begins.
-        let expected_queue_bin = if is_non_direct_small { bin } else { BIN_FULL };
+        // large pages reside in `BIN_FULL`; both full small shapes remain in
+        // their ordinary bins. Direct small alone retains its exact rounded
+        // direct-cache range, while non-direct small keeps every direct slot
+        // at the source empty-page value.
+        let expected_queue_bin = match expected_class {
+            FullRegularPostExitClass::Medium | FullRegularPostExitClass::Large => BIN_FULL,
+            FullRegularPostExitClass::NonDirectSmall | FullRegularPostExitClass::DirectSmall => {
+                bin
+            }
+        };
+        let direct_range = match expected_class {
+            FullRegularPostExitClass::DirectSmall => {
+                match self.direct_cache_range_for_small_bin(bin, page_ref.block_size()) {
+                    Some(range) => Some(range),
+                    None => {
+                        return Err(reject(
+                            self,
+                            ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
+                        ));
+                    }
+                }
+            }
+            FullRegularPostExitClass::Medium
+            | FullRegularPostExitClass::Large
+            | FullRegularPostExitClass::NonDirectSmall => None,
+        };
         let mut sole_page = self.session.theap().page_count() == 1;
         for queue_bin in 0..BIN_COUNT {
             let expected = if queue_bin == expected_queue_bin { 1 } else { 0 };
@@ -2225,7 +2296,11 @@ impl<'attachment, 'main, 'arena, 'map>
         }
         if sole_page {
             for index in 0..PAGES_DIRECT {
-                if self.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                let expected = match direct_range {
+                    Some((start, end)) if index >= start && index <= end => page.as_ptr(),
+                    _ => EMPTY_PAGE.as_ptr(),
+                };
+                if self.session.direct_page(index) != Some(expected) {
                     sole_page = false;
                     break;
                 }
@@ -2298,10 +2373,7 @@ impl<'attachment, 'main, 'arena, 'map>
             ));
         }
         let after_force = unsafe { page.as_ref() };
-        if after_force.used() != usize::from(after_force.reserved())
-            || (is_non_direct_small && page_is_in_full(after_force))
-            || (!is_non_direct_small && !page_is_in_full(after_force))
-        {
+        if !full_class_matches(after_force) {
             return Err(retained(
                 self,
                 ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
@@ -2315,15 +2387,7 @@ impl<'attachment, 'main, 'arena, 'map>
             ));
         }
         let after_collect = unsafe { page.as_ref() };
-        if size_class::page_kind_for_block_size(after_collect.block_size()) != Some(expected_kind)
-            || size_class::bin(after_collect.block_size()) != Some(bin)
-            || after_collect.reserved() <= 1
-            || after_collect.used() != usize::from(after_collect.reserved())
-            || (is_non_direct_small
-                && (after_collect.block_size() <= SMALL_SIZE_MAX
-                    || page_is_in_full(after_collect)))
-            || (!is_non_direct_small && !page_is_in_full(after_collect))
-        {
+        if !full_class_matches(after_collect) {
             return Err(retained(
                 self,
                 ThreadExitFullRegularPostExitAbandonError::NotFullRegular,
@@ -2341,8 +2405,12 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         // SAFETY: preflight proved this exact page is the sole expected
         // source queue member, and the consuming drain owns every queue
-        // mutation. Non-direct small has no direct-cache range to update.
+        // mutation. Direct small must refresh the rounded source cache before
+        // the owning Theap's page count says this page is gone.
         unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        if direct_range.is_some() {
+            self.update_direct_cache(bin);
+        }
         if !self.session.note_page_removed() {
             return Err(retained(
                 self,
@@ -2453,7 +2521,7 @@ impl<'attachment, 'main, 'arena, 'map>
     > {
         // SAFETY: this wrapper fixes the source class before the generic
         // preflight begins; no queue or page state changes before that proof.
-        unsafe { self.abandon_full_regular_to_process_route(block, PageKind::Medium) }
+        unsafe { self.abandon_full_regular_to_process_route(block, FullRegularPostExitClass::Medium) }
     }
 
     /// Transfers one sole full large arena page through the same source full
@@ -2472,7 +2540,7 @@ impl<'attachment, 'main, 'arena, 'map>
     > {
         // SAFETY: this wrapper fixes the source class before the generic
         // preflight begins; no queue or page state changes before that proof.
-        unsafe { self.abandon_full_regular_to_process_route(block, PageKind::Large) }
+        unsafe { self.abandon_full_regular_to_process_route(block, FullRegularPostExitClass::Large) }
     }
 
     /// Transfers one sole full non-direct small arena page through the same
@@ -2494,7 +2562,34 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: this wrapper fixes the only regular-queue full-small class
         // before preflight; direct small pages and all other queue shapes are
         // rejected without mutating source state.
-        unsafe { self.abandon_full_regular_to_process_route(block, PageKind::Small) }
+        unsafe {
+            self.abandon_full_regular_to_process_route(block, FullRegularPostExitClass::NonDirectSmall)
+        }
+    }
+
+    /// Transfers one sole full direct small arena page through the same
+    /// source-unmapped failed-reclaim state machine. This class remains in its
+    /// ordinary small bin but, unlike non-direct small, must retain the exact
+    /// rounded direct-cache range and the source `reserved >= 16` partial
+    /// collector precondition.
+    ///
+    /// # Safety
+    ///
+    /// See [`Self::abandon_full_regular_to_process_route`]. `block` must name
+    /// one exact current allocation in the only full direct small page. Its
+    /// rounded block size must not exceed `SMALL_SIZE_MAX`, and no producer
+    /// may survive the source force/false collections.
+    pub(crate) unsafe fn abandon_full_direct_small_to_process_route(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        ThreadExitFullDirectSmallPostExitDetach<'attachment, 'main, 'arena>,
+        ThreadExitFullDirectSmallPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>,
+    > {
+        // SAFETY: this wrapper fixes the direct-small queue/cache class
+        // before preflight. Non-direct, full-queue, and malformed direct
+        // images reject without changing source state.
+        unsafe { self.abandon_full_regular_to_process_route(block, FullRegularPostExitClass::DirectSmall) }
     }
 
     /// Ports the retired-page portion of
