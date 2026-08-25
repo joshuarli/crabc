@@ -49,7 +49,7 @@
       "state": "available"
     },
     {
-      "claim": "On an attested native x86-64 host, runs seven named private Rust lifecycle/concurrency lanes with 11 selected tests, including five finite Loom head-protocol models. It is not general process/thread lifecycle, client routing, abandonment/adoption, pthread callback, general fault-injection or misuse parity, or whole-allocator stress evidence.",
+      "claim": "On an attested native x86-64 host, runs eight named private Rust lifecycle/concurrency lanes with 12 selected tests, including five finite Loom head-protocol models. It is not general process/thread lifecycle, client routing, abandonment/adoption, pthread callback, general fault-injection or misuse parity, or whole-allocator stress evidence.",
       "command": "./scripts/dev-amd64.sh allocator-lifecycle",
       "id": "native-bounded-lifecycle-concurrency",
       "native_required": true,
@@ -148,7 +148,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Seven bounded private Rust lifecycle/concurrency lanes (11 tests, including five finite Loom models) and five bounded crate-private fault-injection state-preservation regressions are recorded, but general remote-free routing, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models) and five bounded crate-private fault-injection state-preservation regressions are recorded, but general remote-free routing, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

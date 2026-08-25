@@ -468,18 +468,18 @@ contracts, reports, and status.
 ### Remaining native x86-64 allocator-parity work
 
 - [ ] Resolve the target-local source API/mode/test/symbol coverage ledger's
-  explicitly unassessed target-mode, object-symbol, behavior, and implementation
-  statuses into reviewed per-item outcomes; never reuse AArch64 statuses.
-- [ ] Close the source-applicable engine behavior holes identified by that
-  ledger, map each source unit to Rust, record every intentional difference,
-  and add native pinned-C differential evidence for each completed behavior.
-- [ ] Broaden the seven bounded native lifecycle/concurrency lanes (11 selected
-  tests, including five finite Loom models) and five bounded native
-  fault-injection state-preservation regressions into init/done, general remote
-  free, abandonment/adoption, pthread/TLS/fork, fault/misuse isolation,
-  remaining upstream tests, and stress evidence.
-- [ ] Broaden the bounded native private-adapter C/Rust timing and post-init
-  memory measurements into qualified whole-engine performance evidence.
+  explicitly unassessed target-mode, object-symbol, behavior, and
+  implementation statuses into reviewed per-item outcomes; never reuse AArch64
+  statuses.
+- [ ] Close the source-applicable engine behavior holes identified by the x86
+  source map and ledger, record every intentional difference, and add native
+  pinned-C differential evidence for each completed behavior.
+- [ ] Broaden the eight bounded lifecycle/concurrency lanes (12 selected tests,
+  including five finite Loom models) and five bounded fault-state regressions
+  into init/done, general remote free, abandonment/adoption, pthread/TLS/fork,
+  fault/misuse isolation, remaining upstream tests, and stress evidence.
+- [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
+  measurements into qualified whole-engine performance evidence.
 
 Public x86 `crabc` support, x86 libc/ldso/`crabc-rs` integration, public
 allocator exports, and default-backend promotion remain explicitly excluded;

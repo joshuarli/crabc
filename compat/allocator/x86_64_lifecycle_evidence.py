@@ -114,6 +114,21 @@ TEST_LANES = (
         ),
     ),
     TestLane(
+        identifier="main-heap-thread-overlapping-later-theaps",
+        kind="native-unit",
+        test_filter="main_heap_thread::tests::overlapping_later_threads_link_distinct_metadata_theaps_to_one_main_heap",
+        exact_filter=True,
+        features=(),
+        expected_pass_count=1,
+        source_tests=(
+            "main_heap_thread::tests::overlapping_later_threads_link_distinct_metadata_theaps_to_one_main_heap",
+        ),
+        bounded_behavior=(
+            "two overlapping later native workers link distinct metadata Theaps to one ticket-zero static main Heap",
+            "static main teardown remains gated until both shared-list owners finish and the shared count returns to zero",
+        ),
+    ),
+    TestLane(
         identifier="owned-tls-key-registry-concurrent-claim-release",
         kind="native-unit",
         test_filter="owned_tls_key_registry::tests::concurrent_claims_are_unique_and_explicit_releases_restore_lowest_order",

@@ -93,15 +93,16 @@ class CargoCommandTests(unittest.TestCase):
             all(lane.exact_filter for lane in EVIDENCE.TEST_LANES if lane is not loom)
         )
 
-    def test_fixed_selection_has_the_bounded_eleven_test_total(self) -> None:
-        self.assertEqual(len(EVIDENCE.TEST_LANES), 7)
-        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 11)
+    def test_fixed_selection_has_the_bounded_twelve_test_total(self) -> None:
+        self.assertEqual(len(EVIDENCE.TEST_LANES), 8)
+        self.assertEqual(sum(lane.expected_pass_count for lane in EVIDENCE.TEST_LANES), 12)
         self.assertEqual(
             [lane.identifier for lane in EVIDENCE.TEST_LANES],
             [
                 "compiler-tls-fresh-native-thread",
                 "compiler-tls-explicit-reset",
                 "compiler-tls-overlapping-native-threads",
+                "main-heap-thread-overlapping-later-theaps",
                 "owned-tls-key-registry-concurrent-claim-release",
                 "remote-free-joined-multi-producer",
                 "remote-free-owner-collection-race",
@@ -152,9 +153,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertFalse(report["scope"]["public_runtime_support"])
         self.assertEqual(report["summary"], {
-            "expected_pass_count": 11,
-            "observed_pass_count": 11,
-            "lane_count": 7,
+            "expected_pass_count": 12,
+            "observed_pass_count": 12,
+            "lane_count": 8,
         })
         self.assertTrue(report["cargo"]["locked"])
         self.assertEqual(

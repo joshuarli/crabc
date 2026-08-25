@@ -941,7 +941,7 @@ The separate bounded lifecycle/concurrency judge is also native x86-only:
 ./scripts/dev-amd64.sh allocator-lifecycle
 ```
 
-It records seven named private Rust lanes (11 selected tests, including five
+It records eight named private Rust lanes (12 selected tests, including five
 finite Loom head-protocol models) in
 `compat/reports/allocator/x86_64/lifecycle-concurrency.json`. It is evidence
 for only those listed compiler-TLS, private-key, and remote-head transitions;
@@ -997,7 +997,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
 | `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
 | `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
-| `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its seven lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
+| `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
