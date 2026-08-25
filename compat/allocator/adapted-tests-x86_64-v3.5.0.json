@@ -1,0 +1,70 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-test-adapter",
+  "profile": "linux-x86_64-private-test-adapter",
+  "scope": "Native Linux/x86-64 evidence for the private prefixed C test adapter over the bounded crabc-mimalloc engine. It is not a public mimalloc or crabc-libc allocator ABI.",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "interpreter": "ld-musl-x86_64.so.1",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "source_selection": {
+    "base_contract_path": "compat/allocator/adapted-tests-v3.5.0.json",
+    "base_source_selection_sha256": "5f08324c57193dfacb91bd84c7226ed7b83246033cec94f87f50be70f6a208d6",
+    "base_schema": "crabc-mimalloc-adapted-test-api",
+    "expected_adapter_symbol_count": 16,
+    "selected_test_count": 33,
+    "role": "Reuses only the reviewed pinned-source patch and selected C checks. The AArch64 production target, dependency, and public-API claims in the base contract are not inherited."
+  },
+  "compile_requirements": {
+    "adapter_feature": "test-adapter",
+    "compiler": "musl-gcc",
+    "expected_cdylib_elf": {
+      "class": "ELF64",
+      "endianness": "little",
+      "machine": "Advanced Micro Devices X86-64"
+    },
+    "expected_dynamic_dependencies": [
+      "libc.musl-x86_64.so.1",
+      "libgcc_s.so.1"
+    ],
+    "expected_executable_dynamic_dependencies": [
+      "libc.musl-x86_64.so.1",
+      "libgcc_s.so.1"
+    ],
+    "expected_executable_elf": {
+      "class": "ELF64",
+      "endianness": "little",
+      "machine": "Advanced Micro Devices X86-64"
+    },
+    "expected_fixture_stdout": "allocator ok\n",
+    "language": "C11",
+    "link_command_shape": "musl-gcc <fixture-or-patched-source> <rust-staticlib> -L/usr/lib -lgcc_s -lc -o <native-binary>",
+    "link_order": "C fixture or selected patched source, adapter staticlib, then musl/system libraries",
+    "native_library_search_paths": [
+      "/usr/lib"
+    ],
+    "native_static_libs": [
+      "-lgcc_s",
+      "-lc"
+    ],
+    "required_header": "crabc-mimalloc-test-adapter.h",
+    "rust_cdylib_filename": "libcrabc_mimalloc_test_adapter.so",
+    "rust_staticlib_filename": "libcrabc_mimalloc_test_adapter.a"
+  },
+  "evidence_boundary": {
+    "canonical_native_host_provenance": {
+      "execution_mode": "native",
+      "host_architectures": [
+        "x86_64",
+        "amd64"
+      ]
+    },
+    "native_execution_required": true,
+    "private_prefixed_c_abi_only": true,
+    "public_crabc_allocator_integration": false,
+    "public_mi_exports": false
+  }
+}

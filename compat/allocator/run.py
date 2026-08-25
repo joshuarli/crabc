@@ -40,6 +40,9 @@ REPORT_ROOT = ROOT / "compat/reports/allocator"
 API_CONTRACT = ALLOCATOR_ROOT / "api-v3.5.0.json"
 UPSTREAM_TEST_CONTRACT = ALLOCATOR_ROOT / "upstream-tests-v3.5.0.json"
 ADAPTED_TEST_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-v3.5.0.json"
+X86_64_API_CONTRACT = ALLOCATOR_ROOT / "x86_64-api-v3.5.0.json"
+X86_64_API_INVENTORY_RUNNER = ALLOCATOR_ROOT / "x86_64_api_inventory.py"
+X86_64_TEST_ADAPTER_CONTRACT = ALLOCATOR_ROOT / "adapted-tests-x86_64-v3.5.0.json"
 TEST_ADAPTER_ROOT = ALLOCATOR_ROOT / "test-adapter"
 TEST_ADAPTER_HEADER = TEST_ADAPTER_ROOT / "crabc-mimalloc-test-adapter.h"
 TEST_ADAPTER_FIXTURE = TEST_ADAPTER_ROOT / "allocator-fixture-wrapper.c"
@@ -65,10 +68,10 @@ X86_64_RUST_TARGET = "x86_64-unknown-linux-musl"
 X86_64_INTERPRETER = "ld-musl-x86_64.so.1"
 X86_64_ORACLE_REPORT_ROOT = REPORT_ROOT / "x86_64"
 
-# The checked-in allocator contracts and Rust adapter are intentionally still
-# AArch64 contracts.  This explicit native x86-64 profile therefore stops at
-# the pinned C oracle: it records the target assumptions needed to compile and
-# inspect that oracle without pretending that an AArch64 adapter is portable.
+# The reviewed source selection for the adapter remains in the AArch64 M4
+# contract.  The native x86-64 profile owns a separate target-local adapter
+# contract that binds only that reviewed source selection by digest; it does
+# not inherit the AArch64 target, dependency, or public-API claims.
 X86_64_TARGET_METADATA: Mapping[str, Any] = {
     "architecture": "x86_64",
     "target": X86_64_RUST_TARGET,
@@ -961,9 +964,19 @@ def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
 
 
 def validate_adapted_test_contract(
-    contract: Mapping[str, Any], pin: Mapping[str, str], adapter_header: str
+    contract: Mapping[str, Any],
+    pin: Mapping[str, str],
+    adapter_header: str,
+    *,
+    source_selection_only: bool = False,
 ) -> dict[str, int]:
-    """Validate the reviewed M4 patch, selection, and private ABI contract."""
+    """Validate the reviewed M4 patch, selection, and private ABI contract.
+
+    The x86-64 adapter contract source-binds this review record only for its
+    patch, header, symbol, and selected-check facts.  Its target-local build
+    contract must not inherit the AArch64 native-library requirements stored
+    here, so that narrow caller sets ``source_selection_only``.
+    """
 
     if contract.get("format") != 1 or contract.get("schema") != "crabc-mimalloc-adapted-test-api":
         raise HarnessError("unsupported adapted allocator test contract")
@@ -1081,25 +1094,33 @@ def validate_adapted_test_contract(
         if not isinstance(values, list) or not values or not all(isinstance(value, str) and value for value in values):
             raise HarnessError(f"adapted allocator {field} is invalid")
 
-    compile_requirements = contract.get("compile_requirements")
-    if not isinstance(compile_requirements, dict):
-        raise HarnessError("adapted allocator compile requirements are absent")
-    expected_compile = {
-        "adapter_feature": "test-adapter",
-        "expected_dynamic_dependencies": ["libc.musl-aarch64.so.1", "libgcc_s.so.1"],
-        "language": "C11",
-        "native_library_search_paths": ["/usr/lib"],
-        "native_static_libs": ["-lgcc_s", "-lc"],
-        "required_header": TEST_ADAPTER_HEADER.name,
-    }
-    for key, expected in expected_compile.items():
-        if compile_requirements.get(key) != expected:
-            raise HarnessError(f"adapted allocator compile requirement changed: {key}")
+    if not source_selection_only:
+        compile_requirements = contract.get("compile_requirements")
+        if not isinstance(compile_requirements, dict):
+            raise HarnessError("adapted allocator compile requirements are absent")
+        expected_compile = {
+            "adapter_feature": "test-adapter",
+            "expected_dynamic_dependencies": ["libc.musl-aarch64.so.1", "libgcc_s.so.1"],
+            "language": "C11",
+            "native_library_search_paths": ["/usr/lib"],
+            "native_static_libs": ["-lgcc_s", "-lc"],
+            "required_header": TEST_ADAPTER_HEADER.name,
+        }
+        for key, expected in expected_compile.items():
+            if compile_requirements.get(key) != expected:
+                raise HarnessError(f"adapted allocator compile requirement changed: {key}")
 
     verification = contract.get("verification")
     if not isinstance(verification, dict):
         raise HarnessError("adapted allocator verification record is absent")
-    for key in ("patch_applies_cleanly", "patch_round_trip_stable", "adapted_source_sha256_verified", "header_compile_verified"):
+    verification_keys = (
+        "patch_applies_cleanly",
+        "patch_round_trip_stable",
+        "adapted_source_sha256_verified",
+    )
+    if not source_selection_only:
+        verification_keys += ("header_compile_verified",)
+    for key in verification_keys:
         if verification.get(key) is not True:
             raise HarnessError(f"adapted allocator verification is not true: {key}")
     if verification.get("unsupported_raw_mi_references_found") != []:
@@ -1109,6 +1130,173 @@ def validate_adapted_test_contract(
         "expected_adapter_symbol_count": len(expected_symbols),
         "omitted_test_count": len(omitted),
         "selected_test_count": len(selected),
+    }
+
+
+def adapted_test_source_selection_payload(contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract the target-neutral M4 facts reused by the x86 adapter lane."""
+
+    return {
+        "adapted_source": contract.get("adapted_source"),
+        "adapter_header": contract.get("adapter_header"),
+        "expected_adapter_symbols": contract.get("expected_adapter_symbols"),
+        "fixture_source": contract.get("fixture_source"),
+        "format": contract.get("format"),
+        "milestone": contract.get("milestone"),
+        "omitted_tests": contract.get("omitted_tests"),
+        "patch": contract.get("patch"),
+        "required_first_test": contract.get("required_first_test"),
+        "required_init_assertions": contract.get("required_init_assertions"),
+        "required_prefixed_adapter_symbols": contract.get(
+            "required_prefixed_adapter_symbols"
+        ),
+        "required_shutdown_assertions": contract.get("required_shutdown_assertions"),
+        "required_summary_assertions": contract.get("required_summary_assertions"),
+        "schema": contract.get("schema"),
+        "selected_tests": contract.get("selected_tests"),
+        "source_hashes": contract.get("source_hashes"),
+        "upstream": contract.get("upstream"),
+    }
+
+
+def adapted_test_source_selection_digest(contract: Mapping[str, Any]) -> str:
+    """Hash a canonical target-neutral selection payload, never its link contract."""
+
+    encoded = json.dumps(
+        adapted_test_source_selection_payload(contract),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_x86_64_test_adapter_contract(
+    contract: Mapping[str, Any],
+    source_contract: Mapping[str, Any],
+    pin: Mapping[str, str],
+    adapter_header: str,
+) -> dict[str, Any]:
+    """Validate the native x86-64 boundary around the reviewed M4 source set.
+
+    The source-selection contract remains the authoritative review record for
+    the patch, symbols, and selected checks.  This separate contract records
+    only the native x86-64 build and evidence boundary, so it cannot inherit
+    AArch64 production assumptions by accident.
+    """
+
+    expected_fields = {
+        "compile_requirements",
+        "evidence_boundary",
+        "format",
+        "profile",
+        "schema",
+        "scope",
+        "source_selection",
+        "target",
+    }
+    if set(contract) != expected_fields:
+        raise HarnessError("native x86-64 test adapter contract fields changed")
+    if contract.get("format") != 1 or contract.get("schema") != "crabc-mimalloc-x86_64-test-adapter":
+        raise HarnessError("unsupported native x86-64 test adapter contract")
+    if contract.get("profile") != "linux-x86_64-private-test-adapter":
+        raise HarnessError("native x86-64 test adapter profile changed")
+    if contract.get("scope") != (
+        "Native Linux/x86-64 evidence for the private prefixed C test adapter "
+        "over the bounded crabc-mimalloc engine. It is not a public mimalloc "
+        "or crabc-libc allocator ABI."
+    ):
+        raise HarnessError("native x86-64 test adapter scope changed")
+
+    expected_target = {
+        "architecture": "x86_64",
+        "endianness": "little",
+        "interpreter": X86_64_INTERPRETER,
+        "rust_target": X86_64_RUST_TARGET,
+        "system": "linux",
+    }
+    if contract.get("target") != expected_target:
+        raise HarnessError("native x86-64 test adapter target changed")
+
+    source_summary = validate_adapted_test_contract(
+        source_contract,
+        pin,
+        adapter_header,
+        source_selection_only=True,
+    )
+    source_selection = contract.get("source_selection")
+    if not isinstance(source_selection, dict):
+        raise HarnessError("native x86-64 test adapter source-selection is absent")
+    source_selection_digest = adapted_test_source_selection_digest(source_contract)
+    if source_selection.get("base_source_selection_sha256") != source_selection_digest:
+        raise HarnessError("native x86-64 test adapter source-selection digest changed")
+    expected_source_selection = {
+        "base_contract_path": relative(ADAPTED_TEST_CONTRACT),
+        "base_source_selection_sha256": source_selection_digest,
+        "base_schema": "crabc-mimalloc-adapted-test-api",
+        "expected_adapter_symbol_count": source_summary["expected_adapter_symbol_count"],
+        "selected_test_count": source_summary["selected_test_count"],
+        "role": (
+            "Reuses only the reviewed pinned-source patch and selected C checks. "
+            "The AArch64 production target, dependency, and public-API claims "
+            "in the base contract are not inherited."
+        ),
+    }
+    if source_selection != expected_source_selection:
+        raise HarnessError("native x86-64 test adapter source-selection changed")
+
+    expected_compile_requirements = {
+        "adapter_feature": "test-adapter",
+        "compiler": "musl-gcc",
+        "expected_cdylib_elf": {
+            "class": "ELF64",
+            "endianness": "little",
+            "machine": "Advanced Micro Devices X86-64",
+        },
+        "expected_dynamic_dependencies": ["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+        "expected_executable_dynamic_dependencies": [
+            "libc.musl-x86_64.so.1",
+            "libgcc_s.so.1",
+        ],
+        "expected_executable_elf": {
+            "class": "ELF64",
+            "endianness": "little",
+            "machine": "Advanced Micro Devices X86-64",
+        },
+        "expected_fixture_stdout": "allocator ok\n",
+        "language": "C11",
+        "link_command_shape": (
+            "musl-gcc <fixture-or-patched-source> <rust-staticlib> -L/usr/lib "
+            "-lgcc_s -lc -o <native-binary>"
+        ),
+        "link_order": "C fixture or selected patched source, adapter staticlib, then musl/system libraries",
+        "native_library_search_paths": ["/usr/lib"],
+        "native_static_libs": ["-lgcc_s", "-lc"],
+        "required_header": TEST_ADAPTER_HEADER.name,
+        "rust_cdylib_filename": "libcrabc_mimalloc_test_adapter.so",
+        "rust_staticlib_filename": "libcrabc_mimalloc_test_adapter.a",
+    }
+    if contract.get("compile_requirements") != expected_compile_requirements:
+        raise HarnessError("native x86-64 test adapter compile requirements changed")
+
+    expected_boundary = {
+        "canonical_native_host_provenance": {
+            "execution_mode": "native",
+            "host_architectures": ["x86_64", "amd64"],
+        },
+        "native_execution_required": True,
+        "private_prefixed_c_abi_only": True,
+        "public_crabc_allocator_integration": False,
+        "public_mi_exports": False,
+    }
+    if contract.get("evidence_boundary") != expected_boundary:
+        raise HarnessError("native x86-64 test adapter evidence boundary changed")
+
+    return {
+        "expected_adapter_symbol_count": source_summary["expected_adapter_symbol_count"],
+        "profile": "linux-x86_64-private-test-adapter",
+        "selected_test_count": source_summary["selected_test_count"],
+        "target": X86_64_RUST_TARGET,
     }
 
 
@@ -1956,12 +2144,33 @@ def require_native_aarch64() -> None:
         raise HarnessError("allocator C oracle requires the pinned native Linux/AArch64 development image")
 
 
-def require_native_x86_64() -> None:
+def require_native_x86_64() -> dict[str, str]:
+    """Refuse x86 evidence unless the canonical launcher attests a native host.
+
+    A Docker guest can report x86-64 while QEMU translates it on a different
+    host.  The dispatcher computes and passes these two values before the
+    container starts, so require them in addition to the guest ELF/runtime
+    facts.  Direct `--check` remains source-only; direct x86 execution must
+    deliberately use the canonical native launcher provenance.
+    """
+
+    execution_mode = os.environ.get("CRABC_EXECUTION_MODE")
+    host_architecture = os.environ.get("CRABC_HOST_ARCH")
+    if execution_mode != "native" or host_architecture not in {"x86_64", "amd64"}:
+        raise HarnessError(
+            "native x86-64 allocator evidence requires canonical native provenance: "
+            "CRABC_EXECUTION_MODE=native and CRABC_HOST_ARCH=x86_64 (or amd64); "
+            "use ./scripts/dev-amd64.sh allocator --quick"
+        )
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise HarnessError(
             "x86-64 allocator C oracle requires the native Linux/x86-64 development image; "
             "emulation is not accepted"
         )
+    return {
+        "execution_mode": execution_mode,
+        "host_architecture": host_architecture,
+    }
 
 
 def require_native_architecture(architecture: str) -> None:
@@ -2018,6 +2227,71 @@ def artifact_record(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise HarnessError(f"oracle artifact is absent: {path}")
     return {"bytes": path.stat().st_size, "path": relative(path), "sha256": sha256_file(path)}
+
+
+def x86_64_source_api_inventory(archive: Path) -> dict[str, Any]:
+    """Check the target-local source declaration inventory against this archive."""
+
+    command = [
+        sys.executable,
+        str(X86_64_API_INVENTORY_RUNNER),
+        "--archive",
+        str(archive),
+    ]
+    record = command_record(command, cwd=ROOT)
+    require_success(record, "native x86-64 source C API inventory")
+    contract = read_json(X86_64_API_CONTRACT)
+    expected_target = {
+        "architecture": "x86_64",
+        "endianness": "little",
+        "rust_target": X86_64_RUST_TARGET,
+        "system": "linux",
+    }
+    if contract.get("target_context") != expected_target:
+        raise HarnessError("native x86-64 source C API inventory target changed")
+    declaration_count = contract.get("declaration_count")
+    declaration_names_sha256 = contract.get("declaration_names_sha256")
+    if type(declaration_count) is not int or declaration_count <= 0:
+        raise HarnessError("native x86-64 source C API inventory count is invalid")
+    if not isinstance(declaration_names_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", declaration_names_sha256
+    ):
+        raise HarnessError("native x86-64 source C API inventory digest is invalid")
+    return {
+        "command": command,
+        "contract": artifact_record(X86_64_API_CONTRACT),
+        "declaration_count": declaration_count,
+        "declaration_names_sha256": declaration_names_sha256,
+        "status": "passed",
+    }
+
+
+def parse_elf_identity(header: str, architecture: str) -> dict[str, str]:
+    """Read the narrow native ELF identity needed by one oracle lane."""
+
+    expected_machine = {
+        "aarch64": "AArch64",
+        "x86_64": "Advanced Micro Devices X86-64",
+    }.get(architecture)
+    if expected_machine is None:
+        raise HarnessError(f"unsupported allocator ELF architecture: {architecture}")
+    class_match = re.search(r"(?m)^\s*Class:\s*(\S+)\s*$", header)
+    data_match = re.search(r"(?m)^\s*Data:\s*(.+?)\s*$", header)
+    machine_match = re.search(r"(?m)^\s*Machine:\s*(.+?)\s*$", header)
+    if (
+        class_match is None
+        or class_match.group(1) != "ELF64"
+        or data_match is None
+        or "little endian" not in data_match.group(1)
+        or machine_match is None
+        or machine_match.group(1) != expected_machine
+    ):
+        raise HarnessError(f"ELF artifact is not little-endian {architecture} ELF64")
+    return {
+        "class": "ELF64",
+        "endianness": "little",
+        "machine": expected_machine,
+    }
 
 
 def parse_macros(output: str) -> dict[str, str]:
@@ -2302,8 +2576,80 @@ def archive_defined_symbols(nm: str, artifact: Path) -> list[str]:
 
 def dynamic_dependencies(readelf: str, artifact: Path) -> list[str]:
     record = command_record((readelf, "--wide", "--dynamic", str(artifact)), cwd=ROOT)
-    require_success(record, "adapter dynamic dependency inventory")
+    require_success(record, "dynamic dependency inventory")
     return sorted(set(re.findall(r"Shared library: \[([^\]]+)\]", str(record["stdout"]))))
+
+
+def parse_program_interpreter(program_headers: str, expected_basename: str) -> str:
+    """Require one PT_INTERP path with the contract's stable basename.
+
+    The pinned development image installs musl below a versioned absolute
+    directory, so the target contract deliberately records the loader
+    basename rather than an image-private path.  The complete observed path
+    remains report evidence while its basename proves the intended loader.
+    """
+
+    if not isinstance(expected_basename, str) or not expected_basename:
+        raise HarnessError("executable interpreter contract is invalid")
+    matches = re.findall(
+        r"(?m)^\s*\[Requesting program interpreter:\s*([^\]]+)\]\s*$",
+        program_headers,
+    )
+    if len(matches) != 1:
+        raise HarnessError("executable PT_INTERP record is absent or ambiguous")
+    interpreter = matches[0].strip()
+    if not interpreter or Path(interpreter).name != expected_basename:
+        raise HarnessError("executable PT_INTERP differs from the native target contract")
+    return interpreter
+
+
+def audit_native_executable(
+    readelf: str,
+    artifact: Path,
+    *,
+    architecture: str,
+    expected_elf: Mapping[str, str],
+    expected_interpreter: str,
+    expected_dynamic_dependencies: Sequence[str],
+) -> dict[str, Any]:
+    """Audit a native fixture executable before treating its result as evidence."""
+
+    if (
+        not isinstance(expected_elf, Mapping)
+        or set(expected_elf) != {"class", "endianness", "machine"}
+        or not all(isinstance(value, str) and value for value in expected_elf.values())
+    ):
+        raise HarnessError("native executable ELF contract is invalid")
+    if (
+        isinstance(expected_dynamic_dependencies, (str, bytes))
+        or not isinstance(expected_dynamic_dependencies, Sequence)
+        or not expected_dynamic_dependencies
+        or not all(isinstance(item, str) and item for item in expected_dynamic_dependencies)
+    ):
+        raise HarnessError("native executable dynamic dependency contract is invalid")
+
+    header = command_record((readelf, "-h", str(artifact)), cwd=ROOT)
+    require_success(header, "native fixture ELF header")
+    elf = parse_elf_identity(str(header["stdout"]), architecture)
+    if elf != dict(expected_elf):
+        raise HarnessError("native fixture ELF identity differs from the manifest")
+
+    program_headers = command_record(
+        (readelf, "--wide", "--program-headers", str(artifact)), cwd=ROOT
+    )
+    require_success(program_headers, "native fixture PT_INTERP inventory")
+    interpreter = parse_program_interpreter(
+        str(program_headers["stdout"]), expected_interpreter
+    )
+
+    dependencies = dynamic_dependencies(readelf, artifact)
+    if dependencies != list(expected_dynamic_dependencies):
+        raise HarnessError("native fixture dynamic dependency set differs from the manifest")
+    return {
+        "dynamic_dependencies": dependencies,
+        "elf": elf,
+        "interpreter": interpreter,
+    }
 
 
 FORBIDDEN_ADAPTER_ALLOCATOR_EXPORTS = frozenset(
@@ -2699,17 +3045,7 @@ def build_profile(
     require_success(macro_probe, f"pinned C preprocessor probe {name}")
     header = command_record((readelf, "-h", str(artifact)), cwd=source)
     require_success(header, f"pinned C ELF header probe {name}")
-    header_text = str(header["stdout"])
-    machine_marker = {
-        "aarch64": "AArch64",
-        "x86_64": "Advanced Micro Devices X86-64",
-    }.get(architecture)
-    if machine_marker is None:
-        raise HarnessError(f"unsupported allocator oracle architecture: {architecture}")
-    if machine_marker not in header_text or "little endian" not in header_text:
-        raise HarnessError(
-            f"C oracle artifact is not little-endian {architecture}: {artifact}"
-        )
+    parse_elf_identity(str(header["stdout"]), architecture)
     result = {
         "artifact": artifact_record(artifact),
         "build": {"command": command, "stderr": build["stderr"]},
@@ -3059,10 +3395,16 @@ def build_test_adapter(
     readelf: str,
     nm: str,
     contract: Mapping[str, Any],
+    *,
+    rust_target: str = PRODUCTION_RUST_TARGET,
+    architecture: str = "aarch64",
+    artifact_root: Path | None = None,
+    expected_symbols: Sequence[str] | None = None,
 ) -> tuple[Path, list[str], dict[str, Any]]:
     """Build and audit the test-only prefixed Rust staticlib/cdylib pair."""
 
-    artifact_root = REPORT_ROOT / "test-adapter"
+    if artifact_root is None:
+        artifact_root = REPORT_ROOT / "test-adapter"
     cargo_target = artifact_root / "cargo-target"
     artifact_root.mkdir(parents=True, exist_ok=True)
     clean_command = [
@@ -3071,7 +3413,7 @@ def build_test_adapter(
         "--package",
         "crabc-mimalloc-test-adapter",
         "--target",
-        PRODUCTION_RUST_TARGET,
+        rust_target,
         "--release",
         "--target-dir",
         str(cargo_target),
@@ -3088,7 +3430,7 @@ def build_test_adapter(
         "--features",
         "test-adapter",
         "--target",
-        PRODUCTION_RUST_TARGET,
+        rust_target,
         "--release",
         "--target-dir",
         str(cargo_target),
@@ -3109,7 +3451,7 @@ def build_test_adapter(
         "--features",
         "test-adapter",
         "--target",
-        PRODUCTION_RUST_TARGET,
+        rust_target,
         "--release",
         "--target-dir",
         str(cargo_target),
@@ -3121,18 +3463,37 @@ def build_test_adapter(
     native_libraries = parse_native_static_libraries(
         str(rustc_record["stdout"]) + "\n" + str(rustc_record["stderr"])
     )
-    compile_requirements = contract["compile_requirements"]
-    assert isinstance(compile_requirements, dict)
+    compile_requirements = contract.get("compile_requirements")
+    if not isinstance(compile_requirements, dict):
+        raise HarnessError("Rust test adapter lacks compile requirements")
     native_search_paths = compile_requirements["native_library_search_paths"]
     assert isinstance(native_search_paths, list)
     if native_libraries != compile_requirements["native_static_libs"]:
         raise HarnessError("Rust test adapter native static library order differs from the manifest")
 
-    release_root = cargo_target / PRODUCTION_RUST_TARGET / "release"
-    static_library = release_root / "libcrabc_mimalloc_test_adapter.a"
-    shared_library = release_root / "libcrabc_mimalloc_test_adapter.so"
-    expected_symbols = contract["expected_adapter_symbols"]
-    assert isinstance(expected_symbols, list)
+    release_root = cargo_target / rust_target / "release"
+    static_filename = compile_requirements.get(
+        "rust_staticlib_filename", "libcrabc_mimalloc_test_adapter.a"
+    )
+    shared_filename = compile_requirements.get(
+        "rust_cdylib_filename", "libcrabc_mimalloc_test_adapter.so"
+    )
+    if (
+        static_filename != "libcrabc_mimalloc_test_adapter.a"
+        or shared_filename != "libcrabc_mimalloc_test_adapter.so"
+    ):
+        raise HarnessError("Rust test adapter artifact filename differs from the manifest")
+    static_library = release_root / static_filename
+    shared_library = release_root / shared_filename
+    if expected_symbols is None:
+        expected_symbols = contract.get("expected_adapter_symbols")
+    if (
+        not isinstance(expected_symbols, Sequence)
+        or isinstance(expected_symbols, (str, bytes))
+        or not expected_symbols
+        or not all(isinstance(symbol, str) and symbol for symbol in expected_symbols)
+    ):
+        raise HarnessError("Rust test adapter expected symbols are absent or invalid")
     shared_symbols = validate_adapter_dynamic_symbols(
         defined_dynamic_symbols(readelf, shared_library), expected_symbols
     )
@@ -3143,7 +3504,18 @@ def build_test_adapter(
     if needed != compile_requirements["expected_dynamic_dependencies"]:
         raise HarnessError("Rust test adapter dynamic dependency set differs from the manifest")
 
-    return static_library, native_libraries, {
+    cdylib_elf: dict[str, str] | None = None
+    expected_cdylib_elf = compile_requirements.get("expected_cdylib_elf")
+    if expected_cdylib_elf is not None:
+        if not isinstance(expected_cdylib_elf, dict):
+            raise HarnessError("Rust test adapter cdylib ELF contract is invalid")
+        header = command_record((readelf, "-h", str(shared_library)), cwd=ROOT)
+        require_success(header, "Rust test adapter cdylib ELF header")
+        cdylib_elf = parse_elf_identity(str(header["stdout"]), architecture)
+        if cdylib_elf != expected_cdylib_elf:
+            raise HarnessError("Rust test adapter cdylib ELF identity differs from the manifest")
+
+    report = {
         "archive": artifact_record(static_library),
         "archive_symbols": archive_symbols,
         "clean_command": clean_command,
@@ -3156,6 +3528,9 @@ def build_test_adapter(
         "unit_test_command": test_command,
         "unit_test_count": parse_rust_test_count(test_output),
     }
+    if cdylib_elf is not None:
+        report["cdylib_elf"] = cdylib_elf
+    return static_library, native_libraries, report
 
 
 def build_runtime_ticket_zero_adapter(
@@ -3245,12 +3620,27 @@ def run_test_adapter_fixtures(
     source: Path,
     static_library: Path,
     native_libraries: Sequence[str],
-    contract: Mapping[str, Any],
+    source_contract: Mapping[str, Any],
+    *,
+    artifact_root: Path | None = None,
+    target_compile_requirements: Mapping[str, Any] | None = None,
+    expected_fixture_stdout: str = "allocator ok\n",
+    readelf: str | None = None,
+    native_executable_expectations: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run the existing allocator fixture and selected upstream API checks."""
+    """Build, audit, and run the fixture plus selected upstream API checks.
 
-    artifact_root = REPORT_ROOT / "test-adapter"
-    compile_requirements = contract["compile_requirements"]
+    The historical AArch64 adapter caller omits the optional executable
+    expectations.  The target-local x86-64 adapter supplies them so a fixture
+    result cannot stand as native evidence unless its ELF identity, PT_INTERP,
+    and DT_NEEDED records all match the checked-in target contract.
+    """
+
+    if artifact_root is None:
+        artifact_root = REPORT_ROOT / "test-adapter"
+    if target_compile_requirements is None:
+        target_compile_requirements = source_contract.get("compile_requirements")
+    compile_requirements = target_compile_requirements
     assert isinstance(compile_requirements, dict)
     native_search_paths = compile_requirements["native_library_search_paths"]
     assert isinstance(native_search_paths, list)
@@ -3275,8 +3665,38 @@ def run_test_adapter_fixtures(
     ]
     fixture_build = command_record(fixture_command, cwd=ROOT)
     require_success(fixture_build, "existing allocator fixture against Rust adapter")
+    fixture_executable_evidence: dict[str, Any] | None = None
+    adapted_executable_evidence: dict[str, Any] | None = None
+    if native_executable_expectations is not None:
+        if readelf is None:
+            raise HarnessError("native fixture executable audit lacks readelf")
+        expected_fields = {
+            "architecture",
+            "dynamic_dependencies",
+            "elf",
+            "interpreter",
+        }
+        if (
+            not isinstance(native_executable_expectations, Mapping)
+            or set(native_executable_expectations) != expected_fields
+        ):
+            raise HarnessError("native fixture executable audit contract fields changed")
+        architecture = native_executable_expectations["architecture"]
+        expected_elf = native_executable_expectations["elf"]
+        expected_interpreter = native_executable_expectations["interpreter"]
+        expected_dependencies = native_executable_expectations["dynamic_dependencies"]
+        if not isinstance(architecture, str):
+            raise HarnessError("native fixture executable audit architecture is invalid")
+        fixture_executable_evidence = audit_native_executable(
+            readelf,
+            fixture_binary,
+            architecture=architecture,
+            expected_elf=expected_elf,
+            expected_interpreter=expected_interpreter,
+            expected_dynamic_dependencies=expected_dependencies,
+        )
     fixture_run = command_record((str(fixture_binary),), cwd=ROOT)
-    if fixture_run["status"] != 0 or fixture_run["stdout"] != "allocator ok\n":
+    if fixture_run["status"] != 0 or fixture_run["stdout"] != expected_fixture_stdout:
         raise HarnessError(
             "existing allocator fixture failed against Rust adapter: "
             f"status={fixture_run['status']} stdout={fixture_run['stdout']!r} "
@@ -3284,7 +3704,7 @@ def run_test_adapter_fixtures(
         )
 
     adapted_binary = artifact_root / "upstream-test-api-m4-rust"
-    adapted_source = source / str(contract["adapted_source"]["path"])
+    adapted_source = source / str(source_contract["adapted_source"]["path"])
     adapted_command = [
         compiler,
         "-std=c11",
@@ -3308,19 +3728,29 @@ def run_test_adapter_fixtures(
     ]
     adapted_build = command_record(adapted_command, cwd=source)
     require_success(adapted_build, "adapted upstream API fixture against Rust adapter")
+    if native_executable_expectations is not None:
+        assert readelf is not None
+        adapted_executable_evidence = audit_native_executable(
+            readelf,
+            adapted_binary,
+            architecture=architecture,
+            expected_elf=expected_elf,
+            expected_interpreter=expected_interpreter,
+            expected_dynamic_dependencies=expected_dependencies,
+        )
     adapted_run = command_record((str(adapted_binary),), cwd=source)
     require_success(adapted_run, "adapted upstream API fixture")
     summary = parse_upstream_api_test_summary(
         str(adapted_run["stdout"]) + "\n" + str(adapted_run["stderr"])
     )
-    selected = contract["selected_tests"]
+    selected = source_contract["selected_tests"]
     assert isinstance(selected, list)
     if summary["succeeded"] != len(selected):
         raise HarnessError(
             "adapted upstream API summary count differs from the reviewed selection"
         )
 
-    return {
+    result = {
         "adapted_upstream_api": {
             "artifact": artifact_record(adapted_binary),
             "build_command": adapted_command,
@@ -3334,6 +3764,11 @@ def run_test_adapter_fixtures(
             "stdout": str(fixture_run["stdout"]),
         },
     }
+    if fixture_executable_evidence is not None:
+        assert adapted_executable_evidence is not None
+        result["existing_allocator_fixture"]["native_executable"] = fixture_executable_evidence
+        result["adapted_upstream_api"]["native_executable"] = adapted_executable_evidence
+    return result
 
 
 def run_runtime_ticket_zero_adapter_fixture(
@@ -3426,21 +3861,27 @@ def run_x86_64_oracle(
     pin: Mapping[str, str],
     archive: Path,
     source: Path,
-    contracts: Mapping[Path, Mapping[str, Any]],
-    port_map: Mapping[str, Any],
+    source_api_inventory: Mapping[str, Any],
+    adapter_source_contract: Mapping[str, Any],
+    adapter_source_summary: Mapping[str, Any],
+    adapter_contract: Mapping[str, Any],
+    adapter_summary: Mapping[str, Any],
+    adapter_patch: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Run only the native x86-64 pinned C-oracle lane.
+    """Run native x86-64 C-oracle and private test-adapter evidence.
 
     The AArch64 API/adapter contracts remain the production contract.  This
     lane deliberately proves source identity, C layouts/traces, ELF machine
     identity, native direct-Rust configuration/layout/trace parity, compiler
-    TLS code generation, and the x86-64 musl target assumptions while leaving
-    the target-dependent Rust adapter and dependency graph unclaimed.
+    TLS code generation, the target-local private test adapter, and the
+    x86-64 musl target assumptions while leaving the dependency graph and
+    public allocator integration unclaimed.
     """
 
-    require_native_x86_64()
+    native_execution_provenance = require_native_x86_64()
     compiler = require_tool("musl-gcc")
     readelf = require_tool("readelf")
+    nm = require_tool("nm")
     profiles = {
         name: build_profile(
             compiler,
@@ -3453,9 +3894,6 @@ def run_x86_64_oracle(
         )
         for name, flags in CONFIGURATION_PROFILES.items()
     }
-    release_symbol_contract = validate_release_symbol_contract(
-        contracts[API_CONTRACT], profiles["release"]["symbols"]
-    )
     rust_direct_engine = rust_layout_probe(
         profiles["release"]["layout"],
         profiles["release"]["single_thread_small_trace"]["record"],
@@ -3474,28 +3912,73 @@ def run_x86_64_oracle(
         target_metadata=X86_64_TARGET_METADATA,
     )
     report["architecture_profile"] = "x86_64-native-c-oracle"
-    report["contracts"] = {
-        relative(path): payload["summary"] for path, payload in contracts.items()
-    }
-    report["port_map"] = port_map_counts(port_map)
-    report["release_symbol_contract"] = release_symbol_contract
+    report["native_execution_provenance"] = native_execution_provenance
+    report["x86_64_source_api_inventory"] = dict(source_api_inventory)
     # The unit suite exercises the direct no_std engine against this native C
-    # oracle. It is intentionally not evidence for the AArch64-only C adapter
-    # or for public allocator integration.
+    # oracle. It is distinct from the target-local private adapter below and
+    # is not evidence for public allocator integration.
     report["rust_direct_engine"] = rust_direct_engine
     report["compiler_tls_codegen"] = compiler_tls_codegen(architecture="x86_64")
-    report["unsupported_lanes"] = {
-        "rust_adapter": (
-            "not run: the checked-in adapter contract is target-specific to "
-            "AArch64 and this profile owns only native x86-64 C-oracle evidence"
+    adapter_compile_requirements = adapter_contract["compile_requirements"]
+    assert isinstance(adapter_compile_requirements, dict)
+    adapter_target = adapter_contract["target"]
+    assert isinstance(adapter_target, dict)
+    native_executable_expectations = {
+        "architecture": adapter_target["architecture"],
+        "dynamic_dependencies": adapter_compile_requirements[
+            "expected_executable_dynamic_dependencies"
+        ],
+        "elf": adapter_compile_requirements["expected_executable_elf"],
+        "interpreter": adapter_target["interpreter"],
+    }
+    expected_adapter_symbols = adapter_source_contract["expected_adapter_symbols"]
+    assert isinstance(expected_adapter_symbols, list)
+    adapter_artifact_root = X86_64_ORACLE_REPORT_ROOT / "test-adapter"
+    static_library, native_libraries, adapter_build = build_test_adapter(
+        readelf,
+        nm,
+        adapter_contract,
+        rust_target=X86_64_RUST_TARGET,
+        architecture="x86_64",
+        artifact_root=adapter_artifact_root,
+        expected_symbols=expected_adapter_symbols,
+    )
+    report["x86_64_private_test_adapter"] = {
+        "build": adapter_build,
+        "contract": artifact_record(X86_64_TEST_ADAPTER_CONTRACT),
+        "contract_summary": dict(adapter_summary),
+        "evidence_boundary": adapter_contract["evidence_boundary"],
+        "fixtures": run_test_adapter_fixtures(
+            compiler,
+            source,
+            static_library,
+            native_libraries,
+            adapter_source_contract,
+            artifact_root=adapter_artifact_root,
+            target_compile_requirements=adapter_compile_requirements,
+            expected_fixture_stdout=str(
+                adapter_compile_requirements["expected_fixture_stdout"]
+            ),
+            readelf=readelf,
+            native_executable_expectations=native_executable_expectations,
         ),
+        "source_selection": {
+            "base_contract_path": relative(ADAPTED_TEST_CONTRACT),
+            "base_contract_summary": dict(adapter_source_summary),
+            "base_source_selection_sha256": adapted_test_source_selection_digest(
+                adapter_source_contract
+            ),
+            "patch": adapter_patch,
+        },
+    }
+    report["unsupported_lanes"] = {
         "production_dependency_graph": (
             "not run: the production graph contract is target-specific to "
             f"{PRODUCTION_RUST_TARGET}"
         ),
         "public_allocator_integration": (
-            "not run: public crabc allocator integration and default promotion "
-            "remain Linux/AArch64-only"
+            "not run: the private prefixed adapter exports no mi_* symbols and "
+            "does not establish public crabc allocator integration or default promotion"
         ),
     }
     output = X86_64_ORACLE_REPORT_ROOT / "latest.json"
@@ -3521,6 +4004,61 @@ def run_milestone0(
     archive = fetch_archive(pin, offline)
     with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-") as temporary:
         source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        if architecture == "x86_64":
+            if generate_contracts:
+                raise HarnessError(
+                    "native x86-64 uses its checked-in source API inventory; "
+                    "AArch64 contract generation is not part of this profile"
+                )
+            source_api_inventory = x86_64_source_api_inventory(archive)
+            adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
+            adapted_summary = validate_adapted_test_contract(
+                adapted_contract,
+                pin,
+                TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+                source_selection_only=True,
+            )
+            x86_64_adapter_contract = read_json(X86_64_TEST_ADAPTER_CONTRACT)
+            x86_64_adapter_summary = validate_x86_64_test_adapter_contract(
+                x86_64_adapter_contract,
+                adapted_contract,
+                pin,
+                TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+            )
+            adapted_patch = apply_and_verify_adapted_test_patch(
+                source,
+                adapted_contract,
+                require_tool("patch"),
+            )
+            if check_only:
+                return {
+                    "architecture_profile": "x86_64-source-contract-check",
+                    "x86_64_source_api_inventory": source_api_inventory,
+                    "x86_64_private_test_adapter": {
+                        "contract": artifact_record(X86_64_TEST_ADAPTER_CONTRACT),
+                        "contract_summary": x86_64_adapter_summary,
+                        "source_selection": {
+                            "base_contract_path": relative(ADAPTED_TEST_CONTRACT),
+                            "base_contract_summary": adapted_summary,
+                            "base_source_selection_sha256": adapted_test_source_selection_digest(
+                                adapted_contract
+                            ),
+                            "patch": adapted_patch,
+                        },
+                    },
+                    "status": "checked",
+                }
+            return run_x86_64_oracle(
+                pin=pin,
+                archive=archive,
+                source=source,
+                source_api_inventory=source_api_inventory,
+                adapter_source_contract=adapted_contract,
+                adapter_source_summary=adapted_summary,
+                adapter_contract=x86_64_adapter_contract,
+                adapter_summary=x86_64_adapter_summary,
+                adapter_patch=adapted_patch,
+            )
         contracts = generated_contracts(source, pin)
         if generate_contracts:
             write_contracts(contracts)
@@ -3528,24 +4066,6 @@ def run_milestone0(
             check_contracts(contracts)
         port_map = load_port_map()
         check_ratchet(port_map)
-        if architecture == "x86_64":
-            if check_only:
-                return {
-                    "architecture_profile": "x86_64-native-c-oracle",
-                    "contracts": {
-                        relative(path): payload["summary"]
-                        for path, payload in contracts.items()
-                    },
-                    "port_map": port_map_counts(port_map),
-                    "status": "checked",
-                }
-            return run_x86_64_oracle(
-                pin=pin,
-                archive=archive,
-                source=source,
-                contracts=contracts,
-                port_map=port_map,
-            )
         adapted_contract = read_json(ADAPTED_TEST_CONTRACT)
         adapted_summary = validate_adapted_test_contract(
             adapted_contract,
@@ -3676,7 +4196,11 @@ def parse_arguments() -> argparse.Namespace:
         if arguments.quick or arguments.full or arguments.perf_smoke or arguments.perf_full:
             parser.error("contract generation/snapshot cannot be combined with a gate mode")
     if arguments.architecture == "x86_64" and (
-        arguments.full or arguments.perf_smoke or arguments.perf_full
+        arguments.full
+        or arguments.perf_smoke
+        or arguments.perf_full
+        or arguments.generate_contracts
+        or arguments.snapshot_ratchet
     ):
         parser.error("the native x86-64 profile supports only --quick or --check")
     return arguments

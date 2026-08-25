@@ -137,19 +137,136 @@ class InventoryTests(unittest.TestCase):
             with mock.patch.object(sys, "argv", ["run.py", "--quick", "--x86-64"]):
                 self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
 
-    def test_parser_does_not_allow_x86_64_to_claim_later_adapter_lanes(self) -> None:
-        with mock.patch.object(
-            sys, "argv", ["run.py", "--full", "--architecture", "x86_64"]
-        ):
-            with self.assertRaises(SystemExit):
-                RUNNER.parse_arguments()
+    def test_parser_does_not_allow_x86_64_to_claim_later_production_lanes(self) -> None:
+        for mode in ("--full", "--perf-smoke", "--perf-full", "--generate-contracts", "--snapshot-ratchet"):
+            with self.subTest(mode=mode), mock.patch.object(
+                sys, "argv", ["run.py", mode, "--architecture", "x86_64"]
+            ):
+                with self.assertRaises(SystemExit):
+                    RUNNER.parse_arguments()
 
     def test_native_architecture_gate_rejects_non_native_x86_64(self) -> None:
-        with mock.patch.object(RUNNER.platform, "system", return_value="Linux"), mock.patch.object(
+        with mock.patch.dict(
+            os.environ,
+            {"CRABC_EXECUTION_MODE": "native", "CRABC_HOST_ARCH": "x86_64"},
+            clear=False,
+        ), mock.patch.object(RUNNER.platform, "system", return_value="Linux"), mock.patch.object(
             RUNNER.platform, "machine", return_value="aarch64"
         ):
             with self.assertRaisesRegex(RUNNER.HarnessError, "native Linux/x86-64"):
                 RUNNER.require_native_x86_64()
+
+    def test_native_architecture_gate_rejects_missing_or_emulated_x86_provenance(self) -> None:
+        with mock.patch.object(RUNNER.platform, "system", return_value="Linux"), mock.patch.object(
+            RUNNER.platform, "machine", return_value="x86_64"
+        ):
+            with mock.patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "canonical native provenance"):
+                    RUNNER.require_native_x86_64()
+            with mock.patch.dict(
+                os.environ,
+                {"CRABC_EXECUTION_MODE": "emulated", "CRABC_HOST_ARCH": "x86_64"},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RUNNER.HarnessError, "canonical native provenance"):
+                    RUNNER.require_native_x86_64()
+            with mock.patch.dict(
+                os.environ,
+                {"CRABC_EXECUTION_MODE": "native", "CRABC_HOST_ARCH": "amd64"},
+                clear=True,
+            ):
+                self.assertEqual(
+                    RUNNER.require_native_x86_64(),
+                    {"execution_mode": "native", "host_architecture": "amd64"},
+                )
+
+    def test_x86_quick_rejects_emulated_provenance_before_oracle_work(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"CRABC_EXECUTION_MODE": "emulated", "CRABC_HOST_ARCH": "x86_64"},
+            clear=True,
+        ), mock.patch.object(RUNNER.platform, "system", return_value="Linux"), mock.patch.object(
+            RUNNER.platform, "machine", return_value="x86_64"
+        ), mock.patch.object(RUNNER, "load_pin") as load_pin:
+            with self.assertRaisesRegex(RUNNER.HarnessError, "canonical native provenance"):
+                RUNNER.run_milestone0(
+                    offline=True,
+                    generate_contracts=False,
+                    check_only=False,
+                    architecture="x86_64",
+                )
+        load_pin.assert_not_called()
+
+    def test_x86_quick_uses_only_target_local_contract_inputs(self) -> None:
+        source_api_inventory = {
+            "contract": {"path": "compat/allocator/x86_64-api-v3.5.0.json"},
+            "declaration_count": 180,
+            "status": "passed",
+        }
+        expected = {"status": "x86-local"}
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_root = Path(temporary)
+            archive = temporary_root / "mimalloc.tar.gz"
+            archive.write_bytes(b"pinned archive placeholder")
+            source = temporary_root / "mimalloc-3.5.0"
+            source.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {"CRABC_EXECUTION_MODE": "native", "CRABC_HOST_ARCH": "x86_64"},
+                clear=False,
+            ), mock.patch.object(
+                RUNNER.platform, "system", return_value="Linux"
+            ), mock.patch.object(
+                RUNNER.platform, "machine", return_value="x86_64"
+            ), mock.patch.object(
+                RUNNER, "fetch_archive", return_value=archive
+            ), mock.patch.object(
+                RUNNER, "safe_extract", return_value=source
+            ), mock.patch.object(
+                RUNNER,
+                "x86_64_source_api_inventory",
+                return_value=source_api_inventory,
+            ) as inventory, mock.patch.object(
+                RUNNER,
+                "apply_and_verify_adapted_test_patch",
+                return_value={"selected_test_count": 33},
+            ), mock.patch.object(
+                RUNNER, "require_tool", return_value="patch"
+            ), mock.patch.object(
+                RUNNER, "run_x86_64_oracle", return_value=expected
+            ) as run_x86, mock.patch.object(
+                RUNNER, "generated_contracts"
+            ) as generated_contracts, mock.patch.object(
+                RUNNER, "load_port_map"
+            ) as load_port_map, mock.patch.object(
+                RUNNER, "check_ratchet"
+            ) as check_ratchet:
+                self.assertEqual(
+                    RUNNER.run_milestone0(
+                        offline=True,
+                        generate_contracts=False,
+                        check_only=False,
+                        architecture="x86_64",
+                    ),
+                    expected,
+                )
+                source_check = RUNNER.run_milestone0(
+                    offline=True,
+                    generate_contracts=False,
+                    check_only=True,
+                    architecture="x86_64",
+                )
+        self.assertEqual(source_check["architecture_profile"], "x86_64-source-contract-check")
+        self.assertEqual(source_check["x86_64_source_api_inventory"], source_api_inventory)
+        self.assertNotIn("native_execution_provenance", source_check)
+        inventory.assert_has_calls([mock.call(archive), mock.call(archive)])
+        self.assertEqual(inventory.call_count, 2)
+        self.assertEqual(
+            run_x86.call_args.kwargs["source_api_inventory"], source_api_inventory
+        )
+        generated_contracts.assert_not_called()
+        load_port_map.assert_not_called()
+        check_ratchet.assert_not_called()
 
     def test_production_dependency_graph_is_exact_and_build_code_free(self) -> None:
         report = RUNNER.validate_production_dependency_graph(production_dependency_metadata())
@@ -419,6 +536,175 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
             result["single_thread_fundamental_trace"]["comparison"],
             {"compared_value_count": 1, "status": "matched"},
         )
+
+    def test_native_x86_64_adapter_contract_is_target_local_and_source_bound(self) -> None:
+        source_contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        x86_contract = RUNNER.read_json(RUNNER.X86_64_TEST_ADAPTER_CONTRACT)
+        summary = RUNNER.validate_x86_64_test_adapter_contract(
+            x86_contract,
+            source_contract,
+            RUNNER.load_pin(),
+            RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(
+            summary,
+            {
+                "expected_adapter_symbol_count": 16,
+                "profile": "linux-x86_64-private-test-adapter",
+                "selected_test_count": 33,
+                "target": "x86_64-unknown-linux-musl",
+            },
+        )
+
+    def test_native_x86_64_adapter_contract_rejects_source_selection_drift(self) -> None:
+        source_contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        x86_contract = RUNNER.read_json(RUNNER.X86_64_TEST_ADAPTER_CONTRACT)
+        x86_contract["source_selection"]["base_source_selection_sha256"] = "0" * 64
+        with self.assertRaisesRegex(RUNNER.HarnessError, "source-selection digest"):
+            RUNNER.validate_x86_64_test_adapter_contract(
+                x86_contract,
+                source_contract,
+                RUNNER.load_pin(),
+                RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+            )
+
+    def test_x86_64_adapter_source_selection_does_not_inherit_aarch64_link_requirements(self) -> None:
+        source_contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        x86_contract = RUNNER.read_json(RUNNER.X86_64_TEST_ADAPTER_CONTRACT)
+        source_contract["compile_requirements"]["expected_dynamic_dependencies"] = [
+            "libc.musl-x86_64.so.1",
+            "libgcc_s.so.1",
+        ]
+        with self.assertRaisesRegex(RUNNER.HarnessError, "compile requirement changed"):
+            RUNNER.validate_adapted_test_contract(
+                source_contract,
+                RUNNER.load_pin(),
+                RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+            )
+        self.assertEqual(
+            RUNNER.adapted_test_source_selection_digest(source_contract),
+            x86_contract["source_selection"]["base_source_selection_sha256"],
+        )
+        header_verification_drift = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        header_verification_drift["verification"]["header_compile_verified"] = False
+        with self.assertRaisesRegex(RUNNER.HarnessError, "header_compile_verified"):
+            RUNNER.validate_adapted_test_contract(
+                header_verification_drift,
+                RUNNER.load_pin(),
+                RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+            )
+        self.assertEqual(
+            RUNNER.adapted_test_source_selection_digest(header_verification_drift),
+            x86_contract["source_selection"]["base_source_selection_sha256"],
+        )
+        selected_check_drift = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        selected_check_drift["selected_tests"][0]["name"] = "selection-drift"
+        self.assertNotEqual(
+            RUNNER.adapted_test_source_selection_digest(selected_check_drift),
+            x86_contract["source_selection"]["base_source_selection_sha256"],
+        )
+        self.assertEqual(
+            RUNNER.validate_x86_64_test_adapter_contract(
+                x86_contract,
+                source_contract,
+                RUNNER.load_pin(),
+                RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+            )["target"],
+            RUNNER.X86_64_RUST_TARGET,
+        )
+        self.assertEqual(
+            RUNNER.validate_x86_64_test_adapter_contract(
+                x86_contract,
+                header_verification_drift,
+                RUNNER.load_pin(),
+                RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+            )["target"],
+            RUNNER.X86_64_RUST_TARGET,
+        )
+
+    def test_native_x86_64_adapter_elf_identity_requires_the_native_machine(self) -> None:
+        header = """
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Machine:                           Advanced Micro Devices X86-64
+"""
+        self.assertEqual(
+            RUNNER.parse_elf_identity(header, "x86_64"),
+            {
+                "class": "ELF64",
+                "endianness": "little",
+                "machine": "Advanced Micro Devices X86-64",
+            },
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "not little-endian x86_64"):
+            RUNNER.parse_elf_identity(
+                header.replace("Advanced Micro Devices X86-64", "AArch64"),
+                "x86_64",
+            )
+
+    def test_native_x86_64_fixture_audit_requires_elf_interp_and_dependencies(self) -> None:
+        header = """
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Machine:                           Advanced Micro Devices X86-64
+"""
+        dynamic = """
+ 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.musl-x86_64.so.1]
+"""
+
+        def records(interpreter: str) -> list[dict[str, object]]:
+            return [
+                {"status": 0, "stdout": header, "stderr": ""},
+                {
+                    "status": 0,
+                    "stdout": f"[Requesting program interpreter: {interpreter}]\n",
+                    "stderr": "",
+                },
+                {"status": 0, "stdout": dynamic, "stderr": ""},
+            ]
+
+        expected_elf = {
+            "class": "ELF64",
+            "endianness": "little",
+            "machine": "Advanced Micro Devices X86-64",
+        }
+        with mock.patch.object(
+            RUNNER,
+            "command_record",
+            side_effect=records("/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"),
+        ) as command_record:
+            evidence = RUNNER.audit_native_executable(
+                "readelf",
+                Path("fixture"),
+                architecture="x86_64",
+                expected_elf=expected_elf,
+                expected_interpreter="ld-musl-x86_64.so.1",
+                expected_dynamic_dependencies=["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+            )
+        self.assertEqual(
+            evidence,
+            {
+                "dynamic_dependencies": ["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+                "elf": expected_elf,
+                "interpreter": "/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1",
+            },
+        )
+        self.assertEqual(command_record.call_count, 3)
+        with mock.patch.object(
+            RUNNER,
+            "command_record",
+            side_effect=records("/lib64/ld-linux-x86-64.so.2"),
+        ):
+            with self.assertRaisesRegex(RUNNER.HarnessError, "PT_INTERP differs"):
+                RUNNER.audit_native_executable(
+                    "readelf",
+                    Path("fixture"),
+                    architecture="x86_64",
+                    expected_elf=expected_elf,
+                    expected_interpreter="ld-musl-x86_64.so.1",
+                    expected_dynamic_dependencies=["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+                )
 
     def test_small_trace_parser_requires_one_address_independent_machine_record(self) -> None:
         output = """

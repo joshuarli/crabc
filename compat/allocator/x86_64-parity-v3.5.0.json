@@ -17,18 +17,19 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, builds and audits the private prefixed Rust C test adapter, then runs the checked-in allocator fixture and 33 selected patched upstream API checks. It exposes no mi_* symbols and does not establish a public crabc allocator ABI or backend.",
+      "command": "./scripts/dev-amd64.sh allocator --quick",
+      "id": "native-private-test-adapter",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/latest.json",
+      "state": "available"
+    },
+    {
       "claim": "Proves the private compiler-TLS roots and direct x86-64 TLS access model; it does not prove process/thread lifecycle parity.",
       "command": "./scripts/dev-amd64.sh allocator-tls",
       "id": "native-tls-codegen",
       "native_required": true,
       "report": "compat/reports/allocator/tls-codegen-x86_64.json",
-      "state": "available"
-    },
-    {
-      "claim": "Exercises the native `%fs:0` thread-pointer identity boundary used by the allocator TLS owner.",
-      "command": "./scripts/dev-amd64.sh cargo test -p crabc-core --lib",
-      "id": "native-thread-pointer-unit",
-      "native_required": true,
       "state": "available"
     },
     {
@@ -86,6 +87,15 @@
     "allocator backend promotion"
   ],
   "format": 1,
+  "implementation_regressions": [
+    {
+      "claim": "Compiles and runs the crabc-core `%fs:0` thread-pointer implementation on native x86-64. This is an implementation regression, not independent C-oracle or allocator lifecycle evidence.",
+      "command": "./scripts/dev-amd64.sh cargo test -p crabc-core --lib",
+      "id": "native-thread-pointer-unit",
+      "native_required": true,
+      "state": "available"
+    }
+  ],
   "implementation_state": "incomplete",
   "kind": "mimalloc-target-parity-status",
   "ledger_boundary": {
@@ -95,13 +105,13 @@
       "compat/allocator/port-map.toml",
       "compat/allocator/ratchet-v3.5.0.json"
     ],
-    "reason": "Those checked-in ledgers encode AArch64 production API, adapter, dependency, and verification claims. Copying their fields into an x86-64 file before target-specific evidence exists would falsely claim parity.",
+    "reason": "Those checked-in ledgers encode AArch64 production API, adapter, dependency, and verification claims. The x86-64 adapter contract source-binds only the reviewed patch and selected C checks; it does not inherit their target, dependency, or public-API claims. Copying the remaining fields into an x86-64 file would falsely claim parity.",
     "status": "intentionally-not-mirrored"
   },
   "not_yet_covered_lanes": [
     {
-      "id": "test-adapter-and-public-mi-api",
-      "reason": "The checked-in adapter and public API contract remain AArch64-specific; crabc-mimalloc exposes no production C allocator API on x86-64.",
+      "id": "public-mi-api-and-libc-integration",
+      "reason": "The native private adapter is covered, but it exposes only crabc_test_* evidence symbols. It does not expose a public mi_* API or establish crabc-libc allocator integration on x86-64.",
       "state": "not_covered"
     },
     {

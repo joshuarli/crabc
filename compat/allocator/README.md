@@ -883,20 +883,35 @@ performance modes likewise remain explicitly unavailable; these status-3
 results are not skips and must not become successful placeholders.
 
 The native x86-64 quick lane is separate from the AArch64 allocator gate.
-Run it through the architecture-aware native x86-64 dispatcher, or directly
-with `python3 compat/allocator/run.py --quick --architecture x86_64`. Its report is
+Run it only through the architecture-aware native dispatcher:
+
+```sh
+./scripts/dev-amd64.sh allocator --quick
+```
+
+The runner rejects emulation by requiring both the native x86-64 guest and
+the dispatcher's native-host provenance. Its report is
 `compat/reports/allocator/x86_64/latest.json` and its profile is
-`x86_64-native-c-oracle`: the lane combines the pinned native C oracle with
-direct Rust-engine configuration/layout, small/fundamental trace, and
-x86-64 TLS-codegen evidence. It still does not claim the C test adapter,
-production dependency-graph, libc integration, stress, or performance lanes,
-so it is not full x86 mimalloc parity or public x86 `crabc` support.
+`x86_64-native-c-oracle`: the lane checks the target-local source declaration
+inventory, builds the pinned native C oracle, compares direct Rust-engine
+configuration/layout and small/fundamental traces, proves x86-64 TLS codegen,
+and builds/audits the private prefixed adapter. That adapter has exactly 16
+`crabc_test_*` exports, no `mi_*` exports, the recorded musl dynamic
+dependencies, and native executions of both the existing allocator fixture
+and 33 selected patched upstream API checks. The adapter cdylib and both
+fixture executables are audited for their x86-64 ELF identity and dynamic
+dependencies; each executable also records a PT_INTERP loader whose basename
+is `ld-musl-x86_64.so.1`. It does not claim the production
+dependency graph, public `mi_*` API, libc integration, general lifecycle or
+stress coverage, performance, full x86 mimalloc parity, or public x86
+`crabc` support.
 
 Maintainer-only contract operations run directly on the host and require a
 review of their diffs:
 
 ```sh
 python3 compat/allocator/run.py --check --offline
+python3 compat/allocator/run.py --check --architecture x86_64 --offline
 python3 compat/allocator/run.py --generate-contracts --offline
 python3 compat/allocator/run.py --snapshot-ratchet
 python3 -m unittest compat/allocator/tests/test_runner.py
@@ -912,14 +927,17 @@ snapshot after review; the normal gate never updates its own baseline.
 | Path | Contract |
 | --- | --- |
 | `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, and C++ conveniences; every item records its Linux/AArch64 classification, reason, profile, C-oracle release-symbol disposition, and crabc-libc export policy. Native x86-64 parity requires a separate architecture-qualified inventory. |
+| `x86_64-api-v3.5.0.json` | Target-local, source-only inventory of the pinned base `mimalloc.h` `mi_decl_export` declarations. It does not claim object exports, adapter coverage, implementation, or public integration. |
 | `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
-| `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and native link contract for pinned upstream `test-api.c`. |
+| `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and AArch64 native link contract for pinned upstream `test-api.c`. |
+| `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. It hashes only the extracted target-neutral patch/selection facts from the M4 record and separately records native x86-64 cdylib/executable ELF, PT_INTERP, dependency, and link expectations. |
 | `adapted/test-api-m4.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, six-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including one scoped worker round trip. |
 | `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
 | `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
+| `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
 
 Generated reports are measurements and remain ignored. The checked-in

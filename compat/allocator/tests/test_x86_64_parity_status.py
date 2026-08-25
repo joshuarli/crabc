@@ -32,6 +32,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "excludes",
                 "facts",
                 "format",
+                "implementation_regressions",
                 "implementation_state",
                 "kind",
                 "ledger_boundary",
@@ -122,8 +123,8 @@ class X86_64ParityStatusTests(unittest.TestCase):
             {
                 "native-c-oracle",
                 "native-direct-rust-c-differential",
+                "native-private-test-adapter",
                 "native-tls-codegen",
-                "native-thread-pointer-unit",
                 "native-allocator-unit",
             },
         )
@@ -139,13 +140,39 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-tls-codegen"]["report"],
             "compat/reports/allocator/tls-codegen-x86_64.json",
         )
+        self.assertEqual(
+            gates["native-private-test-adapter"]["report"],
+            "compat/reports/allocator/x86_64/latest.json",
+        )
+        self.assertIn("private prefixed", gates["native-private-test-adapter"]["claim"])
+        self.assertIn("no mi_* symbols", gates["native-private-test-adapter"]["claim"])
+
+    def test_native_thread_pointer_unit_is_an_implementation_regression(self) -> None:
+        regressions = {
+            regression["id"]: regression
+            for regression in self.contract["implementation_regressions"]
+        }
+        self.assertEqual(set(regressions), {"native-thread-pointer-unit"})
+        regression = regressions["native-thread-pointer-unit"]
+        self.assertEqual(regression["state"], "available")
+        self.assertTrue(regression["native_required"])
+        self.assertEqual(
+            regression["command"],
+            "./scripts/dev-amd64.sh cargo test -p crabc-core --lib",
+        )
+        self.assertIn("implementation regression", regression["claim"])
+        self.assertIn("not independent C-oracle", regression["claim"])
+        self.assertNotIn(
+            "native-thread-pointer-unit",
+            {gate["id"] for gate in self.contract["evidence_gates"]},
+        )
 
     def test_uncovered_lanes_and_aarch64_ledger_boundary_are_explicit(self) -> None:
         lanes = {lane["id"]: lane for lane in self.contract["not_yet_covered_lanes"]}
         self.assertEqual(
             set(lanes),
             {
-                "test-adapter-and-public-mi-api",
+                "public-mi-api-and-libc-integration",
                 "production-dependency-graph",
                 "general-thread-lifecycle-and-stress",
                 "libc-backend-promotion-and-public-crabc-support",
