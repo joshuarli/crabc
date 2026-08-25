@@ -512,6 +512,16 @@ impl Mapping {
         self.initially_committed
     }
 
+    /// Returns the actual Linux base-page size selected for this mapping.
+    ///
+    /// A source arena can be managed only under the same frozen page-size
+    /// observation as its process page map. This value is immutable after
+    /// creation and exposes no mapping ownership or raw memory access.
+    #[inline]
+    pub(crate) const fn page_size(&self) -> PageSize {
+        self.page_size
+    }
+
     /// Returns the provenance-bearing base pointer of the live mapping.
     ///
     /// The pointer is intentionally raw: later allocator policy must preserve

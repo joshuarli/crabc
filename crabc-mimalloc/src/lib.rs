@@ -8,8 +8,14 @@
 //! singleton path below the metadata-alignment limit. The crate deliberately
 //! exposes no production allocator API; a default-off test-adapter feature
 //! owns the only public operation context. Private static ticket-zero and
-//! regular-key dynamic Theap attachments exist, but production thread/process
-//! teardown and allocator integration remain incomplete.
+//! regular-key dynamic Theap attachments exist. A separate process-static
+//! page-map owner can Release-publish one global source map, and a paired
+//! sidecar can retain one caller-selected source-managed arena mapping. One
+//! crate-private ticket-zero static owner or one sequential later-thread owner
+//! may bind that exact pair to the arena's embedded `pages_main` bitmap for one
+//! complete page-engine and scoped-producer lifetime; process initialization,
+//! concurrent/general later-thread page routing, owner exit, and runtime
+//! allocation routing remain incomplete.
 //! Remote-free and one-page abandonment protocols are bounded substrates;
 //! allocation routing and terminal abandoned-page release remain incomplete.
 //! The public C allocator ABI, including `errno`, remains owned by
@@ -50,6 +56,9 @@ mod free_list;
 mod invariants;
 mod lock;
 mod main_theap;
+mod main_heap_thread;
+mod main_heap_page;
+mod main_static_page;
 mod meta;
 mod once;
 mod os_page;
@@ -61,6 +70,8 @@ mod os;
 mod os;
 mod page;
 mod page_map;
+mod process_arena;
+mod process_page_map;
 mod provenance;
 mod random;
 mod remote_free;

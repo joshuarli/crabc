@@ -4,14 +4,17 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/page.c:276-302`,
+// Source map: pinned mimalloc v3.5.0 `src/page.c:245-302`,
 // `src/arena.c:631-671,725-778,1304-1355`, `src/free.c:372-514`, and
 // `include/mimalloc/internal.h:1008-1039,1111-1119`.
 //
-// This Milestone 5 substrate models only the transition of one live page
-// between an owner and an abandoned arena-map entry. It deliberately excludes
-// allocation/free routing, queues, TLS/theap registration, terminal page
-// release, and metadata reuse.
+// This Milestone 5 substrate models one page's abandoned-owner decisions.
+// It deliberately excludes general allocation/free routing, queues, and
+// TLS/theap registration. It does not itself own raw page-map/span release:
+// `single_thread.rs` supplies that distinct authority for a bounded mapped
+// regular handoff and one post-TLS full singleton owner-exit handoff. Metadata
+// reuse and every general terminal-release route remain outside this
+// substrate.
 
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
@@ -70,6 +73,44 @@ pub(crate) enum MappedAbandonedClaim {
     Claimed(usize),
     CountDecrementFailed(usize),
 }
+
+/// Private capability for a source page that cannot ever enter an arena
+/// `pages_abandoned` bitmap: its size-class bin is at or beyond
+/// `ARENA_BIN_COUNT` (the bounded thread-exit singleton case), or a caller
+/// has otherwise proved the source reabandon branch is unreachable. It never
+/// publishes a bit. Supplying it to the common protocol makes an accidental
+/// attempt to map an eligible regular page fail closed before publication.
+struct UnmappableAbandonedPages;
+
+impl MappedAbandonedPages for UnmappableAbandonedPages {
+    #[inline]
+    fn bin(&self) -> usize { ARENA_BIN_COUNT }
+
+    #[inline]
+    fn page_slice_index(&self, _memory: MemoryId) -> Option<usize> { None }
+
+    #[inline]
+    fn is_clear(&self, _slice_index: usize) -> bool { false }
+
+    #[inline]
+    fn publish(&self, _slice_index: usize) -> bool { false }
+
+    #[inline]
+    fn try_claim<F>(&self, _thread_sequence: usize, _claim: F) -> MappedAbandonedClaim
+    where
+        F: FnMut(usize) -> AbandonedBitmapClaim,
+    {
+        MappedAbandonedClaim::None
+    }
+
+    #[inline]
+    fn clear_once_set(&self, _slice_index: usize) -> bool { false }
+
+    #[inline]
+    fn decrement_after_identity_clear(&self) -> bool { false }
+}
+
+static UNMAPPABLE_ABANDONED_PAGES: UnmappableAbandonedPages = UnmappableAbandonedPages;
 
 impl MappedAbandonedPages for ArenaAbandonedPages<'_> {
     #[inline]
@@ -158,6 +199,40 @@ pub(crate) struct RetainedAdoptFailure {
     error: AbandonError,
 }
 
+/// Result of one `allow_collect=true` remote free on a mapped abandoned page.
+///
+/// This is the mapped same-origin portion of
+/// `free.c:mi_free_try_collect_mt`: a producer can either find another
+/// abandoned-free owner already responsible for the decision, reclaim the
+/// page into its original live Theap, or make the page empty. Empty remains a
+/// terminal result here because `_mi_arenas_page_free` needs the separate
+/// page-map/span release authority that this bounded handoff deliberately
+/// does not own.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MappedAbandonedFreeResult {
+    PublishedToExistingOwner,
+    Reclaimed { collected_remote_blocks: usize },
+    Empty,
+}
+
+/// Result of the unreclaimed, initially-unmapped part of
+/// `free.c:mi_free_try_collect_mt`.
+///
+/// This capability begins only after the source reclaim decision has already
+/// failed. It does not retry reclamation after a concurrent publication: the
+/// source instead collects that publication, then selects terminal release,
+/// reabandonment to the exact arena bitmap, or unownership. [`Self::Empty`]
+/// retains the low owner bit and page metadata for a separate page-map/span
+/// terminal-release capability; it does not claim that raw storage is safe to
+/// reuse.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum UnmappedAbandonedFreeResult {
+    PublishedToExistingOwner,
+    Empty,
+    ReabandonedMapped,
+    UnownedUnmapped,
+}
+
 impl RetainedAdoptFailure {
     #[inline]
     pub(crate) const fn page(self) -> NonNull<Page> { self.page }
@@ -176,6 +251,231 @@ impl AdoptedPage {
     pub(crate) const fn collected_remote_blocks(&self) -> usize {
         self.collected_remote_blocks
     }
+}
+
+/// Ports the mapped same-origin reclaim branch of
+/// `free.c:mi_free_try_collect_mt` for one `allow_collect=true` remote free.
+///
+/// The existing consuming dynamic handoff is the only production caller. It
+/// supplies its original live Theap as `target_theap`; after abandoning, that
+/// is still the page's source-associated Theap and its empty regular queue is
+/// within the frozen default reclaim limit. True reabandon is intentionally
+/// absent here: upstream reaches it only from an *unmapped* abandoned page,
+/// whereas this capability proves the page is presently mapped.
+///
+/// # Safety
+///
+/// `page` must be a stable mapped abandoned page for `map`; `block` must be
+/// one exact current canonical allocation of that page. `target_theap` and
+/// `target_thread` must name the current same-origin live Theap and remain
+/// valid until the caller requeues a successful reclaim. The caller retains
+/// the page-map, arena image, and terminal release authority throughout. A
+/// result of `Empty` retains the owned page for that terminal authority. A
+/// small page must satisfy the pinned source `reserved >= 16` invariant; an
+/// invalid page is retained as a terminal error instead of entering partial
+/// collection.
+pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    map: &M,
+    target_theap: NonNull<Theap>,
+    target_thread: LiveThreadId,
+) -> Result<MappedAbandonedFreeResult, AbandonError> {
+    // SAFETY: the caller supplies the stable abandoned-page/block proof. The
+    // producer reads only atomic page fields and its own block link.
+    match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
+        remote_free::AbandonedRemotePush::PublishedToExistingOwner => {
+            return Ok(MappedAbandonedFreeResult::PublishedToExistingOwner);
+        }
+        remote_free::AbandonedRemotePush::ClaimedUnownedPage => {}
+    }
+
+    // A successful `allow_collect` push acquired the source low owner bit;
+    // only now may this path inspect ordinary page state.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    if !is_owned(&state) || source_thread_identity(&state) != THREAD_ID_ABANDONED_MAPPED {
+        return Err(AbandonError::NotAbandoned);
+    }
+    // `mi_free_try_collect_mt` reaches the partial small-page collector only
+    // under this source invariant. Reject an invalid synthetic/foreign page
+    // after retaining its claimed owner state rather than using the optimized
+    // path without its required geometry.
+    if state.block_size <= crate::config::SMALL_SIZE_MAX && state.reserved < 16 {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+
+    // The frozen normal-release small-page path avoids an atomic detach of
+    // its just-published head. Larger pages use the ordinary full collection.
+    // Both source paths run before the empty/reclaim decision.
+    let collected_remote_blocks = if state.block_size <= crate::config::SMALL_SIZE_MAX {
+        unsafe { remote_free::collect_abandoned_partly(page, block) }
+    } else {
+        unsafe { remote_free::collect_abandoned(page) }
+    }
+    .map_err(AbandonError::RemoteFree)?;
+
+    if page_is_empty(&state) {
+        unabandon_mapped(&state, Some(map))?;
+        return Ok(MappedAbandonedFreeResult::Empty);
+    }
+
+    // `page_reclaim_on_free == 0` reclaims only into the originating Theap.
+    // The consuming dynamic handoff validates that source condition before it
+    // enters here. Preserve the source order: clear the mapped entry before
+    // live reassociation, then run the second normal owner collection.
+    if state.block_size > crate::config::MEDIUM_MAX_OBJ_SIZE
+        || unsafe { ptr::read(state.theap.as_ptr()) } != target_theap.as_ptr()
+    {
+        // A mapped page that cannot use the same-origin reclaim branch stays
+        // owned for a later generalized abandoned-free policy. Do not invent
+        // the unmapped reabandon route in this mapped-only handoff.
+        return Err(AbandonError::NotAbandoned);
+    }
+    unabandon_mapped(&state, Some(map))?;
+    unsafe { ptr::write(state.theap.as_ptr(), target_theap.as_ptr()) };
+    set_thread_identity(&state, target_thread.get());
+    let collected_after_reassociation = unsafe { remote_free::collect(page) }
+        .map_err(AbandonError::RemoteFree)?;
+    Ok(MappedAbandonedFreeResult::Reclaimed {
+        collected_remote_blocks: collected_remote_blocks + collected_after_reassociation,
+    })
+}
+
+/// Ports the failed-reclaim tail of `free.c:mi_free_try_collect_mt` for one
+/// initially-unmapped abandoned page.
+///
+/// The source has already completed (or deliberately declined) its one
+/// reclaim attempt before this point. This helper performs the matching
+/// `allow_collect=true` push, the small partial or ordinary collection, then
+/// chooses in source order: terminal all-free, unmapped-to-mapped reabandon,
+/// or `mi_abandoned_page_unown_from_free`. If a concurrent publication makes
+/// the expected-head CAS fail, it collects and repeats only the terminal and
+/// reabandon decisions; it intentionally never calls reclamation again.
+///
+/// # Safety
+///
+/// `page` must be stable initialized metadata for an unowned
+/// `THREAD_ID_ABANDONED` page whose source reclaim attempt has failed. `block`
+/// must be one exact current canonical allocation of that page and no page-map
+/// entry, bitmap reader, producer, or terminal release may outlive this call
+/// except under the result's retained owner state. `map` must be the exact
+/// arena/bin/slice capability that would receive this page if it becomes
+/// reusable. A small page must satisfy the pinned source `reserved >= 16`
+/// invariant. `Empty` retains the owned abandoned page for a distinct terminal
+/// page-map/span release authority.
+pub(crate) unsafe fn free_unmapped_after_failed_reclaim<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    map: &M,
+) -> Result<UnmappedAbandonedFreeResult, AbandonError> {
+    let mut before_expected_cas: Option<fn()> = None;
+    // SAFETY: this public boundary supplies the caller's complete abandoned
+    // page/block/map lifetime proof to the source-shaped inner protocol.
+    unsafe {
+        free_unmapped_after_failed_reclaim_inner(page, block, map, &mut before_expected_cas)
+    }
+}
+
+/// Ports the failed-reclaim tail for a source-unmappable abandoned page, such
+/// as the one-block singleton used by the bounded thread-exit lifecycle.
+///
+/// Unlike [`free_unmapped_after_failed_reclaim`], this boundary has no
+/// arena-bitmap capability because source `bin >= ARENA_BIN_COUNT` makes
+/// reabandonment impossible. The private sentinel makes any accidental
+/// attempt to use it for a mappable regular arena page fail before it can
+/// publish a substitute bitmap bit.
+///
+/// # Safety
+///
+/// The caller must meet [`free_unmapped_after_failed_reclaim`]'s page/block
+/// lifetime and failed-reclaim obligations, and additionally prove that this
+/// page is not eligible for `pages_abandoned[bin]` publication.
+pub(crate) unsafe fn free_unmappable_after_failed_reclaim(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+) -> Result<UnmappedAbandonedFreeResult, AbandonError> {
+    // SAFETY: the caller supplies the same stable source abandoned-page proof;
+    // the private marker rejects any unexpected mapped-publication branch.
+    unsafe {
+        free_unmapped_after_failed_reclaim(page, block, &UNMAPPABLE_ABANDONED_PAGES)
+    }
+}
+
+/// Testable inner form of [`free_unmapped_after_failed_reclaim`]. The hook is
+/// a deterministic source interleaving point after its expected small-page
+/// head is captured and before the AcqRel unown CAS. Production supplies no
+/// hook; this exists only to prove the failed-CAS collection tail.
+#[cfg(test)]
+unsafe fn free_unmapped_after_failed_reclaim_with<M, F>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    map: &M,
+    before_expected_cas: F,
+) -> Result<UnmappedAbandonedFreeResult, AbandonError>
+where
+    M: MappedAbandonedPages + ?Sized,
+    F: FnOnce(),
+{
+    let mut before_expected_cas = Some(before_expected_cas);
+    // SAFETY: the test fixture provides the same stable page/block/map proof
+    // as the production entry and publishes only at this exact atomic point.
+    unsafe { free_unmapped_after_failed_reclaim_inner(page, block, map, &mut before_expected_cas) }
+}
+
+unsafe fn free_unmapped_after_failed_reclaim_inner<M, F>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    map: &M,
+    before_expected_cas: &mut Option<F>,
+) -> Result<UnmappedAbandonedFreeResult, AbandonError>
+where
+    M: MappedAbandonedPages + ?Sized,
+    F: FnOnce(),
+{
+    // SAFETY: the caller retains the initialized abandoned page and exact
+    // client block through the source atomic publication.
+    match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
+        remote_free::AbandonedRemotePush::PublishedToExistingOwner => {
+            return Ok(UnmappedAbandonedFreeResult::PublishedToExistingOwner);
+        }
+        remote_free::AbandonedRemotePush::ClaimedUnownedPage => {}
+    }
+
+    // A successful `allow_collect` publication owns the low bit. Validate the
+    // unmapped source identity before any ordinary page state is observed.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    if !is_owned(&state) || source_thread_identity(&state) != THREAD_ID_ABANDONED {
+        return Err(AbandonError::NotAbandoned);
+    }
+    if state.reserved == 0 || state.block_size == 0 {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    if state.block_size <= crate::config::SMALL_SIZE_MAX && state.reserved < 16 {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+
+    // `_mi_page_free_collect_partly` leaves its just-published head in the
+    // atomic list. The expected-head CAS below must use that exact address;
+    // the full collector has detached the list and therefore expects zero.
+    let expected_head = if state.block_size <= crate::config::SMALL_SIZE_MAX {
+        block.as_ptr().expose_provenance()
+    } else {
+        0
+    };
+    if state.block_size <= crate::config::SMALL_SIZE_MAX {
+        // SAFETY: the source small-page geometry and just-published head were
+        // validated above; the caller retains all predecessor block lifetime.
+        unsafe { remote_free::collect_abandoned_partly(page, block) }
+    } else {
+        // SAFETY: this caller owns the abandoned low bit and stable metadata.
+        unsafe { remote_free::collect_abandoned(page) }
+    }
+    .map_err(AbandonError::RemoteFree)?;
+
+    if let Some(result) = terminal_or_reabandon_unmapped(page, &state, map)? {
+        return Ok(result);
+    }
+    unown_unmapped_from_free(page, &state, map, expected_head, before_expected_cas)
 }
 
 /// Ports `page.c:_mi_page_abandon` and the mapped/unmapped publication half
@@ -279,6 +579,24 @@ pub(crate) unsafe fn abandon_after_collect<M: MappedAbandonedPages + ?Sized>(
         }
     }
     unown(page, map)
+}
+
+/// Abandons a source-unmappable page after its owner has completed the exact
+/// false-force collection and queue detach. This is the companion to
+/// [`free_unmappable_after_failed_reclaim`] for full singleton/non-bitmap
+/// thread-exit pages; a mappable regular arena page is rejected rather than
+/// silently skipping its required bitmap publication.
+///
+/// # Safety
+///
+/// The caller must meet [`abandon_after_collect`]'s detached-page and stable
+/// metadata obligations, and prove that the page cannot be mapped abandoned.
+pub(crate) unsafe fn abandon_unmappable_after_collect(
+    page: NonNull<Page>,
+) -> Result<AbandonResult, AbandonError> {
+    // SAFETY: the caller provides the queue-detached, false-force-collected
+    // source state; the private marker blocks an accidental mapped route.
+    unsafe { abandon_after_collect(page, Some(&UNMAPPABLE_ABANDONED_PAGES)) }
 }
 
 /// Searches one source `pages_abandoned[bin]` map and claims/reassociates the
@@ -527,6 +845,122 @@ where
     }
 }
 
+/// Ports `mi_abandoned_page_unown_from_free` after its one reclaim attempt
+/// has already failed. Its first CAS preserves the small partial collector's
+/// head; only a failed CAS takes the source full-collection decision loop.
+fn unown_unmapped_from_free<M, F>(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+    map: &M,
+    mut expected_head: usize,
+    before_expected_cas: &mut Option<F>,
+) -> Result<UnmappedAbandonedFreeResult, AbandonError>
+where
+    M: MappedAbandonedPages + ?Sized,
+    F: FnOnce(),
+{
+    let xthread_free = unsafe { state.xthread_free.as_ref() };
+    loop {
+        match remote_free::try_unown_abandoned_expected_head(
+            xthread_free,
+            expected_head,
+            before_expected_cas,
+        )
+        .map_err(AbandonError::RemoteFree)?
+        {
+            remote_free::AbandonedExpectedHeadTransition::Released => {
+                return Ok(UnmappedAbandonedFreeResult::UnownedUnmapped);
+            }
+            remote_free::AbandonedExpectedHeadTransition::OwnedEmpty => {
+                // A weak CAS may fail spuriously, or a concurrent collector
+                // may have left the source-owned empty word. `free.c` retries
+                // with a null expected head in either case.
+                expected_head = 0;
+            }
+            remote_free::AbandonedExpectedHeadTransition::RemotePublished => {
+                // SAFETY: the failed CAS still observed the source owner bit;
+                // this caller owns ordinary fields until it transfers that
+                // bit through the next decision below.
+                unsafe { remote_free::collect_abandoned(page) }
+                    .map_err(AbandonError::RemoteFree)?;
+                if let Some(result) = terminal_or_reabandon_unmapped(page, state, map)? {
+                    return Ok(result);
+                }
+                // The source reloads its now-empty owned head before retrying
+                // and never revisits reclaim after this conflict path.
+                expected_head = 0;
+            }
+            remote_free::AbandonedExpectedHeadTransition::NotOwned => {
+                return Err(AbandonError::NotOwnedAssociated);
+            }
+        }
+    }
+}
+
+/// Chooses the source terminal/reabandon alternatives after a failed reclaim
+/// attempt. `None` deliberately means the caller must run the expected-head
+/// unown path rather than invent another reclaim attempt.
+fn terminal_or_reabandon_unmapped<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+    map: &M,
+) -> Result<Option<UnmappedAbandonedFreeResult>, AbandonError> {
+    if page_is_empty(state) {
+        return Ok(Some(UnmappedAbandonedFreeResult::Empty));
+    }
+    try_reabandon_unmapped_to_mapped(page, state, map)
+}
+
+/// Ports `mi_abandoned_page_try_reabandon_to_mapped` and its
+/// `_mi_arenas_page_try_reabandon_to_mapped` success transition for the
+/// already-abandoned, still-owned unmapped page.
+fn try_reabandon_unmapped_to_mapped<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+    map: &M,
+) -> Result<Option<UnmappedAbandonedFreeResult>, AbandonError> {
+    // The exact pinned source predicate is integer arithmetic: reabandon only
+    // after the page has more than its final eighth free. Invalid synthetic or
+    // foreign geometry is retained instead of being interpreted as reusable.
+    if page_is_mostly_used(state)?
+        || state.memid.kind() != MemoryKind::Arena
+        || source_thread_identity(state) != THREAD_ID_ABANDONED
+        || page_is_full(state)
+    {
+        return Ok(None);
+    }
+    let bin = size_class::bin(state.block_size).ok_or(AbandonError::InvalidPageGeometry)?;
+    if bin >= ARENA_BIN_COUNT {
+        // Pinned source excludes singleton/huge-bin pages from the mapped
+        // abandoned bitmap. They remain unowned unmapped pages for a later
+        // terminal/general lifecycle owner.
+        return Ok(None);
+    }
+    if map.bin() != bin {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    let slice_index = map
+        .page_slice_index(state.memid)
+        .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)?;
+    if !map.is_clear(slice_index) {
+        return Err(AbandonError::MappedBitAlreadyPublished);
+    }
+
+    // `_mi_arenas_page_abandon` first installs the mapped identity, then
+    // publishes its exact bit/count before the generic abandoned unown loop.
+    set_thread_identity(state, THREAD_ID_ABANDONED_MAPPED);
+    if !map.publish(slice_index) {
+        // Identity has crossed the source visibility boundary; callers retain
+        // this terminal owner rather than pretending the page stayed unmapped.
+        return Err(AbandonError::MappedPublicationFailed);
+    }
+    match unown(page, Some(map))? {
+        AbandonResult::UnownedMapped => Ok(Some(UnmappedAbandonedFreeResult::ReabandonedMapped)),
+        AbandonResult::Empty => Ok(Some(UnmappedAbandonedFreeResult::Empty)),
+        AbandonResult::UnownedUnmapped => Err(AbandonError::NotAbandoned),
+    }
+}
+
 fn unabandon_mapped<M: MappedAbandonedPages + ?Sized>(
     state: &PageAbandonmentState,
     map: Option<&M>,
@@ -612,6 +1046,18 @@ fn page_is_full(state: &PageAbandonmentState) -> bool {
     unsafe { *state.used.as_ptr() == usize::from(state.reserved) }
 }
 
+/// Exact `mi_page_is_mostly_used`: more than seven eighths in use remains too
+/// full to republish into `pages_abandoned`; the boundary itself stays
+/// unmapped. Do not substitute a percentage calculation, which could alter
+/// the pinned integer-rounding behavior.
+fn page_is_mostly_used(state: &PageAbandonmentState) -> Result<bool, AbandonError> {
+    // SAFETY: callers hold the source low owner bit while reading `used`.
+    let used = unsafe { *state.used.as_ptr() };
+    let reserved = usize::from(state.reserved);
+    let free = reserved.checked_sub(used).ok_or(AbandonError::InvalidPageGeometry)?;
+    Ok(free <= reserved / 8)
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -625,7 +1071,7 @@ mod tests {
     use crate::arena::ArenaView;
     use crate::bitmap::{BitmapLayout, BitmapView};
     use crate::config::{ARENA_BIN_COUNT, BCHUNK_BITS};
-    use crate::types::{Arena, ArenaPages, Heap, MemoryId, ThreadLocalData};
+    use crate::types::{Arena, ArenaPages, Block, Heap, MemoryId, ThreadLocalData};
 
     #[repr(align(64))]
     struct BitmapStorage {
@@ -664,6 +1110,11 @@ mod tests {
     }
 
     fn map_fixture(storage: &mut BitmapStorage) -> Arena {
+        map_fixture_for_bin(storage, 1)
+    }
+
+    fn map_fixture_for_bin(storage: &mut BitmapStorage, bin: usize) -> Arena {
+        assert!(bin < ARENA_BIN_COUNT);
         let layout = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
         unsafe {
             BitmapView::initialize(
@@ -676,7 +1127,7 @@ mod tests {
         }
         let bitmap = storage.bytes.as_mut_ptr().cast::<u8>();
         let mut maps = [core::ptr::null_mut(); ARENA_BIN_COUNT];
-        maps[1] = bitmap;
+        maps[bin] = bitmap;
         Arena {
             memid: MemoryId::none(),
             subprocess: core::ptr::null_mut(),
@@ -704,7 +1155,10 @@ mod tests {
     }
 
     fn mapped_page(arena: &mut Arena, used: usize) -> Page {
-        let mut page = Page::remote_free_test_page(4, used);
+        // The pinned small-page partial collector requires the source's
+        // `reserved >= 16` invariant before it can leave its just-published
+        // remote head in place.
+        let mut page = Page::remote_free_test_page(16, used);
         assert!(unsafe { page.abandoned_test_set_arena_memory(arena, 17, 1) });
         page
     }
@@ -718,6 +1172,305 @@ mod tests {
         tld.attach_bootstrap_exclusive(thread_id);
         assert!(theap.bind_exclusive_single_thread(heap, tld));
         NonNull::from(theap)
+    }
+
+    fn abandon_full_unmapped(page: &mut Page) -> NonNull<Page> {
+        let page = NonNull::from(page);
+        assert_eq!(
+            unsafe { abandon(page, None::<&ArenaAbandonedPages<'_>>) },
+            Ok(AbandonResult::UnownedUnmapped)
+        );
+        page
+    }
+
+    #[test]
+    fn unmapped_small_free_preserves_its_expected_partial_head_while_mostly_used() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 16);
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut block = TestBlock([0; 16]);
+        let expected_head = block.pointer().as_ptr().expose_provenance();
+
+        assert_eq!(
+            unsafe { free_unmapped_after_failed_reclaim(page_raw, block.pointer(), &map) },
+            Ok(UnmappedAbandonedFreeResult::UnownedUnmapped)
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_eq!(page.remote_free_test_head(), expected_head);
+        assert_eq!(page.remote_free_test_used(), 16);
+    }
+
+    #[test]
+    fn unmapped_abandoned_free_leaves_the_existing_owner_responsible() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 16);
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+
+        assert_eq!(
+            unsafe { remote_free::push_abandoned(page_raw, first.pointer()) },
+            Ok(remote_free::AbandonedRemotePush::ClaimedUnownedPage)
+        );
+        assert_eq!(
+            unsafe { free_unmapped_after_failed_reclaim(page_raw, second.pointer(), &map) },
+            Ok(UnmappedAbandonedFreeResult::PublishedToExistingOwner)
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_ne!(page.remote_free_test_head() & 1, 0);
+        assert_eq!(page.remote_free_test_used(), 16);
+    }
+
+    #[test]
+    fn unmapped_small_free_reabandons_only_after_the_partial_head_lag() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 16);
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+        let mut third = TestBlock([0; 16]);
+        let mut fourth = TestBlock([0; 16]);
+
+        for block in [first.pointer(), second.pointer(), third.pointer()] {
+            assert_eq!(
+                unsafe { free_unmapped_after_failed_reclaim(page_raw, block, &map) },
+                Ok(UnmappedAbandonedFreeResult::UnownedUnmapped)
+            );
+            assert!(!map.is_published(17));
+            assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        }
+
+        assert_eq!(
+            unsafe { free_unmapped_after_failed_reclaim(page_raw, fourth.pointer(), &map) },
+            Ok(UnmappedAbandonedFreeResult::ReabandonedMapped)
+        );
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_eq!(page.remote_free_test_head(), 0);
+        assert_eq!(page.remote_free_test_used(), 12);
+        assert_eq!(page.remote_free_test_free_is_zero(), false);
+        assert!(!page.remote_free_test_free().is_null());
+        assert_eq!(page.remote_free_test_local_chain_len(4), 3);
+    }
+
+    #[test]
+    fn unmapped_medium_free_reabandons_after_three_full_collections() {
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(16, 16);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+        let mut third = TestBlock([0; 16]);
+
+        for block in [first.pointer(), second.pointer()] {
+            assert_eq!(
+                unsafe { free_unmapped_after_failed_reclaim(page_raw, block, &map) },
+                Ok(UnmappedAbandonedFreeResult::UnownedUnmapped)
+            );
+            assert!(!map.is_published(17));
+        }
+        assert_eq!(
+            unsafe { free_unmapped_after_failed_reclaim(page_raw, third.pointer(), &map) },
+            Ok(UnmappedAbandonedFreeResult::ReabandonedMapped)
+        );
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_eq!(page.remote_free_test_head(), 0);
+        assert_eq!(page.remote_free_test_used(), 13);
+    }
+
+    #[test]
+    fn unmapped_abandoned_free_selects_terminal_empty_without_releasing_metadata() {
+        let block_size = crate::config::SMALL_SIZE_MAX + core::mem::size_of::<Block>();
+        let bin = size_class::bin(block_size).expect("the medium size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(1, 1);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut block = TestBlock([0; 16]);
+
+        assert_eq!(
+            unsafe { free_unmapped_after_failed_reclaim(page_raw, block.pointer(), &map) },
+            Ok(UnmappedAbandonedFreeResult::Empty)
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_eq!(page.remote_free_test_head(), 1);
+        assert_eq!(page.remote_free_test_used(), 0);
+    }
+
+    #[test]
+    fn failed_expected_head_unown_collects_new_publication_without_a_second_reclaim() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 16);
+        let page_raw = abandon_full_unmapped(&mut page);
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+
+        assert_eq!(
+            unsafe {
+                free_unmapped_after_failed_reclaim_with(
+                    page_raw,
+                    first.pointer(),
+                    &map,
+                    || {
+                        assert_eq!(
+                            remote_free::push_abandoned(page_raw, second.pointer()),
+                            Ok(remote_free::AbandonedRemotePush::PublishedToExistingOwner)
+                        );
+                    },
+                )
+            },
+            Ok(UnmappedAbandonedFreeResult::UnownedUnmapped)
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_eq!(page.remote_free_test_head(), 0);
+        assert_eq!(page.remote_free_test_used(), 14);
+        assert_eq!(page.remote_free_test_local_chain_len(3), 2);
+    }
+
+    #[test]
+    fn mapped_abandoned_free_reclaims_to_its_same_origin_after_collection() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let thread_id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        let target = bind_adopting_theap(&mut heap, &mut tld, &mut theap, thread_id);
+        let mut page = mapped_page(&mut arena, 3);
+        page.abandoned_test_set_theap(target.as_ptr());
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        let mut block = TestBlock([0; 16]);
+        assert_eq!(
+            unsafe { free_mapped_and_reclaim(page_raw, block.pointer(), &map, target, thread_id) },
+            Ok(MappedAbandonedFreeResult::Reclaimed {
+                collected_remote_blocks: 1,
+            })
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), thread_id.get());
+        assert_eq!(page.remote_free_test_head(), 1);
+        assert_eq!(page.remote_free_test_used(), 2);
+    }
+
+    #[test]
+    fn mapped_abandoned_free_leaves_a_block_with_the_existing_owner() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let thread_id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        let target = bind_adopting_theap(&mut heap, &mut tld, &mut theap, thread_id);
+        let mut page = mapped_page(&mut arena, 3);
+        page.abandoned_test_set_theap(target.as_ptr());
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+        assert_eq!(
+            unsafe { remote_free::push_abandoned(page_raw, first.pointer()) },
+            Ok(remote_free::AbandonedRemotePush::ClaimedUnownedPage)
+        );
+        assert_eq!(
+            unsafe {
+                free_mapped_and_reclaim(page_raw, second.pointer(), &map, target, thread_id)
+            },
+            Ok(MappedAbandonedFreeResult::PublishedToExistingOwner)
+        );
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_eq!(page.remote_free_test_head() & 1, 1);
+    }
+
+    #[test]
+    fn mapped_abandoned_free_reports_empty_with_terminal_owner_retained() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let thread_id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        let target = bind_adopting_theap(&mut heap, &mut tld, &mut theap, thread_id);
+        let mut page = mapped_page(&mut arena, 1);
+        page.abandoned_test_set_theap(target.as_ptr());
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        let mut block = TestBlock([0; 16]);
+        assert_eq!(
+            unsafe { free_mapped_and_reclaim(page_raw, block.pointer(), &map, target, thread_id) },
+            Ok(MappedAbandonedFreeResult::Empty)
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), 0);
+        assert_eq!(page.remote_free_test_head(), 1);
+        assert_eq!(page.remote_free_test_used(), 0);
+    }
+
+    #[test]
+    fn mapped_abandoned_free_rejects_a_small_page_without_the_source_reserve() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let thread_id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        let target = bind_adopting_theap(&mut heap, &mut tld, &mut theap, thread_id);
+        let mut page = Page::remote_free_test_page(4, 3);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        page.abandoned_test_set_theap(target.as_ptr());
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        let mut block = TestBlock([0; 16]);
+        assert_eq!(
+            unsafe { free_mapped_and_reclaim(page_raw, block.pointer(), &map, target, thread_id) },
+            Err(AbandonError::InvalidPageGeometry)
+        );
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_eq!(page.remote_free_test_head() & 1, 1);
     }
 
     #[test]

@@ -10,8 +10,12 @@ boundary is in [`docs/design/allocator.md`](../../docs/design/allocator.md).
 
 The workspace crate currently contains source-mapped foundations, immutable
 Linux memory policy, regular/aligned mapping ownership, a live two-level page
-map, ordinary and binned caller-owned bitmap views, an in-place external-arena
-substrate, the private futex-lock boundary, bounded nonallocating support
+map, one separately owned process-static page-map publication root plus one
+caller-selected process-shared arena sidecar and bounded ticket-zero and
+later-thread page engines over their matched pair, including one all-free
+later-main exit drain, ordinary
+and binned caller-owned bitmap views, an in-place external-arena substrate,
+the private futex-lock boundary, bounded nonallocating support
 kernels, the allocation-free recursive once protocol, pure page geometry, and
 the exact `mi_random_ctx_t` image stored in `Theap::random` over RustCrypto's
 original-ChaCha primitive. The random slice includes direct `getrandom`,
@@ -27,7 +31,31 @@ and uses a must-use owner-bound capability for source-ordered replacement and
 serialized cross-thread release. Its detached heap/TLD/theap and its
 pre-publication-bound registry/published arena name the same deliberately
 bounded process-main identity as the current-thread TLD checkpoint; it does
-not claim general subprocess destruction or public allocation routing. A narrow unsafe
+not claim general subprocess destruction or public allocation routing.
+
+`process_page_map.rs` owns one process-static map initialization/publication
+boundary for the future global source page map. It freezes one `MemoryConfig`
+and selected `MainSubprocess`, initializes the map in its final slot, and
+Release-publishes the root; it is distinct from metadata's private map and all
+caller-managed maps. `process_arena.rs` separately ports the lower
+`mi_manage_os_memory_ex2` ownership edge for one caller-selected complete
+arena mapping: it binds a process registry to that exact map/main identity,
+retains the mapping only after in-place arena publication, and returns an
+unpublished rejected mapping to its caller. `ProcessPageArenaLease` then proves
+the exact map/root/configuration/main tuple for private
+`MainStaticProcessPageAllocator` and `MainHeapThreadProcessPageAllocator`
+owners. Each holds the process map's exclusive plain-entry lifecycle through
+its complete engine and joined scoped producer, installs only the arena's
+in-place `pages_main` bitmap into the shared static main Heap, and completes
+normal fresh/release ordering through map, bitmap, metadata, and slices. It
+chooses no reserve policy, does not model the C `mi_page_map_empty` pre-root,
+and has no process-init coordinator, concurrent/general later-thread page
+routing, general owner exit beyond the recorded all-free later-main drain,
+teardown, or public routing. An unpublished
+reservation failure or dropped unfinished lifecycle terminally poisons rather
+than exposing a null or fresh root.
+
+A narrow unsafe
 current-thread-only owner now uses that metadata prerequisite for regular
 dynamic TLS backing: it retains the typed Malloc capability, follows the
 source 16/double/+1024/least-index/65535 growth rule, publishes a fully
@@ -88,7 +116,30 @@ invalidates and quiesces the TLD, then releases its live count and terminally
 retires static TLD storage. A fallible private lock/list boundary after root
 reset is also terminal invalid-owner handling, retaining storage and
 registration rather than claiming teardown; source heap-busy retry remains
-absent. `dynamic_theap.rs` now takes a nonzero ticket through an atomic
+absent. `main_heap_thread.rs` now separately ports the ordinary later-thread
+`_mi_thread_init_with_heap(mi_heap_main())` branch. A live static attachment
+lends only a borrow-tied, lock-serialized shared-main-Heap lease; each later
+owner gets a nonzero metadata TLD and metadata Theap, links it to that Heap,
+then publishes default followed by its fixed fast slot while dynamic remains
+the immutable count-zero image and cached remains empty. After user destructors
+its direct no-page finish clears fast, resets default/cached, detaches the
+shared heap list then its TLD list, releases metadata, and decrements the main
+attachment's teardown gate. `main_heap_page.rs` can borrow one current later owner with a matched
+process pair, use the same `pages_main` bitmap, and retain the map lifecycle
+through normal free/release plus one scoped producer before returning to that
+no-page teardown. It can also consume a live engine into a post-fast-slot drain
+that force-collects every queue (including full), releases only all-free pages
+in PageMap -> `pages_main` -> metadata -> slice order, and finishes that pass
+even if an earlier page remains live. It then retains the post-fast-slot owner
+rather than abandoning that page; only an all-free pass permits the attachment's
+separate root/list/TLD teardown. A force/release failure remains terminally
+retained. This admits overlapping no-page owners but
+only one sequential page owner; concurrent routing, general page
+abandonment/owner exit, later free/reclaim, source deferred callbacks/arena
+collection, libc/pthread hooks, and public allocation routing remain absent.
+Any page/root/list mismatch is retained rather than treated as complete
+teardown.
+`dynamic_theap.rs` now takes a nonzero ticket through an atomic
 later-ticket gate, then retains one `!Send` caller-pinned Heap, metadata TLD
 and registration, typed Malloc Theap, regular backing, and regular-key lease.
 It preserves dynamic `_mi_theap_init` through both lists before publishing the
@@ -107,10 +158,19 @@ consuming finish requires no pages, queues/direct entries, collection poison,
 or pending OS release, while unfinished Drop latches the attachment terminally
 and transfers any pending OS release owner into that retained attachment.
 This is bounded private routing, not general dynamic allocation or remote-free
-concurrency. General cached-root switching/reference ownership, abandonment
-beyond its one consuming mapped-regular handoff,
-pthread/process hooks, complete subprocess layout/lifecycle, and C
-pthread-mutex layout claims remain absent. A
+concurrency. After clearing its regular backing, it has one distinct
+`DrainingPages` owner-exit state: it first force-collects an already-retired
+all-free regular page, while a full one-block arena singleton may be
+queue-detached and unmapped-abandoned so its exact final client free takes the
+raw failed-reclaim all-free release before cached-root/list/key teardown. Its
+`reserved == used == 1` and no-producer proof excludes invoking the source
+force-only local-list append for that live singleton; `free_list::collect_local`
+separately ports and tests that raw operation, which the separately recorded
+later-main all-free exit drain uses without broadening this dynamic traversal.
+General cached-root
+switching/reference ownership, abandonment beyond the mapped-regular and
+post-TLS singleton handoffs, pthread/process hooks, complete subprocess
+layout/lifecycle, and C pthread-mutex layout claims remain absent. A
 first dynamic arena page additionally creates a private
 `DynamicArenaPagesOwner`: after proving the registry-published arena's
 non-null subprocess identity equals the attachment's selected main subprocess,
@@ -123,9 +183,18 @@ slot, while post-mutation lock/free ambiguity remains terminally retained.
 One consuming `DynamicMappedPageHandoff` now supplies the bounded mapped
 regular dynamic handoff: it removes one exact live regular queue page after
 false-force collection, publishes only the bound heap-local abandoned bit and
-count, and only same-token adoption may claim/reassociate/requeue it. It is
-not abandoned free/reabandon, terminal release/reuse, or general abandonment
-routing. The private explicit single-thread slice now binds a pinned default theap to a
+count, and only same-token adoption or one same-origin `allow_collect` remote
+free may clear/reassociate/requeue it. The small-page path preserves the
+source partial-head collection. Its all-free dynamic-arena result now follows
+the queue-detached source release order—full PageMap-span unregister, exact
+heap-local ordinary-bit clear, metadata retirement, then arena-slice
+release—and returns the drained engine; an existing owner remains terminal.
+Separately, the source-shaped initially-unmapped failed-reclaim substrate
+selects terminal-empty, reabandonment, or unownership after its expected-head
+CAS/conflict collection. It has raw page-span release authority only through
+the post-TLS full-singleton handoff above, not as general free routing. General
+producer routing, regular/nonempty unmapped lifecycle integration, terminal
+reuse, and general abandonment routing remain absent. The private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
 and singleton allocation, exact generic candidate/full retention, local free,
 retirement, full-span unregister-before-release, checked counted allocation,
@@ -155,16 +224,22 @@ already-popped block as private allocator poison, so later allocator entry
 points reject without further state mutation. This slice also includes one
 queue-detached, stable page's mapped/unmapped abandonment/adoption
 protocol, including failed-reader restoration and clear-once-set quiescence.
-A default-off Loom model exercises four exact shared head protocols: two
+A default-off Loom model exercises five exact shared head protocols: two
 live-owner publishers, owner collection racing publication, bitmap adoption
 racing an abandoned producer, and abandoned unown racing publication.
 Deterministic native regressions separately cover the bitmap-field
 quiescence, abandonment publication, adoption versus a remote producer,
 ownership-release races, scoped producer cancellation/admission, regular
 generic/direct collection, and the joined full-page release/unfull branches.
-Except for these bounded owner-side collection routes, these pieces are not yet
-wired into general allocation/free routing, integrated allocator TLS/process/
-thread teardown, terminal page release, or metadata reuse. The compiler-TLS codegen probe proves hidden
+Except for these bounded owner-side collection routes, one post-TLS
+full-singleton terminal release, bounded ticket-zero and sequential later
+process-page engines, the shared-main no-page lifecycle, and the later-main
+all-free exit drain, these pieces are not yet wired into general
+allocation/free routing, integrated allocator TLS/process/thread teardown,
+terminal page release, or metadata reuse. The later page owner proves normal
+map/bitmap/fresh/release/producer ordering plus the all-free half of source
+owner exit after its fixed fast-slot clear, but not a general thread lifecycle,
+abandonment traversal, or `pthread` integration claim. The compiler-TLS codegen probe proves hidden
 initial-exec AArch64 root access and direct thread-pointer identity without a
 TLS resolver, but production integration must still apply that per-crate model
 and audit the final linked ELF. A
@@ -219,7 +294,7 @@ fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
 dependency package, version, source, edge, build script, or proc macro outside
 the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
 only in `Cargo.lock` do not satisfy or fail that selected-graph judge. It then
-runs the four test-only Loom schedules over the shared production remote-head
+runs the five test-only Loom schedules over the shared production remote-head
 publication/detach and abandoned owner-claim/unown loops and records their
 exact pass count separately from the
 ordinary unit suite.

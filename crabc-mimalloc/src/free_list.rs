@@ -15,11 +15,15 @@
 //
 // This is the frozen normal-release path only: `MI_ENCODE_FREELIST == 0` and
 // `MI_PADDING == 0`. This module neither detaches `xthread_free` nor performs
-// queue/theap/allocation policy. Its bounded raw false-force transfer is used
-// only after `remote_free` has detached a caller-proved joined/quiescent live
-// producer list; the explicit detached metadata branch has no remote
-// producer path and uses this local transfer directly. The existing borrowed
-// core remains exclusive-local. Pinned v3.5.0 has no
+// queue/theap/allocation policy. Its bounded raw collection transfer supports
+// both source force modes after `remote_free` has detached a caller-proved
+// joined/quiescent live producer list. Ordinary lifecycle callers use only
+// the false-force form; the bounded later-main all-free exit drain uses the
+// force append before it decides whether a departing owner's page can release.
+// That raw operation is not by itself a general owner-exit traversal. The
+// explicit detached metadata branch has no remote producer path and uses the
+// false-force transfer directly. The existing borrowed core
+// remains exclusive-local. Pinned v3.5.0 has no
 // separate delayed-free state; its `_mi_deferred_free` user callback is outside
 // this local-list core.
 
@@ -565,13 +569,14 @@ impl<'a> LocalFreeList<'a> {
     }
 }
 
-/// Performs only the false-force local half of `_mi_page_free_collect`.
+/// Performs the raw local half of `_mi_page_free_collect`.
 ///
 /// Pinned `page.c:214-243` first detaches a remote list, then moves
-/// `local_free` to `free` only when `free` is null. The append path is for
-/// `force == true` and is intentionally unavailable here. This raw state is
-/// distinct from [`LocalFreeList`]: it avoids a whole-page mutable borrow.
-/// The enclosing full-page lifecycle still has a caller-proved
+/// `local_free` to `free` when `free` is null. When `force` is true and both
+/// lists are non-empty, it validates the source local list, appends the old
+/// immediate head to its tail, and installs that local head as `free`. This
+/// raw state is distinct from [`LocalFreeList`]: it avoids a whole-page
+/// mutable borrow. The enclosing lifecycle still has a caller-proved
 /// joined/quiescent precondition before it makes any queue transition. The
 /// detached metadata branch instead has an explicit no-remote-producer
 /// contract.
@@ -582,8 +587,9 @@ impl<'a> LocalFreeList<'a> {
 /// the projected ordinary fields. `state` must come from one live associated
 /// page whose area remains writable for this operation. It must preserve that
 /// page's no-retirement/no-release lifetime while the raw collection runs.
-pub(crate) unsafe fn collect_local_false(
+pub(crate) unsafe fn collect_local(
     state: PageLocalCollectState,
+    force: bool,
 ) -> Result<bool, FreeListError> {
     validate_raw_collect_state(&state)?;
     // SAFETY: caller supplies exclusive ordinary-field ownership. The raw
@@ -593,21 +599,51 @@ pub(crate) unsafe fn collect_local_false(
         return Ok(false);
     };
     validate_raw_initialized_block(&state, local_free)?;
-    // SAFETY: see the `local_free` read above; source false-force collection
-    // observes `free` only to decide whether it may transfer the local head.
-    if unsafe { !(*state.free.as_ptr()).is_null() } {
+    // SAFETY: see the `local_free` read above; source collection observes
+    // `free` only to decide whether it transfers or appends the local head.
+    let free = unsafe { *state.free.as_ptr() };
+    let Some(free) = NonNull::new(free) else {
+        // SAFETY: the local head is a validated initialized block and caller
+        // exclusivity covers these three ordinary fields. This is the source
+        // transfer common to both force modes; it neither appends nor creates
+        // a delayed/deferred list state.
+        unsafe {
+            *state.free.as_ptr() = local_free.as_ptr();
+            *state.local_free.as_ptr() = ptr::null_mut();
+            *state.free_is_zero.as_ptr() = false;
+        }
+        return Ok(true);
+    };
+    if !force {
         return Ok(false);
     }
+    validate_raw_initialized_block(&state, free)?;
+    let tail = raw_list_tail(&state, local_free)?;
     // SAFETY: the local head is a validated initialized block, `free` is
-    // empty, and caller exclusivity covers these three ordinary fields. This
-    // is exactly the source false-force transfer; it neither appends nor
-    // creates a delayed/deferred list state.
+    // validated, and `tail` is the terminal node of the validated local list.
+    // Caller exclusivity covers these ordinary fields. This is exactly the
+    // source force append before the local head replaces `free`.
     unsafe {
+        ptr::write(tail.as_ptr().cast::<*mut u8>(), free.as_ptr().cast());
         *state.free.as_ptr() = local_free.as_ptr();
         *state.local_free.as_ptr() = ptr::null_mut();
         *state.free_is_zero.as_ptr() = false;
     }
     Ok(true)
+}
+
+/// Performs the false-force local half of `_mi_page_free_collect`.
+///
+/// Existing regular/full collection callers deliberately retain this wrapper:
+/// their source branches never request the linear local-list append reserved
+/// for forced owner-exit collection.
+#[inline]
+pub(crate) unsafe fn collect_local_false(
+    state: PageLocalCollectState,
+) -> Result<bool, FreeListError> {
+    // SAFETY: this wrapper preserves the caller's raw collection obligations
+    // while selecting the source `force == false` branch.
+    unsafe { collect_local(state, false) }
 }
 
 fn validate_raw_collect_state(state: &PageLocalCollectState) -> Result<(), FreeListError> {
@@ -653,6 +689,35 @@ fn validate_raw_initialized_block(
         return Err(FreeListError::InvalidBlock);
     }
     Ok(())
+}
+
+/// Returns the terminal node of one validated raw local-free list.
+///
+/// A valid source local list contains at most `capacity` initialized blocks.
+/// Bounding the walk preserves that invariant at the Rust raw-memory boundary
+/// and prevents a malformed cyclic list from being linked into `free`.
+fn raw_list_tail(
+    state: &PageLocalCollectState,
+    mut block: NonNull<Block>,
+) -> Result<NonNull<Block>, FreeListError> {
+    let mut count = 0usize;
+    loop {
+        if count >= state.capacity as usize {
+            return Err(FreeListError::CorruptFreeList);
+        }
+        count += 1;
+        validate_raw_initialized_block(state, block)?;
+        // SAFETY: `block` has just been validated as an initialized list node
+        // in the caller-proved writable page area. The source normal profile
+        // stores its unencoded next pointer in this first word.
+        let next = unsafe { ptr::read(block.as_ptr().cast::<*mut u8>()) };
+        let Some(next) = NonNull::new(next.cast::<Block>()) else {
+            return Ok(block);
+        };
+        validate_raw_initialized_block(state, next)
+            .map_err(|_| FreeListError::CorruptFreeList)?;
+        block = next;
+    }
 }
 
 #[cfg(test)]
@@ -708,6 +773,25 @@ mod tests {
         // `PageFreeListState` contract above.
         unsafe { LocalFreeList::from_page_state(state) }
             .expect("valid aligned caller-owned test page")
+    }
+
+    fn raw_collect_state<const N: usize>(
+        state: &mut TestPageState,
+        storage: &mut Page<N>,
+        block_size: usize,
+        reserved: u16,
+    ) -> PageLocalCollectState {
+        PageLocalCollectState {
+            area: NonNull::new(storage.0.as_mut_ptr()).expect("test storage is non-null"),
+            area_bytes: N,
+            block_size,
+            capacity: state.capacity,
+            reserved,
+            free: NonNull::from(&mut state.free),
+            local_free: NonNull::from(&mut state.local_free),
+            used: NonNull::from(&mut state.used),
+            free_is_zero: NonNull::from(&mut state.free_is_zero),
+        }
     }
 
     #[test]
@@ -878,6 +962,100 @@ mod tests {
         assert_eq!(list.pop(false).unwrap(), Some(second));
         assert_eq!(list.pop(false).unwrap(), Some(first));
         assert_eq!(list.pop(false).unwrap(), Some(third));
+    }
+
+    #[test]
+    fn raw_force_collection_appends_local_frees_before_the_existing_immediate_head() {
+        let mut storage = Page([0; 64]);
+        let mut state = TestPageState::fresh(true);
+        let (first, second) = {
+            let mut list = list_for(&mut state, &mut storage, 16, 4);
+            assert_eq!(list.extend(), Ok(4));
+            let first = list.pop(false).unwrap().unwrap();
+            let second = list.pop(false).unwrap().unwrap();
+            // SAFETY: both blocks were popped once from this exclusive list
+            // and the remaining immediate list begins at the third block.
+            unsafe {
+                list.push_local(first).unwrap();
+                list.push_local(second).unwrap();
+            }
+            (first, second)
+        };
+        let third = NonNull::new(unsafe { storage.0.as_mut_ptr().add(32) }).unwrap();
+        let fourth = NonNull::new(unsafe { storage.0.as_mut_ptr().add(48) }).unwrap();
+        let raw = raw_collect_state(&mut state, &mut storage, 16, 4);
+
+        // Source `_mi_page_free_collect(page, true)` appends the local list
+        // only during forced owner collection: its LIFO local head remains
+        // first, and the pre-existing immediate list follows its local tail.
+        assert_eq!(unsafe { collect_local(raw, true) }, Ok(true));
+        assert!(state.local_free.is_null());
+        assert!(!state.free_is_zero);
+
+        let mut list = list_for(&mut state, &mut storage, 16, 4);
+        assert_eq!(list.pop(false).unwrap(), Some(second));
+        assert_eq!(list.pop(false).unwrap(), Some(first));
+        assert_eq!(list.pop(false).unwrap(), Some(third));
+        assert_eq!(list.pop(false).unwrap(), Some(fourth));
+        assert_eq!(list.pop(false).unwrap(), None);
+    }
+
+    #[test]
+    fn raw_false_collection_preserves_both_lists_when_immediate_blocks_exist() {
+        let mut storage = Page([0; 64]);
+        let mut state = TestPageState::fresh(true);
+        {
+            let mut list = list_for(&mut state, &mut storage, 16, 4);
+            assert_eq!(list.extend(), Ok(4));
+            let first = list.pop(false).unwrap().unwrap();
+            let second = list.pop(false).unwrap().unwrap();
+            // SAFETY: both blocks were popped once and become the deferred
+            // local list while two immediate source blocks remain available.
+            unsafe {
+                list.push_local(first).unwrap();
+                list.push_local(second).unwrap();
+            }
+        }
+        let free_before = state.free;
+        let local_before = state.local_free;
+        let raw = raw_collect_state(&mut state, &mut storage, 16, 4);
+
+        assert_eq!(unsafe { collect_local(raw, false) }, Ok(false));
+        assert_eq!(state.free, free_before);
+        assert_eq!(state.local_free, local_before);
+        assert!(state.free_is_zero);
+    }
+
+    #[test]
+    fn raw_force_collection_rejects_a_cyclic_local_list_before_linking_it_to_free() {
+        let mut storage = Page([0; 64]);
+        let mut state = TestPageState::fresh(true);
+        let (first, second) = {
+            let mut list = list_for(&mut state, &mut storage, 16, 4);
+            assert_eq!(list.extend(), Ok(4));
+            let first = list.pop(false).unwrap().unwrap();
+            let second = list.pop(false).unwrap().unwrap();
+            // SAFETY: both blocks were popped once before this fixture makes
+            // the intentionally invalid cycle below.
+            unsafe {
+                list.push_local(first).unwrap();
+                list.push_local(second).unwrap();
+            }
+            (first, second)
+        };
+        // SAFETY: this intentionally breaks the source local-list invariant
+        // inside the still-live test storage: second -> first -> second.
+        unsafe { ptr::write(first.as_ptr().cast::<*mut u8>(), second.as_ptr()) };
+        let free_before = state.free;
+        let local_before = state.local_free;
+        let raw = raw_collect_state(&mut state, &mut storage, 16, 4);
+
+        assert_eq!(
+            unsafe { collect_local(raw, true) },
+            Err(FreeListError::CorruptFreeList)
+        );
+        assert_eq!(state.free, free_before);
+        assert_eq!(state.local_free, local_before);
     }
 
     #[test]

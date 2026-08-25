@@ -26,8 +26,10 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
+use crate::arena::ArenaView;
+use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::compiler_tls::{
     cached_theap, clear_main_static_attachment_roots, current_thread_identity,
     default_theap, dynamic_backing_peek, fast_slot_peek,
@@ -39,8 +41,12 @@ use crate::subproc::{
     MainStaticTldError, MainStaticThreadLocalData, MainSubprocess,
     ThreadRegistrationLease,
 };
+use crate::lock::{PrivateLock, PrivateLockGuard};
+use crate::os::MemoryConfig;
+use crate::os_page::OsAlignedPageOwner;
 use crate::types::{
-    Heap, MemoryId, Theap, TheapMainStaticInitError, ThreadLocalData,
+    Heap, MemoryId, Page, PageQueue, Theap, TheapMainStaticInitError, TheapOwner,
+    ThreadLocalData,
     ThreadLocalDataQuiesceError, ThreadLocalTheapListError,
 };
 
@@ -85,18 +91,37 @@ impl MainStaticTheapSlot {
 /// atomic state is the only shared entry path; a successful caller obtains the
 /// unique non-Send attachment capability before either `UnsafeCell` is
 /// projected mutably.
-struct MainStaticAttachmentStorage {
+pub(crate) struct MainStaticAttachmentStorage {
     state: AtomicU8,
     heap: MainStaticHeapSlot,
     theap: MainStaticTheapSlot,
+    /// Serializes short mutable projections of the process-static main Heap
+    /// made by later-thread attachments.  The main attachment itself mutates
+    /// the image only before it can issue a [`MainStaticHeapLease`] or after
+    /// every such lease has been relinquished through Rust's borrow boundary.
+    ///
+    /// This is not a replacement for the source `heap->theaps_lock`: that
+    /// lock still owns the intrusive-list publication.  It is the Rust
+    /// aliasing boundary that lets later attachments use the source static
+    /// Heap without retaining an invalid `&mut Heap` for their lifetime.
+    shared_heap_projection_lock: PrivateLock,
+    /// Number of fully published later-thread Theaps using the static main
+    /// Heap.  It prevents main-image retirement while a live source list
+    /// member still points at that image.  Preparation failures which have no
+    /// attached Theap never increment this count.
+    shared_later_theap_count: AtomicUsize,
     #[cfg(test)]
     inject_busy_tld_list_before_initial_attachment: AtomicU8,
 }
 
-// SAFETY: `state` serializes the unique Cold -> Initializing claim. Only the
-// resulting `!Send` current-thread owner projects either image mutably; after
-// teardown or poison neither slot is reused. Read-only test observations occur
-// only under that same owner or after terminal completion.
+// SAFETY: `state` serializes the unique Cold -> Initializing claim. The
+// ticket-zero `!Send` owner projects both images during initial setup and
+// terminal teardown. A live later-thread attachment can project only `heap`,
+// only while it retains `shared_heap_projection_lock` plus a borrow tied to
+// that main owner; source heap-list mutation remains under `theaps_lock`.
+// Neither slot is reused after teardown or poison. Read-only test observations
+// occur only under the same owner or one of those explicit synchronization
+// boundaries.
 unsafe impl Sync for MainStaticAttachmentStorage {}
 
 impl MainStaticAttachmentStorage {
@@ -105,13 +130,15 @@ impl MainStaticAttachmentStorage {
             state: AtomicU8::new(COLD),
             heap: MainStaticHeapSlot::new(),
             theap: MainStaticTheapSlot::new(),
+            shared_heap_projection_lock: PrivateLock::new(),
+            shared_later_theap_count: AtomicUsize::new(0),
             #[cfg(test)]
             inject_busy_tld_list_before_initial_attachment: AtomicU8::new(0),
         }
     }
 
     #[cfg(test)]
-    fn test_static_owner() -> &'static Self {
+    pub(crate) fn test_static_owner() -> &'static Self {
         std::boxed::Box::leak(std::boxed::Box::new(Self::new()))
     }
 
@@ -157,9 +184,10 @@ impl MainStaticAttachmentStorage {
 
     #[inline]
     unsafe fn images_mut(&self) -> (&mut Heap, &mut Theap) {
-        // SAFETY: the caller owns the one current-thread attachment capability
-        // created after `claim_cold`, or it is performing its sole setup before
-        // that capability escapes. Both slots have distinct storage.
+        // SAFETY: the caller owns the ticket-zero current-thread attachment
+        // before any shared heap lease can exist, or it is doing terminal
+        // teardown after the borrow-tied later attachments have all gone.
+        // Both slots have distinct storage.
         unsafe { (&mut *self.heap.image.get(), &mut *self.theap.image.get()) }
     }
 
@@ -177,6 +205,12 @@ impl MainStaticAttachmentStorage {
 
     #[cfg(test)]
     #[inline]
+    pub(crate) fn test_shared_later_theap_count(&self) -> usize {
+        self.shared_later_theap_count.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    #[inline]
     fn test_inject_busy_tld_list_before_initial_attachment(&self) {
         self.inject_busy_tld_list_before_initial_attachment
             .store(1, Ordering::Relaxed);
@@ -189,6 +223,141 @@ impl MainStaticAttachmentStorage {
             .swap(0, Ordering::Relaxed)
             != 0
     }
+}
+
+/// A borrow-tied capability to make a short synchronized mutable projection
+/// of the process-static main heap for one later-thread attachment.
+///
+/// The capability deliberately carries no raw heap pointer and does not
+/// expose a general heap API.  Its lifetime is tied to a live
+/// [`MainStaticTheapAttachment`], so safe code cannot begin main-image
+/// teardown while a worker can still attach, detach, or retain a Theap that
+/// points into that image.  It is Send/Sync only as this narrow process
+/// lifetime witness; each caller must still establish a separate current
+/// thread/TLD owner before it can mutate the heap.
+#[derive(Clone, Copy)]
+pub(crate) struct MainStaticHeapLease<'main> {
+    storage: &'static MainStaticAttachmentStorage,
+    subprocess: &'static MainSubprocess,
+    _main_attachment: PhantomData<&'main MainStaticTheapAttachment>,
+}
+
+// SAFETY: the lease contains only process-static addresses.  All mutable
+// projection of `storage.heap` is serialized by `shared_heap_projection_lock`;
+// source intrusive-list mutation remains serialized independently by
+// `Heap::theaps_lock`.  Its lifetime borrow prevents safe main attachment
+// teardown while another thread retains this capability.
+unsafe impl Send for MainStaticHeapLease<'_> {}
+// SAFETY: see the Send justification above.  Sharing the capability only
+// permits independently synchronized short projections.
+unsafe impl Sync for MainStaticHeapLease<'_> {}
+
+/// A temporary mutable view of the static main heap.
+///
+/// References returned by [`Self::heap_mut`] cannot outlive this guard, and
+/// the guard is intentionally !Send through `PrivateLockGuard`.
+pub(crate) struct MainStaticHeapGuard<'main> {
+    storage: &'static MainStaticAttachmentStorage,
+    lock: PrivateLockGuard<'static>,
+    // The raw static image remains allocated forever, but this logical
+    // borrow is what prevents safe main-image teardown while a caller can
+    // still project or release the heap through this guard.
+    _main_attachment: PhantomData<&'main MainStaticTheapAttachment>,
+}
+
+impl<'main> MainStaticHeapLease<'main> {
+    /// Returns the main subprocess identity selected by the ticket-zero
+    /// attachment.  Later-thread TLD construction must use this exact
+    /// identity rather than a separately chosen process counter.
+    #[inline]
+    pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
+        self.subprocess
+    }
+
+    /// Acquires the Rust aliasing guard for one short source heap operation.
+    ///
+    /// The underlying source heap remains `READY` for the complete lease
+    /// lifetime.  The atomic check is retained so unsafe/manual lifecycle
+    /// integrations fail closed instead of projecting a retired image.
+    pub(crate) fn lock_heap(self) -> Result<MainStaticHeapGuard<'main>, MainStaticHeapLeaseError> {
+        let lock = self
+            .storage
+            .shared_heap_projection_lock
+            .lock()
+            .map_err(MainStaticHeapLeaseError::Lock)?;
+        if self.storage.state.load(Ordering::Acquire) != READY {
+            drop(lock);
+            return Err(MainStaticHeapLeaseError::Inactive);
+        }
+        Ok(MainStaticHeapGuard {
+            storage: self.storage,
+            lock,
+            _main_attachment: PhantomData,
+        })
+    }
+
+    /// Records a completed source heap-list publication.  The caller holds
+    /// the temporary heap guard and retains the typed Theap/TLD capability;
+    /// this counter is therefore only a main-teardown gate, never a second
+    /// list or ownership registry.
+    #[inline]
+    pub(crate) fn note_later_theap_attached(self) -> Result<(), MainStaticHeapLeaseError> {
+        if self.storage.state.load(Ordering::Acquire) != READY {
+            return Err(MainStaticHeapLeaseError::Inactive);
+        }
+        self.storage
+            .shared_later_theap_count
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| count.checked_add(1))
+            .map(|_| ())
+            .map_err(|_| MainStaticHeapLeaseError::CountOverflow)
+    }
+
+    /// Removes one completed source heap-list member after it has been fully
+    /// detached and its metadata/TLD release is no longer observable through
+    /// the main Heap.
+    #[inline]
+    pub(crate) fn note_later_theap_detached(self) -> bool {
+        let mut current = self.storage.shared_later_theap_count.load(Ordering::Acquire);
+        while current != 0 {
+            match self.storage.shared_later_theap_count.compare_exchange_weak(
+                current,
+                current - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+        false
+    }
+}
+
+impl MainStaticHeapGuard<'_> {
+    /// Projects the stable static main Heap while this guard is held.
+    #[inline]
+    pub(crate) fn heap_mut(&mut self) -> &mut Heap {
+        // SAFETY: `shared_heap_projection_lock` serializes all projections
+        // made through a `MainStaticHeapLease`.  The borrow carried by that
+        // lease prevents the main attachment from independently projecting
+        // or retiring this image in safe code.
+        unsafe { &mut *self.storage.heap.image.get() }
+    }
+
+    /// Releases the aliasing guard and exposes an unexpected private-futex
+    /// wake failure to the lifecycle owner.
+    #[inline]
+    pub(crate) fn unlock(self) -> Result<(), crabc_core::Errno> {
+        self.lock.unlock()
+    }
+}
+
+/// A failure at the shared process-static heap projection boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainStaticHeapLeaseError {
+    Inactive,
+    CountOverflow,
+    Lock(crabc_core::Errno),
 }
 
 static PROCESS_MAIN_STATIC_ATTACHMENT: MainStaticAttachmentStorage =
@@ -215,6 +384,10 @@ pub(crate) enum MainStaticTheapError {
     NotFirstTicket,
     MainStaticTld(MainStaticTldError),
     TheapInit(TheapMainStaticInitError),
+    /// A later-thread source Theap remains linked to the process-static main
+    /// Heap.  Main-image retirement would leave that live list member with a
+    /// dangling heap pointer, so this is a non-mutating refusal.
+    SharedTheapsLive,
     PageCountNonZero,
     RootOwnership,
     TldOwnership,
@@ -237,6 +410,11 @@ pub(crate) struct MainStaticTheapAttachment {
     thread: crate::types::LiveThreadId,
     tld: Option<MainStaticThreadLocalData>,
     registration: Option<ThreadRegistrationLease>,
+    /// One detached OS-aligned singleton release owner retained only when an
+    /// unfinished bounded main-static page engine cannot complete its final
+    /// unmap. It is intentionally terminal: this attachment has no general
+    /// page teardown or OS-release retry entry point yet.
+    terminal_os_release: Option<OsAlignedPageOwner>,
     state: AttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
     #[cfg(test)]
@@ -274,7 +452,7 @@ impl MainStaticTheapAttachment {
 
     /// Builds the same source transition over isolated leaked test statics.
     #[cfg(test)]
-    unsafe fn begin_with_test_storage(
+    pub(crate) unsafe fn begin_with_test_storage(
         storage: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
     ) -> Result<Self, MainStaticTheapError> {
@@ -374,6 +552,7 @@ impl MainStaticTheapAttachment {
             thread,
             tld: Some(tld),
             registration: Some(registration),
+            terminal_os_release: None,
             state: AttachmentState::Attached,
             _not_send_or_sync: PhantomData,
             #[cfg(test)]
@@ -399,6 +578,51 @@ impl MainStaticTheapAttachment {
         Ok(tld)
     }
 
+    /// Returns the selected process-main identity while the ticket-zero
+    /// attachment remains current and live. Page-bearing callers use this
+    /// only to reject a mismatched process map/arena pair before borrowing
+    /// any static image.
+    #[inline]
+    pub(crate) fn subprocess(&self) -> Result<&'static MainSubprocess, MainStaticTheapError> {
+        self.ensure_current()?;
+        if self.storage.state.load(Ordering::Acquire) != READY {
+            return Err(MainStaticTheapError::Poisoned);
+        }
+        Ok(self.subprocess)
+    }
+
+    /// Borrows the live process-static main Heap for source-shaped
+    /// later-thread attachment work.
+    ///
+    /// The returned capability is deliberately narrower than a heap pointer:
+    /// it grants only short locked mutable projections and keeps this main
+    /// attachment immutably borrowed.  That makes a later thread's
+    /// `theap->heap` lifetime explicit without giving it permission to alter
+    /// ticket-zero roots, the main TLD, or process-static image ownership.
+    pub(crate) fn shared_main_heap_lease(
+        &self,
+    ) -> Result<MainStaticHeapLease<'_>, MainStaticTheapError> {
+        self.ensure_current()?;
+        if self.storage.state.load(Ordering::Acquire) != READY {
+            return Err(MainStaticTheapError::Poisoned);
+        }
+        Ok(MainStaticHeapLease {
+            storage: self.storage,
+            subprocess: self.subprocess,
+            _main_attachment: PhantomData,
+        })
+    }
+
+    /// Borrows this exact ticket-zero owner as the bounded static page
+    /// session. The mutable borrow keeps the TLD, static Heap/Theap images,
+    /// compiler-TLS roots, and main teardown authority alive for every page
+    /// and scoped remote producer admitted by the shared page engine.
+    pub(crate) fn page_session(
+        &mut self,
+    ) -> Result<MainStaticPageSession<'_>, MainStaticPageSessionError> {
+        MainStaticPageSession::begin(self)
+    }
+
     /// Performs the bounded source teardown order for the one static main
     /// theap: require no pages, clear only owned TLS roots, detach heap then
     /// TLD lists, clear terminal theap links/random state, invalidate TLD,
@@ -411,6 +635,18 @@ impl MainStaticTheapAttachment {
         if !self.tld_matches_subprocess() {
             self.poison();
             return Err(MainStaticTheapError::TldOwnership);
+        }
+        if self
+            .storage
+            .shared_later_theap_count
+            .load(Ordering::Acquire)
+            != 0
+        {
+            // This is deliberately pre-root and pre-list mutation. A shared
+            // heap lease can only exist while this owner is immutably
+            // borrowed in safe Rust, but retain the runtime counter as the
+            // final guard for future pthread-owned storage.
+            return Err(MainStaticTheapError::SharedTheapsLive);
         }
 
         // SAFETY: the attached capability is unique and current-thread-only.
@@ -534,17 +770,17 @@ impl MainStaticTheapAttachment {
     }
 
     #[cfg(test)]
-    fn test_theap_pointer(&self) -> *mut Theap {
+    pub(crate) fn test_theap_pointer(&self) -> *mut Theap {
         self.storage.theap.image.get()
     }
 
     #[cfg(test)]
-    fn test_heap_pointer(&self) -> *mut Heap {
+    pub(crate) fn test_heap_pointer(&self) -> *mut Heap {
         self.storage.heap.image.get()
     }
 
     #[cfg(test)]
-    fn test_images(&mut self) -> (&Heap, &Theap) {
+    pub(crate) fn test_images(&mut self) -> (&Heap, &Theap) {
         // SAFETY: test callers retain the unique attached owner and request
         // only shared observations of its address-stable static images.
         let (heap, theap) = unsafe { self.storage.images_mut() };
@@ -577,6 +813,260 @@ impl MainStaticTheapAttachment {
     #[cfg(test)]
     fn test_inject_busy_heap_before_detach(&mut self) {
         self.inject_busy_heap_before_detach = true;
+    }
+}
+
+/// A rejection while borrowing the ticket-zero static owner for one complete
+/// process-page lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainStaticPageSessionError {
+    Attachment(MainStaticTheapError),
+    /// Compiler-TLS roots no longer name the exact static Theap/default
+    /// image. This is terminal because a page engine could otherwise publish
+    /// a page owned by a stale root.
+    RootOwnership,
+    /// The static Heap, Theap, or TLD no longer form the source main-thread
+    /// image expected by `mi_heap_ensure_arena_pages`.
+    ImageOwnership,
+    /// A later shared-main Theap remains linked. This is a non-mutating
+    /// refusal: source main-page mutation cannot safely overlap that broader
+    /// unfinished lifecycle in this bounded port.
+    SharedTheapsLive,
+}
+
+/// Borrowed page-owner view of the static ticket-zero Theap.
+///
+/// It is intentionally constructed only by [`MainStaticTheapAttachment`]. A
+/// typed process page/arena pair separately proves the selected PageMap and
+/// arena identity; this session supplies the source main Heap distinction:
+/// fresh pages install the arena's embedded `pages_main`, never a dynamic
+/// `mi_arena_pages_t` image.
+pub(crate) struct MainStaticPageSession<'main> {
+    attachment: &'main mut MainStaticTheapAttachment,
+}
+
+impl<'main> MainStaticPageSession<'main> {
+    fn begin(
+        attachment: &'main mut MainStaticTheapAttachment,
+    ) -> Result<Self, MainStaticPageSessionError> {
+        attachment
+            .ensure_current()
+            .map_err(MainStaticPageSessionError::Attachment)?;
+        if attachment
+            .storage
+            .shared_later_theap_count
+            .load(Ordering::Acquire)
+            != 0
+        {
+            return Err(MainStaticPageSessionError::SharedTheapsLive);
+        }
+        if !attachment.tld_matches_subprocess() {
+            attachment.poison();
+            return Err(MainStaticPageSessionError::ImageOwnership);
+        }
+
+        let theap_pointer = attachment.storage.theap.image.get();
+        if !core::ptr::eq(default_theap().as_ptr(), theap_pointer)
+            || fast_slot_peek().map_or(true, |fast| fast.as_ptr().cast::<Theap>() != theap_pointer)
+            || !core::ptr::eq(cached_theap().as_ptr(), crate::bootstrap::empty_default_theap_ptr())
+            || !matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
+        {
+            attachment.poison();
+            return Err(MainStaticPageSessionError::RootOwnership);
+        }
+
+        // SAFETY: the unique mutable attachment borrow excludes a safe shared
+        // main-heap lease or a second page session. The images remain static
+        // for the process lifetime and are initialized before attachment
+        // READY publication.
+        let (heap, theap) = unsafe { attachment.storage.images_mut() };
+        if !heap.is_bound_to_main_subprocess(attachment.subprocess)
+            || !theap.is_initialized()
+            || !theap.matches_thread(attachment.thread)
+            || !theap.is_bound_to_main_subprocess(attachment.subprocess)
+            || !core::ptr::eq(theap.heap(), core::ptr::from_mut(heap))
+            || theap.page_count() != 0
+        {
+            attachment.poison();
+            return Err(MainStaticPageSessionError::ImageOwnership);
+        }
+        Ok(Self { attachment })
+    }
+
+    /// The source static main TLD consumes the old total-thread count zero.
+    #[inline]
+    pub(crate) const fn thread_sequence(&self) -> usize { 0 }
+
+    #[inline]
+    fn theap(&self) -> &Theap {
+        // SAFETY: session construction took the attachment's unique mutable
+        // borrow; the static image is initialized and cannot move.
+        unsafe { &*self.attachment.storage.theap.image.get() }
+    }
+
+    #[inline]
+    fn theap_mut(&mut self) -> &mut Theap {
+        // SAFETY: see `Self::theap`; all page/queue mutation remains inside
+        // this one page-session lifetime.
+        unsafe { &mut *self.attachment.storage.theap.image.get() }
+    }
+
+    #[inline]
+    fn heap(&self) -> &Heap {
+        // SAFETY: the static Heap shares the same session exclusivity proof.
+        unsafe { &*self.attachment.storage.heap.image.get() }
+    }
+
+}
+
+impl theap_page_session_sealed::Sealed for MainStaticPageSession<'_> {}
+
+// SAFETY: construction verifies the exact current ticket-zero roots and the
+// static TLD/Theap/Heap relation, then retains `&mut MainStaticTheapAttachment`
+// for the complete page engine/remote-producer lifetime. The paired process
+// map mutation lease supplies the separate exclusion required for PageMap
+// plain entries; this session selects only the arena's embedded main bitmap.
+unsafe impl TheapPageSession for MainStaticPageSession<'_> {
+    #[inline]
+    fn theap(&self) -> &Theap { Self::theap(self) }
+
+    #[inline]
+    fn thread_id(&self) -> Option<crate::types::LiveThreadId> {
+        Some(self.attachment.thread)
+    }
+
+    #[inline]
+    fn queue(&self, bin: usize) -> Option<&PageQueue> { self.theap().queue(bin) }
+
+    #[inline]
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
+        self.theap_mut().queue_mut(bin)
+    }
+
+    #[inline]
+    fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.theap().direct_page(index)
+    }
+
+    #[inline]
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        self.theap_mut().set_direct_page(index, page)
+    }
+
+    #[inline]
+    fn note_page_added(&mut self) { self.theap_mut().note_page_added() }
+
+    #[inline]
+    fn note_page_removed(&mut self) -> bool { self.theap_mut().note_page_removed() }
+
+    fn ensure_arena_pages(&mut self, arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
+        let pages = NonNull::from(&arena.arena().pages_main);
+        match self.heap().install_main_arena_pages(
+            self.attachment.subprocess,
+            arena.arena().arena_index,
+            pages,
+        ) {
+            Ok(()) => true,
+            Err(_) => {
+                // A failed static slot installation can follow a visible
+                // Release store or reveal a foreign main bitmap. The bounded
+                // static owner has no rollback/rebinding protocol.
+                self.attachment.poison();
+                false
+            }
+        }
+    }
+
+    #[inline]
+    fn set_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() {
+            return false;
+        }
+        // SAFETY: this static session owns the matching fresh-page lifecycle
+        // and has installed exactly the arena's embedded `pages_main` slot.
+        unsafe { arena.pages() }
+            .and_then(|pages| pages.set_range(arena_memory.slice_index as usize, 1))
+            .is_some_and(|transition| transition.all_transitioned())
+    }
+
+    #[inline]
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if arena_memory.arena != core::ptr::from_ref(arena.arena()).cast_mut() {
+            return false;
+        }
+        // The generic engine unregisters the complete map span before this
+        // matching source main-bitmap clear and arena-slice release.
+        unsafe { arena.pages() }
+            .and_then(|pages| pages.clear_range(arena_memory.slice_index as usize, 1))
+            == Some(true)
+    }
+
+    #[inline]
+    unsafe fn publish_fresh_page(
+        &mut self,
+        metadata: NonNull<Page>,
+        block_size: usize,
+        page_offset: usize,
+        reserved: u16,
+        slice_pcommitted: u16,
+        free_is_zero: bool,
+        memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        let thread = self.attachment.thread;
+        let (heap, theap) = unsafe { self.attachment.storage.images_mut() };
+        // SAFETY: the caller retains the page-engine raw metadata/area proof;
+        // this session owns the exact static live Theap/Heap pair for its
+        // complete source page lifecycle.
+        unsafe {
+            Page::publish_fresh_exclusive_owner_at(
+                metadata,
+                theap,
+                heap,
+                TheapOwner::Live(thread),
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                free_is_zero,
+                memid,
+            )
+        }
+    }
+
+    #[inline]
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { page.retire_exclusive() }
+
+    #[inline]
+    fn retired_bounds(&self) -> (usize, usize) { self.theap().retired_bounds() }
+
+    #[inline]
+    fn note_retired_bin(&mut self, bin: usize) -> bool {
+        self.theap_mut().note_retired_bin(bin)
+    }
+
+    #[inline]
+    fn reset_retired_bounds(&mut self) { self.theap_mut().reset_retired_bounds() }
+
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner> {
+        if self.attachment.terminal_os_release.is_some() {
+            return Err(owner);
+        }
+        self.attachment.terminal_os_release = Some(owner);
+        Ok(())
+    }
+
+    #[inline]
+    fn latch_unfinished_page_engine(&mut self) {
+        self.attachment.poison();
     }
 }
 

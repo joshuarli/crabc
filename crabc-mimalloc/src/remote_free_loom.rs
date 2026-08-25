@@ -7,7 +7,8 @@
 //! integer identity and a modeled `next` word. It executes
 //! [`super::publish_to_head`], [`super::detach_from_head`],
 //! [`super::claim_abandoned_owner_with`], and
-//! [`super::try_unown_abandoned_head_with`] directly, so the production
+//! [`super::try_unown_abandoned_head_with`], and
+//! [`super::try_unown_abandoned_expected_head_with`] directly, so the production
 //! Relaxed load, AcqRel OR, and AcqRel/Acquire weak-CAS transitions cannot
 //! drift from this evidence.
 //!
@@ -17,10 +18,11 @@
 //! `used`/`local_free` mutation.
 
 use super::{
-    AbandonedOwnerClaim, AbandonedOwnerHeadTransition, THREAD_FREE_OWNED,
+    AbandonedExpectedHeadTransition, AbandonedOwnerClaim, AbandonedOwnerHeadTransition,
+    THREAD_FREE_OWNED,
     ThreadFree, claim_abandoned_owner_with, detach_from_head, publish_to_head,
     publish_to_head_with_owner, thread_free_block_address,
-    try_unown_abandoned_head_with,
+    try_unown_abandoned_expected_head_with, try_unown_abandoned_head_with,
 };
 use loom::sync::Arc;
 use loom::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -329,5 +331,65 @@ fn loom_abandoned_unown_racing_publisher_either_transfers_or_retains_collection_
         assert_eq!(blocks.collect_once(&head), 1);
         assert_eq!(head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
         blocks.assert_collected(0);
+    });
+}
+
+#[test]
+fn loom_expected_head_unown_racing_allow_collect_publisher_preserves_the_head_or_collection() {
+    loom::model(|| {
+        // The small partial collector leaves block zero in the owned head.
+        // The expected-head CAS may transfer that exact block unowned, but it
+        // must never drop it while a new allow-collect producer races.
+        let head = Arc::new(AtomicUsize::new(
+            ModelBlocks::address(0) | THREAD_FREE_OWNED,
+        ));
+        let blocks = Arc::new(ModelBlocks::new());
+        blocks.next[0].store(0, Ordering::Relaxed);
+        blocks.published[0].store(true, Ordering::Release);
+
+        let owner_head = Arc::clone(&head);
+        let owner = thread::spawn(move || {
+            let mut no_hook: Option<fn()> = None;
+            try_unown_abandoned_expected_head_with(
+                &*owner_head,
+                ModelBlocks::address(0),
+                &mut no_hook,
+            )
+            .expect("the modeled expected block remains low-bit aligned")
+        });
+
+        let publisher_head = Arc::clone(&head);
+        let publisher_blocks = Arc::clone(&blocks);
+        let publisher = thread::spawn(move || {
+            publisher_blocks.publish_abandoned(&publisher_head, 1)
+        });
+
+        let transition = owner.join().expect("expected-head owner completes");
+        let publisher_found_owner = publisher.join().expect("publisher completes");
+        match transition {
+            AbandonedExpectedHeadTransition::Released => assert!(
+                !publisher_found_owner,
+                "a successful expected-head unown lets the producer claim responsibility"
+            ),
+            AbandonedExpectedHeadTransition::RemotePublished => assert!(
+                publisher_found_owner,
+                "a failed expected-head CAS retains owner-side collection responsibility"
+            ),
+            AbandonedExpectedHeadTransition::OwnedEmpty => {
+                panic!("the model's expected small-page head is never empty")
+            }
+            AbandonedExpectedHeadTransition::NotOwned => {
+                panic!("the model begins with the abandoned owner bit held")
+            }
+        }
+        assert_eq!(
+            head.load(Ordering::Acquire),
+            ModelBlocks::address(1) | THREAD_FREE_OWNED,
+            "the racing producer retains both the new block and one owner bit"
+        );
+
+        assert_eq!(blocks.collect_once(&head), PRODUCER_COUNT);
+        assert_eq!(head.load(Ordering::Acquire), OWNER_EMPTY_HEAD);
+        blocks.assert_all_collected();
     });
 }

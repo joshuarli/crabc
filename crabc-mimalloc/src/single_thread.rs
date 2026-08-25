@@ -18,10 +18,10 @@
 // (`mi_page_malloc_zero`, `mi_theap_malloc_small_zero_nonnull`, generic
 // allocation dispatch, and ordinary realloc), `src/alloc-aligned.c:68-241,
 // 347-388` (natural/overallocated aligned allocation and aligned realloc),
-// `src/free.c:28-50,104-114,522-542` (local free, interior-base recovery,
-// and aligned usable size),
-// `src/page.c:150-242,276-302,374-388,460-522,708-1069` (remote/local free
-// collection, non-abandoning post-enqueue full-page collection,
+// `src/free.c:28-50,104-114,372-514,522-542` (local free, abandoned
+// `allow_collect` reclaim, interior-base recovery, and aligned usable size),
+// `src/page.c:150-269,276-302,374-388,460-522,708-1069` (remote/local and
+// small partial-head collection, non-abandoning post-enqueue full-page collection,
 // full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
 // `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
@@ -37,10 +37,18 @@
 // same exclusive mutation engine. It accepts only caller-managed external
 // arenas and a caller-initialized page map. This engine does not construct or
 // generalize TLS/Heap lifecycle; its narrow dynamic session instead borrows
-// one caller-pinned first-class Heap. There is no general lock-free remote-free
+// one caller-pinned first-class Heap. Separately, ticket-zero and one
+// later-thread main-Heap session can borrow a matched process map/arena under
+// its explicit mutation lease. There is no general lock-free remote-free
 // routing, abandonment/free/reabandon routing, OS arena reservation, or public
 // API here. One consuming dynamic same-owner handoff covers only a mapped
-// regular arena page; it retains the engine until that exact page is adopted.
+// regular arena page; it may adopt that exact page or consume one same-origin
+// `allow_collect` remote free, returning it after exact all-free arena release
+// or retaining it for other terminal outcomes. A separate post-TLS dynamic
+// drain first force-collects already-retired all-free pages, then owns one
+// full one-block arena singleton through source queue detach, unmapped
+// abandonment, failed reclaim, and all-free release; it is not a general
+// owner-exit traversal or remote-free route.
 // A bounded false-force collector runs in
 // the source regular candidate scan and in the non-abandoning full-page pass.
 // `RemoteFreeProducer` is one private linear, scoped route to create that
@@ -59,6 +67,7 @@
 
 use core::cell::Cell;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
@@ -68,7 +77,13 @@ use crate::{aligned, alloc, support};
 use crate::bootstrap::{
     BootstrapError, ExclusiveTheapBootstrap, ExclusiveTheapSession, TheapPageSession,
 };
-use crate::dynamic_theap::DynamicTheapPageSession;
+use crate::dynamic_theap::{
+    DynamicTheapError, DynamicTheapPageDrainSession, DynamicTheapPageSession,
+};
+use crate::main_heap_thread::{
+    MainHeapThreadAttachmentError, MainHeapThreadPageDrainSession, MainHeapThreadPageSession,
+};
+use crate::main_theap::MainStaticPageSession;
 use crate::config::{
     ARENA_SLICE_SIZE, BIN_COUNT, BIN_FULL, BIN_HUGE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
     SMALL_SIZE_MAX, WORD_SIZE,
@@ -93,7 +108,7 @@ const RETIRE_CYCLES: u8 = 16;
 const RETIRE_MAX_PAGES: usize = 3;
 const PAGE_MAX_CANDIDATES: isize = 4;
 
-/// One failed source false-force page collection boundary.
+/// One failed source owner-side page collection boundary.
 ///
 /// These are private invalid-owner/lifecycle observations. The collector
 /// cannot safely continue queue transitions after one because source
@@ -103,16 +118,21 @@ enum PageCollectError {
     Remote(RemoteFreeError),
     Local(FreeListError),
     InvalidOwnerState,
+    /// A post-collection page release or queue lifecycle invariant failed.
+    /// The source transition may already have cleared map/queue ownership, so
+    /// this is retained exactly like a collection error rather than retried.
+    Lifecycle,
     /// Test-only failure before `remote_free::collect` can detach producer
     /// state. This exact variant is the sole cleanup-recoverable provenance.
     #[cfg(test)]
     InjectedBeforeDetach,
 }
 
-/// One permanently retained false-force collection failure.
+/// One permanently retained owner-side collection failure.
 ///
-/// A false-force collector may have detached a remote list before it reports
-/// an error. Retaining the exact page and, when applicable, the block already
+/// Either source force mode may have detached a remote list before it reports
+/// an error, and a following release may already have cleared map or queue
+/// ownership. Retaining the exact page and, when applicable, the block already
 /// removed from its local list prevents later entry points from pretending the
 /// allocator can safely select, release, or mutate that state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -277,9 +297,10 @@ impl<'owner> RemoteFreeProducer<'owner> {
 
 /// Generic private ordinary-allocation engine over one narrow page owner.
 ///
-/// This value owns either the static [`ExclusiveTheapSession`] or a dynamic
-/// attachment-backed page session, so it is the only operation capable of
-/// mutating that session's pinned Theap. It borrows the arena and page map
+/// This value owns either the static [`ExclusiveTheapSession`], a ticket-zero
+/// or later-thread main-Heap page session, or a dynamic attachment-backed
+/// page session, so it is the only operation capable of mutating that
+/// session's pinned Theap. It borrows the arena and page map
 /// rather than reserving VM itself. Dropping it does not
 /// collect, abandon, unregister, or release any page: callers must force a
 /// collection before they dismantle the supplied arena or page map.
@@ -313,6 +334,25 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
     shutdown_complete: bool,
 }
 
+/// The engine state that remains valid while a consuming lifecycle changes
+/// only its typed page-session owner. Keeping it separate prevents a
+/// thread-exit transition from manufacturing a second PageMap/arena/OS-owner
+/// capability while it replaces `DynamicTheapPageSession` with its narrower
+/// post-TLS drain session.
+struct PageAllocatorEngineState<'arena, 'map> {
+    arena: ArenaView<'arena>,
+    requested_arena: ArenaId,
+    page_map: &'map PageMap,
+    thread_sequence: usize,
+    pending_os_release: Option<OsAlignedPageOwner>,
+    collection_poison: Option<RetainedPageCollectPoison>,
+    #[cfg(test)]
+    page_free_collect_failure_once: bool,
+    #[cfg(test)]
+    last_page_to_full: Option<NonNull<Page>>,
+    shutdown_complete: bool,
+}
+
 /// Existing static-session spelling/API. The generic engine above is private
 /// implementation structure, not a public first-class heap abstraction.
 pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
@@ -321,6 +361,98 @@ pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
 /// Private dynamic attachment specialization of the same page engine.
 pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
     PageAllocatorEngine<'arena, 'map, DynamicTheapPageSession<'attach, 'heap>>;
+
+/// A deliberately narrow post-TLS dynamic page-drain owner. It is not a
+/// general allocator: source thread exit has already cleared the Heap's
+/// dynamic regular slot. Its finishing boundary force-collects existing
+/// retired all-free pages, while its only live-page operation is the exact
+/// full singleton abandonment/free/release path needed to prove that later
+/// remote frees cannot reclaim the departed Theap.
+#[must_use = "a dynamic thread-exit drain must release or retain its page before attachment teardown"]
+pub(crate) struct DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map> {
+    engine: PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>,
+}
+
+/// One queue-detached arena singleton abandoned by a dynamic thread-exit
+/// drain. The token retains the pre-list-detach Theap/TLD/Heap/arena-image
+/// owner until its one source failed-reclaim free either releases the page or
+/// records a terminal state for a later general lifecycle implementation.
+#[must_use = "an owner-exit singleton handoff must be consumed or terminally retained"]
+pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map> {
+    drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+    page: NonNull<Page>,
+    terminal: bool,
+}
+
+/// A failed consuming transition into the post-TLS dynamic page-drain state.
+/// The original engine stays retained because a post-slot-clear failure may
+/// already have changed root or backing ownership.
+#[must_use = "a failed dynamic thread-exit drain retains its page engine"]
+pub(crate) enum DynamicThreadExitDrainFailure<'attach, 'heap, 'arena, 'map> {
+    Retained {
+        engine: DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
+        error: DynamicTheapError,
+    },
+}
+
+/// One source-boundary refusal while a draining owner abandons its exact
+/// full singleton. `Rejected` is pre-detach; `RetainedDrain` has already
+/// poisoned a false-force collection, while `Terminal` retains a page that
+/// crossed queue/identity ownership.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitSingletonAbandonError {
+    Collection,
+    Unmapped,
+    ForeignPage,
+    NonArena,
+    NotFullSingleton,
+    NotActiveFull,
+    InvalidBlock,
+    Queue,
+    UnexpectedAbandonOutcome(AbandonResult),
+    Abandon(AbandonError),
+}
+
+#[must_use = "a failed owner-exit singleton abandonment retains its source owner"]
+pub(crate) enum DynamicThreadExitSingletonAbandonFailure<'attach, 'heap, 'arena, 'map> {
+    Rejected {
+        drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitSingletonAbandonError,
+    },
+    RetainedDrain {
+        drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitSingletonAbandonError,
+    },
+    Terminal {
+        handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitSingletonAbandonError,
+    },
+}
+
+/// One source-boundary outcome while a thread-exit singleton receives its
+/// final free after the upstream reclaim attempt has been made impossible by
+/// clearing its dynamic regular TLS slot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitSingletonRemoteFreeError {
+    Terminal,
+    Unmapped,
+    InvalidBlock,
+    Release,
+    UnexpectedFreeOutcome(abandoned::UnmappedAbandonedFreeResult),
+    Abandon(AbandonError),
+}
+
+#[must_use = "a failed owner-exit singleton free retains its handoff"]
+pub(crate) enum DynamicThreadExitSingletonRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
+    Rejected {
+        handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitSingletonRemoteFreeError,
+    },
+    Terminal {
+        handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitSingletonRemoteFreeError,
+    },
+}
 
 /// One rejected pre-handoff observation. Every variant is checked before the
 /// source queue detach; the returned engine has not entered abandoned state.
@@ -382,6 +514,35 @@ pub(crate) enum DynamicMappedAdoptFailure<'attach, 'heap, 'arena, 'map> {
     /// Queue reassociation could not complete after an ownership transition.
     /// The token is terminal; normal engine access is intentionally absent.
     Terminal(DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>),
+}
+
+/// One source-boundary outcome while a mapped-abandoned dynamic page receives
+/// an `allow_collect=true` remote free.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicMappedRemoteFreeError {
+    Terminal,
+    InvalidBlock,
+    ReclaimDisabled,
+    MissingDynamicArenaPages,
+    ConcurrentOwner,
+    Release,
+    Queue,
+    Abandon(AbandonError),
+}
+
+/// A consuming mapped remote-free operation that could not restore ordinary
+/// dynamic page-engine ownership. Pre-mutation refusals keep a retryable
+/// handoff; every source ownership transition retains the handoff terminally.
+#[must_use = "a mapped remote-free failure retains its handoff capability"]
+pub(crate) enum DynamicMappedRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
+    Rejected {
+        handoff: DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>,
+        error: DynamicMappedRemoteFreeError,
+    },
+    Terminal {
+        handoff: DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>,
+        error: DynamicMappedRemoteFreeError,
+    },
 }
 
 impl<'bootstrap, 'arena, 'map>
@@ -482,10 +643,47 @@ impl<'attach, 'heap, 'arena, 'map>
         }
     }
 
+    /// Begins the bounded dynamic thread-exit page-drain transition.
+    ///
+    /// This consumes the ordinary dynamic page engine before it clears the
+    /// Heap's regular TLS slot. On success, only
+    /// [`DynamicThreadExitDrain`] remains; it cannot resume normal allocation
+    /// and may only abandon/release the one source-bound singleton path below.
+    /// A failed transition retains the original engine because the attachment
+    /// may already have entered a terminal post-slot-clear state.
+    pub(crate) fn begin_thread_exit_drain(
+        self,
+    ) -> Result<
+        DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitDrainFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            return Err(DynamicThreadExitDrainFailure::Retained {
+                engine: self,
+                error: DynamicTheapError::Poisoned,
+            });
+        }
+        let (session, state) = self.into_session_and_state();
+        match session.begin_thread_exit_drain() {
+            Ok(session) => Ok(DynamicThreadExitDrain {
+                engine: PageAllocatorEngine::<DynamicTheapPageSession<'attach, 'heap>>::from_session_and_state(
+                    session, state,
+                ),
+            }),
+            Err((session, error)) => Err(DynamicThreadExitDrainFailure::Retained {
+                engine: PageAllocatorEngine::<DynamicTheapPageSession<'attach, 'heap>>::from_session_and_state(
+                    session, state,
+                ),
+                error,
+            }),
+        }
+    }
+
     /// Moves one live mapped regular dynamic page into its exact heap-local
     /// abandoned bitmap. This consumes the engine: after source queue detach
     /// the only way back to ordinary allocation/free is the returned linear
-    /// [`DynamicMappedPageHandoff`]'s same-owner adoption.
+    /// [`DynamicMappedPageHandoff`]'s same-owner adoption or one same-origin
+    /// `allow_collect` remote-free reclaim.
     ///
     /// # Safety
     ///
@@ -696,9 +894,651 @@ impl<'attach, 'heap, 'arena, 'map>
 
 }
 
+impl<'main, 'arena, 'map> PageAllocatorEngine<'arena, 'map, MainStaticPageSession<'main>> {
+    /// Activates the existing source page engine over the ticket-zero static
+    /// owner. Unlike the caller-managed test/dynamic constructors, this takes
+    /// only a shared PageMap reference: the caller must hold the private
+    /// process-root mutation lease for this complete engine and every scoped
+    /// remote producer lifetime.
+    ///
+    /// # Safety
+    ///
+    /// `page_map` must be the final process-global map matched to `arena` and
+    /// serialized by a live `ProcessPageMapMutationLease`. No other plain
+    /// PageMap registration, lookup, or unregistration may overlap this
+    /// engine. `session` must be the matching ticket-zero static owner.
+    pub(crate) unsafe fn activate_main_static(
+        session: MainStaticPageSession<'main>,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map PageMap,
+    ) -> Self {
+        let thread_sequence = session.thread_sequence();
+        Self {
+            session,
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence,
+            pending_os_release: None,
+            collection_poison: None,
+            #[cfg(test)]
+            page_free_collect_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            shutdown_complete: false,
+        }
+    }
+}
+
+impl<'attachment, 'main, 'arena, 'map>
+    PageAllocatorEngine<'arena, 'map, MainHeapThreadPageSession<'attachment, 'main>>
+{
+    /// Activates the existing source page engine for one later metadata Theap
+    /// linked to `mi_heap_main()`. Like the ticket-zero specialization, the
+    /// PageMap is a shared reference only because its paired process owner
+    /// retains the exclusive mutation lease for the complete engine and every
+    /// scoped remote producer lifetime.
+    ///
+    /// # Safety
+    ///
+    /// `page_map` must be the final process-global map paired with `arena`
+    /// and serialized by a live `ProcessPageMapMutationLease`. `session` must
+    /// retain the exact current later-thread Theap and a live static-main Heap
+    /// lease for that same process image.
+    pub(crate) unsafe fn activate_later_main_thread(
+        session: MainHeapThreadPageSession<'attachment, 'main>,
+        arena: ArenaView<'arena>,
+        requested_arena: ArenaId,
+        page_map: &'map PageMap,
+    ) -> Self {
+        let thread_sequence = session.thread_sequence();
+        Self {
+            session,
+            arena,
+            requested_arena,
+            page_map,
+            thread_sequence,
+            pending_os_release: None,
+            collection_poison: None,
+            #[cfg(test)]
+            page_free_collect_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            shutdown_complete: false,
+        }
+    }
+
+    /// Consumes one ordinary later-main page engine into the source
+    /// post-fast-slot page-drain state. Unlike normal `finish`, this path
+    /// deliberately reaches every queue, including `BIN_FULL`, with the
+    /// force collector needed by `_mi_theap_collect_abandon` before it decides
+    /// whether each page can be released. A transition failure retains the
+    /// original engine because no allocation API may resume after a visible
+    /// thread-exit root transition.
+    pub(crate) fn begin_thread_exit_drain(
+        self,
+    ) -> Result<
+        PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+        (
+            PageAllocatorEngine<'arena, 'map, MainHeapThreadPageSession<'attachment, 'main>>,
+            MainHeapThreadAttachmentError,
+        ),
+    > {
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            return Err((self, MainHeapThreadAttachmentError::Poisoned));
+        }
+        let (session, state) = self.into_session_and_state();
+        match session.begin_thread_exit_drain() {
+            Ok(session) => Ok(
+                PageAllocatorEngine::<MainHeapThreadPageSession<'attachment, 'main>>::from_session_and_state(
+                    session, state,
+                ),
+            ),
+            Err((session, error)) => Err((
+                PageAllocatorEngine::<MainHeapThreadPageSession<'attachment, 'main>>::from_session_and_state(
+                    session, state,
+                ),
+                error,
+            )),
+        }
+    }
+}
+
+impl<'attachment, 'main, 'arena, 'map>
+    PageAllocatorEngine<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>
+{
+    /// Completes the first bounded later-main source owner-exit traversal.
+    ///
+    /// Source `_mi_theap_collect_abandon` force-collects every ordinary and
+    /// full queue before releasing all-free pages or abandoning the remaining
+    /// live pages. This deliberately ports only the all-free side: it visits
+    /// every queue and force-appends joined remote/local frees, releases each
+    /// page that reaches zero use through the existing PageMap -> `pages_main`
+    /// -> metadata -> arena-slice order, and retains this drain if any page
+    /// remains live. General regular/unmapped/huge abandonment, deferred
+    /// callbacks, arena collection, and later free/reclaim routing remain
+    /// outside this capability.
+    pub(crate) fn finish_after_all_free_thread_exit(mut self) -> Result<(), Self> {
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            return Err(self);
+        }
+
+        // Source visits every queue before it starts the broader live-page
+        // abandonment decision. This bounded port preserves that complete
+        // force-collection/release pass, but records a live page instead of
+        // queue-detaching or abandoning it. The retained post-fast-slot owner
+        // is the explicit boundary where a later source-complete traversal
+        // must resume.
+        let mut retained_live_page = false;
+        for bin in 0..BIN_COUNT {
+            let mut page = match self.session.queue(bin) {
+                Some(queue) => queue.first(),
+                None => return Err(self),
+            };
+            while !page.is_null() {
+                // SAFETY: the drain retains the sole queue mutation capability
+                // and every producer has joined before it can be consumed.
+                // Preserve the successor before all-free release may retire
+                // this page's metadata and return its arena slices.
+                let next = unsafe { (*page).next() };
+                let Some(page_nonnull) = NonNull::new(page) else {
+                    return Err(self);
+                };
+                if let Err(error) = self.page_free_collect_force(page_nonnull) {
+                    self.retain_page_collect_poison(page_nonnull, error, None);
+                    return Err(self);
+                }
+                // SAFETY: the source force collector completed while the
+                // page remains queue-linked under this exclusive drain.
+                if unsafe { page_nonnull.as_ref().used() } != 0 {
+                    // Do not queue-detach or abandon a live page here, but
+                    // keep visiting later queues: source force collection
+                    // must not leave a joined remote/free list beyond the
+                    // first live page. The retained drain represents the
+                    // resulting post-fast-slot state until a later
+                    // source-complete traversal exists.
+                    retained_live_page = true;
+                } else if !self.release_page(bin, page) {
+                    // `release_page` can fail after queue removal and PageMap
+                    // unregistration. A second pass could then mistake its
+                    // empty queue/count for completed drain, so retain a
+                    // terminal page-specific record rather than retrying.
+                    self.retain_page_collect_poison(
+                        page_nonnull,
+                        PageCollectError::Lifecycle,
+                        None,
+                    );
+                    return Err(self);
+                }
+                page = next;
+            }
+        }
+
+        if retained_live_page
+            || self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+            || self.session.theap().page_count() != 0
+        {
+            return Err(self);
+        }
+        for bin in 0..BIN_COUNT {
+            if !self.session.queue(bin).is_some_and(|queue| queue.count() == 0) {
+                return Err(self);
+            }
+        }
+        for index in 0..PAGES_DIRECT {
+            if self.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                return Err(self);
+            }
+        }
+        self.shutdown_complete = true;
+        Ok(())
+    }
+}
+
+impl<'attach, 'heap, 'arena, 'map>
+    DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>
+{
+    /// Abandons one exact full arena singleton after the dynamic regular TLS
+    /// slot has been cleared for thread exit.
+    ///
+    /// This is the one owner-exit branch for which the current bounded
+    /// lifecycle has both sides of the source handoff: a full singleton cannot
+    /// enter `pages_abandoned`, and its later sole remote free must therefore
+    /// take `free.c:mi_free_try_collect_mt`'s failed-reclaim all-free tail.
+    /// No general page traversal, nonempty owner-exit page, or producer route
+    /// is exposed by this drain capability.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the one current canonical allocation in a full
+    /// singleton owned by this exact draining engine. No producer may retain
+    /// the block or its page, and all client aliases must stay valid only until
+    /// the returned handoff consumes this exact block once or is retained
+    /// terminally.
+    pub(crate) unsafe fn abandon_full_singleton(
+        mut self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitSingletonAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |drain, error| DynamicThreadExitSingletonAbandonFailure::Rejected {
+            drain,
+            error,
+        };
+        let retained = |drain, error| DynamicThreadExitSingletonAbandonFailure::RetainedDrain {
+            drain,
+            error,
+        };
+        if self.engine.is_collection_poisoned() || self.engine.pending_os_release.is_some() {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::Collection));
+        }
+
+        // SAFETY: this drain retains the sole PageMap mutation capability
+        // until the returned handoff terminally releases or retains the page.
+        let page = unsafe { self.engine.page_map.checked_lookup(block.as_ptr()) };
+        let Some(page) = NonNull::new(page) else {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::Unmapped));
+        };
+        // SAFETY: the checked PageMap entry keeps this page metadata live; no
+        // queue or ordinary-field mutation occurs until every preflight below
+        // has completed.
+        let page_ref = unsafe { page.as_ref() };
+        if !self.engine.owns_page(page_ref)
+            || page_ref.heap() != self.engine.session.theap().heap()
+        {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::ForeignPage));
+        }
+        if page_ref.memid().kind() != MemoryKind::Arena {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::NonArena));
+        }
+        if size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Singleton)
+            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+            || page_ref.reserved() != 1
+            || page_ref.used() != 1
+            || !page_is_in_full(page_ref)
+        {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::NotFullSingleton));
+        }
+        // `release_span` proves every map entry and singleton arena geometry
+        // before source collection and queue detach. A leading-slice lookup is
+        // not enough: the eventual all-free path unregisters this full span.
+        if !matches!(self.engine.release_span(page.as_ptr()), Some(ReleaseSpan::Arena { .. })) {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::Unmapped));
+        }
+        if !self.engine.page_is_active_queue_member(BIN_FULL, page) {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::NotActiveFull));
+        }
+        let Some(canonical_block) = self.engine.canonical_block_start(page_ref, block) else {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::InvalidBlock));
+        };
+        // SAFETY: this uses only the stable singleton's local geometry while
+        // the drain owns its page and no producer can coexist with entry.
+        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
+            Err(error) => Err(error),
+        };
+        if preflight.is_err() {
+            return Err(reject(self, DynamicThreadExitSingletonAbandonError::InvalidBlock));
+        }
+
+        // `_mi_theap_collect_abandon` first calls the force collector, then
+        // `_mi_page_abandon` calls the false collector immediately before
+        // queue removal. This exact one-block full singleton has no local or
+        // immediate free list to append while its one client block is live, so
+        // the force-only append branch is unreachable; the latter source
+        // false collector is the state-changing operation represented here.
+        // Any collection failure may already have detached remote state, so
+        // retain this drain rather than presenting a retryable pre-detach
+        // owner. A future route that admits a page with local free state must
+        // port the force collector separately rather than reuse this proof.
+        if let Err(error) = self.engine.page_free_collect_false(page) {
+            self.engine.retain_page_collect_poison(page, error, None);
+            return Err(retained(
+                self,
+                DynamicThreadExitSingletonAbandonError::Collection,
+            ));
+        }
+        // This bounded route has no producer and begins at a one-block full
+        // singleton. A different post-collection state is already beyond the
+        // pre-detach contract, so keep the drain rather than guessing whether
+        // it can be released or reclassified.
+        if unsafe { page.as_ref().used() } != 1 {
+            return Err(retained(
+                self,
+                DynamicThreadExitSingletonAbandonError::NotFullSingleton,
+            ));
+        }
+
+        let queue = match self.engine.session.queue_mut(BIN_FULL) {
+            Some(queue) => queue as *mut _,
+            None => {
+                return Err(retained(
+                    self,
+                    DynamicThreadExitSingletonAbandonError::Queue,
+                ));
+            }
+        };
+        // SAFETY: preflight proved this exact initialized singleton is linked
+        // in the complete full queue; the drain exclusively owns its links.
+        unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        if !self.engine.session.note_page_removed() {
+            return Err(DynamicThreadExitSingletonAbandonFailure::Terminal {
+                handoff: DynamicThreadExitSingletonHandoff {
+                    drain: self,
+                    page,
+                    terminal: true,
+                },
+                error: DynamicThreadExitSingletonAbandonError::Queue,
+            });
+        }
+
+        // The high singleton bin is not eligible for arena bitmap mapping.
+        // This consumes the source associated identity only after queue/count
+        // removal and leaves its low atomic owner bit clear for the later
+        // failed-reclaim free to claim.
+        let abandoned = unsafe { abandoned::abandon_unmappable_after_collect(page) };
+        match abandoned {
+            Ok(AbandonResult::UnownedUnmapped) => Ok(DynamicThreadExitSingletonHandoff {
+                drain: self,
+                page,
+                terminal: false,
+            }),
+            Ok(outcome) => Err(DynamicThreadExitSingletonAbandonFailure::Terminal {
+                handoff: DynamicThreadExitSingletonHandoff {
+                    drain: self,
+                    page,
+                    terminal: true,
+                },
+                error: DynamicThreadExitSingletonAbandonError::UnexpectedAbandonOutcome(outcome),
+            }),
+            Err(error) => Err(DynamicThreadExitSingletonAbandonFailure::Terminal {
+                handoff: DynamicThreadExitSingletonHandoff {
+                    drain: self,
+                    page,
+                    terminal: true,
+                },
+                error: DynamicThreadExitSingletonAbandonError::Abandon(error),
+            }),
+        }
+    }
+
+    /// Force-collects post-TLS retired pages, then finishes the page-drain
+    /// owner only after its source queues, direct caches, and page count are
+    /// empty. The attachment remains in its `DrainingPages` state until this
+    /// wrapper drops; the fixture or future thread-exit coordinator then
+    /// performs the separate root/list teardown.
+    pub(crate) fn finish(self) -> bool {
+        match self.engine.finish() {
+            Ok(()) => true,
+            Err(engine) => {
+                drop(engine);
+                false
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_regular_slot_is_clear(&self) -> bool {
+        self.engine.session.test_dynamic_regular_slot_is_clear()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_cached_root_still_names_the_draining_theap(&self) -> bool {
+        self.engine
+            .session
+            .test_cached_root_still_names_the_draining_theap()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_count(&self) -> usize {
+        self.engine.session.theap().page_count()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
+        // SAFETY: this is a read-only test witness while the drain owns the
+        // page map and no raw page lifetime escapes it.
+        unsafe { self.engine.page_for_block(block) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_arena_page_is_clear(&self, memory: MemoryId) -> bool {
+        self.engine.session.test_dynamic_arena_page_is_clear(memory)
+    }
+}
+
+impl<'attach, 'heap, 'arena, 'map>
+    DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>
+{
+    /// Frees the singleton's one client block after source owner exit made
+    /// reclamation impossible by clearing the dynamic regular TLS slot.
+    ///
+    /// The handoff cannot route a nonempty page back into normal allocation:
+    /// that needs the broader abandoned-owner lifecycle. For this one-block
+    /// singleton, the source collector must make the page all-free and the
+    /// handoff owns the exact PageMap/arena-image release capability.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the exact once-live client allocation transferred by
+    /// [`DynamicThreadExitDrain::abandon_full_singleton`]. It must not have
+    /// been freed, republished, or accessed through any alias after this call.
+    pub(crate) unsafe fn remote_free_after_failed_reclaim(
+        mut self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitSingletonRemoteFreeFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |handoff, error| DynamicThreadExitSingletonRemoteFreeFailure::Rejected {
+            handoff,
+            error,
+        };
+        let terminal = |handoff, error| DynamicThreadExitSingletonRemoteFreeFailure::Terminal {
+            handoff,
+            error,
+        };
+        if self.terminal {
+            return Err(terminal(self, DynamicThreadExitSingletonRemoteFreeError::Terminal));
+        }
+        // SAFETY: the handoff retains the only PageMap owner for this
+        // abandoned page. Verify that the caller did not present a different
+        // mapping before its atomic free can claim abandoned ownership.
+        if unsafe { self.drain.engine.page_map.checked_lookup(block.as_ptr()) } != self.page.as_ptr() {
+            return Err(reject(self, DynamicThreadExitSingletonRemoteFreeError::Unmapped));
+        }
+        // SAFETY: the handoff keeps the stable source metadata alive and this
+        // preflight observes only its allocation geometry.
+        let page_ref = unsafe { self.page.as_ref() };
+        let Some(canonical_block) = self.drain.engine.canonical_block_start(page_ref, block) else {
+            return Err(reject(self, DynamicThreadExitSingletonRemoteFreeError::InvalidBlock));
+        };
+        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
+            Err(error) => Err(error),
+        };
+        if preflight.is_err()
+            || !matches!(
+                self.drain.engine.release_span(self.page.as_ptr()),
+                Some(ReleaseSpan::Arena { .. })
+            )
+        {
+            return Err(reject(self, DynamicThreadExitSingletonRemoteFreeError::InvalidBlock));
+        }
+
+        // `DynamicTheapPageDrainSession` is constructible only after
+        // `begin_page_drain` clears the associated dynamic regular TLS slot.
+        // That is the concrete source proof that the one reclaim attempt in
+        // `mi_free_try_collect_mt` fails before this helper's raw tail.
+        let result = unsafe {
+            abandoned::free_unmappable_after_failed_reclaim(self.page, canonical_block)
+        };
+        match result {
+            Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
+                if self
+                    .drain
+                    .engine
+                    .release_queue_detached_abandoned_arena_page(self.page)
+                {
+                    Ok(self.drain)
+                } else {
+                    self.terminal = true;
+                    Err(terminal(
+                        self,
+                        DynamicThreadExitSingletonRemoteFreeError::Release,
+                    ))
+                }
+            }
+            Ok(outcome) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitSingletonRemoteFreeError::UnexpectedFreeOutcome(outcome),
+                ))
+            }
+            Err(error) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitSingletonRemoteFreeError::Abandon(error),
+                ))
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_count(&self) -> usize {
+        self.drain.engine.session.theap().page_count()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_regular_slot_is_clear(&self) -> bool {
+        self.drain.engine.session.test_dynamic_regular_slot_is_clear()
+    }
+}
+
 impl<'attach, 'heap, 'arena, 'map>
     DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>
 {
+    /// Frees one still-live client block through the source mapped-abandoned
+    /// `allow_collect=true` path and restores this exact page to its original
+    /// dynamic Theap when the frozen same-origin reclaim rule accepts it.
+    ///
+    /// This is deliberately narrower than general abandoned free routing.
+    /// The handoff owns the only engine/session/page-map/arena-image mutation
+    /// capability, so it can prove the current Theap is the page's original
+    /// live owner and uses the pinned default `page_reclaim_on_free = 0` /
+    /// unlimited same-origin queue-reclaim profile. A concurrent producer
+    /// that already owns the abandoned page remains terminal. An all-free
+    /// result instead has the exact queue-detached arena release authority
+    /// retained by this handoff and follows the source terminal order.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be one current, exactly-once client allocation from this
+    /// handoff's exact mapped page. It must not have been freed, transferred
+    /// to another producer, or accessed after this call. The caller must keep
+    /// all page metadata and the still-live allocations of that page stable
+    /// for the result's complete lifecycle.
+    pub(crate) unsafe fn remote_free_and_reclaim(
+        mut self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
+        DynamicMappedRemoteFreeFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |handoff, error| DynamicMappedRemoteFreeFailure::Rejected {
+            handoff,
+            error,
+        };
+        let terminal = |handoff, error| DynamicMappedRemoteFreeFailure::Terminal {
+            handoff,
+            error,
+        };
+        if self.terminal {
+            return Err(terminal(self, DynamicMappedRemoteFreeError::Terminal));
+        }
+        let Some(target_thread) = self.engine.session.thread_id() else {
+            self.terminal = true;
+            return Err(terminal(self, DynamicMappedRemoteFreeError::Terminal));
+        };
+        if !self.engine.session.theap().allows_page_reclaim() {
+            return Err(reject(self, DynamicMappedRemoteFreeError::ReclaimDisabled));
+        }
+        let canonical_block = {
+            // SAFETY: the handoff retains the source page registration and
+            // metadata; this preflight only recovers an aligned block base.
+            let page = unsafe { self.page.as_ref() };
+            match self.engine.canonical_block_start(page, block) {
+                Some(block) => block,
+                None => return Err(reject(self, DynamicMappedRemoteFreeError::InvalidBlock)),
+            }
+        };
+        let target_theap = NonNull::from(self.engine.session.theap());
+        let result = {
+            let Some(map) = self.engine.session.mapped_abandoned_page(
+                &self.engine.arena,
+                self.bin,
+                self.memory,
+            ) else {
+                return Err(reject(
+                    self,
+                    DynamicMappedRemoteFreeError::MissingDynamicArenaPages,
+                ));
+            };
+            // SAFETY: this token retains the exact mapped-abandoned page,
+            // map bit/count image, original live Theap, and client-block
+            // ownership required by the source allow-collect transition.
+            unsafe {
+                abandoned::free_mapped_and_reclaim(
+                    self.page,
+                    canonical_block,
+                    &map,
+                    target_theap,
+                    target_thread,
+                )
+            }
+        };
+        match result {
+            Ok(abandoned::MappedAbandonedFreeResult::Reclaimed { .. }) => {
+                if !self.requeue_reclaimed() {
+                    self.terminal = true;
+                    return Err(terminal(self, DynamicMappedRemoteFreeError::Queue));
+                }
+                Ok(self.engine)
+            }
+            Ok(abandoned::MappedAbandonedFreeResult::PublishedToExistingOwner) => {
+                self.terminal = true;
+                Err(terminal(self, DynamicMappedRemoteFreeError::ConcurrentOwner))
+            }
+            Ok(abandoned::MappedAbandonedFreeResult::Empty) => {
+                if self
+                    .engine
+                    .release_queue_detached_abandoned_arena_page(self.page)
+                {
+                    Ok(self.engine)
+                } else {
+                    self.terminal = true;
+                    Err(terminal(self, DynamicMappedRemoteFreeError::Release))
+                }
+            }
+            Err(error) => {
+                self.terminal = true;
+                Err(terminal(self, DynamicMappedRemoteFreeError::Abandon(error)))
+            }
+        }
+    }
+
     /// Reclaims this exact dynamic mapped page into the same pinned Theap and
     /// appends it to its original regular queue. It consumes the token so
     /// normal engine access becomes available only after source reassociation,
@@ -759,8 +1599,8 @@ impl<'attach, 'heap, 'arena, 'map>
                 )
             }
         };
-        let adopted = match result {
-            Ok(Some(adopted)) if adopted.page() == self.page => adopted,
+        match result {
+            Ok(Some(adopted)) if adopted.page() == self.page => {}
             Ok(None) => return Err(DynamicMappedAdoptFailure::Pending(self)),
             Ok(Some(_)) => {
                 self.terminal = true;
@@ -773,20 +1613,28 @@ impl<'attach, 'heap, 'arena, 'map>
                     retained,
                 });
             }
+        }
+        if !self.requeue_reclaimed() {
+            self.terminal = true;
+            return Err(DynamicMappedAdoptFailure::Terminal(self));
+        }
+        Ok(self.engine)
+    }
+
+    /// Appends an already reassociated page and restores the exact Theap
+    /// queue/count/direct-cache state shared by same-owner adoption and its
+    /// mapped remote-free reclaim branch.
+    fn requeue_reclaimed(&mut self) -> bool {
+        let Some(queue) = self.engine.session.queue_mut(self.bin) else {
+            return false;
         };
-        let queue = match self.engine.session.queue_mut(self.bin) {
-            Some(queue) => queue as *mut _,
-            None => {
-                self.terminal = true;
-                return Err(DynamicMappedAdoptFailure::Terminal(self));
-            }
-        };
-        // SAFETY: `try_adopt_retained` completed reassociation for this exact
-        // detached page, and this token still owns the sole queue mutation.
-        unsafe { page_queue_push_at_end_metadata(&mut *queue, adopted.page().as_ptr()) };
+        // SAFETY: the caller has completed the source reassociation for this
+        // exact detached page, and this linear handoff retains sole queue
+        // mutation authority.
+        unsafe { page_queue_push_at_end_metadata(queue, self.page.as_ptr()) };
         self.engine.session.note_page_added();
         self.engine.update_direct_cache(self.bin);
-        Ok(self.engine)
+        true
     }
 
     #[cfg(test)]
@@ -837,6 +1685,60 @@ impl<'attach, 'heap, 'arena, 'map>
 }
 
 impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, Session> {
+
+    /// Consumes this Drop-bearing engine without running its conservative
+    /// unfinished-engine latch, returning its unique typed session separately
+    /// from the PageMap/arena state. Callers must immediately reassemble one
+    /// engine (possibly with a different session type) or retain both parts.
+    fn into_session_and_state(self) -> (Session, PageAllocatorEngineState<'arena, 'map>) {
+        let this = ManuallyDrop::new(self);
+        let this_ptr = (&this as *const ManuallyDrop<Self>).cast::<Self>();
+        // SAFETY: `this` suppresses `Drop`; every field is moved exactly once
+        // into the returned session/state pair and no reference escapes this
+        // method. The caller retains the obligation to reassemble or retain
+        // those exact capabilities before either can be dropped.
+        unsafe {
+            (
+                core::ptr::read(core::ptr::addr_of!((*this_ptr).session)),
+                PageAllocatorEngineState {
+                    arena: core::ptr::read(core::ptr::addr_of!((*this_ptr).arena)),
+                    requested_arena: core::ptr::read(core::ptr::addr_of!((*this_ptr).requested_arena)),
+                    page_map: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_map)),
+                    thread_sequence: core::ptr::read(core::ptr::addr_of!((*this_ptr).thread_sequence)),
+                    pending_os_release: core::ptr::read(core::ptr::addr_of!((*this_ptr).pending_os_release)),
+                    collection_poison: core::ptr::read(core::ptr::addr_of!((*this_ptr).collection_poison)),
+                    #[cfg(test)]
+                    page_free_collect_failure_once: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_free_collect_failure_once)),
+                    #[cfg(test)]
+                    last_page_to_full: core::ptr::read(core::ptr::addr_of!((*this_ptr).last_page_to_full)),
+                    shutdown_complete: core::ptr::read(core::ptr::addr_of!((*this_ptr).shutdown_complete)),
+                },
+            )
+        }
+    }
+
+    /// Reassembles one engine from the unique state produced by
+    /// [`Self::into_session_and_state`]. This is intentionally the only way
+    /// the thread-exit conversion changes a typed session owner.
+    fn from_session_and_state<NewSession: TheapPageSession>(
+        session: NewSession,
+        state: PageAllocatorEngineState<'arena, 'map>,
+    ) -> PageAllocatorEngine<'arena, 'map, NewSession> {
+        PageAllocatorEngine {
+            session,
+            arena: state.arena,
+            requested_arena: state.requested_arena,
+            page_map: state.page_map,
+            thread_sequence: state.thread_sequence,
+            pending_os_release: state.pending_os_release,
+            collection_poison: state.collection_poison,
+            #[cfg(test)]
+            page_free_collect_failure_once: state.page_free_collect_failure_once,
+            #[cfg(test)]
+            last_page_to_full: state.last_page_to_full,
+            shutdown_complete: state.shutdown_complete,
+        }
+    }
 
     /// Returns the stable source `page->theap` identity of this exclusive
     /// lifecycle. The detached metadata wrapper uses it only for the exact
@@ -2109,13 +3011,53 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         Ok(())
     }
 
+    /// Exact force `_mi_page_free_collect` ordering used before the bounded
+    /// later-main thread-exit release decision: detach any joined remote list,
+    /// then append the owner-local deferred list to the immediate free list.
+    ///
+    /// This must stay distinct from [`Self::page_free_collect_false`]. The
+    /// latter intentionally leaves `local_free` deferred for ordinary live
+    /// allocation paths, whereas source `_mi_theap_collect_abandon` uses
+    /// `force == true` before testing whether a departing owner's page can be
+    /// released.
+    fn page_free_collect_force(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> Result<(), PageCollectError> {
+        #[cfg(test)]
+        if core::mem::take(&mut self.page_free_collect_failure_once) {
+            // Preserve the same pre-detach-only test seam as the false-force
+            // collector; production errors may follow remote detachment and
+            // are terminally retained by the caller.
+            return Err(PageCollectError::InjectedBeforeDetach);
+        }
+        let expected_thread = self.session.thread_id();
+        if expected_thread.is_some() {
+            // SAFETY: the source drain still owns the live Theap/page while
+            // every scoped producer has joined. Remote state is the only
+            // concurrently published component and is detached first.
+            unsafe { remote_free::collect(page) }.map_err(PageCollectError::Remote)?;
+        }
+        // SAFETY: remote state is detached above for live owners; detached
+        // sessions retain their explicit no-producer proof. This obtains only
+        // the narrow local-list projection for the exact current owner.
+        let state = unsafe { Page::local_collect_state_for_owner_at(page, expected_thread) }
+            .ok_or(PageCollectError::InvalidOwnerState)?;
+        // SAFETY: the source force path validates and appends `local_free`
+        // behind the immediate free list before the all-free `used` test.
+        unsafe { crate::free_list::collect_local(state, true) }
+            .map_err(PageCollectError::Local)?;
+        Ok(())
+    }
+
     #[inline]
     fn is_collection_poisoned(&self) -> bool {
         self.collection_poison.is_some()
     }
 
-    /// Records the first false-force failure before its caller can perform
-    /// any fallback, fresh-page, release, or additional queue transition.
+    /// Records the first owner-side collection failure before its caller can
+    /// perform any fallback, fresh-page, release, or additional queue
+    /// transition.
     fn retain_page_collect_poison(
         &mut self,
         page: NonNull<Page>,
@@ -2124,7 +3066,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     ) {
         assert!(
             self.collection_poison.is_none(),
-            "a terminal false-force collection failure must be retained once"
+            "a terminal page collection failure must be retained once"
         );
         #[cfg(test)]
         let test_recoverable = matches!(error, PageCollectError::InjectedBeforeDetach);
@@ -2753,14 +3695,65 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         }
     }
 
+    /// Completes `_mi_arenas_page_free` for the all-free result of a mapped
+    /// abandoned-page remote free.
+    ///
+    /// Unlike [`Self::release_page`], source abandonment already removed this
+    /// exact page from its queue/direct cache and decremented the live Theap
+    /// page count. The caller therefore must not perform either transition a
+    /// second time. It instead proves the retained page is still all-free and
+    /// detached, then preserves the source terminal ordering: unregister the
+    /// full PageMap span, clear the exact ordinary arena-page bit, retire
+    /// metadata, and return the arena slices. Any failure after unregistration
+    /// is terminal because reconstructing a visible owner would be unsound.
+    fn release_queue_detached_abandoned_arena_page(&mut self, page: NonNull<Page>) -> bool {
+        let Some(ReleaseSpan::Arena {
+            memory,
+            slice_start,
+            size,
+        }) = self.release_span(page.as_ptr())
+        else {
+            return false;
+        };
+        // SAFETY: the linear mapped-page handoff remains the sole owner of
+        // this initialized page until this terminal transition completes.
+        let page_ref = unsafe { page.as_ref() };
+        if page_ref.used() != 0 || !page_ref.is_queue_detached() {
+            return false;
+        }
+        // SAFETY: `release_span` proved this exact page still owns every
+        // registered slice of its arena span. No ordinary queue/producer
+        // capability remains after the all-free abandoned-free result.
+        if unsafe { self.page_map.unregister_range(slice_start, size) }.is_err() {
+            return false;
+        }
+        if !self.session.clear_arena_page(&self.arena, memory) {
+            // The map is already clear; retain terminal ownership rather than
+            // returning slices while the ordinary arena-page image remains
+            // visible as allocated.
+            return false;
+        }
+        // SAFETY: the source all-free result proved there is no remote list;
+        // this method just proved queue detachment and removed every map and
+        // arena-page publication predecessor before resetting metadata.
+        if unsafe { self.session.retire_page(&mut *page.as_ptr()) }.is_none() {
+            return false;
+        }
+        // SAFETY: map and ordinary page-image removal now precede return of
+        // this exact one outstanding external-arena span.
+        unsafe { release_arena_slices(memory) }
+    }
+
     /// Validates every arena or OS-aligned page-map fact needed for terminal
-    /// release before detaching a queue member. This preserves the distinct
-    /// source release provenance instead of treating an OS mapping as an
+    /// release before a caller removes a queue member or releases a page that
+    /// abandonment already detached. This preserves the distinct source
+    /// release provenance instead of treating an OS mapping as an
     /// external-arena bitmap claim.
     fn release_span(&self, page: *mut Page) -> Option<ReleaseSpan> {
         let page = NonNull::new(page)?;
-        // SAFETY: only a page currently linked in this session's queue reaches
-        // this helper, so its metadata remains live for this preflight.
+        // SAFETY: each caller retains the exact initialized page through this
+        // preflight, either by exclusive queue ownership or by its linear
+        // queue-detached abandoned-page handoff.
         let page_ref = unsafe { page.as_ref() };
         let memory = page_ref.memid();
         if memory.is_os() {
@@ -2965,11 +3958,12 @@ impl<'arena, 'map, Session: TheapPageSession> Drop
                     core::mem::forget(owner);
                 }
             }
-            // This is intentionally non-destructive. Dynamic sessions retain
-            // their attachment and any pending OS release authority but
-            // become terminal; static sessions are otherwise inert. A Drop
-            // cannot manufacture source collection, page release, or
-            // attachment teardown.
+            // This is intentionally non-destructive. Ticket-zero static,
+            // dynamic, and later-main sessions retain their attachment and
+            // any pending OS release authority but become terminal; exclusive
+            // bootstrap sessions are otherwise inert. A Drop cannot
+            // manufacture source collection, page release, or attachment
+            // teardown.
             self.session.latch_unfinished_page_engine();
         }
     }

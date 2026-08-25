@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 72,
-    "item_count": 68,
+    "implemented": 78,
+    "item_count": 74,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 72
+    "unit_verified": 78
   },
-  "port_map_sha256": "44ecb4287ef04737c07d47ea82e8bcd25414483263a9f9db12464d1e8f1d44d1",
+  "port_map_sha256": "9f3c509b0af116a3a4ed38239ee702d082d1a89f83d95e7749774172b5ac826c",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -146,6 +146,18 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/arena.c:later-main-process-page-map-arena-lifecycle": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:main-static-process-page-map-arena-lifecycle": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:mi-manage-os-memory-ex2-process-shared-one-arena": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/arena.c:mi_heap_ensure_arena_pages-private-dynamic-owner": [
       "implemented",
       "unit_verified"
@@ -195,6 +207,10 @@
       "implemented",
       "unit_verified"
     ],
+    "item:src/init.c:later-thread-process-static-main-heap-no-page-attachment": [
+      "implemented",
+      "unit_verified"
+    ],
     "item:src/init.c:mi_page_empty-and-MI_PAGE_QUEUES_EMPTY": [
       "implemented",
       "unit_verified"
@@ -224,6 +240,10 @@
       "unit_verified"
     ],
     "item:src/page-map.c:mapped-two-level-page-map-lifecycle": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page-map.c:mi-page-map-init-once-process-publication": [
       "implemented",
       "unit_verified"
     ],
@@ -286,6 +306,10 @@
       "implemented",
       "unit_verified",
       "differential_verified"
+    ],
+    "item:src/theap.c:later-main-all-free-thread-exit-drain": [
+      "implemented",
+      "unit_verified"
     ],
     "item:src/theap.c:private-current-thread-regular-key-dynamic-theap-attachment": [
       "implemented",

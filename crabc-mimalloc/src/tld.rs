@@ -272,6 +272,38 @@ impl ThreadLocalDataOwner {
         }
     }
 
+    /// Creates one metadata-backed later-ticket TLD for a Theap attached to
+    /// the process-static main Heap.
+    ///
+    /// The ticket/TLD transition is intentionally shared with the private
+    /// first-class-heap path: both are the nonzero branch of
+    /// `mi_tld_create`.  What differs is only the later Theap publication
+    /// (fixed main fast slot versus a regular dynamic key).  Naming this
+    /// separately prevents a shared-main lifecycle from inheriting a
+    /// misleading dynamic-key ownership claim.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the current thread's allocator lifecycle, retain
+    /// `metadata` for the complete returned TLD lifetime, and already have a
+    /// live ticket-zero main attachment for `subprocess`.  It must attach the
+    /// result to exactly one source Theap or explicitly retire it while still
+    /// in the no-Theap state.
+    pub(crate) unsafe fn begin_later_main_heap_attachment_with_metadata(
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+    ) -> Result<DynamicAttachedThreadLocalData, ThreadLocalDataError> {
+        // SAFETY: this uses the exact same later-ticket transition as the
+        // dynamic path; the caller owns the distinct shared-main publication
+        // protocol after the returned TLD exists.
+        unsafe {
+            Self::begin_later_dynamic_attachment_with_main_and_metadata(
+                subprocess, metadata, config,
+            )
+        }
+    }
+
     unsafe fn begin_with_main_and_metadata(
         subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>,

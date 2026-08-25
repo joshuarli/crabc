@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/arena.c:674-723,1101-1114,1240-1282`,
+// `src/page.c:214-302`, `src/free.c:371-515`,
 // `src/threadlocal.c:23-214`,
 // `src/init.c:236-360,377-421,448-481`, `src/theap.c:228-306,357-369,414-449`,
 // `src/heap.c:60-100`, and `src/prim/prim-tls.c:211-229`.
@@ -22,8 +23,12 @@
 //! Release heap publication; its exclusive borrowed `DynamicTheapPageSession`
 //! alone reaches the shared private page engine. Its first dynamic arena page
 //! lazily receives one exact heap-local `mi_arena_pages_t` metadata image;
-//! fresh/rollback/release use that image rather than `Arena::pages_main`.
-//! It does implement the one
+//! fresh/rollback/release use that image rather than `Arena::pages_main`. Its
+//! post-TLS `DynamicTheapPageDrainSession` first force-collects already-retired
+//! all-free pages, then has one further source-shaped live owner exit: a full
+//! one-block arena singleton can be queue-detached, abandoned, and released
+//! only when its later client free sees the cleared regular slot and takes the
+//! failed-reclaim all-free tail. It does implement the one
 //! owner-only cached-Theap root/reference pair which follows regular-slot
 //! publication in `src/heap.c:_mi_heap_theap_get_or_init`.
 
@@ -62,6 +67,11 @@ use crate::types::{
 enum DynamicAttachmentState {
     Preparing,
     Attached,
+    /// The source regular TLS slot is cleared, so an abandoned-page free can
+    /// no longer reclaim this Theap. The page-map/arena/Theap/TLD ownership
+    /// stays live until the dedicated page-drain owner has released or
+    /// retained every page, after which ordinary attachment teardown resumes.
+    DrainingPages,
     AwaitingKeyRelease,
     TornDown,
     Poisoned,
@@ -561,15 +571,37 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         true
     }
 
-    /// Performs the bounded no-page teardown sequence.
-    pub(crate) fn teardown(&mut self) -> Result<(), DynamicTheapError> {
-        if self.state == DynamicAttachmentState::AwaitingKeyRelease {
-            return self.finish_key_release();
+    /// Clears one exact dynamic ordinary-page bit while the regular TLS slot
+    /// has already been removed for thread exit. The page-drain owner retains
+    /// the same Heap-local arena-pages image; using the normal attached-path
+    /// helper here would incorrectly require a still-live reclaim slot.
+    fn clear_dynamic_arena_page_during_drain(
+        &mut self,
+        arena: &ArenaView<'_>,
+        memory: MemoryId,
+    ) -> bool {
+        if self.ensure_draining_current().is_err() {
+            return false;
         }
-        self.prevalidate_teardown()?;
+        let Some(owner) = self.arena_pages.as_ref() else {
+            self.state = DynamicAttachmentState::Poisoned;
+            return false;
+        };
+        if !owner.is_for_arena(arena) || !owner.clear_page(memory) {
+            self.state = DynamicAttachmentState::Poisoned;
+            return false;
+        }
+        true
+    }
 
+    /// Clears the dynamic regular TLS backing before thread-exit page
+    /// abandonment, matching `_mi_thread_locals_thread_done` before
+    /// `mi_thread_theaps_done`. The resulting [`DynamicAttachmentState::DrainingPages`]
+    /// retains the page map, arena image, Theap, Heap, and TLD until a narrow
+    /// page-drain owner has accounted for every page.
+    fn begin_page_drain(&mut self) -> Result<(), DynamicTheapError> {
+        self.prevalidate_attached_page_drain(false)?;
         let key = self.binding()?.key();
-        let theap_pointer = self.theap_pointer()?;
         let clear_slot = {
             let backing = self.backing.as_mut().ok_or(DynamicTheapError::Poisoned)?;
             backing.set(key, core::ptr::null_mut())
@@ -592,7 +624,41 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(self.poison(DynamicTheapError::Backing(error)));
         }
         self.backing = None;
+        self.state = DynamicAttachmentState::DrainingPages;
+        Ok(())
+    }
 
+    /// Performs the bounded no-page teardown sequence. A direct no-page
+    /// teardown enters and completes the same page-drain state in one call;
+    /// a previously returned drain owner completes it only after its exact
+    /// abandoned pages have been released or deliberately retained.
+    pub(crate) fn teardown(&mut self) -> Result<(), DynamicTheapError> {
+        if self.state == DynamicAttachmentState::AwaitingKeyRelease {
+            return self.finish_key_release();
+        }
+        match self.state {
+            DynamicAttachmentState::Attached => {
+                self.prevalidate_attached_page_drain(true)?;
+                self.begin_page_drain()?;
+            }
+            DynamicAttachmentState::DrainingPages => self.prevalidate_draining_page_teardown()?,
+            DynamicAttachmentState::TornDown => return Err(DynamicTheapError::TornDown),
+            DynamicAttachmentState::Preparing | DynamicAttachmentState::Poisoned => {
+                return Err(DynamicTheapError::Poisoned);
+            }
+            DynamicAttachmentState::AwaitingKeyRelease => unreachable!(),
+        }
+        let theap_pointer = self.theap_pointer()?;
+        self.complete_page_drain_teardown(theap_pointer)
+    }
+
+    /// Completes the part of `mi_thread_theaps_done` that follows successful
+    /// page drain: restore the cached root, detach the exact Theap from the
+    /// Heap and TLD lists, then release typed metadata and the key lease.
+    fn complete_page_drain_teardown(
+        &mut self,
+        theap_pointer: *mut Theap,
+    ) -> Result<(), DynamicTheapError> {
         if let Err(error) = self.restore_empty_cached_root_and_release(theap_pointer) {
             return Err(self.poison(error));
         }
@@ -699,13 +765,102 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         Ok(())
     }
 
-    fn prevalidate_teardown(&mut self) -> Result<(), DynamicTheapError> {
+    /// Validates the still-attached source ownership required before the
+    /// regular TLS slot is cleared. `require_empty` is true for direct
+    /// teardown and false for the intermediate thread-exit page-drain state.
+    fn prevalidate_attached_page_drain(
+        &mut self,
+        require_empty: bool,
+    ) -> Result<(), DynamicTheapError> {
         self.ensure_attached_current()?;
         if !self.roots.default_and_fast_still_match() {
             return Err(DynamicTheapError::RootOwnership);
         }
         let key = self.binding()?.key();
         if !self.binding()?.slot_bound {
+            return Err(DynamicTheapError::SlotOwnership);
+        }
+        let theap_pointer = self.theap_pointer()?;
+        let subprocess = self
+            .tld
+            .as_ref()
+            .ok_or(DynamicTheapError::Poisoned)?
+            .subprocess();
+        let (page_count, refcount, matches_thread, bound_to_subprocess) = {
+            let theap = self
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .ok_or(DynamicTheapError::TheapProjection)?;
+            (
+                theap.page_count(),
+                theap.refcount(),
+                theap.matches_thread(self.thread),
+                theap.is_bound_to_main_subprocess(subprocess),
+            )
+        };
+        if require_empty && page_count != 0 {
+            return Err(DynamicTheapError::PageCountNonZero);
+        }
+        if require_empty {
+            if let Some(owner) = self.arena_pages.as_ref() {
+                if !owner.is_published_for(self.heap.as_ref().get_ref())
+                    || !owner.is_empty_published()
+                {
+                    return Err(DynamicTheapError::ArenaPages(
+                        DynamicArenaPagesOwnerError::NonEmpty,
+                    ));
+                }
+            }
+        }
+        if !self.cached_root_bound || !core::ptr::eq(cached_theap().as_ptr(), theap_pointer) {
+            return Err(DynamicTheapError::RootOwnership);
+        }
+        if refcount != 2 {
+            return Err(DynamicTheapError::CachedReference);
+        }
+        let tld_member = match self.tld.as_mut() {
+            Some(tld) => tld
+                .current_mut()
+                .map_err(DynamicTheapError::ThreadLocalData)?
+                .has_exact_theap_member(theap_pointer),
+            None => return Err(DynamicTheapError::Poisoned),
+        };
+        let heap = self.heap.as_ref().get_ref();
+        if !matches_thread
+            || !bound_to_subprocess
+            || !tld_member
+            || !heap.has_exact_theap_member(theap_pointer)
+            || !heap.matches_dynamic_binding(
+                subprocess,
+                key.raw() as usize,
+            )
+        {
+            return Err(DynamicTheapError::ListOwnership);
+        }
+        let value = self
+            .backing
+            .as_mut()
+            .ok_or(DynamicTheapError::Poisoned)?
+            .get(key)
+            .map_err(DynamicTheapError::Backing)?;
+        if value != theap_pointer.cast() {
+            return Err(DynamicTheapError::SlotOwnership);
+        }
+        Ok(())
+    }
+
+    /// Validates the post-TLS, pre-list-detach side of the source thread-exit
+    /// sequence. No dynamic regular backing may remain, while the cached
+    /// root and both intrusive list memberships still retain the exact Theap
+    /// until every page has drained.
+    fn prevalidate_draining_page_teardown(&mut self) -> Result<(), DynamicTheapError> {
+        self.ensure_draining_current()?;
+        if !self.roots.default_and_fast_still_match() {
+            return Err(DynamicTheapError::RootOwnership);
+        }
+        let key = self.binding()?.key();
+        if self.binding()?.slot_bound || self.backing.is_some() {
             return Err(DynamicTheapError::SlotOwnership);
         }
         let theap_pointer = self.theap_pointer()?;
@@ -763,15 +918,6 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             )
         {
             return Err(DynamicTheapError::ListOwnership);
-        }
-        let value = self
-            .backing
-            .as_mut()
-            .ok_or(DynamicTheapError::Poisoned)?
-            .get(key)
-            .map_err(DynamicTheapError::Backing)?;
-        if value != theap_pointer.cast() {
-            return Err(DynamicTheapError::SlotOwnership);
         }
         Ok(())
     }
@@ -919,10 +1065,26 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             },
             DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
             DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::DrainingPages
             | DynamicAttachmentState::AwaitingKeyRelease
             | DynamicAttachmentState::Poisoned => {
                 Err(DynamicTheapError::Poisoned)
             }
+        }
+    }
+
+    #[inline]
+    fn ensure_draining_current(&self) -> Result<(), DynamicTheapError> {
+        match self.state {
+            DynamicAttachmentState::DrainingPages => match current_thread_identity() {
+                Some(thread) if thread == self.thread => Ok(()),
+                Some(_) | None => Err(DynamicTheapError::InvalidCurrentThread),
+            },
+            DynamicAttachmentState::TornDown => Err(DynamicTheapError::TornDown),
+            DynamicAttachmentState::Preparing
+            | DynamicAttachmentState::Attached
+            | DynamicAttachmentState::AwaitingKeyRelease
+            | DynamicAttachmentState::Poisoned => Err(DynamicTheapError::Poisoned),
         }
     }
 
@@ -1028,7 +1190,7 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         attachment: &'attach mut DynamicTheapAttachment<'heap>,
     ) -> Result<Self, DynamicTheapPageSessionError> {
         attachment
-            .prevalidate_teardown()
+            .prevalidate_attached_page_drain(true)
             .map_err(DynamicTheapPageSessionError::Attachment)?;
         let theap = attachment
             .theap
@@ -1090,12 +1252,28 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
             .mapped_abandoned_page(arena, bin, memory)
     }
 
+    /// Consumes this live page-session borrow into the source thread-exit
+    /// page-drain state. The attachment clears its regular TLS backing first,
+    /// so later abandoned frees cannot reclaim this Theap through its dynamic
+    /// heap key. On error the caller retains this exact session/engine; a
+    /// post-mutation error has already poisoned the attachment.
+    pub(crate) fn begin_thread_exit_drain(
+        self,
+    ) -> Result<DynamicTheapPageDrainSession<'attach, 'heap>, (Self, DynamicTheapError)> {
+        match self.attachment.begin_page_drain() {
+            Ok(()) => Ok(DynamicTheapPageDrainSession {
+                attachment: self.attachment,
+            }),
+            Err(error) => Err((self, error)),
+        }
+    }
+
     /// Test-only non-mutating view of the attachment's teardown preflight.
     /// It never invokes teardown, clears a root, or detaches a list while the
     /// session owns the attachment borrow.
     #[cfg(test)]
     pub(crate) fn test_teardown_preflight(&mut self) -> Result<(), DynamicTheapError> {
-        self.attachment.prevalidate_teardown()
+        self.attachment.prevalidate_attached_page_drain(true)
     }
 
     #[cfg(test)]
@@ -1110,7 +1288,65 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
 
 }
 
+/// A post-TLS, pre-list-detach page owner used only by the bounded
+/// thread-exit handoff. It deliberately has no public allocation interface:
+/// it can force-collect existing retired pages and drain exact queue-detached
+/// abandoned pages while retaining the dynamic Heap's arena-page image and
+/// PageMap authority.
+pub(crate) struct DynamicTheapPageDrainSession<'attach, 'heap> {
+    attachment: &'attach mut DynamicTheapAttachment<'heap>,
+}
+
+impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
+    #[inline]
+    fn dynamic_theap(&self) -> &Theap {
+        self.attachment
+            .theap
+            .as_ref()
+            .and_then(MetaAllocation::dynamic_theap)
+            .expect("a draining dynamic page session retains its typed Theap")
+    }
+
+    #[inline]
+    fn dynamic_theap_mut(&mut self) -> &mut Theap {
+        self.attachment
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .expect("a draining dynamic page session retains its typed Theap")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_regular_slot_is_clear(&self) -> bool {
+        self.attachment.backing.is_none()
+            && self
+                .attachment
+                .binding
+                .as_ref()
+                .is_some_and(|binding| !binding.slot_bound)
+            && crate::compiler_tls::dynamic_backing_peek().is_none()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_cached_root_still_names_the_draining_theap(&self) -> bool {
+        self.attachment.cached_root_bound
+            && core::ptr::eq(
+                cached_theap().as_ptr(),
+                self.dynamic_theap() as *const Theap as *mut Theap,
+            )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_arena_page_is_clear(&self, memory: MemoryId) -> bool {
+        self.attachment
+            .arena_pages
+            .as_ref()
+            .is_some_and(|owner| !owner.page_is_set(memory))
+    }
+}
+
 impl theap_page_session_sealed::Sealed for DynamicTheapPageSession<'_, '_> {}
+impl theap_page_session_sealed::Sealed for DynamicTheapPageDrainSession<'_, '_> {}
 
 // SAFETY: construction revalidates the exact attached current-thread
 // TLD/Theap/Heap/list/root/refcount state while taking `&mut attachment`.
@@ -1232,20 +1468,128 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
     }
 }
 
+// SAFETY: `DynamicTheapPageDrainSession` is constructed only by consuming an
+// attached dynamic page session after its regular TLS slot has been cleared.
+// It retains the same pinned Heap, typed Theap/TLD metadata, exact queue
+// records, PageMap borrow, and heap-local arena image, but is exposed only
+// through the thread-exit drain wrapper in `single_thread.rs`. Its live thread
+// identity remains available solely for the source false-force collection that
+// precedes abandonment; no ordinary allocation entry point receives this
+// session type.
+unsafe impl TheapPageSession for DynamicTheapPageDrainSession<'_, '_> {
+    #[inline]
+    fn theap(&self) -> &Theap { self.dynamic_theap() }
+
+    #[inline]
+    fn thread_id(&self) -> Option<crate::types::LiveThreadId> {
+        Some(self.attachment.thread)
+    }
+
+    #[inline]
+    fn queue(&self, bin: usize) -> Option<&PageQueue> { self.dynamic_theap().queue(bin) }
+
+    #[inline]
+    fn queue_mut(&mut self, bin: usize) -> Option<&mut PageQueue> {
+        self.dynamic_theap_mut().queue_mut(bin)
+    }
+
+    #[inline]
+    fn direct_page(&self, index: usize) -> Option<*mut Page> {
+        self.dynamic_theap().direct_page(index)
+    }
+
+    #[inline]
+    fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
+        self.dynamic_theap_mut().set_direct_page(index, page)
+    }
+
+    #[inline]
+    fn note_page_added(&mut self) { self.dynamic_theap_mut().note_page_added() }
+
+    #[inline]
+    fn note_page_removed(&mut self) -> bool { self.dynamic_theap_mut().note_page_removed() }
+
+    // Fresh publication during page drain would recreate a regular TLS owner
+    // after source thread-local teardown. The thread-exit wrapper has no such
+    // operation, and these defensive trait implementations refuse it.
+    #[inline]
+    fn ensure_arena_pages(&mut self, _arena: &ArenaView<'_>, _config: MemoryConfig) -> bool {
+        false
+    }
+
+    #[inline]
+    fn set_arena_page(&mut self, _arena: &ArenaView<'_>, _memory: MemoryId) -> bool { false }
+
+    #[inline]
+    fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        self.attachment.clear_dynamic_arena_page_during_drain(arena, memory)
+    }
+
+    #[inline]
+    unsafe fn publish_fresh_page(
+        &mut self,
+        _metadata: NonNull<Page>,
+        _block_size: usize,
+        _page_offset: usize,
+        _reserved: u16,
+        _slice_pcommitted: u16,
+        _free_is_zero: bool,
+        _memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        None
+    }
+
+    #[inline]
+    fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { page.retire_exclusive() }
+
+    #[inline]
+    fn retired_bounds(&self) -> (usize, usize) { self.dynamic_theap().retired_bounds() }
+
+    #[inline]
+    fn note_retired_bin(&mut self, bin: usize) -> bool {
+        self.dynamic_theap_mut().note_retired_bin(bin)
+    }
+
+    #[inline]
+    fn reset_retired_bounds(&mut self) { self.dynamic_theap_mut().reset_retired_bounds() }
+
+    fn retain_unfinished_os_release(
+        &mut self,
+        owner: OsAlignedPageOwner,
+    ) -> Result<(), OsAlignedPageOwner> {
+        if self.attachment.terminal_os_release.is_some() {
+            return Err(owner);
+        }
+        self.attachment.terminal_os_release = Some(owner);
+        Ok(())
+    }
+
+    #[inline]
+    fn latch_unfinished_page_engine(&mut self) {
+        self.attachment.state = DynamicAttachmentState::Poisoned;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::arena::{
         ArenaId, ArenaPagesLayout, ArenaRegistry, ArenaView, manage_external_in_place,
     };
-    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
+    use crate::config::{
+        ARENA_ALIGNMENT, ARENA_MIN_SIZE, BIN_FULL, LARGE_MAX_OBJ_SIZE, SMALL_MAX_OBJ_SIZE,
+    };
     use crate::compiler_tls::{
         dynamic_backing_peek, is_empty_dynamic_backing, set_cached_theap,
     };
     use crate::os::{PageSize, fault};
     use crate::page_map::PageMap;
     use crate::single_thread::{
-        DynamicMappedAbandonError, DynamicMappedAbandonFailure, DynamicTheapAllocator,
+        DynamicMappedAbandonError, DynamicMappedAbandonFailure,
+        DynamicMappedRemoteFreeFailure,
+        DynamicTheapAllocator, DynamicThreadExitDrainFailure,
+        DynamicThreadExitSingletonAbandonFailure,
+        DynamicThreadExitSingletonRemoteFreeFailure,
     };
     use crate::tld::ThreadLocalDataOwner;
     use crate::types::MemoryKind;
@@ -1581,6 +1925,240 @@ mod tests {
             unsafe { allocator.free(block) }
                 .expect("the reclaimed dynamic page accepts its original local free");
             assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_mapped_regular_remote_free_reclaims_to_its_same_origin() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(37, false)
+                .expect("first dynamic regular page allocation");
+            let second = allocator
+                .allocate(37, false)
+                .expect("second allocation shares the regular page");
+            let page = unsafe { allocator.page_for_block(first) };
+            assert_eq!(unsafe { allocator.page_for_block(second) }, page);
+            let memory = unsafe { (*page).memid() };
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the dynamic fixture allocated a regular size class");
+
+            // SAFETY: both client blocks are live allocations of the exact
+            // active regular page, and this consuming handoff admits no
+            // scoped producer while it changes page ownership.
+            let handoff = match unsafe { allocator.abandon_mapped_regular(first) } {
+                Ok(handoff) => handoff,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("a partially used dynamic regular page enters the mapped handoff");
+                }
+            };
+            assert!(handoff.test_dynamic_abandoned_page_is_set());
+
+            // SAFETY: `first` is still exactly once live in this handoff's
+            // page; this method models the source allow-collect remote-free
+            // branch and consumes that client ownership.
+            let mut allocator = match unsafe { handoff.remote_free_and_reclaim(first) } {
+                Ok(allocator) => allocator,
+                Err(DynamicMappedRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicMappedRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("same-origin mapped remote free reclaims the page: {error:?}");
+                }
+            };
+            assert_eq!(unsafe { (*page).theap() }, allocator.theap_identity());
+            assert!(allocator.test_dynamic_abandoned_page_is_clear(bin, memory));
+
+            // SAFETY: `second` remains the one live client allocation after
+            // the source remote free was collected into owner-local state.
+            unsafe { allocator.free(second) }
+                .expect("the reclaimed page accepts its remaining local allocation");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_mapped_regular_remote_free_empty_releases_the_queue_detached_arena_page() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(37, false)
+                .expect("one dynamic regular page allocation");
+            let page = unsafe { allocator.page_for_block(block) };
+            let memory = unsafe { (*page).memid() };
+            let bin = crate::size_class::bin(unsafe { (*page).block_size() })
+                .expect("the dynamic fixture allocated a regular size class");
+            let handoff = match unsafe { allocator.abandon_mapped_regular(block) } {
+                Ok(handoff) => handoff,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the one live regular block enters the mapped handoff");
+                }
+            };
+
+            // SAFETY: this is the handoff's only current client allocation.
+            // The source makes its page all-free, clears its mapped-abandoned
+            // entry, and then releases the already queue-detached arena span.
+            let allocator = match unsafe { handoff.remote_free_and_reclaim(block) } {
+                Ok(allocator) => allocator,
+                Err(DynamicMappedRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicMappedRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("an empty mapped free releases its exact arena span: {error:?}");
+                }
+            };
+            assert_eq!(unsafe { allocator.page_for_block(block) }, core::ptr::null_mut());
+            let heap = unsafe { &*allocator.theap_identity().cast::<Theap>() }.heap();
+            assert_eq!(
+                unsafe { heap.as_ref() }.and_then(|heap| heap.abandoned_count(bin)),
+                Some(0),
+                "unabandoning consumes the exact dynamic abandoned-map count before release"
+            );
+            let (_, _, _, dynamic_page_is_set) = allocator
+                .test_dynamic_arena_pages_image(memory)
+                .expect("the dynamic image remains available after its page bit clears");
+            assert!(!dynamic_page_is_set);
+            assert!(allocator.test_dynamic_main_arena_page_is_clear(memory));
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_singleton_remote_free_clears_tls_then_releases_its_arena_page() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(LARGE_MAX_OBJ_SIZE + 1, false)
+                .expect("the dynamic fixture allocates one arena singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the singleton remains page-map published before thread exit");
+            let memory = unsafe { page.as_ref().memid() };
+            assert_eq!(unsafe { page.as_ref().reserved() }, 1);
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            // The source clears the dynamic regular TLS backing before it
+            // abandons pages during `mi_thread_theaps_done`. That makes this
+            // page's later free fail the one reclaim attempt without
+            // pretending that its original Theap is still live.
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+            assert!(drain.test_cached_root_still_names_the_draining_theap());
+
+            // SAFETY: `block` is the singleton's one current allocation.
+            // Thread-exit drain owns its queue, page map, dynamic arena image,
+            // and the exact source TLS-detach proof until the result is
+            // terminally released or retained.
+            let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
+                    core::mem::forget(drain);
+                    panic!("the live full singleton enters the owner-exit handoff: {error:?}");
+                }
+                Err(DynamicThreadExitSingletonAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("singleton abandonment does not retain a terminal owner: {error:?}");
+                }
+            };
+            assert_eq!(handoff.test_page_count(), 0);
+            assert!(handoff.test_dynamic_regular_slot_is_clear());
+
+            // SAFETY: this is the handoff's exact once-live client block.
+            // The singleton cannot reabandon to an arena bitmap, so its
+            // source failed-reclaim tail must take the all-free terminal
+            // release rather than route through the mapped handoff.
+            let drain = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the final singleton free releases its queue-detached arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(block) }.is_null());
+            assert_eq!(drain.test_page_count(), 0);
+            assert!(drain.test_dynamic_arena_page_is_clear(memory));
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_force_collects_a_retired_regular_page_after_tls_clear() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                .expect("the dynamic fixture allocates one regular medium page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the regular page remains page-map published");
+            assert!(unsafe { page.as_ref().reserved() } > 1);
+
+            // SAFETY: this is the page's only current local allocation. Its
+            // normal free leaves a retired regular page so thread exit must
+            // take `_mi_theap_collect_retired(theap, true)` after clearing the
+            // regular TLS backing, rather than treating no-page teardown as a
+            // substitute for the source force-collection boundary.
+            unsafe { allocator.free(block) }
+                .expect("one non-full regular page enters retirement before thread exit");
+            assert!(!unsafe { allocator.page_for_block(block) }.is_null());
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+            assert_eq!(drain.test_page_count(), 1);
+
+            // `finish` first force-collects retirement before it can establish
+            // the empty-page precondition for cached-root/list/key teardown.
+            assert!(drain.finish());
             DynamicPageFixtureOutcome::TearDown
         });
     }

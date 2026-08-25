@@ -347,13 +347,68 @@ impl Heap {
         (bin < BIN_COUNT).then(|| self.abandoned_count[bin].load(Ordering::Relaxed))
     }
 
-    /// Acquire-loads one private source `heap->arena_pages[arena]` slot.
+    /// Acquire-loads one source `heap->arena_pages[arena]` slot.
+    ///
+    /// Callers must retain the matching main in-place or dynamic heap-local
+    /// owner; this raw table observation does not select a bitmap policy.
     #[inline]
-    pub(crate) fn dynamic_arena_pages_at(&self, arena_index: usize) -> Option<NonNull<ArenaPages>> {
+    pub(crate) fn arena_pages_at(&self, arena_index: usize) -> Option<NonNull<ArenaPages>> {
         if arena_index >= MAX_ARENAS {
             return None;
         }
         NonNull::new(self.arena_pages[arena_index].load(Ordering::Acquire))
+    }
+
+    /// Backward-compatible spelling for the existing non-main owner paths.
+    #[inline]
+    pub(crate) fn dynamic_arena_pages_at(&self, arena_index: usize) -> Option<NonNull<ArenaPages>> {
+        self.arena_pages_at(arena_index)
+    }
+
+    /// Installs the source main arena's embedded `pages_main` image into the
+    /// static main Heap's arena slot.
+    ///
+    /// Pinned `mi_heap_ensure_arena_pages` does not allocate a dynamic
+    /// `mi_arena_pages_t` for `mi_heap_main()`: it points the main Heap at the
+    /// selected arena's in-place `pages_main` instead. An already identical
+    /// installation is the normal later-allocation fast path; any different
+    /// non-null image is an invalid-owner boundary rather than a fallback to
+    /// a dynamic image.
+    #[inline]
+    pub(crate) fn install_main_arena_pages(
+        &self,
+        subprocess: &MainSubprocess,
+        arena_index: usize,
+        pages: NonNull<ArenaPages>,
+    ) -> Result<(), HeapArenaPagesError> {
+        if arena_index >= MAX_ARENAS {
+            return Err(HeapArenaPagesError::ArenaIndex);
+        }
+        if self.theap_slot != 1
+            || self.memid.kind() != MemoryKind::Static
+            || !core::ptr::eq(self.subprocess, subprocess.as_ptr())
+        {
+            return Err(HeapArenaPagesError::NotMainStatic);
+        }
+        let guard = self
+            .arena_pages_lock
+            .lock()
+            .map_err(HeapArenaPagesError::Lock)?;
+        let current = self.arena_pages[arena_index].load(Ordering::Acquire);
+        let result = if current.is_null() {
+            self.arena_pages[arena_index].store(pages.as_ptr(), Ordering::Release);
+            Ok(())
+        } else if current == pages.as_ptr() {
+            Ok(())
+        } else {
+            Err(HeapArenaPagesError::Occupied)
+        };
+        let unlock = guard.unlock();
+        match (result, unlock) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(error)) => Err(HeapArenaPagesError::Lock(error)),
+            (Err(error), _) => Err(error),
+        }
     }
 
     /// Release-publishes one freshly initialized private dynamic
@@ -461,14 +516,38 @@ impl Heap {
         &mut self,
         theap: *mut Theap,
     ) -> Result<(), HeapTheapListError> {
+        self.attach_theap_after_heap_publication_with_lock(theap, false)
+    }
+
+    /// Performs the same source heap-list publication using the normal
+    /// blocking private-lock path.  Later-thread attachments to the shared
+    /// process-static main heap use this variant: routine lock contention is
+    /// not an invalid owner state merely because another thread is attaching
+    /// or detaching its own Theap.
+    #[inline]
+    pub(crate) fn attach_theap_after_heap_publication_blocking(
+        &mut self,
+        theap: *mut Theap,
+    ) -> Result<(), HeapTheapListError> {
+        self.attach_theap_after_heap_publication_with_lock(theap, true)
+    }
+
+    fn attach_theap_after_heap_publication_with_lock(
+        &mut self,
+        theap: *mut Theap,
+        blocking: bool,
+    ) -> Result<(), HeapTheapListError> {
         // The bounded static or dynamic attachment owns an otherwise-
         // uncontended heap list. A busy result is therefore an invalid-owner
         // initialization boundary, not a reason to block while an unexplained
         // alias exists.
-        let guard = self
-            .theaps_lock
-            .try_lock()
-            .ok_or(HeapTheapListError::Busy)?;
+        let guard = if blocking {
+            self.theaps_lock.lock().map_err(HeapTheapListError::Lock)?
+        } else {
+            self.theaps_lock
+                .try_lock()
+                .ok_or(HeapTheapListError::Busy)?
+        };
         // SAFETY: the attachment owns `theap`, keeps it address-stable, and
         // invokes this only after its Release heap publication. The lock
         // serializes the source intrusive heap-list update.
@@ -498,16 +577,77 @@ impl Heap {
         }
     }
 
+    /// Validates one member of a potentially multi-Theap shared main heap.
+    ///
+    /// Unlike [`Self::has_exact_theap_member`], this accepts either a head or
+    /// an interior entry.  The caller retains the typed Theap allocation and
+    /// holds the process-level projection guard; this method additionally
+    /// takes the source heap-list lock so concurrent normal attachment or
+    /// detachment cannot make the local link witness transient.
+    #[inline]
+    pub(crate) fn has_shared_theap_member_blocking(
+        &self,
+        theap: *mut Theap,
+    ) -> Result<bool, HeapTheapListError> {
+        if theap.is_null() {
+            return Ok(false);
+        }
+        let guard = self.theaps_lock.lock().map_err(HeapTheapListError::Lock)?;
+        // SAFETY: the caller owns the typed Theap allocation and this lock
+        // serializes the source hnext/hprev relations for this Heap.  The
+        // adjacent links, if non-null, were inserted through the same list.
+        let is_member = unsafe {
+            if !core::ptr::eq(
+                (*theap).heap.load(Ordering::Acquire),
+                core::ptr::from_ref(self).cast_mut(),
+            ) {
+                false
+            } else if (*theap).hprev.is_null() {
+                self.theaps == theap
+            } else {
+                (*(*theap).hprev).hnext == theap
+                    && ((*theap).hnext.is_null() || (*(*theap).hnext).hprev == theap)
+            }
+        };
+        guard.unlock().map_err(HeapTheapListError::Lock)?;
+        Ok(is_member)
+    }
+
     #[inline]
     fn detach_one_theap_under_tld_lock(
         &mut self,
         theap: *mut Theap,
     ) -> Result<(), HeapTheapListError> {
+        self.detach_one_theap_under_tld_lock_with_lock(theap, false)
+    }
+
+    /// Removes one shared-main-heap list member while its source TLD list
+    /// lock is already held.  Unlike the bounded one-Theap owners, ordinary
+    /// contention on the process heap is resolved by waiting on the private
+    /// lock, matching `_mi_tld_detach_theaps` rather than terminally poisoning
+    /// an otherwise valid later-thread owner.
+    #[inline]
+    pub(crate) fn detach_one_theap_under_tld_lock_blocking(
+        &mut self,
+        theap: *mut Theap,
+    ) -> Result<(), HeapTheapListError> {
+        self.detach_one_theap_under_tld_lock_with_lock(theap, true)
+    }
+
+    fn detach_one_theap_under_tld_lock_with_lock(
+        &mut self,
+        theap: *mut Theap,
+        blocking: bool,
+    ) -> Result<(), HeapTheapListError> {
         // The attachment owner has already cleared its owned TLS publication
         // in source teardown order. A busy/private-lock or membership failure
         // is therefore an invalid-owner terminal state: do not retry, steal
         // the lock, or imply that its retained storage was retired.
-        let guard = self.theaps_lock.try_lock().ok_or(HeapTheapListError::Busy)?;
+        let guard = if blocking {
+            self.theaps_lock.lock().map_err(HeapTheapListError::Lock)?
+        } else {
+            self.theaps_lock.try_lock().ok_or(HeapTheapListError::Busy)?
+        };
         // SAFETY: the caller holds the associated TLD list lock and owns the
         // one exact bounded theap. The heap lock completes the source two-list
         // detachment discipline before this method clears the Release heap
@@ -581,6 +721,7 @@ pub(crate) enum HeapTheapListError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HeapArenaPagesError {
     ArenaIndex,
+    NotMainStatic,
     Busy,
     Occupied,
     Mismatch,
@@ -974,6 +1115,39 @@ impl ThreadLocalData {
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)
     }
 
+    /// Performs the same heap-list half for a later thread attached to the
+    /// shared process-static main Heap.
+    ///
+    /// The TLD still has exactly one owner, but the Heap can contain other
+    /// live threads' Theaps.  Its private list lock therefore waits for
+    /// ordinary contention instead of treating a concurrent valid detach as
+    /// a terminal aliasing violation.  The caller's process heap lease keeps
+    /// the static image live while this operation runs.
+    #[inline]
+    pub(crate) fn detach_one_theap_from_shared_main_heap(
+        &mut self,
+        heap: &mut Heap,
+        theap: *mut Theap,
+    ) -> Result<(), ThreadLocalTheapListError> {
+        let self_pointer = core::ptr::from_mut(self);
+        let guard = self
+            .theaps_lock
+            .lock()
+            .map_err(ThreadLocalTheapListError::Lock)?;
+        let valid_member = unsafe {
+            self.theaps == theap
+                && (*theap).tprev.is_null()
+                && core::ptr::eq((*theap).tld, self_pointer)
+        };
+        if !valid_member {
+            let _ = guard.unlock();
+            return Err(ThreadLocalTheapListError::Membership);
+        }
+        heap.detach_one_theap_under_tld_lock_blocking(theap)
+            .map_err(ThreadLocalTheapListError::Heap)?;
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)
+    }
+
     /// Clears the source TLD-list links after the heap-list pass has
     /// Release-cleared `theap->heap`.
     #[inline]
@@ -1358,20 +1532,26 @@ pub(super) struct PageRemoteFreeProducerState {
 
 /// Narrow owner-only projection for remote-list collection.
 ///
-/// The owner may touch `local_free` and `used` only after its AcqRel CAS has
-/// detached the remote head. These are raw field pointers rather than a
-/// `&mut Page`, so producers can retain disjoint atomic-field pointers without
-/// creating a concurrent whole-page alias. The caller supplies the lifetime,
-/// non-abandonment, and no-release proof for every pointer.
+/// The owner may touch `free`, `local_free`, `used`, and `free_is_zero` only
+/// while it holds the source low owner bit. Ordinary collection obtains that
+/// state through an AcqRel CAS that detaches the remote head; the abandoned
+/// small-page partial path instead keeps its just-published head atomic while
+/// the claimed owner moves only its predecessor list. These are raw field
+/// pointers rather than a `&mut Page`, so producers can retain disjoint
+/// atomic-field pointers without creating a concurrent whole-page alias. The
+/// caller supplies the lifetime, non-abandonment, and no-release proof for
+/// every pointer.
+#[derive(Clone, Copy)]
 pub(super) struct PageRemoteFreeOwnerState {
     pub(super) xthread_free: NonNull<AtomicUsize>,
+    pub(super) free: NonNull<*mut Block>,
     pub(super) local_free: NonNull<*mut Block>,
     pub(super) used: NonNull<usize>,
+    pub(super) free_is_zero: NonNull<bool>,
     pub(super) capacity: u16,
 }
 
-/// Narrow owner-only projection for the false-force local half of
-/// `_mi_page_free_collect`.
+/// Narrow owner-only projection for the local half of `_mi_page_free_collect`.
 ///
 /// Unlike [`PageFreeListState`], this carries raw field pointers and never
 /// creates a whole-page mutable reference. The bounded full-page collector is
@@ -2173,12 +2353,16 @@ impl Page {
         }
         // SAFETY: the same initialized-page proof allows these owner-only
         // field pointers. They are not dereferenced until after list detach.
+        let free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) };
         let local_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free)) };
         let used = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) };
+        let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
             xthread_free,
+            free,
             local_free,
             used,
+            free_is_zero,
             // SAFETY: capacity is immutable while the page is live in this
             // bounded slice and belongs to the exclusive owner contract.
             capacity: unsafe { (*page).capacity },
@@ -2231,7 +2415,9 @@ impl Page {
     /// while this narrow collection step does not manufacture a whole-page
     /// mutable reference. The surrounding full-page lifecycle still requires
     /// caller-proved joined/quiescent producers before its later queue
-    /// transition helpers.
+    /// transition helpers. The raw free-list boundary can select either the
+    /// false-force transfer or the force-only local-list append; no projection
+    /// itself grants a queue, abandonment, or owner-exit transition.
     ///
     /// # Safety
     ///
@@ -2379,7 +2565,7 @@ impl Page {
     /// `page` must be a live abandoned page whose `xthread_free` owner bit is
     /// held by this caller. The caller must retain the metadata and every
     /// remote block until collection completes, and must be the sole writer of
-    /// `local_free` and `used`.
+    /// `free`, `local_free`, `used`, and `free_is_zero`.
     #[inline]
     pub(super) unsafe fn abandoned_remote_free_owner_state_at(
         page: NonNull<Self>,
@@ -2398,12 +2584,16 @@ impl Page {
         if thread_id != THREAD_ID_ABANDONED && thread_id != THREAD_ID_ABANDONED_MAPPED {
             return None;
         }
+        let free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) };
         let local_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).local_free)) };
         let used = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) };
+        let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
             xthread_free,
+            free,
             local_free,
             used,
+            free_is_zero,
             capacity: unsafe { (*page).capacity },
         })
     }
@@ -2503,8 +2693,31 @@ impl Page {
     }
 
     #[cfg(test)]
+    pub(crate) fn abandoned_test_set_theap(&mut self, theap: *mut Theap) {
+        self.theap = theap;
+    }
+
+    #[cfg(test)]
     pub(crate) fn remote_free_test_set_local_free(&mut self, local_free: *mut Block) {
         self.local_free = local_free;
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn remote_free_test_free(&self) -> *mut Block {
+        self.free
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn remote_free_test_local_free(&self) -> *mut Block {
+        self.local_free
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn remote_free_test_free_is_zero(&self) -> bool {
+        self.free_is_zero
     }
 
     #[cfg(test)]
@@ -2560,6 +2773,17 @@ impl Page {
     #[inline]
     pub(crate) const fn next(&self) -> *mut Page {
         self.next
+    }
+
+    /// Whether neither intrusive queue link names this page.
+    ///
+    /// Terminal release validates this before it clears map/arena metadata:
+    /// the ordinary local path detaches immediately before release, while an
+    /// abandoned-free path has already detached it before publishing its
+    /// abandoned identity.
+    #[inline]
+    pub(crate) const fn is_queue_detached(&self) -> bool {
+        self.next.is_null() && self.prev.is_null()
     }
 }
 
@@ -2854,6 +3078,79 @@ impl Theap {
             .map_err(TheapDynamicInitError::HeapList)
     }
 
+    /// Initializes one metadata Theap for a later thread using the shared
+    /// process-static main Heap.
+    ///
+    /// This is the normal `src/init.c:_mi_thread_init_with_heap` later-ticket
+    /// branch, not the caller-pinned first-class-heap substitute above.  Its
+    /// typed metadata image and current-thread TLD remain exclusive to the
+    /// caller, while the supplied main Heap is projected only under a
+    /// [`crate::main_theap::MainStaticHeapLease`] guard.  The final
+    /// heap-list operation waits for normal source lock contention; all
+    /// source publication ordering before that point is identical to
+    /// [`Self::initialize_dynamic_metadata`].
+    ///
+    /// # Safety
+    ///
+    /// `heap` must be the initialized process-static main Heap selected by
+    /// the same `MainSubprocess` as `tld`, and the caller must hold the
+    /// lease's temporary projection guard for this entire call.  `tld` and
+    /// this exact direct-zeroed metadata allocation must remain live and
+    /// address-stable until both intrusive lists are detached.  No raw alias
+    /// may mutate this Theap outside its current-thread lifecycle owner.
+    #[inline]
+    pub(crate) unsafe fn initialize_shared_main_metadata(
+        &mut self,
+        heap: &mut Heap,
+        tld: &mut ThreadLocalData,
+    ) -> Result<(), TheapDynamicInitError> {
+        if self.is_initialized()
+            || self.memid.kind() != MemoryKind::Malloc
+            || !tld.is_subprocess_attached_no_theap()
+            || !tld.matches_owner(TheapOwner::Live(
+                LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
+            ))
+            || heap.subprocess.is_null()
+            || !core::ptr::eq(heap.subprocess, tld.subprocess)
+            // A later `_mi_thread_init_with_heap(mi_heap_main())` uses the
+            // process main Heap's fixed fast key, not a regular dynamic slot.
+            || heap.theap_slot != 1
+            || heap.memid.kind() != MemoryKind::Static
+        {
+            return Err(TheapDynamicInitError::InvalidInput);
+        }
+
+        let memid = self.memid;
+        let replaced = core::mem::replace(self, Self::empty());
+        drop(replaced);
+        self.memid = memid;
+        self.tld = core::ptr::from_mut(tld);
+        self.refcount.store(1, Ordering::Release);
+        self.subproc.store(heap.subprocess, Ordering::Release);
+        // This is the ordinary source option image.  A shared-main later
+        // thread cannot select the private non-abandoning page-session mode.
+        self.allow_page_reclaim = true;
+        self.allow_page_abandon = true;
+        self.page_full_retain = 2;
+        self.is_detached = false;
+
+        let self_pointer = core::ptr::from_mut(self);
+        let head_random = tld
+            .attach_one_theap(self_pointer)
+            .map_err(TheapDynamicInitError::ThreadList)?;
+        if let Some(mut head_random) = head_random {
+            head_random.split_into(&mut self.random);
+        } else {
+            self.random.initialize();
+        }
+        self.cookie = self.random.next() as usize | 1;
+        // The initialized predicate remains the Release heap pointer store;
+        // only the heap-list lock behavior differs from the private binding.
+        self.heap.store(core::ptr::from_mut(heap), Ordering::Release);
+        heap.attach_theap_after_heap_publication_blocking(self_pointer)
+            .map_err(TheapDynamicInitError::HeapList)
+    }
+
     /// Clears the remaining terminal static-theap state after both intrusive
     /// lists are detached. Static provenance suppresses source metadata free,
     /// but Rust's manual static-storage lifecycle must still clear the random
@@ -3068,6 +3365,14 @@ impl Theap {
     #[inline]
     pub(crate) const fn page_full_retain(&self) -> isize {
         self.page_full_retain
+    }
+
+    /// Reports the frozen source `page_reclaim_on_free >= 0` option image.
+    /// A mapped abandoned free may reassociate only with a live Theap that
+    /// retained this permission during initialization.
+    #[inline]
+    pub(crate) const fn allows_page_reclaim(&self) -> bool {
+        self.allow_page_reclaim
     }
 
     #[inline]

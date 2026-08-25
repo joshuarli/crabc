@@ -4,21 +4,23 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/free.c:62-97`
-// (`mi_free_block_mt`) and `src/page.c:150-201`
-// (`mi_page_thread_collect_to_local` and `mi_page_thread_free_collect`), with
+// Source map: pinned mimalloc v3.5.0 `src/free.c:62-97,396-417`
+// (`mi_free_block_mt` and `mi_abandoned_page_unown_from_free`) and `src/page.c:150-269`
+// (`mi_page_thread_collect_to_local`, `mi_page_thread_free_collect`, and
+// `_mi_page_free_collect_partly`), with
 // the exact `mi_thread_free_t` low-bit representation from
 // `include/mimalloc/types.h:388-418`.
 //
 // This bounded Milestone 5 slice handles remote push and owner collection for
 // live owner-associated pages, plus the narrow `allow_collect=true` head
-// transition used by `abandoned`. It deliberately excludes the separate
-// `_mi_deferred_free` callback, general allocation/free routing, TLS/theap
-// attachment, page retirement, and page release. `single_thread.rs` is the
-// sole bounded consumer that follows a successful detach with false-force
-// full-page collection, whose caller proves live producers are
-// joined/quiescent before its queue transition. The explicit detached metadata
-// branch has no remote producer path and does not call this module.
+// transitions used by `abandoned`, including its expected-head unown tail.
+// It deliberately excludes the separate `_mi_deferred_free` callback, general
+// allocation/free routing, TLS/theap attachment, and general page retirement
+// or release. `single_thread.rs` is the sole bounded consumer that follows a
+// successful detach with false-force full-page collection, whose caller proves
+// live producers are joined/quiescent before its queue transition. The
+// explicit detached metadata branch has no remote producer path and does not
+// call this module.
 // `remote_free_loom.rs` separately models this module's
 // exact head CAS transitions with Loom; it does not model page lifetime, raw
 // block pointers, or owner-local mutation.
@@ -56,6 +58,11 @@ pub(crate) enum RemoteFreeError {
     TooManyRemoteBlocks,
     /// The detached remote list would decrement `used` below zero.
     UsedCountUnderflow,
+    /// `_mi_page_free_collect_partly` reached its last-head fast path but the
+    /// atomic head no longer named the source-provided block. This is an
+    /// invalid caller/concurrent-lifetime state; collection must retain the
+    /// page rather than detach an unrelated list.
+    PartialHeadMismatch,
 }
 
 /// Result of `mi_free_block_mt(..., allow_collect=true)` on an abandoned page.
@@ -86,6 +93,21 @@ pub(super) enum AbandonedOwnerClaim {
 pub(super) enum AbandonedOwnerHeadTransition {
     Released,
     RemotePublished(ThreadFree),
+    NotOwned,
+}
+
+/// One result of the source's expected-head release attempt in
+/// `mi_abandoned_page_unown_from_free`.
+///
+/// Unlike [`AbandonedOwnerHeadTransition`], this preserves a known small-page
+/// head when the first AcqRel CAS succeeds. A failed weak CAS leaves the
+/// decision with an owned empty or nonempty word so `abandoned` can follow the
+/// source's collect/free/reabandon loop without ever retrying reclamation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AbandonedExpectedHeadTransition {
+    Released,
+    OwnedEmpty,
+    RemotePublished,
     NotOwned,
 }
 
@@ -229,6 +251,41 @@ pub(crate) unsafe fn collect_abandoned(page: NonNull<Page>) -> Result<usize, Rem
     collect_state(state)
 }
 
+/// Collects the predecessor list of one just-published abandoned remote free.
+///
+/// This is the small-page `_mi_page_free_collect_partly` path from
+/// `page.c:245-269`. It intentionally leaves `head` in `xthread_free` so the
+/// caller can preserve `mi_abandoned_page_unown_from_free`'s expected-head
+/// release fast path. If that head is the sole remaining used block, it uses
+/// the ordinary atomic collector to make the all-free result exact.
+///
+/// # Safety
+///
+/// `page` must remain initialized and abandoned while this caller owns its
+/// low `xthread_free` bit. `head` must be the exact aligned block that this
+/// caller just published and must still be reachable from that owned atomic
+/// list. The page metadata, every predecessor block, and every owner-local
+/// free-list field must remain live and exclusively mutable by this caller
+/// until the operation finishes. Other producers may retain only their
+/// atomic page projection and may not access a predecessor after this method
+/// detaches it from `head`. The caller must also have established the source
+/// small-page geometry invariant, `reserved >= 16`.
+pub(crate) unsafe fn collect_abandoned_partly(
+    page: NonNull<Page>,
+    head: NonNull<u8>,
+) -> Result<usize, RemoteFreeError> {
+    if head.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
+        return Err(RemoteFreeError::UnalignedBlock);
+    }
+    // SAFETY: caller supplies the abandoned owner/lifetime proof. This names
+    // only the owner-owned source fields needed by the partial collector.
+    let state = unsafe { Page::abandoned_remote_free_owner_state_at(page) }
+        .ok_or(RemoteFreeError::NotOwnerAssociated)?;
+    // SAFETY: the caller proves `head` is one exact source block in this
+    // page's atomic remote list.
+    unsafe { collect_partly_state(state, head.cast()) }
+}
+
 fn collect_state(state: PageRemoteFreeOwnerState) -> Result<usize, RemoteFreeError> {
     // SAFETY: state construction proved this is the initialized page atomic.
     let xthread_free = unsafe { state.xthread_free.as_ref() };
@@ -241,6 +298,66 @@ fn collect_state(state: PageRemoteFreeOwnerState) -> Result<usize, RemoteFreeErr
     // supplied the sole owner proof for non-atomic page fields and each
     // source-shaped unencoded block link.
     unsafe { collect_detached_to_local(state, head) }
+}
+
+/// Source `_mi_page_free_collect_partly` under a caller-held abandoned owner
+/// bit. It only severs the supplied head from its predecessor list; the head
+/// remains atomically reachable until the source's later unown transition.
+unsafe fn collect_partly_state(
+    state: PageRemoteFreeOwnerState,
+    head: NonNull<Block>,
+) -> Result<usize, RemoteFreeError> {
+    // SAFETY: caller proves `head` is a valid source block and the low owner
+    // bit excludes ordinary-field mutation by another owner.
+    let next = unsafe { block_next(head) };
+    let mut collected = 0;
+    if let Some(next) = NonNull::new(next) {
+        // SAFETY: the source leaves its just-published head in the atomic
+        // list but detaches its already-linked predecessor chain before it
+        // moves that chain into owner-local state.
+        unsafe { block_set_next(head, ptr::null_mut()) };
+        // SAFETY: `next` is now detached from the remote head and the caller
+        // owns every affected ordinary field through the low owner bit.
+        collected = unsafe { collect_detached_to_local(state, next) }?;
+        // `_mi_page_free_collect_partly` performs the ordinary non-force
+        // local transfer immediately after consuming predecessor blocks.
+        move_local_to_free_if_empty(state);
+    }
+
+    // When only the supplied head remains used, source assertions prove it is
+    // still the atomic head and has no predecessor. Validate those facts at
+    // the Rust raw boundary before the final atomic collect.
+    if unsafe { *state.used.as_ptr() } == 1 {
+        let observed = word_load_relaxed(unsafe { state.xthread_free.as_ref() });
+        if !is_owned(observed)
+            || thread_free_block_address(observed) != head.as_ptr().addr()
+            || !unsafe { block_next(head) }.is_null()
+        {
+            return Err(RemoteFreeError::PartialHeadMismatch);
+        }
+        // SAFETY: the validated final head remains atomically reachable; the
+        // ordinary collector detaches it with the source AcqRel CAS and
+        // accounts the final used block exactly.
+        collected += collect_state(state)?;
+        move_local_to_free_if_empty(state);
+    }
+    Ok(collected)
+}
+
+/// The non-force local portion of `_mi_page_free_collect` used by the
+/// partial collector. It moves the owner-local list only when `free` remains
+/// empty; it deliberately does not append to an existing free list.
+fn move_local_to_free_if_empty(state: PageRemoteFreeOwnerState) {
+    // SAFETY: the caller holds the low owner bit and this raw state projects
+    // exactly the source fields that the collection routine owns.
+    unsafe {
+        let local_free = *state.local_free.as_ptr();
+        if !local_free.is_null() && (*state.free.as_ptr()).is_null() {
+            *state.free.as_ptr() = local_free;
+            *state.local_free.as_ptr() = ptr::null_mut();
+            *state.free_is_zero.as_ptr() = false;
+        }
+    }
 }
 
 /// The narrow atomic boundary for the `mi_thread_free_t` head only.
@@ -308,6 +425,25 @@ where
     try_unown_abandoned_head_with(head, before_release_cas)
 }
 
+/// Attempts the first `mi_abandoned_page_unown_from_free` transition:
+/// `(expected_block | owned) -> expected_block`.
+///
+/// The caller supplies the source-captured block address (or zero after a
+/// full collector). A success transfers the low owner bit while retaining that
+/// exact small-page block in the atomic list. On a weak-CAS miss this reports
+/// only whether the observed owned list needs collection; source policy stays
+/// in `abandoned.rs` so it can decide terminal release or reabandonment.
+pub(super) fn try_unown_abandoned_expected_head<F>(
+    head: &AtomicWord,
+    expected_block: ThreadFree,
+    before_release_cas: &mut Option<F>,
+) -> Result<AbandonedExpectedHeadTransition, RemoteFreeError>
+where
+    F: FnOnce(),
+{
+    try_unown_abandoned_expected_head_with(head, expected_block, before_release_cas)
+}
+
 fn try_unown_abandoned_head_with<H, F>(
     head: &H,
     before_release_cas: &mut Option<F>,
@@ -335,6 +471,34 @@ where
         // publisher's nonempty owned word. The next iteration distinguishes
         // those states without losing the collection obligation.
         previous = expected;
+    }
+}
+
+fn try_unown_abandoned_expected_head_with<H, F>(
+    head: &H,
+    expected_block: ThreadFree,
+    before_release_cas: &mut Option<F>,
+) -> Result<AbandonedExpectedHeadTransition, RemoteFreeError>
+where
+    H: ThreadFreeHead + ?Sized,
+    F: FnOnce(),
+{
+    let expected = thread_free_create_address(expected_block, true)?;
+    let replacement = thread_free_create_address(expected_block, false)?;
+    if let Some(before_release_cas) = before_release_cas.take() {
+        before_release_cas();
+    }
+    let mut observed = expected;
+    if head.cas_weak_acq_rel(&mut observed, replacement) {
+        return Ok(AbandonedExpectedHeadTransition::Released);
+    }
+    if !is_owned(observed) {
+        return Ok(AbandonedExpectedHeadTransition::NotOwned);
+    }
+    if thread_free_block_address(observed) == 0 {
+        Ok(AbandonedExpectedHeadTransition::OwnedEmpty)
+    } else {
+        Ok(AbandonedExpectedHeadTransition::RemotePublished)
     }
 }
 
@@ -602,6 +766,63 @@ mod tests {
         assert_eq!(unsafe { collect(page_raw) }, Ok(0));
         assert_eq!(page.remote_free_test_head(), 1);
         assert_eq!(page.remote_free_test_used(), 1);
+    }
+
+    #[test]
+    fn abandoned_partly_collection_keeps_its_head_atomic_and_moves_prior_frees() {
+        // The pinned source uses this path only for small pages, which have
+        // at least sixteen reserved blocks. The newest remote block remains
+        // in `xthread_free`; only its already-linked predecessor moves to the
+        // ordinary free list without an atomic detach.
+        let mut page = Page::remote_free_test_page(16, 3);
+        let page_raw = NonNull::from(&mut page);
+        page.remote_free_test_mark_abandoned();
+        let mut first = TestBlock([0; 16]);
+        let mut head = TestBlock([0; 16]);
+        let first_pointer = first.pointer();
+        let head_pointer = head.pointer();
+
+        assert_eq!(
+            unsafe { push_abandoned(page_raw, first_pointer) },
+            Ok(AbandonedRemotePush::PublishedToExistingOwner)
+        );
+        assert_eq!(
+            unsafe { push_abandoned(page_raw, head_pointer) },
+            Ok(AbandonedRemotePush::PublishedToExistingOwner)
+        );
+
+        assert_eq!(
+            unsafe { collect_abandoned_partly(page_raw, head_pointer) },
+            Ok(1)
+        );
+        assert_eq!(page.remote_free_test_head(), head_pointer.as_ptr().addr() | 1);
+        assert_eq!(page.remote_free_test_used(), 2);
+        assert_eq!(page.remote_free_test_free(), first_pointer.cast::<Block>().as_ptr());
+        assert!(page.remote_free_test_local_free().is_null());
+        assert!(!page.remote_free_test_free_is_zero());
+    }
+
+    #[test]
+    fn abandoned_partly_collection_detaches_its_last_head_when_the_page_becomes_empty() {
+        let mut page = Page::remote_free_test_page(16, 1);
+        let page_raw = NonNull::from(&mut page);
+        page.remote_free_test_mark_abandoned();
+        let mut head = TestBlock([0; 16]);
+        let head_pointer = head.pointer();
+
+        assert_eq!(
+            unsafe { push_abandoned(page_raw, head_pointer) },
+            Ok(AbandonedRemotePush::PublishedToExistingOwner)
+        );
+        assert_eq!(
+            unsafe { collect_abandoned_partly(page_raw, head_pointer) },
+            Ok(1)
+        );
+        assert_eq!(page.remote_free_test_head(), 1);
+        assert_eq!(page.remote_free_test_used(), 0);
+        assert_eq!(page.remote_free_test_free(), head_pointer.cast::<Block>().as_ptr());
+        assert!(page.remote_free_test_local_free().is_null());
+        assert!(!page.remote_free_test_free_is_zero());
     }
 
     #[test]
