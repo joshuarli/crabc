@@ -28,12 +28,26 @@ clang++ hello.cc -o hello-cxx
 
 ## The hard prerequisite
 
-Current crabc HEAD still labels a crabc-owned application CRT and complete compiler/sysroot package as future work. Its existing Lua adapter sysroot borrows musl `Scrt1.o`, `crti.o`, and `crtn.o`, plus compiler-provided CRT bookends. That is valid compatibility evidence, but it cannot support a claim that the LLVM toolchain is completely musl-free.
+`llvm-clang-crabc` needs a crabc-owned application sysroot, not a stable crabc ABI release, before it can begin. The old Lua adapter sysroot borrows musl `Scrt1.o`, `crti.o`, and `crtn.o`, plus compiler-provided CRT bookends. That remains valid compatibility evidence, but it cannot support a claim that the LLVM toolchain is completely musl-free.
 
 Therefore, this is a coordinated two-repository project:
 
-1. **crabc must publish a stable, crabc-owned sysroot artifact.**
-2. **`llvm-clang-crabc` consumes that artifact and adds the LLVM/C++ layers.**
+1. **crabc must publish an immutable, crabc-owned experimental sysroot prerelease.**
+2. **`llvm-clang-crabc` must pin, verify, and consume that exact artifact before adding the LLVM/C++ layers.**
+
+An accepted prerelease is a GitHub prerelease tagged
+`sysroot-aarch64-<full-source-commit>` that contains a commit-named archive,
+its SHA-256 file, the embedded-manifest copy, and a passing smoke attestation.
+The tag, release target commit, manifest `source_commit`, smoke
+`source_commit`, and archive digest must all agree. This is an immutable
+input boundary, not a promise of ABI, API, header, startup-object, loader, or
+static-archive compatibility across snapshots.
+
+That experimental status is sufficient for the LLVM implementation work
+because the consumer must lock and validate one snapshot byte-for-byte. A
+stable crabc sysroot contract is required only before representing the
+combined SDK as a general-purpose stable release; it does not block the
+initial LLVM/C++ integration.
 
 Do not implement missing libc, loader, or startup behavior inside `llvm-clang-crabc`. Every such deficiency belongs in crabc with a focused regression.
 
@@ -173,19 +187,31 @@ Do not install crabc’s loader into the Alpine builder’s `/lib` during this b
 
 ---
 
-# Required crabc sysroot contract
+# Required crabc sysroot artifact contract
 
-Before LLVM integration, crabc must expose one canonical command:
+Before LLVM integration, `llvm-clang-crabc` must acquire one pinned crabc
+release snapshot. It must consume the release archive rather than invoke a
+source-tree export command, inspect Cargo target directories, or infer Rust
+artifact naming.
 
-```sh
-./scripts/dev.sh sysroot --output /work/crabc-sysroot
-```
-
-The output must be a conventional, self-contained sysroot:
+The release assets are named from the pinned full source commit, using its
+first 12 lowercase hexadecimal characters as `<short-commit>`:
 
 ```text
-crabc-sysroot/
-├── manifest.json
+tag:      sysroot-aarch64-<full-source-commit>
+archive:  crabc-sysroot-aarch64-<short-commit>.tar.xz
+checksum: crabc-sysroot-aarch64-<short-commit>.tar.xz.sha256
+manifest: crabc-sysroot-aarch64-<short-commit>.manifest.json
+smoke:    crabc-sysroot-aarch64-<short-commit>.smoke.json
+```
+
+After SHA-256 verification and safe extraction, the archive must contain a
+conventional, self-contained sysroot:
+
+```text
+crabc-sysroot-aarch64-<short-commit>/
+├── bin/
+│   └── crabc-cc
 ├── lib/
 │   ├── ld-crabc-aarch64.so.1
 │   ├── libc.so
@@ -200,42 +226,43 @@ crabc-sysroot/
         ├── rcrt1.o
         ├── crti.o
         └── crtn.o
+└── share/crabc/
+    ├── manifest.json
+    └── purity.json
 ```
 
-The manifest should resemble:
+The embedded manifest must use the crabc sysroot schema and include the
+following identity and layout fields (the separate manifest release asset must
+be byte-for-byte identical to it):
 
 ```json
 {
   "schema": 1,
   "target": "aarch64-unknown-linux-musl",
-  "architecture": "aarch64",
-  "endianness": "little",
-  "interpreter": "/lib/ld-crabc-aarch64.so.1",
-  "kernel_minimum": "<declared by crabc>",
-  "link_modes": [
-    "dynamic-pie",
-    "dynamic-no-pie",
-    "static",
-    "static-pie"
-  ],
-  "source": {
-    "repository": "joshuarli/crabc",
-    "commit": "<full commit>"
+  "platform": {
+    "os": "linux",
+    "architecture": "aarch64",
+    "endianness": "little",
+    "kernel_minimum": "5.10"
   },
+  "canonical_interpreter": "/lib/ld-crabc-aarch64.so.1",
+  "source_commit": "<full-source-commit>",
   "artifacts": {
-    "lib/ld-crabc-aarch64.so.1": "<sha256>",
-    "lib/libc.so": "<sha256>",
-    "usr/lib/libc.a": "<sha256>",
-    "usr/lib/crt1.o": "<sha256>",
-    "usr/lib/Scrt1.o": "<sha256>",
-    "usr/lib/rcrt1.o": "<sha256>",
-    "usr/lib/crti.o": "<sha256>",
-    "usr/lib/crtn.o": "<sha256>"
+    "libc": {
+      "path": "usr/lib/libc.a",
+      "sha256": "<sha256>"
+    }
   }
 }
 ```
 
-The export command must not require `llvm-clang-crabc` to scrape Cargo target directories or know Rust artifact naming. The sysroot is a public crabc product.
+The consumer lock must record the crabc repository, full source commit, release
+tag, archive filename, and SHA-256 digests of all four release assets. It must
+verify the release is a prerelease targeted at that full commit, verify the
+checksum file against the archive, and verify that the manifest and smoke
+attestation bind the same source commit and archive hash. The extracted
+sysroot is a public crabc product, although this experimental snapshot has no
+cross-snapshot compatibility guarantee.
 
 Its gate must prove:
 
@@ -571,6 +598,13 @@ git_revision = "..."
 repository = "https://github.com/joshuarli/crabc"
 revision = "<full commit>"
 
+[crabc.sysroot]
+release_tag = "sysroot-aarch64-<full commit>"
+archive = "crabc-sysroot-aarch64-<short commit>.tar.xz"
+archive_sha256 = "<sha256>"
+manifest_sha256 = "<sha256>"
+smoke_sha256 = "<sha256>"
+
 [zlib]
 version = "<pinned version>"
 source_sha256 = "..."
@@ -632,17 +666,14 @@ out/bootstrap/bin/ld.lld --version
 
 Then assert that no file from `out/bootstrap/` appears in a package manifest.
 
-## PR 2 — Land the crabc-owned sysroot prerequisite
+## PR 2 — Pin the crabc-owned sysroot prerelease
 
-Work in the crabc repository.
+The crabc prerequisite is its immutable experimental prerelease, not a stable
+ABI release or a source-tree `--output` command. Record one accepted snapshot
+in `llvm-clang-crabc/versions.toml`, including its full commit, immutable tag,
+four release-asset names, and digests.
 
-Implement or finish:
-
-```sh
-./scripts/dev.sh sysroot --output <directory>
-```
-
-Required outputs:
+The verified extracted archive must provide:
 
 * crabc headers;
 * `libc.so`;
@@ -654,7 +685,7 @@ Required outputs:
 * `rcrt1.o`;
 * `crti.o`;
 * `crtn.o`;
-* manifest and hashes.
+* the embedded manifest and accompanying release-asset hashes.
 
 Required tests:
 
@@ -670,9 +701,9 @@ Required tests:
 10. Exact loader path.
 11. Lua source build with no borrowed musl CRT.
 
-Do not add any C++ runtime to crabc.
-
-Commit this in crabc and update `llvm-clang-crabc/versions.toml` to the exact passing revision.
+Do not add any C++ runtime to crabc. Do not require a stable crabc ABI/API
+claim for this PR; the pinned snapshot is an intentionally narrow, immutable
+input to LLVM work.
 
 ## PR 3 — Consume and validate the crabc sysroot
 
@@ -686,9 +717,11 @@ tests/unit/test_crabc_manifest.py
 tests/policy/test_sysroot_policy.py
 ```
 
-The new repository must invoke crabc’s public export command. It must not:
+The new repository must download the exact release assets named by the lock,
+verify them, and safely extract the archive. It must not:
 
 * inspect Cargo target directories;
+* invoke a crabc source-tree export command;
 * infer loader names;
 * synthesize missing startup objects;
 * borrow Alpine files;
@@ -697,6 +730,10 @@ The new repository must invoke crabc’s public export command. It must not:
 
 Validate:
 
+* prerelease tag and release target commit equal the locked full commit;
+* release-asset names and SHA-256 digests equal the lock;
+* checksum file validates the archive;
+* manifest and smoke attestation bind the archive to the locked commit;
 * manifest schema;
 * exact target;
 * exact interpreter;
