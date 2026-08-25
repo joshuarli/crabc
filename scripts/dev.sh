@@ -460,7 +460,14 @@ case "$command" in
             usage >&2
             exit 2
         fi
-        run_in_container python3 compat/allocator/tls-codegen/run.py
+        # TLS relocation and thread-pointer evidence are architecture-specific.
+        # Keep the native x86-64 proof in its own judge rather than letting the
+        # AArch64 relocation expectations run under the amd64 laboratory.
+        if [ "$DEV_ARCH" = "x86_64" ]; then
+            run_in_container python3 compat/allocator/tls-codegen/run-x86_64.py
+        else
+            run_in_container python3 compat/allocator/tls-codegen/run.py
+        fi
         ;;
     allocator-perf)
         ensure_image

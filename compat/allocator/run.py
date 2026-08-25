@@ -55,6 +55,8 @@ RUNTIME_TICKET_ZERO_ADAPTER_FIXTURE = (
 )
 TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run.py"
 TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen.json"
+X86_64_TLS_CODEGEN_RUNNER = ALLOCATOR_ROOT / "tls-codegen/run-x86_64.py"
+X86_64_TLS_CODEGEN_REPORT = ROOT / "compat/reports/allocator/tls-codegen-x86_64.json"
 PORT_MAP = ALLOCATOR_ROOT / "port-map.toml"
 RATCHET = ALLOCATOR_ROOT / "ratchet-v3.5.0.json"
 
@@ -2929,23 +2931,37 @@ def rust_layout_probe(
     c_release_layout: Mapping[str, int],
     c_release_small_trace: Mapping[str, int],
     c_release_fundamental_trace: Mapping[str, int],
+    *,
+    rust_target: str | None = None,
 ) -> dict[str, Any]:
+    """Compare the direct Rust engine against one native C release profile.
+
+    The historical AArch64 invocation deliberately relies on the native image's
+    default target.  A selected explicit target is only for the separately
+    native x86-64 parity profile; it keeps that evidence from inheriting an
+    AArch64 test artifact or report by accident.
+    """
+
     command = [
         "cargo",
         "test",
         "-p",
         "crabc-mimalloc",
         "--lib",
+    ]
+    if rust_target is not None:
+        command.extend(("--target", rust_target))
+    command.extend((
         "--",
         "--nocapture",
-    ]
+    ))
     record = command_record(command, cwd=ROOT)
     require_success(record, "Rust allocator layout probe")
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
     rust_layout = parse_rust_layout(output)
     rust_small_trace = parse_small_trace(output)
     rust_fundamental_trace = parse_fundamental_trace(output)
-    return {
+    result = {
         "command": command,
         "comparison": compare_rust_layout(c_release_layout, rust_layout),
         "layout": rust_layout,
@@ -2961,6 +2977,9 @@ def rust_layout_probe(
             "record": rust_fundamental_trace,
         },
     }
+    if rust_target is not None:
+        result["target"] = rust_target
+    return result
 
 
 def loom_remote_free_model() -> dict[str, Any]:
@@ -2999,20 +3018,32 @@ def loom_remote_free_model() -> dict[str, Any]:
     }
 
 
-def compiler_tls_codegen() -> dict[str, Any]:
-    """Prove the private allocator roots use the required AArch64 TLS model."""
+def compiler_tls_codegen(*, architecture: str = "aarch64") -> dict[str, Any]:
+    """Prove the selected native profile's private compiler-TLS model."""
 
-    command = [sys.executable, str(TLS_CODEGEN_RUNNER)]
+    if architecture == "aarch64":
+        runner = TLS_CODEGEN_RUNNER
+        report_path = TLS_CODEGEN_REPORT
+    elif architecture == "x86_64":
+        runner = X86_64_TLS_CODEGEN_RUNNER
+        report_path = X86_64_TLS_CODEGEN_REPORT
+    else:
+        raise HarnessError(f"unsupported allocator TLS architecture: {architecture}")
+
+    command = [sys.executable, str(runner)]
     record = command_record(command, cwd=ROOT)
     require_success(record, "Rust allocator compiler-TLS codegen")
-    report = read_json(TLS_CODEGEN_REPORT)
+    report = read_json(report_path)
     if report.get("status") != "pass":
         raise HarnessError("allocator compiler-TLS report did not record a pass")
-    return {
+    result = {
         "command": command,
         "report": report,
         "status": "passed",
     }
+    if architecture != "aarch64":
+        result["architecture"] = architecture
+    return result
 
 
 def integration_provenance() -> dict[str, str]:
@@ -3402,8 +3433,9 @@ def run_x86_64_oracle(
 
     The AArch64 API/adapter contracts remain the production contract.  This
     lane deliberately proves source identity, C layouts/traces, ELF machine
-    identity, and the x86-64 musl target assumptions while leaving the
-    target-dependent Rust adapter and dependency graph unclaimed.
+    identity, native direct-Rust configuration/layout/trace parity, compiler
+    TLS code generation, and the x86-64 musl target assumptions while leaving
+    the target-dependent Rust adapter and dependency graph unclaimed.
     """
 
     require_native_x86_64()
@@ -3424,6 +3456,15 @@ def run_x86_64_oracle(
     release_symbol_contract = validate_release_symbol_contract(
         contracts[API_CONTRACT], profiles["release"]["symbols"]
     )
+    rust_direct_engine = rust_layout_probe(
+        profiles["release"]["layout"],
+        profiles["release"]["single_thread_small_trace"]["record"],
+        profiles["release"]["fundamental_trace"]["c_oracle"]["record"],
+        rust_target=X86_64_RUST_TARGET,
+    )
+    profiles["release"]["fundamental_trace"]["rust_comparison"] = rust_direct_engine[
+        "single_thread_fundamental_trace"
+    ]["comparison"]
     report = milestone0_report(
         pin,
         archive,
@@ -3438,6 +3479,11 @@ def run_x86_64_oracle(
     }
     report["port_map"] = port_map_counts(port_map)
     report["release_symbol_contract"] = release_symbol_contract
+    # The unit suite exercises the direct no_std engine against this native C
+    # oracle. It is intentionally not evidence for the AArch64-only C adapter
+    # or for public allocator integration.
+    report["rust_direct_engine"] = rust_direct_engine
+    report["compiler_tls_codegen"] = compiler_tls_codegen(architecture="x86_64")
     report["unsupported_lanes"] = {
         "rust_adapter": (
             "not run: the checked-in adapter contract is target-specific to "
@@ -3446,6 +3492,10 @@ def run_x86_64_oracle(
         "production_dependency_graph": (
             "not run: the production graph contract is target-specific to "
             f"{PRODUCTION_RUST_TARGET}"
+        ),
+        "public_allocator_integration": (
+            "not run: public crabc allocator integration and default promotion "
+            "remain Linux/AArch64-only"
         ),
     }
     output = X86_64_ORACLE_REPORT_ROOT / "latest.json"

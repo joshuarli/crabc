@@ -370,6 +370,56 @@ ok
         with self.assertRaisesRegex(RUNNER.HarnessError, "layout markers"):
             RUNNER.parse_rust_layout("pointer.size=8\n")
 
+    def test_native_x86_64_direct_engine_probe_selects_its_explicit_target(self) -> None:
+        output = """
+CRABC_MI_LAYOUT_BEGIN
+config.MAX_VABITS=47
+config.PAGE_MAP_SHIFT=18
+CRABC_MI_LAYOUT_END
+CRABC_MI_SMALL_TRACE_BEGIN
+trace.boundary.count=1
+CRABC_MI_SMALL_TRACE_END
+CRABC_MI_FUNDAMENTAL_TRACE_BEGIN
+trace.fundamental.count=1
+CRABC_MI_FUNDAMENTAL_TRACE_END
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+"""
+        record = {"status": 0, "stdout": output, "stderr": ""}
+        c_layout = {"config.MAX_VABITS": 47, "config.PAGE_MAP_SHIFT": 18}
+        small_trace = {"trace.boundary.count": 1}
+        fundamental_trace = {"trace.fundamental.count": 1}
+        with mock.patch.object(RUNNER, "command_record", return_value=record) as command_record:
+            result = RUNNER.rust_layout_probe(
+                c_layout,
+                small_trace,
+                fundamental_trace,
+                rust_target=RUNNER.X86_64_RUST_TARGET,
+            )
+        self.assertEqual(
+            command_record.call_args.args[0],
+            [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--lib",
+                "--target",
+                "x86_64-unknown-linux-musl",
+                "--",
+                "--nocapture",
+            ],
+        )
+        self.assertEqual(result["target"], RUNNER.X86_64_RUST_TARGET)
+        self.assertEqual(result["comparison"], {"compared_value_count": 2, "status": "matched"})
+        self.assertEqual(
+            result["single_thread_small_trace"]["comparison"],
+            {"compared_value_count": 1, "status": "matched"},
+        )
+        self.assertEqual(
+            result["single_thread_fundamental_trace"]["comparison"],
+            {"compared_value_count": 1, "status": "matched"},
+        )
+
     def test_small_trace_parser_requires_one_address_independent_machine_record(self) -> None:
         output = """
 noise before

@@ -884,8 +884,7 @@ results are not skips and must not become successful placeholders.
 
 The native x86-64 quick lane is separate from the AArch64 allocator gate.
 Run it through the architecture-aware native x86-64 dispatcher, or directly
-with `python3 compat/allocator/run.py --quick --architecture x86_64` while
-that dispatcher is being wired. Its report is
+with `python3 compat/allocator/run.py --quick --architecture x86_64`. Its report is
 `compat/reports/allocator/x86_64/latest.json` and its profile is
 `x86_64-native-c-oracle`: the lane combines the pinned native C oracle with
 direct Rust-engine configuration/layout, small/fundamental trace, and

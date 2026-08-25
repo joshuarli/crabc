@@ -121,6 +121,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
             set(gates),
             {
                 "native-c-oracle",
+                "native-direct-rust-c-differential",
                 "native-tls-codegen",
                 "native-thread-pointer-unit",
                 "native-allocator-unit",
@@ -144,7 +145,6 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             set(lanes),
             {
-                "rust-layout-and-trace-differential",
                 "test-adapter-and-public-mi-api",
                 "production-dependency-graph",
                 "general-thread-lifecycle-and-stress",
