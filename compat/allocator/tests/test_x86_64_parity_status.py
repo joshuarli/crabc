@@ -143,6 +143,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-reserved-small-direct-on-demand-differential",
                 "native-regular-small-retire-quick-collect-release-differential",
                 "native-medium-full-to-regular-retire-force-release-differential",
+                "native-full-non-direct-small-force-collect-post-exit-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -247,6 +248,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-medium-full-to-regular-retire-force-release-differential"]["report"],
             "compat/reports/allocator/x86_64/medium-full-retire.json",
+        )
+        self.assertEqual(
+            gates["native-full-non-direct-small-force-collect-post-exit-differential"][
+                "command"
+            ],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-full-non-direct-small-force-collect-post-exit",
+        )
+        self.assertEqual(
+            gates["native-full-non-direct-small-force-collect-post-exit-differential"][
+                "report"
+            ],
+            "compat/reports/allocator/x86_64/"
+            "full-non-direct-small-force-collect-post-exit.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
@@ -510,6 +525,28 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, regular_small)
+        full_non_direct_small = gates[
+            "native-full-non-direct-small-force-collect-post-exit-differential"
+        ]["claim"]
+        for fragment in (
+            "25 address-independent values",
+            "worker-owned arena full non-direct-small regular-bin page",
+            "1032 bytes",
+            "1280-byte class, 51 blocks, one slice",
+            "exactly one remote mi_free",
+            "real mi_thread_done and pthread_join",
+            "mapped abandoned route",
+            "nonfinal mapped state",
+            "terminal PageMap unregister",
+            "ordinary arena-page bitmap clear",
+            "one-slice release",
+            "bounded f329040",
+            "private client-free route evidence",
+            "general thread exit",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, full_non_direct_small)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])

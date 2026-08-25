@@ -153,6 +153,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 25 address-independent values for one worker-owned arena full non-direct-small regular-bin page requested at 1032 bytes (1280-byte class, 51 blocks, one slice). A consumer publishes exactly one remote mi_free before the worker runs real mi_thread_done and pthread_join precedes every consumer free. Source force collection makes the full page nonfull, removes its ordinary queue member, and publishes the mapped abandoned route; sequential consumer frees prove its nonfinal mapped state and terminal PageMap unregister, ordinary arena-page bitmap clear, and one-slice release. Rust exercises the bounded f329040 full non-direct-small force-collect post-exit route. This is only private client-free route evidence; it does not establish general thread exit, remote-free routing or concurrency, abandonment/adoption, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-full-non-direct-small-force-collect-post-exit",
+      "id": "native-full-non-direct-small-force-collect-post-exit-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/full-non-direct-small-force-collect-post-exit.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 18 address-independent values from a real pinned-C worker pthread that allocates two same-page regular medium arena blocks, performs real mi_thread_done followed by pthread join before the consumer's public mi_free calls, and records producer_teardown_completed_before_consumer_free for that ordering while observing the selected mapped failed-reclaim/unown transition plus three terminal checks: page_map_unregistered_after_final_free, arena_page_bitmap_clear_after_final_free, and arena_slice_released_after_final_free. Rust compares only one bounded process-owned mapped regular handoff after Theap/TLD teardown and directly observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does not establish general thread exit, general routing or concurrency, adoption or reclaim, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-mapped-post-exit",
       "id": "native-mapped-post-theap-teardown-failed-reclaim-differential",

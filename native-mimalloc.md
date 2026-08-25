@@ -470,52 +470,18 @@ contracts, reports, and status.
 - [ ] Resolve the target-local source API/mode/test/symbol coverage ledger's
   remaining CMake and mode-dependent forms, unselected C/C++ inline/override
   forms, upstream-test coverage, behavior, and Rust implementation statuses
-  into reviewed outcomes. The native selected normal-release assessment now
-  classifies object/dynamic presence for 194 distinct C functions and marks
-  183 non-object source forms; separate native gates compile-link six
-  selected staged public C/C++ forms and two selected static/archive override
-  forms. Neither result establishes behavior, Rust/public-runtime support,
-  CMake installation, consumer execution, or any unselected target mode;
-  never reuse AArch64 statuses.
+  into reviewed outcomes. Do not reuse AArch64 statuses or treat selected
+  native compile/link evidence as behavior, public-runtime, installation,
+  consumer-execution, or unselected-mode evidence.
 - [ ] Close the source-applicable engine behavior holes identified by the x86
   source map and ledger, record every intentional difference, and add native
   pinned-C differential evidence for each completed behavior.
-- [ ] Broaden the eight bounded lifecycle/concurrency lanes (12 selected tests,
-  including five finite Loom models), five bounded fault-state regressions, the
-  25-field quiescent live-owner pinned-C/Rust differential, the 28-field real
-  small direct-page remote-free/reuse differential, the 8-field mapped arena
-  same-origin reclaim differential, the 13-field initially-unmapped full-medium
-  reabandon differential with its bounded real Rust post-Theap-teardown route, and the completed
-  18-field post-Theap-teardown mapped failed-reclaim/unown differential with
-  `pthread_join()` ordering and terminal PageMap, ordinary arena-page bitmap,
-  and exact eight-slice-span release checks into init/done, general remote free
-  or concurrent collection, abandonment/adoption, pthread/TLS/fork,
-  fault/misuse isolation, remaining upstream tests, and stress evidence. The
-  18-field lane is only the selected real-C worker `mi_thread_done()` plus
-  joined consumer `mi_free` transition; its Rust side is one bounded
-  process-owned mapped regular handoff and does not close general thread exit
-  or routing work. A completed 21-field retired-page prepass is only a narrow
-  antecedent: it covers one real worker-local `mi_free` retirement, real
-  `mi_thread_done()`/join force-release, one distinct live-page mapped handoff,
-  and one terminal consumer free. A completed 25-field aggregate post-exit
-  trace is likewise narrow: exactly two distinct live nonfull medium pages in
-  distinct bins survive a worker `mi_thread_done()`/return and consumer join;
-  the consumer frees the second first while the first remains registered/bit-set/mapped-abandoned/
-  `used == 1`, then frees the first and observes an empty route. A completed
-  46-field aggregate still-live trace is also narrow: two distinct clients on
-  one nonfull medium page A plus a one-client distinct-bin medium page B survive
-  a worker `mi_thread_done()`/return and consumer join; A's first free is
-  `StillLive` and preserves both pages plus the route, B's free is
-  `ReleasedPage` and releases only B, and A's second free is `ReleasedAll` and
-  completes the route. A completed 53-field aggregate same-bin still-live trace
-  is also narrow: the worker fills medium page A, creates B in the same bin,
-  locally restores A to two clients, then `mi_thread_done()`/return and
-  consumer join expose selected same-bin queue count/link/saved-successor
-  traversal plus mapped-abandoned count/bitmap transitions `2 -> 2 -> 1 -> 0`;
-  A's first free is `StillLive`, B's is `ReleasedPage`, and A's second is
-  `ReleasedAll`. Broader retirement, teardown, routing, concurrency,
-  public API/runtime, backend,
-  and architecture qualification remain open.
+- [ ] Extend native lifecycle and concurrency coverage into process
+  initialization/done, general remote-free or concurrent collection,
+  abandonment/adoption, pthread/TLS/fork, fault and misuse isolation, remaining
+  upstream tests, and stress evidence. Do not generalize any bounded lane into
+  a broader lifecycle, routing, runtime, backend, or architecture claim without
+  new native evidence.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
   measurements into qualified whole-engine performance evidence.
 

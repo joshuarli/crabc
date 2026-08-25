@@ -203,7 +203,17 @@ evidence. A separate native x86-only medium-page differential covers one
  This is one private route only—not general retirement/lifecycle,
  remote/concurrent collection, abandonment, thread teardown, public `mi_*`
  behavior, libc integration, backend promotion, public x86 support, or AArch64
- evidence. A fourth native x86-only
+ evidence. A separate private native x86-only 25-field C/Rust differential
+ covers one worker-owned arena full non-direct-small regular-bin page: a
+ 1032-byte request uses the 1280-byte, 51-block, one-slice class; one remote
+ `mi_free` is published before real `mi_thread_done()` and `pthread_join()`
+ precedes sequential consumer frees. Force collection makes the full page
+ nonfull, mapped-abandoned, PageMap-registered, arena-bitmap-set, and detached
+ from its ordinary queue with 50 remaining clients; only the final free releases
+ the PageMap, bitmap, and slice. It is not general remote-free routing, thread
+ exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public
+ `mi_*` behavior or runtime, libc integration, backend promotion, public x86
+ support, or AArch64 evidence. A fourth native x86-only
 eight-field C/Rust differential creates one arena-backed mapped page with two
 same-page live blocks, applies the source queue-detach abandonment transition,
 and frees one block through the same-origin reclaim path while the survivor
