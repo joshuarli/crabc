@@ -26253,6 +26253,15 @@ impl<'attach, 'heap, 'arena, 'map>
 
     #[cfg(test)]
     #[inline]
+    pub(crate) fn test_dynamic_arena_page_is_set(&self) -> bool {
+        self.drain
+            .engine
+            .session
+            .test_dynamic_arena_page_is_set(self.memory)
+    }
+
+    #[cfg(test)]
+    #[inline]
     pub(crate) fn test_page_map_entry(&self, address: *mut u8) -> *mut Page {
         // SAFETY: the handoff retains the only PageMap lifecycle capability;
         // this test witness reads one exact registered medium-span entry

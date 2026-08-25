@@ -151,6 +151,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-two-live-page-aggregate-post-exit-differential",
                 "native-two-client-aggregate-still-live-differential",
                 "native-same-bin-two-page-aggregate-still-live-differential",
+                "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
@@ -326,6 +327,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-same-bin-two-page-aggregate-still-live-differential"]["report"],
             "compat/reports/allocator/x86_64/aggregate-same-bin-still-live.json",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential"][
+                "command"
+            ],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential"][
+                "report"
+            ],
+            "compat/reports/allocator/x86_64/"
+            "dynamic-full-medium-one-remote-force-collect-to-mapped.json",
         )
         self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
@@ -612,6 +627,29 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, full_direct_small)
+        dynamic_full_medium = gates[
+            "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential"
+        ]["claim"]
+        for fragment in (
+            "29 address-independent values",
+            "sole full BIN_FULL medium arena page",
+            "exactly one remote mi_free",
+            "real mi_thread_done",
+            "joins before the consumer's sequential frees",
+            "10248",
+            "12288-byte blocks",
+            "capacity/reserved 42",
+            "eight slices",
+            "used 41",
+            "dynamic abandoned bitmap/count",
+            "mapped",
+            "PageMap",
+            "ordinary arena-page bitmap",
+            "private native x86 engine evidence only",
+            "general lifecycle",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, dynamic_full_medium)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])

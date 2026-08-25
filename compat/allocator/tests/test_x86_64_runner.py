@@ -46,6 +46,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-medium-full-retire",
             "allocator-full-non-direct-small-force-collect-post-exit",
             "allocator-full-direct-small-force-collect-post-exit",
+            "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped",
             "allocator-unit",
             "allocator-core-unit",
         ):
@@ -153,6 +154,29 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn(
             "allocator-full-direct-small-force-collect-post-exit takes no arguments",
+            result.stderr,
+        )
+
+    def test_dynamic_full_medium_one_remote_force_collect_to_mapped_command_is_closed_and_uses_its_private_offline_probe(
+        self,
+    ) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn(
+            "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped)",
+            source,
+        )
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_dynamic_full_medium_one_remote_force_collect_to_mapped_evidence.py "
+            "--offline",
+            source,
+        )
+        result = self.run_launcher(
+            "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped", "unexpected"
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped takes no arguments",
             result.stderr,
         )
 

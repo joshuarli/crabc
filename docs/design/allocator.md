@@ -304,6 +304,19 @@ accounting nor the header gate establishes behavior,
 Rust implementation, CMake installation, consumer execution, or public runtime
 compatibility.
 
+The same native x86-only track additionally has a 29-field dynamic
+full-medium one-remote force-collect-to-mapped differential. One C-oracle
+worker fills a sole full `BIN_FULL` medium arena page (request 10248,
+12288-byte blocks, capacity/reserved 42, eight slices), publishes exactly one
+joined remote `mi_free` before `mi_thread_done()`, and returns; Rust uses only
+the corresponding private typed drain. Force collection publishes mapped
+abandonment with dynamic bitmap/count state and `used == 41`.
+Sequential consumer frees retain the mapped route until terminal PageMap,
+ordinary arena bitmap, dynamic bitmap/count, and exact slice release. This is
+private native x86-64 engine evidence only, not general lifecycle/routing or
+concurrent collection, abandonment/adoption, public API/runtime, public x86
+support, backend promotion, libc integration, or AArch64 evidence.
+
 Those operations are
 live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
