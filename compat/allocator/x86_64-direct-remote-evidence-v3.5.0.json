@@ -1,0 +1,148 @@
+{
+  "c_probe_sha256": "570f7a78eb074722a6e47a9670bc4322d9b29cc098f5ca8b76e044e3fc0cdae1",
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "format": 1,
+  "profile": "linux-x86_64-private-small-direct-remote-free-differential",
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "rust_test": {
+    "path": "crabc-mimalloc/src/single_thread.rs",
+    "target_arch": "x86_64",
+    "test_filter": "single_thread::tests::x86_64_small_direct_remote_trace_matches_pinned_c_protocol"
+  },
+  "schema": "crabc-mimalloc-x86_64-small-direct-remote-evidence",
+  "scope": {
+    "aarch64_status_reused": false,
+    "abandoned_or_thread_teardown_claimed": false,
+    "concurrent_collection_claimed": false,
+    "emulation_accepted": false,
+    "general_allocation_routing_claimed": false,
+    "native_linux_x86_64_required": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "small_direct_route_only": true
+  },
+  "source_anchors": [
+    {
+      "end_line": 249,
+      "member": "src/free.c",
+      "sha256": "e755fc43b602a94ee89305924c28fcdbea5901bbccc2927c6cf5aa77f9e43942",
+      "start_line": 223
+    },
+    {
+      "end_line": 201,
+      "member": "src/page.c",
+      "sha256": "01d8f3f6a09d7d7b30e9e4f90f59c6738954fe5231d8fe9dac1ef5d0f96b967a",
+      "start_line": 150
+    },
+    {
+      "end_line": 917,
+      "member": "src/page.c",
+      "sha256": "b9a8d102ea3285c4f0283e7379d621f36dde91728a5daa3306e764e979a949b6",
+      "start_line": 879
+    },
+    {
+      "end_line": 58,
+      "member": "src/alloc.c",
+      "sha256": "ebecab0a27c74739c146a986504e36e8361dbac617a78071cc97ef8d3e67602a",
+      "start_line": 29
+    },
+    {
+      "end_line": 214,
+      "member": "src/alloc.c",
+      "sha256": "1cc8fd1bdc079b0fc4fc4d3ac4f9fbbdc81cb73dbd700b2958e7012100973723",
+      "start_line": 204
+    },
+    {
+      "end_line": 655,
+      "member": "include/mimalloc/internal.h",
+      "sha256": "6388823e5d1e066d764c6d2f506a1f852325be603eac748877f5411dec492fcc",
+      "start_line": 650
+    },
+    {
+      "end_line": 418,
+      "member": "include/mimalloc/types.h",
+      "sha256": "efa7121eecd1146792f7eff5fd7b730daac15e124fe6a3d94457d81644d460cd",
+      "start_line": 388
+    }
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "trace": {
+    "begin": "CRABC_MI_SMALL_DIRECT_REMOTE_TRACE_BEGIN",
+    "end": "CRABC_MI_SMALL_DIRECT_REMOTE_TRACE_END",
+    "expected_values": {
+      "trace.small_direct_remote.initial_capacity_ge_used": 1,
+      "trace.small_direct_remote.initial_capacity_lt_reserved": 1,
+      "trace.small_direct_remote.initial_direct_page_matches": 1,
+      "trace.small_direct_remote.initial_head_empty": 1,
+      "trace.small_direct_remote.initial_head_owned": 1,
+      "trace.small_direct_remote.initial_live_owner_associated": 1,
+      "trace.small_direct_remote.initial_remote_count": 0,
+      "trace.small_direct_remote.initial_used_equals_capacity": 1,
+      "trace.small_direct_remote.owner_reused_remote": 1,
+      "trace.small_direct_remote.post_allocate_direct_page_matches": 1,
+      "trace.small_direct_remote.post_allocate_free_empty": 1,
+      "trace.small_direct_remote.post_allocate_full_queue_empty": 1,
+      "trace.small_direct_remote.post_allocate_head_empty": 1,
+      "trace.small_direct_remote.post_allocate_head_owned": 1,
+      "trace.small_direct_remote.post_allocate_local_empty": 1,
+      "trace.small_direct_remote.post_allocate_regular_queue": 1,
+      "trace.small_direct_remote.post_allocate_remote_count": 0,
+      "trace.small_direct_remote.post_allocate_used_unchanged": 1,
+      "trace.small_direct_remote.post_join_remote_count": 1,
+      "trace.small_direct_remote.producer_count": 1,
+      "trace.small_direct_remote.published_head_is_remote": 1,
+      "trace.small_direct_remote.published_head_owned": 1,
+      "trace.small_direct_remote.published_list_acyclic": 1,
+      "trace.small_direct_remote.published_remote_count": 1,
+      "trace.small_direct_remote.published_used_unchanged": 1,
+      "trace.small_direct_remote.request_is_small": 1,
+      "trace.small_direct_remote.same_page": 1,
+      "trace.small_direct_remote.valid": 1
+    }
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

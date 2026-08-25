@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-api-native-coverage",
+  "profile": "linux-x86_64-pinned-mimalloc-release",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "system": "linux",
+    "rust_target": "x86_64-unknown-linux-musl"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "native_linux_x86_64_required": true,
+    "release_mode_and_symbol_presence_only": true,
+    "behavior_claimed": false,
+    "rust_implementation_claimed": false,
+    "public_crabc_support": false,
+    "public_x86_libc_or_ldso_support": false,
+    "public_runtime_or_api_compatibility": false,
+    "aarch64_status_reused": false,
+    "emulation_accepted": false
+  },
+  "source_inventories": {
+    "base": {
+      "path": "compat/allocator/x86_64-api-v3.5.0.json",
+      "sha256": "1cfbdffb2d6dc6f6f984a48f83dcc68cdd679cca958027181eb9e74ebdb130bc",
+      "declaration_count": 180,
+      "declaration_names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975"
+    },
+    "statistics": {
+      "path": "compat/allocator/x86_64-api-coverage-v3.5.0.json",
+      "sha256": "6fe7353c76ed022957d47234d949ef61b378815702b7f7b1da8169da787906b4",
+      "declaration_count": 15,
+      "declaration_names_sha256": "9a9c4bf51cde6774f22488f0e92200d1909cc6bc688cc4b824aa3aa92020cdda"
+    }
+  },
+  "classification": {
+    "function": "object-symbol",
+    "non_object_source_form": "not-an-object-symbol",
+    "presence_values": [
+      "present",
+      "absent"
+    ]
+  },
+  "release_evidence": {
+    "schema": "crabc-mimalloc-x86_64-release-object-symbol-evidence",
+    "report_status": "passed",
+    "report_path": "compat/reports/allocator/x86_64/release-evidence.json"
+  }
+}

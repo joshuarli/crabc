@@ -32361,6 +32361,267 @@ mod tests {
         });
     }
 
+    /// Emits the fixed address-independent native x86-64 record for a real
+    /// small direct-cache page whose empty local list falls through the
+    /// generic queue search, detaches one joined remote publication, and
+    /// returns that exact block to the owner.
+    ///
+    /// The paired pinned-C fixture follows the same private source route.
+    /// This remains a one-producer, joined/quiescent private engine proof; it
+    /// does not establish general remote-free routing, concurrent collection,
+    /// abandonment, thread teardown, public `mi_*` behavior, or x86 runtime
+    /// support.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_small_direct_remote_trace_matches_pinned_c_protocol() {
+        const PRODUCER_COUNT: usize = 1;
+
+        with_allocator(|allocator| {
+            let request = SMALL_SIZE_MAX;
+            let block = allocator.allocate(request, false).unwrap();
+            // SAFETY: this is one current allocation in a map-published page
+            // that remains live through the joined producer and owner reuse.
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let capacity = unsafe { page.as_ref().capacity() as usize };
+            let reserved = unsafe { page.as_ref().reserved() as usize };
+            assert!(capacity > PRODUCER_COUNT);
+            assert!(capacity < reserved);
+
+            let mut local_blocks = Vec::with_capacity(capacity);
+            local_blocks.push(block);
+            while unsafe { page.as_ref().used() } < capacity {
+                let next = allocator.allocate(request, false).unwrap();
+                assert_eq!(unsafe { allocator.page_for_block(next) }, page.as_ptr());
+                local_blocks.push(next);
+            }
+
+            let direct = invariants::word_count(request.max(WORD_SIZE)).unwrap();
+            let bin = size_class::bin(unsafe { page.as_ref().block_size() }).unwrap();
+            let initial_head = unsafe { page.as_ref().remote_free_test_head() };
+            let owner = allocator
+                .session
+                .thread_id()
+                .expect("the active fixture has one live owner identity");
+            // SAFETY: before producer creation, this live map-published page
+            // remains exclusively owned by this allocator session.
+            let initial_live_owner_associated = unsafe {
+                Page::is_live_owner_for_thread_at(page, owner)
+            };
+            let initial_direct_page_matches = allocator.direct_page(direct) == Some(page.as_ptr());
+            let initial_capacity_ge_used = capacity >= unsafe { page.as_ref().used() };
+            let initial_capacity_lt_reserved = capacity < reserved;
+            let initial_used_equals_capacity = unsafe { page.as_ref().used() } == capacity;
+            let initial_head_owned = initial_head & 1 == 1;
+            let initial_head_empty = initial_head & !1 == 0;
+            let initial_remote_count = usize::from(!initial_head_empty);
+
+            assert_eq!(local_blocks.len(), capacity);
+            assert!(initial_live_owner_associated);
+            assert!(initial_direct_page_matches);
+            assert!(initial_capacity_ge_used);
+            assert!(initial_capacity_lt_reserved);
+            assert!(initial_used_equals_capacity);
+            assert!(initial_head_owned);
+            assert!(initial_head_empty);
+            assert_eq!(initial_remote_count, 0);
+            assert_eq!(allocator.queue_count(bin), Some(1));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+
+            // SAFETY: the exact current allocation transfers entirely to the
+            // scoped producer. The owner neither mutates nor inspects ordinary
+            // page fields until the worker has joined.
+            let producer = unsafe { allocator.begin_remote_free(block) }
+                .expect("the active small direct page admits one remote producer");
+            thread::scope(|scope| {
+                let joined = scope.spawn(move || producer.publish());
+                match joined
+                    .join()
+                    .expect("the scoped small direct producer must not panic")
+                {
+                    Ok(()) => {}
+                    Err((producer, error)) => {
+                        let block = producer.cancel();
+                        panic!("small direct page rejected remote block {block:?}: {error:?}");
+                    }
+                }
+            });
+
+            // The worker joined, so the owner can now inspect its ordinary
+            // fields and the single frozen remote list link.
+            let published_head = unsafe { page.as_ref().remote_free_test_head() };
+            let published_head_owned = published_head & 1 == 1;
+            let published_block_address = published_head & !1;
+            let published_head_is_remote = published_block_address == block.as_ptr().addr();
+            let published_remote_count = usize::from(published_block_address != 0);
+            let published_used_unchanged = unsafe { page.as_ref().used() } == capacity;
+            let published_list_acyclic = if published_block_address == 0 {
+                false
+            } else {
+                // SAFETY: the joined producer wrote this exact source-format
+                // unencoded link before its release publication.
+                unsafe {
+                    core::ptr::read(
+                        core::ptr::with_exposed_provenance::<u8>(published_block_address)
+                            .cast::<*mut u8>(),
+                    )
+                    .is_null()
+                }
+            };
+
+            assert!(published_head_owned);
+            assert!(published_head_is_remote);
+            assert_eq!(published_remote_count, PRODUCER_COUNT);
+            assert!(published_used_unchanged);
+            assert!(published_list_acyclic);
+
+            let reused = allocator
+                .allocate(request, false)
+                .expect("direct fallback must collect and reuse the remote block");
+            let post_allocate_head = unsafe { page.as_ref().remote_free_test_head() };
+            let post_allocate_used_unchanged = unsafe { page.as_ref().used() } == capacity;
+            let post_allocate_direct_page_matches = allocator.direct_page(direct) == Some(page.as_ptr());
+            let post_allocate_regular_queue = allocator.queue_count(bin) == Some(1);
+            let post_allocate_full_queue_empty = allocator.queue_count(BIN_FULL) == Some(0);
+            let post_allocate_head_owned = post_allocate_head & 1 == 1;
+            let post_allocate_head_empty = post_allocate_head & !1 == 0;
+            let post_allocate_remote_count = usize::from(!post_allocate_head_empty);
+            let post_allocate_free_empty = unsafe { page.as_ref().free_list_head().is_null() };
+            let post_allocate_local_empty = unsafe { page.as_ref().remote_free_test_local_free().is_null() };
+            let owner_reused_remote = reused == block;
+            let same_page = unsafe { allocator.page_for_block(reused) } == page.as_ptr();
+            let valid = initial_live_owner_associated
+                && initial_direct_page_matches
+                && initial_capacity_ge_used
+                && initial_capacity_lt_reserved
+                && initial_used_equals_capacity
+                && initial_head_owned
+                && initial_head_empty
+                && published_used_unchanged
+                && published_head_owned
+                && published_head_is_remote
+                && published_remote_count == PRODUCER_COUNT
+                && published_list_acyclic
+                && owner_reused_remote
+                && same_page
+                && post_allocate_used_unchanged
+                && post_allocate_direct_page_matches
+                && post_allocate_regular_queue
+                && post_allocate_full_queue_empty
+                && post_allocate_head_owned
+                && post_allocate_head_empty
+                && post_allocate_remote_count == 0
+                && post_allocate_free_empty
+                && post_allocate_local_empty;
+
+            assert!(valid, "the small direct remote trace must preserve its source route");
+
+            std::println!("CRABC_MI_SMALL_DIRECT_REMOTE_TRACE_BEGIN");
+            std::println!("trace.small_direct_remote.producer_count={PRODUCER_COUNT}");
+            std::println!("trace.small_direct_remote.request_is_small=1");
+            std::println!("trace.small_direct_remote.same_page={}", u8::from(same_page));
+            std::println!(
+                "trace.small_direct_remote.initial_live_owner_associated={}",
+                u8::from(initial_live_owner_associated),
+            );
+            std::println!(
+                "trace.small_direct_remote.initial_direct_page_matches={}",
+                u8::from(initial_direct_page_matches),
+            );
+            std::println!(
+                "trace.small_direct_remote.initial_capacity_ge_used={}",
+                u8::from(initial_capacity_ge_used),
+            );
+            std::println!(
+                "trace.small_direct_remote.initial_capacity_lt_reserved={}",
+                u8::from(initial_capacity_lt_reserved),
+            );
+            std::println!(
+                "trace.small_direct_remote.initial_used_equals_capacity={}",
+                u8::from(initial_used_equals_capacity),
+            );
+            std::println!(
+                "trace.small_direct_remote.initial_head_owned={}",
+                u8::from(initial_head_owned),
+            );
+            std::println!(
+                "trace.small_direct_remote.initial_head_empty={}",
+                u8::from(initial_head_empty),
+            );
+            std::println!("trace.small_direct_remote.initial_remote_count={initial_remote_count}");
+            std::println!(
+                "trace.small_direct_remote.published_used_unchanged={}",
+                u8::from(published_used_unchanged),
+            );
+            std::println!(
+                "trace.small_direct_remote.published_head_owned={}",
+                u8::from(published_head_owned),
+            );
+            std::println!(
+                "trace.small_direct_remote.published_head_is_remote={}",
+                u8::from(published_head_is_remote),
+            );
+            std::println!(
+                "trace.small_direct_remote.published_remote_count={published_remote_count}",
+            );
+            std::println!(
+                "trace.small_direct_remote.post_join_remote_count={published_remote_count}",
+            );
+            std::println!(
+                "trace.small_direct_remote.published_list_acyclic={}",
+                u8::from(published_list_acyclic),
+            );
+            std::println!(
+                "trace.small_direct_remote.owner_reused_remote={}",
+                u8::from(owner_reused_remote),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_used_unchanged={}",
+                u8::from(post_allocate_used_unchanged),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_direct_page_matches={}",
+                u8::from(post_allocate_direct_page_matches),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_regular_queue={}",
+                u8::from(post_allocate_regular_queue),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_full_queue_empty={}",
+                u8::from(post_allocate_full_queue_empty),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_head_owned={}",
+                u8::from(post_allocate_head_owned),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_head_empty={}",
+                u8::from(post_allocate_head_empty),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_remote_count={post_allocate_remote_count}",
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_free_empty={}",
+                u8::from(post_allocate_free_empty),
+            );
+            std::println!(
+                "trace.small_direct_remote.post_allocate_local_empty={}",
+                u8::from(post_allocate_local_empty),
+            );
+            std::println!("trace.small_direct_remote.valid={}", u8::from(valid));
+            std::println!("CRABC_MI_SMALL_DIRECT_REMOTE_TRACE_END");
+
+            // SAFETY: owner-side collection returned the remote allocation
+            // exactly once; all other fixture blocks remained locally owned.
+            unsafe { allocator.free(reused).unwrap() };
+            for local in local_blocks.into_iter().skip(1) {
+                // SAFETY: these sibling allocations were never transferred.
+                unsafe { allocator.free(local).unwrap() };
+            }
+        });
+    }
+
     #[test]
     fn small_direct_remote_publication_retries_the_direct_page_before_full_transition() {
         with_allocator(|allocator| {

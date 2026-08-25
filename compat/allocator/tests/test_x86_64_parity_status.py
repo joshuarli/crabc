@@ -136,7 +136,9 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-tls-codegen",
                 "native-bounded-lifecycle-concurrency",
                 "native-live-owner-remote-free-differential",
+                "native-small-direct-remote-free-differential",
                 "native-pinned-c-release-mode-object-symbols",
+                "native-release-api-mode-object-symbol-assessment",
                 "native-bounded-fault-injection",
                 "native-allocator-unit",
             },
@@ -178,6 +180,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "compat/reports/allocator/x86_64/live-owner-remote-free.json",
         )
         self.assertEqual(
+            gates["native-small-direct-remote-free-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-direct-remote",
+        )
+        self.assertEqual(
+            gates["native-small-direct-remote-free-differential"]["report"],
+            "compat/reports/allocator/x86_64/small-direct-remote.json",
+        )
+        self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
             "compat/reports/allocator/x86_64/fault-injection.json",
         )
@@ -189,10 +199,21 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-pinned-c-release-mode-object-symbols"]["report"],
             "compat/reports/allocator/x86_64/release-evidence.json",
         )
+        self.assertEqual(
+            gates["native-release-api-mode-object-symbol-assessment"]["command"],
+            "./scripts/dev-amd64.sh allocator-api-coverage",
+        )
+        self.assertEqual(
+            gates["native-release-api-mode-object-symbol-assessment"]["report"],
+            "compat/reports/allocator/x86_64/api-native-coverage.json",
+        )
         self.assertIn("preprocessor", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("object", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("default-visible", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("does not claim public x86", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
+        self.assertIn("194 distinct source-declared C functions", gates["native-release-api-mode-object-symbol-assessment"]["claim"])
+        self.assertIn("not-an-object-symbol", gates["native-release-api-mode-object-symbol-assessment"]["claim"])
+        self.assertIn("does not claim declaration behavior", gates["native-release-api-mode-object-symbol-assessment"]["claim"])
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
@@ -215,6 +236,9 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("quiescent pthread", gates["native-live-owner-remote-free-differential"]["claim"])
         self.assertIn("_mi_page_free_collect(page, false)", gates["native-live-owner-remote-free-differential"]["claim"])
         self.assertIn("not general remote-free routing", gates["native-live-owner-remote-free-differential"]["claim"])
+        self.assertIn("28 address-independent values", gates["native-small-direct-remote-free-differential"]["claim"])
+        self.assertIn("small direct-cache page", gates["native-small-direct-remote-free-differential"]["claim"])
+        self.assertIn("not general allocation/free routing", gates["native-small-direct-remote-free-differential"]["claim"])
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])
@@ -256,6 +280,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("Eight bounded private Rust lifecycle/concurrency lanes", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("five bounded crate-private fault-injection", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("25-field native C/Rust quiescent live-owner", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("28-field real small direct-page", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])
 
         boundary = self.contract["ledger_boundary"]

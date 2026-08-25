@@ -159,7 +159,19 @@ from one quiescent `pthread`, then the pinned private owner false collector.
 It proves only owner-bit preservation, LIFO publication, exact used-count, and
 the post-join detach/local-free merge; it is not general remote-free routing or
 concurrent collection, abandonment, thread teardown, public API, libc
-integration, backend, or AArch64 evidence. Those operations are
+integration, backend, or AArch64 evidence.
+The same x86-only track separately compares 28 address-independent C/Rust
+values for one real small direct-cache page filled to its current capacity,
+one joined `pthread` remote free, and the owner direct-cache miss falling
+through the regular queue search to detach and reuse that exact block. This is
+one private small direct-page route only, not general allocation/free routing,
+concurrent collection, abandonment, thread teardown, public API, libc
+integration, backend, or AArch64 evidence. The selected normal-release source
+surface is also accounted per item for native object/dynamic symbol presence;
+that accounting does not establish behavior, Rust implementation, or public
+runtime compatibility.
+
+Those operations are
 live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
 64 KiB and below the 256 MiB metadata limit. Failed terminal unmaps retain one

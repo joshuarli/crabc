@@ -466,10 +466,13 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "The engine has bounded local, remote-free, and abandonment substrates. One 25-field native C/Rust differential proves two quiescent live-owner publications and owner-side collection, not general asynchronous public free routing, abandonment, or complete thread exit.",
+      "difference": "The engine has bounded local, remote-free, and abandonment substrates. A 25-field native C/Rust differential proves two quiescent live-owner publications and owner-side collection; a separate 28-field native C/Rust differential proves real small direct-cache remote publication, owner collection, and exact reuse. Neither proves general asynchronous public free routing, abandonment, or complete thread exit.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_direct_remote_evidence.py",
         "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
+        "compat/allocator/x86_64-direct-remote-evidence-v3.5.0.json",
         "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_direct_remote_evidence.py",
         "compat/allocator/x86_64_remote_free_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/free_list.rs",
@@ -704,10 +707,13 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions. One 25-field native C/Rust differential proves the quiescent live-owner xthread detach and local-free merge, not general page routing or complete owner-exit traversal.",
+      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions. A 25-field native C/Rust differential proves the quiescent live-owner xthread detach and local-free merge; a separate 28-field native C/Rust differential proves a real small direct-cache page exhausting its local list, remote publication, owner collection, and exact reuse. Neither proves general page routing or complete owner-exit traversal.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_direct_remote_evidence.py",
         "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
+        "compat/allocator/x86_64-direct-remote-evidence-v3.5.0.json",
         "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_direct_remote_evidence.py",
         "compat/allocator/x86_64_remote_free_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/free_list.rs",
@@ -904,6 +910,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "2264a658725f64220789cac93f7c01a9998bc1e6e06b715e2d25dc90e2ba1934"
+    "units_sha256": "24e4f9f6a9aebf2b839c8b31af261d25734ee35e2c482a48220440004740ee96"
   }
 }

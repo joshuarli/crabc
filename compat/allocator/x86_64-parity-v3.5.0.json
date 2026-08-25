@@ -9,6 +9,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, consumes a fresh pinned normal-release C mode/object-symbol report and classifies all 194 distinct source-declared C functions by object and dynamic-symbol presence, while classifying 183 C/C++/macro/type/option source forms as not-an-object-symbol. It is selected-release source accounting only and does not claim declaration behavior, Rust implementation, public mi_* API, libc, loader, or public x86 runtime compatibility.",
+      "command": "./scripts/dev-amd64.sh allocator-api-coverage",
+      "id": "native-release-api-mode-object-symbol-assessment",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/api-native-coverage.json",
+      "state": "available"
+    },
+    {
       "claim": "Builds and inspects the separately compiled, pinned mimalloc C oracle. It does not claim a Rust C-API adapter or public allocator support.",
       "command": "./scripts/dev-amd64.sh allocator --quick",
       "id": "native-c-oracle",
@@ -70,6 +78,14 @@
       "id": "native-live-owner-remote-free-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/live-owner-remote-free.json",
+      "state": "available"
+    },
+    {
+      "claim": "On an attested native x86-64 host, differentially compares 28 address-independent values for one real small direct-cache page filled to its current capacity, one joined/quiescent pthread mi_free publication, and the owner direct-cache miss falling through the regular queue search to collect and reuse that exact block. It proves only this private small direct-page route; it is not general allocation/free routing or concurrent collection, abandonment, thread teardown, public mi_* API, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./scripts/dev-amd64.sh allocator-direct-remote",
+      "id": "native-small-direct-remote-free-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/small-direct-remote.json",
       "state": "available"
     },
     {
@@ -164,7 +180,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, and one separate 25-field native C/Rust quiescent live-owner remote-free protocol differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, and one 28-field real small direct-page remote-free/reuse differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

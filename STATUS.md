@@ -44,6 +44,17 @@ it is not general remote-free routing or concurrent collection, abandonment,
 thread teardown, public `mi_*` API, libc integration, backend, or AArch64
 evidence.
 
+The same native x86-64 profile separately has a 28-field C/Rust differential
+for one real small direct-cache page filled to its current capacity, one
+joined/quiescent `pthread` remote free, and the owner direct-cache miss falling
+through the regular queue search to collect and reuse that exact block. Its
+selected normal-release source API assessment also records per-item native
+object/dynamic-symbol presence for 194 distinct C functions and marks 183
+non-object source forms explicitly. Neither result claims general routing or
+concurrent collection, behavior or Rust implementation parity, abandonment,
+thread teardown, public API/runtime support, libc integration, backend
+promotion, or AArch64 evidence.
+
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free
 small, medium, large, singleton, aligned, and offset-aligned blocks from a
