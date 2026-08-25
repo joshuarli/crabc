@@ -646,6 +646,21 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/theap.c"
+name = "dynamic-thread-exit-full-medium-unmapped-to-mapped-handoff"
+source_region = "dynamic post-TLS regular-slot clear from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; source force/false collection and full-page abandonment from src/theap.c:89-152 and src/page.c:291-303; full-queue detach from src/page-queue.c:252-274; dynamic Heap arena bitmap/count publication from src/arena.c:1304-1424; and the unmapped then mapped failed-reclaim tails from src/free.c:372-418,479-515"
+rust_module = "crabc_mimalloc::dynamic_theap, crabc_mimalloc::single_thread, crabc_mimalloc::arena, and crabc_mimalloc::abandoned"
+rust_item = "DynamicTheapPageDrainSession::mapped_abandoned_page_during_drain; DynamicThreadExitDrain::abandon_full_medium; DynamicThreadExitFullMediumHandoff::remote_free_after_thread_exit; DynamicArenaMappedAbandonedPage; abandoned::{abandon_unmappable_after_collect,free_unmapped_after_failed_reclaim,free_mapped_after_failed_reclaim}; and PageAllocatorEngine::release_queue_detached_abandoned_arena_page"
+intentional_difference = "This is one sequential current-thread dynamic owner-exit class only: after the dynamic regular TLS slot has cleared, it accepts a sole full `MemoryKind::Arena` medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, no direct-cache entry, and no other queue member. It preserves source force -> false collection -> full-queue/page-count detach -> ordinary unmapped abandonment/unown. Each linear client free takes the failed-reclaim tail: the page remains unmapped while the source mostly-used predicate holds, then the first free beyond `reserved / 8` publishes the exact heap-local bitmap/count pair; later mapped frees clear that pair before PageMap -> dynamic ordinary bit -> metadata -> arena-slice release. Reclaim of the departed Theap, adoption, requeue, bitmap scans, producers, concurrent or multiple-page routing, full small/large, and public lifecycle integration remain absent."
+tests = ["crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/types.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/theap.c"
 name = "dynamic-thread-exit-mapped-one-block-medium-handoff"
 source_region = "dynamic post-TLS regular-slot clear from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; source force/false collection and regular-page abandonment from src/theap.c:89-152 and src/page.c:291-303; dynamic Heap arena bitmap/count publication from src/arena.c:1304-1337; and the mapped empty-before-reclaim free prefix from src/free.c:479-515"
 rust_module = "crabc_mimalloc::dynamic_theap, crabc_mimalloc::single_thread, crabc_mimalloc::arena, and crabc_mimalloc::abandoned"

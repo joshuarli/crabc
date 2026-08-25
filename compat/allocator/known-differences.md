@@ -785,6 +785,17 @@ aggregate-registry adoption remain absent.
   `reserved == used == 1`, no-producer proof; the raw free-list primitive
   separately ports and tests it without broadening this drain. The successful
   drain then permits the existing cached-root/list/key teardown.
+  `DynamicThreadExitDrain::abandon_full_medium` is a separate sequential
+  dynamic owner-exit endpoint for the drain's sole full `MemoryKind::Arena`
+  medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no
+  direct-cache entry. It force- then false-collects, detaches the full queue
+  and page count, and ordinary-unmapped abandons. Its linear
+  `DynamicThreadExitFullMediumHandoff` remains unmapped through the source
+  mostly-used prefix, publishes the exact dynamic bitmap/count pair only after
+  the first free beyond `reserved / 8`, then clears that pair before PageMap ->
+  dynamic ordinary-bit -> metadata -> slice release. It does not cover full
+  small/large, multiple pages, reclaim, adoption, requeue, scanning, or a
+  general dynamic owner-exit traversal.
   Separately, `DynamicThreadExitMappedOneBlockHandoff` admits only one sole
   nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
   with `reserved > 1`, `used == 1`, and one regular queue member.
@@ -822,8 +833,9 @@ aggregate-registry adoption remain absent.
   `free_unmapped_after_failed_reclaim` substrate ports expected-head unown,
   conflict collection without another reclaim attempt, and terminal-empty /
   reabandon / unown selection. Its lifecycle-integrated raw terminal-release
-  owners are the post-TLS arena/OS singleton handoffs above and the later-main
-  full-medium, full-large, and full-non-direct-small routes; none routes
+  owners are the post-TLS arena/OS singleton and full-medium handoffs above
+  and the later-main full-medium, full-large, and full-non-direct-small routes;
+  none routes
   general policy through the dynamic handoff. Other regular/nonempty unmapped,
   other non-arena, foreign, and full/singleton/huge pages
   still lack lifecycle integration or terminal reuse.
@@ -869,6 +881,12 @@ aggregate-registry adoption remain absent.
   regressions prove the dynamic Heap list insertion/removal order, pre-detach
   refusal, clipped PageMap removal, and terminal failed-`munmap` owner
   retention.
+  `dynamic_thread_exit_full_medium_handoff_reabandons_after_mostly_used_frees_then_releases`,
+  `dynamic_thread_exit_full_medium_handoff_rejects_before_detach_when_another_page_is_live`,
+  and `dynamic_thread_exit_full_medium_handoff_retains_collection_failure`
+  prove the full `BIN_FULL` preflight, exact unmapped-to-mapped mostly-used
+  threshold, dynamic bitmap/count cleanup before terminal arena release,
+  wholly pre-detach sole-page refusal, and retained collection failure.
   `dynamic_thread_exit_mapped_one_block_handoff_releases_after_its_final_free`,
   `dynamic_thread_exit_mapped_one_block_handoff_rejects_before_detach_when_another_page_is_live`,
   and `dynamic_thread_exit_mapped_one_block_handoff_retains_collection_failure`

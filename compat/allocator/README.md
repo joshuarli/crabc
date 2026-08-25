@@ -216,6 +216,19 @@ no-producer proof excludes invoking the source force-only local-list append;
 `free_list::collect_local` separately ports and tests that raw operation, which
 the separately recorded later-main all-free exit drain uses without broadening
 this dynamic traversal.
+
+`DynamicThreadExitDrain::abandon_full_medium` is a fourth, source-unmapped
+dynamic endpoint. It admits only the sole full `MemoryKind::Arena` medium page
+in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct-cache
+entry. Source force -> false collection -> full-queue/page-count detach leaves
+ordinary unmapped abandonment. Its linear handoff consumes sequential failed-
+reclaim frees, stays unmapped through the source mostly-used prefix, then
+publishes the exact dynamic `pages_abandoned[bin]` bit plus paired
+`Heap::abandoned_count[bin]` on the first free beyond `reserved / 8`. The
+mapped tail clears that pair before PageMap -> dynamic ordinary bit -> metadata
+-> arena-slice release. It is not a full-small/full-large, multi-page,
+reclaim/adoption/requeue, or general owner-exit traversal capability.
+
 Three separate mapped endpoints accept only a sole nonfull `MemoryKind::Arena`
 page with `reserved > 1`, `used == 1`, and one regular queue member.
 `DynamicThreadExitDrain::abandon_mapped_one_block` admits the medium class;
@@ -235,7 +248,7 @@ metadata -> arena slices. It does not reclaim the departed Theap, adopt,
 requeue, scan, or accept multiple pages or frees.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular and
-post-TLS singleton/mapped-one-block handoffs, pthread/process hooks, complete
+post-TLS singleton/full-medium/mapped-one-block handoffs, pthread/process hooks, complete
 subprocess layout/lifecycle, and C pthread-mutex layout claims remain absent. A
 first dynamic arena page additionally creates a private
 `DynamicArenaPagesOwner`: after proving the registry-published arena's
@@ -258,7 +271,8 @@ release—and returns the drained engine; an existing owner remains terminal.
 Separately, the source-shaped initially-unmapped failed-reclaim substrate
 selects terminal-empty, reabandonment, or unownership after its expected-head
 CAS/conflict collection. It has raw page-span release authority only through
-the post-TLS arena/OS-singleton handoffs above, not as general free routing. General
+the post-TLS arena/OS-singleton and full-medium handoffs above, not as general
+free routing. General
 producer routing, regular/nonempty unmapped lifecycle integration, terminal
 reuse, and general abandonment routing remain absent. The private explicit single-thread slice now binds a pinned default theap to a
 caller-managed arena and page map and exercises ordinary small, medium, large,
@@ -297,8 +311,8 @@ Deterministic native regressions separately cover the bitmap-field
 quiescence, abandonment publication, adoption versus a remote producer,
 ownership-release races, scoped producer cancellation/admission, regular
 generic/direct collection, and the joined full-page release/unfull branches.
-Except for these bounded owner-side collection routes, one post-TLS
-arena/OS-singleton terminal release, bounded ticket-zero and sequential later
+Except for these bounded owner-side collection routes, post-TLS arena/OS-
+singleton and full-medium terminal releases, bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
 all-free exit drain plus its full-singleton, mapped-medium-one-block, full
 medium/full-large/full-non-direct-small/full-direct-small, and sole mapped small-or-medium

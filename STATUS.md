@@ -359,6 +359,18 @@ all-free release. The OS form additionally links/removes its exact dynamic
 `Heap::os_abandoned_pages` member around clipped PageMap -> alias -> primary
 metadata -> mapping release.
 
+`DynamicThreadExitDrain::abandon_full_medium` separately admits one sole full
+`MemoryKind::Arena` medium page in `BIN_FULL`, with `reserved > 1` and
+`used == reserved`. It preserves source force -> false collection ->
+full-queue/page-count detach -> ordinary unmapped abandonment. Its linear
+`DynamicThreadExitFullMediumHandoff` consumes sequential failed-reclaim frees:
+the page stays unmapped through the source mostly-used prefix, the first free
+beyond `reserved / 8` publishes the matching dynamic `pages_abandoned[bin]`
+bit plus `Heap::abandoned_count[bin]`, and the mapped tail clears that pair
+before PageMap -> dynamic ordinary bit -> metadata -> arena-slice release.
+This one route neither reclaims, adopts, requeues, scans, nor covers full
+small, large, multi-page, or general dynamic owner exit.
+
 A separate `DynamicThreadExitMappedOneBlockHandoff` accepts only a sole,
 nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
 with `reserved > 1`, `used == 1`, and one regular queue member. The medium
@@ -403,9 +415,9 @@ then arena slices—and returns the drained engine; an existing owner remains a
 terminal handoff. Separately, `free_unmapped_after_failed_reclaim` remains the
 source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
-singleton above and the bounded later-main normal full-medium, full-large, and full
-non-direct-small process routes are its lifecycle-integrated raw-release
-callers; other regular or
+singleton above, the separate dynamic full-medium handoff, and the bounded
+later-main normal full-medium, full-large, and full non-direct-small process
+routes are its lifecycle-integrated raw-release callers; other regular or
 nonempty unmapped pages, general producer routing, terminal reuse, multi-arena dynamic heap
 support, and general heap destruction remain absent.
 
@@ -432,9 +444,11 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-dynamic owner-exit singleton and sole mapped medium/non-direct-small/direct-small
-one-block handoffs: clearing the regular backing prevents reclaim; the singleton
-final free takes the raw failed-reclaim all-free release, while each mapped
+dynamic owner-exit singleton, one full-medium unmapped-to-mapped handoff, and
+sole mapped medium/non-direct-small/direct-small one-block handoffs: clearing
+the regular backing prevents reclaim; the singleton final free takes the raw
+failed-reclaim all-free release, the full-medium route crosses the source
+mostly-used boundary before dynamic bitmap publication, and each mapped
 endpoint clears its dynamic bitmap/count before terminal arena release. The raw
 protocol remains
 otherwise unintegrated: regular/nonempty pages, general producer routing,

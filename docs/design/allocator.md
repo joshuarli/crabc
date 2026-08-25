@@ -590,6 +590,20 @@ generalize that OS list. Because the regular backing is already clear, source
 reclaim cannot find the Theap. A drained attachment alone can then resume
 cached-root/list/key teardown.
 
+`DynamicThreadExitDrain::abandon_full_medium` is a separate source-unmapped
+dynamic handoff. It accepts only the drain's sole full `MemoryKind::Arena`
+medium page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no
+direct-cache entry. Force then false collection precedes full-queue/page-count
+detach and ordinary abandoned unown; unlike the nonfull endpoints below, this
+does not publish a bitmap at abandonment. The linear
+`DynamicThreadExitFullMediumHandoff` follows the failed-reclaim tail for each
+client free: it stays unmapped while `mi_page_is_mostly_used` holds, then the
+first free beyond `reserved / 8` publishes the matching heap-local
+`pages_abandoned[bin]` bit and paired `Heap::abandoned_count[bin]`. The mapped
+tail clears that pair before queue-detached PageMap span -> dynamic ordinary
+bit -> metadata -> arena-slice release. It is not a reclaim, adoption,
+requeue, scan, full-small/full-large, multi-page, or general traversal route.
+
 The same drain has three separately bounded mapped endpoints,
 `DynamicThreadExitDrain::abandon_mapped_one_block` for a medium page,
 `DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small` for a
@@ -672,8 +686,9 @@ the expected-head CAS, collects a conflict without retrying reclaim, and then
 selects terminal-empty, mapped reabandonment, or unmapped unownership using
 the source integer mostly-used boundary. It deliberately does not itself
 release or reuse a page. Its raw-release owners are the post-TLS arena and
-OS-aligned singleton handoffs above; all other initially-unmapped pages retain
-the raw terminal decision for a later lifecycle. A test-only Loom model executes the
+OS-aligned singleton handoffs and the separate dynamic full-medium handoff
+above; all other initially-unmapped pages retain the raw terminal decision for
+a later lifecycle. A test-only Loom model executes the
 live-owner remote-head publication/detach loops and the abandoned
 owner-claim/unown races under bounded schedules; deterministic native
 regressions cover the bitmap-field quiescence and full one-page abandonment

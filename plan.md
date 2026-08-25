@@ -62,6 +62,19 @@ clear that dynamic bit/count pair, then release PageMap -> dynamic ordinary bit
 -> metadata -> arena slices. It cannot reclaim the departed Theap, requeue,
 adopt, scan, accept a second free, or generalize dynamic owner exit.
 
+`DynamicThreadExitDrain::abandon_full_medium` is a fourth, disjoint dynamic
+owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena` medium
+page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct
+cache entry. Source force then false collection precedes full-queue/page-count
+detach and ordinary unmapped abandonment. Its
+`DynamicThreadExitFullMediumHandoff` carries sequential client frees through
+the failed-reclaim tail: they remain unmapped while the source mostly-used
+predicate holds, then the first free beyond `reserved / 8` publishes the exact
+dynamic `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`.
+The mapped tail clears that pair before PageMap -> dynamic ordinary bit ->
+metadata -> arena-slice release. It cannot reclaim, adopt, requeue, scan, or
+cover full small, large, multi-page, or general dynamic thread-exit state.
+
 The raw owner-local free-list substrate now also ports that source force-only
 append: it validates the deferred local chain, appends the old immediate head,
 and rejects a malformed cycle before relinking. Ordinary regular/full callers
@@ -357,6 +370,9 @@ and concurrency evidence.
 
 Checkpoint evidence is green: the focused
 `dynamic_theap::tests::dynamic_thread_exit_singleton_remote_free_clears_tls_then_releases_its_arena_page`,
+`dynamic_thread_exit_full_medium_handoff_reabandons_after_mostly_used_frees_then_releases`,
+`dynamic_thread_exit_full_medium_handoff_rejects_before_detach_when_another_page_is_live`,
+and `dynamic_thread_exit_full_medium_handoff_retains_collection_failure`,
 `dynamic_thread_exit_force_collects_a_retired_regular_page_after_tls_clear`,
 and the raw false/force-local-list order/cycle regressions in `free_list::tests`,
 the no-page shared-main regressions in `main_heap_thread::tests`, the
@@ -403,10 +419,10 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 88 items and 92
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 89 items and 93
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-mapped-one-block-medium/non-direct-small/direct-small cases, the later-main
+full-medium or mapped-one-block-medium/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately
