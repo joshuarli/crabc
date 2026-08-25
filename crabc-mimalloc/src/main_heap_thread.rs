@@ -745,6 +745,15 @@ impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
             .get()
     }
 
+    /// Returns the process-static main Heap witness retained by this normal
+    /// later-thread page session. A consuming post-exit adoption uses it only
+    /// to prove that its source route and fresh target share the same static
+    /// main image before the mapped page's low owner bit is claimed.
+    #[inline]
+    pub(crate) fn main_heap_lease(&self) -> MainStaticHeapLease<'main> {
+        self.attachment.main_heap
+    }
+
     #[inline]
     fn theap(&self) -> &Theap {
         self.attachment

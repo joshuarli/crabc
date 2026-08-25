@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 85,
-    "item_count": 81,
+    "implemented": 86,
+    "item_count": 82,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 85
+    "unit_verified": 86
   },
-  "port_map_sha256": "71a7214406bbc1857ea57c45214126d6e5cb30b03ec9d88ce4b452ab9933f42d",
+  "port_map_sha256": "1802d25e2300e7b278e422deddfb3068569bf74c073a98f6cb8e454fd45c9591",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -143,6 +143,10 @@
       "unit_verified"
     ],
     "item:src/arena.c:external-arena-contiguous-claim-page-metadata-and-release": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/arena.c:later-main-one-member-post-exit-allocation-adoption": [
       "implemented",
       "unit_verified"
     ],

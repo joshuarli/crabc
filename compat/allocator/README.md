@@ -18,7 +18,7 @@ and its seven sole-page handoffs (a full arena singleton, a mapped medium
 one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
 reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
-client-free route) plus
+route) plus
 one aggregate regular small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
@@ -63,6 +63,9 @@ chooses no reserve policy, does not model the C `mi_page_map_empty` pre-root,
 and has no concurrent/general later-thread page routing, general owner exit
 beyond the recorded all-free later-main scan, its seven sole-page handoffs, and
 the bounded aggregate regular-pages traversal, teardown, or public routing.
+Only the explicit consuming sole-medium handoff can turn a detached route's
+short PageMap access back into one long later-main lifecycle; ordinary route
+and aggregate-registry use remains sequential client-free access.
 The coordinator deliberately does not reserve this shared arena or supply a
 full process lifecycle. An unpublished
 reservation failure or dropped unfinished lifecycle terminally poisons rather
@@ -270,7 +273,15 @@ map/bitmap/fresh/release/producer ordering plus the all-free scan, one
 preflight-bounded full-singleton failed-reclaim handoff, one sole-medium
 mapped empty-before-reclaim handoff, four full source-unmapped routes (medium,
 large, non-direct small, and direct small), and one sole nonfull small-or-medium process
-route whose linear client frees begin after actual old Theap/TLD teardown. The
+route whose linear client frees begin after actual old Theap/TLD teardown. A
+fresh later-main owner may explicitly consume only that route's sole mapped
+nonfull medium page: it proves the same subprocess/configuration/PageMap root,
+static main Heap, arena, span, and page identity; transfers short PageMap
+access into one long lifecycle; claims the bitmap/count member; collects and
+reassociates it; then restores source queue-tail order. It requires an
+immediate free-list head and retains bitmap misses or post-transfer failures
+terminally, without a fresh allocation fallback. Small/direct, full, and
+aggregate members remain client-free-only. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
 only after the source mostly-used boundary. The full direct-small route also

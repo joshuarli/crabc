@@ -6,8 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-360,377-421,448-481`,
 // `src/theap.c:89-152`, `src/page.c:214-302,414-518`,
-// `src/page-queue.c:204-304`,
-// `src/arena.c:674-723,781-821,951-1114,1183-1204,1240-1282`, and
+// `src/page-queue.c:204-330`,
+// `src/arena.c:631-778,781-821,951-1153,1183-1204,1240-1282`, and
 // `src/page-map.c:228-365`, and `src/free.c:372-514`.
 
 //! Page-bearing later-thread attachment to the source static main Heap.
@@ -26,23 +26,24 @@
 //! source-shaped `_mi_thread_done` boundary: a consuming exit drain clears the
 //! fixed main fast slot, force-collects every queue, and releases only pages
 //! that become all-free before returning to attachment root/list/TLD teardown.
-//! Five disjoint sole-page exceptions retain their PageMap/arena ownership
-//! through final client frees: a sole full singleton becomes
-//! unmapped-abandoned, a sole medium regular page with one live block becomes
-//! mapped-abandoned and must become empty before reclaim, sole full medium and
-//! full large pages begin unmapped and reabandon into the static-main bitmap
-//! only after source's mostly-used threshold, and a sole nonfull small-or-medium
-//! page with one or more live blocks becomes a typed process route before the old
-//! Theap/TLD tears down. A sixth, aggregate exception first
+//! Seven disjoint sole-page exceptions retain their PageMap/arena ownership
+//! through final client frees: a full singleton, a mapped one-block medium,
+//! full medium and full large pages, full non-direct and direct small pages,
+//! and a nonfull small-or-medium page. The full regular cases begin unmapped
+//! and reabandon into the static-main bitmap only after source's mostly-used
+//! threshold; the nonfull route becomes a typed process route before its old
+//! Theap/TLD tears down. A separate aggregate exception first
 //! force-releases tracked retired regular pages, then source-traverses every
 //! remaining live nonfull regular small, medium, or large arena page only when
 //! every queued member has that supported shape: it releases pages made empty
 //! by force collection and registers every survivor in one linear process
-//! route. Each
-//! route free serializes its plain PageMap operation briefly, but none exposes
-//! allocation-time claiming, reclaim/requeue, concurrent client-free routing,
-//! or another full/singleton/unmapped/huge owner-exit shape. Source deferred
-//! callbacks and arena collection also remain absent.
+//! route. Each route free serializes its plain PageMap operation briefly. One
+//! explicit consuming edge additionally reclaims only the sole mapped nonfull
+//! medium route into a fresh later-main engine: it claims that exact bitmap
+//! member and requeues it at the source tail. It has no automatic allocation
+//! scan or fresh-page fallback. Small/direct, full, aggregate, concurrent,
+//! singleton, unmapped, and huge adoption remain absent, as do source deferred
+//! callbacks and arena collection.
 
 use core::ptr::NonNull;
 
@@ -57,6 +58,8 @@ use crate::process_page_map::{
 };
 use crate::single_thread::{
     FreeError, PageAllocatorEngine, RemoteFreePreparationError, RemoteFreeProducer,
+    ThreadExitMappedRegularPostExitAdoptError,
+    ThreadExitMappedRegularPostExitAdoptOutcome,
     ThreadExitMappedRegularPostExitAbandonError,
     ThreadExitMappedRegularPostExitAbandonFailure,
     ThreadExitMappedRegularPostExitFreeError,
@@ -163,9 +166,12 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment
 /// The source abandonment transition has already detached the page from every
 /// old queue/direct/page-count owner, and `page_map_access` now serializes the
 /// PageMap lookup -> abandoned-free -> terminal-release decision for each
-/// client block. The route deliberately remains linear: it proves real
-/// post-exit client-free routing but does not yet establish the wider
-/// allocation-time claim or concurrent producer protocol.
+/// client block. It also admits one explicit consuming allocation-time
+/// handoff: a sole mapped nonfull medium page may transfer into a fresh
+/// later-main owner, claim its exact static-main bitmap member, and requeue
+/// at the source tail. It deliberately does not scan arbitrary routes, take a
+/// fresh-page fallback, adopt small/direct/full/aggregate members, or expose
+/// concurrent producer protocol.
 #[must_use = "a post-exit mapped regular route must release every client block or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
@@ -179,6 +185,21 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
 // one route owner at a time. Sending it is therefore the intended client-free
 // handoff after thread exit, not permission to share it concurrently.
 unsafe impl Send for MainHeapThreadProcessPageExitMappedRegularRoute<'_> {}
+
+/// A target later-main owner retained after it consumed a mapped regular
+/// process route but could not complete the one supported medium reclaim.
+///
+/// Field order is intentional: an unfinished engine first latches the fresh
+/// later attachment, then the long PageMap lease poisons rather than reopens
+/// a root whose source page may have crossed a bitmap, low-owner, or Theap
+/// reassociation boundary. `parts` preserves the exact source span and page
+/// identity for terminal evidence; it offers no second adoption path.
+#[must_use = "a failed mapped-medium adoption retains its target owner terminally"]
+pub(crate) struct MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment, 'main> {
+    engine: PageAllocatorEngine<'static, 'static, MainHeapThreadPageSession<'attachment, 'main>>,
+    page_map_lifecycle: ProcessPageMapMutationLease,
+    parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
+}
 
 /// One sole full medium page that begins post-exit life as source-unmapped
 /// abandonment and can later reabandon into the static-main bitmap.
@@ -300,6 +321,54 @@ pub(crate) enum MainHeapThreadProcessPageAllocatorBeginError {
     ConfigurationMismatch,
     Session(MainHeapThreadPageSessionError),
     PageMap(ProcessPageMapError),
+}
+
+/// A pre-transfer or retained-terminal outcome while a mapped regular
+/// post-exit route attempts the one supported fresh later-main medium
+/// adoption.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
+    /// The source route is small rather than the deliberately supported
+    /// medium shape. Its post-exit client-free route remains unchanged.
+    SourceNotMedium,
+    Pair(ProcessPageArenaLeaseError),
+    Attachment(MainHeapThreadAttachmentError),
+    SubprocessMismatch,
+    ConfigurationMismatch,
+    /// The target pair's stable PageMap root differs from the route's short
+    /// post-exit access capability.
+    PageMapRootMismatch,
+    ArenaMismatch,
+    Session(MainHeapThreadPageSessionError),
+    PageMap(ProcessPageMapError),
+    /// The source bitmap had no currently claimable exact page. The target
+    /// owner is retained; this slice never turns that miss into fresh page
+    /// allocation.
+    Pending,
+    Route(ThreadExitMappedRegularPostExitAdoptError),
+}
+
+/// A failed mapped-medium adoption preserves either the original route before
+/// any target engine exists, or a terminal target owner after the short route
+/// transferred to a long PageMap lifecycle. A returned original route still
+/// carries its own PageMap error state: only a ready route can continue its
+/// normal client-free tail.
+#[must_use = "a failed mapped-medium adoption retains its original or target owner"]
+pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptFailure<'attachment, 'main> {
+    /// No target engine was created, so the caller retains this exact route.
+    /// A ready route may continue its client-free tail; a reported PageMap
+    /// poison remains terminal under that route's existing contract.
+    Rejected {
+        route: MainHeapThreadProcessPageExitMappedRegularRoute<'main>,
+        error: MainHeapThreadProcessPageExitMappedRegularAdoptError,
+    },
+    /// The target long lifecycle exists. A source bitmap/owner/reassociation
+    /// step may have changed, or the intentionally unsupported no-claim path
+    /// must not fall through into a fresh allocation.
+    Retained {
+        adoption: MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment, 'main>,
+        error: MainHeapThreadProcessPageExitMappedRegularAdoptError,
+    },
 }
 
 /// The outcomes while consuming a later-thread shared process page engine.
@@ -2248,6 +2317,266 @@ impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main> {
 }
 
 impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
+    /// Consumes this one mapped regular post-exit route into a fresh
+    /// later-main page engine when it has the completed medium-page shape.
+    ///
+    /// The source route is intentionally explicit rather than an allocation
+    /// search: it transfers the same PageMap access capability to the new
+    /// long engine, claims only its stable page identity, then restores source
+    /// queue-tail order. A bitmap miss and every post-transfer failure retain
+    /// the target owner; this slice never allocates a fresh replacement or
+    /// broadens into small, full, aggregate, or concurrent adoption.
+    pub(crate) fn adopt_into_later_main<'attachment>(
+        self,
+        attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+        pair: ProcessPageArenaLease,
+    ) -> Result<
+        MainHeapThreadProcessPageAllocator<'attachment, 'main>,
+        MainHeapThreadProcessPageExitMappedRegularAdoptFailure<'attachment, 'main>,
+    > {
+        let Self {
+            parts,
+            page_map_access,
+        } = self;
+        if !parts.supports_later_main_adoption() {
+            return Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                    route: Self {
+                        parts,
+                        page_map_access,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::SourceNotMedium,
+                },
+            );
+        }
+        let attachment_subprocess = match attachment.subprocess() {
+            Ok(subprocess) => subprocess,
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Attachment(
+                            error,
+                        ),
+                    },
+                );
+            }
+        };
+        let pair_subprocess = match pair.subprocess() {
+            Ok(subprocess) => subprocess,
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Pair(error),
+                    },
+                );
+            }
+        };
+        if !core::ptr::eq(attachment_subprocess.as_ptr(), pair_subprocess.as_ptr())
+            || !core::ptr::eq(
+                attachment_subprocess.as_ptr(),
+                parts.main_heap_subprocess().as_ptr(),
+            )
+        {
+            return Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                    route: Self {
+                        parts,
+                        page_map_access,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::SubprocessMismatch,
+                },
+            );
+        }
+        let attachment_config = match attachment.memory_config() {
+            Ok(config) => config,
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Attachment(
+                            error,
+                        ),
+                    },
+                );
+            }
+        };
+        let pair_config = match pair.memory_config() {
+            Ok(config) => config,
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Pair(error),
+                    },
+                );
+            }
+        };
+        if attachment_config != pair_config {
+            return Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                    route: Self {
+                        parts,
+                        page_map_access,
+                    },
+                    error:
+                        MainHeapThreadProcessPageExitMappedRegularAdoptError::ConfigurationMismatch,
+                },
+            );
+        }
+        let pair_root = match pair.page_map_root() {
+            Ok(root) => root,
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Pair(error),
+                    },
+                );
+            }
+        };
+        match page_map_access.matches_root(pair_root) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error:
+                            MainHeapThreadProcessPageExitMappedRegularAdoptError::PageMapRootMismatch,
+                    },
+                );
+            }
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::PageMap(error),
+                    },
+                );
+            }
+        }
+        let arena = match pair.arena() {
+            Ok(arena) => arena,
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Pair(error),
+                    },
+                );
+            }
+        };
+        if !parts.matches_arena(&arena) {
+            return Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                    route: Self {
+                        parts,
+                        page_map_access,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::ArenaMismatch,
+                },
+            );
+        }
+        let session = match attachment.page_session() {
+            Ok(session) => session,
+            Err(error) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Session(error),
+                    },
+                );
+            }
+        };
+        let page_map_lifecycle = match unsafe { page_map_access.into_mutation_lease() } {
+            Ok(lifecycle) => lifecycle,
+            Err((page_map_access, error)) => {
+                return Err(
+                    MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                        route: Self {
+                            parts,
+                            page_map_access,
+                        },
+                        error: MainHeapThreadProcessPageExitMappedRegularAdoptError::PageMap(error),
+                    },
+                );
+            }
+        };
+        // A successful short-to-long bridge holds this exact guard and its
+        // ready root. No other state transition can invalidate the root while
+        // this lease remains live; preserving that invariant here avoids a
+        // second unpaired PageMap access branch after ownership transferred.
+        let page_map = page_map_lifecycle
+            .page_map()
+            .expect("a successful post-exit PageMap bridge retains its ready long lease");
+        // SAFETY: all preflight proved the attachment/pair/source identities,
+        // and `page_map_lifecycle` now serializes this complete target engine.
+        let mut engine = unsafe {
+            PageAllocatorEngine::activate_later_main_thread(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            )
+        };
+        match unsafe { parts.adopt_into_later_main(&mut engine) } {
+            Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reclaimed) => {
+                Ok(MainHeapThreadProcessPageAllocator {
+                    engine,
+                    page_map_lifecycle,
+                })
+            }
+            Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Pending) => Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                    adoption: MainHeapThreadProcessPageExitMappedRegularAdoption {
+                        engine,
+                        page_map_lifecycle,
+                        parts,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Pending,
+                },
+            ),
+            Err(error) => Err(
+                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                    adoption: MainHeapThreadProcessPageExitMappedRegularAdoption {
+                        engine,
+                        page_map_lifecycle,
+                        parts,
+                    },
+                    error: MainHeapThreadProcessPageExitMappedRegularAdoptError::Route(error),
+                },
+            ),
+        }
+    }
+
     /// Routes one exact client free after the originating later Theap/TLD has
     /// completed source teardown.
     ///
@@ -3803,6 +4132,217 @@ mod tests {
         .expect("post-exit mapped regular route fixture remains current-thread local");
     }
 
+    #[test]
+    fn later_thread_exit_mapped_medium_route_adopts_into_a_fresh_later_owner() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the paired arena remains published through the reclaim route");
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let mut source = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut source_allocator = MainHeapThreadProcessPageAllocator::begin(&mut source, pair)
+                        .expect("the source attachment admits one medium page");
+                    let first = source_allocator
+                        .allocate(request, false)
+                        .expect("the source creates one medium page");
+                    let second = source_allocator
+                        .allocate(request, false)
+                        .expect("the source keeps two client blocks live in that page");
+                    let spare = source_allocator
+                        .allocate(request, false)
+                        .expect("the source can retain one immediately reusable medium block");
+                    let page = NonNull::new(unsafe { source_allocator.test_page_for_block(first) })
+                        .expect("the source medium page stays PageMap-published");
+                    assert_eq!(
+                        unsafe { source_allocator.test_page_for_block(second) },
+                        page.as_ptr(),
+                        "the source fixture keeps both client blocks in the sole medium page"
+                    );
+                    assert_eq!(
+                        unsafe { source_allocator.test_page_for_block(spare) },
+                        page.as_ptr(),
+                        "the source's reusable block belongs to the same sole medium page"
+                    );
+                    unsafe {
+                        source_allocator
+                            .free(spare)
+                            .expect("the source returns one block to the immediate local free list");
+                    }
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size()),
+                        Some(crate::types::PageKind::Medium),
+                        "the adoption boundary starts with the narrow medium source class"
+                    );
+                    assert!(
+                        page_ref.used() > 0 && page_ref.used() < usize::from(page_ref.reserved()),
+                        "the source page is nonfull and immediately reusable before its owner exits"
+                    );
+                    let bin = crate::size_class::bin(page_ref.block_size())
+                        .expect("the medium source page has one regular bin");
+                    let memory = page_ref.memid();
+                    let slice = memory
+                        .arena_memory()
+                        .expect("the source page belongs to the paired arena")
+                        .slice_index as usize;
+
+                    let drain = source_allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("source owner reaches its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe {
+                        drain.abandon_mapped_small_or_medium_to_process_route(first)
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!("the sole nonfull medium page enters its mapped post-exit route"),
+                    };
+                    assert_eq!(
+                        source.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the source Theap/TLD is gone before a fresh owner can reclaim its page"
+                    );
+                    assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                        page.as_ptr(),
+                        "the mapped route retains the exact source PageMap entry"
+                    );
+
+                    let mut target = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("fresh target attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("fresh target attachment retained: {error:?}")
+                        }
+                    };
+                    let mut target_allocator = match route.adopt_into_later_main(&mut target, pair) {
+                        Ok(allocator) => allocator,
+                        Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                            error,
+                            ..
+                        }) => panic!(
+                            "the exact mapped medium route transfers into the fresh later-main page owner: {error:?}"
+                        ),
+                        Err(MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                            error,
+                            ..
+                        }) => panic!(
+                            "the exact mapped medium route transfers into the fresh later-main page owner: {error:?}"
+                        ),
+                    };
+
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(first) },
+                        page.as_ptr(),
+                        "the new owner retains the original first client block's PageMap identity"
+                    );
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(second) },
+                        page.as_ptr(),
+                        "the new owner retains the original second client block's PageMap identity"
+                    );
+                    {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable after reclaim");
+                        assert_eq!(
+                            heap.heap_mut().abandoned_count(bin),
+                            Some(0),
+                            "successful source reclaim consumes the paired static-main abandoned count"
+                        );
+                        heap.unlock()
+                            .expect("the reclaim observation releases the static-main heap projection");
+                    }
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
+                        Some(false),
+                        "reclaim retains the original ordinary arena-page ownership instead of taking a fresh slice"
+                    );
+
+                    let reused = target_allocator
+                        .allocate(request, false)
+                        .expect("the target allocates from the reclaimed medium page before fresh allocation");
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(reused) },
+                        page.as_ptr(),
+                        "the first target allocation reuses the exact source page"
+                    );
+
+                    unsafe {
+                        target_allocator
+                            .free(first)
+                            .expect("the target frees the first inherited client block");
+                        target_allocator
+                            .free(second)
+                            .expect("the target frees the second inherited client block");
+                        target_allocator
+                            .free(reused)
+                            .expect("the target frees its reclaimed-page allocation");
+                    }
+                    match target_allocator.finish() {
+                        Ok(()) => {}
+                        Err(_) => panic!("the reclaimed target page lifecycle finishes after every client free"),
+                    }
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
+                        "normal target cleanup unregisters the reclaimed page only after its final free"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
+                        Some(true),
+                        "normal target cleanup clears the original arena bit before releasing its slice"
+                    );
+                    assert_eq!(
+                        target.finish_after_user_destructors(),
+                        Ok(()),
+                        "the fresh target completes its ordinary later-thread teardown after the reclaimed page is gone"
+                    );
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "the reclaimed page's normal release reopens the process-map lifecycle"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the source and target reclaim fixture remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("mapped medium reclaim fixture remains current-thread local");
+    }
+
     /// Independent source model of `mi_theap_queue_first_update`'s direct
     /// range. This test-side calculation intentionally uses the frozen queue
     /// table rather than `PageAllocatorEngine`'s helper, so the route fixture
@@ -3832,7 +4372,7 @@ mod tests {
         (start, index)
     }
 
-    fn assert_small_regular_route(request: usize, direct: bool) {
+    fn assert_small_regular_route(request: usize, direct: bool, reject_adoption: bool) {
         thread::spawn(move || {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -3958,6 +4498,68 @@ mod tests {
                     );
                     assert_eq!(route.test_abandoned_count(), Some(1));
 
+                    let route = if reject_adoption {
+                        let mut target = match unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap,
+                                metadata,
+                                config,
+                            )
+                        } {
+                            Ok(owner) => owner,
+                            Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                                panic!("fresh small-route target attachment rejected: {error:?}")
+                            }
+                            Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                                panic!("fresh small-route target attachment retained: {error:?}")
+                            }
+                        };
+                        let route = match route.adopt_into_later_main(&mut target, pair) {
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                    route,
+                                    error,
+                                },
+                            ) => {
+                                assert_eq!(
+                                    error,
+                                    MainHeapThreadProcessPageExitMappedRegularAdoptError::SourceNotMedium,
+                                    "a small mapped route rejects before PageMap access or target-engine transfer"
+                                );
+                                route
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!(
+                                    "a small mapped route rejects before any target state transition: {error:?}"
+                                );
+                            }
+                            Ok(allocator) => {
+                                core::mem::forget(allocator);
+                                panic!("a small mapped route cannot become a normal allocation owner");
+                            }
+                        };
+                        assert_eq!(
+                            target.finish_after_user_destructors(),
+                            Ok(()),
+                            "the pre-transfer small refusal leaves the fresh target attachment empty"
+                        );
+                        assert_eq!(
+                            unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                            page.as_ptr(),
+                            "the pre-transfer small refusal leaves the exact PageMap entry untouched"
+                        );
+                        assert_eq!(route.test_abandoned_count(), Some(1));
+                        route
+                    } else {
+                        route
+                    };
+
                     let route = match unsafe { route.remote_free_after_thread_exit(first) } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
                             route
@@ -4009,22 +4611,27 @@ mod tests {
 
     #[test]
     fn later_thread_exit_mapped_regular_route_tears_down_before_two_non_direct_small_client_frees() {
-        assert_small_regular_route(SMALL_SIZE_MAX + WORD_SIZE, false);
+        assert_small_regular_route(SMALL_SIZE_MAX + WORD_SIZE, false, false);
     }
 
     #[test]
     fn later_thread_exit_mapped_regular_route_accepts_non_direct_small_upper_boundary() {
-        assert_small_regular_route(SMALL_MAX_OBJ_SIZE, false);
+        assert_small_regular_route(SMALL_MAX_OBJ_SIZE, false, false);
     }
 
     #[test]
     fn later_thread_exit_mapped_regular_route_tears_down_before_two_direct_small_client_frees() {
-        assert_small_regular_route(WORD_SIZE, true);
+        assert_small_regular_route(WORD_SIZE, true, false);
     }
 
     #[test]
     fn later_thread_exit_mapped_regular_route_accepts_direct_small_upper_boundary() {
-        assert_small_regular_route(SMALL_SIZE_MAX, true);
+        assert_small_regular_route(SMALL_SIZE_MAX, true, false);
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_regular_route_rejects_direct_small_allocation_adoption() {
+        assert_small_regular_route(WORD_SIZE, true, true);
     }
 
     #[test]

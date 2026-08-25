@@ -468,6 +468,76 @@ pub(crate) struct ProcessPageMapPostExitAccess {
 }
 
 impl ProcessPageMapPostExitAccess {
+    /// Reclaims the long source-plain PageMap exclusion boundary for one
+    /// newly attached page engine.
+    ///
+    /// # Safety
+    ///
+    /// The caller must consume the only process-exit route that owns every
+    /// still-registered page and immediately couple the returned lease to one
+    /// typed engine that assumes every later plain PageMap lookup,
+    /// registration, and unregistration responsibility. It must not leave a
+    /// second short-access route, a concurrent post-exit client-free route,
+    /// or an unowned registered page behind. Dropping the returned lease
+    /// before that engine finishes remains terminal, just like a normal
+    /// mutation lease.
+    ///
+    /// This is the inverse of
+    /// [`ProcessPageMapMutationLease::into_post_exit_access`], but it is not
+    /// a general route upgrade: only an explicit consuming handoff may turn
+    /// the short post-exit access capability back into a long engine
+    /// lifecycle.
+    pub(crate) unsafe fn into_mutation_lease(
+        mut self,
+    ) -> Result<ProcessPageMapMutationLease, (Self, ProcessPageMapError)> {
+        if self.completed
+            || self.storage.state.load(Ordering::Acquire) != READY
+            || self.storage.root.load().is_none()
+        {
+            return Err((self, ProcessPageMapError::Poisoned));
+        }
+        let guard = match self.storage.page_lifecycle_lock.try_lock() {
+            Some(guard) => guard,
+            None => return Err((self, ProcessPageMapError::LifecycleBusy)),
+        };
+        if self.storage.state.load(Ordering::Acquire) != READY || self.storage.root.load().is_none() {
+            let unlock = guard.unlock();
+            if let Err(error) = unlock {
+                // The lock became externally visible before its wake failed.
+                // This route cannot retry as though it still owned a clean
+                // short-access capability.
+                self.storage.state.store(POISONED, Ordering::Release);
+                return Err((self, ProcessPageMapError::Lock(error)));
+            }
+            return Err((self, ProcessPageMapError::Poisoned));
+        }
+        // The returned long lease is now the sole owner responsible for the
+        // post-exit entries. Mark this source capability complete before it
+        // drops so its conservative Drop cannot poison that valid transfer.
+        self.completed = true;
+        Ok(ProcessPageMapMutationLease {
+            storage: self.storage,
+            guard: Some(guard),
+        })
+    }
+
+    /// Checks whether this post-exit route belongs to one stable
+    /// process-page-map root.
+    ///
+    /// This is only an identity witness. It neither borrows the map nor
+    /// grants entry access; callers still need the consuming transition above
+    /// before they may form a normal page engine.
+    #[inline]
+    pub(crate) fn matches_root(
+        &self,
+        root: NonNull<PageMapHeader>,
+    ) -> Result<bool, ProcessPageMapError> {
+        if self.completed || self.storage.state.load(Ordering::Acquire) != READY {
+            return Err(ProcessPageMapError::Poisoned);
+        }
+        Ok(self.storage.root.load() == Some(root))
+    }
+
     /// Runs one complete operation while holding the source-plain PageMap
     /// entry exclusion boundary.
     ///
@@ -680,6 +750,46 @@ mod tests {
         lease
             .begin_page_lifecycle()
             .expect("a completed post-exit route leaves the map reusable")
+            .finish()
+            .expect("the final empty lifecycle releases normally");
+    }
+
+    #[test]
+    fn post_exit_access_can_transfer_to_one_new_long_page_lifecycle() {
+        let storage = ProcessPageMapStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let lease = storage.initialize(memory_config(), subprocess).unwrap();
+        let lifecycle = lease
+            .begin_page_lifecycle()
+            .expect("the exiting engine initially owns every plain map entry");
+        // SAFETY: this isolated fixture models the consuming route handoff;
+        // no registered page exists, so the follow-on long lifecycle owns the
+        // complete empty map boundary.
+        let access = unsafe { lifecycle.into_post_exit_access() }
+            .expect("the old engine transfers into its process-lived route");
+        let reclaimed = match unsafe { access.into_mutation_lease() } {
+            Ok(lifecycle) => lifecycle,
+            Err((_access, error)) => {
+                panic!("the explicit route reclaims its one long lifecycle: {error:?}")
+            }
+        };
+        assert!(matches!(
+            lease.begin_page_lifecycle(),
+            Err(ProcessPageMapError::LifecycleBusy)
+        ));
+        assert_eq!(
+            reclaimed
+                .page_map()
+                .expect("the reclaimed lifecycle retains the final map")
+                .memory_config(),
+            memory_config()
+        );
+        reclaimed
+            .finish()
+            .expect("the empty adopted engine releases the long lifecycle");
+        lease
+            .begin_page_lifecycle()
+            .expect("the completed adopted lifecycle leaves the map reusable")
             .finish()
             .expect("the final empty lifecycle releases normally");
     }

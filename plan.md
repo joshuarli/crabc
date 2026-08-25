@@ -1,6 +1,6 @@
 The crucial framing is: **do not design a new allocator**. Produce a provenance-preserving, semantically faithful Rust port of a fixed upstream mimalloc v3 release, then optimize only where measurement shows the Rust translation diverges. The objective is to remove the C allocator from the production dependency graph while retaining mimalloc’s design, behavior, and performance—not to create “mimalloc-inspired” machinery.
 
-## Handoff — 2026-08-24
+## Handoff — 2026-08-25
 
 The current checkpoint completes the dependency/crypto boundary, dynamic
 Theap-to-page-engine binding, private dynamic arena-pages ownership, and two
@@ -165,8 +165,21 @@ actually tears down the former Theap/TLD. The resulting
 linear `ProcessPageMapPostExitAccess`. Each client free re-acquires the same
 map lock briefly: a nonempty result keeps PageMap registration and the paired
 bitmap/count, while the final free clears them before PageMap -> `pages_main`
--> metadata -> slice release. The route is movable to one client-free thread,
-but is not concurrent routing, allocation-time claim, reclaim, or requeue.
+-> metadata -> slice release. The route is movable to one client-free thread.
+One explicit consuming allocation-time edge is now complete for its sole
+mapped nonfull medium form:
+`MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
+requires an exact matching fresh later-main attachment/process pair (same
+subprocess, frozen configuration, stable PageMap root, static main Heap, and
+arena) and re-proves the source span and page identity. It transfers the short
+`ProcessPageMapPostExitAccess` into one long mutation lease, claims the exact
+bitmap/count member, collects abandoned state, reassociates the page with the
+fresh Theap/thread, collects live state, and restores source queue-tail order.
+The initial branch requires an immediate free-list head. A bitmap miss,
+extension/reabandon condition, or post-transfer failure retains the target
+terminally and never takes a fresh-page fallback. Small/direct, full,
+singleton, unmapped, huge, foreign, aggregate-registry, automatic-scanning,
+and concurrent adoption remain deliberately absent.
 
 The bounded aggregate extension,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`,
@@ -237,14 +250,14 @@ coordinator.
 General producer routing, concurrent/general shared/later-thread page-bearing
 ownership, full/singleton/unmapped/huge owner-exit pages and behavior beyond
 the bounded sole full-medium/full-large/full-non-direct-small/full-direct-small routes, sole
-small-or-medium route, and
-aggregate regular-pages registry, terminal reuse, automatic
-and multiple dynamic arenas, complete process options/TLS/shutdown,
-pthread/TLS teardown hooks, fork repair, public libc backend integration,
-performance qualification, and default promotion remain unfinished. The next
-safe lifecycle frontier is another source-shaped owner-exit page class or the
-allocation-time policy needed to reclaim an existing registry member—not a
-superficial broad abandonment loop.
+small-or-medium route (apart from its exact mapped-medium consuming handoff),
+and aggregate regular-pages registry, terminal reuse, automatic and multiple
+dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
+hooks, fork repair, public libc backend integration, performance qualification,
+and default promotion remain unfinished. The next safe lifecycle frontier is
+another source-shaped owner-exit page class, the exact route's
+extension/reabandon branch, or a separately proven aggregate-registry policy—
+not a superficial broad abandonment loop or generic allocation-time scan.
 
 A fresh pinned-source audit makes that prerequisite concrete: after its absent
 deferred-callback edge, `mi_theap_collect_ex(MI_ABANDON)` first calls
@@ -255,27 +268,31 @@ false-collects, detaches the page, and delegates mapped publication/count
 pairing or unmapped abandonment to `src/arena.c:1304-1409`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
-are empty; an unfinished lease poisons that map owner. The post-exit transfer
-now has six narrow forms: the full-medium route, full-large route, full
-non-direct-small route, full-direct-small route, sole small-or-medium route, and aggregate regular-pages
-registry convert the long
-mutation lease into a short locked free owner,
-retain stable span/arena/Heap facts rather than the old Theap/TLD, and prove
-bitmap/count pairing through actual teardown and sequential later frees. The
-aggregate registry intentionally stops at nonfull regular small, medium, and
-large pages. Do not extend it to another page shape without its source-specific
-publication, terminal-release, allocation-time claim/reclaim, and concurrency
-evidence.
+are empty; an unfinished lease poisons that map owner. The post-exit
+client-free transfer has six narrow forms: the full-medium route, full-large
+route, full non-direct-small route, full direct-small route, sole
+small-or-medium route, and aggregate regular-pages registry. Each converts the
+long mutation lease into a short locked free owner, retains stable
+span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
+pairing through actual teardown and sequential later frees. The sole
+mapped-medium route also has the separately
+completed explicit inverse bridge into one fresh later-main mutation lease; it
+is not a generic allocation policy. The aggregate registry intentionally stops
+at nonfull regular small, medium, and large pages and has no adoption
+capability. Do not extend either boundary to another page shape without its
+source-specific publication, terminal-release, allocation-time claim/reclaim,
+and concurrency evidence.
 
 Checkpoint evidence is green: the focused
 `dynamic_theap::tests::dynamic_thread_exit_singleton_remote_free_clears_tls_then_releases_its_arena_page`,
 `dynamic_thread_exit_force_collects_a_retired_regular_page_after_tls_clear`,
 and the raw false/force-local-list order/cycle regressions in `free_list::tests`,
 the no-page shared-main regressions in `main_heap_thread::tests`, the
-process-map commit/once/lifecycle regressions in `process_page_map::tests`, the
+process-map commit/once/lifecycle regressions in `process_page_map::tests`
+(including `post_exit_access_can_transfer_to_one_new_long_page_lifecycle`), the
 root-pairing regressions in `process_arena::tests`, the five bounded
-static-main page-owner regressions in `main_static_page::tests`, the thirty-two
-bounded later-main page-owner regressions in `main_heap_page::tests` (including
+static-main page-owner regressions in `main_static_page::tests`, the bounded
+later-main page-owner regressions in `main_heap_page::tests` (including
 the joined remote-full all-free exit drain, its later-queue collection behind a
 retained live page, the retained-live-page boundary, the sole-full-singleton
 final-free/reject-before-detach regressions, the sole-medium
@@ -288,8 +305,9 @@ route's exact rounded cache preflight/clear boundary, partial-head-lag
 threshold transition, terminal release, and stale-cache refusal, the
 post-exit regular route's medium, threshold-adjacent non-direct small, upper direct and
 non-direct small boundaries, direct-image preflight refusal, full-small
-pre-detach refusal, one-page-refusal, and cross-thread movement
-regressions, and the aggregate regular-pages registry's mixed small/medium/large
+pre-detach refusal, one-page-refusal, and cross-thread movement regressions;
+the sole mapped-medium route's explicit fresh-owner adoption and direct-small
+pre-transfer refusal regressions; and the aggregate regular-pages registry's mixed small/medium/large
 release, retired-large prepass, malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
 selection, large-span terminal release,
@@ -306,14 +324,15 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 81 items and 85
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 82 items and 86
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
 all-free scan/seven sole-page handoffs/aggregate regular-pages registry, or either
 bounded process page owner. The next frontier is another page-bearing
-owner-exit class or registry adoption policy, then complete process and real
-pthread/TLS lifecycle integration—not routing that general policy through either
-bounded singleton or mapped-one-block handoff, the no-page finish, or these
+owner-exit class, the exact medium handoff's source extension/reabandon branch,
+or a separately proven aggregate-registry policy, then complete process and real
+pthread/TLS lifecycle integration—not a generic allocation-time scan routed
+through a bounded singleton, mapped-one-block handoff, no-page finish, or these
 sequential ticket-zero/later page-owner slices.
 
 The current upstream baseline should be **mimalloc v3.5.0**, released August 19, 2026, at tag commit `18b08671c9302247bfb682286e6bf3cc1773f801`. Upstream marks v3 as its recommended current design. Pin that exact commit and archive hash; never track `main`. ([GitHub][1])

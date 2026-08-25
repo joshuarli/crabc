@@ -76,7 +76,9 @@ their mostly-used free boundary then reabandon to the static-main bitmap, and a 
 small-or-medium page whose process-owned route survives old-Theap/TLD teardown);
 and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
-through sequential client frees.
+through sequential client frees. A fresh later-main owner can explicitly
+reclaim only the sole mapped nonfull medium route; small/direct and aggregate
+members remain sequential client-free-only.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
@@ -199,7 +201,15 @@ that pairing until the same terminal release. The full-large route validates
 its complete 64-slice span before release. The sole nonfull small-or-medium
 process route preserves the same
 mapped publication, tears down the old Theap/TLD, and routes its linear client
-frees through short PageMap access. A direct small member must prove the exact
+frees through short PageMap access. Its sole mapped medium member may instead
+be explicitly consumed by a fresh later-main owner after exact
+subprocess/configuration/PageMap-root/static-main-Heap/arena/page-identity
+preflight: the short map access becomes one long lifecycle, the matching
+bitmap/count member is claimed, source abandoned/live collection and Theap
+reassociation run, and the page returns at the target queue tail. The first
+slice requires an immediate free-list head; a miss or post-transfer failure
+retains the target rather than taking a fresh allocation fallback. Small/direct
+members remain client-free-only. A direct small member must prove the exact
 rounded source direct-cache range before collection; queue removal clears that
 range before page-count detach. The route retains the source `reserved >= 16`
 small partial-collection invariant and excludes full small pages through its
@@ -226,8 +236,8 @@ PageMap -> `pages_main` -> metadata -> slice release on empty. The current
 small, medium, and large cases therefore prove their one-, 8-, and 64-slice
 releases. If retirement/force collection empties every page, it returns the
 ordinary drain. Fresh engines may serialize independent PageMap operations
-between client frees, but no current path can adopt, reclaim, or requeue a
-registered route page. Full/singleton/unmapped/huge/foreign pages, malformed
+between client frees, but no current path can adopt, reclaim, or requeue an
+aggregate registry member. Full/singleton/unmapped/huge/foreign pages, malformed
 direct-cache images, concurrent client routes, deferred callbacks, arena
 collection, and retry/reuse
 as a normal allocator remain outside this owner. Only an empty drain permits
@@ -360,7 +370,8 @@ Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
 full-medium/full-large/full-non-direct-small routes, sole small-or-medium
 route, and regular-pages aggregate, allocation-time
-claim/reclaim/requeue after later-thread exit, general dynamic heap/Theap
+claim/reclaim/requeue after later-thread exit beyond the exact sole mapped
+medium handoff, general dynamic heap/Theap
 attachment and remote-free routing, complete concurrency modeling and stress,
 libc integration, the remaining upstream suites, and performance promotion
 gates remain open.

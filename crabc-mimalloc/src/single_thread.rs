@@ -25,7 +25,7 @@
 // full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
 // `src/page-queue.c:64-121,126-423` (size-bin/direct-cache selection and
-// queue mutations), `src/arena.c:674-723,950-1283` (heap-local arena-pages
+// queue mutations), `src/arena.c:631-778,950-1283` (heap-local arena-pages
 // selection, fresh regular/singleton metadata, arena-page registration,
 // page-map publication, and release ordering), and
 // `include/mimalloc/internal.h:650-654,945-949`
@@ -65,8 +65,11 @@
 // regular small, medium, or large arena page when no other page shape remains,
 // releases pages
 // made empty by force collection, and registers surviving mapped pages without
-// retaining a raw former-Theap page list. None of these process routes reclaims
-// or requeues a live page.
+// retaining a raw former-Theap page list. One explicit consumer can reclaim
+// only the sole mapped nonfull medium route into a fresh later-main Theap;
+// it claims the exact page identity and appends it to the source queue tail.
+// Small/direct, full, aggregate, and all automatic allocation-time routes
+// remain absent.
 // A bounded false-force collector runs in
 // the source regular candidate scan and in the non-abandoning full-page pass.
 // `RemoteFreeProducer` is one private linear, scoped route to create that
@@ -437,11 +440,13 @@ pub(crate) struct ThreadExitMappedOneBlockHandoff<'arena, 'map, Session: TheapPa
 /// from its departing later Theap but before that Theap/TLD is torn down.
 ///
 /// Unlike [`ThreadExitMappedOneBlockHandoff`], this intentionally carries no
-/// engine and no page pointer. Its sole role is to bridge one exactly
+/// engine or departed-Theap pointer. Its sole role is to bridge one exactly
 /// queue-detached, mapped-abandoned small-or-medium page into a process-owned
-/// route.
-/// The final route re-resolves the page under a short PageMap guard for every
-/// client free, so it cannot retain a Rust borrow of the departed Theap.
+/// route. `page` is a non-dereferencing stable identity witness: a later
+/// consuming adoption uses it only to reject a foreign PageMap entry before
+/// it claims the page's low owner bit. The normal client-free route still
+/// re-resolves the page under a short PageMap guard and never projects the
+/// former Theap.
 #[must_use = "a detached mapped regular page must become a process route or remain terminally retained"]
 pub(crate) struct ThreadExitMappedRegularPostExitDetach<'attachment, 'main, 'arena> {
     session: MainHeapThreadPageDrainSession<'attachment, 'main>,
@@ -454,10 +459,12 @@ pub(crate) struct ThreadExitMappedRegularPostExitDetach<'attachment, 'main, 'are
 pub(crate) struct ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     arena: ArenaView<'arena>,
     main_heap: MainStaticHeapLease<'main>,
+    page: NonNull<Page>,
     memory: MemoryId,
     slice_start: *mut u8,
     size: usize,
     bin: usize,
+    kind: PageKind,
 }
 
 /// A post-detach failure while tearing down the old later Theap/TLD. The
@@ -798,6 +805,37 @@ pub(crate) enum ThreadExitMappedRegularPostExitFreeError {
     ConcurrentOwner,
     Abandon(AbandonError),
     Release,
+}
+
+/// The bounded outcome while one explicit post-exit mapped regular route is
+/// handed to a fresh later-main page owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadExitMappedRegularPostExitAdoptOutcome {
+    /// No exact bitmap member was claimable. The caller retains its consuming
+    /// target owner rather than silently taking a fresh-page fallback.
+    Pending,
+    /// The exact source page was reassociated and appended to the target
+    /// regular queue's tail.
+    Reclaimed,
+}
+
+/// A post-exit mapped regular adoption boundary that could not produce a
+/// normal target engine. After entering this source operation, every error is
+/// retained by the caller's consuming target owner; it must not retry through
+/// an unrelated allocation path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadExitMappedRegularPostExitAdoptError {
+    SourceNotMedium,
+    TargetArenaMismatch,
+    TargetMainHeapMismatch,
+    InvalidSpan,
+    MissingMainArenaPages,
+    MissingTargetThread,
+    Claimed(RetainedAdoptFailure),
+    ReclaimedPageMismatch,
+    ReclaimedPageState,
+    NeedsExtension,
+    Queue,
 }
 
 /// A source-boundary refusal while one later-main post-fast-slot drain moves
@@ -2143,10 +2181,13 @@ impl<'attachment, 'main, 'arena, 'map>
             parts: ThreadExitMappedRegularPostExitParts {
                 arena,
                 main_heap,
+                page,
                 memory,
                 slice_start,
                 size,
                 bin,
+                kind: after_collect_kind
+                    .expect("the mapped regular post-exit shape has a page kind"),
             },
         })
     }
@@ -4231,6 +4272,195 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
 }
 
 impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
+    /// Whether this exact source route has the one medium-page shape whose
+    /// allocation-time reclaim tail is completed in this slice. Small pages
+    /// remain client-free-only routes until their direct-cache contract has a
+    /// separate adoption proof.
+    #[inline]
+    pub(crate) fn supports_later_main_adoption(&self) -> bool {
+        self.kind == PageKind::Medium
+    }
+
+    /// Returns the static-main subprocess selected by the source route's
+    /// paired Heap witness. A target attachment and process map/arena pair
+    /// must match it before this route transfers its PageMap access.
+    #[inline]
+    pub(crate) const fn main_heap_subprocess(&self) -> &'static MainSubprocess {
+        self.main_heap.subprocess()
+    }
+
+    /// Returns whether a proposed target arena names the exact source arena.
+    /// This is a pointer-identity check only; source page state stays
+    /// untouched until the later low-owner claim.
+    #[inline]
+    pub(crate) fn matches_arena(&self, arena: &ArenaView<'_>) -> bool {
+        core::ptr::eq(self.arena.arena(), arena.arena())
+    }
+
+    /// Reclaims this one exact mapped-abandoned medium route into a fresh
+    /// later-main engine, then appends it to the target regular queue tail.
+    ///
+    /// The caller must already have consumed this route's short PageMap
+    /// access into the target engine's long mutation lease. No generic page
+    /// search is permitted: the bitmap resolver accepts only `self.page` at
+    /// this route's exact source slice. A miss remains explicit so the outer
+    /// handoff can retain its target engine instead of fabricating a fresh
+    /// allocation fallback.
+    ///
+    /// # Safety
+    ///
+    /// `target` must own the exact process PageMap lifecycle that previously
+    /// belonged to this route, plus a fresh current-thread later-main
+    /// attachment paired with this route's arena and static main Heap. The
+    /// caller must retain the complete target engine on every error: after a
+    /// successful low-owner claim, source bitmap/count/association state can
+    /// no longer be retried through a second route.
+    pub(crate) unsafe fn adopt_into_later_main<'attachment, 'map>(
+        &self,
+        target: &mut PageAllocatorEngine<
+            'arena,
+            'map,
+            MainHeapThreadPageSession<'attachment, 'main>,
+        >,
+    ) -> Result<
+        ThreadExitMappedRegularPostExitAdoptOutcome,
+        ThreadExitMappedRegularPostExitAdoptError,
+    > {
+        if !self.supports_later_main_adoption() {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::SourceNotMedium);
+        }
+        if !self.matches_arena(&target.arena) {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::TargetArenaMismatch);
+        }
+        if !core::ptr::eq(
+            self.main_heap_subprocess().as_ptr(),
+            target.session.main_heap_lease().subprocess().as_ptr(),
+        ) {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::TargetMainHeapMismatch);
+        }
+        let Some(expected_memory) = self.memory.arena_memory() else {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidSpan);
+        };
+        if expected_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidSpan);
+        }
+        let expected_slice = expected_memory.slice_index as usize;
+        let Some(expected_size) = (expected_memory.slice_count as usize)
+            .checked_mul(ARENA_SLICE_SIZE)
+        else {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidSpan);
+        };
+        if self.size != expected_size
+            || self.arena.slice_start(expected_slice) != Some(self.slice_start)
+        {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidSpan);
+        }
+        let target_theap = NonNull::from(target.session.theap());
+        let Some(target_thread) = target.session.thread_id() else {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::MissingTargetThread);
+        };
+        let target_thread_sequence = target.thread_sequence;
+        let result = {
+            let Some(map) = target.main_heap_abandoned_page(self.bin) else {
+                return Err(ThreadExitMappedRegularPostExitAdoptError::MissingMainArenaPages);
+            };
+            let target_arena = &target.arena;
+            let page_map = target.page_map;
+            let expected_page = self.page;
+            // SAFETY: the outer consuming route owns the complete long map
+            // lease, `map` binds the target static-main bitmap/count pair,
+            // and the resolver compares only raw identities before the raw
+            // helper claims the abandoned low owner bit.
+            unsafe {
+                abandoned::try_adopt_retained(
+                    &map,
+                    target_thread_sequence,
+                    target_theap,
+                    target_thread,
+                    |slice_index| {
+                        if slice_index != expected_slice
+                            || target_arena.slice_start(slice_index) != Some(self.slice_start)
+                        {
+                            return None;
+                        }
+                        let resolved = NonNull::new(page_map.checked_lookup(self.slice_start))?;
+                        (resolved == expected_page).then_some(resolved)
+                    },
+                )
+            }
+        };
+        let page = match result {
+            Ok(Some(adopted)) if adopted.page() == self.page => adopted.page(),
+            Ok(Some(_)) => {
+                return Err(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageMismatch);
+            }
+            Ok(None) => return Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Pending),
+            Err(error) => {
+                return Err(ThreadExitMappedRegularPostExitAdoptError::Claimed(error));
+            }
+        };
+
+        // The low-owner claim permits ordinary-state inspection. Reuse the
+        // engine's complete source release-span proof before queue ownership
+        // is restored, then require this route's exact old span rather than
+        // trusting only the bitmap's leading slice.
+        let span = target
+            .release_span(page.as_ptr())
+            .ok_or(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageState)?;
+        let ReleaseSpan::Arena {
+            memory,
+            slice_start,
+            size,
+        } = span
+        else {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageState);
+        };
+        let Some(actual_memory) = memory.arena_memory() else {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageState);
+        };
+        if actual_memory.arena != expected_memory.arena
+            || actual_memory.slice_index != expected_memory.slice_index
+            || actual_memory.slice_count != expected_memory.slice_count
+            || slice_start != self.slice_start
+            || size != self.size
+        {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageMismatch);
+        }
+        // SAFETY: the successful low-owner claim and source reassociation
+        // make this exact page exclusively target-owned until the queue tail
+        // below publishes it to the normal target engine.
+        let page_ref = unsafe { page.as_ref() };
+        if !target.owns_page(page_ref)
+            || page_ref.heap() != target.session.theap().heap()
+            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(PageKind::Medium)
+            || size_class::bin(page_ref.block_size()) != Some(self.bin)
+            || page_ref.reserved() <= 1
+            || page_ref.used() == 0
+            || page_ref.used() >= usize::from(page_ref.reserved())
+            || page_is_in_full(page_ref)
+            || !page_ref.is_queue_detached()
+        {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageState);
+        }
+        // `_mi_theap_page_reclaim` returns the page to allocation only after
+        // its collector. This narrow route deliberately requires an immediate
+        // free-list head; source's later extension/reabandon branch remains a
+        // separately retained frontier rather than a fabricated fresh page.
+        if page_ref.free_list_head().is_null() {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::NeedsExtension);
+        }
+        let Some(queue) = target.session.queue_mut(self.bin) else {
+            return Err(ThreadExitMappedRegularPostExitAdoptError::Queue);
+        };
+        // SAFETY: source reassociation completed above, the page is detached,
+        // and the fresh target session owns this complete regular queue.
+        // Preserve `src/page.c:_mi_theap_page_reclaim`'s tail insertion order.
+        unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
+        target.session.note_page_added();
+        target.update_direct_cache(self.bin);
+        Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reclaimed)
+    }
+
     /// Performs the source mapped abandoned-page free tail under one complete
     /// process PageMap operation.
     ///

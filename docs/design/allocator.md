@@ -392,6 +392,28 @@ remains outside this nonfull sole route, checked by `used < reserved` because
 it can remain in a regular queue; the fifth and sixth handoffs own the
 non-direct and direct full-small counterparts.
 
+One deliberately consuming allocation-time edge is now complete for this
+sole route only. `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
+accepts an exact `PageKind::Medium` route and a fresh
+`MainHeapThreadAttachment` only after the subprocess, frozen configuration,
+stable PageMap root, static main Heap, and selected arena all match. It turns
+the route's `ProcessPageMapPostExitAccess` back into a
+`ProcessPageMapMutationLease`, so the new engine owns one continuous
+source-plain map lifecycle. `ThreadExitMappedRegularPostExitParts` keeps a
+non-dereferencing page identity solely to reject a foreign PageMap entry before
+the source low-owner claim. The handoff then follows
+`src/arena.c:631-778,951-1153` and `src/page.c:245-302`: it claims the exact
+static-main bitmap member and paired count, collects while abandoned,
+reassociates the page with the new Theap/thread identity, collects live state,
+re-proves the complete PageMap span and medium geometry, and appends the
+queue-detached page with `page_queue_push_at_end_metadata` at the target queue
+tail before restoring its page count/direct-cache image. This initial slice
+requires an immediate free-list head; a source extension/reabandon condition
+is retained terminally rather than guessed. A bitmap miss or any post-transfer
+failure likewise retains the target owner: there is no fresh-page fallback.
+Small/direct, full, aggregate-registry, singleton, unmapped, huge, foreign,
+automatic-scanning, and concurrent adoption remain deliberately unsupported.
+
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.
 Its complete non-mutating structural preflight requires every direct slot to
@@ -424,7 +446,9 @@ large spans remain distinct source shapes. A retired/force-empty traversal retur
 ordinary drain instead of creating an empty registry. Fresh engines may serialize
 independent PageMap operations between frees, but the current engine surface
 exposes no allocation-time adoption, reclaim, or requeue capability for a
-registered aggregate member.
+registered aggregate member. Apart from the explicit sole-medium handoff
+above, it exposes no allocation-time claim, reclaim, or requeue for a
+post-exit route.
 
 Other live-page states are rejected before aggregate detach: full, singleton,
 huge, unmapped, foreign, malformed, or non-source-derived direct-cache state
@@ -433,10 +457,10 @@ An empty drain may call `MainHeapThreadAttachment::finish_after_page_drain`;
 the detached routes instead use their narrowly typed finish once the old Theap
 image is empty. Any force/release failure is retained terminally; the drain
 cannot allocate, run source deferred callbacks/arena collection, or resume as
-a normal engine. This remains deliberately bounded: it is not allocation-time
-claiming, reclaim/requeue, concurrent later-thread routing, general page
-traversal/abandonment or owner exit, a `pthread` hook, or public allocator
-routing.
+a normal engine. This remains deliberately bounded: apart from the explicit
+sole-medium handoff above, it is not allocation-time claiming, reclaim/requeue,
+concurrent later-thread routing, general page traversal/abandonment or owner
+exit, a `pthread` hook, or public allocator routing.
 
 `main_static_page.rs` is the corresponding ticket-zero owner of that separately
 initialized process pair. Its `MainStaticProcessPageAllocator` accepts only a

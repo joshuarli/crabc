@@ -368,20 +368,25 @@ result may refine it only when it can prove retained ownership.
   `src/theap.c:89-152`; force `_mi_page_free_collect` in
   `src/page.c:214-243`; sole-singleton `_mi_page_abandon` in
   `src/page.c:245-302`; failed-reclaim final free in `src/free.c:372-514`;
-  main-heap `pages_main` selection in
-  `src/arena.c:674-723`; fresh arena-page publication in
-  `src/arena.c:781-821,951-1114`; and all-free release in
+  main-heap `pages_main` selection and abandoned-page claim in
+  `src/arena.c:631-778`; fresh arena-page publication in
+  `src/arena.c:781-821,951-1153`; queue-tail insertion in
+  `src/page-queue.c:204-330`; and all-free release in
   `src/arena.c:1240-1282`; represented by
   `main_heap_page::MainHeapThreadProcessPageAllocator`,
   `main_heap_page::MainHeapThreadProcessPageExitDrain`,
   `main_heap_page::MainHeapThreadProcessPageExitSingletonHandoff`,
   `main_heap_page::MainHeapThreadProcessPageExitMappedOneBlockHandoff`,
   `main_heap_page::MainHeapThreadProcessPageExitMappedRegularRoute`,
+  `MainHeapThreadProcessPageExitMappedRegularAdoption`, and its typed
+  adoption failure,
   `main_heap_thread::{MainHeapThreadPageSession, MainHeapThreadPageDrainSession}`,
   `single_thread::{ThreadExitSingletonHandoff, ThreadExitMappedOneBlockHandoff,
-  ThreadExitMappedRegularPostExitParts}`,
+  ThreadExitMappedRegularPostExitParts, ThreadExitMappedRegularPostExitAdoptOutcome,
+  ThreadExitMappedRegularPostExitAdoptError}`,
   `process_arena::ProcessPageArenaLease`, and
-  `process_page_map::{ProcessPageMapMutationLease, ProcessPageMapPostExitAccess}`.
+  `process_page_map::{ProcessPageMapMutationLease, ProcessPageMapPostExitAccess,
+  ProcessPageMapPostExitAccess::into_mutation_lease}`.
 - **Category:** crate-private, one sequential later-thread page owner only. It
   has no C ABI surface or valid allocation-trace differential entry.
 - **Difference:** C permits normal concurrent page-map consumers and later
@@ -448,6 +453,22 @@ result may refine it only when it can prove retained ownership.
   `used < reserved` guard; the distinct fifth and sixth handoffs above own the
   source non-direct and direct full-small shapes.
 
+  One explicit consuming allocation-time edge is complete for the sole route
+  only: `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
+  accepts exactly its mapped nonfull medium page. Before it consumes the short
+  route, the target proves the source subprocess, frozen configuration,
+  PageMap-root identity, static main Heap, selected arena, complete span, and
+  PageMap page identity. It turns `ProcessPageMapPostExitAccess` into the one
+  long `ProcessPageMapMutationLease`, claims the exact bitmap/count member,
+  collects abandoned state, reassociates the page with the fresh Theap/thread,
+  collects live state, re-proves the complete span, and appends the detached
+  page at the target queue tail. This initial source-shaped branch requires an
+  immediate free-list head. A bitmap miss, extension/reabandon condition, or
+  any post-transfer failure retains the target terminally; it never falls back
+  to fresh allocation. Small/direct, full, singleton, unmapped, huge, foreign,
+  automatic-scanning, concurrent, and aggregate-registry adoption remain
+  absent.
+
   `abandon_mapped_regular_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
   structural preflight rejects before mutation unless every direct slot is
@@ -473,7 +494,7 @@ result may refine it only when it can prove retained ownership.
   A retired/force-empty traversal returns the ordinary drain. Fresh engines may
   serialize independent map
   operations between frees, but no current engine receives an adoption,
-  reclaim, or requeue capability for a registered route page. Other
+  reclaim, or requeue capability for an aggregate registry member. Other
   full/singleton/unmapped/huge/foreign pages, malformed direct-cache images, concurrent
   client-free routes, source deferred
   callbacks, arena collection, statistics merge, and retry/reuse as a normal
@@ -548,6 +569,17 @@ result may refine it only when it can prove retained ownership.
   `later_thread_exit_mapped_regular_route_can_move_to_the_client_free_thread`
   proves the linear route can cross to its later client-free thread without
   retaining the departed Theap/TLD; and
+  `later_thread_exit_mapped_medium_route_adopts_into_a_fresh_later_owner`
+  proves one sole mapped nonfull medium page keeps its exact PageMap identity
+  and static-main bitmap/count pairing through short-to-long lifecycle
+  transfer, abandoned/live collection, reassociation, queue-tail reentry, and
+  final normal target release.
+  `later_thread_exit_mapped_regular_route_rejects_direct_small_allocation_adoption`
+  proves a small/direct route is rejected before the map/session transfer and
+  remains available for its normal client-free tail.
+  `process_page_map::tests::post_exit_access_can_transfer_to_one_new_long_page_lifecycle`
+  proves the short post-exit capability cannot coexist with a second long
+  lifecycle and leaves the root reusable only after that long lease finishes.
   `later_thread_exit_mapped_regular_pages_route_tears_down_and_releases_mixed_pages`
   proves one aggregate registry keeps mixed direct-small, medium, and large
   PageMap/bitmap/count memberships paired across still-live frees, one-page

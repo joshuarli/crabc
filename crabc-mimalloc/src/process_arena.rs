@@ -465,6 +465,17 @@ impl ProcessPageArenaLease {
         self.arena.arena().map_err(ProcessPageArenaLeaseError::Arena)
     }
 
+    /// Returns the paired PageMap's stable root identity without borrowing
+    /// any source-plain entry. A consuming post-exit handoff uses this only
+    /// to reject a different test/process map before it transfers its short
+    /// route into a long mutation lease.
+    #[inline]
+    pub(crate) fn page_map_root(
+        self,
+    ) -> Result<NonNull<crate::page_map::PageMapHeader>, ProcessPageArenaLeaseError> {
+        self.page_map.root().map_err(ProcessPageArenaLeaseError::PageMap)
+    }
+
     #[inline]
     pub(crate) fn memory_config(self) -> Result<MemoryConfig, ProcessPageArenaLeaseError> {
         self.page_map
