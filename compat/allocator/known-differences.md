@@ -851,6 +851,17 @@ aggregate-registry adoption remain absent.
   complete 64-slice arena release. It rejects non-large before collection and
   adds no full medium/small, multiple-page, reclaim, adoption, requeue,
   scanning, or general dynamic owner-exit traversal capability.
+  `DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped`
+  separately ports the exact source full-large branch with one already joined
+  remote free: force collection keeps the sole `BIN_FULL` member linked and
+  marked full while changing it to `used == reserved - 1`; false collection
+  preserves that geometry; full-queue/page-count detach clears its full flag;
+  and mapped abandonment immediately publishes the exact dynamic bitmap/count
+  pair. Its `DynamicThreadExitFullLargeHandoff` begins mapped and permits only
+  sequential failed-reclaim client frees, which clear that pair before the
+  complete 64-slice release. Multiple frees, normal full-page unmapped
+  abandonment, other classes, reclaim, adoption, requeue, scanning, and
+  general dynamic owner-exit traversal remain absent.
   `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
   sequential dynamic owner-exit endpoint for the drain's sole full
   `MemoryKind::Arena` small page in its ordinary bin. It requires
@@ -981,6 +992,13 @@ aggregate-registry adoption remain absent.
   prove the full-large `BIN_FULL` preflight, normal unmapped-to-mapped
   mostly-used threshold, complete 64-slice terminal release, wholly pre-detach
   class refusal, and retained collection failure.
+  `dynamic_thread_exit_full_large_one_remote_force_collects_to_mapped_handoff_then_releases`,
+  `dynamic_thread_exit_full_large_one_remote_force_collect_route_rejects_full_medium_before_detach`,
+  and `dynamic_thread_exit_full_large_one_remote_force_collect_route_retains_collection_failure`
+  prove the distinct exact-one-joined-remote branch: force collection changes
+  the still-linked full-large member to `used == reserved - 1`, mapped
+  abandonment retains all 64 PageMap slices, full-medium rejects before
+  mutation, and injected collection failure retains the post-TLS drain.
   `dynamic_thread_exit_full_non_direct_small_handoff_reabandons_after_mostly_used_frees_then_releases`,
   `dynamic_thread_exit_full_non_direct_small_handoff_rejects_before_detach_when_another_page_is_live`,
   `dynamic_thread_exit_full_non_direct_small_handoff_rejects_direct_small_before_detach`,

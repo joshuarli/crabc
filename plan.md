@@ -94,6 +94,18 @@ metadata -> complete 64-slice arena release. It cannot reclaim, adopt,
 requeue, scan, or cover full medium/non-direct-small/direct-small, multi-page,
 or general dynamic thread-exit state.
 
+`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped`
+now captures the separate dynamic full-large source branch with exactly one
+joined remote free. Force collection changes the still-linked, still-full sole
+`BIN_FULL` member to `used == reserved - 1`; false collection preserves it;
+full-queue/page-count detachment clears the full flag; then mapped abandonment
+immediately publishes the exact heap-local bitmap/count pair. The returned
+`DynamicThreadExitFullLargeHandoff` starts mapped and accepts only sequential
+failed-reclaim client frees, clearing the pair before the complete 64-slice
+release. This does not broaden the normal unmapped full-large endpoint to
+multiple frees, other page classes, reclaim, adoption, requeue, scanning, or a
+general dynamic owner-exit traversal.
+
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, disjoint
 dynamic owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena`
 small page in its ordinary regular bin, with
@@ -415,6 +427,9 @@ and `dynamic_thread_exit_full_medium_handoff_retains_collection_failure`,
 `dynamic_thread_exit_full_large_handoff_reabandons_after_mostly_used_frees_then_releases`,
 `dynamic_thread_exit_full_large_handoff_rejects_a_full_medium_before_detach`,
 and `dynamic_thread_exit_full_large_handoff_retains_collection_failure`,
+`dynamic_thread_exit_full_large_one_remote_force_collects_to_mapped_handoff_then_releases`,
+`dynamic_thread_exit_full_large_one_remote_force_collect_route_rejects_full_medium_before_detach`,
+and `dynamic_thread_exit_full_large_one_remote_force_collect_route_retains_collection_failure`,
 `dynamic_thread_exit_full_non_direct_small_handoff_reabandons_after_mostly_used_frees_then_releases`,
 `dynamic_thread_exit_full_non_direct_small_handoff_rejects_before_detach_when_another_page_is_live`,
 `dynamic_thread_exit_full_non_direct_small_handoff_rejects_direct_small_before_detach`,
@@ -489,7 +504,7 @@ and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/allocator/ratchet-v3.5.0.json` snapshot with 96 items and 100
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-large/full-non-direct-small/full-direct-small or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+full-medium/full-large/full-large-one-remote-mapped/full-non-direct-small/full-direct-small or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
 The next frontier is another page-bearing owner-exit class or a separately

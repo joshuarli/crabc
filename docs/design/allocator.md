@@ -635,6 +635,18 @@ mapped tail clears that pair before PageMap -> dynamic ordinary bit -> metadata
 -> complete 64-slice arena release. It is not a reclaim, adoption, requeue,
 scan, full-small/full-medium, multi-page, or general traversal route.
 
+`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped` is
+the separate source branch for that same sole full large `BIN_FULL` member when
+exactly one joined remote free exists before owner exit. Force collection must
+leave it linked and marked full with `used == reserved - 1`; false collection
+preserves that one-free geometry; full-queue/page-count detach clears its full
+flag; then mapped abandonment immediately publishes the matching dynamic
+bitmap/count pair. The returned `DynamicThreadExitFullLargeHandoff` begins in
+its mapped state and permits only sequential failed-reclaim client frees, which
+clear that pair before the same complete 64-slice release. It does not widen
+the normal unmapped full-large route to additional frees, other classes,
+reclaim, adoption, requeue, scans, or general dynamic owner-exit traversal.
+
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
 source-unmapped dynamic handoff. It accepts only the drain's sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with

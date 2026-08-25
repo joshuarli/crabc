@@ -392,6 +392,18 @@ arena release. This one route neither reclaims, adopts, requeues, scans, nor
 covers full medium/non-direct-small/direct-small, multi-page, or general
 dynamic owner exit.
 
+`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped`
+separately preserves the source full-large branch with exactly one joined
+remote free. The sole `BIN_FULL` page starts with `used == reserved`; force
+collection consumes that free but leaves the member linked and marked full with
+`used == reserved - 1`; false collection preserves it; full-queue/page-count
+detach clears the full flag; and mapped abandonment immediately publishes its
+dynamic bitmap/count pair. The returned `DynamicThreadExitFullLargeHandoff`
+starts mapped and consumes sequential failed-reclaim frees only, clearing that
+pair before the complete 64-slice release. It does not add multiple frees,
+other classes, reclaim, adoption, requeue, scans, or general dynamic owner
+exit.
+
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
 dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
 page only in its ordinary regular bin, with
