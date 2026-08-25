@@ -20,7 +20,7 @@
 // 347-388` (natural/overallocated aligned allocation and aligned realloc),
 // `src/free.c:28-50,104-114,372-514,522-542` (local free, abandoned
 // `allow_collect` reclaim, interior-base recovery, and aligned usable size),
-// `src/page.c:150-269,276-302,374-388,460-522,574-644,708-1069` (remote/local and
+// `src/page.c:150-341,374-388,460-522,574-665,708-1069` (remote/local and
 // small partial-head collection, non-abandoning post-enqueue full-page collection,
 // full-page collection, free-page search, full-page retention,
 // retirement, forced retry, regular and huge page selection),
@@ -80,9 +80,10 @@
 // releases pages
 // made empty by force collection, and registers surviving mapped pages without
 // retaining a raw former-Theap page list. One explicit consumer can reclaim
-// only the sole mapped nonfull medium route into a fresh later-main Theap;
-// it claims the exact page identity and appends it to the source queue tail.
-// All force-collected full origins remain client-free-only.
+// only the sole mapped nonfull medium route or two direct-small source shapes
+// (an immediate head or a fully committed scalar extension) into a fresh
+// later-main Theap; it claims the exact page identity and appends it to the
+// source queue tail. All force-collected full origins remain client-free-only.
 // A test-only one-shot fresh on-demand seam reaches that route's real reserved
 // page prefix; its direct extension commit either succeeds before free-list
 // mutation or performs the source mapped reabandon tail for a same-candidate
@@ -689,10 +690,15 @@ enum ThreadExitMappedRegularPostExitOrigin {
     /// source force/false collection, retains an immediate local free block.
     /// Its exact one-page allocation-time adoption/requeue proof is complete.
     InitiallyNonfullDirectSmallImmediate,
+    /// The page was already a nonfull direct-small regular member, source
+    /// collection left no immediate local free block, and its fully committed
+    /// capacity can take the scalar source extension.
+    InitiallyNonfullDirectSmallNeedsScalarExtension,
     /// The page was already a nonfull direct-small regular member, but source
-    /// collection left no immediate local free block. It remains
-    /// client-free-only until the source extension/commit tail is proved.
-    InitiallyNonfullDirectSmallNeedsExtension,
+    /// collection left no immediate local free block without the exact fully
+    /// committed scalar-extension shape. It remains client-free-only until
+    /// the direct-commit or other source tail is proved.
+    InitiallyNonfullDirectSmallNoImmediateUnsupported,
     /// The page entered owner exit as a full medium `BIN_FULL` member and one
     /// joined remote free made it nonfull during force collection. It remains
     /// client-free-only even though its final geometry is medium/nonfull.
@@ -2816,9 +2822,10 @@ impl<'attachment, 'main, 'arena, 'map>
         }
         // SAFETY: both source collectors completed under the exclusive drain.
         // Classify the final source shape before queue removal and bitmap
-        // publication. A direct-small page that still needs `mi_page_extend_free`
-        // must remain client-free-only: the narrow adoption route below accepts
-        // only an immediate local free-list head.
+        // publication. The narrow direct-small adoption route accepts an
+        // immediate local free-list head or the exact fully committed scalar
+        // `mi_page_extend_free` shape; page-area commitment and every other
+        // no-immediate shape remain client-free-only.
         let (after_collect_kind, origin) = {
             let after_collect = unsafe { page.as_ref() };
             let after_collect_kind = size_class::page_kind_for_block_size(after_collect.block_size());
@@ -2841,8 +2848,15 @@ impl<'attachment, 'main, 'arena, 'map>
                 Some(PageKind::Small) if after_collect.block_size() > SMALL_SIZE_MAX => {
                     ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullNonDirectSmall
                 }
+                Some(PageKind::Small)
+                    if after_collect.free_list_head().is_null()
+                        && after_collect.capacity() < after_collect.reserved()
+                        && after_collect.slice_pcommitted() == 0 =>
+                {
+                    ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsScalarExtension
+                }
                 Some(PageKind::Small) if after_collect.free_list_head().is_null() => {
-                    ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsExtension
+                    ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNoImmediateUnsupported
                 }
                 Some(PageKind::Small) => {
                     ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate
@@ -6591,9 +6605,10 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
 impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     /// Whether this exact source route has an allocation-time reclaim tail
     /// completed in this slice: an initially-nonfull medium, or an
-    /// initially-nonfull direct-small page with an immediate local free block.
-    /// Non-direct-small pages, direct-small extension cases, and every
-    /// force-collected full origin remain client-free-only.
+    /// initially-nonfull direct-small page with an immediate local free block
+    /// or exact fully committed scalar-extension shape. Non-direct-small
+    /// pages, direct-small direct-commit cases, and every force-collected full
+    /// origin remain client-free-only.
     #[inline]
     pub(crate) fn supports_later_main_adoption(&self) -> bool {
         matches!(
@@ -6604,6 +6619,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
             ) | (
                 PageKind::Small,
                 ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate
+            ) | (
+                PageKind::Small,
+                ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsScalarExtension
             )
         )
     }
@@ -6625,8 +6643,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     }
 
     /// Reclaims one exact initially-nonfull mapped-abandoned medium or
-    /// immediate-head direct-small route into a fresh later-main engine, then
-    /// appends it to the target regular queue tail.
+    /// direct-small route with either an immediate head or the exact scalar
+    /// extension shape into a fresh later-main engine, then appends it to the
+    /// target regular queue tail.
     ///
     /// The caller must already have consumed this route's short PageMap
     /// access into the target engine's long mutation lease. No generic page
@@ -6765,7 +6784,10 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         let page_ref = unsafe { page.as_ref() };
         let immediate_direct_small = self.origin
             == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate;
-        let expected_kind = if immediate_direct_small {
+        let scalar_extension_direct_small = self.origin
+            == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsScalarExtension;
+        let direct_small = immediate_direct_small || scalar_extension_direct_small;
+        let expected_kind = if direct_small {
             PageKind::Small
         } else {
             PageKind::Medium
@@ -6776,10 +6798,14 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
             || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(expected_kind)
             || size_class::bin(page_ref.block_size()) != Some(self.bin)
             || page_ref.reserved() <= 1
-            || (immediate_direct_small
+            || (direct_small
                 && (page_ref.block_size() > SMALL_SIZE_MAX
-                    || page_ref.reserved() < 16
-                    || page_ref.free_list_head().is_null()))
+                    || page_ref.reserved() < 16))
+            || (immediate_direct_small && page_ref.free_list_head().is_null())
+            || (scalar_extension_direct_small
+                && (!page_ref.free_list_head().is_null()
+                    || page_ref.capacity() >= page_ref.reserved()
+                    || page_ref.slice_pcommitted() != 0))
             || page_ref.used() == 0
             || page_ref.used() >= usize::from(page_ref.reserved())
             || page_is_in_full(page_ref)

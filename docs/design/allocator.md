@@ -452,7 +452,9 @@ One deliberately consuming allocation-time edge is now complete for this
 sole route only. `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
 accepts either an exact `PageKind::Medium` route, or an exact
 `PageKind::Small` direct-cache route whose source force/false collection left
-an immediate local free block. Both require a fresh
+an immediate local free block or the exhausted fully committed scalar-
+extension shape (`free` null, `capacity < reserved`, and
+`slice_pcommitted == 0`). Both require a fresh
 `MainHeapThreadAttachment` whose subprocess, frozen configuration, stable
 PageMap root, static main Heap, and selected arena all match. The handoff turns
 the route's `ProcessPageMapPostExitAccess` back into a
@@ -471,8 +473,11 @@ The medium branch accepts either an immediate head or an exhausted nonfull
 medium page (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs scalar
 `mi_page_extend_free` free-list/capacity mutation after that tail restoration.
-The direct-small branch requires its immediate head; a direct-small page that
-would need extension or page-area commitment stays client-free-only.
+The direct-small branch accepts its immediate head or that exact exhausted
+fully committed scalar-extension shape, applying the same scalar
+`mi_page_extend_free` free-list/capacity mutation after queue-tail/direct-cache
+restoration. A direct-small page needing page-area commitment, or any other
+no-immediate shape, stays client-free-only.
 The bounded test-only `commit == false` seam creates one actual reserved medium
 page with the source initial callback-committed prefix. For that nonzero-prefix
 case, `page_area_commit_plan` separates OS-page counts from byte ranges, then
@@ -485,8 +490,9 @@ publication. The resulting consuming owner can retry only the same candidate
 through its long lifecycle; it cannot reopen short map access, scan, or take a
 fresh fallback. This proves no production page-on-demand option. A bitmap miss,
 malformed state, scalar extension error, or any other post-transfer failure
-likewise retains the target owner. Non-direct-small, direct-small extension,
-full, aggregate-registry, singleton, unmapped, huge, foreign,
+likewise retains the target owner. Non-direct-small, direct-small page-area-
+commit and other no-immediate cases, full, aggregate-registry, singleton,
+unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`

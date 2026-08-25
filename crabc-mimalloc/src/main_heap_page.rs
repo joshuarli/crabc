@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0 `src/init.c:236-360,377-421,448-481`,
-// `src/theap.c:89-152`, `src/page.c:214-302,414-518,574-644`,
+// `src/theap.c:89-152`, `src/page.c:214-341,414-518,574-665`,
 // `src/page-queue.c:204-330`,
 // `src/arena.c:631-778,781-821,870-1037,951-1153,1183-1204,1240-1282`, and
 // `src/page-map.c:228-365`, and `src/free.c:372-514`.
@@ -44,18 +44,19 @@
 //! by force collection and registers every survivor in one linear process
 //! route. Each route free serializes its plain PageMap operation briefly. One
 //! explicit consuming edge additionally reclaims a sole mapped medium route,
-//! or a sole direct-small route with an immediate local free block, that
-//! entered source owner exit already nonfull into a fresh later-main engine:
-//! it claims that exact bitmap member and requeues it at the source tail.
-//! Non-direct-small, direct-small extension, full medium, large, and full
-//! small origins remain client-free-only.
+//! or a sole direct-small route with either an immediate local free block or
+//! an exhausted fully committed scalar-extension shape, that entered source
+//! owner exit already nonfull into a fresh later-main engine: it claims that
+//! exact bitmap member and requeues it at the source tail. Non-direct-small,
+//! direct-small page-area-commit and other no-immediate shapes, full medium,
+//! large, and full small origins remain client-free-only.
 //! Its test-only real reserved on-demand medium
 //! prefix commits its next page area directly before extension; a direct-commit
 //! failure reabandones that same candidate for its one consuming retry. It has
 //! no automatic allocation scan or fresh-page fallback.
-//! Non-direct-small, direct-small extension, full, aggregate, concurrent,
-//! singleton, unmapped, and huge adoption remain absent, as do source
-//! deferred callbacks and arena collection.
+//! Non-direct-small, direct-small page-area-commit and other no-immediate,
+//! full, aggregate, concurrent, singleton, unmapped, and huge adoption remain
+//! absent, as do source deferred callbacks and arena collection.
 
 use core::ptr::NonNull;
 
@@ -180,13 +181,14 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment
 /// PageMap lookup -> abandoned-free -> terminal-release decision for each
 /// client block. It also admits one explicit consuming allocation-time
 /// handoff: only a sole mapped medium page, or a sole direct-small page with
-/// an immediate local free block, that entered source owner exit already
-/// nonfull may transfer into a fresh later-main owner, claim its exact
-/// static-main bitmap member, and requeue at the source tail. Non-direct
-/// small pages, direct-small extension cases, and every force-collected full
-/// origin remain client-free-only. This route deliberately does not scan
-/// arbitrary routes, take a fresh-page fallback, adopt aggregate members, or
-/// expose concurrent producer protocol.
+/// either an immediate local free block or the exact fully committed scalar
+/// extension shape, that entered source owner exit already nonfull may
+/// transfer into a fresh later-main owner, claim its exact static-main bitmap
+/// member, and requeue at the source tail. Non-direct small pages,
+/// direct-small page-area-commit and other no-immediate cases, and every
+/// force-collected full origin remain client-free-only. This route deliberately
+/// does not scan arbitrary routes, take a fresh-page fallback, adopt aggregate
+/// members, or expose concurrent producer protocol.
 #[must_use = "a post-exit mapped regular route must release every client block or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
@@ -364,8 +366,9 @@ pub(crate) enum MainHeapThreadProcessPageAllocatorBeginError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// Only a source-initially-nonfull medium or direct-small page with an
-    /// immediate local free block has the completed adoption proof.
-    /// Non-direct-small pages, direct-small extension cases, and every
+    /// immediate local free block or exact fully committed scalar-extension
+    /// shape has the completed adoption proof. Non-direct-small pages,
+    /// direct-small page-area-commit and other no-immediate cases, and every
     /// force-collected full origin retain their post-exit client-free route.
     SourceNotInitiallyNonfullAdoptable,
     Pair(ProcessPageArenaLeaseError),
@@ -2777,15 +2780,16 @@ impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main> {
 impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// Consumes this one mapped regular post-exit route into a fresh
     /// later-main page engine when it has a completed initially-nonfull
-    /// medium or immediate-head direct-small shape.
+    /// medium, immediate-head direct-small, or fully committed scalar-
+    /// extension direct-small shape.
     ///
     /// The source route is intentionally explicit rather than an allocation
     /// search: it transfers the same PageMap access capability to the new
     /// long engine, claims only its stable page identity, then restores source
     /// queue-tail order. A bitmap miss and every post-transfer failure retain
     /// the target owner; this slice never allocates a fresh replacement or
-    /// broadens into non-direct-small, direct-small extension, full-origin,
-    /// aggregate, or concurrent adoption.
+    /// broadens into non-direct-small, direct-small page-area-commit or other
+    /// no-immediate, full-origin, aggregate, or concurrent adoption.
     pub(crate) fn adopt_into_later_main<'attachment>(
         self,
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -5712,7 +5716,7 @@ mod tests {
     enum SmallRegularRouteNextStep {
         ClientFreeOnly,
         RejectAdoption,
-        RejectDirectSmallNeedsExtension,
+        AdoptDirectSmallNeedsExtension,
         AdoptDirectSmall,
     }
 
@@ -5767,10 +5771,12 @@ mod tests {
                         page.as_ptr(),
                         "the fixture keeps both client blocks in the same small page"
                     );
-                    if next_step == SmallRegularRouteNextStep::RejectDirectSmallNeedsExtension {
+                    let direct_extension = if next_step
+                        == SmallRegularRouteNextStep::AdoptDirectSmallNeedsExtension
+                    {
                         assert!(
                             direct,
-                            "the extension refusal regression covers only the direct-small source class"
+                            "the extension adoption regression covers only the direct-small source class"
                         );
                         while !unsafe { page.as_ref().free_list_head() }.is_null() {
                             let block = allocator
@@ -5793,7 +5799,23 @@ mod tests {
                             page_ref.free_list_head().is_null(),
                             "the direct-small source has no immediate local block before owner exit"
                         );
-                    }
+                        assert_eq!(
+                            page_ref.slice_pcommitted(),
+                            0,
+                            "the bounded direct-small extension case stays fully committed"
+                        );
+                        let extend = crate::page::page_extend_count(
+                            page_ref.capacity(),
+                            page_ref.reserved(),
+                            page_ref.block_size(),
+                            page_ref.slice_pcommitted(),
+                        )
+                        .expect("the exhausted direct-small page has one valid scalar extension count");
+                        assert!(extend > 0, "the direct-small extension boundary retains capacity");
+                        Some((page_ref.capacity(), extend))
+                    } else {
+                        None
+                    };
                     let page_ref = unsafe { page.as_ref() };
                     assert_eq!(
                         crate::size_class::page_kind_for_block_size(page_ref.block_size()),
@@ -5874,7 +5896,11 @@ mod tests {
                     );
                     assert_eq!(route.test_abandoned_count(), Some(1));
 
-                    if next_step == SmallRegularRouteNextStep::AdoptDirectSmall {
+                    if matches!(
+                        next_step,
+                        SmallRegularRouteNextStep::AdoptDirectSmall
+                            | SmallRegularRouteNextStep::AdoptDirectSmallNeedsExtension
+                    ) {
                         assert!(
                             direct,
                             "the bounded adoption regression covers only the direct-small source class"
@@ -5946,6 +5972,18 @@ mod tests {
                                 "target reclaim restores only the complete rounded direct-small cache range"
                             );
                         }
+                        if let Some((capacity_before, extend)) = direct_extension {
+                            let page_ref = unsafe { page.as_ref() };
+                            assert_eq!(
+                                page_ref.capacity(),
+                                capacity_before + extend,
+                                "the direct-small target extends the reclaimed page before allocation resumes"
+                            );
+                            assert!(
+                                !page_ref.free_list_head().is_null(),
+                                "the direct-small scalar extension publishes an immediate local block"
+                            );
+                        }
                         {
                             let mut heap = main_heap
                                 .lock_heap()
@@ -5967,12 +6005,11 @@ mod tests {
                             "the first target allocation reuses the direct-small source page"
                         );
                         unsafe {
-                            target_allocator
-                                .free(first)
-                                .expect("the first inherited direct-small block remains normally freeable");
-                            target_allocator
-                                .free(second)
-                                .expect("the second inherited direct-small block remains normally freeable");
+                            for block in client_blocks {
+                                target_allocator
+                                    .free(block)
+                                    .expect("every inherited direct-small block remains normally freeable");
+                            }
                             target_allocator
                                 .free(reused)
                                 .expect("the reclaimed direct-small allocation remains normally freeable");
@@ -6006,11 +6043,7 @@ mod tests {
                         return;
                     }
 
-                    let route = if matches!(
-                        next_step,
-                        SmallRegularRouteNextStep::RejectAdoption
-                            | SmallRegularRouteNextStep::RejectDirectSmallNeedsExtension
-                    ) {
+                    let route = if next_step == SmallRegularRouteNextStep::RejectAdoption {
                         let mut target = match unsafe {
                             MainHeapThreadAttachment::begin_with_test_metadata(
                                 main_heap,
@@ -6082,54 +6115,6 @@ mod tests {
                     } else {
                         route
                     };
-
-                    if next_step == SmallRegularRouteNextStep::RejectDirectSmallNeedsExtension {
-                        let final_block = client_blocks
-                            .pop()
-                            .expect("the direct-small extension fixture retains one final client block");
-                        let mut route = route;
-                        for block in client_blocks {
-                            route = match unsafe { route.remote_free_after_thread_exit(block) } {
-                                Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(
-                                    route,
-                                )) => route,
-                                Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {
-                                    panic!("a nonfinal direct-small client free cannot release the page")
-                                }
-                                Err(_) => panic!(
-                                    "every nonfinal direct-small client free remains routed after TLD teardown"
-                                ),
-                            };
-                        }
-                        match unsafe { route.remote_free_after_thread_exit(final_block) } {
-                            Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {}
-                            Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
-                                core::mem::forget(route);
-                                panic!(
-                                    "the final direct-small client free releases the extension-refused route"
-                                );
-                            }
-                            Err(_) => panic!(
-                                "the final direct-small client free releases the extension-refused route"
-                            ),
-                        }
-                        assert!(
-                            unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }
-                                .is_null(),
-                            "the extension-refused direct-small route still releases its PageMap span"
-                        );
-                        assert_eq!(
-                            unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1),
-                            Some(true),
-                            "the extension-refused direct-small route clears its ordinary arena bit"
-                        );
-                        assert_eq!(
-                            page_map.begin_page_lifecycle().unwrap().finish(),
-                            Ok(()),
-                            "the extension-refused direct-small route reopens an empty process map"
-                        );
-                        return;
-                    }
 
                     let route = match unsafe { route.remote_free_after_thread_exit(first) } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
@@ -6226,11 +6211,11 @@ mod tests {
     }
 
     #[test]
-    fn later_thread_exit_mapped_regular_route_rejects_direct_small_allocation_adoption_that_needs_extension() {
+    fn later_thread_exit_mapped_regular_route_reclaims_initially_nonfull_direct_small_that_needs_extension() {
         assert_small_regular_route(
             WORD_SIZE,
             true,
-            SmallRegularRouteNextStep::RejectDirectSmallNeedsExtension,
+            SmallRegularRouteNextStep::AdoptDirectSmallNeedsExtension,
         );
     }
 

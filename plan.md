@@ -295,8 +295,9 @@ linear `ProcessPageMapPostExitAccess`. Each client free re-acquires the same
 map lock briefly: a nonempty result keeps PageMap registration and the paired
 bitmap/count, while the final free clears them before PageMap -> `pages_main`
 -> metadata -> slice release. The route is movable to one client-free thread.
-Two explicit consuming allocation-time edges are now complete for the sole
-mapped nonfull medium form and its immediate-head direct-small counterpart:
+Three explicit consuming allocation-time edges are now complete for the sole
+mapped nonfull medium form and its immediate-head and exhausted-fully-
+committed-scalar-extension direct-small counterparts:
 `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
 requires an exact matching fresh later-main attachment/process pair (same
 subprocess, frozen configuration, stable PageMap root, static main Heap, and
@@ -306,6 +307,8 @@ bitmap/count member, collects abandoned state, reassociates the page with the
 fresh Theap/thread, collects live state, and restores source queue-tail order.
 A direct-small target restores its complete rounded direct-cache range before
 target page-count increment and immediately allocates from that exact page.
+Its exhausted fully committed scalar-extension shape then extends after that
+tail restoration.
 The medium branch accepts either an immediate head or an exhausted nonfull
 medium page (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs the scalar source
@@ -321,9 +324,9 @@ only that same candidate through its existing long lifecycle. This does not
 add a production page-on-demand option, a generic fresh fallback, or a bitmap
 scan. A bitmap miss, malformed state, scalar extension error, or any other
 post-transfer error remains terminally retained.
-Non-direct-small, direct-small extension, full, singleton, unmapped, huge,
-foreign, aggregate-registry, automatic-scanning, and concurrent adoption
-remain deliberately absent.
+Non-direct-small, direct-small page-area-commit and other no-immediate cases,
+full, singleton, unmapped, huge, foreign, aggregate-registry, automatic-
+scanning, and concurrent adoption remain deliberately absent.
 
 The bounded aggregate extension,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`,
@@ -432,10 +435,11 @@ direct-small branch clears its rounded range before page-count detach. All four
 immediately publish the ordinary mapped bit/count pair before old-Theap/TLD
 teardown. They are not general full-page traversals. All full-origin
 predecessors remain client-free-only even though their final geometry is
-nonfull. Only the separately completed source-initially-nonfull sole
-mapped-medium route has the explicit inverse bridge into one fresh
-later-main mutation lease. Its bounded reserved-prefix fixture
-now covers source direct page-area commitment and failed-commit reabandonment
+nonfull. The separately completed source-initially-nonfull sole mapped-medium
+route and immediate-head or exhausted-fully-committed-scalar-extension
+direct-small routes have the explicit inverse bridge into one fresh later-main
+mutation lease. The mapped-medium route's bounded reserved-prefix fixture now
+covers source direct page-area commitment and failed-commit reabandonment
 before a same-candidate retry; it is not a generic allocation policy. The
 aggregate registry intentionally stops
 at nonfull regular small, medium, and large pages and has no adoption
@@ -512,8 +516,8 @@ pre-detach refusal, one-page-refusal, and cross-thread movement regressions;
 the sole mapped-medium route's immediate and exhausted-fully-committed
 fresh-owner adoption, scalar capacity-extension, real reserved-prefix direct
 page-area commitment, failed-commit mapped reabandonment/same-candidate retry;
-the direct-small immediate-head fresh-owner reclaim/reuse and extension-needed
-pre-transfer refusal regressions; and the aggregate
+the direct-small immediate-head and exhausted-fully-committed scalar-extension
+fresh-owner reclaim/reuse regressions; and the aggregate
 regular-pages registry's mixed small/medium/large
 release, retired-large prepass, malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
@@ -531,17 +535,18 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 101 items and 105
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 102 items and 106
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
 full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
-The next frontier is another page-bearing owner-exit class or a separately
-proven aggregate-registry policy, then complete process and real
-pthread/TLS lifecycle integration—not a generic allocation-time scan routed
-through a bounded singleton, mapped-one-block handoff, no-page finish, or these
-sequential ticket-zero/later page-owner slices.
+The next local frontier is a separately proven direct-small page-area-commit or
+other no-immediate source shape, or a separately proven aggregate-registry
+policy, then complete process and real pthread/TLS lifecycle integration—not a
+generic allocation-time scan routed through a bounded singleton,
+mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later
+page-owner slices.
 
 The current upstream baseline should be **mimalloc v3.5.0**, released August 19, 2026, at tag commit `18b08671c9302247bfb682286e6bf3cc1773f801`. Upstream marks v3 as its recommended current design. Pin that exact commit and archive hash; never track `main`. ([GitHub][1])
 

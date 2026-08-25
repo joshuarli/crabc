@@ -9,14 +9,14 @@
   "port_map_counts": {
     "differential_verified": 12,
     "exported": 1,
-    "implemented": 105,
-    "item_count": 101,
+    "implemented": 106,
+    "item_count": 102,
     "performance_qualified": 0,
     "stress_verified": 0,
     "unit_count": 34,
-    "unit_verified": 105
+    "unit_verified": 106
   },
-  "port_map_sha256": "2e8dbd3153a593586ab4b2b82a293273019950a70936504ab58577067eafff98",
+  "port_map_sha256": "8a8ac5580c425c85919ca8ee1488b62c32a75bde90708da243dbaca9426bdeec",
   "port_map_true_statuses": {
     "item:include/mimalloc/atomic.h:mi_lock_t-active-linux-private-lock-boundary": [
       "implemented",
@@ -306,6 +306,10 @@
       "unit_verified"
     ],
     "item:src/page-queue.c:page-queue-intrusive-metadata-kernels": [
+      "implemented",
+      "unit_verified"
+    ],
+    "item:src/page.c:later-main-one-member-scalar-direct-small-post-exit-allocation-adoption": [
       "implemented",
       "unit_verified"
     ],

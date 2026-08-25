@@ -80,18 +80,32 @@ full-direct-small force-collection branches retain their full origins in
 `ThreadExitMappedRegularPostExitParts`: although source publishes a nonfull
 mapped page, each remains client-free-only. The
 separate `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
-edge accepts a source-initially-nonfull medium route or an immediate-head
-direct-small route. Non-direct-small, direct-small extension, and full-origin
-routes remain client-free-only.
+edge accepts a source-initially-nonfull medium route, an immediate-head
+direct-small route, or an exhausted fully committed scalar-extension
+direct-small route. Non-direct-small, direct-small page-area-commit and other
+no-immediate shapes, and full-origin routes remain client-free-only.
 
 > **Later-main direct-small adoption correction.** The broad later-main table
 > rows below predate the source-specific
 > `later-main-one-member-immediate-direct-small-post-exit-allocation-adoption`
-> ledger item. Where those orientation rows describe the consuming handoff as
+> and `later-main-one-member-scalar-direct-small-post-exit-allocation-adoption`
+> ledger items. Where those orientation rows describe the consuming handoff as
 > medium-only, read that as the medium extension/commit branch: the completed
-> direct-small branch requires its exact rounded cache range and an immediate
-> local free-list head, restores that range before target page-count increment,
-> and does not admit extension or commitment.
+> direct-small branches require their exact rounded cache range and either an
+> immediate local free-list head or the exhausted fully committed scalar shape
+> (`free` null, `capacity < reserved`, `slice_pcommitted == 0`). Each restores
+> that range before target page-count increment; only the scalar shape extends
+> after tail insertion. Direct page-area commitment and every other
+> no-immediate direct-small shape remain absent.
+
+> **Later-main direct-small scalar-extension correction.** The broad
+> `src/page.c` and `src/alloc.c` orientation rows that describe this handoff as
+> medium-only, or state that direct-small allocation-time adoption is wholly
+> absent, predate the two direct-small ledger items above. They remain source
+> provenance summaries, not a narrower capability claim. The scalar item maps
+> `src/page.c:307-341,630-665` only after the source reclaim/tail ordering;
+> it neither authorizes page-area commitment nor adds an allocation scan,
+> replacement page, or general direct-small adoption policy.
 
 > **Current raw-tail accounting.** The explicit dynamic full-medium, full-large,
 > full-non-direct-small, and full-direct-small rows below add four distinct lifecycle owners to the

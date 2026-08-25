@@ -73,10 +73,11 @@ chooses no reserve policy, does not model the C `mi_page_map_empty` pre-root,
 and has no concurrent/general later-thread page routing, general owner exit
 beyond the recorded all-free later-main scan, its eight sole-page handoffs, and
 the bounded aggregate regular-pages traversal, teardown, or public routing.
-Only the explicit consuming medium and immediate-head direct-small handoffs
-can turn a detached route's short PageMap access back into one long later-main
-lifecycle; ordinary route, direct-small extension, and aggregate-registry use
-remain sequential client-free access.
+Only the explicit consuming medium and direct-small handoffs (immediate-head
+or exhausted fully committed scalar extension) can turn a detached route's
+short PageMap access back into one long later-main lifecycle; ordinary route,
+direct-small page-area-commit and other no-immediate cases, and aggregate-
+registry use remain sequential client-free access.
 The coordinator deliberately does not reserve this shared arena or supply a
 full process lifecycle. An unpublished
 reservation failure or dropped unfinished lifecycle terminally poisons rather
@@ -438,16 +439,19 @@ rounded direct-cache range before page-count detach. The large mapped route
 retains its complete 64-slice terminal-release proof.
 A fresh later-main owner may explicitly consume a sole mapped medium page that
 entered source owner exit already nonfull, or a sole direct-small page whose
-source collection left an immediate local free block. All force-collected
-full-origin predecessors stay client-free-only even though their final geometry
-is nonfull. The eligible route
+source collection left an immediate local free block or the exhausted fully
+committed scalar-extension shape. All force-collected full-origin predecessors
+stay client-free-only even though their final geometry is nonfull. The eligible
+route
 proves the same subprocess/configuration/PageMap root, static main Heap,
 arena, span, and page identity; transfers short PageMap access into one long
 lifecycle; claims the bitmap/count member; collects and reassociates it; then
 restores source queue-tail order. A direct-small target restores its exact
 rounded cache range before target page-count increment and allocates from that
-same page; direct-small extension/commit remains client-free-only. The medium
-slice requires an immediate head or an exhausted nonfull medium page
+same page; an exhausted fully committed direct-small page extends after that
+tail restoration, while direct-small page-area commitment and other
+no-immediate shapes remain client-free-only. The medium slice requires an
+immediate head or an exhausted nonfull medium page
 (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs the scalar source capacity extension after
 tail insertion. Its bounded test-only

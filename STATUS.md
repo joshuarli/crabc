@@ -101,12 +101,13 @@ and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
 through sequential client frees. A fresh later-main owner can explicitly
 reclaim a sole mapped medium route that began owner exit nonfull, or a sole
-direct-small route that retains an immediate local free block after source
-collection; all force-collected full-origin predecessors remain sequential
-client-free-only. The medium fixture also covers a real reserved on-demand
-prefix, direct page-area commitment, and failed-commit mapped reabandonment
-before a same-candidate retry; non-direct-small, direct-small extension, and
-aggregate members remain sequential client-free-only.
+direct-small route that retains an immediate local free block or the exhausted
+fully committed scalar-extension shape after source collection; all force-
+collected full-origin predecessors remain sequential client-free-only. The
+medium fixture also covers a real reserved on-demand prefix, direct page-area
+commitment, and failed-commit mapped reabandonment before a same-candidate
+retry; non-direct-small, direct-small page-area-commit and other no-immediate
+cases, and aggregate members remain sequential client-free-only.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
@@ -244,14 +245,16 @@ remain client-free-only through terminal release. The sole nonfull small-or-medi
 process route preserves the same
 mapped publication, tears down the old Theap/TLD, and routes its linear client
 frees through short PageMap access. Its sole mapped medium member, or its sole
-direct-small member with an immediate local free block after source collection,
-may instead be explicitly consumed by a fresh later-main owner after exact
+direct-small member with an immediate local free block or the exhausted fully
+committed scalar-extension shape after source collection, may instead be
+explicitly consumed by a fresh later-main owner after exact
 subprocess/configuration/PageMap-root/static-main-Heap/arena/page-identity
 preflight: the short map access becomes one long lifecycle, the matching
 bitmap/count member is claimed, source abandoned/live collection and Theap
 reassociation run, and the page returns at the target queue tail. A direct-
 small target restores its complete rounded direct-cache range before target
-page-count increment and immediately reuses that same page. The medium slice
+page-count increment and immediately reuses that same page; its exhausted fully
+committed scalar shape then extends after tail insertion. The medium slice
 accepts an immediate head or an exhausted nonfull medium page
 (`capacity < reserved`). A fully committed medium page (`slice_pcommitted == 0`)
 extends after tail insertion. The bounded test-only `commit == false` fixture
@@ -263,8 +266,8 @@ repair, and mapped identity/bit/count/unown publication, then permits only a
 same-candidate retry through the retained long lifecycle. This is not a
 production page-on-demand policy or fresh fallback. A bitmap miss, malformed
 state, scalar extension error, or other post-transfer failure remains
-terminally retained. Non-direct-small and direct-small extension members
-remain client-free-only. A direct small member must prove the exact rounded
+terminally retained. Non-direct-small and direct-small page-area-commit or
+other no-immediate members remain client-free-only. A direct small member must prove the exact rounded
 source direct-cache range before collection; queue removal clears that range
 before page-count detach. The route retains the source `reserved >= 16`
 small partial-collection invariant and excludes full small pages through its
