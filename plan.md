@@ -73,10 +73,24 @@ predicate holds, then the first free beyond `reserved / 8` publishes the exact
 dynamic `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`.
 The mapped tail clears that pair before PageMap -> dynamic ordinary bit ->
 metadata -> arena-slice release. It cannot reclaim, adopt, requeue, scan, or
-cover full non-direct-small/direct-small, large, multi-page, or general dynamic
+cover full large/non-direct-small/direct-small, multi-page, or general dynamic
 thread-exit state.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small` is a fifth, disjoint
+`DynamicThreadExitDrain::abandon_full_large` is a fifth, disjoint dynamic
+owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena` large
+page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct
+cache entry. Source force then false collection precedes full-queue/page-count
+detach and ordinary unmapped abandonment. Its
+`DynamicThreadExitFullLargeHandoff` carries sequential normal failed-reclaim
+frees through the same tail: they remain unmapped while the source mostly-used
+predicate holds, then the first free beyond `reserved / 8` publishes the exact
+dynamic `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`.
+The mapped tail clears that pair before PageMap -> dynamic ordinary bit ->
+metadata -> complete 64-slice arena release. It cannot reclaim, adopt,
+requeue, scan, or cover full medium/non-direct-small/direct-small, multi-page,
+or general dynamic thread-exit state.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, disjoint
 dynamic owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena`
 small page in its ordinary regular bin, with
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
@@ -394,6 +408,9 @@ Checkpoint evidence is green: the focused
 `dynamic_thread_exit_full_medium_handoff_reabandons_after_mostly_used_frees_then_releases`,
 `dynamic_thread_exit_full_medium_handoff_rejects_before_detach_when_another_page_is_live`,
 and `dynamic_thread_exit_full_medium_handoff_retains_collection_failure`,
+`dynamic_thread_exit_full_large_handoff_reabandons_after_mostly_used_frees_then_releases`,
+`dynamic_thread_exit_full_large_handoff_rejects_a_full_medium_before_detach`,
+and `dynamic_thread_exit_full_large_handoff_retains_collection_failure`,
 `dynamic_thread_exit_full_non_direct_small_handoff_reabandons_after_mostly_used_frees_then_releases`,
 `dynamic_thread_exit_full_non_direct_small_handoff_rejects_before_detach_when_another_page_is_live`,
 `dynamic_thread_exit_full_non_direct_small_handoff_rejects_direct_small_before_detach`,
@@ -455,14 +472,14 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 448 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 451 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 94 items and 98
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 95 items and 99
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
 full-medium/full-large/full-non-direct-small/full-direct-small or mapped-one-block-medium/non-direct-small/direct-small cases, the later-main

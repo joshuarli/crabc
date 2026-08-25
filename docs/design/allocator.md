@@ -621,7 +621,21 @@ tail clears that pair before queue-detached PageMap span -> dynamic ordinary
 bit -> metadata -> arena-slice release. It is not a reclaim, adoption,
 requeue, scan, full-small/full-large, multi-page, or general traversal route.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small` is a fifth, separate
+`DynamicThreadExitDrain::abandon_full_large` is a fifth, separate
+source-unmapped dynamic handoff. It accepts only the drain's sole full
+`MemoryKind::Arena` large page in `BIN_FULL`, with `reserved > 1`,
+`used == reserved`, and no direct-cache entry. Force then false collection
+precedes full-queue/page-count detach and ordinary abandoned unown; like the
+medium route, this does not publish a bitmap at abandonment. The linear
+`DynamicThreadExitFullLargeHandoff` follows the normal failed-reclaim tail for
+each client free: it remains unmapped through the source mostly-used prefix,
+the first free beyond `reserved / 8` publishes the matching heap-local
+`pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`, and the
+mapped tail clears that pair before PageMap -> dynamic ordinary bit -> metadata
+-> complete 64-slice arena release. It is not a reclaim, adoption, requeue,
+scan, full-small/full-medium, multi-page, or general traversal route.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
 source-unmapped dynamic handoff. It accepts only the drain's sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
@@ -637,7 +651,7 @@ dynamic ordinary bit -> metadata -> arena-slice release. It rejects direct
 small before collection, and it neither reclaims, adopts, requeues, scans, nor
 covers full medium/direct-small/large, multi-page, or general traversal state.
 
-`DynamicThreadExitDrain::abandon_full_direct_small` is a sixth, separate
+`DynamicThreadExitDrain::abandon_full_direct_small` is a seventh, separate
 source-unmapped dynamic handoff. It accepts only the drain's sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with
 `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == reserved`,

@@ -230,7 +230,20 @@ mapped tail clears that pair before PageMap -> dynamic ordinary bit -> metadata
 -> arena-slice release. It is not a full-small/full-large, multi-page,
 reclaim/adoption/requeue, or general owner-exit traversal capability.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small` is a fifth,
+`DynamicThreadExitDrain::abandon_full_large` is a fifth, source-unmapped
+dynamic endpoint. It admits only the sole full `MemoryKind::Arena` large page
+in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct-cache
+entry. Source force -> false collection -> full-queue/page-count detach leaves
+ordinary unmapped abandonment. Its `DynamicThreadExitFullLargeHandoff` uses
+the normal failed-reclaim collector: the page stays unmapped through the
+mostly-used prefix, maps exactly on the first free beyond `reserved / 8`, and
+the mapped tail clears the exact dynamic bitmap/count pair before PageMap ->
+dynamic ordinary bit -> metadata -> complete 64-slice arena release. It
+rejects non-large before collection and does not cover full
+medium/non-direct-small/direct-small, multi-page, reclaim/adoption/requeue, or
+general owner-exit traversal.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth,
 source-unmapped dynamic endpoint. It admits only the sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
@@ -244,7 +257,7 @@ dynamic ordinary bit -> metadata -> arena-slice release. It rejects direct
 small before collection and does not cover full medium/direct-small/large,
 multi-page, reclaim/adoption/requeue, or general owner-exit traversal.
 
-`DynamicThreadExitDrain::abandon_full_direct_small` is a sixth,
+`DynamicThreadExitDrain::abandon_full_direct_small` is a seventh,
 source-unmapped dynamic endpoint. It admits only the sole full
 `MemoryKind::Arena` small page in its ordinary regular bin, with
 `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == reserved`,
@@ -280,7 +293,7 @@ metadata -> arena slices. It does not reclaim the departed Theap, adopt,
 requeue, scan, or accept multiple pages or frees.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular and
-post-TLS singleton/full-medium/full-non-direct-small/full-direct-small/mapped-one-block handoffs, pthread/process hooks, complete
+post-TLS singleton/full-medium/full-large/full-non-direct-small/full-direct-small/mapped-one-block handoffs, pthread/process hooks, complete
 subprocess layout/lifecycle, and C pthread-mutex layout claims remain absent. A
 first dynamic arena page additionally creates a private
 `DynamicArenaPagesOwner`: after proving the registry-published arena's
@@ -303,7 +316,7 @@ release—and returns the drained engine; an existing owner remains terminal.
 Separately, the source-shaped initially-unmapped failed-reclaim substrate
 selects terminal-empty, reabandonment, or unownership after its expected-head
 CAS/conflict collection. It has raw page-span release authority only through
-the post-TLS arena/OS-singleton, full-medium, full-non-direct-small, and
+the post-TLS arena/OS-singleton, full-medium, full-large, full-non-direct-small, and
 full-direct-small handoffs above, not as general
 free routing. General
 producer routing, regular/nonempty unmapped lifecycle integration, terminal
@@ -345,7 +358,7 @@ quiescence, abandonment publication, adoption versus a remote producer,
 ownership-release races, scoped producer cancellation/admission, regular
 generic/direct collection, and the joined full-page release/unfull branches.
 Except for these bounded owner-side collection routes, post-TLS arena/OS-
-singleton, full-medium, full-non-direct-small, and full-direct-small terminal releases, bounded ticket-zero and sequential later
+singleton, full-medium, full-large, full-non-direct-small, and full-direct-small terminal releases, bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
 all-free exit drain plus its full-singleton, mapped-medium-one-block, full
 medium/full-large/full-non-direct-small/full-direct-small, and sole mapped small-or-medium

@@ -376,10 +376,23 @@ beyond `reserved / 8` publishes the matching dynamic `pages_abandoned[bin]`
 bit plus `Heap::abandoned_count[bin]`, and the mapped tail clears that pair
 before PageMap -> dynamic ordinary bit -> metadata -> arena-slice release.
 This one route neither reclaims, adopts, requeues, scans, nor covers full
-non-direct-small, direct-small, large, multi-page, or general dynamic owner
+large, non-direct-small, direct-small, multi-page, or general dynamic owner
 exit.
 
-`DynamicThreadExitDrain::abandon_full_non_direct_small` is a fifth, separate
+`DynamicThreadExitDrain::abandon_full_large` separately admits one sole full
+`MemoryKind::Arena` large page in `BIN_FULL`, with `reserved > 1` and
+`used == reserved`. It preserves source force -> false collection ->
+full-queue/page-count detach -> ordinary unmapped abandonment. Its linear
+`DynamicThreadExitFullLargeHandoff` consumes sequential failed-reclaim frees:
+the page stays unmapped through the source mostly-used prefix, the first free
+beyond `reserved / 8` publishes the matching dynamic `pages_abandoned[bin]`
+bit plus `Heap::abandoned_count[bin]`, and the mapped tail clears that pair
+before PageMap -> dynamic ordinary bit -> metadata -> complete 64-slice
+arena release. This one route neither reclaims, adopts, requeues, scans, nor
+covers full medium/non-direct-small/direct-small, multi-page, or general
+dynamic owner exit.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
 dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
 page only in its ordinary regular bin, with
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
@@ -395,7 +408,7 @@ arena-slice release. It rejects direct-small before collection and neither
 reclaims, adopts, requeues, scans, nor covers full medium/direct-small/large,
 multi-page, or general dynamic owner exit.
 
-`DynamicThreadExitDrain::abandon_full_direct_small` is a sixth, separate
+`DynamicThreadExitDrain::abandon_full_direct_small` is a seventh, separate
 dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
 page only in its ordinary regular bin, with `block_size <= SMALL_SIZE_MAX`,
 `reserved >= 16`, `used == reserved`, `!page_is_in_full`, and its complete
@@ -487,7 +500,7 @@ dynamic engine consumes one stable, queue-detached mapped regular handoff and
 one same-origin mapped `allow_collect` remote free; its all-free dynamic-arena
 result performs the bounded PageMap/ordinary-bit/metadata/slice release while
 an existing-owner result remains terminal. It additionally proves one post-TLS
-dynamic owner-exit singleton, full-medium, full-non-direct-small, and
+dynamic owner-exit singleton, full-medium, full-large, full-non-direct-small, and
 full-direct-small unmapped-to-mapped handoffs, and sole mapped
 medium/non-direct-small/direct-small
 one-block handoffs: clearing the regular backing prevents reclaim; the singleton

@@ -839,7 +839,19 @@ aggregate-registry adoption remain absent.
   dynamic ordinary-bit -> metadata -> slice release. It does not cover full
   small/large, multiple pages, reclaim, adoption, requeue, scanning, or a
   general dynamic owner-exit traversal.
-  `DynamicThreadExitDrain::abandon_full_non_direct_small` is a fifth, separate
+  `DynamicThreadExitDrain::abandon_full_large` is a fifth, separate sequential
+  dynamic owner-exit endpoint for the drain's sole full `MemoryKind::Arena`
+  large page in `BIN_FULL`. It requires `reserved > 1`, `used == reserved`,
+  and no direct-cache entry. It force- then false-collects, detaches the full
+  queue and page count, and ordinary-unmapped abandons. Its linear
+  `DynamicThreadExitFullLargeHandoff` uses the normal failed-reclaim collector,
+  remains unmapped through the source mostly-used prefix, publishes the exact
+  dynamic bitmap/count pair only after the first free beyond `reserved / 8`,
+  and clears that pair before PageMap -> dynamic ordinary-bit -> metadata ->
+  complete 64-slice arena release. It rejects non-large before collection and
+  adds no full medium/small, multiple-page, reclaim, adoption, requeue,
+  scanning, or general dynamic owner-exit traversal capability.
+  `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
   sequential dynamic owner-exit endpoint for the drain's sole full
   `MemoryKind::Arena` small page in its ordinary bin. It requires
   `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
@@ -853,7 +865,7 @@ aggregate-registry adoption remain absent.
   -> metadata -> slice release. It rejects direct-small before collection and
   does not cover full medium/direct-small/large, multiple pages, reclaim,
   adoption, requeue, scanning, or a general dynamic owner-exit traversal.
-  `DynamicThreadExitDrain::abandon_full_direct_small` is a sixth, separate
+  `DynamicThreadExitDrain::abandon_full_direct_small` is a seventh, separate
   sequential dynamic owner-exit endpoint for the drain's sole full
   `MemoryKind::Arena` small page in its ordinary bin. It requires
   `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == reserved`,
@@ -961,6 +973,12 @@ aggregate-registry adoption remain absent.
   prove the full `BIN_FULL` preflight, exact unmapped-to-mapped mostly-used
   threshold, dynamic bitmap/count cleanup before terminal arena release,
   wholly pre-detach sole-page refusal, and retained collection failure.
+  `dynamic_thread_exit_full_large_handoff_reabandons_after_mostly_used_frees_then_releases`,
+  `dynamic_thread_exit_full_large_handoff_rejects_a_full_medium_before_detach`,
+  and `dynamic_thread_exit_full_large_handoff_retains_collection_failure`
+  prove the full-large `BIN_FULL` preflight, normal unmapped-to-mapped
+  mostly-used threshold, complete 64-slice terminal release, wholly pre-detach
+  class refusal, and retained collection failure.
   `dynamic_thread_exit_full_non_direct_small_handoff_reabandons_after_mostly_used_frees_then_releases`,
   `dynamic_thread_exit_full_non_direct_small_handoff_rejects_before_detach_when_another_page_is_live`,
   `dynamic_thread_exit_full_non_direct_small_handoff_rejects_direct_small_before_detach`,
