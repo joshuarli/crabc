@@ -12,6 +12,19 @@
 #define CRABC_TEST_ADAPTER_REMAP_STDLIB 1
 #include "crabc-mimalloc-test-adapter.h"
 
+/*
+ * This wrapper is compiled as C11 against the pinned native musl profile.
+ * Its `size_t` declarations cross directly into Rust `usize` parameters,
+ * while its stdlib remap promises `max_align_t` alignment. Fail at compile
+ * time if a foreign C ABI would make either adapter assumption false.
+ */
+_Static_assert(sizeof(size_t) == 8,
+               "crabc mimalloc test adapter requires a 64-bit size_t C ABI");
+_Static_assert(sizeof(void *) == sizeof(size_t),
+               "crabc mimalloc test adapter requires matching C pointer and size_t widths");
+_Static_assert(_Alignof(max_align_t) == CRABC_TEST_LIBC_MALLOC_ALIGNMENT,
+               "pinned Linux musl max_align_t must match the adapter fixture alignment");
+
 /* Keep the fixture's normal main body intact while giving this wrapper the
  * process entry point that brackets every allocator operation with lifecycle.
  */

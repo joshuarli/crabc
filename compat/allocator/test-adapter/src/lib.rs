@@ -793,6 +793,43 @@ mod enabled {
             }
         }
 
+        /// The C fixture's source-only `malloc` remap selects the aligned
+        /// adapter exports to retain the native 64-bit musl `max_align_t`
+        /// boundary. Keep this x86-64 regression separate from the broad C
+        /// adapter contract: it proves the newly enabled target's exact
+        /// zero-size and ordinary request boundaries without claiming a
+        /// production libc allocator integration.
+        #[cfg(target_arch = "x86_64")]
+        #[test]
+        fn x86_64_fixture_alignment_uses_the_prefixed_aligned_exports() {
+            const FIXTURE_MAX_ALIGNMENT: usize = 16;
+
+            let _serial = test_guard();
+            // SAFETY: the serial guard establishes the documented one-thread
+            // adapter contract for every operation in this test.
+            unsafe {
+                assert_eq!(crabc_test_init(), 0);
+                for request in [0, 1, 15, 16, 17, 4 * 1024, 256 * 1024] {
+                    set_errno(EAGAIN);
+                    let block = crabc_test_malloc_aligned(request, FIXTURE_MAX_ALIGNMENT);
+                    assert!(!block.is_null(), "request={request}");
+                    assert_eq!(block as usize % FIXTURE_MAX_ALIGNMENT, 0, "request={request}");
+                    assert!(crabc_test_usable_size(block) >= request, "request={request}");
+                    assert_eq!(errno_value(), EAGAIN, "request={request}");
+                    crabc_test_free(block);
+                }
+
+                let zeroed = crabc_test_calloc_aligned(3, 19, FIXTURE_MAX_ALIGNMENT);
+                assert!(!zeroed.is_null());
+                assert_eq!(zeroed as usize % FIXTURE_MAX_ALIGNMENT, 0);
+                for index in 0..57 {
+                    assert_eq!(zeroed.cast::<u8>().add(index).read(), 0);
+                }
+                crabc_test_free(zeroed);
+                assert_eq!(crabc_test_shutdown(), 0);
+            }
+        }
+
         #[test]
         fn exported_symbol_names_stay_prefixed() {
             let _serial = test_guard();

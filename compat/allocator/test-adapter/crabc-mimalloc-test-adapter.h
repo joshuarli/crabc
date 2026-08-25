@@ -96,13 +96,22 @@ int crabc_test_posix_memalign(void **out, size_t alignment, size_t size);
  */
 #if defined(CRABC_TEST_ADAPTER_REMAP_STDLIB)
 /*
- * crabc's Linux/AArch64 libc boundary retains its existing 16-byte
- * `max_align_t` guarantee for every allocation size. The source-faithful
- * mimalloc entry points above keep their natural small-bin alignment; these
- * private inline shims select the engine's aligned operations only for the
- * existing libc fixture. They add no ELF symbols.
+ * This adapter-only fixture boundary requires the pinned Linux 64-bit musl
+ * `max_align_t` alignment of 16 bytes for every allocation size. The
+ * source-faithful mimalloc entry points above keep their natural small-bin
+ * alignment; these private inline shims select the engine's aligned
+ * operations only for the existing libc fixture. They add no ELF symbols and
+ * do not claim a public crabc-libc allocator ABI.
  */
 enum { CRABC_TEST_LIBC_MALLOC_ALIGNMENT = 16 };
+
+/*
+ * The Rust adapter's `usize` parameters and the fixture's standard C
+ * allocation declarations are valid only for the explicit Linux/AArch64 and
+ * Linux/x86-64 64-bit profiles. The checked-in C wrapper verifies those
+ * width and alignment facts at its C11 source-remap boundary, so a foreign C
+ * ABI cannot silently exercise this private evidence adapter.
+ */
 
 static inline void *crabc_test_libc_malloc(size_t size)
 {
