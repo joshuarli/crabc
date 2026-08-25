@@ -52,7 +52,13 @@ maps. `process_arena.rs` separately ports the lower
 `mi_manage_os_memory_ex2` ownership edge for one caller-selected complete
 arena mapping: it binds a process registry to that exact map/main identity,
 retains the mapping only after in-place arena publication, and returns an
-unpublished rejected mapping to its caller. `ProcessPageArenaLease` then proves
+unpublished rejected mapping to its caller. A reserved mapping first enters
+the final sidecar slot so a stable arena callback commits metadata and later
+selected/page-metadata ranges through that exact owner; default Linux decommit
+reports no recommit requirement. A metadata-commit failure returns the exact
+mapping with an empty registry and a cold retry state. This is only a lower
+external-map boundary, not page-on-demand policy, `slice_pcommitted`, or the
+failed-commit page-reabandon branch. `ProcessPageArenaLease` then proves
 the exact map/root/configuration/main tuple for private
 `MainStaticProcessPageAllocator` and `MainHeapThreadProcessPageAllocator`
 owners. Each holds the process map's exclusive plain-entry lifecycle through

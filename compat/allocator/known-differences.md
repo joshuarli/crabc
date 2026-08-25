@@ -281,8 +281,9 @@ result may refine it only when it can prove retained ownership.
 - **Upstream/Rust:** `src/arena.c:1573-1611,1676-1791,1794-1871`, especially
   `mi_arenas_add`, `mi_arena_initialize`, and `mi_manage_os_memory_ex2`;
   represented by `process_arena::ProcessSharedArenaStorage` and
-  `ProcessPageArenaLease` over the existing `ArenaRegistry`,
-  `ManagedExternalRegion`, `Mapping`, and `ProcessPageMapLease` boundaries.
+  `process_owned_mapping_commit` / `ProcessPageArenaLease` over the existing
+  `ArenaRegistry`, `ManagedExternalRegion`, `Mapping`, and
+  `ProcessPageMapLease` boundaries.
 - **Category:** private incomplete process-arena ownership only. It has no C
   ABI surface or valid allocation-trace differential entry.
 - **Difference:** C may manage arbitrary external spans (including split
@@ -293,7 +294,16 @@ result may refine it only when it can prove retained ownership.
   returns that `Mapping` to the caller instead of silently unmapping it,
   because this is the lower `mi_manage_os_memory_ex2` boundary and no Rust
   `mi_reserve_os_memory_ex2` policy owner exists yet. Once published, the map
-  and in-place arena are process-lived. The typed pair may now be consumed by
+  and in-place arena are process-lived. A reserved mapping enters its final
+  sidecar slot before in-place initialization, so its retained callback can
+  commit metadata and later selected/page-metadata ranges through the exact
+  `Mapping`; it conservatively reports nonzero and the frozen Linux decommit
+  path reports no recommit requirement. An injected metadata-commit failure
+  returns that exact mapping with an empty registry and COLD sidecar, while the
+  selected map/subprocess pair remains available for a matching retry. This is
+  not source page-on-demand allocation policy: it does not select on-demand
+  commitment, maintain `slice_pcommitted`, or perform failed-commit
+  `_mi_page_abandon` reabandonment. The typed pair may now be consumed by
   separately recorded ticket-zero or one sequential later-thread page owners:
   each installs this arena's embedded `pages_main`, registers/releases ordinary
   pages, and retains a joined scoped producer. That does not create general
@@ -302,9 +312,14 @@ result may refine it only when it can prove retained ownership.
 - **Evidence:**
   `process_arena::tests::shared_owned_arena_binds_to_the_release_published_map_and_selected_subprocess`
   proves exact root/configuration/subprocess pairing, registry publication,
-  retained mapping geometry, and an empty page map. The setup-failure test
-  proves an inaccessible backing returns unchanged while the global root stays
-  ready, including a foreign retry that cannot consume the selected cold pair;
+  retained mapping geometry, and an empty page map.
+  `reserved_owned_arena_commits_metadata_and_claims_slices_through_its_stable_mapping`
+  proves reserved metadata, selected-slice, page-metadata, and later purge
+  requests stay on the final mapping callback.
+  `reserved_owned_arena_commit_failure_returns_the_unpublished_mapping_for_retry`
+  proves an injected metadata commit failure returns the exact live backing,
+  leaves the registry empty/cold, and permits only a matching retry; its foreign
+  retry cannot consume the selected pair.
   `foreign_map_or_subprocess_rejects_before_mapping_or_registry_mutation`
   proves a ready owner cannot accept a foreign process map.
   `main_static_page::tests::main_static_page_allocator_binds_the_in_place_main_arena_bitmap_before_page_map_publication`

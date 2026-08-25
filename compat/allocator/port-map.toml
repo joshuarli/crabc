@@ -970,10 +970,10 @@ performance_qualified = false
 [[item]]
 upstream = "src/arena.c"
 name = "mi-manage-os-memory-ex2-process-shared-one-arena"
-source_region = "mi_arenas_add, mi_arena_initialize, and mi_manage_os_memory_ex2 single-arena publication"
+source_region = "mi_arenas_add, mi_arena_initialize, mi_manage_os_memory_ex2 single-arena publication, and the retained external commit/decommit callback boundary"
 rust_module = "crabc_mimalloc::process_arena, crabc_mimalloc::arena, and crabc_mimalloc::os"
-rust_item = "ProcessSharedArenaStorage::install_one_owned_external_arena/ProcessSharedArenaLease/ProcessPageArenaLease"
-intentional_difference = "This is only the lower caller-selected mi_manage_os_memory_ex2 edge for one complete aligned mapping paired with the existing process PageMap root. Its typed pair now admits separately recorded ticket-zero or sequential later-thread page owners; automatic mi_arena_reserve policy, multiple/sub-arenas, concurrent/general page routing, and destruction remain absent. A pre-publication rejected Mapping returns to its caller because the absent reserve-policy layer owns any unmap decision."
+rust_item = "ProcessSharedArenaStorage::install_one_owned_external_arena, process_owned_mapping_commit, ProcessSharedArenaLease, and ProcessPageArenaLease"
+intentional_difference = "This is only the lower caller-selected mi_manage_os_memory_ex2 edge for one complete aligned mapping paired with the existing process PageMap root. A reserved Mapping enters its final sidecar slot before in-place initialization, so the retained callback commits metadata and later selected/page-metadata ranges through that exact mapping; frozen Linux decommit reports no recommit requirement. An injected metadata-commit failure returns the exact Mapping with an empty registry and COLD sidecar, while the selected pair remains retry-bound. This does not select source page-on-demand policy, maintain slice_pcommitted, or implement the failed-commit _mi_page_abandon reabandon branch. Its typed pair now admits separately recorded ticket-zero or sequential later-thread page owners; automatic mi_arena_reserve policy, multiple/sub-arenas, concurrent/general page routing, and destruction remain absent. A pre-publication rejected Mapping returns to its caller because the absent reserve-policy layer owns any unmap decision."
 tests = ["crabc-mimalloc/src/process_arena.rs", "crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/process_page_map.rs", "crabc-mimalloc/src/main_static_page.rs", "crabc-mimalloc/src/main_heap_page.rs"]
 exported = false
 implemented = true

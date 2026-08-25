@@ -48,7 +48,13 @@ Release-publishes the header root. `process_arena.rs` is its deliberately
 separate `mi_manage_os_memory_ex2` sidecar: it accepts one caller-selected,
 single-arena `Mapping`, binds an `ArenaRegistry` to that exact map/root/main
 identity before publication, and retains the mapping and in-place arena image
-for process lifetime. `ProcessPageArenaLease` validates that immutable tuple
+for process lifetime. For a reserved map, it first places the `Mapping` in its
+final sidecar slot, then gives the in-place arena a stable callback to commit
+metadata and later selected/page-metadata ranges through that exact owner; the
+frozen Linux decommit callback reports no recommit requirement. A metadata
+commit failure takes the exact map back before publication, with an empty
+registry and COLD sidecar but the selected pair still bound for retry.
+`ProcessPageArenaLease` validates that immutable tuple
 before either `main_static_page.rs` or `main_heap_page.rs` may borrow its
 selected source Theap. Each private owner holds the map's nonrecursive
 lifecycle lease for its complete engine and scoped-producer lifetime, installs
@@ -61,6 +67,9 @@ still has no automatic reserve policy, C `mi_page_map_empty` pre-root, general
 concurrent page consumer, owner-exit traversal, or process shutdown. A rejected
 unpublished mapping returns to its caller; a failed map reservation or dropped
 unfinished lifecycle is terminal rather than exposing a null or fresh root.
+This callback is not a fresh-page policy: page-on-demand selection,
+`slice_pcommitted` advancement, page-area commitment, and failed-commit
+`_mi_page_abandon` reabandonment remain separate source transitions.
 
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
 present. `MetaAllocator` is one process-static, `!Unpin` owner: its internal

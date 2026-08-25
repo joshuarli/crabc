@@ -209,9 +209,10 @@ bitmap/count member is claimed, source abandoned/live collection and Theap
 reassociation run, and the page returns at the target queue tail. The first
 slice accepts an immediate head or an exhausted nonfull fully committed medium
 page (`slice_pcommitted == 0` and `capacity < reserved`), extending the latter
-after tail insertion. Page-area commit/failure-reabandon remains absent: a
-nonzero commit prefix, miss, scalar extension error, or post-transfer failure
-retains the target rather than taking a fresh allocation fallback. Small/direct
+after tail insertion. The lower process-owned mapping callback now exists, but
+page-area commit/failure-reabandon remains absent: a nonzero commit prefix,
+miss, scalar extension error, or post-transfer failure retains the target
+rather than taking a fresh allocation fallback. Small/direct
 members remain client-free-only. A direct small member must prove the exact
 rounded source direct-cache range before collection; queue removal clears that
 range before page-count detach. The route retains the source `reserved >= 16`
@@ -255,7 +256,14 @@ its final static slot, and Release-publishes its root exactly once.
 `process_arena.rs` separately admits one caller-selected, complete in-place
 arena mapping only after binding its registry to that same
 map/root/configuration/subprocess tuple; it retains the published mapping for
-process lifetime and returns an unpublished rejected mapping to its caller.
+process lifetime and returns an unpublished rejected mapping to its caller. A
+reserved mapping first enters that final owner slot, so the retained arena
+callback commits metadata and later selected ranges through the exact same
+`Mapping`; frozen Linux decommit reports no recommit requirement. An injected
+metadata-commit failure returns the exact map with the registry empty and the
+sidecar cold. This establishes only the external-map ownership prerequisite:
+it does not enable page-on-demand policy, `slice_pcommitted`, or failed-commit
+page reabandonment.
 `ProcessPageArenaLease` proves that exact tuple before `main_static_page.rs`
 or `main_heap_page.rs` may bind an already selected source Theap to it. The
 private ticket-zero and later-thread engines each hold the only process-map

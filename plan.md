@@ -64,9 +64,16 @@ a `PageMap` in its final process-static slot, and Release-publishes a stable
 root exactly once. `process_arena.rs` source-maps the caller-selected
 `mi_manage_os_memory_ex2` edge for one complete mapping: it binds an
 `ArenaRegistry` to that exact root/configuration/main identity before
-in-place publication, retains the mapping on success, and returns an
-unpublished rejected mapping to its caller. `ProcessPageArenaLease` now proves
-that exact tuple for `main_static_page.rs`'s one bounded page-bearing owner.
+in-place publication. A reserved mapping first moves into the sidecar's final
+slot, whose stable callback commits source metadata and later selected arena
+ranges through that same `Mapping`; its frozen Linux decommit reports that
+reuse needs no recommit. An injected metadata-commit failure recovers the
+exact unpublished mapping, leaves the registry empty and the sidecar cold, and
+keeps the selected map/subprocess pair available for a matching retry. This is
+only the lower external-map boundary: it does not select page-on-demand commit,
+maintain `slice_pcommitted`, or implement the source failed-commit
+`_mi_page_abandon` branch. `ProcessPageArenaLease` now proves that exact tuple
+for `main_static_page.rs`'s one bounded page-bearing owner.
 `MainStaticProcessPageAllocator` borrows only the live ticket-zero attachment,
 holds a nonrecursive process-map lifecycle lease through its complete engine
 and joined scoped producer, installs the selected arena's embedded `pages_main`
@@ -263,7 +270,9 @@ and default promotion remain unfinished. The next safe lifecycle frontier is
 another source-shaped owner-exit page class, the exact route's page-area
 commit/failure-reabandon branch, or a separately proven aggregate-registry
 policy—not a superficial broad abandonment loop or generic allocation-time
-scan.
+scan. The stable process-owned mapping callback required by a future
+page-area-commit route is now present, but its source allocation policy and
+failure-reabandon transition remain intentionally separate work.
 
 A fresh pinned-source audit makes that prerequisite concrete: after its absent
 deferred-callback edge, `mi_theap_collect_ex(MI_ABANDON)` first calls

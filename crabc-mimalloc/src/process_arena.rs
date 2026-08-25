@@ -23,6 +23,14 @@
 //! owner alone attaches the main Heap, registers pages, and retains a scoped
 //! producer lifetime.
 //!
+//! A reserved selected mapping enters this sidecar's final slot before
+//! `manage_external_in_place` initializes metadata. The retained arena callback
+//! therefore reaches the exact process-owned [`Mapping`] for metadata, later
+//! arena/page-metadata commitment, and the frozen Linux decommit request; it
+//! never borrows a stack-local mapping owner. That boundary deliberately does
+//! not choose source page-on-demand policy, track `slice_pcommitted`, or own a
+//! failed page-area commit's `_mi_page_abandon` transition.
+//!
 //! On a pre-publication rejection, the caller receives its [`Mapping`] back
 //! through [`ProcessSharedArenaInstallFailure`]. That is deliberate: this is
 //! the lower `mi_manage_os_memory_ex2` layer, whose source caller owns the
@@ -34,6 +42,7 @@
 extern crate std;
 
 use core::cell::UnsafeCell;
+use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
@@ -41,8 +50,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 use crabc_core::Errno;
 
 use crate::arena::{
-    ArenaRegistry, ArenaView, ExternalArenaPlan, ManageArenaError, ManagedExternalRegion,
-    manage_external_in_place,
+    ArenaRegistry, ArenaView, CommitHook, ExternalArenaPlan, ManageArenaError,
+    ManagedExternalRegion, manage_external_in_place,
 };
 use crate::lock::PrivateLock;
 use crate::os::{Mapping, MemoryConfig};
@@ -53,8 +62,9 @@ use crate::process_page_map::{
 use crate::subproc::MainSubprocess;
 
 const COLD: u8 = 0;
-const READY: u8 = 1;
-const RETAINED: u8 = 2;
+const INITIALIZING: u8 = 1;
+const READY: u8 = 2;
+const RETAINED: u8 = 3;
 
 const PAIR_UNSET: u8 = 0;
 const PAIR_SET: u8 = 1;
@@ -65,9 +75,11 @@ const PAIR_SET: u8 = 1;
 /// fields needed by prior slices. Keeping its arena-registry group here
 /// avoids claiming that it is already a full Rust layout of `mi_subproc_t`.
 /// The initialization lock serializes pair selection and the one registry
-/// insertion. Once READY is Release-published, the final mapping, managed
-/// arena metadata, exact root identity, and registry publication are all
-/// stable until a future process-shutdown/quiescence owner exists.
+/// insertion. `INITIALIZING` makes the temporary final mapping-slot ownership
+/// explicit while in-place metadata initialization invokes its callback. Once
+/// READY is Release-published, the mapping, managed arena metadata, exact
+/// root identity, and registry publication are all stable until a future
+/// process-shutdown/quiescence owner exists.
 pub(crate) struct ProcessSharedArenaStorage {
     state: AtomicU8,
     pair_state: AtomicU8,
@@ -80,10 +92,13 @@ pub(crate) struct ProcessSharedArenaStorage {
     managed: UnsafeCell<MaybeUninit<ManagedExternalRegion>>,
 }
 
-// SAFETY: the initialization lock serializes final-slot writes. READY is
-// Release-published only after every final slot and the registry's Release
-// arena publication are valid. This owner intentionally supplies neither
-// mutable page-map access nor arena teardown while a lease can exist.
+// SAFETY: the initialization lock serializes final-slot writes and temporary
+// `INITIALIZING` ownership. READY is Release-published only after every final
+// slot and the registry's Release arena publication are valid. Once stored, a
+// Mapping is never moved, replaced, or unmapped; its callback performs only
+// raw range transitions whose conflicting ownership is serialized by Arena's
+// source bitmap protocol. This owner intentionally supplies neither mutable
+// page-map access nor arena teardown while a lease can exist.
 unsafe impl Sync for ProcessSharedArenaStorage {}
 
 impl ProcessSharedArenaStorage {
@@ -127,8 +142,11 @@ impl ProcessSharedArenaStorage {
     /// The caller transfers one live mapping. On every pre-publication error,
     /// the returned failure still owns exactly that mapping; it must remain
     /// live or be explicitly unmapped by the caller. Success consumes it into
-    /// this process-lifetime owner. A later source reserve policy must choose
-    /// the mapping size/commit mode and decide whether to unmap on failure.
+    /// this process-lifetime owner. A reserved mapping commits only through
+    /// the stable final-slot callback; a callback failure returns that same
+    /// unpublished mapping while this sidecar returns to COLD. A later source
+    /// reserve policy must choose the mapping size/commit mode and decide
+    /// whether to unmap on failure.
     pub(crate) fn install_one_owned_external_arena(
         &'static self,
         page_map: ProcessPageMapLease,
@@ -150,7 +168,13 @@ impl ProcessSharedArenaStorage {
         };
 
         let attempt = match self.state.load(Ordering::Acquire) {
-            COLD => self.install_cold(candidate, mapping),
+            COLD => {
+                // This state makes the temporary mapping-slot ownership
+                // observable while `manage_external_in_place` invokes the
+                // callback synchronously under this same lock.
+                self.state.store(INITIALIZING, Ordering::Release);
+                self.install_cold(candidate, mapping)
+            }
             READY => ProcessSharedArenaInstallAttempt::Returned {
                 error: if self.pair_matches(candidate) {
                     ProcessSharedArenaError::AlreadyInstalled
@@ -159,7 +183,7 @@ impl ProcessSharedArenaStorage {
                 },
                 mapping,
             },
-            RETAINED | _ => ProcessSharedArenaInstallAttempt::Returned {
+            INITIALIZING | RETAINED | _ => ProcessSharedArenaInstallAttempt::Returned {
                 error: ProcessSharedArenaError::Retained,
                 mapping,
             },
@@ -204,31 +228,57 @@ impl ProcessSharedArenaStorage {
             // private source registry no longer has a trustworthy state.
             if error == ProcessSharedArenaError::RegistryBinding {
                 self.state.store(RETAINED, Ordering::Release);
+            } else {
+                self.state.store(COLD, Ordering::Release);
             }
             return ProcessSharedArenaInstallAttempt::Returned { error, mapping };
         }
 
+        // The callback is retained by the in-place arena beyond this stack
+        // frame. Store the mapping in its process-lifetime slot before the
+        // source-shaped metadata commit call, rather than handing out a
+        // pointer to this consuming local owner. An error below takes this
+        // exact slot back before COLD is republished.
+        //
+        // SAFETY: `INITIALIZING` is held under `initialization_lock` and no
+        // previous attempt can have initialized this final slot. The only
+        // callback invocation before READY is synchronous below.
+        unsafe { self.write_initializing_mapping(mapping) };
+        let mapping = unsafe { self.mapping_for_commit() };
+        let initially_committed = mapping.initially_committed();
+        let initially_zero = mapping.initially_zero();
+        let commit_hook = CommitHook::new(
+            process_owned_mapping_commit,
+            core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
+        );
+
         // SAFETY: the candidate proves the live mapping is one complete,
         // aligned single arena using the same page size as the selected map.
-        // The initialization lock excludes every registry reader/writer until
-        // `manage_external_in_place` has fully initialized and published it.
+        // The final mapping slot is initialized for the stable hook before
+        // this call, and the initialization lock excludes every registry
+        // reader/writer until `manage_external_in_place` fully publishes it.
         let managed = unsafe {
             manage_external_in_place(
                 &self.registry,
                 candidate.base,
                 candidate.length,
                 candidate.config.page_size(),
-                mapping.initially_committed(),
+                initially_committed,
                 false,
-                mapping.initially_zero(),
+                initially_zero,
                 -1,
                 false,
-                None,
+                Some(commit_hook),
             )
         };
         let managed = match managed {
             Ok(managed) => managed,
             Err(error) => {
+                // SAFETY: the failed first-arena setup has not published a
+                // registry entry or callback reachable by another caller.
+                // The initialization lock still excludes another install.
+                let mapping = unsafe { self.take_initializing_mapping() };
+                self.state.store(COLD, Ordering::Release);
                 return ProcessSharedArenaInstallAttempt::Returned {
                     error: ProcessSharedArenaError::Arena(error),
                     mapping,
@@ -241,10 +291,7 @@ impl ProcessSharedArenaStorage {
         // the escaped mapping and registry slot rather than pretending an
         // unpublish/retry protocol exists.
         if !managed.is_complete() {
-            // SAFETY: this is the unique success path under the initialization
-            // lock. The mapping must remain live because an arena slot escaped.
-            unsafe { (*self.mapping.get()).write(mapping) };
-            // SAFETY: same final-slot ownership proof as the mapping write.
+            // SAFETY: the managed slot joins the already-retained mapping.
             unsafe { (*self.managed.get()).write(managed) };
             self.state.store(RETAINED, Ordering::Release);
             return ProcessSharedArenaInstallAttempt::Retained(
@@ -253,13 +300,49 @@ impl ProcessSharedArenaStorage {
         }
 
         // SAFETY: `manage_external_in_place` has fully initialized and
-        // Release-published the sole arena. The mapping and region now move
-        // into their final process-lifetime slots before READY publication.
-        unsafe { (*self.mapping.get()).write(mapping) };
-        // SAFETY: same final-slot ownership proof as the mapping write.
+        // Release-published the sole arena. Its stable mapping callback is
+        // already in the final slot; write the paired managed region before
+        // READY publication.
         unsafe { (*self.managed.get()).write(managed) };
         self.state.store(READY, Ordering::Release);
         ProcessSharedArenaInstallAttempt::Ready(ProcessSharedArenaLease { storage: self })
+    }
+
+    /// Writes the mapping before synchronous in-place initialization can ask
+    /// its callback to commit metadata.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds `initialization_lock`, has changed the state from
+    /// COLD to INITIALIZING, and knows this slot is uninitialized.
+    #[inline]
+    unsafe fn write_initializing_mapping(&self, mapping: Mapping) {
+        unsafe { (*self.mapping.get()).write(mapping) };
+    }
+
+    /// Recovers the caller's mapping after first-arena initialization fails
+    /// before registry publication.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds `initialization_lock`, the state is INITIALIZING, and
+    /// no arena callback escaped the failed first-arena setup.
+    #[inline]
+    unsafe fn take_initializing_mapping(&self) -> Mapping {
+        unsafe { (*self.mapping.get()).assume_init_read() }
+    }
+
+    /// Borrows the stable mapping that owns an external arena commit hook.
+    ///
+    /// # Safety
+    ///
+    /// The caller either holds `initialization_lock` during synchronous
+    /// INITIALIZING metadata setup after `write_initializing_mapping`, or was
+    /// reached through an arena that escaped management; its mapping slot is
+    /// never moved or unmapped by this owner.
+    #[inline]
+    unsafe fn mapping_for_commit(&self) -> &Mapping {
+        unsafe { (*self.mapping.get()).assume_init_ref() }
     }
 
     fn bind_or_match_pair(
@@ -326,6 +409,62 @@ impl ProcessSharedArenaStorage {
     #[inline]
     fn test_state(&self) -> u8 {
         self.state.load(Ordering::Acquire)
+    }
+}
+
+/// Commits or purges a range through the exact mapping retained by the
+/// process-owned external arena.
+///
+/// This is the source `mi_manage_os_memory_ex2` callback boundary, not an
+/// arena-reservation policy: the storage owns the selected map before this
+/// callback can run, and it never releases or replaces that map while an arena
+/// can retain the function pointer. A commit reports the conservative
+/// `is_zero = false` observation because [`Mapping::commit`] cannot prove
+/// zeroed bytes. A decommit callback's boolean instead means
+/// `needs_recommit`; the frozen Linux `MADV_DONTNEED` path leaves a range
+/// accessible, so both its successful outcome and its no-failure-channel
+/// error case return false.
+unsafe extern "C" fn process_owned_mapping_commit(
+    commit: bool,
+    start: *mut u8,
+    size: usize,
+    is_zero: *mut bool,
+    user_argument: *mut c_void,
+) -> bool {
+    if user_argument.is_null() {
+        return false;
+    }
+    // SAFETY: `install_cold` supplies only its process-static storage address
+    // and stores its Mapping before `manage_external_in_place` can call this.
+    // No successful path moves or unmapps that slot while an arena retains it.
+    let storage = unsafe { &*user_argument.cast::<ProcessSharedArenaStorage>() };
+    // SAFETY: the callback is synchronous under initialization_lock before
+    // first publication, or comes from an arena whose retained mapping slot is
+    // stable for the process lifetime.
+    let mapping = unsafe { storage.mapping_for_commit() };
+    let Ok(base) = mapping.base() else {
+        return false;
+    };
+    let Some(offset) = start.addr().checked_sub(base.addr()) else {
+        return false;
+    };
+
+    if commit {
+        if mapping.commit(offset, size).is_err() {
+            return false;
+        }
+        if !is_zero.is_null() {
+            // SAFETY: the in-place arena API supplies either null or a valid
+            // writable source `bool` output for this callback invocation.
+            unsafe { is_zero.write(false) };
+        }
+        true
+    } else {
+        // The callback ABI has no decommit failure result: false specifically
+        // says no recommit is needed. Mapping::decommit either preserves the
+        // accessible default Linux mapping or leaves it untouched on error.
+        let _ = mapping.decommit(offset, size);
+        false
     }
 }
 
@@ -620,9 +759,11 @@ static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStora
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::arena::ArenaId;
     use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
-    use crate::os::{MapAccess, PageSize};
+    use crate::os::{fault, MapAccess, PageSize};
     use crate::process_page_map::ProcessPageMapStorage;
+    use crabc_core::Errno;
 
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
@@ -690,16 +831,73 @@ mod tests {
     }
 
     #[test]
-    fn arena_setup_failure_keeps_the_global_map_ready_and_returns_its_unpublished_backing() {
+    fn reserved_owned_arena_commits_metadata_and_claims_slices_through_its_stable_mapping() {
+        let _fault = fault::install(fault::Plan::disabled());
         let config = memory_config();
         let subprocess = MainSubprocess::test_static_owner();
         let page_map = initialized_map(config, subprocess);
         let root = page_map.root().unwrap();
         let storage = ProcessSharedArenaStorage::test_static_owner();
-        // This is a valid one-arena region but its source memory facts require
-        // a metadata commit hook. The bounded sidecar deliberately has no
-        // hidden hook or policy fallback, so `mi_manage_os_memory_ex2` fails
-        // before registry publication and gives the caller its map back.
+        let reserved = Mapping::map_aligned_for_allocator(
+            config,
+            ARENA_MIN_SIZE,
+            ARENA_ALIGNMENT,
+            MapAccess::Reserved,
+        )
+        .expect("map one reserved source-sized arena backing");
+        let base = reserved.base().expect("the caller still owns the reserved mapping");
+
+        let lease = match storage.install_one_owned_external_arena(page_map, reserved) {
+            Ok(lease) => lease,
+            Err(_) => panic!("the process-owned mapping commits its arena metadata"),
+        };
+        assert_eq!(lease.root().unwrap(), root);
+        assert_eq!(lease.registry_count().unwrap(), 1);
+        let arena = lease.arena().expect("the committed reserved arena publishes");
+        assert_eq!(arena.slice_start(0), Some(base));
+
+        let claim = arena
+            .try_claim_suitable_slices(ArenaId::none(), 1, true, 0)
+            .expect("the same stable callback commits a selected arena slice");
+        let slice = claim.slice_index();
+        assert!(claim.memory_id().initially_committed());
+        assert!(
+            claim.page_metadata().is_some(),
+            "page metadata commitment uses the same process-owned mapping callback"
+        );
+        assert_eq!(
+            unsafe { arena.slices_committed() }
+                .expect("the arena retains its source commitment bitmap")
+                .is_set_range(slice, 1),
+            Some(true),
+            "the selected data slice becomes committed only through the callback"
+        );
+        assert!(claim.release(), "the one committed claim returns to its source free bitmap");
+        assert!(
+            arena.collect_scheduled_purge(config.page_size(), true),
+            "the stable callback also owns the later source decommit request"
+        );
+        assert_eq!(
+            unsafe { arena.slices_committed() }
+                .expect("the source commitment bitmap remains readable")
+                .is_set_range(slice, 1),
+            Some(true),
+            "the default Linux decommit callback reports that reuse needs no recommit"
+        );
+    }
+
+    #[test]
+    fn reserved_owned_arena_commit_failure_returns_the_unpublished_mapping_for_retry() {
+        let config = memory_config();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = initialized_map(config, subprocess);
+        let root = page_map.root().unwrap();
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Commit,
+            1,
+            Errno::NOMEM,
+        ));
         let reserved = Mapping::map_aligned_for_allocator(
             config,
             ARENA_MIN_SIZE,
@@ -707,16 +905,32 @@ mod tests {
             MapAccess::Reserved,
         )
         .expect("map an intentionally inaccessible arena candidate");
+        let base = reserved
+            .base()
+            .expect("the caller owns the candidate before installation");
 
         let failure = match storage.install_one_owned_external_arena(page_map, reserved) {
-            Ok(_) => panic!("a missing commit hook cannot become an arena"),
+            Ok(_) => panic!("the injected owned-mapping commit failure cannot publish an arena"),
             Err(failure) => failure,
         };
         let (error, mut returned) = take_returned_mapping(failure);
-        assert_eq!(error, ProcessSharedArenaError::Arena(ManageArenaError::CommitRequired));
+        assert_eq!(error, ProcessSharedArenaError::Arena(ManageArenaError::CommitFailed));
         assert_eq!(storage.test_state(), COLD);
         assert_eq!(storage.registry.count(), 0);
         assert_eq!(page_map.root().unwrap(), root);
+        assert_eq!(
+            returned.base().expect("the returned mapping remains live"),
+            base,
+            "failed in-place metadata commitment returns the exact selected mapping"
+        );
+        fault.set(fault::Plan::disabled());
+        assert!(
+            returned
+                .commit(0, config.page_size().bytes())
+                .expect("the unpublished mapping remains live after commit failure")
+                .is_some(),
+            "the returned mapping retains its exact commit authority"
+        );
 
         // Pairing is now frozen to this source map/subprocess, but a foreign
         // caller must not turn that still-cold retry state into a retained
