@@ -251,6 +251,32 @@ def require_native_x86_host(rustc: str) -> str:
     return rustc_version
 
 
+def cargo_probe_command(cargo: str) -> list[str]:
+    """Build the retained x86 TLS probe from the immutable lockfile.
+
+    A native laboratory starts with an empty per-architecture Cargo volume, so
+    this command intentionally permits Cargo to fetch the already-locked
+    registry sources on its first run. `--locked` prevents lockfile mutation;
+    `--offline` would make the documented standalone TLS command depend on an
+    unrelated earlier Cargo invocation.
+    """
+
+    return [
+        cargo,
+        "rustc",
+        "--locked",
+        "-p",
+        "crabc-mimalloc",
+        "--lib",
+        "--features",
+        "tls-codegen-probe",
+        "--target",
+        TARGET,
+        "--message-format=json-render-diagnostics",
+        "--",
+    ]
+
+
 def main() -> int:
     require_native_x86_execution_provenance()
     cargo = require_tool("cargo")
@@ -265,20 +291,7 @@ def main() -> int:
         temporary_root = Path(temporary)
         environment = os.environ.copy()
         environment["CARGO_TARGET_DIR"] = str(temporary_root / "target")
-        cargo_base_command = [
-            cargo,
-            "rustc",
-            "--offline",
-            "-p",
-            "crabc-mimalloc",
-            "--lib",
-            "--features",
-            "tls-codegen-probe",
-            "--target",
-            TARGET,
-            "--message-format=json-render-diagnostics",
-            "--",
-        ]
+        cargo_base_command = cargo_probe_command(cargo)
         common_codegen_flags = [
             "-Copt-level=3",
             "-Cdebug-assertions=no",

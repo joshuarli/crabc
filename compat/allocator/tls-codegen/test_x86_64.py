@@ -19,6 +19,29 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class X86_64TlsWitnessEvidenceTests(unittest.TestCase):
+    def test_probe_command_is_locked_without_a_hidden_warm_cache_requirement(self) -> None:
+        command = RUNNER.cargo_probe_command("cargo")
+
+        self.assertEqual(command[:3], ["cargo", "rustc", "--locked"])
+        self.assertNotIn("--offline", command)
+        self.assertEqual(
+            command,
+            [
+                "cargo",
+                "rustc",
+                "--locked",
+                "-p",
+                "crabc-mimalloc",
+                "--lib",
+                "--features",
+                "tls-codegen-probe",
+                "--target",
+                RUNNER.TARGET,
+                "--message-format=json-render-diagnostics",
+                "--",
+            ],
+        )
+
     def test_identity_requires_an_exact_fs_zero_load_without_tls_relocation(self) -> None:
         evidence = RUNNER.witness_access_evidence(
             RUNNER.IDENTITY_WITNESS,

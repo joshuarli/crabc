@@ -56,3 +56,8 @@ compilation/runtime regression for that source boundary, not independent
 oracle evidence. The object and relocation inspection in this runner is the
 native x86-64 codegen evidence. The report is written separately to
 `compat/reports/allocator/tls-codegen-x86_64.json`.
+
+The probe build uses `--locked` but deliberately not `--offline`: its first
+native run may populate the architecture-local Cargo volume from the checked-in
+lockfile. It never updates that lockfile or relies on an unrelated prior Cargo
+command to warm the cache.
