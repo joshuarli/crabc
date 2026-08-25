@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -79,6 +80,51 @@ class ArchiveValidationTests(unittest.TestCase):
             self.assertEqual((extracted / "libc.so").read_bytes(), b"owned\n")
             self.assertTrue((extracted / "libc-alias.so").is_symlink())
             self.assertEqual((extracted / "libc-alias.so").readlink().as_posix(), "libc.so")
+
+
+class ElfValidationTests(unittest.TestCase):
+    def test_dynamic_non_pie_requires_et_exec(self) -> None:
+        def parsed(elf_type: int) -> dict[str, object]:
+            return {
+                "machine": RUNNER.SYSROOT.EM_AARCH64,
+                "elf_type": elf_type,
+                "interpreter": RUNNER.SYSROOT.CANONICAL_INTERPRETER,
+                "dynamic_needed": [],
+            }
+
+        with mock.patch.object(RUNNER, "raw_elf_tools", return_value={}), mock.patch.object(
+            RUNNER.SYSROOT, "inspect_elf", return_value=parsed(2)
+        ):
+            result = RUNNER.elf_record(
+                Path("/synthetic/dynamic-non-pie"),
+                1.0,
+                kind="dynamic-executable",
+                interpreter=RUNNER.SYSROOT.CANONICAL_INTERPRETER,
+            )
+        self.assertTrue(result["passed"])
+
+        with mock.patch.object(RUNNER, "raw_elf_tools", return_value={}), mock.patch.object(
+            RUNNER.SYSROOT, "inspect_elf", return_value=parsed(3)
+        ):
+            with self.assertRaises(RUNNER.SmokeError):
+                RUNNER.elf_record(
+                    Path("/synthetic/wrong-dynamic-non-pie"),
+                    1.0,
+                    kind="dynamic-executable",
+                    interpreter=RUNNER.SYSROOT.CANONICAL_INTERPRETER,
+                )
+
+
+class LinkModeDeclarationTests(unittest.TestCase):
+    def test_rejects_a_declared_link_mode_without_a_smoke(self) -> None:
+        with self.assertRaises(RUNNER.SmokeError):
+            RUNNER.optional_modes(
+                Path("/synthetic/sysroot"),
+                Path("/synthetic/crabc-cc"),
+                Path("/synthetic/work"),
+                1.0,
+                {"supported_link_modes": ["future-unverified-mode"]},
+            )
 
 
 if __name__ == "__main__":

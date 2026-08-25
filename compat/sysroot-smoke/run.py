@@ -474,11 +474,21 @@ def elf_record(path: Path, timeout: float, *, kind: str, interpreter: str | None
         errors.append("ELF is not AArch64")
     if parsed.get("interpreter") != interpreter:
         errors.append(f"unexpected PT_INTERP: {parsed.get('interpreter')!r}")
-    if kind == "dynamic" and parsed.get("elf_type") != 3:
-        errors.append("dynamic executable is not ET_DYN")
-    if kind == "module" and parsed.get("elf_type") != 3:
-        errors.append("module is not ET_DYN")
-    if kind == "static" and (parsed.get("interpreter") is not None or parsed.get("dynamic_needed")):
+    expected_type = {
+        "dynamic-pie": (3, "ET_DYN"),
+        "dynamic-executable": (2, "ET_EXEC"),
+        "module": (3, "ET_DYN"),
+        "static-executable": (2, "ET_EXEC"),
+        "static-pie": (3, "ET_DYN"),
+    }.get(kind)
+    if expected_type is None:
+        raise SmokeError(f"unknown ELF smoke artifact kind: {kind}")
+    expected_elf_type, expected_elf_name = expected_type
+    if parsed.get("elf_type") != expected_elf_type:
+        errors.append(f"{kind} is not {expected_elf_name}")
+    if kind in {"static-executable", "static-pie"} and (
+        parsed.get("interpreter") is not None or parsed.get("dynamic_needed")
+    ):
         errors.append("static executable has dynamic runtime metadata")
     foreign = [item for item in parsed.get("dynamic_needed", []) if any(marker in str(item) for marker in ("ld-linux", "libc.so.6", "libgcc", "libatomic", "libssp"))]
     if foreign:
@@ -616,7 +626,7 @@ def static_pthread_tls(root: Path, work: Path, timeout: float) -> dict[str, obje
         or not map_path.is_file()
     ):
         raise SmokeError("static pthread/TLS link selected an unapproved input or did not emit a map")
-    elf = elf_record(output, timeout, kind="static", interpreter=None)
+    elf = elf_record(output, timeout, kind="static-executable", interpreter=None)
     run = command_record([str(output)], environment=environment, timeout=timeout)
     result = {
         "compile": compile_record,
@@ -640,22 +650,62 @@ def static_pthread_tls(root: Path, work: Path, timeout: float) -> dict[str, obje
 
 
 def optional_modes(root: Path, wrapper: Path, work: Path, timeout: float, manifest: Mapping[str, object]) -> dict[str, object]:
-    declared = manifest.get("supported_link_modes", manifest.get("link_modes", ()))
+    if "supported_link_modes" in manifest:
+        declared = manifest["supported_link_modes"]
+    elif "link_modes" in manifest:
+        declared = manifest["link_modes"]
+    else:
+        return {}
     if isinstance(declared, dict):
-        declared = declared.keys()
-    if not isinstance(declared, (list, tuple, set)):
-        declared = ()
+        declared_values: Iterable[object] = declared.keys()
+    elif isinstance(declared, (list, tuple, set, frozenset)):
+        declared_values = declared
+    else:
+        raise SmokeError("manifest link-mode declaration must be a collection")
+
+    aliases: set[str] = set()
+    for value in declared_values:
+        if not isinstance(value, str) or not value:
+            raise SmokeError("manifest link-mode declaration contains an invalid name")
+        aliases.add(value.replace("_", "-"))
+    covered = {
+        # These three are always exercised by the mandatory probes below.
+        "dynamic-pie",
+        "static",
+        "static-executable",
+        "shared",
+        # These require their dedicated extra link/ELF paths below.
+        "dynamic-executable",
+        "dynamic-non-pie",
+        "static-pie",
+    }
+    unsupported = sorted(aliases - covered)
+    if unsupported:
+        raise SmokeError(
+            "manifest declares link modes without a corresponding archive smoke: "
+            + ", ".join(unsupported)
+        )
+
     result: dict[str, object] = {}
     source = FIXTURES / "dynamic.c"
-    aliases = {str(item).replace("_", "-") for item in declared}
     if {"dynamic-non-pie", "dynamic-executable"} & aliases:
         output = work / "dynamic-non-pie"
         result["dynamic_non_pie"] = link_artifact(root, wrapper, ["-no-pie", str(source), "-o", str(output)], output, work, timeout, [source])
-        result["dynamic_non_pie"]["elf"] = elf_record(output, timeout, kind="dynamic", interpreter=SYSROOT.CANONICAL_INTERPRETER)
+        result["dynamic_non_pie"]["elf"] = elf_record(
+            output,
+            timeout,
+            kind="dynamic-executable",
+            interpreter=SYSROOT.CANONICAL_INTERPRETER,
+        )
     if {"static-pie"} & aliases:
         output = work / "static-pie"
         result["static_pie"] = link_artifact(root, wrapper, ["-static-pie", str(source), "-o", str(output)], output, work, timeout, [source])
-        result["static_pie"]["elf"] = elf_record(output, timeout, kind="static", interpreter=None)
+        result["static_pie"]["elf"] = elf_record(
+            output,
+            timeout,
+            kind="static-pie",
+            interpreter=None,
+        )
     return result
 
 
@@ -695,7 +745,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         report["tests"]["module"]["elf"] = elf_record(module, args.timeout, kind="module", interpreter=None)
         dynamic = work / "dynamic"
         report["tests"]["dynamic"] = link_artifact(root, wrapper, [str(FIXTURES / "dynamic.c"), "-o", str(dynamic)], dynamic, work, args.timeout, [FIXTURES / "dynamic.c"])
-        report["tests"]["dynamic"]["elf"] = elf_record(dynamic, args.timeout, kind="dynamic", interpreter=SYSROOT.CANONICAL_INTERPRETER)
+        report["tests"]["dynamic"]["elf"] = elf_record(
+            dynamic,
+            args.timeout,
+            kind="dynamic-pie",
+            interpreter=SYSROOT.CANONICAL_INTERPRETER,
+        )
         report["tests"]["dynamic"]["runtime"] = run_chroot_dynamic(root, dynamic, module, work, args.timeout)
         report["tests"]["static_pthread_tls"] = static_pthread_tls(root, work, args.timeout)
         report["tests"]["optional_modes"] = optional_modes(root, wrapper, work, args.timeout, structural["manifest"])
