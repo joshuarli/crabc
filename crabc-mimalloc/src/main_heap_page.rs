@@ -50,7 +50,7 @@
 //! page-area-commit shape, that entered source owner exit already nonfull into
 //! a fresh later-main engine: it claims that
 //! exact bitmap member and requeues it at the source tail. Non-direct-small,
-//! other no-immediate direct-small shapes, full medium,
+//! malformed or out-of-profile no-immediate direct-small metadata, full medium,
 //! large, and full small origins remain client-free-only.
 //! Its test-only real reserved on-demand medium and direct-small prefixes
 //! take a direct page-area commitment only when their exact extension plan has
@@ -58,7 +58,8 @@
 //! its prefix count. A direct-commit failure reabandons that same candidate for
 //! its one consuming retry. It has no automatic allocation scan or fresh-page
 //! fallback.
-//! Non-direct-small, other no-immediate direct-small,
+//! Non-direct-small, malformed or out-of-profile no-immediate direct-small
+//! metadata,
 //! full, aggregate, concurrent, singleton, unmapped, and huge adoption remain
 //! absent, as do source deferred callbacks and arena collection.
 
@@ -191,7 +192,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment
 /// owner exit already nonfull may
 /// transfer into a fresh later-main owner, claim its exact static-main bitmap
 /// member, and requeue at the source tail. Non-direct small pages,
-/// other no-immediate direct-small cases, and every
+/// malformed or out-of-profile no-immediate direct-small metadata, and every
 /// force-collected full origin remain client-free-only. This route deliberately
 /// does not scan arbitrary routes, take a fresh-page fallback, adopt aggregate
 /// members, or expose concurrent producer protocol.
@@ -375,7 +376,8 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// immediate local free block, exact fully committed scalar-extension
     /// shape, exact prefix-covered extension shape, or exact on-demand
     /// page-area-commit shape has the completed adoption proof.
-    /// Non-direct-small pages, other no-immediate cases, and every
+    /// Non-direct-small pages, malformed or out-of-profile no-immediate
+    /// metadata, and every
     /// force-collected full origin retain their post-exit client-free route.
     SourceNotInitiallyNonfullAdoptable,
     Pair(ProcessPageArenaLeaseError),
@@ -2796,7 +2798,8 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// long engine, claims only its stable page identity, then restores source
     /// queue-tail order. A bitmap miss and every post-transfer failure retain
     /// the target owner; this slice never allocates a fresh replacement or
-    /// broadens into non-direct-small, other no-immediate, full-origin,
+    /// broadens into non-direct-small, malformed or out-of-profile
+    /// no-immediate metadata, full-origin,
     /// aggregate, or concurrent adoption.
     pub(crate) fn adopt_into_later_main<'attachment>(
         self,
@@ -10723,6 +10726,230 @@ mod tests {
         })
         .join()
         .expect("multi-page post-exit route fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_regular_pages_route_releases_retired_direct_small_before_live_medium() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the paired arena remains published through the route");
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the direct retirement fixture");
+                    let retired = allocator
+                        .allocate(WORD_SIZE, false)
+                        .expect("the fixture creates a retired direct-small page");
+                    let retired_page = NonNull::new(unsafe { allocator.test_page_for_block(retired) })
+                        .expect("the direct-small page is PageMap-published");
+                    let retired_page_ref = unsafe { retired_page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(retired_page_ref.block_size()),
+                        Some(crate::types::PageKind::Small),
+                        "the retired member has direct-small source geometry"
+                    );
+                    assert!(
+                        retired_page_ref.block_size() <= SMALL_SIZE_MAX
+                            && retired_page_ref.reserved() >= 16,
+                        "the retired direct-small page satisfies free.c's partial-collect prerequisite"
+                    );
+                    let (direct_start, direct_end) =
+                        source_direct_cache_range(retired_page_ref.block_size());
+                    for index in 0..PAGES_DIRECT {
+                        let expected = if index >= direct_start && index <= direct_end {
+                            retired_page.as_ptr()
+                        } else {
+                            EMPTY_PAGE.as_ptr()
+                        };
+                        assert_eq!(
+                            allocator.test_direct_page(index),
+                            Some(expected),
+                            "the direct-small page begins as the complete rounded source cache image"
+                        );
+                    }
+                    let live = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the fixture creates a live medium page in another bin");
+                    let live_page = NonNull::new(unsafe { allocator.test_page_for_block(live) })
+                        .expect("the live medium page is PageMap-published");
+                    assert_ne!(
+                        retired_page, live_page,
+                        "the retirement fixture keeps an all-free direct page and live medium page independently queued"
+                    );
+                    assert_ne!(
+                        crate::size_class::bin(retired_page_ref.block_size()),
+                        crate::size_class::bin(unsafe { live_page.as_ref().block_size() }),
+                        "distinct direct-small and medium bins prevent the live allocation from reviving the retired page"
+                    );
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(unsafe {
+                            live_page.as_ref().block_size()
+                        }),
+                        Some(crate::types::PageKind::Medium),
+                        "the live route member remains a medium page"
+                    );
+                    let retired_memory = retired_page_ref.memid();
+                    let retired_slice = retired_memory
+                        .arena_memory()
+                        .expect("the retired direct-small page belongs to the paired arena")
+                        .slice_index as usize;
+                    let retired_slice_count = retired_memory
+                        .arena_memory()
+                        .expect("the retired direct-small page retains arena provenance")
+                        .slice_count as usize;
+                    assert_eq!(
+                        retired_slice_count,
+                        crate::page::regular_page_slice_count(crate::types::PageKind::Small).unwrap(),
+                        "the retired page has the complete small regular span"
+                    );
+
+                    // SAFETY: this is the first direct-small page's one
+                    // current local allocation. Its normal free keeps the
+                    // page queued and cached as a source-retired member while
+                    // the medium page remains live for the process route.
+                    unsafe { allocator.free(retired) }
+                        .expect("the ordinary local free retires the empty direct-small page");
+                    assert_eq!(unsafe { retired_page.as_ref().used() }, 0);
+                    assert_ne!(
+                        unsafe { retired_page.as_ref().retire_expire() },
+                        0,
+                        "ordinary local free leaves this empty direct-small page retired"
+                    );
+                    for index in 0..PAGES_DIRECT {
+                        let expected = if index >= direct_start && index <= direct_end {
+                            retired_page.as_ptr()
+                        } else {
+                            EMPTY_PAGE.as_ptr()
+                        };
+                        assert_eq!(
+                            allocator.test_direct_page(index),
+                            Some(expected),
+                            "retirement keeps the complete rounded direct-cache image until the source prepass"
+                        );
+                    }
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(retired.as_ptr()) },
+                        retired_page.as_ptr(),
+                        "retirement retains the direct-small PageMap span until the source thread-exit prepass"
+                    );
+                    assert_eq!(unsafe { live_page.as_ref().used() }, 1);
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
+                            core::mem::forget(drain);
+                            panic!("one live medium page still requires a process route")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Rejected {
+                            drain,
+                            error,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("the retired direct-small source prepass releases before the live medium route: {error:?}")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::RetainedDrain {
+                            drain,
+                            error,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("direct-small retirement retains only a failed source transition: {error:?}")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Teardown {
+                            terminal,
+                            ..
+                        }) => {
+                            core::mem::forget(terminal);
+                            panic!("the retired direct-small prepass still tears down the old Theap/TLD")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::PageMap {
+                            parts,
+                            error,
+                        }) => {
+                            core::mem::forget(parts);
+                            panic!("the live medium page transfers its short PageMap route: {error:?}")
+                        }
+                    };
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the route tears down the old Theap/TLD after source retirement"
+                    );
+                    assert_eq!(route.test_remaining_pages(), 1);
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(retired.as_ptr()) }.is_null(),
+                        "the retired direct-small page releases before the live page is published into the route"
+                    );
+                    assert_eq!(
+                        unsafe { arena.pages() }.unwrap().is_clear_range(retired_slice, 1),
+                        Some(true),
+                        "the source retirement prepass clears the retired direct-small page's ordinary arena bit"
+                    );
+                    assert_eq!(
+                        unsafe { arena.slices_free() }
+                            .unwrap()
+                            .is_set_range(retired_slice, retired_slice_count),
+                        Some(true),
+                        "the source retirement prepass releases the retired direct-small span"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(live.as_ptr()) },
+                        live_page.as_ptr(),
+                        "only the live medium page remains PageMap-registered for its client free"
+                    );
+
+                    match unsafe { route.remote_free_after_thread_exit(live) } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {}
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+                        | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
+                            core::mem::forget(route);
+                            panic!("the one live routed page releases after its final client free")
+                        }
+                        Err(_) => panic!("the final live client releases through the aggregate route"),
+                    }
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "the live route's final release reopens the process map after direct-small retirement"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the retired direct-small aggregate fixture remains local to its later owner");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("retired direct-small aggregate fixture remains current-thread local");
     }
 
     #[test]

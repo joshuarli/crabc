@@ -519,8 +519,9 @@ increment and immediately reuses that same page; an exhausted fully committed
 direct-small page enters the scalar extension after tail restoration, the exact
 prefix-covered shape retains its prefix count and extends without direct
 commit, while the exact exhausted on-demand page-area-commit shape performs
-the direct commit before prefix-count/free-list/capacity publication. Other
-unproven no-immediate shapes remain client-free-only. The
+the direct commit before prefix-count/free-list/capacity publication. Those
+three no-immediate outcomes are exhaustive for valid frozen-profile metadata;
+the defensive unsupported classifier rejects malformed or out-of-profile state. The
 medium branch also handles an exhausted nonfull medium page (`capacity < reserved`).
 A fully committed medium page (`slice_pcommitted == 0`) applies scalar
 `mi_page_extend_free` list/capacity mutation after tail insertion. Its bounded
@@ -708,6 +709,11 @@ registry adoption remain absent.
   proves one aggregate registry keeps mixed direct-small, medium, and large
   PageMap/bitmap/count memberships paired across still-live frees, one-page
   releases, and the last-page release;
+  `later_thread_exit_mapped_regular_pages_route_releases_retired_direct_small_before_live_medium`
+  proves a normally retired all-free direct-small page retains its complete
+  rounded cache image until the source prepass clears it and releases its
+  one-slice span before the remaining live medium page becomes a post-exit
+  registry member; and
   `later_thread_exit_mapped_regular_pages_route_releases_retired_large_before_live_medium`
   proves a normally retired all-free large span releases before the remaining
   live medium page becomes a post-exit registry member;

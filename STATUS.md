@@ -108,8 +108,9 @@ source collection; all force-collected full-origin predecessors remain
 sequential client-free-only. The reserved fixtures cover both medium and
 direct-small prefixes, prefix-covered direct-small reuse without a direct
 commit, direct page-area commitment, and failed-commit mapped reabandonment
-before a same-candidate retry; non-direct-small, other unproven no-immediate
-direct-small cases, and aggregate members remain sequential client-free-only.
+before a same-candidate retry; non-direct-small, malformed or out-of-profile
+no-immediate direct-small metadata, and aggregate members remain sequential
+client-free-only.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
@@ -273,8 +274,8 @@ repair, and mapped identity/bit/count/unown publication, then permits only a
 same-candidate retry through the retained long lifecycle. This is not a
 production page-on-demand policy or fresh fallback. A bitmap miss, malformed
 state, scalar extension error, or other post-transfer failure remains
-terminally retained. Non-direct-small and other unproven no-immediate
-direct-small members remain client-free-only. A direct small member must prove the exact rounded
+terminally retained. Non-direct-small and malformed or out-of-profile
+no-immediate direct-small metadata remain client-free-only. A direct small member must prove the exact rounded
 source direct-cache range before collection; queue removal clears that range
 before page-count detach. The route retains the source `reserved >= 16`
 small partial-collection invariant and excludes full small pages through its
@@ -299,7 +300,10 @@ the source low owner-bit claim, preserves map/bit/count while nonempty, and
 re-derives the supported page's complete regular span before the terminal
 PageMap -> `pages_main` -> metadata -> slice release on empty. The current
 small, medium, and large cases therefore prove their one-, 8-, and 64-slice
-releases. If retirement/force collection empties every page, it returns the
+releases. The direct-small retirement regression retains the exact rounded
+cache image through ordinary local retirement, then proves the source prepass
+clears it as the one-slice span releases before a live medium member is
+published. If retirement/force collection empties every page, it returns the
 ordinary drain. Fresh engines may serialize independent PageMap operations
 between client frees, but no current path can adopt, reclaim, or requeue an
 aggregate registry member. Full/singleton/unmapped/huge/foreign pages, malformed

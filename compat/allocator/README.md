@@ -455,8 +455,9 @@ same page; an exhausted fully committed direct-small page extends after that
 tail restoration, the exact prefix-covered direct-small shape retains its
 recorded prefix and extends without a direct mapping operation, while the exact
 on-demand direct-small shape commits its page area before
-prefix-count/free-list/capacity publication. Other unproven no-immediate
-direct-small shapes remain client-free-only. The medium slice requires an
+prefix-count/free-list/capacity publication. Those three no-immediate
+direct-small outcomes are exhaustive for valid frozen-profile metadata; the
+remaining defensive classifier rejects malformed or out-of-profile state. The medium slice requires an
 immediate head or an exhausted nonfull medium page
 (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs the scalar source capacity extension after
@@ -471,7 +472,7 @@ tail, preserving the PageMap and ordinary arena membership for a consuming
 same-candidate retry. This is not a production page-on-demand option or a
 fresh allocation fallback. A bitmap miss, malformed state, scalar extension
 error, or other post-transfer failure is retained terminally. Non-direct-small,
-other unproven no-immediate direct-small, full, and aggregate members remain
+malformed or out-of-profile no-immediate direct-small metadata, full, and aggregate members remain
 client-free-only. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons

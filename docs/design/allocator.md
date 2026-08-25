@@ -486,8 +486,9 @@ restores the direct-cache range before page-count increment, retains its
 recorded prefix count, and publishes the source free-list/capacity extension
 without a direct mapping operation. The page-area-commit shape instead performs
 the same source direct commitment before it publishes the new prefix count or
-free-list/capacity state. Other unproven no-immediate direct-small shapes stay
-client-free-only.
+free-list/capacity state. These three no-immediate direct-small outcomes are
+exhaustive for valid frozen-profile metadata; the remaining defensive
+classifier rejects only malformed or out-of-profile state.
 The bounded test-only `commit == false` seam creates one actual reserved medium
 or direct-small page with the source initial callback-committed prefix. For the
 commit-requiring nonzero-prefix case, `page_area_commit_plan` separates OS-page
@@ -503,8 +504,8 @@ publication. The resulting consuming owner can retry only the same candidate
 through its long lifecycle; it cannot reopen short map access, scan, or take a
 fresh fallback. This proves no production page-on-demand option. A bitmap miss,
 malformed state, scalar extension error, or any other post-transfer failure
-likewise retains the target owner. Non-direct-small, other no-immediate
-direct-small cases, full, aggregate-registry, singleton,
+likewise retains the target owner. Non-direct-small, malformed or
+out-of-profile no-immediate direct-small metadata, full, aggregate-registry, singleton,
 unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
 

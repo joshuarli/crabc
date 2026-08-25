@@ -331,7 +331,7 @@ arms that fault before adoption, proving its zero-delta plan cannot enter the
 mapping path. This does not add a production page-on-demand option, a generic
 fresh fallback, or a bitmap scan. A bitmap miss, malformed state, scalar
 extension error, or any other post-transfer error remains terminally retained.
-Non-direct-small, other unproven no-immediate direct-small cases, full, singleton,
+Non-direct-small, malformed or out-of-profile no-immediate direct-small metadata, full, singleton,
 unmapped, huge, foreign, aggregate-registry, automatic-
 scanning, and concurrent adoption remain deliberately absent.
 
@@ -528,7 +528,7 @@ reserved-prefix-covered no-commit extension, and reserved-prefix page-area-
 commit fresh-owner reclaim/reuse regressions (including failed-commit
 direct-cache repair and same-candidate retry); and the aggregate
 regular-pages registry's mixed small/medium/large
-release, retired-large prepass, malformed direct-image and malformed-predecessor
+release, retired-direct-small and retired-large prepass, malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
 selection, large-span terminal release,
 and large force-collection-to-drained regressions), and
@@ -537,7 +537,7 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 476 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 477 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
@@ -550,9 +550,13 @@ before broadening the newly proven post-TLS arena/OS-singleton or
 full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
 either bounded process page owner.
-The next local frontier is a separately proven additional direct-small
-no-immediate source shape, or a separately proven aggregate-registry
-policy, then complete process and real pthread/TLS lifecycle integration—not a
+The frozen-profile direct-small no-immediate source family is now exhaustive:
+after force/false collection, every valid nonfull page has either a fully
+committed scalar extension, a prefix-covered extension, or a positive
+page-area-commit extension. The defensive unsupported classifier is only for
+malformed or out-of-profile metadata. The next local frontier is therefore a
+separately proven aggregate-registry policy or another source-shaped owner-exit
+class, then complete process and real pthread/TLS lifecycle integration—not a
 generic allocation-time scan routed through a bounded singleton,
 mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later
 page-owner slices.

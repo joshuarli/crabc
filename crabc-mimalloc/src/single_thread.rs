@@ -707,9 +707,11 @@ enum ThreadExitMappedRegularPostExitOrigin {
     /// committed prefix already covers the exact source free-list extension.
     /// It must retain that prefix count and skip direct page-area commitment.
     InitiallyNonfullDirectSmallNeedsPrefixCoveredExtension,
-    /// The page was already a nonfull direct-small regular member, but source
-    /// collection left no immediate local free block without one of the exact
-    /// proven extension shapes. It remains client-free-only.
+    /// Defensive rejection for malformed or out-of-profile direct-small
+    /// metadata. Under the frozen source profile, a valid nonfull page with
+    /// no immediate local free block has exactly one of the scalar,
+    /// prefix-covered, or page-area-commit extension shapes above; it is not
+    /// a fourth normal source state.
     InitiallyNonfullDirectSmallNoImmediateUnsupported,
     /// The page entered owner exit as a full medium `BIN_FULL` member and one
     /// joined remote free made it nonfull during force collection. It remains
@@ -6660,8 +6662,8 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     /// initially-nonfull direct-small page with an immediate local free block,
     /// exact fully committed scalar-extension shape, exact prefix-covered
     /// extension shape, or exact on-demand page-area-commit shape.
-    /// Non-direct-small pages, other no-immediate
-    /// direct-small shapes, and every force-collected full origin remain
+    /// Non-direct-small pages, malformed or out-of-profile no-immediate
+    /// direct-small metadata, and every force-collected full origin remain
     /// client-free-only.
     #[inline]
     pub(crate) fn supports_later_main_adoption(&self) -> bool {
