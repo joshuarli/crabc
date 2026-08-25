@@ -433,14 +433,15 @@ pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map
     terminal: bool,
 }
 
-/// One queue-detached mapped-abandoned medium or non-direct small page with
-/// exactly one live client block at dynamic post-TLS owner exit. The token
-/// retains the draining attachment's source Theap/TLD/Heap, dynamic arena-page
-/// image, PageMap, and client block until that exact final free clears its
-/// paired dynamic bitmap/count entry and releases the arena span, or terminally
-/// retains the state. It deliberately cannot reclaim, requeue, or allocate
-/// from the page. Its private source class keeps direct-small pages outside the
-/// shared terminal-free implementation.
+/// One queue-detached mapped-abandoned medium, non-direct small, or direct
+/// small page with exactly one live client block at dynamic post-TLS owner
+/// exit. The token retains the draining attachment's source Theap/TLD/Heap,
+/// dynamic arena-page image, PageMap, and client block until that exact final
+/// free clears its paired dynamic bitmap/count entry and releases the arena
+/// span, or terminally retains the state. It deliberately cannot reclaim,
+/// requeue, or allocate from the page. Its private source class keeps the
+/// direct-small partial collector and rounded cache contract distinct from the
+/// normal-collector siblings.
 #[must_use = "a dynamic mapped one-block owner-exit handoff must be consumed or terminally retained"]
 pub(crate) struct DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
@@ -459,6 +460,7 @@ pub(crate) struct DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena,
 enum DynamicThreadExitMappedOneBlockClass {
     Medium,
     NonDirectSmall,
+    DirectSmall,
 }
 
 impl DynamicThreadExitMappedOneBlockClass {
@@ -474,6 +476,11 @@ impl DynamicThreadExitMappedOneBlockClass {
                 size_class::page_kind_for_block_size(block_size) == Some(PageKind::Small)
                     && block_size > SMALL_SIZE_MAX
                     && block_size <= SMALL_MAX_OBJ_SIZE
+            }
+            Self::DirectSmall => {
+                size_class::page_kind_for_block_size(block_size) == Some(PageKind::Small)
+                    && block_size <= SMALL_SIZE_MAX
+                    && page.reserved() >= 16
             }
         }
     }
@@ -5858,11 +5865,49 @@ impl<'attach, 'heap, 'arena, 'map>
         }
     }
 
+    /// Maps one exact nonfull dynamic direct-small page with one live client
+    /// block after source thread exit cleared its regular TLS slot.
+    ///
+    /// This admits only a rounded small block size at or below
+    /// `SMALL_SIZE_MAX`, the pinned `reserved >= 16` partial-collection
+    /// geometry, and the complete exact `pages_free_direct` range for the
+    /// sole queue member. The handoff clears that cache range before its
+    /// page-count decrement, then its final free consumes the exact partial
+    /// collector head before the all-free decision. Medium, non-direct small,
+    /// full, multi-free, and any stale or additional queue/cache state remain
+    /// outside this endpoint.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the sole current canonical allocation in one active,
+    /// nonfull direct-small arena page owned by this exact drain. No producer
+    /// may survive, and every client alias must remain valid only until the
+    /// returned handoff consumes this exact block once or is terminally
+    /// retained.
+    pub(crate) unsafe fn abandon_mapped_one_block_direct_small(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitMappedOneBlockAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        // SAFETY: this public direct-small spelling fixes the rounded cache
+        // and partial-collector source class before the shared preflight can
+        // mutate any queue, direct-cache, or page-count state.
+        unsafe {
+            self.abandon_mapped_one_block_for_class(
+                block,
+                DynamicThreadExitMappedOneBlockClass::DirectSmall,
+            )
+        }
+    }
+
     /// Performs the shared source force/false-collection, queue-detach, and
     /// mapped-abandon sequence after a public entry point fixed the exact page
-    /// class that may cross it. Both admitted classes lie above the direct
-    /// cache boundary; preserving that fact in `class` keeps the shared code
-    /// from widening to direct-small geometry.
+    /// class that may cross it. Direct-small retains its own exact rounded
+    /// cache image and partial collector while the normal classes remain above
+    /// the direct-cache boundary; preserving that fact in `class` keeps this
+    /// shared code from widening either source contract.
     unsafe fn abandon_mapped_one_block_for_class(
         mut self,
         block: NonNull<u8>,
@@ -5931,12 +5976,34 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitMappedOneBlockAbandonError::NotMappedOneBlock,
             ));
         }
+        // A direct-small page may enter this route only with the exact rounded
+        // source direct-cache range that names its sole regular queue member.
+        // Normal classes retain the all-empty direct image that their earlier
+        // one-block contracts already prove.
+        let direct_range = match class {
+            DynamicThreadExitMappedOneBlockClass::DirectSmall => {
+                match self
+                    .engine
+                    .direct_cache_range_for_small_bin(bin, page_ref.block_size())
+                {
+                    Some(range) => Some(range),
+                    None => {
+                        return Err(reject(
+                            self,
+                            DynamicThreadExitMappedOneBlockAbandonError::NotMappedOneBlock,
+                        ));
+                    }
+                }
+            }
+            DynamicThreadExitMappedOneBlockClass::Medium
+            | DynamicThreadExitMappedOneBlockClass::NonDirectSmall => None,
+        };
 
         // Source `_mi_theap_collect_abandon` force-collects every queue before
         // it abandons live pages. This narrow handoff can run the target page's
-        // exact force then false pass only because it proves every other
-        // queue/direct entry is empty; it does not claim a general traversal or
-        // release order.
+        // exact force then false pass only because it proves every other queue
+        // member and the complete class-specific direct-cache image; it does
+        // not claim a general traversal or release order.
         let mut sole_page = self.engine.session.theap().page_count() == 1;
         for queue_bin in 0..BIN_COUNT {
             let expected = if queue_bin == bin { 1 } else { 0 };
@@ -5952,7 +6019,11 @@ impl<'attach, 'heap, 'arena, 'map>
         }
         if sole_page {
             for index in 0..PAGES_DIRECT {
-                if self.engine.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                let expected = match direct_range {
+                    Some((start, end)) if index >= start && index <= end => page.as_ptr(),
+                    Some(_) | None => EMPTY_PAGE.as_ptr(),
+                };
+                if self.engine.session.direct_page(index) != Some(expected) {
                     sole_page = false;
                     break;
                 }
@@ -6088,6 +6159,13 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: preflight proved this exact initialized page is the sole
         // linked regular-queue member and the drain owns every queue mutation.
         unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        if class == DynamicThreadExitMappedOneBlockClass::DirectSmall {
+            // `mi_theap_queue_first_update` clears the rounded direct range
+            // from the now-empty queue before `mi_page_queue_remove` decrements
+            // the owning Theap's page count. The direct-small preflight above
+            // made this update complete rather than a partial cache repair.
+            self.engine.update_direct_cache(bin);
+        }
         if !self.engine.session.note_page_removed() {
             return Err(DynamicThreadExitMappedOneBlockAbandonFailure::Terminal {
                 handoff: DynamicThreadExitMappedOneBlockHandoff {
@@ -6101,11 +6179,13 @@ impl<'attach, 'heap, 'arena, 'map>
                 error: DynamicThreadExitMappedOneBlockAbandonError::Queue,
             });
         }
-        // Both represented source classes lie strictly above the direct-cache
-        // boundary, so this is a source no-op. Keeping the update call at the
-        // queue-remove boundary prevents an invalid stale direct image from
-        // becoming hidden.
-        self.engine.update_direct_cache(bin);
+        if class != DynamicThreadExitMappedOneBlockClass::DirectSmall {
+            // The normal-collector classes lie above the direct-cache boundary,
+            // so this remains a source no-op. Keep their established
+            // post-count order intact while ensuring malformed stale cache
+            // images cannot become hidden.
+            self.engine.update_direct_cache(bin);
+        }
 
         let abandoned = match self
             .engine
@@ -6435,9 +6515,9 @@ impl<'attach, 'heap, 'arena, 'map>
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>
 {
-    /// Frees the handoff's exact one live medium or non-direct small block and
-    /// admits only the source all-free result before any abandoned-page
-    /// reclamation branch.
+    /// Frees the handoff's exact one live medium, non-direct small, or direct
+    /// small block and admits only the source all-free result before any
+    /// abandoned-page reclamation branch.
     ///
     /// The dynamic page drain exists only after its regular TLS slot cleared,
     /// so the original Theap cannot be reclaimed through that slot. This
@@ -6449,7 +6529,8 @@ impl<'attach, 'heap, 'arena, 'map>
     ///
     /// `block` must be the exact once-live allocation transferred by
     /// [`DynamicThreadExitDrain::abandon_mapped_one_block`] or
-    /// [`DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small`].
+    /// [`DynamicThreadExitDrain::abandon_mapped_one_block_non_direct_small`]
+    /// or [`DynamicThreadExitDrain::abandon_mapped_one_block_direct_small`].
     /// It must not have been freed, republished, or accessed through any alias
     /// after this call.
     pub(crate) unsafe fn remote_free_to_empty(
@@ -6545,11 +6626,21 @@ impl<'attach, 'heap, 'arena, 'map>
             ));
         };
 
-        // The sole class-specific one-live-block handoff proves that source
-        // normal collection reaches the empty decision before the mapped-page
-        // reclaim branch. This helper therefore cannot return a
-        // requeued/reclaimed live page.
-        match unsafe { abandoned::free_mapped_one_block_to_empty(self.page, canonical_block, &map) } {
+        // The sole class-specific one-live-block handoff proves that its exact
+        // source collector reaches the empty decision before the mapped-page
+        // reclaim branch. Direct small retains its partial-head collector;
+        // normal classes retain their ordinary collector. Neither branch can
+        // return a requeued or reclaimed live page here.
+        let free_result = match self.class {
+            DynamicThreadExitMappedOneBlockClass::DirectSmall => unsafe {
+                abandoned::free_mapped_direct_one_block_to_empty(self.page, canonical_block, &map)
+            },
+            DynamicThreadExitMappedOneBlockClass::Medium
+            | DynamicThreadExitMappedOneBlockClass::NonDirectSmall => unsafe {
+                abandoned::free_mapped_one_block_to_empty(self.page, canonical_block, &map)
+            },
+        };
+        match free_result {
             Ok(abandoned::MappedAbandonedFreeToEmptyResult::Empty) => {
                 if self
                     .drain

@@ -216,19 +216,23 @@ no-producer proof excludes invoking the source force-only local-list append;
 `free_list::collect_local` separately ports and tests that raw operation, which
 the separately recorded later-main all-free exit drain uses without broadening
 this dynamic traversal.
-Two separate mapped endpoints accept only a sole nonfull `MemoryKind::Arena`
-page with `reserved > 1`, `used == 1`, one regular queue member, and no other
-queue/direct entry. `DynamicThreadExitDrain::abandon_mapped_one_block` admits
-the medium class; `abandon_mapped_one_block_non_direct_small` admits only
+Three separate mapped endpoints accept only a sole nonfull `MemoryKind::Arena`
+page with `reserved > 1`, `used == 1`, and one regular queue member.
+`DynamicThreadExitDrain::abandon_mapped_one_block` admits the medium class;
+`abandon_mapped_one_block_non_direct_small` admits only
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, whose direct-cache image
-is empty. Direct-small is refused before collection or detach. Each endpoint
-force- then false-collects, queue/page-count detaches, and publishes that exact
-dynamic `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`.
-Its class-carrying handoff admits only the exact final free, which reaches empty
-through the normal collector before any reclaim branch, clears that bit/count,
-and releases PageMap -> dynamic ordinary bit -> metadata -> arena slices. It
-does not reclaim the departed Theap, adopt, requeue, scan, or accept multiple
-pages or frees.
+is empty; and `abandon_mapped_one_block_direct_small` admits only
+`block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and its complete rounded
+source direct-cache range. The direct-small preflight rejects a stale range
+before collection or detach, and source queue removal clears the exact range
+before page-count detach. Each endpoint force- then false-collects and
+publishes that exact dynamic `pages_abandoned[bin]` bit plus paired
+`Heap::abandoned_count[bin]`. Its class-carrying handoff admits only the exact
+final free, which reaches empty before any reclaim branch—through the normal
+collector for medium/non-direct small or the partial collector for direct
+small—clears that bit/count, and releases PageMap -> dynamic ordinary bit ->
+metadata -> arena slices. It does not reclaim the departed Theap, adopt,
+requeue, scan, or accept multiple pages or frees.
 General cached-root
 switching/reference ownership, abandonment beyond the mapped-regular and
 post-TLS singleton/mapped-one-block handoffs, pthread/process hooks, complete

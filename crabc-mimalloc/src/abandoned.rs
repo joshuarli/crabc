@@ -423,16 +423,27 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
     })
 }
 
-/// Ports only the mapped-abandoned all-free prefix of
-/// `free.c:mi_free_try_collect_mt` for one final client free at owner exit.
+/// The source collector selected by one mapped one-block owner-exit endpoint.
 ///
-/// The source checks whether the page is empty immediately after its partial
-/// or ordinary collection and before it enters the reclaim branch. A sole
-/// non-direct small or medium page with one current client block must
-/// therefore reach `Empty`. If it does not, this narrow helper retains the
-/// acquired low owner bit and returns [`AbandonError::MappedPageNotEmpty`]
-/// rather than manufacturing a reclaim, requeue, or general abandoned-page
-/// policy.
+/// Keeping the direct-small partial collector distinct from the normal
+/// collector prevents callers from treating a rounded direct-cache page as a
+/// non-direct small page merely because both have [`PageKind::Small`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MappedOneBlockOwnerExitCollector {
+    Normal,
+    DirectSmall,
+}
+
+/// Ports only the mapped-abandoned all-free prefix of
+/// `free.c:mi_free_try_collect_mt` for one final normal-collector client free
+/// at owner exit.
+///
+/// The source checks whether the page is empty immediately after ordinary
+/// collection and before it enters the reclaim branch. A sole non-direct
+/// small or medium page with one current client block must therefore reach
+/// `Empty`. If it does not, this narrow helper retains the acquired low owner
+/// bit and returns [`AbandonError::MappedPageNotEmpty`] rather than
+/// manufacturing a reclaim, requeue, or general abandoned-page policy.
 ///
 /// # Safety
 ///
@@ -444,6 +455,69 @@ pub(crate) unsafe fn free_mapped_one_block_to_empty<M: MappedAbandonedPages + ?S
     page: NonNull<Page>,
     block: NonNull<u8>,
     map: &M,
+) -> Result<MappedAbandonedFreeToEmptyResult, AbandonError> {
+    // SAFETY: the normal endpoint's caller provides the stable mapped-page,
+    // exact-block, bitmap, and terminal-release proof required by the shared
+    // source all-free prefix.
+    unsafe {
+        free_mapped_one_block_to_empty_with_collector(
+            page,
+            block,
+            map,
+            MappedOneBlockOwnerExitCollector::Normal,
+        )
+    }
+}
+
+/// Ports only the mapped-abandoned all-free prefix of
+/// `free.c:mi_free_try_collect_mt` for one final direct-small client free at
+/// owner exit.
+///
+/// The direct-small source branch uses `_mi_page_free_collect_partly` with the
+/// just-published remote head, and therefore requires the pinned
+/// `reserved >= 16` geometry. Its one-live-block owner proves that partial
+/// collection reaches all-free before the source reclaim branch. Any other
+/// outcome remains terminally retained rather than becoming a general direct
+/// cache or multi-free lifecycle.
+///
+/// # Safety
+///
+/// `page` must be stable mapped-abandoned direct-small metadata for `map`;
+/// `block` must be its exact one current canonical allocation. The caller
+/// retains the PageMap, exact direct-cache-detached arena image, and terminal
+/// page-map/span release authority throughout. A result of `Empty` retains
+/// the owned page for that terminal authority.
+pub(crate) unsafe fn free_mapped_direct_one_block_to_empty<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    map: &M,
+) -> Result<MappedAbandonedFreeToEmptyResult, AbandonError> {
+    // SAFETY: the direct-small endpoint's caller additionally proves the
+    // exact rounded cache image was detached and `block` is its sole live
+    // direct-small allocation through this partial-collector transition.
+    unsafe {
+        free_mapped_one_block_to_empty_with_collector(
+            page,
+            block,
+            map,
+            MappedOneBlockOwnerExitCollector::DirectSmall,
+        )
+    }
+}
+
+/// Shared source all-free prefix after a public boundary fixed the only valid
+/// one-block collection class.
+///
+/// # Safety
+///
+/// See the public normal/direct-small entry points. `collector` must match
+/// the exact page class established by the caller before it invokes this raw
+/// source tail.
+unsafe fn free_mapped_one_block_to_empty_with_collector<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    map: &M,
+    collector: MappedOneBlockOwnerExitCollector,
 ) -> Result<MappedAbandonedFreeToEmptyResult, AbandonError> {
     // SAFETY: the caller supplies the stable abandoned-page/block proof. The
     // producer reads only atomic page fields and its own block link.
@@ -460,24 +534,39 @@ pub(crate) unsafe fn free_mapped_one_block_to_empty<M: MappedAbandonedPages + ?S
     if !is_owned(&state) || source_thread_identity(&state) != THREAD_ID_ABANDONED_MAPPED {
         return Err(AbandonError::NotAbandoned);
     }
-    // This owner-exit endpoint deliberately accepts only source classes that
-    // take `free.c`'s normal collector: medium pages and small pages strictly
-    // above the direct-cache boundary. Direct-small's partial collector and
-    // all regular live-page reclamation remain distinct work; the explicit
-    // check also prevents synthetic geometry from reaching the wrong source
-    // collection path.
-    if !matches!(
-        size_class::page_kind_for_block_size(state.block_size),
-        Some(crate::types::PageKind::Small | crate::types::PageKind::Medium)
-    ) || state.block_size <= crate::config::SMALL_SIZE_MAX
-        || state.reserved <= 1
-    {
+    // Select only the exact source branch proved by the higher-level handoff.
+    // Normal one-block endpoints remain strictly above the direct-cache
+    // boundary; the direct-small endpoint retains the partial collector and
+    // its `reserved >= 16` precondition as a separately named contract.
+    let geometry_matches_collector = match collector {
+        MappedOneBlockOwnerExitCollector::Normal => {
+            matches!(
+                size_class::page_kind_for_block_size(state.block_size),
+                Some(crate::types::PageKind::Small | crate::types::PageKind::Medium)
+            ) && state.block_size > crate::config::SMALL_SIZE_MAX
+                && state.reserved > 1
+        }
+        MappedOneBlockOwnerExitCollector::DirectSmall => {
+            size_class::page_kind_for_block_size(state.block_size)
+                == Some(crate::types::PageKind::Small)
+                && state.block_size <= crate::config::SMALL_SIZE_MAX
+                && state.reserved >= 16
+        }
+    };
+    if !geometry_matches_collector {
         return Err(AbandonError::InvalidPageGeometry);
     }
 
-    // Both admitted classes use the ordinary source collector. It runs before
-    // the all-free decision and before any source reclaim branch.
-    unsafe { remote_free::collect_abandoned(page) }.map_err(AbandonError::RemoteFree)?;
+    // Both exact source collectors run before the all-free decision and before
+    // any source reclaim branch. The direct-sized path consumes its exact
+    // just-published head; normal pages detach the full remote list.
+    match collector {
+        MappedOneBlockOwnerExitCollector::Normal => unsafe { remote_free::collect_abandoned(page) },
+        MappedOneBlockOwnerExitCollector::DirectSmall => unsafe {
+            remote_free::collect_abandoned_partly(page, block)
+        },
+    }
+    .map_err(AbandonError::RemoteFree)?;
 
     if !page_is_empty(&state) {
         return Err(AbandonError::MappedPageNotEmpty);
@@ -1850,6 +1939,60 @@ mod tests {
         assert_eq!(
             unsafe { free_mapped_one_block_to_empty(page_raw, block.pointer(), &map) },
             Err(AbandonError::MappedPageNotEmpty)
+        );
+        assert!(map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
+        assert_eq!(page.remote_free_test_head() & 1, 1);
+        assert_eq!(page.remote_free_test_used(), 1);
+    }
+
+    #[test]
+    fn mapped_direct_one_block_owner_exit_free_collects_its_final_head_then_releases() {
+        let block_size = crate::config::SMALL_SIZE_MAX;
+        let bin = size_class::bin(block_size).expect("the direct-small size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(16, 1);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+        assert!(map.is_published(17));
+
+        let mut block = TestBlock([0; 16]);
+        assert_eq!(
+            unsafe { free_mapped_direct_one_block_to_empty(page_raw, block.pointer(), &map) },
+            Ok(MappedAbandonedFreeToEmptyResult::Empty)
+        );
+        assert!(!map.is_published(17));
+        assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED);
+        assert_eq!(page.remote_free_test_head(), 1);
+        assert_eq!(page.remote_free_test_used(), 0);
+    }
+
+    #[test]
+    fn mapped_direct_one_block_owner_exit_free_rejects_small_geometry_without_source_reserve() {
+        let block_size = crate::config::SMALL_SIZE_MAX;
+        let bin = size_class::bin(block_size).expect("the direct-small size has an arena bin");
+        assert!(bin < ARENA_BIN_COUNT);
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let mut page = Page::remote_free_test_page(15, 1);
+        page.set_block_size(block_size);
+        assert!(unsafe { page.abandoned_test_set_arena_memory(&mut arena, 17, 1) });
+        let page_raw = NonNull::from(&mut page);
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+        assert!(map.is_published(17));
+
+        let mut block = TestBlock([0; 16]);
+        assert_eq!(
+            unsafe { free_mapped_direct_one_block_to_empty(page_raw, block.pointer(), &map) },
+            Err(AbandonError::InvalidPageGeometry)
         );
         assert!(map.is_published(17));
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);

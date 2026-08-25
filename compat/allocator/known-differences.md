@@ -786,18 +786,23 @@ aggregate-registry adoption remain absent.
   separately ports and tests it without broadening this drain. The successful
   drain then permits the existing cached-root/list/key teardown.
   Separately, `DynamicThreadExitMappedOneBlockHandoff` admits only one sole
-  nonfull `MemoryKind::Arena` medium or non-direct-small page with `reserved >
-  1`, `used == 1`, one regular queue member, and no other queue/direct entry.
+  nonfull `MemoryKind::Arena` medium, non-direct-small, or direct-small page
+  with `reserved > 1`, `used == 1`, and one regular queue member.
   `DynamicThreadExitDrain::abandon_mapped_one_block` remains medium-only;
   `abandon_mapped_one_block_non_direct_small` requires
-  `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, an empty direct-cache
-  image, and explicitly refuses direct-small before collection or detach. Its
-  source-class witness preserves force -> false collection -> queue/page-count
-  detach -> dynamic bitmap/count/unown order. Its exact final free reaches
-  empty through the normal collector, clears that dynamic `pages_abandoned[bin]`
-  bit plus paired `Heap::abandoned_count[bin]`, then releases PageMap ->
-  dynamic ordinary-bit -> metadata -> slice release. It cannot reclaim the
-  departed Theap, adopt, requeue, scan, or represent a second page or free.
+  `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and an empty direct-cache
+  image; `abandon_mapped_one_block_direct_small` requires
+  `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and its complete rounded
+  direct-cache range. A stale direct-small range rejects before collection or
+  detach, while source queue removal clears a valid range before page-count
+  detach. Its source-class witness preserves force -> false collection ->
+  queue/page-count detach -> dynamic bitmap/count/unown order. Its exact final
+  free reaches empty before any reclaim branch—through the normal collector for
+  medium/non-direct small or the partial collector for direct small—clears that
+  dynamic `pages_abandoned[bin]` bit plus paired `Heap::abandoned_count[bin]`,
+  then releases PageMap -> dynamic ordinary-bit -> metadata -> slice release.
+  It cannot reclaim the departed Theap, adopt, requeue, scan, or represent a
+  second page or free.
   Its first dynamic arena page first proves the registry-published arena's
   non-null subprocess identity equals the attachment's selected main
   subprocess, then lazily owns one exact BCHUNK-aligned `mi_arena_pages_t`
@@ -876,6 +881,17 @@ aggregate-registry adoption remain absent.
   prove normal-collector terminal release, direct-small refusal with its
   complete cache image unchanged, and retained collection failure for the
   separate non-direct-small class.
+  `dynamic_thread_exit_mapped_one_block_direct_small_handoff_releases_after_its_final_free`,
+  `dynamic_thread_exit_mapped_one_block_direct_small_handoff_refuses_stale_direct_cache_before_detach`,
+  and `dynamic_thread_exit_mapped_one_block_direct_small_handoff_retains_collection_failure`
+  prove the partial-collector terminal release, wholly pre-detach stale-cache
+  refusal, direct-range clearing before page-count detach, and retained
+  collection failure for the separate direct-small class. The raw
+  `mapped_direct_one_block_owner_exit_free_collects_its_final_head_then_releases`
+  and
+  `mapped_direct_one_block_owner_exit_free_rejects_small_geometry_without_source_reserve`
+  regressions prove final-head consumption and the pinned `reserved >= 16`
+  boundary below the dynamic owner-exit API.
   `dynamic_thread_exit_force_collects_a_retired_regular_page_after_tls_clear`
   proves the post-TLS force-retirement release happens before that same
   teardown. The image-boundary regressions
