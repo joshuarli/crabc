@@ -462,8 +462,14 @@ result may refine it only when it can prove retained ownership.
   `used` to exactly `reserved - 1` while the page remains linked and marked
   full in `BIN_FULL`; false collection then removes that same member and
   immediately publishes the ordinary medium mapped bit/count pair into the
-  existing mapped regular route. It is not a general full-page traversal:
-  regular/nonfull input rejects before mutation and a collector fault retains
+  existing mapped regular route. Its direct-small counterpart starts from the
+  sole full ordinary-bin `PageKind::Small` page with `block_size <=
+  SMALL_SIZE_MAX`, `reserved >= 16`, and the complete rounded direct-cache
+  range. Force and false collection leave that direct member queue-linked but
+  nonfull; removal clears its exact direct range before page-count detach and
+  immediately publishes the ordinary small mapped bit/count pair into the same
+  client-free-only route. Neither predecessor is a general full-page traversal:
+  malformed/nonfull input rejects before mutation and a collector fault retains
   the drain terminally. The sixth handoff accepts one full non-direct small page only
   when its rounded `block_size > SMALL_SIZE_MAX`: unlike the `BIN_FULL` medium
   and large shapes, it remains in its ordinary small bin, has no direct-cache
@@ -491,8 +497,9 @@ result may refine it only when it can prove retained ownership.
   One explicit consuming allocation-time edge is complete for the sole route
   only: `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
   accepts exactly its source-initially-nonfull mapped medium page. A full
-  `BIN_FULL` medium that force collection makes nonfull preserves that origin
-  and remains client-free-only. Before it consumes the short route, the target
+  `BIN_FULL` medium or full ordinary-bin direct-small page that force collection
+  makes nonfull preserves that origin and remains client-free-only. Before it
+  consumes the short route, the target
   proves the source subprocess, frozen configuration,
   PageMap-root identity, static main Heap, selected arena, complete span, and
   PageMap page identity. It turns `ProcessPageMapPostExitAccess` into the one
@@ -605,6 +612,16 @@ aggregate-registry adoption remain absent.
   direct-cache image, source partial-head accounting lag, threshold-adjacent
   unmapped-to-mapped transition, and one-slice terminal release after
   old-Theap/TLD teardown; while
+  `later_thread_exit_full_direct_small_force_collects_to_client_free_only_mapped_process_route`
+  proves one joined remote free makes that same full ordinary-bin page nonfull
+  during force collection, then source clears its rounded direct range before
+  page-count detach, immediately publishes the mapped bit/count pair, tears
+  down the old Theap/TLD, rejects allocation-time adoption, and releases its
+  one-slice span through sequential client frees.
+  `later_thread_exit_full_direct_small_force_collect_route_refuses_stale_rounded_direct_cache_before_detach`
+  proves a stale range rejects before collection or detachment, and
+  `later_thread_exit_full_direct_small_force_collect_route_retains_a_collection_failure`
+  proves a force-collector fault retains terminal drain poison; while
   `later_thread_exit_full_direct_small_route_refuses_stale_rounded_direct_cache_before_detach`
   proves a stale slot rejects before collection, direct-cache clearing, queue
   detachment, or PageMap mutation; and

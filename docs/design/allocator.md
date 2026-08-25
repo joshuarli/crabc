@@ -144,9 +144,10 @@ operation only after its fixed fast-slot clear; ordinary regular/full and
 detached paths still use false force. Its separate sole full-singleton handoff
 uses false force after its preflight and before queue detach, while both
 mapped-one-block sole-page handoffs preserve the source force-then-false sequence
-before bitmap publication. The full-origin medium branch retains that origin
-after force collection, so it remains client-free-only rather than borrowing
-the separate initially-nonfull medium adoption/requeue authority. The one-block
+before bitmap publication. The full-origin medium and direct-small branches
+retain that origin after force collection, so they remain client-free-only
+rather than borrowing the separate initially-nonfull medium adoption/requeue
+authority. The one-block
 handoff accepts only its empty final free. Separate full-medium and full-large
 routes first preserve the source full-queue detach and ordinary unmapped
 abandonment. A separate full
@@ -363,21 +364,30 @@ route validates the complete 64-slice PageMap span before terminal release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_after_force_collect_to_mapped_process_route`
-is a separate, source-specific predecessor of the eighth mapped route rather
-than a new full-page state machine. It accepts the same sole full medium
-`BIN_FULL` page only when one different allocation has already been published
-through a joined remote producer. The `MI_ABANDON` force collector changes
-`used` from `reserved` to exactly `reserved - 1` while source still leaves the
-page linked and marked full; its following false collector must preserve that
-state. `_mi_page_abandon` then removes the exact `BIN_FULL` member, clearing
-the full flag and page count, and immediately publishes the ordinary medium
-mapped-abandoned identity plus the exact static-main bitmap/count pair. The
-old Theap/TLD tears down before the remaining linear client frees enter
-`MainHeapThreadProcessPageExitMappedRegularRoute`. Regular/nonfull input
-rejects before mutation, and a collector fault retains the drain terminally.
-It deliberately excludes multiple joined frees, local-free variants,
-small/large pages, all-free release, normal full-page unmapped abandonment,
-allocation-time adoption/requeue, mixed traversal, and concurrent frees.
+and
+`MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_after_force_collect_to_mapped_process_route`
+are separate, source-specific predecessors of the eighth mapped route rather
+than new full-page state machines. Each admits exactly one joined remote free
+and requires force then false collection to leave `used == reserved - 1`.
+The medium predecessor starts from the sole full `BIN_FULL` member: force
+collection leaves it linked and marked full, then `_mi_page_abandon` removes
+that member, clears its full flag and page count, and immediately publishes the
+ordinary medium mapped-abandoned identity plus its exact static-main
+bitmap/count pair. The direct-small predecessor instead starts from the sole
+full ordinary-bin `PageKind::Small` member with `block_size <= SMALL_SIZE_MAX`,
+`reserved >= 16`, and its complete rounded direct-cache range. It stays out of
+`BIN_FULL`; after force and false collection, source removes the regular
+member, clears that exact direct range before page-count detach, and immediately
+publishes the ordinary small mapped-abandoned identity plus the same paired
+static-main capability. Both old Theap/TLD owners tear down before remaining
+linear client frees enter `MainHeapThreadProcessPageExitMappedRegularRoute`.
+Their full origins remain client-free-only: final nonfull geometry cannot grant
+the initially-nonfull-medium allocation-time adoption edge. Malformed regular,
+nonfull, or stale direct-cache input rejects before mutation, while a collector
+fault retains the drain terminally. They deliberately exclude multiple joined
+frees, local-free variants, all-free release, normal full-page unmapped
+abandonment, allocation-time adoption/requeue, mixed traversal, and concurrent
+frees.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`
 is the sixth handoff. It accepts only a sole full `PageKind::Small` arena page
