@@ -115,6 +115,15 @@ REQUIRED_UNIT_IDS = (
     "linux-unix-primitives",
 )
 
+# This external floor makes the source-map ratchet monotonic: changing the
+# checked-in JSON's self-hash cannot erase a source scope already reviewed as
+# implemented. New implemented scopes still require an explicit validator-code
+# review through `IMPLEMENTED_SOURCE_REQUIREMENTS` below and a deliberate
+# expansion of this baseline.
+REQUIRED_IMPLEMENTED_UNIT_IDS = (
+    "x86-64-width-and-bit-operations",
+)
+
 # An `implemented` source scope is deliberately rare.  The source map itself
 # cannot prove a whole translation unit, so only this narrow scalar scope may
 # use the stronger word until a later reviewed ratchet expands the allow-list.
@@ -448,6 +457,11 @@ def validate_units(
 
     if tuple(unit["id"] for unit in normalized) != REQUIRED_UNIT_IDS:
         raise SourceMapError("x86-64 source-map unit inventory changed")
+    implemented_unit_ids = tuple(
+        unit["id"] for unit in normalized if unit["status"] == "implemented"
+    )
+    if implemented_unit_ids != REQUIRED_IMPLEMENTED_UNIT_IDS:
+        raise SourceMapError("x86-64 source-map implemented-status baseline changed")
     if tuple(unit["source_anchor"]["member"] for unit in normalized) != REQUIRED_SOURCE_MEMBERS:
         raise SourceMapError(
             "x86-64 source-map units must cover each reviewed source member exactly once"

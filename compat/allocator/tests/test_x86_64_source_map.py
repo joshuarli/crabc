@@ -194,6 +194,28 @@ class X86_64SourceMapTests(unittest.TestCase):
         with self.assertRaisesRegex(SOURCE_MAP.SourceMapError, "cannot claim implemented status"):
             SOURCE_MAP.validate_contract(malformed, self.pin, self.sources)
 
+    def test_implemented_status_downgrade_is_rejected_despite_a_recomputed_ratchet(self) -> None:
+        malformed = copy.deepcopy(self.contract)
+        implemented = next(
+            unit
+            for unit in malformed["units"]
+            if unit["id"] == "x86-64-width-and-bit-operations"
+        )
+        implemented["status"] = "partial"
+        status_counts = SOURCE_MAP.status_counts(malformed["units"])
+        malformed["ratchet"]["status_counts"] = status_counts
+        malformed["ratchet"]["unfinished_unit_count"] = (
+            status_counts["partial"] + status_counts["not-started"]
+        )
+        malformed["ratchet"]["units_sha256"] = SOURCE_MAP.canonical_sha256(
+            malformed["units"]
+        )
+        with self.assertRaisesRegex(
+            SOURCE_MAP.SourceMapError,
+            "implemented-status baseline changed",
+        ):
+            SOURCE_MAP.validate_contract(malformed, self.pin, self.sources)
+
     def test_unratcheted_status_model_change_is_rejected(self) -> None:
         malformed = copy.deepcopy(self.contract)
         malformed["status_model"]["partial"] += " Changed without review."
