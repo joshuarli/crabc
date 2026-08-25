@@ -600,6 +600,10 @@ def run_focused_contract_tests(records: list[dict[str, object]]) -> list[dict[st
             [sys.executable, "scripts/tests/test_build_owned_sysroot.py"],
         ),
         (
+            "docker_source_mount_git_ownership",
+            [sys.executable, "scripts/tests/test_dev_container.py"],
+        ),
+        (
             "crt_object_contracts",
             [sys.executable, "crt/tests/test_build.py"],
         ),
