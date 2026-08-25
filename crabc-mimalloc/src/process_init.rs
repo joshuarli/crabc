@@ -861,8 +861,8 @@ mod tests {
                 Err(ProcessMainInitError::AlreadyInitialized)
             ));
             let different_config = MemoryConfig::from_observations(
-                PageSize::new(16_384).expect("Linux/AArch64 supports this page size"),
-                1024 * 1024,
+                PageSize::new(4_096).expect("the selected native page size is valid"),
+                1024 * 1024 + 1,
                 false,
                 false,
             );

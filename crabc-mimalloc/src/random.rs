@@ -174,7 +174,7 @@ impl TheapRandomImage {
         word
     }
 
-    /// Returns two source-order words as the AArch64 `uintptr_t` result.
+    /// Returns two source-order words as the 64-bit `uintptr_t` result.
     ///
     /// `_mi_random_next` shifts its first `chacha_next32` result into the
     /// high half and places the second in the low half. This raw helper keeps
@@ -185,7 +185,7 @@ impl TheapRandomImage {
         (u64::from(self.next32()) << 32) | u64::from(self.next32())
     }
 
-    /// Port of AArch64 `_mi_random_next`'s nonzero-result contract.
+    /// Port of the selected 64-bit `_mi_random_next` nonzero-result contract.
     #[inline]
     pub(crate) fn next(&mut self) -> u64 {
         debug_assert!(self.is_initialized());

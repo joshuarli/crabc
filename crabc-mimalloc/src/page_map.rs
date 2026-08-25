@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn reserve_count_covers_the_configured_address_space_without_overflow() {
         assert_eq!(reserve_count(MIN_VABITS), Some(1usize << (MIN_VABITS - 29)));
-        assert_eq!(reserve_count(MAX_VABITS), Some(1usize << 19));
+        assert_eq!(reserve_count(MAX_VABITS), Some(1usize << (MAX_VABITS - 29)));
         assert_eq!(reserve_count(28), None);
         assert_eq!(reserve_count(usize::BITS as usize), None);
     }

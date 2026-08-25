@@ -257,7 +257,7 @@ impl UnrelatedRoots {
 /// the intrusive Theap lists contain it. The key lease, backing, TLD
 /// registration/allocation, and Theap allocation are all retained as fields.
 /// The raw marker makes this owner `!Send` and `!Sync`; every live operation
-/// also rechecks the captured AArch64 `TPIDR_EL0` identity.
+/// also rechecks the captured direct target TLS identity.
 #[must_use = "a dynamic Theap attachment must explicitly tear down or remain terminally retained"]
 pub(crate) struct DynamicTheapAttachment<'heap> {
     heap: Pin<&'heap mut Heap>,
@@ -791,7 +791,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 .ok_or(DynamicTheapError::TheapProjection)?;
             // SAFETY: this attachment retains the caller's pinned Heap, the
             // exact metadata TLD capability, and the Theap allocation through
-            // both list lifetimes; its `!Send`/TPIDR proof excludes a second
+            // both list lifetimes; its `!Send`/direct-TLS-identity proof excludes a second
             // thread or list mutator until source-ordered detachment.
             unsafe { theap.initialize_dynamic_metadata(heap, tld, page_mode) }
                 .map_err(DynamicTheapError::TheapInit)?;

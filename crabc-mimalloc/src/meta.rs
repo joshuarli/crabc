@@ -105,7 +105,7 @@ enum BitmapImageState {
 /// outcome and must translate it at a later public boundary if one exists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MetaError {
-    /// The direct AArch64 thread pointer was zero or not a valid live source
+    /// The direct target thread pointer was zero or not a valid live source
     /// identity, so entering the process lock would not be recursion-safe.
     InvalidEntryThread,
     /// This thread already owns the metadata lock; waiting would deadlock the
@@ -1729,7 +1729,7 @@ mod tests {
     fn typed_tld_initialization_rejects_aligned_and_replacement_origins() {
         let allocator = static_allocator();
         let thread = LiveThreadId::new(crate::os::thread_pointer_identity())
-            .expect("the native AArch64 test thread has a live identity");
+            .expect("the native test thread has a live identity");
         let sequence = ThreadSequence::from_previous_total_count(7);
         let tld_size = size_of::<ThreadLocalData>();
 
@@ -1774,7 +1774,7 @@ mod tests {
         );
 
         let thread = LiveThreadId::new(crate::os::thread_pointer_identity())
-            .expect("the native AArch64 test thread has a live identity");
+            .expect("the native test thread has a live identity");
         let mut tld = allocator
             .zalloc(config(), size_of::<ThreadLocalData>())
             .expect("the exact fresh TLD allocation succeeds");
@@ -1922,10 +1922,9 @@ mod tests {
     fn configuration_mismatch_does_not_disturb_ready_metadata_state() {
         let allocator = static_allocator();
         let mut block = allocator.zalloc(config(), 8).unwrap();
-        let different_page_size = PageSize::new(16 * 1024).unwrap();
         let different = MemoryConfig::from_observations(
-            different_page_size,
-            1024 * 1024,
+            PageSize::new(4 * 1024).unwrap(),
+            1024 * 1024 + 1,
             false,
             false,
         );

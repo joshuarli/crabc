@@ -728,12 +728,20 @@ mod tests {
     }
 
     #[test]
-    fn small_os_aligned_layout_preserves_each_linux_aarch64_page_size() {
-        for (page_size, block_size) in [
+    fn small_os_aligned_layout_preserves_selected_linux_profile_geometry() {
+        #[cfg(target_arch = "aarch64")]
+        let cases = [
             (4 * KIB, 4 * KIB),
             (16 * KIB, 16 * KIB),
             (64 * KIB, 64 * KIB),
-        ] {
+        ];
+        #[cfg(target_arch = "x86_64")]
+        let cases = [
+            (4 * KIB, 4 * KIB),
+            (4 * KIB, 16 * KIB),
+            (4 * KIB, 64 * KIB),
+        ];
+        for (page_size, block_size) in cases {
             let layout = OsAlignedPageLayout::new(
                 config(page_size),
                 block_size,
@@ -776,7 +784,7 @@ mod tests {
 
     #[test]
     fn huge_page_map_span_is_clipped_without_clipping_mapping_ownership() {
-        let config = config(64 * KIB);
+        let config = config(4 * KIB);
         let exact_large =
             OsAlignedPageLayout::new(config, 4 * MIB, 128 * KIB).unwrap();
         assert_eq!(exact_large.page_map_size(), 4 * MIB);

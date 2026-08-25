@@ -2,7 +2,7 @@
 name = "crabc-mimalloc"
 version.workspace = true
 edition.workspace = true
-description = "Pinned Rust port of the Linux/AArch64 mimalloc allocator engine"
+description = "Pinned Rust mimalloc port: Linux/AArch64 production plus private native x86 evidence"
 # The allocator contains MIT-only semantic translations of pinned mimalloc.
 license = "MIT"
 repository.workspace = true
@@ -21,17 +21,17 @@ test-adapter = []
 # dev-dependency; it never selects a production atomic backend.
 loom = []
 # Retains named, test-only witnesses for the allocator's private compiler-TLS
-# roots so the pinned AArch64 ELF harness can inspect their exact access model.
+# roots so the pinned target-specific ELF harness can inspect their exact access model.
 # Normal allocator builds expose neither these witnesses nor a TLS ABI.
 tls-codegen-probe = []
 
 [dependencies]
 chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }
-crabc-core = { path = "../crabc-core" }
+crabc-core = { path = "../crabc-core", features = ["allocator-x86-evidence"] }
 zeroize = { version = "=1.9.0", default-features = false }
 
 [dev-dependencies]
 # Test-only finite scheduler for the exact live and abandoned remote-head transitions.
 # See `src/remote_free_loom.rs`; this is deliberately absent from normal
-# Linux/AArch64 allocator builds.
+# Linux/AArch64 and Linux/x86-64 allocator builds.
 loom = { version = "=0.7.2", default-features = false }

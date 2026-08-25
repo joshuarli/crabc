@@ -15,8 +15,8 @@
 // `include/mimalloc/internal.h:717-719` (word and two-level page-map
 // constants), `src/bitmap.h:94-105` (bitmap-bounded arena constants), and
 // `CMakeLists.txt:7-18,415-454,684-693,772-774` (default Release switches).
-// This module freezes only the Linux/AArch64 little-endian default-release
-// profile; it is not a runtime configuration mechanism.
+// This module freezes only the Linux/AArch64 and Linux/x86-64 little-endian
+// default-release profiles; it is not a runtime configuration mechanism.
 
 pub(crate) const WORD_SIZE: usize = core::mem::size_of::<usize>();
 pub(crate) const KIB: usize = 1024;
@@ -91,9 +91,12 @@ pub(crate) const BITMAP_MAX_BIT_COUNT: usize = BCHUNK_BITS * BCHUNK_BITS;
 pub(crate) const ARENA_MIN_SIZE: usize = BCHUNK_BITS * ARENA_SLICE_SIZE;
 pub(crate) const ARENA_MAX_SIZE: usize = BITMAP_MAX_BIT_COUNT * ARENA_SLICE_SIZE;
 
-// `bits.h` selects 48 virtual-address bits for a 64-bit non-x64 target, and
+// `bits.h` selects 48 virtual-address bits for AArch64 and 47 for x86-64;
 // `internal.h` uses the two-level map when page metadata is separated.
+#[cfg(target_arch = "aarch64")]
 pub(crate) const MAX_VABITS: usize = 48;
+#[cfg(target_arch = "x86_64")]
+pub(crate) const MAX_VABITS: usize = 47;
 pub(crate) const MIN_VABITS: usize = 43;
 pub(crate) const PAGE_MAP_FLAT: bool = false;
 pub(crate) const PAGE_MAP_SUB_SHIFT: usize = 13;
@@ -116,7 +119,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_release_constants_match_the_pinned_aarch64_profile() {
+    fn default_release_constants_match_the_pinned_linux_64_profiles() {
         assert_eq!(MAX_ALIGN_SIZE, 16);
         assert_eq!(SECURE_LEVEL, 0);
         assert_eq!(DEBUG_LEVEL, 0);
@@ -148,7 +151,16 @@ mod tests {
         assert_eq!(MAX_SINGLETON_BIN, 60);
         assert_eq!(MAX_ALLOC_SIZE, isize::MAX as usize);
         assert_eq!(PAGE_MAP_SUB_COUNT, 8192);
-        assert_eq!(PAGE_MAP_SHIFT, 19);
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert_eq!(MAX_VABITS, 48);
+            assert_eq!(PAGE_MAP_SHIFT, 19);
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert_eq!(MAX_VABITS, 47);
+            assert_eq!(PAGE_MAP_SHIFT, 18);
+        }
     }
 
     #[test]

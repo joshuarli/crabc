@@ -15,7 +15,7 @@
 // General cached switching, process initialization, libc/pthread hooks, and
 // full thread lifecycle integration remain separate work.
 
-//! Private Linux/AArch64 compiler-TLS roots.
+//! Private Linux/musl compiler-TLS roots for the configured AArch64 and x86-64 profiles.
 //!
 //! Pinned mimalloc selects `MI_TLS_MODEL_LOCAL` on Linux. Its hot theap roots
 //! use compiler TLS with the initial-exec model, while the regular dynamic
@@ -176,11 +176,11 @@ static mut DEFAULT_THEAP_ROOT: *mut Theap = empty_default_theap_ptr();
 static mut CACHED_THEAP_ROOT: *mut Theap = empty_default_theap_ptr();
 
 // `src/prim/prim-tls.c` defines this root on every platform, but the selected
-// Linux/AArch64 musl path does not use its address for identity. Musl disables
-// the compiler builtin, after which `prim-tls.h` selects GCC's direct
-// `mrs tpidr_el0` branch. Retain the helper root for source-shape completeness
-// and for any later configuration inventory; do not route live ownership
-// through it on the sole production target.
+// Linux/musl paths do not use its address for identity. Musl disables the
+// compiler builtin, after which `prim-tls.h` selects direct `TPIDR_EL0` reads
+// on AArch64 and `%fs:0` reads on x86-64. Retain the helper root for
+// source-shape completeness and for any later configuration inventory; do not
+// route live ownership through it on either production target.
 #[thread_local]
 static mut THREAD_ID_HELPER_ROOT: *mut () = core::ptr::null_mut();
 
@@ -303,13 +303,13 @@ pub(crate) fn clear_main_static_attachment_roots() {
     }
 }
 
-/// Returns the selected Linux/AArch64 source identity for this thread.
+/// Returns the selected Linux/musl source identity for this thread.
 ///
-/// Pinned `prim-tls.h` uses the AArch64 thread pointer even under musl:
-/// `MI_LIBC_MUSL` disables `__builtin_thread_pointer`, then the GCC inline-asm
-/// branch reads `TPIDR_EL0`. The source-declared helper TLS root belongs only
-/// to the later `MI_NO_THREAD_POINTER` fallback and is not this target's live
-/// allocator identity.
+/// `MI_LIBC_MUSL` disables `__builtin_thread_pointer`; the pinned GCC
+/// inline-assembly branch then reads `TPIDR_EL0` on AArch64 or `%fs:0` on
+/// x86-64. The source-declared helper TLS root belongs only to the later
+/// `MI_NO_THREAD_POINTER` fallback and is not either target's live allocator
+/// identity.
 #[inline(always)]
 pub(crate) fn current_thread_identity() -> Option<LiveThreadId> {
     LiveThreadId::new(crate::os::thread_pointer_identity())
@@ -318,8 +318,8 @@ pub(crate) fn current_thread_identity() -> Option<LiveThreadId> {
 /// Returns the address of the source-declared identity-helper TLS root.
 ///
 /// This is a source-shape/codegen observation only. It is aligned and unique
-/// per thread, but the selected Linux/AArch64 path uses [`current_thread_identity`]
-/// instead because `TPIDR_EL0` is directly available.
+/// per thread, but the selected Linux/musl paths use [`current_thread_identity`]
+/// instead because their direct thread-pointer register is available.
 #[inline(always)]
 fn thread_id_helper_address() -> Option<LiveThreadId> {
     LiveThreadId::new(core::ptr::addr_of_mut!(THREAD_ID_HELPER_ROOT) as usize)
@@ -408,7 +408,7 @@ mod tests {
         assert!(fast_slot_peek().is_none());
         assert_eq!(default_theap().as_ptr(), empty_default_theap_ptr());
         assert_eq!(cached_theap().as_ptr(), empty_default_theap_ptr());
-        let identity = current_thread_identity().expect("the aligned AArch64 thread pointer is live");
+        let identity = current_thread_identity().expect("the aligned native thread pointer is live");
         assert_eq!(identity.get() & crate::types::PAGE_FLAG_MASK, 0);
         let helper_address = thread_id_helper_address()
             .expect("the unused source helper root still has an aligned TLS address");

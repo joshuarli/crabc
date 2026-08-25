@@ -1,4 +1,4 @@
-//! Stateless Linux/AArch64 thread operations.
+//! Stateless Linux/AArch64 and Linux/x86-64 thread operations.
 
 use crate::Result;
 use crate::syscall::{decode, syscall0, syscall2, syscall3, syscall6, SYS_FUTEX, SYS_GETCPU, SYS_GETTID, SYS_SCHED_GETAFFINITY, SYS_SCHED_RR_GET_INTERVAL, SYS_SCHED_SETAFFINITY, SYS_SCHED_YIELD, SYS_SETRESGID, SYS_SETRESUID};
@@ -112,6 +112,7 @@ pub fn gettid() -> i32 {
 /// assume it is a stable process-wide identifier across thread exit or TLS
 /// runtime transitions. A zero value remains representable during the earliest
 /// runtime setup before a thread pointer is installed.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn thread_pointer_identity() -> usize {
     let thread_pointer: usize;
@@ -122,6 +123,33 @@ pub fn thread_pointer_identity() -> usize {
             "mrs {thread_pointer}, tpidr_el0",
             thread_pointer = out(reg) thread_pointer,
             options(nomem, nostack, preserves_flags),
+        );
+    }
+    thread_pointer
+}
+
+/// Reads the calling thread's Linux/x86-64 `%fs:0` value as an opaque identity
+/// for private allocator differential evidence.
+///
+/// The Linux/musl x86-64 TLS ABI places the thread-control-block self pointer
+/// at this address. It is intentionally distinct from the kernel task ID
+/// returned by [`gettid`]. The value is not dereferenced or retained here.
+/// Callers must treat it only as an opaque same-thread identity and must not
+/// assume it is a stable process-wide identifier across thread exit or TLS
+/// runtime transitions. A zero value remains representable during the earliest
+/// runtime setup before a thread pointer is installed.
+#[cfg(all(target_arch = "x86_64", feature = "allocator-x86-evidence"))]
+#[inline]
+pub fn thread_pointer_identity() -> usize {
+    let thread_pointer: usize;
+    // SAFETY: Linux/x86-64 makes the current thread-control-block self pointer
+    // readable at `%fs:0`. This snapshots that memory word without dereferencing
+    // the resulting opaque value or writing TLS state.
+    unsafe {
+        asm!(
+            "mov {thread_pointer}, fs:[0]",
+            thread_pointer = out(reg) thread_pointer,
+            options(readonly, nostack, preserves_flags),
         );
     }
     thread_pointer

@@ -17,7 +17,7 @@
 //! records the caller's thread identity, sequence and NUMA observation, and
 //! then links it into a process/subprocess and theap lifecycle. This module
 //! preserves the process-main ticket, static-first versus metadata-later
-//! allocation, field initialization, current-`TPIDR_EL0` authority,
+//! allocation, field initialization, current direct-TLS-identity authority,
 //! invalidation, and release portions without inventing a complete subprocess
 //! implementation. The process-static [`MainSubprocess`] owns the source
 //! relaxed sequencing and live-count state; callers cannot inject a sequence.
@@ -41,7 +41,7 @@ use crate::types::{
 /// One bounded current-thread TLD lifecycle error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadLocalDataError {
-    /// The calling AArch64 thread pointer did not encode a live source ID.
+    /// The calling direct target TLS pointer did not encode a live source ID.
     InvalidCurrentThread,
     /// An owner was moved or otherwise invoked from a different thread.
     WrongThread,
@@ -92,7 +92,7 @@ enum ThreadLocalDataStorage {
 /// This owner intentionally has no compiler-TLS root. It does not make a
 /// second process/TLD registry and cannot detect a duplicate inactive owner,
 /// so construction is unsafe. It is `!Send` and `!Sync`; every operation
-/// rechecks the exact direct `TPIDR_EL0` identity captured at construction.
+/// rechecks the exact direct target TLS identity captured at construction.
 /// This checkpoint is subprocess-attached with no theap: its TLD names the
 /// source main subprocess and owns one current-thread registration lease, but
 /// its theap-list remains null and it is not published to default/cached/fast
@@ -694,7 +694,7 @@ mod tests {
     #[test]
     fn first_ticket_uses_the_real_static_main_tld_without_metadata_or_tls_publication() {
         thread::spawn(|| {
-            let identity = current_thread_identity().expect("AArch64 TPIDR_EL0 is live");
+            let identity = current_thread_identity().expect("the native TLS identity is live");
             let (subprocess, metadata) = fixture();
             let dynamic_before = dynamic_backing_peek();
             let fast_before = fast_slot_peek();

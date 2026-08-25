@@ -36,9 +36,9 @@ use crabc_core::{Errno, Result};
 
 use crate::invariants;
 
-// Linux's AArch64 values used by the exact Unix primitive path. These are
-// intentionally private: allocator policy does not receive an open mmap or
-// madvise flag vocabulary from this module.
+// Linux values shared by the exact AArch64 and x86-64 Unix primitive paths.
+// These are intentionally private: allocator policy does not receive an open
+// mmap or madvise flag vocabulary from this module.
 const PROT_NONE: u32 = 0;
 const PROT_READ: u32 = 0x1;
 const PROT_WRITE: u32 = 0x2;
@@ -57,21 +57,26 @@ const RUSAGE_SELF: i32 = 0;
 // after decommit, so this static is the only raw Unix reset policy retained.
 static RESET_ADVICE: AtomicUsize = AtomicUsize::new(MADV_FREE as usize);
 
-/// One Linux/AArch64 base-page size supplied by the process-start owner.
+/// One configured Linux base-page size supplied by the process-start owner.
 ///
-/// Linux/AArch64 supports exactly these configured base-page granularities.
-/// Keeping the value typed prevents future page-map and OS paths from
-/// accidentally relying on the host's common 4-KiB configuration.
+/// The AArch64 profile accepts 4, 16, and 64 KiB; the x86-64 profile accepts
+/// only 4 KiB. Keeping the value typed prevents future page-map and OS paths
+/// from accidentally relying on another profile's common configuration.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PageSize(NonZeroUsize);
 
 impl PageSize {
-    /// Validates one Linux/AArch64 base-page size.
+    /// Validates one base-page size for the selected Linux target profile.
     #[inline]
     pub(crate) const fn new(bytes: usize) -> Option<Self> {
         match bytes {
-            4_096 | 16_384 | 65_536 => {
+            4_096 => {
+                // SAFETY: The enumerated base-page size is non-zero.
+                Some(Self(unsafe { NonZeroUsize::new_unchecked(bytes) }))
+            }
+            #[cfg(target_arch = "aarch64")]
+            16_384 | 65_536 => {
                 // SAFETY: Each enumerated base-page size is non-zero.
                 Some(Self(unsafe { NonZeroUsize::new_unchecked(bytes) }))
             }
@@ -111,7 +116,7 @@ impl StartupInput {
     }
 }
 
-/// The pinned default Linux/AArch64 OS-memory policy after primitive probing.
+/// The pinned default Linux OS-memory policy after primitive probing.
 ///
 /// This is the typed counterpart of `mi_os_mem_config_t`. It contains facts
 /// observed during process initialization, not mutable allocator options.
@@ -812,7 +817,7 @@ pub(crate) fn monotonic_milliseconds() -> Result<i64> {
 
     let mut time = core::mem::MaybeUninit::<KernelTimespec>::uninit();
     fault_before(FaultPoint::Clock)?;
-    // SAFETY: `KernelTimespec` is the two-signed-word Linux/AArch64 timespec
+    // SAFETY: `KernelTimespec` is the two-signed-word Linux 64-bit timespec
     // layout, and the kernel/vDSO initializes both words on success.
     unsafe { crabc_core::time::clock_gettime_raw(CLOCK_MONOTONIC, time.as_mut_ptr().cast()) }?;
     // SAFETY: the successful clock query initialized the exact output record.
@@ -880,7 +885,7 @@ pub(crate) fn thread_id() -> i32 {
     crabc_core::thread::gettid()
 }
 
-/// Returns the calling AArch64 TLS-register identity as an opaque value.
+/// Returns the calling target TLS-register identity as an opaque value.
 ///
 /// This is distinct from [`thread_id`]. It is suitable only for later
 /// same-thread allocator ownership checks and is never dereferenced here.
@@ -1143,12 +1148,18 @@ mod tests {
     }
 
     #[test]
-    fn startup_page_size_represents_supported_linux_aarch64_granularities() {
+    fn startup_page_size_represents_selected_linux_profile_granularities() {
         let _fault = fault::install(fault::Plan::disabled());
         assert!(PageSize::new(0).is_none());
         assert!(PageSize::new(3).is_none());
-        for bytes in [4 * 1024, 16 * 1024, 64 * 1024] {
+        assert_eq!(PageSize::new(4 * 1024).unwrap().bytes(), 4 * 1024);
+        #[cfg(target_arch = "aarch64")]
+        for bytes in [16 * 1024, 64 * 1024] {
             assert_eq!(PageSize::new(bytes).unwrap().bytes(), bytes);
+        }
+        #[cfg(target_arch = "x86_64")]
+        for bytes in [16 * 1024, 64 * 1024] {
+            assert!(PageSize::new(bytes).is_none());
         }
     }
 

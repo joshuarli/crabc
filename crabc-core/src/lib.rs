@@ -1,4 +1,4 @@
-//! Internal, stateless Linux/AArch64 operations shared by crabc's facades.
+//! Internal, stateless Linux operations shared by crabc's facades.
 //!
 //! This crate deliberately owns no process-global runtime state.  It is safe
 //! to link into both `libc.so` and a Rust application because its operations
@@ -9,14 +9,25 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-#[cfg(not(all(target_os = "linux", target_arch = "aarch64", target_endian = "little")))]
-compile_error!("crabc-core supports Linux/AArch64 little-endian only");
+// Linux/AArch64 is the sole crabc production target. The explicitly named
+// feature admits Linux/x86-64 only while the private allocator differential is
+// being built natively; no public x86 runtime artifact selects this crate.
+#[cfg(not(all(
+    target_os = "linux",
+    target_endian = "little",
+    any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", feature = "allocator-x86-evidence")
+    )
+)))]
+compile_error!("crabc-core supports Linux/AArch64; Linux/x86-64 requires the private allocator-x86-evidence feature");
 
 mod error;
 
 pub use error::{Errno, RawFd, Result, AT_FDCWD};
 
 /// Direct, typed access to the calling thread's AArch64 floating-point state.
+#[cfg(target_arch = "aarch64")]
 pub mod fenv;
 /// Allocation-free character-set conversion shared by the native and C facades.
 pub mod iconv;
@@ -38,6 +49,11 @@ mod vdso;
 /// through the explicitly versioned private entry point.
 pub mod runtime;
 
+#[cfg(target_arch = "aarch64")]
+#[path = "syscall.rs"]
+mod syscall;
+#[cfg(all(target_arch = "x86_64", feature = "allocator-x86-evidence"))]
+#[path = "syscall_x86_64.rs"]
 mod syscall;
 
 /// Direct descriptor I/O operations.

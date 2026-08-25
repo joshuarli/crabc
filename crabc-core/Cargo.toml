@@ -2,7 +2,7 @@
 name = "crabc-core"
 version.workspace = true
 edition.workspace = true
-description = "Internal typed Linux/AArch64 syscall primitives shared by crabc facades"
+description = "Internal typed Linux syscall primitives; AArch64 production plus private x86 allocator evidence"
 license.workspace = true
 repository.workspace = true
 publish = false
@@ -12,3 +12,7 @@ name = "crabc_core"
 
 [features]
 default = []
+# This capability exists only so `crabc-mimalloc` can run its private native
+# x86-64 differential evidence. It does not authorize x86 crabc runtime,
+# libc, loader, or facade artifacts.
+allocator-x86-evidence = []

@@ -38,7 +38,7 @@ use crate::atomic::{
 use crate::bits::{bsf, bsr, clz, ctz, popcount};
 use crate::config::BCHUNK_BITS;
 
-/// `MI_BFIELD_BITS` for the sole 64-bit Linux/AArch64 target.
+/// `MI_BFIELD_BITS` for the configured 64-bit Linux target profiles.
 pub(crate) const BFIELD_BITS: usize = usize::BITS as usize;
 pub(crate) const BCHUNK_FIELDS: usize = BCHUNK_BITS / BFIELD_BITS;
 pub(crate) const BCHUNK_SIZE: usize = BCHUNK_BITS / 8;

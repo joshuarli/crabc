@@ -114,7 +114,7 @@ impl ProcessPageMapStorage {
     ///
     /// The source default `mi_option_max_vabits == 0` is passed as the
     /// configured value, so [`PageMap::initialize`] observes the frozen
-    /// Linux/AArch64 virtual-address width.  Option parsing and process
+    /// selected Linux-profile virtual-address width. Option parsing and process
     /// shutdown are intentionally separate future boundaries.
     pub(crate) fn initialize(
         &'static self,
@@ -670,8 +670,8 @@ mod tests {
         let first = storage.initialize(memory_config(), subprocess).unwrap();
         let root = first.root().unwrap();
         let different_config = MemoryConfig::from_observations(
-            PageSize::new(16_384).expect("Linux/AArch64 supports this page size"),
-            1024 * 1024,
+            PageSize::new(4_096).expect("the selected native page size is valid"),
+            1024 * 1024 + 1,
             false,
             false,
         );

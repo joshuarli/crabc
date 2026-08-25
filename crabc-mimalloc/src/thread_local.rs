@@ -6,7 +6,7 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/threadlocal.c:23-315` and
 // `include/mimalloc/prim-tls.h:41-50,193-229`. This slice preserves the
-// AArch64 key encoding, caller-owned slot semantics, and the global
+// 64-bit Linux key encoding, caller-owned slot semantics, and the global
 // free-index claim/release protocol. A current-thread lifecycle owner now
 // uses the process-static metadata allocator for the source-shaped regular
 // flexible backing, exact expansion, root publication, and bounded regular
@@ -36,9 +36,9 @@ use crate::types::LiveThreadId;
 
 /// The low key-field width used by pinned mimalloc on 64-bit targets.
 ///
-/// The sole production target is AArch64, so a key is one 64-bit word with a
-/// 16-bit index and a 48-bit version. This is an encoding fact, not a chosen
-/// limit for a future registry's metadata allocation strategy.
+/// Both production target profiles use one 64-bit key word with a 16-bit index
+/// and a 48-bit version. This is an encoding fact, not a chosen limit for a
+/// future registry's metadata allocation strategy.
 pub(crate) const TLS_INDEX_BITS: u32 = 16;
 const TLS_VERSION_BITS: u32 = 64 - TLS_INDEX_BITS;
 pub(crate) const TLS_INDEX_MASK: u64 = (1_u64 << TLS_INDEX_BITS) - 1;
@@ -48,7 +48,7 @@ pub(crate) const TLS_FAST_KEY_RAW: u64 = 1;
 
 const _: [(); 64] = [(); usize::BITS as usize];
 
-/// A slot index that can be represented in a pinned AArch64 TLS key.
+/// A slot index that can be represented in a pinned 64-bit Linux TLS key.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ThreadLocalSlotIndex(u16);
 
@@ -516,9 +516,9 @@ impl ThreadLocalSlots<'_> {
 /// operation without violating its source lifecycle contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadLocalBackingError {
-    /// `TPIDR_EL0` did not encode a valid live source thread identity.
+    /// The direct target TLS register did not encode a valid live source thread identity.
     InvalidCurrentThread,
-    /// A current-thread owner was used from a different AArch64 thread.
+    /// A current-thread owner was used from a different native thread.
     WrongThread,
     /// The current root already names a live dynamically owned image.
     RootAlreadyOwned,
@@ -554,7 +554,7 @@ enum ThreadLocalBackingState {
 /// exact `MetaAllocation` capability so a growth replacement cannot publish
 /// a raw pointer without matching metadata provenance. The private marker
 /// makes this type `!Send` and `!Sync`: its every operation validates the
-/// captured direct `TPIDR_EL0` identity, but the type system also prevents a
+/// captured direct TLS identity, but the type system also prevents a
 /// safe move to a second thread.
 ///
 /// The constructor is `unsafe` because the source's initially immutable
@@ -584,7 +584,7 @@ impl ThreadLocalBackingOwner {
     /// exclusively. In particular, no second `ThreadLocalBackingOwner` may
     /// exist for this thread, and no other code may mutate the dynamic root
     /// until this owner tears it down. The caller must eventually call
-    /// [`Self::teardown`] while still on this exact `TPIDR_EL0` identity.
+    /// [`Self::teardown`] while still on this exact direct TLS identity.
     pub(crate) unsafe fn begin(config: MemoryConfig) -> Result<Self, ThreadLocalBackingError> {
         // SAFETY: forwarded unchanged to the common constructor; production
         // always binds the committed process-static metadata owner.
@@ -965,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_key_uses_the_complete_aarch64_16_bit_index_and_48_bit_version_fields() {
+    fn packed_key_uses_the_complete_linux_64_16_bit_index_and_48_bit_version_fields() {
         let first_index = ThreadLocalSlotIndex::new(0).expect("zero is a valid index");
         let first = ThreadLocalKey::from_parts(first_index, 1).expect("one is the first valid version");
         assert_eq!(first.raw(), 1_u64 << TLS_INDEX_BITS);
@@ -1243,7 +1243,7 @@ mod tests {
     #[test]
     fn current_thread_backing_first_allocates_the_exact_flexible_image_and_leaves_other_roots_alone() {
         thread::spawn(|| {
-            let identity = current_thread_identity().expect("AArch64 TPIDR_EL0 is live");
+            let identity = current_thread_identity().expect("the native TLS identity is live");
             let fast_before = crate::compiler_tls::fast_slot_peek();
             let default_before = crate::compiler_tls::default_theap();
             let cached_before = crate::compiler_tls::cached_theap();
@@ -1522,7 +1522,7 @@ mod tests {
             let worker_sender = sender.clone();
             workers.push(thread::spawn(move || {
                 let mut owner = unsafe { ThreadLocalBackingOwner::begin(memory_config()) }.unwrap();
-                let identity = current_thread_identity().expect("the worker has TPIDR_EL0");
+                let identity = current_thread_identity().expect("the worker has a native TLS identity");
                 let fast_before = crate::compiler_tls::fast_slot_peek();
                 let default_before = crate::compiler_tls::default_theap();
                 let cached_before = crate::compiler_tls::cached_theap();
@@ -1560,7 +1560,7 @@ mod tests {
         for worker in workers {
             worker.join().expect("the worker TLS lifecycle completes");
         }
-        assert_ne!(results[0].0, results[1].0, "TPIDR_EL0 identities are distinct");
+        assert_ne!(results[0].0, results[1].0, "native TLS identities are distinct");
         assert_ne!(results[0].1, results[1].1, "each worker owns a separate backing");
         for result in &results {
             assert_eq!(result.2, result.3, "each worker retrieves only its own value");

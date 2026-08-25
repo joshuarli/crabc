@@ -34,7 +34,7 @@ use crate::types::{LiveThreadId, PAGE_FLAG_BITS};
 pub enum TestContextInitError {
     /// Linux did not provide `AT_PAGESZ` to this process.
     PageSizeUnavailable,
-    /// The process supplied a base page size outside the Linux/AArch64 set.
+    /// The process supplied a base page size outside the selected Linux profile.
     InvalidPageSize,
     /// Initializing the owned source page map failed.
     PageMapInitialization,

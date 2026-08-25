@@ -8,7 +8,7 @@
 // `include/mimalloc/atomic.h:405-472`. Its active `MI_USE_PTHREADS` branch
 // delegates a private normal pthread mutex. This file preserves that narrow
 // capability boundary without importing crabc-libc or its public pthread ABI.
-// The 0/1/2 futex state machine below is crabc Linux/AArch64 boundary code,
+// The 0/1/2 futex state machine below is crabc native Linux boundary code,
 // not a transliteration of upstream mimalloc code.
 
 //! Allocator-private blocking lock boundary.

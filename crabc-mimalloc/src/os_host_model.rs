@@ -3,7 +3,7 @@
 //! This module is selected only by `cfg(miri)`. It is deliberately not a host
 //! platform backend: fixed, page-aligned static regions represent a bounded
 //! set of live anonymous mappings, so Miri can exercise allocator ownership
-//! and lazy page-map publication without Linux/AArch64 syscalls. The model
+//! and lazy page-map publication without native Linux syscalls. The model
 //! records mapping and logical accessibility transitions. It does not model host protection
 //! faults, kernel RSS, `MADV_FREE` reclamation, or Linux scheduling/process
 //! observations; tests must not infer any of those properties from it.
@@ -16,17 +16,22 @@ use crabc_core::{Errno, Result};
 
 use crate::invariants;
 
-/// One Linux/AArch64 base-page size supplied by the process-start owner.
+/// One selected Linux-profile base-page size supplied by the process-start owner.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PageSize(NonZeroUsize);
 
 impl PageSize {
-    /// Validates one Linux/AArch64 base-page size.
+    /// Validates one base-page size for the selected Linux target profile.
     #[inline]
     pub(crate) const fn new(bytes: usize) -> Option<Self> {
         match bytes {
-            4_096 | 16_384 | 65_536 => {
+            4_096 => {
+                // SAFETY: The enumerated base-page size is non-zero.
+                Some(Self(unsafe { NonZeroUsize::new_unchecked(bytes) }))
+            }
+            #[cfg(target_arch = "aarch64")]
+            16_384 | 65_536 => {
                 // SAFETY: Each enumerated base-page size is non-zero.
                 Some(Self(unsafe { NonZeroUsize::new_unchecked(bytes) }))
             }
@@ -887,12 +892,18 @@ mod tests {
     }
 
     #[test]
-    fn startup_page_size_matches_the_linux_aarch64_contract() {
+    fn startup_page_size_matches_the_selected_linux_profile_contract() {
         let _fault = fault::install(fault::Plan::disabled());
         assert!(PageSize::new(0).is_none());
         assert!(PageSize::new(3).is_none());
-        for bytes in [4 * 1024, 16 * 1024, 64 * 1024] {
+        assert_eq!(startup(4 * 1024).page_size().bytes(), 4 * 1024);
+        #[cfg(target_arch = "aarch64")]
+        for bytes in [16 * 1024, 64 * 1024] {
             assert_eq!(startup(bytes).page_size().bytes(), bytes);
+        }
+        #[cfg(target_arch = "x86_64")]
+        for bytes in [16 * 1024, 64 * 1024] {
+            assert!(PageSize::new(bytes).is_none());
         }
     }
 

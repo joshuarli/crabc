@@ -58,7 +58,7 @@ pub(crate) const fn wsize_from_size(size: usize) -> Option<usize> {
     invariants::word_count(size)
 }
 
-/// Port of `src/page-queue.c:mi_bin` for the frozen default AArch64 profile.
+/// Port of `src/page-queue.c:mi_bin` for the frozen default Linux 64-bit profiles.
 ///
 /// The profile has `MI_ALIGN2W`, so word sizes through eight use their direct
 /// queue number. Larger regular sizes use mimalloc's three high-bit size-class
@@ -96,7 +96,7 @@ pub(crate) const fn bin_size(bin: usize) -> Option<usize> {
     }
 }
 
-/// Port of `mi_good_size` for a validated Linux/AArch64 OS page size.
+/// Port of `mi_good_size` for a validated selected Linux-profile OS page size.
 ///
 /// The pinned default has no padding. The expression remains written in terms
 /// of `PADDING_SIZE` so its source invariant stays visible: small objects use
@@ -237,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn default_aarch64_two_word_alignment_skips_odd_small_bins() {
+    fn default_linux_64_two_word_alignment_skips_odd_small_bins() {
         assert_eq!(bin(2 * WORD_SIZE), Some(2));
         assert_eq!(bin(2 * WORD_SIZE + 1), Some(4));
         assert_eq!(bin(3 * WORD_SIZE), Some(4));

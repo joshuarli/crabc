@@ -1,5 +1,9 @@
 //! Linux/AArch64 allocator-engine port of the pinned mimalloc upstream.
 //!
+//! Linux/x86-64 compilation exists only for private, native C/Rust allocator
+//! differential evidence. It neither selects nor exposes a public x86 crabc,
+//! libc, loader, facade, or allocator backend.
+//!
 //! The crate contains source-mapped allocator foundations and one private,
 //! explicit single-thread ordinary-allocation lifecycle over a caller-managed
 //! external arena and page map. That lifecycle covers small, medium, large,
@@ -30,18 +34,18 @@
 #[cfg(feature = "test-adapter")]
 extern crate alloc as rust_alloc;
 
-// This is the sole production platform. `cfg(miri)` selects a private test
-// instrument only: it never makes a non-Linux/AArch64 target supported by the
-// allocator engine or production build.
+// Linux/AArch64 is the sole production profile. `cfg(miri)` selects a private
+// test instrument only; Linux/x86-64 is accepted solely for the bounded native
+// allocator differentials documented above.
 #[cfg(all(
     not(miri),
     not(all(
         target_os = "linux",
-        target_arch = "aarch64",
+        any(target_arch = "aarch64", target_arch = "x86_64"),
         target_endian = "little"
     ))
 ))]
-compile_error!("crabc-mimalloc supports Linux/AArch64 little-endian only");
+compile_error!("crabc-mimalloc supports Linux/AArch64 production and private Linux/x86-64 allocator evidence only");
 
 mod bits;
 mod aligned;

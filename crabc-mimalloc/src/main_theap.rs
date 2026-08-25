@@ -1770,7 +1770,7 @@ mod tests {
             let (storage, subprocess) = fixture();
             assert_eq!(storage.heap_address() & 63, 0);
             assert_eq!(storage.theap_address() & 63, 0);
-            let identity = current_thread_identity().expect("native TPIDR_EL0 identity");
+            let identity = current_thread_identity().expect("native direct TLS identity");
             let mut owner = unsafe {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
             }

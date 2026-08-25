@@ -217,7 +217,7 @@ pub(crate) unsafe fn c_strnlen(source: *const u8, maximum_length: usize) -> usiz
 /// call.
 #[inline]
 pub(crate) unsafe fn c_strlen(source: *const u8) -> usize {
-    // `PTRDIFF_MAX` is `isize::MAX` on the fixed Linux/AArch64 target.
+    // `PTRDIFF_MAX` is `isize::MAX` on both fixed Linux 64-bit profiles.
     unsafe { c_strnlen(source, isize::MAX as usize) }
 }
 
