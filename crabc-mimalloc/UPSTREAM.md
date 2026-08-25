@@ -249,6 +249,17 @@ shares a live page engine, or repairs a fork child. The source-specific
 2018-2026 Microsoft Research/Daan Leijen MIT notice already recorded for the
 runtime and later-main mappings governs this translated lifecycle.
 
+### Current private expand mapping
+
+The private engine also maps the fixed normal-release `mi_expand` decision in
+`src/alloc.c:364-377`. `alloc::expansion_fits` and
+`single_thread::PageAllocatorEngine::expand_in_place` require a caller-proved
+current allocation, retain the full usable-size fit predicate, and never
+allocate, copy, free, or mutate allocator state. The native x86-64 fundamental
+trace covers null/nonzero, zero-size, below-half, exact-fit, oversize, and
+failure-preservation cases. This is a crate-private engine behavior rather than
+a public allocator API; native AArch64 revalidation remains pending.
+
 ### Current mapped page-area correction
 
 The earlier table clauses saying that page-area commitment or the mapped-medium

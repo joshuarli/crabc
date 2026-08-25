@@ -898,10 +898,44 @@ int main(void) {
   printf("trace.fundamental.realloc_size_zero.usable=%zu\n", mi_usable_size(size_zero));
   mi_free(size_zero);
 
+  const size_t expand_request = 59;
+  uint8_t* const expand = (uint8_t*)mi_malloc(expand_request);
+  if (expand == NULL) return 19;
+  const size_t expand_usable = mi_usable_size(expand);
+  if (expand_usable < 2 || expand_usable == SIZE_MAX) {
+    mi_free(expand);
+    return 20;
+  }
+  memset(expand, 0x6d, expand_request);
+  const uint64_t expand_before = content_hash(expand, expand_request);
+  // `mi_expand` must reject NULL regardless of the requested size.
+  void* const expand_null = mi_expand(NULL, expand_request);
+  void* const expand_zero = mi_expand(expand, 0);
+  void* const expand_below_half = mi_expand(expand, expand_usable / 2 - 1);
+  void* const expand_exact = mi_expand(expand, expand_usable);
+  void* const expand_oversize = mi_expand(expand, expand_usable + 1);
+  const uint64_t expand_after = content_hash(expand, expand_request);
+  printf("trace.fundamental.expand.usable=%zu\n", expand_usable);
+  printf("trace.fundamental.expand.null_nonzero_returns_null=%u\n", (unsigned)(expand_null == NULL));
+  printf("trace.fundamental.expand.zero_returns_input=%u\n", (unsigned)(expand_zero == expand));
+  printf("trace.fundamental.expand.below_half_returns_input=%u\n", (unsigned)(expand_below_half == expand));
+  printf("trace.fundamental.expand.exact_returns_input=%u\n", (unsigned)(expand_exact == expand));
+  printf("trace.fundamental.expand.oversize_returns_null=%u\n", (unsigned)(expand_oversize == NULL));
+  printf("trace.fundamental.expand.failure_preserves=%u\n", (unsigned)(expand_before == expand_after));
+  const bool expand_valid =
+      expand_null == NULL
+      && expand_zero == expand
+      && expand_below_half == expand
+      && expand_exact == expand
+      && expand_oversize == NULL
+      && expand_before == expand_after;
+  mi_free(expand);
+  if (!expand_valid) return 21;
+
   const size_t aligned_size = 97;
   const size_t aligned_alignment = 256;
   uint8_t* const aligned = (uint8_t*)mi_malloc_aligned(aligned_size, aligned_alignment);
-  if (aligned == NULL) return 16;
+  if (aligned == NULL) return 22;
   printf("trace.fundamental.aligned.size=%zu\n", aligned_size);
   printf("trace.fundamental.aligned.alignment=%zu\n", aligned_alignment);
   printf("trace.fundamental.aligned.usable=%zu\n", mi_usable_size(aligned));
@@ -914,7 +948,7 @@ int main(void) {
   const size_t offset = 13;
   uint8_t* const offset_aligned =
       (uint8_t*)mi_malloc_aligned_at(offset_size, offset_alignment, offset);
-  if (offset_aligned == NULL) return 17;
+  if (offset_aligned == NULL) return 23;
   printf("trace.fundamental.offset_aligned.size=%zu\n", offset_size);
   printf("trace.fundamental.offset_aligned.alignment=%zu\n", offset_alignment);
   printf("trace.fundamental.offset_aligned.offset=%zu\n", offset);
@@ -931,13 +965,75 @@ int main(void) {
   printf("trace.fundamental.oom.returns_null=%u\n", forced_oom == NULL);
   if (forced_oom != NULL) {
     mi_free(forced_oom);
-    return 18;
+    return 24;
   }
 
   puts("CRABC_MI_FUNDAMENTAL_TRACE_END");
   return 0;
 }
 """
+
+
+# This schema freezes the selected direct C/Rust fundamental trace. Comparing
+# only the two observed maps would allow a synchronized deletion to silently
+# shrink the recorded contract. The trace algorithm is target-neutral; native
+# evidence qualification remains in the architecture-specific ledgers.
+FUNDAMENTAL_TRACE_EXPECTED_KEYS = frozenset(
+    {
+        *(
+            f"trace.fundamental.class.{kind}.{field}"
+            for kind in ("small", "medium", "large", "singleton")
+            for field in ("request", "usable", "success")
+        ),
+        "trace.fundamental.calloc.count",
+        "trace.fundamental.calloc.size",
+        "trace.fundamental.calloc.usable",
+        "trace.fundamental.calloc.cleared",
+        "trace.fundamental.calloc.content_hash",
+        "trace.fundamental.calloc_overflow.count",
+        "trace.fundamental.calloc_overflow.size",
+        "trace.fundamental.calloc_overflow.returns_null",
+        "trace.fundamental.realloc_null.request",
+        "trace.fundamental.realloc_null.usable",
+        "trace.fundamental.realloc_null.content_hash",
+        "trace.fundamental.realloc_grow.original_size",
+        "trace.fundamental.realloc_grow.new_size",
+        "trace.fundamental.realloc_grow.usable",
+        "trace.fundamental.realloc_grow.preserved",
+        "trace.fundamental.realloc_grow.content_hash",
+        "trace.fundamental.realloc_shrink.new_size",
+        "trace.fundamental.realloc_shrink.usable",
+        "trace.fundamental.realloc_shrink.preserved",
+        "trace.fundamental.realloc_shrink.content_hash",
+        "trace.fundamental.realloc_failure.request",
+        "trace.fundamental.realloc_failure.returns_null",
+        "trace.fundamental.realloc_failure.preserved",
+        "trace.fundamental.realloc_failure.content_hash",
+        "trace.fundamental.realloc_size_zero.request",
+        "trace.fundamental.realloc_size_zero.returns_nonnull",
+        "trace.fundamental.realloc_size_zero.usable",
+        "trace.fundamental.expand.usable",
+        "trace.fundamental.expand.null_nonzero_returns_null",
+        "trace.fundamental.expand.zero_returns_input",
+        "trace.fundamental.expand.below_half_returns_input",
+        "trace.fundamental.expand.exact_returns_input",
+        "trace.fundamental.expand.oversize_returns_null",
+        "trace.fundamental.expand.failure_preserves",
+        "trace.fundamental.aligned.size",
+        "trace.fundamental.aligned.alignment",
+        "trace.fundamental.aligned.usable",
+        "trace.fundamental.aligned.valid",
+        "trace.fundamental.offset_aligned.size",
+        "trace.fundamental.offset_aligned.alignment",
+        "trace.fundamental.offset_aligned.offset",
+        "trace.fundamental.offset_aligned.usable",
+        "trace.fundamental.offset_aligned.valid",
+        "trace.fundamental.oom.request",
+        "trace.fundamental.oom.classification_invalid_request",
+        "trace.fundamental.oom.returns_null",
+    }
+)
+FUNDAMENTAL_TRACE_EXPECTED_COUNT = 58
 
 
 class HarnessError(RuntimeError):
@@ -2739,6 +2835,9 @@ def compare_fundamental_trace(
 ) -> dict[str, Any]:
     """Require a future Rust fundamental trace to equal the pinned C record."""
 
+    validate_fundamental_trace_schema(c_trace, source="pinned C")
+    validate_fundamental_trace_schema(rust_trace, source="Rust")
+
     missing_from_c = sorted(set(rust_trace).difference(c_trace))
     missing_from_rust = sorted(set(c_trace).difference(rust_trace))
     mismatches = [
@@ -2759,6 +2858,30 @@ def compare_fundamental_trace(
             + "; ".join(problems)
         )
     return {"compared_value_count": len(rust_trace), "status": "matched"}
+
+
+def validate_fundamental_trace_schema(trace: Mapping[str, int], *, source: str) -> None:
+    """Reject a trace whose fields drift from the fixed 58-key record."""
+
+    expected_count = FUNDAMENTAL_TRACE_EXPECTED_COUNT
+    if len(FUNDAMENTAL_TRACE_EXPECTED_KEYS) != expected_count:
+        raise HarnessError(
+            "internal fundamental-operation trace schema has an unexpected key count"
+        )
+    observed = set(trace)
+    missing = sorted(FUNDAMENTAL_TRACE_EXPECTED_KEYS.difference(observed))
+    unexpected = sorted(observed.difference(FUNDAMENTAL_TRACE_EXPECTED_KEYS))
+    if missing or unexpected:
+        problems: list[str] = []
+        if missing:
+            problems.append("missing: " + ", ".join(missing))
+        if unexpected:
+            problems.append("unexpected: " + ", ".join(unexpected))
+        raise HarnessError(
+            f"{source} fundamental-operation trace does not match the fixed "
+            f"{expected_count}-key schema: "
+            + "; ".join(problems)
+        )
 
 
 def defined_dynamic_symbols(readelf: str, artifact: Path) -> list[str]:

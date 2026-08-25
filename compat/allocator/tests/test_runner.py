@@ -554,7 +554,9 @@ class InventoryTests(unittest.TestCase):
     def test_x86_64_direct_engine_probe_is_pinned_unfeatured_and_isolated(self) -> None:
         c_layout = {"config.value": 1}
         c_small_trace = {"small.value": 2}
-        c_fundamental_trace = {"fundamental.value": 3}
+        c_fundamental_trace = {
+            key: 3 for key in RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS
+        }
         with mock.patch.object(
             RUNNER,
             "command_record",
@@ -739,7 +741,13 @@ ok
             RUNNER.parse_rust_layout("pointer.size=8\n")
 
     def test_native_x86_64_direct_engine_probe_selects_its_explicit_target(self) -> None:
-        output = """
+        fundamental_trace = {
+            key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS
+        }
+        fundamental_output = "\n".join(
+            f"{key}={value}" for key, value in sorted(fundamental_trace.items())
+        )
+        output = f"""
 CRABC_MI_LAYOUT_BEGIN
 config.MAX_VABITS=47
 config.PAGE_MAP_SHIFT=18
@@ -748,14 +756,13 @@ CRABC_MI_SMALL_TRACE_BEGIN
 trace.boundary.count=1
 CRABC_MI_SMALL_TRACE_END
 CRABC_MI_FUNDAMENTAL_TRACE_BEGIN
-trace.fundamental.count=1
+{fundamental_output}
 CRABC_MI_FUNDAMENTAL_TRACE_END
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 """
         record = {"status": 0, "stdout": output, "stderr": ""}
         c_layout = {"config.MAX_VABITS": 47, "config.PAGE_MAP_SHIFT": 18}
         small_trace = {"trace.boundary.count": 1}
-        fundamental_trace = {"trace.fundamental.count": 1}
         with mock.patch.object(RUNNER, "command_record", return_value=record) as command_record:
             result = RUNNER.rust_layout_probe(
                 c_layout,
@@ -787,7 +794,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         )
         self.assertEqual(
             result["single_thread_fundamental_trace"]["comparison"],
-            {"compared_value_count": 1, "status": "matched"},
+            {"compared_value_count": 58, "status": "matched"},
         )
 
     def test_native_x86_64_adapter_contract_is_target_local_and_source_bound(self) -> None:
@@ -1028,29 +1035,42 @@ noise after
         with self.assertRaisesRegex(RUNNER.HarnessError, "fundamental-operation trace.*markers"):
             RUNNER.parse_fundamental_trace("trace.fundamental.class.small.request=10240\n")
 
-    def test_fundamental_trace_comparison_names_missing_and_mismatched_values(self) -> None:
-        c_trace = {
+    def test_fundamental_trace_comparison_names_value_mismatch_after_schema_validation(self) -> None:
+        c_trace = {key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS}
+        self.assertEqual(
+            RUNNER.compare_fundamental_trace(c_trace, c_trace),
+            {"compared_value_count": 58, "status": "matched"},
+        )
+        mismatched = dict(c_trace)
+        mismatched["trace.fundamental.class.small.success"] = 0
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            r"value mismatches: trace\.fundamental\.class\.small\.success \(C=1, Rust=0\)",
+        ):
+            RUNNER.compare_fundamental_trace(c_trace, mismatched)
+
+    def test_fundamental_trace_comparison_rejects_a_synchronized_schema_regression(self) -> None:
+        # Comparing only the two observed maps would let a matching deletion
+        # silently reduce the pinned trace contract. The durable record has a
+        # fixed 58-key schema, including the nonzero null-pointer expand case.
+        self.assertEqual(RUNNER.FUNDAMENTAL_TRACE_EXPECTED_COUNT, 58)
+        self.assertEqual(len(RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS), 58)
+        self.assertIn(
+            "trace.fundamental.expand.null_nonzero_returns_null",
+            RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS,
+        )
+        self.assertIn("mi_expand(NULL, expand_request)", RUNNER.FUNDAMENTAL_TRACE_PROBE)
+        synchronized_but_incomplete = {
             "trace.fundamental.class.small.request": 10240,
             "trace.fundamental.class.small.success": 1,
             "trace.fundamental.class.small.usable": 10240,
         }
-        self.assertEqual(
-            RUNNER.compare_fundamental_trace(c_trace, c_trace),
-            {"compared_value_count": 3, "status": "matched"},
-        )
         with self.assertRaisesRegex(
             RUNNER.HarnessError,
-            r"missing from C oracle: trace\.fundamental\.extra; "
-            r"missing from Rust port: trace\.fundamental\.class\.small\.usable; "
-            r"value mismatches: trace\.fundamental\.class\.small\.success \(C=1, Rust=0\)",
+            r"fixed 58-key schema.*trace\.fundamental\.expand\.null_nonzero_returns_null",
         ):
             RUNNER.compare_fundamental_trace(
-                c_trace,
-                {
-                    "trace.fundamental.class.small.request": 10240,
-                    "trace.fundamental.class.small.success": 0,
-                    "trace.fundamental.extra": 1,
-                },
+                synchronized_but_incomplete, synchronized_but_incomplete
             )
 
     def test_fundamental_trace_parser_rejects_raw_address_fields(self) -> None:

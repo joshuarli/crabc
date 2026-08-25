@@ -393,7 +393,7 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "The mapped engine is a caller-managed private single-thread lifecycle, not general public allocation routing or process-owned allocation.",
+      "difference": "The mapped engine includes the fixed no-padding mi_expand decision for one current private allocation, but remains a caller-managed private single-thread lifecycle rather than general public allocation routing or process-owned allocation.",
       "evidence": [
         "crabc-mimalloc/src/alloc.rs",
         "crabc-mimalloc/src/free_list.rs",
@@ -898,6 +898,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "4fc1e0c49721e6ebff81d50d6266f4f7e593a7fc6f983495275f315628a36df8"
+    "units_sha256": "58508aa78f8e3ad11dfc0c22034e8579bb01c3c5399735e62e454c98e080f9ed"
   }
 }

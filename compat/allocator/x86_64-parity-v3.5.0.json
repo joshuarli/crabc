@@ -9,7 +9,7 @@
       "state": "available"
     },
     {
-      "claim": "Compares the native direct Rust engine's configuration/layout, small-allocation trace, and fundamental-operation trace against the selected pinned C release profile. It does not claim a C-API adapter, general lifecycle, or public allocator integration.",
+      "claim": "Compares the native direct Rust engine's configuration/layout, small-allocation trace, and 58-field fundamental-operation trace (including fixed no-padding mi_expand NULL/nonzero, fitting, oversize, and preservation cases) against the selected pinned C release profile. It does not claim a C-API adapter, general lifecycle, or public allocator integration.",
       "command": "./scripts/dev-amd64.sh allocator --quick",
       "id": "native-direct-rust-c-differential",
       "native_required": true,

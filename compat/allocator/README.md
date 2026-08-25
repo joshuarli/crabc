@@ -832,7 +832,9 @@ fill/free permutation. Raw addresses are deliberately excluded. The gate also
 records a separate 51-key exact-C baseline for page-kind, calloc, realloc,
 aligned/offset-aligned, usable-size, preservation, and invalid-size OOM
 behavior. The same library run emits an independent 51-key Rust record and
-requires exact equality with that pinned C baseline. This proves the bounded
+requires exact equality with that pinned C baseline. The native x86-64 lane
+below extends its own trace to 58 fields with no-padding `mi_expand`; native
+AArch64 revalidation of that extension remains pending. This proves the bounded
 single-thread engine's fundamental operation slice; it is not a production C
 adapter, process lifecycle, or whole-allocator parity claim. A
 default-off `test-adapter` feature now owns one allocation-backed, creating-
@@ -909,6 +911,11 @@ audited for their x86-64 ELF identity and dynamic dependencies; each
 executable also records a PT_INTERP loader whose basename is
 `ld-musl-x86_64.so.1`. Its first native run may populate the architecture-local
 Cargo cache from the checked-in lockfile; it never updates that lockfile.
+
+The direct native C/Rust fundamental trace currently contains 58 exact logical
+fields, including the fixed no-padding `mi_expand` nonzero null-pointer, zero-size,
+below-half, exact-fit, oversize, and state-preservation cases. It remains
+private engine evidence rather than a public x86 allocator API.
 
 A separate native private-adapter measurement lane is available through the
 same dispatcher:

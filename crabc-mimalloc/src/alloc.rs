@@ -4,15 +4,28 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/alloc.c:379-439`
-// (`mi_theap_realloc_zero_ex`). This module owns the address-independent
-// reallocation decision and copy/zero extents. Allocation, byte access, old
-// block release, and failure preservation stay in the live allocator owner.
+// Source map: pinned mimalloc v3.5.0 `src/alloc.c:364-377` (`mi_expand`) and
+// `src/alloc.c:379-439` (`mi_theap_realloc_zero_ex`). This module owns the
+// address-independent expansion/reallocation decisions and copy/zero extents.
+// Allocation, byte access, old block release, and failure preservation stay in
+// the live allocator owner.
 
 use core::mem::size_of;
 use core::ops::Range;
 
 use crate::invariants;
+
+/// Selects the pinned `mi_expand` result after its non-null pointer has been
+/// validated and its usable size observed.
+///
+/// The frozen normal release profile has `MI_PADDING == 0`, so source
+/// `mi_expand` returns its input exactly when `new_size` fits that usable
+/// extent. Retaining the padding condition makes a future configuration change
+/// fail closed just as the pinned C branch does.
+#[inline]
+pub(crate) const fn expansion_fits(usable_size: usize, new_size: usize) -> bool {
+    crate::config::PADDING_SIZE == 0 && new_size <= usable_size
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReallocationPlan {
@@ -93,6 +106,15 @@ pub(crate) const fn replacement_zeros_first_byte(new_size: usize, zero: bool) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expand_uses_the_full_usable_extent_only_in_the_no_padding_profile() {
+        assert_eq!(crate::config::PADDING_SIZE, 0);
+        assert!(expansion_fits(64, 0));
+        assert!(expansion_fits(64, 31));
+        assert!(expansion_fits(64, 64));
+        assert!(!expansion_fits(64, 65));
+    }
 
     #[test]
     fn ordinary_realloc_reuse_uses_the_source_floor_half_threshold() {

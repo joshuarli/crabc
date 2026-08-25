@@ -150,7 +150,10 @@ gate compares 378 address-independent allocation facts with exact pinned C
 v3.5.0 across all 62 small-bin transition requests. A second 51-key exact
 differential record covers page-kind selection, checked calloc, ordinary
 reallocation, aligned and offset-aligned allocation, usable size, preservation,
-and invalid-size failure. Those operations are live in the private lifecycle,
+and invalid-size failure. The native x86-64 evidence lane separately extends
+its private trace to 58 fields with fixed no-padding `mi_expand`; native
+AArch64 revalidation of that extension remains pending. Those operations are
+live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above
 64 KiB and below the 256 MiB metadata limit. Failed terminal unmaps retain one
 exact allocation-free owner for later collection or allocation-boundary retry.

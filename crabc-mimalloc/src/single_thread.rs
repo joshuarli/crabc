@@ -14,9 +14,9 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/alloc.c:21-103,130-191`
+// Source map: pinned mimalloc v3.5.0 `src/alloc.c:21-103,130-191,364-439`
 // (`mi_page_malloc_zero`, `mi_theap_malloc_small_zero_nonnull`, generic
-// allocation dispatch, and ordinary realloc), `src/alloc-aligned.c:68-241,
+// allocation dispatch, `mi_expand`, and ordinary realloc), `src/alloc-aligned.c:68-241,
 // 347-388` (natural/overallocated aligned allocation and aligned realloc),
 // `src/free.c:28-50,104-114,372-514,522-542` (local free, abandoned
 // `allow_collect` reclaim, interior-base recovery, and aligned usable size),
@@ -29195,6 +29195,37 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         unsafe { self.reallocate_inner(block, new_size, false) }
     }
 
+    /// Expands or shrinks one current allocation in place when the requested
+    /// size already fits its source usable extent.
+    ///
+    /// This is the fixed normal-release `mi_expand` decision: a null pointer
+    /// never allocates, and every fitting request (including zero and a size
+    /// below half the usable extent) returns the unchanged pointer. It does no
+    /// allocation, copy, free, or allocator-state mutation.
+    ///
+    /// # Safety
+    ///
+    /// When present, `block` must be one current allocation returned by this
+    /// exact allocator. The caller must keep its page-map metadata and backing
+    /// allocation live, and must exclude free, reallocation, remote-free, or
+    /// lifecycle mutation of that block while this method observes it. This is
+    /// not arbitrary-pointer validation.
+    pub(crate) unsafe fn expand_in_place(
+        &self,
+        block: Option<NonNull<u8>>,
+        new_size: usize,
+    ) -> Option<NonNull<u8>> {
+        let block = block?;
+        // SAFETY: the caller retains the exact current-allocation and
+        // page-map-lifetime conditions required by `usable_size`.
+        let usable_size = unsafe { self.usable_size(block) }?;
+        if alloc::expansion_fits(usable_size, new_size) {
+            Some(block)
+        } else {
+            None
+        }
+    }
+
     /// Reallocates one ordinary allocation and zeroes the source-defined
     /// replacement extent. This is the bounded `rezalloc`/`recalloc` core.
     ///
@@ -32904,6 +32935,39 @@ mod tests {
     }
 
     #[test]
+    fn expand_in_place_keeps_the_live_block_for_every_fitting_size() {
+        with_allocator(|allocator| {
+            // `mi_expand(NULL, size)` is never an allocation request, even
+            // when the requested size is nonzero.
+            assert!(unsafe { allocator.expand_in_place(None, 59) }.is_none());
+
+            let block = allocator.allocate(59, false).unwrap();
+            let usable = unsafe { allocator.usable_size(block) }.unwrap();
+            assert!(usable >= 59);
+            assert!(usable >= 2);
+            unsafe { write_bytes(block, 59, 0x4d) };
+
+            // Unlike realloc, `mi_expand` must retain the same allocation for
+            // zero and a request below half its usable extent when either
+            // request still fits the source block.
+            let zero = unsafe { allocator.expand_in_place(Some(block), 0) }.unwrap();
+            assert_eq!(zero, block);
+            let below_half = usable / 2 - 1;
+            let below = unsafe { allocator.expand_in_place(Some(zero), below_half) }.unwrap();
+            assert_eq!(below, block);
+            let exact = unsafe { allocator.expand_in_place(Some(below), usable) }.unwrap();
+            assert_eq!(exact, block);
+            assert!(unsafe { bytes_equal(exact, 59, 0x4d) });
+
+            // A failing expansion leaves the allocation current and intact.
+            let too_large = usable.checked_add(1).unwrap();
+            assert!(unsafe { allocator.expand_in_place(Some(exact), too_large) }.is_none());
+            assert!(unsafe { bytes_equal(exact, 59, 0x4d) });
+            unsafe { allocator.free(exact).unwrap() };
+        });
+    }
+
+    #[test]
     fn aligned_realloc_uses_ceil_half_and_zeroes_replacement_growth() {
         with_allocator(|allocator| {
             let original = allocator.allocate_aligned_at(33, 64, 7).unwrap();
@@ -33139,6 +33203,56 @@ mod tests {
                 unsafe { allocator.usable_size(size_zero) }.unwrap(),
             );
             unsafe { allocator.free(size_zero).unwrap() };
+
+            let expand_request = 59usize;
+            let expand = allocator.allocate(expand_request, false).unwrap();
+            let expand_usable = unsafe { allocator.usable_size(expand) }.unwrap();
+            assert!(expand_usable >= 2);
+            let expand_oversize = expand_usable.checked_add(1).unwrap();
+            unsafe { write_bytes(expand, expand_request, 0x6d) };
+            let expand_before = unsafe { content_hash(expand, expand_request) };
+            let expand_null = unsafe { allocator.expand_in_place(None, expand_request) };
+            let expand_zero = unsafe { allocator.expand_in_place(Some(expand), 0) };
+            let expand_below_half = unsafe {
+                allocator.expand_in_place(Some(expand), expand_usable / 2 - 1)
+            };
+            let expand_exact = unsafe { allocator.expand_in_place(Some(expand), expand_usable) };
+            let expand_oversize = unsafe {
+                allocator.expand_in_place(Some(expand), expand_oversize)
+            };
+            let expand_after = unsafe { content_hash(expand, expand_request) };
+            std::println!("trace.fundamental.expand.usable={expand_usable}");
+            std::println!(
+                "trace.fundamental.expand.null_nonzero_returns_null={}",
+                u8::from(expand_null.is_none()),
+            );
+            std::println!(
+                "trace.fundamental.expand.zero_returns_input={}",
+                u8::from(expand_zero == Some(expand)),
+            );
+            std::println!(
+                "trace.fundamental.expand.below_half_returns_input={}",
+                u8::from(expand_below_half == Some(expand)),
+            );
+            std::println!(
+                "trace.fundamental.expand.exact_returns_input={}",
+                u8::from(expand_exact == Some(expand)),
+            );
+            std::println!(
+                "trace.fundamental.expand.oversize_returns_null={}",
+                u8::from(expand_oversize.is_none()),
+            );
+            std::println!(
+                "trace.fundamental.expand.failure_preserves={}",
+                u8::from(expand_before == expand_after),
+            );
+            assert!(expand_null.is_none());
+            assert_eq!(expand_zero, Some(expand));
+            assert_eq!(expand_below_half, Some(expand));
+            assert_eq!(expand_exact, Some(expand));
+            assert!(expand_oversize.is_none());
+            assert_eq!(expand_before, expand_after);
+            unsafe { allocator.free(expand).unwrap() };
 
             let aligned_size = 97usize;
             let aligned_alignment = 256usize;
