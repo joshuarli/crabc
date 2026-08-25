@@ -1,0 +1,767 @@
+{
+  "format": 1,
+  "kind": "mimalloc-x86_64-source-c-api-inventory",
+  "maturity": "bounded-source-inventory-foundation",
+  "profile": "linux-x86_64-mimalloc-source-c-api",
+  "scope": {
+    "included_declaration_form": "uncommented semicolon-terminated mi_decl_export declarations whose declared name is an mi_* function",
+    "included_header": "include/mimalloc.h",
+    "excluded_headers": [
+      "include/mimalloc-new-delete.h",
+      "include/mimalloc-override.h",
+      "include/mimalloc-stats.h"
+    ],
+    "exclusion_reason": "This bounded foundation records only the base C-header declaration surface. C++ helpers, source-rewrite macros, statistics headers, types, options, and macros require separate target-local contracts."
+  },
+  "target_context": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "source": {
+    "archive_sha256": "1e432f0559a4ab512143b9bff7a700541a2c8d4712b26a72de3e0222790da305",
+    "header_sha256": "af34f215cb6fe9e4e97bf08d78bfda877ab4cdd63c9222640c483d7d6a4488a5",
+    "member": "include/mimalloc.h"
+  },
+  "classification": {
+    "name": "source-declared-c-function",
+    "meaning": "Each entry is declared by the pinned source header. It is not a claim that a Linux/x86_64 mimalloc object defines the symbol."
+  },
+  "declarations": [
+    {
+      "name": "mi_malloc",
+      "source_line": 109
+    },
+    {
+      "name": "mi_calloc",
+      "source_line": 110
+    },
+    {
+      "name": "mi_realloc",
+      "source_line": 111
+    },
+    {
+      "name": "mi_expand",
+      "source_line": 112
+    },
+    {
+      "name": "mi_free",
+      "source_line": 114
+    },
+    {
+      "name": "mi_strdup",
+      "source_line": 115
+    },
+    {
+      "name": "mi_strndup",
+      "source_line": 116
+    },
+    {
+      "name": "mi_realpath",
+      "source_line": 117
+    },
+    {
+      "name": "mi_malloc_small",
+      "source_line": 125
+    },
+    {
+      "name": "mi_zalloc_small",
+      "source_line": 126
+    },
+    {
+      "name": "mi_zalloc",
+      "source_line": 127
+    },
+    {
+      "name": "mi_mallocn",
+      "source_line": 129
+    },
+    {
+      "name": "mi_reallocn",
+      "source_line": 130
+    },
+    {
+      "name": "mi_reallocf",
+      "source_line": 131
+    },
+    {
+      "name": "mi_usable_size",
+      "source_line": 133
+    },
+    {
+      "name": "mi_good_size",
+      "source_line": 134
+    },
+    {
+      "name": "mi_free_size",
+      "source_line": 137
+    },
+    {
+      "name": "mi_free_small",
+      "source_line": 141
+    },
+    {
+      "name": "mi_malloc_aligned",
+      "source_line": 149
+    },
+    {
+      "name": "mi_malloc_aligned_at",
+      "source_line": 150
+    },
+    {
+      "name": "mi_zalloc_aligned",
+      "source_line": 151
+    },
+    {
+      "name": "mi_zalloc_aligned_at",
+      "source_line": 152
+    },
+    {
+      "name": "mi_calloc_aligned",
+      "source_line": 153
+    },
+    {
+      "name": "mi_calloc_aligned_at",
+      "source_line": 154
+    },
+    {
+      "name": "mi_realloc_aligned",
+      "source_line": 155
+    },
+    {
+      "name": "mi_realloc_aligned_at",
+      "source_line": 156
+    },
+    {
+      "name": "mi_register_deferred_free",
+      "source_line": 185
+    },
+    {
+      "name": "mi_register_output",
+      "source_line": 188
+    },
+    {
+      "name": "mi_register_error",
+      "source_line": 191
+    },
+    {
+      "name": "mi_collect",
+      "source_line": 193
+    },
+    {
+      "name": "mi_version",
+      "source_line": 194
+    },
+    {
+      "name": "mi_options_print",
+      "source_line": 195
+    },
+    {
+      "name": "mi_process_info_print",
+      "source_line": 196
+    },
+    {
+      "name": "mi_options_print_out",
+      "source_line": 197
+    },
+    {
+      "name": "mi_process_info_print_out",
+      "source_line": 198
+    },
+    {
+      "name": "mi_process_info",
+      "source_line": 199
+    },
+    {
+      "name": "mi_process_init",
+      "source_line": 206
+    },
+    {
+      "name": "mi_process_done",
+      "source_line": 207
+    },
+    {
+      "name": "mi_thread_init",
+      "source_line": 208
+    },
+    {
+      "name": "mi_thread_done",
+      "source_line": 209
+    },
+    {
+      "name": "mi_thread_set_in_threadpool",
+      "source_line": 210
+    },
+    {
+      "name": "mi_umalloc",
+      "source_line": 217
+    },
+    {
+      "name": "mi_ucalloc",
+      "source_line": 218
+    },
+    {
+      "name": "mi_urealloc",
+      "source_line": 219
+    },
+    {
+      "name": "mi_ufree",
+      "source_line": 220
+    },
+    {
+      "name": "mi_umalloc_aligned",
+      "source_line": 222
+    },
+    {
+      "name": "mi_uzalloc_aligned",
+      "source_line": 223
+    },
+    {
+      "name": "mi_umalloc_small",
+      "source_line": 225
+    },
+    {
+      "name": "mi_uzalloc_small",
+      "source_line": 226
+    },
+    {
+      "name": "mi_heap_new",
+      "source_line": 237
+    },
+    {
+      "name": "mi_heap_delete",
+      "source_line": 238
+    },
+    {
+      "name": "mi_heap_destroy",
+      "source_line": 239
+    },
+    {
+      "name": "mi_heap_set_numa_affinity",
+      "source_line": 240
+    },
+    {
+      "name": "mi_heap_collect",
+      "source_line": 241
+    },
+    {
+      "name": "mi_heap_main",
+      "source_line": 243
+    },
+    {
+      "name": "mi_heap_of",
+      "source_line": 244
+    },
+    {
+      "name": "mi_heap_contains",
+      "source_line": 245
+    },
+    {
+      "name": "mi_any_heap_contains",
+      "source_line": 246
+    },
+    {
+      "name": "mi_heap_malloc",
+      "source_line": 248
+    },
+    {
+      "name": "mi_heap_zalloc",
+      "source_line": 249
+    },
+    {
+      "name": "mi_heap_calloc",
+      "source_line": 250
+    },
+    {
+      "name": "mi_heap_mallocn",
+      "source_line": 251
+    },
+    {
+      "name": "mi_heap_malloc_small",
+      "source_line": 252
+    },
+    {
+      "name": "mi_heap_zalloc_small",
+      "source_line": 253
+    },
+    {
+      "name": "mi_heap_realloc",
+      "source_line": 255
+    },
+    {
+      "name": "mi_heap_reallocn",
+      "source_line": 256
+    },
+    {
+      "name": "mi_heap_reallocf",
+      "source_line": 257
+    },
+    {
+      "name": "mi_heap_strdup",
+      "source_line": 259
+    },
+    {
+      "name": "mi_heap_strndup",
+      "source_line": 260
+    },
+    {
+      "name": "mi_heap_realpath",
+      "source_line": 261
+    },
+    {
+      "name": "mi_heap_malloc_aligned",
+      "source_line": 263
+    },
+    {
+      "name": "mi_heap_malloc_aligned_at",
+      "source_line": 264
+    },
+    {
+      "name": "mi_heap_zalloc_aligned",
+      "source_line": 265
+    },
+    {
+      "name": "mi_heap_zalloc_aligned_at",
+      "source_line": 266
+    },
+    {
+      "name": "mi_heap_calloc_aligned",
+      "source_line": 267
+    },
+    {
+      "name": "mi_heap_calloc_aligned_at",
+      "source_line": 268
+    },
+    {
+      "name": "mi_heap_realloc_aligned",
+      "source_line": 269
+    },
+    {
+      "name": "mi_heap_realloc_aligned_at",
+      "source_line": 270
+    },
+    {
+      "name": "mi_rezalloc",
+      "source_line": 280
+    },
+    {
+      "name": "mi_recalloc",
+      "source_line": 281
+    },
+    {
+      "name": "mi_rezalloc_aligned",
+      "source_line": 283
+    },
+    {
+      "name": "mi_rezalloc_aligned_at",
+      "source_line": 284
+    },
+    {
+      "name": "mi_recalloc_aligned",
+      "source_line": 285
+    },
+    {
+      "name": "mi_recalloc_aligned_at",
+      "source_line": 286
+    },
+    {
+      "name": "mi_heap_rezalloc",
+      "source_line": 288
+    },
+    {
+      "name": "mi_heap_recalloc",
+      "source_line": 289
+    },
+    {
+      "name": "mi_heap_rezalloc_aligned",
+      "source_line": 291
+    },
+    {
+      "name": "mi_heap_rezalloc_aligned_at",
+      "source_line": 292
+    },
+    {
+      "name": "mi_heap_recalloc_aligned",
+      "source_line": 293
+    },
+    {
+      "name": "mi_heap_recalloc_aligned_at",
+      "source_line": 294
+    },
+    {
+      "name": "mi_heap_visit_blocks",
+      "source_line": 315
+    },
+    {
+      "name": "mi_heap_visit_abandoned_blocks",
+      "source_line": 316
+    },
+    {
+      "name": "mi_is_redirected",
+      "source_line": 324
+    },
+    {
+      "name": "mi_reserve_huge_os_pages_interleave",
+      "source_line": 326
+    },
+    {
+      "name": "mi_reserve_huge_os_pages_at",
+      "source_line": 327
+    },
+    {
+      "name": "mi_reserve_os_memory",
+      "source_line": 329
+    },
+    {
+      "name": "mi_manage_os_memory",
+      "source_line": 330
+    },
+    {
+      "name": "mi_debug_show_arenas",
+      "source_line": 332
+    },
+    {
+      "name": "mi_arenas_print",
+      "source_line": 333
+    },
+    {
+      "name": "mi_arena_min_alignment",
+      "source_line": 334
+    },
+    {
+      "name": "mi_arena_min_size",
+      "source_line": 335
+    },
+    {
+      "name": "mi_arena_max_object_size",
+      "source_line": 336
+    },
+    {
+      "name": "mi_arena_area",
+      "source_line": 339
+    },
+    {
+      "name": "mi_reserve_huge_os_pages_at_ex",
+      "source_line": 340
+    },
+    {
+      "name": "mi_reserve_os_memory_ex",
+      "source_line": 341
+    },
+    {
+      "name": "mi_manage_os_memory_ex",
+      "source_line": 342
+    },
+    {
+      "name": "mi_arena_contains",
+      "source_line": 343
+    },
+    {
+      "name": "mi_heap_new_in_arena",
+      "source_line": 346
+    },
+    {
+      "name": "mi_subproc_main",
+      "source_line": 356
+    },
+    {
+      "name": "mi_subproc_current",
+      "source_line": 357
+    },
+    {
+      "name": "mi_subproc_new",
+      "source_line": 358
+    },
+    {
+      "name": "mi_subproc_destroy",
+      "source_line": 359
+    },
+    {
+      "name": "mi_subproc_add_current_thread",
+      "source_line": 360
+    },
+    {
+      "name": "mi_subproc_visit_heaps",
+      "source_line": 363
+    },
+    {
+      "name": "mi_heap_theap",
+      "source_line": 379
+    },
+    {
+      "name": "mi_theap_set_default",
+      "source_line": 380
+    },
+    {
+      "name": "mi_theap_get_default",
+      "source_line": 381
+    },
+    {
+      "name": "mi_theap_collect",
+      "source_line": 382
+    },
+    {
+      "name": "mi_theap_malloc",
+      "source_line": 384
+    },
+    {
+      "name": "mi_theap_zalloc",
+      "source_line": 385
+    },
+    {
+      "name": "mi_theap_calloc",
+      "source_line": 386
+    },
+    {
+      "name": "mi_theap_malloc_small",
+      "source_line": 387
+    },
+    {
+      "name": "mi_theap_zalloc_small",
+      "source_line": 388
+    },
+    {
+      "name": "mi_theap_malloc_aligned",
+      "source_line": 389
+    },
+    {
+      "name": "mi_theap_zalloc_aligned",
+      "source_line": 390
+    },
+    {
+      "name": "mi_theap_realloc",
+      "source_line": 391
+    },
+    {
+      "name": "mi_theap_rezalloc",
+      "source_line": 392
+    },
+    {
+      "name": "mi_theap_guarded_set_sample_rate",
+      "source_line": 423
+    },
+    {
+      "name": "mi_theap_guarded_set_size_bound",
+      "source_line": 424
+    },
+    {
+      "name": "mi_manage_memory",
+      "source_line": 428
+    },
+    {
+      "name": "mi_unsafe_heap_page_is_under_utilized",
+      "source_line": 437
+    },
+    {
+      "name": "mi_check_owned",
+      "source_line": 443
+    },
+    {
+      "name": "mi_thread_stats_print_out",
+      "source_line": 445
+    },
+    {
+      "name": "mi_is_in_heap_region",
+      "source_line": 446
+    },
+    {
+      "name": "mi_theap_visit_blocks",
+      "source_line": 447
+    },
+    {
+      "name": "mi_reserve_huge_os_pages",
+      "source_line": 449
+    },
+    {
+      "name": "mi_collect_reduce",
+      "source_line": 450
+    },
+    {
+      "name": "mi_stats_reset",
+      "source_line": 452
+    },
+    {
+      "name": "mi_stats_merge",
+      "source_line": 453
+    },
+    {
+      "name": "mi_stats_print",
+      "source_line": 454
+    },
+    {
+      "name": "mi_stats_print_out",
+      "source_line": 456
+    },
+    {
+      "name": "mi_option_is_enabled",
+      "source_line": 523
+    },
+    {
+      "name": "mi_option_enable",
+      "source_line": 524
+    },
+    {
+      "name": "mi_option_disable",
+      "source_line": 525
+    },
+    {
+      "name": "mi_option_set_enabled",
+      "source_line": 526
+    },
+    {
+      "name": "mi_option_set_enabled_default",
+      "source_line": 527
+    },
+    {
+      "name": "mi_option_get",
+      "source_line": 529
+    },
+    {
+      "name": "mi_option_get_clamp",
+      "source_line": 530
+    },
+    {
+      "name": "mi_option_get_size",
+      "source_line": 531
+    },
+    {
+      "name": "mi_option_set",
+      "source_line": 532
+    },
+    {
+      "name": "mi_option_set_default",
+      "source_line": 533
+    },
+    {
+      "name": "mi_cfree",
+      "source_line": 542
+    },
+    {
+      "name": "mi__expand",
+      "source_line": 543
+    },
+    {
+      "name": "mi_malloc_size",
+      "source_line": 544
+    },
+    {
+      "name": "mi_malloc_good_size",
+      "source_line": 545
+    },
+    {
+      "name": "mi_malloc_usable_size",
+      "source_line": 546
+    },
+    {
+      "name": "mi_posix_memalign",
+      "source_line": 548
+    },
+    {
+      "name": "mi_memalign",
+      "source_line": 549
+    },
+    {
+      "name": "mi_valloc",
+      "source_line": 550
+    },
+    {
+      "name": "mi_pvalloc",
+      "source_line": 551
+    },
+    {
+      "name": "mi_aligned_alloc",
+      "source_line": 552
+    },
+    {
+      "name": "mi_reallocarray",
+      "source_line": 554
+    },
+    {
+      "name": "mi_reallocarr",
+      "source_line": 555
+    },
+    {
+      "name": "mi_aligned_recalloc",
+      "source_line": 556
+    },
+    {
+      "name": "mi_aligned_offset_recalloc",
+      "source_line": 557
+    },
+    {
+      "name": "mi_free_size_aligned",
+      "source_line": 559
+    },
+    {
+      "name": "mi_free_aligned",
+      "source_line": 560
+    },
+    {
+      "name": "mi_dupenv_s",
+      "source_line": 561
+    },
+    {
+      "name": "mi_wdupenv_s",
+      "source_line": 564
+    },
+    {
+      "name": "mi_wcsdup",
+      "source_line": 565
+    },
+    {
+      "name": "mi_mbsdup",
+      "source_line": 566
+    },
+    {
+      "name": "mi_new",
+      "source_line": 570
+    },
+    {
+      "name": "mi_new_aligned",
+      "source_line": 571
+    },
+    {
+      "name": "mi_new_nothrow",
+      "source_line": 572
+    },
+    {
+      "name": "mi_new_aligned_nothrow",
+      "source_line": 573
+    },
+    {
+      "name": "mi_new_n",
+      "source_line": 574
+    },
+    {
+      "name": "mi_new_realloc",
+      "source_line": 575
+    },
+    {
+      "name": "mi_new_reallocn",
+      "source_line": 576
+    },
+    {
+      "name": "mi_heap_alloc_new",
+      "source_line": 578
+    },
+    {
+      "name": "mi_heap_alloc_new_n",
+      "source_line": 579
+    }
+  ],
+  "declaration_count": 180,
+  "declaration_names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975",
+  "integration_boundary": {
+    "crabc_libc_exports": "not-assessed",
+    "crabc_mimalloc_implementation": "not-assessed",
+    "native_object_export_inventory": "not-assessed",
+    "public_c_api_adapter": "not-assessed",
+    "verification": "This contract verifies only the pinned-source declaration inventory. It does not establish implementation, linkability, behavioral parity, stress coverage, or performance qualification."
+  }
+}
