@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-medium-full-retire-evidence",
+  "profile": "linux-x86_64-private-medium-full-regular-retire-force-release",
+  "harness_dependency": {
+    "path": "compat/allocator/x86_64_regular_small_evidence.py",
+    "sha256": "325e47567009e8fa2135acf08e221bad22f4ac5c47f16a1c900827aa518aecfc"
+  },
+  "target": {"architecture":"x86_64","endianness":"little","rust_target":"x86_64-unknown-linux-musl","system":"linux"},
+  "upstream": {"archive_root":"mimalloc-3.5.0","revision":"18b08671c9302247bfb682286e6bf3cc1773f801","version":"3.5.0"},
+  "scope": {"aarch64_status_reused":false,"abandonment_disabled_only":true,"emulation_accepted":false,"forced_retired_release_only":true,"general_lifecycle_claimed":false,"general_retirement_claimed":false,"native_linux_x86_64_required":true,"ordinary_medium_page_only":true,"private_engine_evidence_only":true,"public_crabc_support":false,"public_mi_api_claimed":false,"public_x86_libc_or_ldso_support":false,"single_theap_same_thread_only":true},
+  "compile_definitions": ["-DMI_SHARED_LIB","-DMI_SHARED_LIB_EXPORT","-DMI_LIBC_MUSL=1"],
+  "release_flags": ["-O3","-DNDEBUG","-DMI_BUILD_RELEASE=1","-DMI_DEBUG=0","-DMI_STAT=0","-DMI_SECURE=0","-DMI_GUARDED=0"],
+  "release_source_set": ["src/alloc.c","src/alloc-aligned.c","src/alloc-posix.c","src/arena.c","src/bitmap.c","src/heap.c","src/init.c","src/libc.c","src/options.c","src/os.c","src/page.c","src/page-map.c","src/random.c","src/stats.c","src/subproc.c","src/theap.c","src/threadlocal.c","src/prim/prim.c","src/prim/prim-tls.c"],
+  "source_anchors": [
+    {"member":"include/mimalloc.h","start_line":122,"end_line":123,"sha256":"254ce29a1c8187dae3f5cccd5f98bbf7f71f448f68cbb5e822dd6f74f291778c"},
+    {"member":"include/mimalloc/types.h","start_line":228,"end_line":238,"sha256":"7a29585d14970109c4c0ecff95c918e90d43c57eb8de4fcd9495ef8cb277d907"},
+    {"member":"include/mimalloc/types.h","start_line":430,"end_line":449,"sha256":"9befd05f3264611334cec9745bbd1de88fe83f01b4a1c7f2b9beadb3e6badb5f"},
+    {"member":"include/mimalloc/types.h","start_line":731,"end_line":740,"sha256":"d898791180decb2ddb76eca0a7373a68e2437cce514c35d10b674fbb3d6e4988"},
+    {"member":"src/page-queue.c","start_line":92,"end_line":116,"sha256":"bfbc65c903825cf36ec379c52ba6ee7857a8965861b69b2486d05c05913cf011"},
+    {"member":"src/arena.c","start_line":980,"end_line":998,"sha256":"4d66fd65bb721890af00061539085a8a10b6c8226c4da8fcf21d874ac084aa74"},
+    {"member":"src/arena.c","start_line":1053,"end_line":1064,"sha256":"e2063beb8a77f1bf35554b3ad7fb761362d2c430434867c68a67b7f7315c2371"},
+    {"member":"src/arena.c","start_line":1183,"end_line":1204,"sha256":"09e82c9f0473e73a9fad065943d41fdab4b85faf570274bddbac77aee3b6860a"},
+    {"member":"src/arena.c","start_line":1285,"end_line":1308,"sha256":"d6649da0e0a6903b0e0bde04d12df78a99159d8c64b2acfb4c51a1827af9f3d1"},
+    {"member":"src/free.c","start_line":44,"end_line":56,"sha256":"de6d94667e1d6b127947a347660b35b4eaf1480751da492154de4a1e48f43e13"},
+    {"member":"src/page.c","start_line":350,"end_line":413,"sha256":"5b409a75471fbfec55eca726ffaeda2748f1ca0fd919d157dea9a04be01fbde6"},
+    {"member":"src/page.c","start_line":414,"end_line":457,"sha256":"2c58d5b8b71c68e9dc1794c63a218f41f374b85f822abc60ba920d65efe5a30a"},
+    {"member":"src/page.c","start_line":460,"end_line":518,"sha256":"9e0c373ed5a817f9e9998319442aaf7b5870509e4821a57686179b54ff6428af"},
+    {"member":"src/page.c","start_line":1068,"end_line":1081,"sha256":"af1dea54316ebd65ce020d39dd30dd4ed97fb1908533a952fc4eb0ebee2ecd31"},
+    {"member":"src/theap.c","start_line":123,"end_line":165,"sha256":"a84d17ad1b74eb93e79bb3b756f099fd60fe611eda6279c17db283c44cccc1bb"},
+    {"member":"src/theap.c","start_line":228,"end_line":232,"sha256":"16c0e73a20b9a94bf994c4e83836c976f5683e3c6e8b18935782a934405adba0"},
+    {"member":"src/page-map.c","start_line":460,"end_line":515,"sha256":"c752c966d40e6ebd16795295a1a87d3b8a762cdfc4ba752aa3a043df44dfb495"}
+  ],
+  "c_probe_sha256": "5f4e94a2ea651f986e953e41968d991838cecdb6d9a6ce2e176785f6a7758f2e",
+  "rust_test": {"path":"crabc-mimalloc/src/single_thread.rs","target_arch":"x86_64","test_filter":"single_thread::tests::x86_64_medium_full_unfull_retire_force_release_trace_matches_pinned_c"},
+  "trace": {
+    "begin":"CRABC_MI_MEDIUM_FULL_TRACE_BEGIN","end":"CRABC_MI_MEDIUM_FULL_TRACE_END",
+    "expected_values": {
+      "trace.medium_full.request":10241,"trace.medium_full.block_size":12288,"trace.medium_full.capacity":42,"trace.medium_full.slice_count":8,"trace.medium_full.arena_backed":1,
+      "trace.medium_full.filled.used":42,"trace.medium_full.filled.regular_queue":0,"trace.medium_full.filled.full_queue":1,"trace.medium_full.filled.page_count":1,"trace.medium_full.filled.free_empty":1,"trace.medium_full.filled.local_empty":1,"trace.medium_full.filled.remote_empty":1,
+      "trace.medium_full.unfull.used":41,"trace.medium_full.unfull.regular_queue":1,"trace.medium_full.unfull.full_queue":0,"trace.medium_full.unfull.in_full":0,"trace.medium_full.unfull.free_empty":1,"trace.medium_full.unfull.local_nonempty":1,"trace.medium_full.unfull.remote_empty":1,
+      "trace.medium_full.retired.used":0,"trace.medium_full.retired.expire":4,"trace.medium_full.retired.regular_queue":1,"trace.medium_full.retired.full_queue":0,"trace.medium_full.retired.free_empty":1,"trace.medium_full.retired.local_nonempty":1,"trace.medium_full.retired.remote_empty":1,"trace.medium_full.retired.map_published":1,"trace.medium_full.retired.arena_page_set":1,"trace.medium_full.retired.slices_unreleased":1,
+      "trace.medium_full.release.regular_queue":0,"trace.medium_full.release.full_queue":0,"trace.medium_full.release.page_count":0,"trace.medium_full.release.map_clear":1,"trace.medium_full.release.span_map_clear":1,"trace.medium_full.release.arena_page_clear":1,"trace.medium_full.release.slices_free":1,"trace.medium_full.valid":1
+    }
+  }
+}

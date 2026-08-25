@@ -145,6 +145,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares a fixed address-independent trace for one same-thread/same-Theap, arena-backed ordinary medium page requested at 10241 bytes (12288-byte block size, 42 capacity, 8 slices) with C full-retain option -1. The page fills to BIN_FULL, one local free returns it to regular, the remaining local frees retire it with retire_expire == 4, and forced release verifies the terminal queue, PageMap, arena-page bitmap, and slice-span transitions. This is only private engine evidence for that one medium-page route; it does not establish general retirement or lifecycle, remote/concurrent collection, abandonment, thread teardown, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-medium-full-retire",
+      "id": "native-medium-full-to-regular-retire-force-release-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/medium-full-retire.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 18 address-independent values from a real pinned-C worker pthread that allocates two same-page regular medium arena blocks, performs real mi_thread_done followed by pthread join before the consumer's public mi_free calls, and records producer_teardown_completed_before_consumer_free for that ordering while observing the selected mapped failed-reclaim/unown transition plus three terminal checks: page_map_unregistered_after_final_free, arena_page_bitmap_clear_after_final_free, and arena_slice_released_after_final_free. Rust compares only one bounded process-owned mapped regular handoff after Theap/TLD teardown and directly observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does not establish general thread exit, general routing or concurrency, adoption or reclaim, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-mapped-post-exit",
       "id": "native-mapped-post-theap-teardown-failed-reclaim-differential",

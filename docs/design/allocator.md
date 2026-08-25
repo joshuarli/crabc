@@ -194,7 +194,16 @@ arena-page bitmap, and exact slice release. It is only same-thread/same-Theap
 private engine evidence for that route, not general retirement or lifecycle,
 remote/concurrent collection, abandonment, thread teardown, public `mi_*`
 behavior, libc integration, backend promotion, public x86 support, or AArch64
-evidence. A fourth native x86-only
+evidence. A separate native x86-only medium-page differential covers one
+ same-thread/same-Theap, arena-backed ordinary 10241-byte request with a
+ 12288-byte block size, 42-block capacity, and eight slices. Under C
+ full-retain option `-1`, it fills `BIN_FULL`, one local free returns the page
+ to regular, remaining local frees retire it with `retire_expire == 4`, and
+ forced release checks queue, PageMap, arena-page bit, and slice-span teardown.
+ This is one private route only—not general retirement/lifecycle,
+ remote/concurrent collection, abandonment, thread teardown, public `mi_*`
+ behavior, libc integration, backend promotion, public x86 support, or AArch64
+ evidence. A fourth native x86-only
 eight-field C/Rust differential creates one arena-backed mapped page with two
 same-page live blocks, applies the source queue-detach abandonment transition,
 and frees one block through the same-origin reclaim path while the survivor

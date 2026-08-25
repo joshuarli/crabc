@@ -42,6 +42,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-on-demand",
             "allocator-direct-on-demand",
             "allocator-regular-small",
+            "allocator-medium-full-retire",
             "allocator-unit",
             "allocator-core-unit",
         ):
@@ -88,6 +89,17 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         result = self.run_launcher("allocator-regular-small", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-regular-small takes no arguments", result.stderr)
+
+    def test_medium_full_retire_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-medium-full-retire)", source)
+        self.assertIn(
+            "run_in_container python3 compat/allocator/x86_64_medium_full_retire_evidence.py --offline",
+            source,
+        )
+        result = self.run_launcher("allocator-medium-full-retire", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("allocator-medium-full-retire takes no arguments", result.stderr)
 
     def test_help_and_unsupported_command_do_not_need_docker(self) -> None:
         help_result = self.run_launcher("--help")

@@ -142,6 +142,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-ordinary-reserved-medium-on-demand-differential",
                 "native-reserved-small-direct-on-demand-differential",
                 "native-regular-small-retire-quick-collect-release-differential",
+                "native-medium-full-to-regular-retire-force-release-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -238,6 +239,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-regular-small-retire-quick-collect-release-differential"]["report"],
             "compat/reports/allocator/x86_64/regular-small.json",
+        )
+        self.assertEqual(
+            gates["native-medium-full-to-regular-retire-force-release-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-medium-full-retire",
+        )
+        self.assertEqual(
+            gates["native-medium-full-to-regular-retire-force-release-differential"]["report"],
+            "compat/reports/allocator/x86_64/medium-full-retire.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],

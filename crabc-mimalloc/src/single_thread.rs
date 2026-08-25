@@ -32420,6 +32420,200 @@ mod tests {
         });
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_medium_full_unfull_retire_force_release_trace_matches_pinned_c() {
+        with_allocator(|allocator| {
+            std::println!("CRABC_MI_MEDIUM_FULL_TRACE_BEGIN");
+            // This request selects one ordinary medium page. The page is
+            // deliberately filled before the first local free so source
+            // `mi_page_unfull` moves it out of BIN_FULL.
+            let request = SMALL_MAX_OBJ_SIZE + 1;
+            let bin = size_class::bin(request).unwrap();
+            let first = allocator.allocate(request, false).unwrap();
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            let page_ptr = page.as_ptr();
+            // SAFETY: `first` is current and keeps this medium page mapped
+            // while its source geometry and arena span are recorded.
+            let (block_size, capacity, memory, arena_backed) = unsafe {
+                let page_ref = page.as_ref();
+                assert_eq!(size_class::page_kind_for_block_size(page_ref.block_size()), Some(PageKind::Medium));
+                assert!(page_ref.block_size() > SMALL_MAX_OBJ_SIZE);
+                (
+                    page_ref.block_size(),
+                    page_ref.reserved() as usize,
+                    page_ref.memid().arena_memory().unwrap(),
+                    page_ref.memid().kind() == MemoryKind::Arena,
+                )
+            };
+            assert!(capacity > 1);
+            let slice_index = memory.slice_index as usize;
+            let slice_count = memory.slice_count as usize;
+            let slice_start = allocator.arena.slice_start(slice_index).unwrap();
+            let span_size = slice_count * ARENA_SLICE_SIZE;
+            assert!(arena_backed);
+            std::println!("trace.medium_full.request={request}");
+            std::println!("trace.medium_full.block_size={block_size}");
+            std::println!("trace.medium_full.capacity={capacity}");
+            std::println!("trace.medium_full.slice_count={slice_count}");
+            std::println!("trace.medium_full.arena_backed={}", u8::from(arena_backed));
+
+            let mut blocks = Vec::with_capacity(capacity);
+            blocks.push(first);
+            while blocks.len() < capacity {
+                let block = allocator.allocate(request, false).unwrap();
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page_ptr);
+                blocks.push(block);
+            }
+            let filled_used = unsafe { page.as_ref().used() };
+            let filled_regular_queue = allocator.queue_count(bin).unwrap();
+            let filled_full_queue = allocator.queue_count(BIN_FULL).unwrap();
+            let filled_page_count = allocator.session.theap().page_count();
+            let filled_free_empty = unsafe { page.as_ref().remote_free_test_free().is_null() };
+            let filled_local_empty = unsafe { page.as_ref().remote_free_test_local_free().is_null() };
+            let filled_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            assert_eq!(filled_used, capacity);
+            assert_eq!(filled_regular_queue, 0);
+            assert_eq!(filled_full_queue, 1);
+            assert_eq!(filled_page_count, 1);
+            assert!(filled_free_empty && filled_local_empty && filled_remote_empty);
+            std::println!("trace.medium_full.filled.used={filled_used}");
+            std::println!("trace.medium_full.filled.regular_queue={filled_regular_queue}");
+            std::println!("trace.medium_full.filled.full_queue={filled_full_queue}");
+            std::println!("trace.medium_full.filled.page_count={filled_page_count}");
+            std::println!("trace.medium_full.filled.free_empty={}", u8::from(filled_free_empty));
+            std::println!("trace.medium_full.filled.local_empty={}", u8::from(filled_local_empty));
+            std::println!("trace.medium_full.filled.remote_empty={}", u8::from(filled_remote_empty));
+
+            // A local free from BIN_FULL must unfull the page before the
+            // remaining blocks return and retire it on the regular queue.
+            unsafe { allocator.free(blocks[0]).unwrap() };
+            let unfull_used = unsafe { page.as_ref().used() };
+            let unfull_regular_queue = allocator.queue_count(bin).unwrap();
+            let unfull_full_queue = allocator.queue_count(BIN_FULL).unwrap();
+            let unfull_in_full = unsafe { page_is_in_full(page.as_ref()) };
+            let unfull_free_empty = unsafe { page.as_ref().remote_free_test_free().is_null() };
+            let unfull_local_nonempty = unsafe { !page.as_ref().remote_free_test_local_free().is_null() };
+            let unfull_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            assert_eq!(unfull_used, capacity - 1);
+            assert_eq!(unfull_regular_queue, 1);
+            assert_eq!(unfull_full_queue, 0);
+            assert!(!unfull_in_full);
+            assert!(unfull_free_empty && unfull_local_nonempty && unfull_remote_empty);
+            std::println!("trace.medium_full.unfull.used={unfull_used}");
+            std::println!("trace.medium_full.unfull.regular_queue={unfull_regular_queue}");
+            std::println!("trace.medium_full.unfull.full_queue={unfull_full_queue}");
+            std::println!("trace.medium_full.unfull.in_full={}", u8::from(unfull_in_full));
+            std::println!("trace.medium_full.unfull.free_empty={}", u8::from(unfull_free_empty));
+            std::println!("trace.medium_full.unfull.local_nonempty={}", u8::from(unfull_local_nonempty));
+            std::println!("trace.medium_full.unfull.remote_empty={}", u8::from(unfull_remote_empty));
+
+            for block in blocks.iter().copied().skip(1) {
+                // SAFETY: every remaining filled-page block is returned once.
+                unsafe { allocator.free(block).unwrap() };
+            }
+            let retired_used = unsafe { page.as_ref().used() };
+            let retired_expire = unsafe { page.as_ref().retire_expire() };
+            let retired_regular_queue = allocator.queue_count(bin).unwrap();
+            let retired_full_queue = allocator.queue_count(BIN_FULL).unwrap();
+            let retired_free_empty = unsafe { page.as_ref().remote_free_test_free().is_null() };
+            let retired_local_nonempty = unsafe { !page.as_ref().remote_free_test_local_free().is_null() };
+            let retired_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let retired_map_published = unsafe { allocator.page_map.checked_lookup(first.as_ptr()) == page_ptr };
+            let retired_arena_page_set = unsafe { allocator.arena.pages() }
+                .unwrap()
+                .is_set_range(slice_index, 1)
+                == Some(true);
+            let retired_slices_unreleased = unsafe { allocator.arena.slices_free() }
+                .unwrap()
+                .is_clear_range(slice_index, slice_count)
+                == Some(true);
+            assert_eq!(retired_used, 0);
+            assert_eq!(retired_expire, RETIRE_CYCLES / 4);
+            assert_eq!(retired_regular_queue, 1);
+            assert_eq!(retired_full_queue, 0);
+            assert!(retired_free_empty && retired_local_nonempty && retired_remote_empty);
+            assert!(retired_map_published && retired_arena_page_set && retired_slices_unreleased);
+            std::println!("trace.medium_full.retired.used={retired_used}");
+            std::println!("trace.medium_full.retired.expire={retired_expire}");
+            std::println!("trace.medium_full.retired.regular_queue={retired_regular_queue}");
+            std::println!("trace.medium_full.retired.full_queue={retired_full_queue}");
+            std::println!("trace.medium_full.retired.free_empty={}", u8::from(retired_free_empty));
+            std::println!("trace.medium_full.retired.local_nonempty={}", u8::from(retired_local_nonempty));
+            std::println!("trace.medium_full.retired.remote_empty={}", u8::from(retired_remote_empty));
+            std::println!("trace.medium_full.retired.map_published={}", u8::from(retired_map_published));
+            std::println!("trace.medium_full.retired.arena_page_set={}", u8::from(retired_arena_page_set));
+            std::println!("trace.medium_full.retired.slices_unreleased={}", u8::from(retired_slices_unreleased));
+
+            assert!(allocator.collect_retired(true));
+            let release_regular_queue = allocator.queue_count(bin).unwrap();
+            let release_full_queue = allocator.queue_count(BIN_FULL).unwrap();
+            let release_page_count = allocator.session.theap().page_count();
+            let map_cleared = unsafe { allocator.page_map.checked_lookup(first.as_ptr()) }.is_null();
+            let mut span_map_cleared = true;
+            for offset in (0..span_size).step_by(ARENA_SLICE_SIZE) {
+                span_map_cleared &= unsafe {
+                    allocator.page_map.checked_lookup(slice_start.wrapping_add(offset))
+                }
+                .is_null();
+            }
+            let arena_page_clear = unsafe { allocator.arena.pages() }
+                .unwrap()
+                .is_clear_range(slice_index, 1)
+                == Some(true);
+            let slices_free = unsafe { allocator.arena.slices_free() }
+                .unwrap()
+                .is_set_range(slice_index, slice_count)
+                == Some(true);
+            assert_eq!(release_regular_queue, 0);
+            assert_eq!(release_full_queue, 0);
+            assert_eq!(release_page_count, 0);
+            assert!(map_cleared && span_map_cleared && arena_page_clear && slices_free);
+            let valid = arena_backed
+                && filled_used == capacity
+                && filled_regular_queue == 0
+                && filled_full_queue == 1
+                && filled_page_count == 1
+                && filled_free_empty
+                && filled_local_empty
+                && filled_remote_empty
+                && unfull_used == capacity - 1
+                && unfull_regular_queue == 1
+                && unfull_full_queue == 0
+                && !unfull_in_full
+                && unfull_free_empty
+                && unfull_local_nonempty
+                && unfull_remote_empty
+                && retired_used == 0
+                && retired_expire == RETIRE_CYCLES / 4
+                && retired_regular_queue == 1
+                && retired_full_queue == 0
+                && retired_free_empty
+                && retired_local_nonempty
+                && retired_remote_empty
+                && retired_map_published
+                && retired_arena_page_set
+                && retired_slices_unreleased
+                && release_regular_queue == 0
+                && release_full_queue == 0
+                && release_page_count == 0
+                && map_cleared
+                && span_map_cleared
+                && arena_page_clear
+                && slices_free;
+            assert!(valid, "medium full trace diverged from pinned C");
+            std::println!("trace.medium_full.release.regular_queue={release_regular_queue}");
+            std::println!("trace.medium_full.release.full_queue={release_full_queue}");
+            std::println!("trace.medium_full.release.page_count={release_page_count}");
+            std::println!("trace.medium_full.release.map_clear={}", u8::from(map_cleared));
+            std::println!("trace.medium_full.release.span_map_clear={}", u8::from(span_map_cleared));
+            std::println!("trace.medium_full.release.arena_page_clear={}", u8::from(arena_page_clear));
+            std::println!("trace.medium_full.release.slices_free={}", u8::from(slices_free));
+            std::println!("trace.medium_full.valid={}", u8::from(valid));
+            std::println!("CRABC_MI_MEDIUM_FULL_TRACE_END");
+        });
+    }
+
     #[test]
     fn all_small_good_size_boundaries_select_the_source_direct_cache_page() {
         with_allocator(|allocator| {
