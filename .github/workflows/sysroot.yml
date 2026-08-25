@@ -145,7 +145,7 @@ jobs:
             metadata = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
             if metadata.get("tagName") != sys.argv[2] or metadata.get("isPrerelease") is not True or metadata.get("targetCommitish") != sys.argv[3]:
                 raise SystemExit("existing release does not have the required immutable tag, prerelease state, and target commit")
-            PY
+          PY
             existing_dir="$(mktemp -d)"
             gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" \
               --pattern "${checksum}" --dir "${existing_dir}"

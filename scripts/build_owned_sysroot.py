@@ -604,6 +604,10 @@ def run_focused_contract_tests(records: list[dict[str, object]]) -> list[dict[st
             [sys.executable, "scripts/tests/test_dev_container.py"],
         ),
         (
+            "sysroot_release_workflow_shell",
+            [sys.executable, "scripts/tests/test_sysroot_workflow.py"],
+        ),
+        (
             "crt_object_contracts",
             [sys.executable, "crt/tests/test_build.py"],
         ),
