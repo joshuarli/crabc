@@ -32,6 +32,15 @@ The target-runtime purity boundary is deliberately split:
 `share/crabc/purity.json` are the machine-readable records. See
 [`crt-and-sysroot.md`](crt-and-sysroot.md) for the production/runtime design.
 
+## Historical adapter evidence
+
+Earlier Lua adapter-sysroot lanes that borrowed a musl CRT are retained only
+as historical differential evidence. They are neither the default build path
+nor evidence for the installed crabc sysroot, and they must not be used to
+turn a missing crabc startup or runtime input into a passing candidate result.
+Musl continues to be the behavior oracle in the explicitly separate reference
+lane described below.
+
 ## Lua build graph
 
 The hash-pinned Lua archive is extracted into a temporary application tree.

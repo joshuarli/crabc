@@ -37,6 +37,7 @@ int main(int argc, char **argv)
     void *handle;
     pthread_t worker;
     void *worker_result;
+    int access_status;
 
     if (argc != 2)
         return 1;
@@ -54,8 +55,13 @@ int main(int argc, char **argv)
         return 5;
     state.access = (dynamic_tls_dependency_access_fn)dlsym(handle,
         "dynamic_tls_dependency_access");
-    if (state.access == 0 || state.access(47, 31, 247, 231) != 0)
+    if (state.access == 0)
         return 6;
+    access_status = state.access(47, 31, 247, 231);
+    if (access_status != 0) {
+        fprintf(stderr, "initial dynamic TLS access failed: %d\n", access_status);
+        return 6;
+    }
     if (pthread_mutex_lock(&state.mutex) != 0)
         return 7;
     state.command = 1;

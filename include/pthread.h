@@ -5,12 +5,12 @@
 #define __NEED_size_t
 #define __NEED_sigset_t
 #include <bits/alltypes.h>
+/* `sched.h` owns the public `struct sched_param` tag shared by pthread APIs.
+ * Include that definition so applications may include these headers in either
+ * order without receiving two incompatible declarations. */
+#include <sched.h>
 #include <time.h>
 #include <sys/types.h>
-
-struct sched_param {
-    int sched_priority;
-};
 
 #ifndef _PTHREAD_TYPES_DEFINED
 #define _PTHREAD_TYPES_DEFINED

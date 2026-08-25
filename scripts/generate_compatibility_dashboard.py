@@ -989,7 +989,7 @@ def main() -> int:
         lines.append(
             f"\nStatic libc.a pthread/TLS lifecycle: "
             f"**{'pass' if static_pthread_tls.get('passed') is True else 'FAIL'}** "
-            f"(pinned musl CRT/archive link and run, exact raw streams); "
+            f"(owned crabc CRT/archive link and run, exact raw streams); "
             f"report `{static_pthread_tls['_path']}`."
         )
 

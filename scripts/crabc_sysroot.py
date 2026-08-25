@@ -100,6 +100,22 @@ REQUIRED_COMPILER_BUILTINS_FEATURES = frozenset(
 REQUIRED_COMPILER_BUILTINS_BUILD_SCRIPT_INPUTS = frozenset(
     {"rust-src/library/compiler-builtins/libm/configure.rs"}
 )
+STATIC_RUNTIME_ROLES = frozenset({"crabc_rust_runtime", "native_allocator_exception"})
+STATIC_RUNTIME_REQUIRED_SYMBOLS = {
+    "crabc_rust_runtime": "__libc_start_main",
+    "native_allocator_exception": "mi_malloc",
+}
+STATIC_RUNTIME_COMMAND_KINDS = frozenset(
+    {
+        "enumerate_cargo_staticlib_members",
+        "extract_selected_runtime_members",
+        "create_deterministic_static_runtime_archive",
+        "audit_selected_runtime_members",
+    }
+)
+STATIC_RUNTIME_RUST_TARGET_FEATURE = "target-feature=-crt-static,-outline-atomics"
+STATIC_RUNTIME_CFLAGS_KEY = "CFLAGS_aarch64_unknown_linux_musl"
+STATIC_RUNTIME_CFLAGS_VALUE = "-mno-outline-atomics"
 HOST_BUILD_PATH_ROOTS = frozenset({"Users", "home", "private", "root", "tmp", "var", "workspace", "build", "opt"})
 BUILD_PATH_COMPONENTS = frozenset(
     {".cargo", ".rustup", "cargo", "crabc-sysroot", "crabc-sysroot-build-comparison", "crabc-sysroot-build-primary", "debug", "release", "target"}
@@ -107,6 +123,11 @@ BUILD_PATH_COMPONENTS = frozenset(
 BUILD_PATH_SUFFIXES = frozenset({".a", ".c", ".cc", ".cpp", ".cxx", ".d", ".o", ".rlib", ".rs", ".s", ".S", ".so"})
 EMBEDDED_ABSOLUTE_PATH = re.compile(rb"/(?:[A-Za-z0-9._+@%=-]+/)+[A-Za-z0-9._+@%=-]+")
 NATIVE_IMPLEMENTATION_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".s", ".S", ".asm"}
+NATIVE_COMPILER_RUNTIME_MEMBER = re.compile(
+    r"^[0-9a-f]+-(?:aarch64|lse_(?:cas|swp|ldadd|ldclr|ldeor|ldset)[0-9]+_(?:relax|acq|rel|acq_rel)|"
+    r"(?:absv|addv|cmp|div|ffs|fp_mode|int_util|mul|neg|parity|popcount|subv|ucmp)[a-z0-9_]*)(?:\.o)$"
+)
+NATIVE_COMPILER_RUNTIME_PATH_MARKERS = ("/compiler-rt/", "/lib/builtins/")
 ELF_MAGIC = b"\x7fELF"
 EM_AARCH64 = 183
 AR_MAGIC = b"!<arch>\n"
@@ -181,6 +202,8 @@ class RuntimeInputs:
     crt_commands: Path | None
     builtins_provenance: Path | None
     builtins_commands: Path | None
+    libc_static_provenance: Path | None = None
+    libc_static_commands: Path | None = None
 
     def required_paths(self) -> dict[str, Path]:
         paths = {
@@ -234,6 +257,17 @@ class LinkInput:
 
     def record(self) -> dict[str, str]:
         return dataclasses.asdict(self)
+
+
+@dataclasses.dataclass(frozen=True)
+class LinkTraceInput:
+    """One resolved lld trace input, retaining an archive member if named."""
+
+    path: Path
+    archive_member: str | None = None
+
+    def record(self) -> dict[str, str | None]:
+        return {"path": str(self.path), "archive_member": self.archive_member}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -686,6 +720,237 @@ def read_builtins_provenance(
     }
 
 
+def _archive_elf_members(record: Mapping[str, object]) -> list[dict[str, object]]:
+    """Return actual object members, excluding the archive's symbol index."""
+
+    members = record.get("members")
+    if not isinstance(members, list):
+        return []
+    return [
+        member
+        for member in members
+        if isinstance(member, dict) and isinstance(member.get("elf"), dict)
+    ]
+
+
+def _archive_member_symbols(member: Mapping[str, object]) -> set[str]:
+    elf = member.get("elf")
+    symbols = elf.get("defined_symbols") if isinstance(elf, dict) else None
+    if not isinstance(symbols, list):
+        return set()
+    return {
+        name
+        for symbol in symbols
+        if isinstance(symbol, dict)
+        and symbol.get("binding") in {1, 2}
+        and isinstance((name := symbol.get("name")), str)
+        and name
+    }
+
+
+def read_static_runtime_provenance(
+    path: Path | None,
+    archive: Path,
+    commands_path: Path | None,
+) -> dict[str, object]:
+    """Bind installed ``libc.a`` to its compiler-runtime-free reconstruction.
+
+    Cargo's staticlib output is intentionally only an intermediate artifact:
+    it bundles rustup's compiler-builtins closure and native compiler-rt
+    fallbacks.  The installed archive may retain only the crabc Rust runtime
+    root plus the separately disclosed native allocator object.  Compiler
+    helpers remain in the independently source-built ``libcrabc-builtins.a``.
+    """
+
+    if path is None and commands_path is None:
+        return {
+            "status": "unverified",
+            "reason": "no static-runtime provenance or producer-command record was supplied",
+        }
+    if path is None or commands_path is None:
+        return {
+            "status": "rejected",
+            "reason": "static-runtime provenance and producer-command record must be supplied together",
+        }
+    provenance = require_regular_file(path, "static-runtime provenance")
+    commands_file = require_regular_file(commands_path, "static-runtime producer-command record")
+    try:
+        value = json.loads(provenance.read_text(encoding="utf-8"))
+        commands = json.loads(commands_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SysrootError(f"invalid static-runtime provenance or command JSON: {provenance}") from error
+    if not isinstance(value, dict) or value.get("schema") != SCHEMA_VERSION:
+        raise SysrootError("static-runtime provenance must have schema 1")
+    if not isinstance(commands, dict) or commands.get("schema") != SCHEMA_VERSION:
+        raise SysrootError("static-runtime producer-command record must have schema 1")
+
+    component = value.get("component")
+    archive_record = value.get("archive")
+    build = value.get("build")
+    excluded = value.get("excluded_members")
+    allocator_exception = value.get("native_allocator_exception")
+    operations = commands.get("operations")
+    operation_by_kind = {
+        entry.get("kind"): entry
+        for entry in operations
+        if isinstance(entry, dict) and isinstance(entry.get("kind"), str)
+    } if isinstance(operations, list) else {}
+    command_binding = build.get("exact_command_record") if isinstance(build, dict) else None
+    command_record_valid = (
+        commands.get("archive") == archive.name
+        and isinstance(command_binding, dict)
+        and command_binding.get("name") == commands_file.name
+        and command_binding.get("sha256") == sha256_file(commands_file)
+        and set(operation_by_kind) == STATIC_RUNTIME_COMMAND_KINDS
+        and isinstance(operation_by_kind.get("enumerate_cargo_staticlib_members"), dict)
+        and isinstance(operation_by_kind.get("extract_selected_runtime_members"), dict)
+        and isinstance(operation_by_kind.get("create_deterministic_static_runtime_archive"), dict)
+        and isinstance(operation_by_kind.get("audit_selected_runtime_members"), dict)
+    )
+    extracted = operation_by_kind.get("extract_selected_runtime_members")
+    created = operation_by_kind.get("create_deterministic_static_runtime_archive")
+    command_record_valid = command_record_valid and isinstance(extracted, dict) and isinstance(created, dict)
+    if isinstance(extracted, dict):
+        command_record_valid = command_record_valid and isinstance(extracted.get("command"), list) and isinstance(
+            extracted.get("selected_members"), list
+        )
+    if isinstance(created, dict):
+        command = created.get("command")
+        command_record_valid = command_record_valid and isinstance(command, list) and "rcsD" in command
+
+    archive_inspection = inspect_archive(archive)
+    actual_members = _archive_elf_members(archive_inspection)
+    non_elf_members = [
+        member.get("name")
+        for member in archive_inspection.get("members", [])
+        if isinstance(member, dict) and not isinstance(member.get("elf"), dict) and member.get("name") not in {"", None}
+    ]
+    expected_members = archive_record.get("members") if isinstance(archive_record, dict) else None
+    checked_members: list[dict[str, object]] = []
+    member_valid = (
+        isinstance(expected_members, list)
+        and len(expected_members) == len(STATIC_RUNTIME_ROLES)
+        and len(actual_members) == len(STATIC_RUNTIME_ROLES)
+        and not non_elf_members
+    )
+    expected_by_name: dict[str, dict[str, object]] = {}
+    if isinstance(expected_members, list):
+        for member in expected_members:
+            if not isinstance(member, dict) or not isinstance(member.get("name"), str):
+                member_valid = False
+                continue
+            expected_by_name[member["name"]] = member
+    if len(expected_by_name) != len(STATIC_RUNTIME_ROLES):
+        member_valid = False
+    observed_roles: set[str] = set()
+    for member in actual_members:
+        name = member.get("name")
+        expected = expected_by_name.get(name) if isinstance(name, str) else None
+        role = expected.get("role") if isinstance(expected, dict) else None
+        required_symbol = STATIC_RUNTIME_REQUIRED_SYMBOLS.get(role) if isinstance(role, str) else None
+        symbols = _archive_member_symbols(member)
+        valid_member = (
+            isinstance(expected, dict)
+            and isinstance(role, str)
+            and role in STATIC_RUNTIME_ROLES
+            and expected.get("sha256") == member.get("sha256")
+            and expected.get("required_symbol") == required_symbol
+            and required_symbol in symbols
+            and isinstance(expected.get("defined_symbols"), list)
+            and set(expected["defined_symbols"]) == symbols
+        )
+        if not valid_member:
+            member_valid = False
+        if isinstance(role, str):
+            observed_roles.add(role)
+        checked_members.append(
+            {
+                "name": name,
+                "role": role,
+                "sha256": member.get("sha256"),
+                "required_symbol": required_symbol,
+                "defined_symbol_count": len(symbols),
+                "status": "verified" if valid_member else "rejected",
+            }
+        )
+    member_valid = member_valid and observed_roles == STATIC_RUNTIME_ROLES
+
+    all_excluded = excluded.get("all") if isinstance(excluded, dict) else None
+    stock_builtins = excluded.get("stock_compiler_builtins") if isinstance(excluded, dict) else None
+    native_compiler_rt = excluded.get("native_compiler_rt") if isinstance(excluded, dict) else None
+    excluded_valid = (
+        isinstance(all_excluded, list)
+        and isinstance(stock_builtins, list)
+        and isinstance(native_compiler_rt, list)
+        and bool(stock_builtins)
+        and bool(native_compiler_rt)
+        and all(isinstance(name, str) and name.startswith("compiler_builtins-") for name in stock_builtins)
+        and all(isinstance(name, str) and NATIVE_COMPILER_RUNTIME_MEMBER.fullmatch(name) for name in native_compiler_rt)
+        and set(stock_builtins).issubset(set(all_excluded))
+        and set(native_compiler_rt).issubset(set(all_excluded))
+    )
+    actual_member_names = {str(member.get("name")) for member in actual_members}
+    no_embedded_stock_runtime = not any(
+        name.startswith("compiler_builtins-") or NATIVE_COMPILER_RUNTIME_MEMBER.fullmatch(name)
+        for name in actual_member_names
+    )
+    build_valid = (
+        isinstance(build, dict)
+        and isinstance(build.get("runtime_rustflags"), list)
+        and STATIC_RUNTIME_RUST_TARGET_FEATURE in build["runtime_rustflags"]
+        and isinstance(build.get("runtime_cflags"), dict)
+        and build["runtime_cflags"].get(STATIC_RUNTIME_CFLAGS_KEY) == STATIC_RUNTIME_CFLAGS_VALUE
+    )
+    allocator_valid = (
+        isinstance(allocator_exception, dict)
+        and allocator_exception.get("status") == "blocked_by_native_allocator"
+        and isinstance(allocator_exception.get("member"), str)
+        and allocator_exception.get("member")
+        in {
+            member.get("name")
+            for member in actual_members
+            if isinstance(member, dict)
+        }
+    )
+    valid = (
+        isinstance(component, dict)
+        and component.get("name") == "crabc-libc-static"
+        and component.get("target") == TARGET_TRIPLE
+        and isinstance(archive_record, dict)
+        and archive_record.get("name") == archive.name
+        and archive_record.get("sha256") == sha256_file(archive)
+        and command_record_valid
+        and member_valid
+        and excluded_valid
+        and no_embedded_stock_runtime
+        and build_valid
+        and allocator_valid
+    )
+    return {
+        "status": "verified" if valid else "rejected",
+        "provenance": {"name": provenance.name, "sha256": sha256_file(provenance)},
+        "commands": {"name": commands_file.name, "sha256": sha256_file(commands_file)},
+        "archive": {
+            "name": archive.name,
+            "sha256": sha256_file(archive),
+            "members": checked_members,
+            "non_elf_members": non_elf_members,
+        },
+        "excluded_members": {
+            "stock_compiler_builtins": stock_builtins if isinstance(stock_builtins, list) else [],
+            "native_compiler_rt": native_compiler_rt if isinstance(native_compiler_rt, list) else [],
+        },
+        "native_allocator_exception": allocator_exception if isinstance(allocator_exception, dict) else {},
+        "checks": {
+            "commands": "verified" if command_record_valid else "rejected",
+            "members": "verified" if member_valid else "rejected",
+            "excluded_runtime": "verified" if excluded_valid and no_embedded_stock_runtime else "rejected",
+            "build_flags": "verified" if build_valid else "rejected",
+            "allocator_exception": "verified" if allocator_valid else "rejected",
+        },
+    }
+
+
 def classify_source_file(path: Path) -> str:
     suffix = path.suffix
     if suffix == ".rs":
@@ -740,39 +1005,218 @@ def _build_script_uses_native_tool(text: str) -> bool:
     return bool(re.search(r"(?i)(?:\bcc\b|clang\+\+|\bclang\b|\bgcc\b|\bcmake\b|autoconf|automake)", text))
 
 
-def _metadata_manifest_paths(path: Path) -> list[Path]:
-    metadata = require_regular_file(path, "Cargo metadata JSON")
-    try:
-        value = json.loads(metadata.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise SysrootError(f"invalid Cargo metadata JSON: {metadata}") from error
-    packages = value.get("packages") if isinstance(value, dict) else None
-    if not isinstance(packages, list) or not packages:
-        raise SysrootError("Cargo metadata JSON must contain a non-empty packages list")
-    paths: list[Path] = []
-    for package in packages:
-        if not isinstance(package, dict) or not isinstance(package.get("manifest_path"), str):
-            raise SysrootError("Cargo metadata package lacks manifest_path")
-        paths.append(require_regular_file(Path(package["manifest_path"]), "Cargo metadata manifest"))
-    return paths
+def _native_allocator_exception_contract(
+    manifest_path: Path,
+    package: Mapping[str, object],
+    build_script: Path,
+    build_script_text: str | None,
+    resolved_features: Sequence[str],
+) -> dict[str, object]:
+    """Describe the one separately scoped native allocator input exactly.
+
+    This is deliberately narrower than a package-name allowlist. The current
+    temporary exception is the pinned `libmimalloc-sys` v3 static source only;
+    a changed feature, build-script selection, package version, or source path
+    becomes an ordinary unapproved purity failure.
+    """
+
+    if package.get("name") != "libmimalloc-sys":
+        return {"status": "not_applicable"}
+    source = manifest_path.parent / "c_src/mimalloc/v3/src/static.c"
+    source_label = f"{stable_input_label(manifest_path)[:-len('Cargo.toml')]}c_src/mimalloc/v3/src/static.c"
+    expected_build_script = (
+        build_script_text is not None
+        and bool(
+            re.search(
+                r'let\s+static_source\s*=\s*include_root\s*\.join\("src"\)\s*\.join\("static\.c"\)',
+                build_script_text,
+            )
+        )
+        and "build.file(&static_source)" in build_script_text
+        and 'build.compile("mimalloc")' in build_script_text
+    )
+    valid = (
+        package.get("version") == "0.1.49"
+        and build_script.is_file()
+        and source.is_file()
+        and "v2" not in resolved_features
+        and expected_build_script
+    )
+    return {
+        "status": "verified" if valid else "rejected",
+        "package": "libmimalloc-sys",
+        "version": package.get("version"),
+        "resolved_features": sorted(resolved_features),
+        "build_script": {
+            "path": stable_input_label(build_script) if build_script.is_file() else None,
+            "sha256": sha256_file(build_script) if build_script.is_file() else None,
+            "selects_v3_static_source": expected_build_script,
+        },
+        "selected_native_source": {
+            "path": source_label,
+            "sha256": sha256_file(source) if source.is_file() else None,
+        },
+        "reason": (
+            "separately tracked native allocator blocker; no other package or transitive native input is exempt"
+            if valid
+            else "pinned native allocator source-selection contract no longer matches"
+        ),
+    }
+
+
+def _native_allocator_build_helper_contract(manifest_path: Path, package: Mapping[str, object]) -> dict[str, object]:
+    """Bind the allocator's one host C-driver helper to its pinned source."""
+
+    if package.get("name") != "cc":
+        return {"status": "not_applicable"}
+    source = manifest_path.parent / "src/detect_compiler_family.c"
+    source_label = f"{stable_input_label(manifest_path)[:-len('Cargo.toml')]}src/detect_compiler_family.c"
+    valid = package.get("version") == "1.4.3" and source.is_file()
+    return {
+        "status": "verified" if valid else "rejected",
+        "package": "cc",
+        "version": package.get("version"),
+        "selected_native_source": {
+            "path": source_label,
+            "sha256": sha256_file(source) if source.is_file() else None,
+        },
+        "reason": (
+            "pinned host compiler-discovery helper used only to build the documented libmimalloc-sys exception"
+            if valid
+            else "pinned allocator build-helper contract no longer matches"
+        ),
+    }
 
 
 def audit_dependencies(
     manifest_paths: Sequence[Path], *, cargo_metadata: Sequence[Path] = ()
 ) -> dict[str, object]:
-    """Audit normal/build dependencies, requiring Cargo metadata for closure proof."""
+    """Audit the production normal/build dependency closure, never test-only deps.
+
+    Cargo metadata's package list includes every resolved dev dependency.  A
+    blanket scan therefore misclassified test fixtures (including their
+    deliberately foreign assembly) as target-runtime inputs.  Start from the
+    explicit runtime components and traverse only normal and build edges; keep
+    the excluded dev-only package identities in the evidence record.
+    """
 
     explicit_manifests = [require_regular_file(path, "Cargo manifest") for path in manifest_paths]
     metadata_files = [require_regular_file(path, "Cargo metadata JSON") for path in cargo_metadata]
-    metadata_manifests = [
-        manifest
-        for metadata_path in metadata_files
-        for manifest in _metadata_manifest_paths(metadata_path)
-    ]
-    manifests = sorted({*explicit_manifests, *metadata_manifests})
+    packages_by_id: dict[str, dict[str, object]] = {}
+    nodes_by_id: dict[str, dict[str, object]] = {}
+    resolved_features_by_id: dict[str, list[str]] = {}
+    manifest_to_ids: dict[Path, set[str]] = {}
+    metadata_complete = bool(metadata_files)
+    for metadata_path in metadata_files:
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise SysrootError(f"invalid Cargo metadata JSON: {metadata_path}") from error
+        package_values = metadata.get("packages") if isinstance(metadata, dict) else None
+        if not isinstance(package_values, list) or not package_values:
+            raise SysrootError("Cargo metadata JSON must contain a non-empty packages list")
+        for index, package in enumerate(package_values):
+            if not isinstance(package, dict) or not isinstance(package.get("manifest_path"), str):
+                raise SysrootError("Cargo metadata package lacks manifest_path")
+            package_id = package.get("id")
+            if not isinstance(package_id, str) or not package_id:
+                # Fixtures for parser tests may omit Cargo's opaque ID.  They
+                # cannot prove a graph closure, but remain useful for the
+                # manifest-level audit below.
+                package_id = f"{metadata_path.name}:package:{index}"
+                metadata_complete = False
+            manifest = require_regular_file(Path(package["manifest_path"]), "Cargo metadata manifest")
+            packages_by_id[package_id] = {**package, "_manifest": manifest}
+            manifest_to_ids.setdefault(manifest.resolve(), set()).add(package_id)
+        resolve = metadata.get("resolve") if isinstance(metadata, dict) else None
+        node_values = resolve.get("nodes") if isinstance(resolve, dict) else None
+        if not isinstance(node_values, list):
+            metadata_complete = False
+            continue
+        for node in node_values:
+            if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+                metadata_complete = False
+                continue
+            nodes_by_id[node["id"]] = node
+            features = node.get("features")
+            resolved_features_by_id[node["id"]] = (
+                sorted(feature for feature in features if isinstance(feature, str))
+                if isinstance(features, list)
+                else []
+            )
+
+    root_ids: set[str] = set()
+    uncovered_explicit: list[str] = []
+    for manifest in explicit_manifests:
+        ids = manifest_to_ids.get(manifest.resolve(), set())
+        if metadata_files and not ids:
+            uncovered_explicit.append(stable_input_label(manifest))
+        root_ids.update(ids)
+
+    normal_build_edges: dict[str, set[str]] = {}
+    excluded_dev_ids: set[str] = set()
+    selected_ids: set[str] = set()
+    missing_resolve_nodes: set[str] = set()
+    if metadata_files and metadata_complete:
+        pending = list(root_ids)
+        while pending:
+            package_id = pending.pop()
+            if package_id in selected_ids:
+                continue
+            selected_ids.add(package_id)
+            node = nodes_by_id.get(package_id)
+            if node is None:
+                missing_resolve_nodes.add(package_id)
+                continue
+            selected_dependencies: set[str] = set()
+            dependencies = node.get("deps")
+            if not isinstance(dependencies, list):
+                missing_resolve_nodes.add(package_id)
+                continue
+            for dependency in dependencies:
+                if not isinstance(dependency, dict) or not isinstance(dependency.get("pkg"), str):
+                    missing_resolve_nodes.add(package_id)
+                    continue
+                dependency_id = dependency["pkg"]
+                dep_kinds = dependency.get("dep_kinds")
+                if not isinstance(dep_kinds, list) or not dep_kinds:
+                    missing_resolve_nodes.add(package_id)
+                    continue
+                kinds = {
+                    entry.get("kind")
+                    for entry in dep_kinds
+                    if isinstance(entry, dict) and entry.get("kind") in {None, "build", "dev"}
+                }
+                if kinds.intersection({None, "build"}):
+                    selected_dependencies.add(dependency_id)
+                    pending.append(dependency_id)
+                elif "dev" in kinds:
+                    excluded_dev_ids.add(dependency_id)
+            normal_build_edges[package_id] = selected_dependencies
+        if missing_resolve_nodes:
+            metadata_complete = False
+    elif metadata_files:
+        # Preserve the older manifest-only test fixture behavior while making
+        # its incomplete closure explicit in the resulting record.
+        selected_ids = set(packages_by_id)
+
+    if not metadata_files:
+        selected_paths = {manifest.resolve() for manifest in explicit_manifests}
+    else:
+        selected_paths = {
+            package["_manifest"].resolve()
+            for package_id, package in packages_by_id.items()
+            if package_id in selected_ids and isinstance(package.get("_manifest"), Path)
+        }
+    package_id_by_manifest: dict[Path, str] = {}
+    for package_id, package in packages_by_id.items():
+        manifest = package.get("_manifest")
+        if isinstance(manifest, Path) and package_id in selected_ids:
+            package_id_by_manifest.setdefault(manifest.resolve(), package_id)
+    manifests = sorted(selected_paths)
     packages: list[dict[str, object]] = []
     rejected: list[dict[str, str]] = []
-    for manifest_path in sorted(manifests):
+    for manifest_path in manifests:
         try:
             with manifest_path.open("rb") as stream:
                 manifest = tomllib.load(stream)
@@ -784,9 +1228,11 @@ def audit_dependencies(
         links = package.get("links")
         build = package.get("build")
         build_script = manifest_path.parent / (str(build) if isinstance(build, str) else "build.rs")
+        build_script_text: str | None = None
         native_build = False
         if build_script.is_file():
-            native_build = _build_script_uses_native_tool(build_script.read_text(encoding="utf-8", errors="replace"))
+            build_script_text = build_script.read_text(encoding="utf-8", errors="replace")
+            native_build = _build_script_uses_native_tool(build_script_text)
         selected_source_root = manifest_path.parent / "src"
         native_source_inputs: list[str] = []
         bundled_native_archives: list[str] = []
@@ -797,9 +1243,26 @@ def audit_dependencies(
                     native_source_inputs.append(label)
                 if source.suffix in {".a", ".so", ".o"}:
                     bundled_native_archives.append(label)
+        package_id = package_id_by_manifest.get(manifest_path.resolve())
+        allocator_contract = _native_allocator_exception_contract(
+            manifest_path,
+            package,
+            build_script,
+            build_script_text,
+            resolved_features_by_id.get(package_id, []) if isinstance(package_id, str) else [],
+        )
+        allocator_build_helper_contract = _native_allocator_build_helper_contract(manifest_path, package)
+        selected_native_inputs = list(native_source_inputs)
+        if allocator_contract.get("status") != "not_applicable":
+            source_record = allocator_contract.get("selected_native_source")
+            if isinstance(source_record, dict) and isinstance(source_record.get("path"), str):
+                selected_native_inputs.append(source_record["path"])
         package_record = {
             "manifest": stable_input_label(manifest_path),
+            "package_id": package_id,
             "package": package.get("name"),
+            "version": package.get("version"),
+            "resolved_features": resolved_features_by_id.get(package_id, []) if isinstance(package_id, str) else [],
             "links": links,
             "build_script": stable_input_label(build_script) if build_script.is_file() else None,
             "build_script_native_tool_reference": native_build,
@@ -807,50 +1270,142 @@ def audit_dependencies(
             "build_dependencies": sorted((manifest.get("build-dependencies") or {}).keys()),
             "selected_source_root": stable_input_label(selected_source_root) if selected_source_root.is_dir() else None,
             "native_source_inputs": native_source_inputs,
+            "selected_native_build_inputs": selected_native_inputs,
             "bundled_native_archives": bundled_native_archives,
+            "native_allocator_exception_contract": allocator_contract,
+            "native_allocator_build_helper_contract": allocator_build_helper_contract,
         }
         packages.append(package_record)
         if isinstance(links, str) and links:
-            rejected.append({"manifest": stable_input_label(manifest_path), "reason": "package.links is forbidden"})
-        if native_build:
-            rejected.append({"manifest": stable_input_label(manifest_path), "reason": "build script references a native build tool"})
-        if native_source_inputs:
             rejected.append(
                 {
                     "manifest": stable_input_label(manifest_path),
-                    "reason": "selected target source contains native implementation input: " + ", ".join(native_source_inputs),
+                    "package_id": str(package_id_by_manifest.get(manifest_path.resolve(), "")),
+                    "reason": "package.links is forbidden",
+                }
+            )
+        if native_build:
+            rejected.append(
+                {
+                    "manifest": stable_input_label(manifest_path),
+                    "package_id": str(package_id_by_manifest.get(manifest_path.resolve(), "")),
+                    "reason": "build script references a native build tool",
+                }
+            )
+        if selected_native_inputs:
+            rejected.append(
+                {
+                    "manifest": stable_input_label(manifest_path),
+                    "package_id": str(package_id_by_manifest.get(manifest_path.resolve(), "")),
+                    "reason": "selected target source contains native implementation input: " + ", ".join(selected_native_inputs),
                 }
             )
         if bundled_native_archives:
             rejected.append(
                 {
                     "manifest": stable_input_label(manifest_path),
+                    "package_id": str(package_id_by_manifest.get(manifest_path.resolve(), "")),
                     "reason": "selected target source contains bundled native archive/object: " + ", ".join(bundled_native_archives),
                 }
             )
-    metadata_set = set(metadata_manifests)
-    uncovered_explicit = (
-        sorted(stable_input_label(path) for path in explicit_manifests if path not in metadata_set)
-        if metadata_files
-        else []
-    )
+        if allocator_contract.get("status") == "rejected":
+            rejected.append(
+                {
+                    "manifest": stable_input_label(manifest_path),
+                    "package_id": str(package_id_by_manifest.get(manifest_path.resolve(), "")),
+                    "reason": "native allocator exception contract is not verified",
+                }
+            )
+        if allocator_build_helper_contract.get("status") == "rejected":
+            rejected.append(
+                {
+                    "manifest": stable_input_label(manifest_path),
+                    "package_id": str(package_id_by_manifest.get(manifest_path.resolve(), "")),
+                    "reason": "native allocator build-helper contract is not verified",
+                }
+            )
     if uncovered_explicit:
         rejected.extend(
-            {"manifest": label, "reason": "not represented by supplied Cargo metadata closure"}
+            {"manifest": label, "package_id": "", "reason": "not represented by supplied Cargo metadata closure"}
             for label in uncovered_explicit
         )
-    closure_status = "complete" if metadata_files else ("partial" if manifests else "unverified")
-    status = "rejected" if rejected else ("passed" if manifests and closure_status == "complete" else closure_status)
+
+    allocator_roots = {
+        package_id
+        for package_id, package in packages_by_id.items()
+        if package_id in selected_ids and package.get("name") == "libmimalloc-sys"
+    }
+    allocator_closure: set[str] = set()
+    pending_allocator = list(allocator_roots)
+    while pending_allocator:
+        package_id = pending_allocator.pop()
+        if package_id in allocator_closure:
+            continue
+        allocator_closure.add(package_id)
+        pending_allocator.extend(normal_build_edges.get(package_id, ()))
+    # The exception is only the pinned sys crate itself.  Its normal/build
+    # closure remains visible for review, but a future native dependency below
+    # it is an independent purity failure rather than something this label can
+    # silently absorb.
+    verified_allocator_roots = {
+        str(package.get("package_id"))
+        for package in packages
+        if isinstance(package, dict)
+        and package.get("package_id") in allocator_roots
+        and isinstance(package.get("native_allocator_exception_contract"), dict)
+        and package["native_allocator_exception_contract"].get("status") == "verified"
+    }
+    package_records_by_id = {
+        package.get("package_id"): package
+        for package in packages
+        if isinstance(package, dict) and isinstance(package.get("package_id"), str)
+    }
+    verified_allocator_build_helpers: set[str] = set()
+    for allocator_id in verified_allocator_roots:
+        for dependency_id in normal_build_edges.get(allocator_id, ()):
+            record = package_records_by_id.get(dependency_id)
+            contract = record.get("native_allocator_build_helper_contract") if isinstance(record, dict) else None
+            if isinstance(contract, dict) and contract.get("status") == "verified":
+                verified_allocator_build_helpers.add(dependency_id)
+    approved_allocator_exception_ids = verified_allocator_roots | verified_allocator_build_helpers
+    allocator_rejections = [entry for entry in rejected if entry.get("package_id") in approved_allocator_exception_ids]
+    unapproved_rejections = [entry for entry in rejected if entry.get("package_id") not in approved_allocator_exception_ids]
+    closure_status = "complete" if metadata_files and metadata_complete else ("partial" if manifests else "unverified")
+    if unapproved_rejections:
+        status = "rejected"
+    elif allocator_rejections and allocator_roots and closure_status == "complete":
+        status = "blocked_by_native_allocator"
+    elif rejected:
+        status = "rejected"
+    elif manifests and closure_status == "complete":
+        status = "passed"
+    else:
+        status = closure_status
     return {
         "status": status,
         "closure_status": closure_status,
         "cargo_metadata": [
             {"name": path.name, "sha256": sha256_file(path)} for path in metadata_files
         ],
-        "uncovered_explicit_manifests": uncovered_explicit,
+        "uncovered_explicit_manifests": sorted(uncovered_explicit),
+        "production_closure": {
+            "root_package_ids": sorted(root_ids),
+            "selected_package_ids": sorted(selected_ids),
+            "excluded_dev_package_ids": sorted(excluded_dev_ids - selected_ids),
+            "missing_resolve_nodes": sorted(missing_resolve_nodes),
+        },
         "manifests": packages,
         "rejected": rejected,
-        "note": "Without Cargo metadata, this is an explicitly partial manifest audit and cannot establish dependency purity.",
+        "allocator_exception": {
+            "status": "blocked_by_native_allocator" if allocator_rejections and not unapproved_rejections else "not_applicable",
+            "package_ids": sorted(allocator_roots),
+            "verified_package_ids": sorted(verified_allocator_roots),
+            "verified_build_helper_package_ids": sorted(verified_allocator_build_helpers),
+            "closure_package_ids": sorted(allocator_closure),
+            "rejected": allocator_rejections,
+        },
+        "unapproved_rejected": unapproved_rejections,
+        "note": "Only normal/build Cargo edges are target-runtime inputs; dev-only resolution is reported but excluded from purity classification.",
     }
 
 
@@ -1283,7 +1838,7 @@ def audit_link_inputs(
     }
 
 
-def parse_linker_trace_paths(output: bytes) -> list[Path]:
+def parse_linker_trace_inputs(output: bytes) -> list[LinkTraceInput]:
     """Extract existing absolute input paths from lld ``--trace`` output.
 
     lld writes one resolved input per line, with archive members commonly
@@ -1292,21 +1847,38 @@ def parse_linker_trace_paths(output: bytes) -> list[Path]:
     than treating arbitrary diagnostic text as provenance.
     """
 
-    paths: list[Path] = []
-    seen: set[Path] = set()
+    inputs: list[LinkTraceInput] = []
+    seen: set[tuple[Path, str | None]] = set()
     for line in output.decode("utf-8", errors="replace").splitlines():
         candidate_text = line.strip()
         if candidate_text.startswith("ld.lld: "):
             candidate_text = candidate_text[len("ld.lld: ") :].strip()
-        if "(" in candidate_text:
-            candidate_text = candidate_text.split("(", 1)[0]
+        archive_member: str | None = None
+        if candidate_text.endswith(")") and "(" in candidate_text:
+            archive_path, member = candidate_text.rsplit("(", 1)
+            if member[:-1] and Path(archive_path).is_absolute() and Path(archive_path).is_file():
+                candidate_text = archive_path
+                archive_member = member[:-1]
         candidate = Path(candidate_text)
         if not candidate.is_absolute() or not candidate.is_file():
             continue
         resolved = candidate.resolve()
-        if resolved not in seen:
-            seen.add(resolved)
-            paths.append(resolved)
+        identity = (resolved, archive_member)
+        if identity not in seen:
+            seen.add(identity)
+            inputs.append(LinkTraceInput(resolved, archive_member))
+    return inputs
+
+
+def parse_linker_trace_paths(output: bytes) -> list[Path]:
+    """Return unique trace paths for callers that do not need member identity."""
+
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for input_record in parse_linker_trace_inputs(output):
+        if input_record.path not in seen:
+            seen.add(input_record.path)
+            paths.append(input_record.path)
     return paths
 
 
@@ -1316,7 +1888,13 @@ def audit_linker_trace(
     application_paths: Iterable[Path] = (),
     application_library_roots: Iterable[Path] = (),
 ) -> dict[str, object]:
-    paths = parse_linker_trace_paths(output)
+    trace_inputs = parse_linker_trace_inputs(output)
+    paths: list[Path] = []
+    seen_paths: set[Path] = set()
+    for input_record in trace_inputs:
+        if input_record.path not in seen_paths:
+            seen_paths.add(input_record.path)
+            paths.append(input_record.path)
     if not paths:
         return {
             "status": "unverified",
@@ -1326,9 +1904,29 @@ def audit_linker_trace(
             "musl_target_inputs": [],
             "gcc_target_inputs": [],
             "compiler_runtime_inputs": [],
+            "trace_paths": [],
+            "trace_inputs": [],
+            "archive_member_inputs": [],
         }
     result = audit_link_inputs(paths, sysroot, application_paths, application_library_roots)
     result["trace_paths"] = [str(path) for path in paths]
+    classification_by_path = {
+        input_record["path"]: input_record
+        for input_record in result["inputs"]
+        if isinstance(input_record, dict) and isinstance(input_record.get("path"), str)
+    }
+    trace_records: list[dict[str, object]] = []
+    for input_record in trace_inputs:
+        record: dict[str, object] = input_record.record()
+        classified = classification_by_path.get(str(input_record.path))
+        if classified is not None:
+            record["classification"] = classified.get("classification")
+            record["reason"] = classified.get("reason")
+        trace_records.append(record)
+    result["trace_inputs"] = trace_records
+    result["archive_member_inputs"] = [
+        record for record in trace_records if isinstance(record.get("archive_member"), str)
+    ]
     return result
 
 
@@ -1406,6 +2004,86 @@ def artifact_records(paths: Mapping[str, Path], *, relative_to: Path | None = No
     return records
 
 
+def audit_runtime_artifacts(
+    artifacts: Mapping[str, object],
+    static_runtime: Mapping[str, object],
+) -> dict[str, object]:
+    """Reject native compiler-runtime material in the installed artifact set.
+
+    The report keeps raw archive and ELF records for inspection, while this
+    focused decision checks the static archive boundary that Cargo otherwise
+    blurs.  It deliberately permits only the named mimalloc member as the
+    temporary full-runtime-purity exception; the separately source-built
+    helper archive is the sole allowed home for compiler-builtins objects.
+    """
+
+    rejected: list[dict[str, str]] = []
+    approved_absolute_paths: list[dict[str, str]] = []
+    libc = artifacts.get("libc.a")
+    builtins = artifacts.get("builtins")
+    expected_static_members = static_runtime.get("archive", {}).get("members") if isinstance(static_runtime.get("archive"), dict) else None
+    expected_static_sha256 = static_runtime.get("archive", {}).get("sha256") if isinstance(static_runtime.get("archive"), dict) else None
+    expected_static_names = [
+        entry.get("name")
+        for entry in expected_static_members
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    ] if isinstance(expected_static_members, list) else []
+    libc_members = _archive_elf_members(libc) if isinstance(libc, dict) else []
+    libc_names = [member.get("name") for member in libc_members]
+    if static_runtime.get("status") != "verified":
+        rejected.append({"artifact": "libc.a", "reason": "static runtime provenance is not verified"})
+    if libc_names != expected_static_names:
+        rejected.append(
+            {
+                "artifact": "libc.a",
+                "reason": "installed static archive members differ from provenance-selected runtime roots",
+            }
+        )
+    if not isinstance(libc, dict) or libc.get("sha256") != expected_static_sha256:
+        rejected.append({"artifact": "libc.a", "reason": "installed static archive hash differs from provenance"})
+    for name in libc_names:
+        if not isinstance(name, str):
+            rejected.append({"artifact": "libc.a", "reason": "static archive has an unnamed ELF member"})
+        elif name.startswith("compiler_builtins-") or NATIVE_COMPILER_RUNTIME_MEMBER.fullmatch(name):
+            rejected.append({"artifact": "libc.a", "reason": f"forbidden compiler runtime member: {name}"})
+
+    builtins_members = _archive_elf_members(builtins) if isinstance(builtins, dict) else []
+    builtins_names = [member.get("name") for member in builtins_members]
+    if not builtins_names or builtins_names[0] != "crabc-builtins.o":
+        rejected.append({"artifact": "builtins", "reason": "helper archive has no crabc-owned root member"})
+    for name in builtins_names[1:]:
+        if not isinstance(name, str) or not name.startswith("compiler_builtins-"):
+            rejected.append({"artifact": "builtins", "reason": f"unexpected helper archive member: {name}"})
+        elif NATIVE_COMPILER_RUNTIME_MEMBER.fullmatch(name):
+            rejected.append({"artifact": "builtins", "reason": f"native compiler runtime member: {name}"})
+
+    for artifact_name, record in artifacts.items():
+        if not isinstance(record, dict):
+            rejected.append({"artifact": str(artifact_name), "reason": "artifact record is not an object"})
+            continue
+        paths = record.get("absolute_build_paths")
+        if not isinstance(paths, list):
+            rejected.append({"artifact": str(artifact_name), "reason": "artifact lacks absolute-build-path audit"})
+            continue
+        for path in paths:
+            if not isinstance(path, str):
+                rejected.append({"artifact": str(artifact_name), "reason": "artifact path audit contains a non-string"})
+                continue
+            lowered = path.lower()
+            if any(marker in lowered for marker in NATIVE_COMPILER_RUNTIME_PATH_MARKERS) or Path(path).suffix in NATIVE_IMPLEMENTATION_SUFFIXES:
+                rejected.append({"artifact": str(artifact_name), "reason": f"native compiler runtime source retained: {path}"})
+            elif artifact_name == "builtins" and path.startswith("/rust-src/library/compiler-builtins/"):
+                approved_absolute_paths.append({"artifact": str(artifact_name), "path": path})
+
+    return {
+        "status": "passed" if not rejected else "rejected",
+        "libc_static_members": libc_names,
+        "builtins_members": builtins_names,
+        "approved_absolute_build_paths": approved_absolute_paths,
+        "rejected": rejected,
+    }
+
+
 def _copy_python_driver(staging: Path) -> None:
     destination = staging / "share/crabc/crabc_sysroot.py"
     _copy_file(Path(__file__).resolve(), destination)
@@ -1469,6 +2147,11 @@ def assemble_sysroot(
         checked_paths["libcrabc-builtins.a"],
         inputs.builtins_commands,
     )
+    static_runtime_provenance = read_static_runtime_provenance(
+        inputs.libc_static_provenance,
+        checked_paths["libc.a"],
+        inputs.libc_static_commands,
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{destination.name}.", dir=destination.parent) as temporary:
         staging = Path(temporary) / destination.name
@@ -1485,6 +2168,10 @@ def assemble_sysroot(
             _copy_file(inputs.builtins_provenance, staging / "share/crabc/libcrabc-builtins.provenance.json")
         if inputs.builtins_commands is not None:
             _copy_file(inputs.builtins_commands, staging / "share/crabc/libcrabc-builtins.commands.json")
+        if inputs.libc_static_provenance is not None:
+            _copy_file(inputs.libc_static_provenance, staging / "share/crabc/libc-static.provenance.json")
+        if inputs.libc_static_commands is not None:
+            _copy_file(inputs.libc_static_commands, staging / "share/crabc/libc-static.commands.json")
         for name in CRT_OBJECTS:
             _copy_file(checked_paths[name], staging / "usr/lib" / name)
         canonical_loader = staging / "lib" / Path(CANONICAL_INTERPRETER).name
@@ -1496,6 +2183,7 @@ def assemble_sysroot(
         runtime = installed_runtime_paths(staging)
         installed_artifacts = artifact_records(runtime, relative_to=staging)
         installed_link_audit = audit_link_inputs(list(runtime.values()), staging)
+        artifact_purity = audit_runtime_artifacts(installed_artifacts, static_runtime_provenance)
         manifest: dict[str, object] = {
             "schema": SCHEMA_VERSION,
             "target": TARGET_TRIPLE,
@@ -1510,6 +2198,11 @@ def assemble_sysroot(
                 "library": "usr/lib",
             },
             "artifacts": installed_artifacts,
+            "provenance": {
+                "crt": crt_provenance.get("provenance"),
+                "compiler_helpers": builtins_provenance.get("provenance"),
+                "static_runtime": static_runtime_provenance.get("provenance"),
+            },
             "driver_module": "share/crabc/crabc_sysroot.py",
         }
         absolute_build_paths = sorted(
@@ -1525,21 +2218,32 @@ def assemble_sysroot(
         dependency_passed = dependency_audit["status"] == "passed"
         crt_verified = crt_provenance["status"] == "verified"
         builtins_verified = builtins_provenance["status"] == "verified"
+        static_runtime_verified = static_runtime_provenance["status"] == "verified"
+        artifact_purity_passed = artifact_purity["status"] == "passed"
         link_passed = installed_link_audit["status"] == "passed"
-        crt_sysroot_pure_rust = source_passed and crt_verified and builtins_verified and link_passed
+        crt_sysroot_pure_rust = (
+            source_passed
+            and crt_verified
+            and builtins_verified
+            and static_runtime_verified
+            and artifact_purity_passed
+            and link_passed
+        )
         full_runtime_pure_rust = crt_sysroot_pure_rust and dependency_passed
-        allocator_native_dependency = any(
-            package.get("package") == "libmimalloc-sys"
-            for package in dependency_audit.get("manifests", [])
-            if isinstance(package, dict)
+        allocator_is_only_remaining_blocker = (
+            crt_sysroot_pure_rust
+            and dependency_audit.get("status") == "blocked_by_native_allocator"
+            and not dependency_audit.get("unapproved_rejected")
         )
         purity: dict[str, object] = {
             "schema": SCHEMA_VERSION,
             "crt_owned": crt_provenance,
             "compiler_helpers": builtins_provenance,
+            "static_runtime": static_runtime_provenance,
             "startup_objects": {name: installed_artifacts[name] for name in CRT_OBJECTS},
             "runtime_source_languages": source_audit,
             "dependency_purity": dependency_audit,
+            "artifact_purity": artifact_purity,
             "external_native_source_inputs": source_audit["rejected_native_sources"],
             "foreign_target_runtime_inputs": installed_link_audit["foreign_target_runtime_inputs"],
             "compiler_runtime_inputs": installed_link_audit["compiler_runtime_inputs"],
@@ -1553,11 +2257,13 @@ def assemble_sysroot(
                 "covers": [
                     "Rust CRT source and startup objects",
                     "Rust compiler-helper archive",
+                    "compiler-runtime-free static libc archive boundary",
+                    "installed archive and ELF member/source audit",
                     "sealed application driver and final-link inputs",
                     "crabc runtime source-language audit",
                 ],
                 "does_not_claim": [
-                    "complete allocator implementation purity while libc uses libmimalloc-sys",
+                    "complete allocator implementation purity while libc retains the documented libmimalloc-sys member",
                 ],
             },
             "full_runtime_pure_rust": full_runtime_pure_rust,
@@ -1565,7 +2271,7 @@ def assemble_sysroot(
                 "passed"
                 if full_runtime_pure_rust
                 else "blocked_by_native_allocator"
-                if allocator_native_dependency
+                if allocator_is_only_remaining_blocker
                 else "rejected"
             ),
             "full_runtime_pure_rust_basis": {
@@ -1573,6 +2279,8 @@ def assemble_sysroot(
                 "dependency_audit": dependency_audit["status"],
                 "crt_provenance": crt_provenance["status"],
                 "builtins_provenance": builtins_provenance["status"],
+                "static_runtime_provenance": static_runtime_provenance["status"],
+                "artifact_purity": artifact_purity["status"],
                 "link_input_audit": installed_link_audit["status"],
             },
         }
@@ -1649,6 +2357,23 @@ def _reject_sealed_driver_overrides(arguments: Sequence[str]) -> None:
             if arguments[index + 1] in {"-isysroot", "-resource-dir", "-target", "-target-feature", "-triple"}:
                 raise SysrootError("crabc-cc owns target and toolchain selection; -Xclang may not replace it")
 
+        # `-Xlinker` passes one raw argument through clang's normal driver
+        # validation. Keep ordinary application-library selection in the
+        # supported direct `-L`/`-l` surface, but do not allow this escape
+        # hatch to inject a linker script, foreign sysroot, or secondary
+        # target-library search root.
+        if argument == "-Xlinker":
+            if index + 1 >= len(arguments):
+                raise SysrootError("-Xlinker requires one argument")
+            linker_argument = arguments[index + 1]
+            if (
+                linker_argument in {"-L", "--library-path", "-T", "--script", "--sysroot", "-dynamic-linker", "--dynamic-linker", "-rpath-link", "--rpath-link"}
+                or linker_argument.startswith(("-L", "--library-path=", "-T", "--script=", "--sysroot=", "-dynamic-linker=", "--dynamic-linker=", "-rpath-link=", "--rpath-link="))
+            ):
+                raise SysrootError("crabc-cc rejects linker search, script, sysroot, and interpreter overrides through -Xlinker")
+        if argument.startswith("-Xlinker="):
+            raise SysrootError("crabc-cc accepts no joined -Xlinker escape hatch")
+
 
 def parse_driver_request(arguments: Sequence[str]) -> DriverRequest:
     args = tuple(arguments)
@@ -1663,6 +2388,14 @@ def parse_driver_request(arguments: Sequence[str]) -> DriverRequest:
             raise SysrootError("crabc-cc owns the dynamic interpreter")
         if "dynamic-linker" in argument or argument.startswith("-Wl,-I"):
             raise SysrootError("crabc-cc owns the dynamic interpreter and linker script selection")
+        if argument.startswith("-Wl,"):
+            linker_arguments = argument[len("-Wl,") :].split(",")
+            if any(
+                linker_argument in {"-L", "--library-path", "-T", "--script", "--sysroot", "-rpath-link", "--rpath-link"}
+                or linker_argument.startswith(("-L", "--library-path=", "-T", "--script=", "--sysroot=", "-rpath-link=", "--rpath-link="))
+                for linker_argument in linker_arguments
+            ):
+                raise SysrootError("crabc-cc rejects linker search, script, sysroot, and rpath-link overrides through -Wl")
     compile_flags = {"-c": LinkMode.COMPILE, "-E": LinkMode.PREPROCESS, "-S": LinkMode.ASSEMBLY}
     selected_compile = [mode for flag, mode in compile_flags.items() if flag in stripped]
     if len(set(selected_compile)) > 1:
@@ -1872,6 +2605,8 @@ def _assemble_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
     parser.add_argument("--include-dir", type=Path, required=True)
     parser.add_argument("--libc-shared", type=Path, required=True)
     parser.add_argument("--libc-static", type=Path, required=True)
+    parser.add_argument("--libc-static-provenance", type=Path)
+    parser.add_argument("--libc-static-commands", type=Path)
     parser.add_argument("--loader", type=Path, required=True)
     parser.add_argument("--crt-dir", type=Path, required=True)
     parser.add_argument("--builtins", type=Path, required=True)
@@ -1911,11 +2646,19 @@ def audit_installed_sysroot(sysroot: Path) -> dict[str, object]:
     manifest = load_installed_manifest(root)
     artifacts = artifact_records(installed_runtime_paths(root), relative_to=root)
     link_audit = audit_link_inputs(list(installed_runtime_paths(root).values()), root)
+    purity_path = require_regular_file(root / "share/crabc/purity.json", "installed purity report")
+    try:
+        installed_purity = json.loads(purity_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise SysrootError(f"invalid installed purity report: {purity_path}") from error
+    static_runtime = installed_purity.get("static_runtime") if isinstance(installed_purity, dict) else None
+    artifact_purity = audit_runtime_artifacts(artifacts, static_runtime if isinstance(static_runtime, dict) else {})
     return {
         "schema": SCHEMA_VERSION,
         "sysroot": str(root),
         "manifest": manifest,
         "artifacts": artifacts,
+        "runtime_artifact_purity": artifact_purity,
         "link_input_audit": link_audit,
         "generated_at_unix_seconds": int(time.time()),
     }
@@ -1936,6 +2679,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 crt_commands=args.crt_commands,
                 builtins_provenance=args.builtins_provenance,
                 builtins_commands=args.builtins_commands,
+                libc_static_provenance=args.libc_static_provenance,
+                libc_static_commands=args.libc_static_commands,
             )
             toolchain = discover_toolchain(args.clang, args.lld)
             manifest = assemble_sysroot(

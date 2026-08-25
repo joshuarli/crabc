@@ -850,12 +850,11 @@ def run_compiler_helper_contract(
 
 
 def mutation_static_pie_failure(binary: Path, *, timeout: float, environment: dict[str, str]) -> dict[str, object]:
-    """Corrupt one bootstrap relocation and require rcrt1.o to fail closed."""
+    """Corrupt type, table-range, and target-range data; rcrt1 must close."""
 
     elf = TOOL.inspect_elf(binary)
-    corrupted = binary.with_name(f"{binary.name}-malformed-relocation")
-    data = bytearray(binary.read_bytes())
-    mutation: dict[str, object] | None = None
+    original_data = binary.read_bytes()
+    mutations: list[tuple[str, dict[str, object], bytearray]] = []
     for relocation in elf["relocations"]:
         if not isinstance(relocation, dict):
             continue
@@ -864,25 +863,115 @@ def mutation_static_pie_failure(binary: Path, *, timeout: float, environment: di
             continue
         relocation_type = relocation.get("type")
         if relocation_type == 1027:
+            data = bytearray(original_data)
             info_offset = file_offset + 8
             original = struct.unpack_from("<Q", data, info_offset)[0]
             struct.pack_into("<Q", data, info_offset, (original & ~0xffff_ffff) | 0x7fff_ffff)
-            mutation = {"kind": "RELA", "file_offset": file_offset, "old_info": original}
+            mutations.append(("unsupported_rela_type", {"file_offset": file_offset, "old_info": original}, data))
             break
         if "relr_word" in relocation:
+            data = bytearray(original_data)
             original = struct.unpack_from("<Q", data, file_offset)[0]
             struct.pack_into("<Q", data, file_offset, 1)
-            mutation = {"kind": "RELR", "file_offset": file_offset, "old_word": original}
+            mutations.append(("malformed_relr_word", {"file_offset": file_offset, "old_word": original}, data))
             break
-    if mutation is None:
-        return {"status": "unverified", "reason": "static PIE has no mutable RELA/RELR bootstrap record"}
-    corrupted.write_bytes(data)
-    corrupted.chmod(binary.stat().st_mode)
-    run = run_binary(corrupted, ["proof"], timeout=timeout, environment=environment)
+
+    dynamic_entry: tuple[int, int, int] | None = None
+    for program in elf["program_headers"]:
+        if not isinstance(program, dict) or program.get("type") != 2:
+            continue
+        offset = program.get("offset")
+        size = program.get("filesz")
+        if not isinstance(offset, int) or not isinstance(size, int):
+            continue
+        for entry_offset in range(offset, offset + size, 16):
+            tag, value = struct.unpack_from("<qQ", original_data, entry_offset)
+            if tag in {7, 36}:
+                dynamic_entry = (entry_offset, tag, value)
+                break
+            if tag == 0:
+                break
+        if dynamic_entry is not None:
+            break
+    if dynamic_entry is not None:
+        entry_offset, tag, value = dynamic_entry
+        data = bytearray(original_data)
+        struct.pack_into("<Q", data, entry_offset + 8, 0xffff_ffff_ffff_fff8)
+        mutations.append(
+            (
+                "relocation_table_outside_load_segment",
+                {"dynamic_file_offset": entry_offset, "tag": tag, "old_value": value},
+                data,
+            )
+        )
+
+    readonly_target: int | None = None
+    for program in elf["program_headers"]:
+        if not isinstance(program, dict) or program.get("type") != 1 or int(program.get("flags", 0)) & 2:
+            continue
+        vaddr = program.get("vaddr")
+        size = program.get("memsz")
+        if not isinstance(vaddr, int) or not isinstance(size, int):
+            continue
+        candidate = (vaddr + 7) & ~7
+        if candidate + 8 <= vaddr + size:
+            readonly_target = candidate
+            break
+    if readonly_target is not None:
+        target_mutated = False
+        for relocation in elf["relocations"]:
+            if not isinstance(relocation, dict) or relocation.get("type") != 1027:
+                continue
+            file_offset = relocation.get("file_offset")
+            if not isinstance(file_offset, int):
+                continue
+            data = bytearray(original_data)
+            original = struct.unpack_from("<Q", data, file_offset)[0]
+            struct.pack_into("<Q", data, file_offset, readonly_target)
+            mutations.append(
+                (
+                    "relocation_target_outside_writable_load_segment",
+                    {"file_offset": file_offset, "old_offset": original, "new_offset": readonly_target},
+                    data,
+                )
+            )
+            target_mutated = True
+            break
+        if not target_mutated:
+            for relocation in elf["relocations"]:
+                if not isinstance(relocation, dict) or "relr_word" not in relocation:
+                    continue
+                file_offset = relocation.get("file_offset")
+                if not isinstance(file_offset, int):
+                    continue
+                data = bytearray(original_data)
+                original = struct.unpack_from("<Q", data, file_offset)[0]
+                struct.pack_into("<Q", data, file_offset, readonly_target)
+                mutations.append(
+                    (
+                        "relocation_target_outside_writable_load_segment",
+                        {"file_offset": file_offset, "old_word": original, "new_word": readonly_target},
+                        data,
+                    )
+                )
+                break
+
+    if len(mutations) != 3:
+        return {
+            "status": "unverified",
+            "reason": "static PIE lacks all mutable bootstrap type/table/target witnesses",
+            "available_mutations": [name for name, _, _ in mutations],
+        }
+    runs: list[dict[str, object]] = []
+    for name, mutation, data in mutations:
+        corrupted = binary.with_name(f"{binary.name}-malformed-{name}")
+        corrupted.write_bytes(data)
+        corrupted.chmod(binary.stat().st_mode)
+        run = run_binary(corrupted, ["proof"], timeout=timeout, environment=environment)
+        runs.append({"kind": name, "mutation": mutation, "run": run})
     return {
-        "status": "passed" if run["status"] == 127 else "rejected",
-        "mutation": mutation,
-        "run": run,
+        "status": "passed" if all(record["run"]["status"] == 127 for record in runs) else "rejected",
+        "mutations": runs,
     }
 
 

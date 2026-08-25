@@ -38,6 +38,10 @@ Commands:
   lto [options]       run the AArch64 static/build-std LTO evidence matrix
   lto-native-facade [options] run the native crabc-rs facade LTO proof
   sysroot [options]   build and prove the owned CRT/sysroot and sealed C driver
+  sysroot-dist [options]
+                      build, deterministically package, and smoke a commit sysroot snapshot
+  sysroot-smoke <archive>
+                      smoke-test one packaged sysroot archive without rebuilding it
   lua [options]       build Lua 5.4 through the owned crabc sysroot
   allocator --quick|--full
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
@@ -386,6 +390,20 @@ case "$command" in
         # builds, assembly, mode/link/map evidence, and the reproducibility
         # comparison. It owns all generated sysroot paths deliberately.
         run_in_container python3 scripts/build_owned_sysroot.py "$@"
+        ;;
+    sysroot-dist)
+        ensure_image
+        # The release entry point owns all work on the container's Linux
+        # filesystem and copies only four final assets to /workspace/dist.
+        run_in_container python3 scripts/sysroot_dist.py dist "$@"
+        ;;
+    sysroot-smoke)
+        ensure_image
+        if [ "$#" -ne 1 ]; then
+            usage >&2
+            exit 2
+        fi
+        run_in_container python3 scripts/sysroot_dist.py smoke --archive "$1"
         ;;
     lua)
         ensure_image

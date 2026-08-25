@@ -629,6 +629,11 @@ path = "../tests/pthread_mutex_cond_ping_pong_regression.rs"
 
 
 [[test]]
+name = "pthread_mutex_contention_regression"
+path = "../tests/pthread_mutex_contention_regression.rs"
+
+
+[[test]]
 name = "pthread_mutex_uncontended_regression"
 path = "../tests/pthread_mutex_uncontended_regression.rs"
 

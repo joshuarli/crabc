@@ -1,0 +1,210 @@
+name: Publish AArch64 sysroot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sysroot-prerelease-${{ github.repository }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-smoke:
+    name: Build and smoke the Linux/AArch64 snapshot
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      # actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Require a default-branch dispatch
+        shell: bash
+        env:
+          ACTUAL_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          expected_ref="refs/heads/${DEFAULT_BRANCH}"
+          if [[ "${ACTUAL_REF}" != "${expected_ref}" ]]; then
+            printf 'sysroot prereleases may only be dispatched from %s; got %s\n' \
+              "${expected_ref}" "${ACTUAL_REF}" >&2
+            exit 1
+          fi
+
+      - name: Build the pinned native development image
+        run: ./scripts/dev.sh image
+
+      - name: Build, package, and smoke the commit snapshot
+        run: ./scripts/dev.sh sysroot-dist
+
+      - name: Validate the four release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          archive="crabc-sysroot-aarch64-${short_sha}.tar.xz"
+          expected=(
+            "${archive}"
+            "${archive}.sha256"
+            "crabc-sysroot-aarch64-${short_sha}.manifest.json"
+            "crabc-sysroot-aarch64-${short_sha}.smoke.json"
+          )
+          for asset in "${expected[@]}"; do
+            test -f "dist/${asset}"
+          done
+          actual_count="$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          test "${actual_count}" = "4"
+          (
+            cd dist
+            sha256sum -c "${archive}.sha256"
+          )
+
+      # actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sysroot-aarch64-${{ github.sha }}
+          path: |
+            dist/crabc-sysroot-aarch64-*.tar.xz
+            dist/crabc-sysroot-aarch64-*.tar.xz.sha256
+            dist/crabc-sysroot-aarch64-*.manifest.json
+            dist/crabc-sysroot-aarch64-*.smoke.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-prerelease:
+    name: Publish immutable prerelease
+    needs: build-and-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      # actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: sysroot-aarch64-${{ github.sha }}
+          path: dist
+
+      - name: Independently verify the archive and attestations
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          archive="crabc-sysroot-aarch64-${short_sha}.tar.xz"
+          checksum="${archive}.sha256"
+          manifest="crabc-sysroot-aarch64-${short_sha}.manifest.json"
+          smoke="crabc-sysroot-aarch64-${short_sha}.smoke.json"
+          expected=("${archive}" "${checksum}" "${manifest}" "${smoke}")
+          for asset in "${expected[@]}"; do
+            test -f "dist/${asset}"
+          done
+          actual_count="$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')"
+          test "${actual_count}" = "4"
+          (
+            cd dist
+            sha256sum -c "${checksum}"
+          )
+          python3 - "dist/${manifest}" "dist/${smoke}" "${GITHUB_SHA}" "dist/${archive}" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest_path = Path(sys.argv[1])
+          smoke_path = Path(sys.argv[2])
+          source_commit_text = sys.argv[3]
+          archive_path = Path(sys.argv[4])
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+          archive_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+          if manifest.get("source_commit") != source_commit_text:
+              raise SystemExit("manifest source_commit does not match GITHUB_SHA")
+          if manifest.get("target") != "aarch64-unknown-linux-musl":
+              raise SystemExit("manifest target is not crabc Linux/AArch64")
+          platform = manifest.get("platform")
+          if not isinstance(platform, dict) or platform.get("architecture") != "aarch64" or platform.get("endianness") != "little":
+              raise SystemExit("manifest platform is not little-endian AArch64")
+          if smoke.get("source_commit") != source_commit_text or smoke.get("passed") is not True or smoke.get("target") != "aarch64":
+              raise SystemExit("smoke report does not attest to this AArch64 commit")
+          archive = smoke.get("archive")
+          if not isinstance(archive, dict) or archive.get("sha256") != archive_hash:
+              raise SystemExit("smoke report archive SHA-256 does not match the verified asset")
+          PY
+
+      - name: Create or verify the immutable prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA:0:12}"
+          tag="sysroot-aarch64-${GITHUB_SHA}"
+          title="crabc AArch64 sysroot snapshot ${short_sha}"
+          archive="crabc-sysroot-aarch64-${short_sha}.tar.xz"
+          checksum="${archive}.sha256"
+          manifest="crabc-sysroot-aarch64-${short_sha}.manifest.json"
+          smoke="crabc-sysroot-aarch64-${short_sha}.smoke.json"
+
+          if gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json tagName,isPrerelease,targetCommitish > release.json 2>/dev/null; then
+            python3 - release.json "${tag}" "${GITHUB_SHA}" <<'PY'
+            import json
+            import sys
+            from pathlib import Path
+
+            metadata = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+            if metadata.get("tagName") != sys.argv[2] or metadata.get("isPrerelease") is not True or metadata.get("targetCommitish") != sys.argv[3]:
+                raise SystemExit("existing release does not have the required immutable tag, prerelease state, and target commit")
+            PY
+            existing_dir="$(mktemp -d)"
+            gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" \
+              --pattern "${checksum}" --dir "${existing_dir}"
+            if ! cmp -s "dist/${checksum}" "${existing_dir}/${checksum}"; then
+              printf 'existing %s has a different checksum asset; refusing to mutate an immutable snapshot\n' "${tag}" >&2
+              exit 1
+            fi
+            printf 'immutable prerelease %s already publishes the exact snapshot\n' "${tag}"
+            exit 0
+          fi
+
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            printf 'tag %s already exists without a releasable immutable snapshot; refusing to attach assets\n' "${tag}" >&2
+            exit 1
+          fi
+
+          notes_file="$(mktemp)"
+          printf '%s\n' \
+            '## Experimental Linux/AArch64 sysroot snapshot' \
+            '' \
+            "This is an unstable prerelease snapshot of the crabc sysroot from commit \`${GITHUB_SHA}\`." \
+            '' \
+            'It is intended for crabc development, testing, and groundwork for a future `llvm-clang-crabc` toolchain.' \
+            '' \
+            'There are currently no guarantees concerning:' \
+            '' \
+            '- ABI stability' \
+            '- API stability' \
+            '- header stability' \
+            '- startup-object layout' \
+            '- loader behavior across snapshots' \
+            '- static archive compatibility' \
+            '- forward or backward compatibility' \
+            '- suitability as a general-purpose production SDK' \
+            '' \
+            'Pin the exact commit and verify the accompanying SHA-256 checksum.' \
+            '' \
+            "The archive was built and smoke-tested natively on Linux/AArch64 inside crabc's pinned Docker development environment. It was tested using the container's disposable Clang/lld installation; it does not contain or depend on a released \`llvm-clang-crabc\` toolchain." \
+            '' \
+            'Local reproduction on Apple Silicon macOS:' \
+            '' \
+            '```sh' \
+            './scripts/dev.sh image' \
+            './scripts/dev.sh sysroot-dist' \
+            '```' > "${notes_file}"
+          gh release create "${tag}" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" \
+            --title "${title}" --prerelease --latest=false --notes-file "${notes_file}" \
+            "dist/${archive}" "dist/${checksum}" "dist/${manifest}" "dist/${smoke}"

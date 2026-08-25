@@ -4,24 +4,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/signalfd.h>
+#include <sys/timerfd.h>
 #include <unistd.h>
-
-struct itimerspec {
-    struct timespec it_interval;
-    struct timespec it_value;
-};
-
-extern int timerfd_create(int, int);
-extern int timerfd_gettime(int, struct itimerspec *);
-extern int timerfd_settime(int, int, const struct itimerspec *,
-                           struct itimerspec *);
-extern int signalfd(int, const sigset_t *, int);
-
-#define CLOCK_MONOTONIC 1
-#define TFD_NONBLOCK 0x800
-#define TFD_CLOEXEC 0x80000
-#define SFD_NONBLOCK 0x800
-#define SFD_CLOEXEC 0x80000
 
 static int timerfd_case(void)
 {

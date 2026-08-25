@@ -68,6 +68,7 @@ MUSL_ORACLE_C_TESTS = frozenset(
         "memmem_regression.rs",
         "pthread_create_join_tls_regression.rs",
         "pthread_mutex_cond_ping_pong_regression.rs",
+        "pthread_mutex_contention_regression.rs",
         "pthread_mutex_uncontended_regression.rs",
         "stdio_format_parse_regression.rs",
         "strlen_regression.rs",

@@ -18,6 +18,7 @@ usr/lib/{libm.so,libdl.so,libpthread.so,librt.so,libutil.so}
 share/crabc/{manifest.json,purity.json}
 share/crabc/{crt.provenance.json,crt.commands.json}
 share/crabc/{libcrabc-builtins.provenance.json,libcrabc-builtins.commands.json}
+share/crabc/{libc-static.provenance.json,libc-static.commands.json}
 ```
 
 New dynamic executables name `/lib/ld-crabc-aarch64.so.1`. The musl-name
@@ -71,6 +72,17 @@ record covers local Rust compilation, the source build, member extraction,
 deterministic archiving, and archive-surface checks; the installed provenance
 hash-binds that record to `libcrabc-builtins.a`.
 
+`libc.a` has a narrower, separately audited construction. Cargo's raw
+`staticlib` is only an intermediate: `scripts/build_owned_sysroot.py` extracts
+exactly the crabc Rust runtime root (which defines `__libc_start_main`) and the
+current documented mimalloc object (which defines `mi_malloc`), then creates a
+deterministic replacement archive. It rejects every unclassified member and
+records the selected member hashes, exported-symbol checks, excluded stock
+`compiler_builtins` members, excluded compiler-rt C/assembly members, and the
+Rust/C build flags in `libc-static.{provenance,commands}.json`. Compiler
+helpers remain exclusively in `libcrabc-builtins.a`; no compiler-rt target
+archive is installed or linked.
+
 ## Startup ownership
 
 The startup ABI is musl's six arguments:
@@ -108,8 +120,10 @@ retain their separate contracts.
 The stack guard comes from `AT_RANDOM`, falling back only to a raw early
 `getrandom` syscall and failing closed if neither yields secure bytes. No
 deterministic canary is installed. The static-PIE bootstrap validates its
-actual AArch64 RELA/RELR forms and fails closed on malformed or unsupported
-records before entering normal Rust state.
+actual AArch64 RELA/RELR forms, the dynamic and relocation-table ranges against
+`PT_LOAD`, and each relocation write against a writable load segment. It fails
+closed on malformed, unsupported, or out-of-range records before entering
+normal Rust state.
 
 ## Purity accounting
 
@@ -124,9 +138,13 @@ records before entering normal Rust state.
    and absolute build-path scans.
 
 The passed `crt_sysroot_pure_rust` field covers the Rust CRT/builtins/sysroot
-boundary. `full_runtime_pure_rust` remains explicitly false while libc uses
-`libmimalloc-sys`; its status is `blocked_by_native_allocator`, not a hidden
-fallback or a relabeled success.
+boundary and the reconstructed static-runtime archive. `full_runtime_pure_rust`
+remains explicitly false while libc uses `libmimalloc-sys`; its status is
+`blocked_by_native_allocator`, not a hidden fallback or a relabeled success.
+The only admitted native closure is the pinned `libmimalloc-sys` static source
+and its direct pinned `cc` compiler-discovery helper. Both are hash-bound and
+recorded as the allocator exception; any other native production dependency
+fails the audit.
 
 ## Evidence
 
@@ -134,7 +152,7 @@ fallback or a relabeled success.
 ELF type/interpreter/RELRO/NOW/no-executable-stack facts, canonical kernel
 execution, startup vectors, ASLR for PIE paths, stack-protector failure,
 pthread/TLS behavior, constructor/destructor ordering, `dlopen`/`dlclose`,
-static-PIE malformed relocation failure, packed RELR when available, and
+static-PIE malformed relocation/table/target failure, packed RELR when available, and
 `/proc/<pid>/maps` identities. The harness waits for a complete dynamic map
 snapshot containing both owned loader and libc, avoiding a loader-only startup
 race.

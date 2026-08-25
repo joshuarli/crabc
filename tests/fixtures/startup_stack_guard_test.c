@@ -16,10 +16,12 @@ __attribute__((constructor)) static void observe_startup_guard(void)
 
 int main(void)
 {
-    if (constructor_guard == 0 || __stack_chk_guard == 0)
+    if (constructor_guard == 0)
         return 81;
-    if (constructor_guard != __stack_chk_guard)
+    if (__stack_chk_guard == 0)
         return 82;
+    if (constructor_guard != __stack_chk_guard)
+        return 83;
     puts("startup stack guard ok");
     return 0;
 }

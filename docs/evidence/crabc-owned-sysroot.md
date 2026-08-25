@@ -32,6 +32,57 @@ The evidence includes:
   guard, dynamic loading, and static-PIE relocation witnesses; and
 - two-clean-build reproducibility.
 
+## Current artifact record
+
+The current native run is recorded at
+`compat/reports/sysroot/latest.json`. Its two production builds agree on these
+target runtime byte hashes:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `libc.a` | `89cfdf33e3b1770fbec6bd8205a762ffd0d7ae2cc3137a2ffbf7bfd7fb3c4308` |
+| `libc.so` | `182b499031ef249f76da72d6dc7ddab80fc19dbd5f08a890da92864105da0621` |
+| `libldso.so` | `0414d8d1698e4cfb77d7cae28bd2ffbabbd46bee1daf49b8607b8d36bb6eed34` |
+
+The report's `purity.static_runtime` record binds `libc.a` to exactly two ELF
+members: the Rust libc root and the documented mimalloc exception. Its
+`artifact_purity`, link traces, and static provenance reject compiler-rt
+C/assembly and stock compiler-builtins members in `libc.a`; the separately
+source-built `libcrabc-builtins.a` is the only compiler-helper archive.
+
+## Tool and input boundary
+
+The host-side proof accepts only the pinned Docker Linux/AArch64 environment,
+Clang/lld, pinned Rust `rustc`/Cargo and rust-src, Python's standard-library
+runner, and LLVM archive/ELF inspection tools. These are build and inspection
+tools, not target runtime inputs.
+
+| Rejected target input | Enforcement point |
+| --- | --- |
+| musl CRT or target library | archive/ELF and resolved-link-input audits |
+| GCC `crtbegin`/`crtend`, `libgcc`, `libatomic`, or `libssp` | wrapper plan and resolved-link-input audits |
+| compiler-rt target archive, C object, or assembly object | static-runtime provenance, archive inventory, and link audit |
+| ambient target sysroot/header/library path | sealed `crabc-cc` driver and header/link traces |
+
+The sole recorded full-runtime exception is `libmimalloc-sys` 0.1.49's pinned
+`static.c`, plus its direct `cc` 1.4.3 compiler-discovery build helper. The
+dependency audit hash-binds both and rejects every other native production
+input.
+
+## Mode and application witnesses
+
+| Witness | Result required by the report |
+| --- | --- |
+| Compile, preprocess, assembly, and relocatable output | installed driver owns target include and tool inputs |
+| Shared DSO | owned startup/library ordering and no foreign runtime input |
+| Dynamic PIE and non-PIE | canonical `/lib/ld-crabc-aarch64.so.1` and owned maps |
+| Static non-PIE | no interpreter or dynamic dependencies |
+| Static PIE | genuine `ET_DYN`, self-relocation, ASLR, and fail-closed malformed table/target checks |
+| Pinned Lua 5.4.8 | source build, extension loading, and execution through `crabc-cc` |
+
+`./scripts/dev.sh lua` is the application-level witness. Its separate musl
+lane remains a behavior oracle, not a target-runtime fallback or CRT claim.
+
 The canonical loader is staged only when absent in the disposable Docker
 container and is hash-checked before removal. This makes ordinary kernel
 `exec` evidence possible without modifying a persistent host filesystem.
