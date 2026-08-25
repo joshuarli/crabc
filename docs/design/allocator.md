@@ -140,10 +140,12 @@ small member is recognized by rounded source block size, preflights its exact
 `pages_free_direct` range, and clears that range with queue removal before the
 former Theap page count drops; the small partial-free tail retains its source
 `reserved >= 16` invariant. Full small pages remain outside that route. The
-aggregate medium-and-large route applies that same source sequence to every
-qualifying medium-or-large page, releases force-empty pages, and stores
-PageMap/bitmap registry. Neither process route broadens the drain into general
-live-page abandonment or routing. An owner-side collection error permanently poisons this private
+aggregate regular-pages route applies that same source sequence to every
+qualifying small, medium, or large page, releases force-empty pages, and stores
+PageMap/bitmap registry. Its direct-small preflight accepts only the complete
+source-derived queue-head cache image and refreshes that cache during queue
+removal before the Theap count changes. Neither process route broadens the
+drain into general live-page abandonment or routing. An owner-side collection error permanently poisons this private
 allocator with the exact page, error, and any already-popped block; all later
 allocation, inspection, free, producer preparation, and collection entry
 points reject without another queue or page-map transition. A bounded one-page
@@ -327,11 +329,12 @@ free thread but is not shareable as concurrent routes. Every full small page
 remains outside this sole route, checked by `used < reserved` because it can
 remain in a regular queue.
 
-`MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_large_pages_to_process_route`
+`MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.
 Its complete non-mutating structural preflight requires every direct slot to
-be empty and every queued page to be a nonfull medium-or-large arena page. It
-also
+match the source queue-head image and every queued page to be a nonfull regular
+small, medium, or large arena page. A direct small member must retain
+`reserved >= 16` for the source partial collector. It also
 proves every intrusive queue's complete bounded doubly linked image: an empty
 queue has null endpoints; a nonempty queue has a null head predecessor, each
 successor names its actual predecessor, and its counted forward walk ends at
@@ -341,10 +344,10 @@ unsupported/mixed images still reject before mutation. It then ports
 `_mi_theap_collect_retired(theap, true)`'s regular-bin portion, releasing those
 already-empty retired spans before the normal source visit order for each
 remaining page: force-collect, immediately release an all-free page,
-false-collect a still-live page, then queue/page-count detach and mapped
-identity/bit/count publication. This narrow `MI_ABANDON` edge deliberately
+false-collect a still-live page, then queue detach, direct-cache refresh,
+page-count detach, and mapped identity/bit/count publication. This narrow `MI_ABANDON` edge deliberately
 does not turn on the absent deferred-callback, arena-collection, or stats-merge
-work. `ThreadExitMappedMediumLargePagesPostExitParts` is the resulting fixed-capacity
+work. `ThreadExitMappedRegularPagesPostExitParts` is the resulting fixed-capacity
 registry: membership remains in each page's PageMap registration and exact
 `pages_abandoned[bin]`/`abandoned_count[bin]` pair, while its `remaining_pages`
 count tracks only spans that have not yet completed terminal release. It
@@ -353,16 +356,16 @@ old-Theap/TLD teardown, each consuming free briefly locks the map, acquires the
 source low owner bit before deriving that page's bin/capability, and either
 returns the still-live route, releases one page, or releases the last page and
 completes the map route. A terminal free re-derives that page's regular span
-before unregistration, so the current 8-slice medium and 64-slice large spans
-remain distinct source shapes. A retired/force-empty traversal returns the
+before unregistration, so the one-slice small, 8-slice medium, and 64-slice
+large spans remain distinct source shapes. A retired/force-empty traversal returns the
 ordinary drain instead of creating an empty registry. Fresh engines may serialize
 independent PageMap operations between frees, but the current engine surface
 exposes no allocation-time adoption, reclaim, or requeue capability for a
 registered aggregate member.
 
-Other live-page states are rejected before aggregate detach: small, full,
-singleton, huge, unmapped, foreign, or direct-cache state remain separate
-work.
+Other live-page states are rejected before aggregate detach: full, singleton,
+huge, unmapped, foreign, malformed, or non-source-derived direct-cache state
+remain separate work.
 An empty drain may call `MainHeapThreadAttachment::finish_after_page_drain`;
 the detached routes instead use their narrowly typed finish once the old Theap
 image is empty. Any force/release failure is retained terminally; the drain

@@ -71,8 +71,8 @@ sidecar; bounded ticket-zero and later-thread page engines over that matched
 process pair; one all-free later-main thread-exit drain; three sole-page
 later-main owner-exit handoffs (a full arena singleton, a mapped medium page
 with one live block, and a sole nonfull small-or-medium page whose
-process-owned route survives old Theap/TLD teardown); and one aggregate medium-and-large post-exit
-registry that can route every qualifying surviving medium-or-large page
+process-owned route survives old Theap/TLD teardown); and one aggregate regular-pages post-exit
+registry that can route every qualifying surviving regular small, medium, or large page
 through sequential client frees.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
@@ -185,27 +185,30 @@ range before page-count detach. The route retains the source `reserved >= 16`
 small partial-collection invariant and excludes full small pages through its
 explicit `used < reserved` guard.
 
-`abandon_mapped_medium_large_pages_to_process_route` is the bounded
-source-traversal extension: before any mutation, every direct slot must be
-empty and every queue member must be a nonfull medium-or-large arena page. An
-empty member is admitted only when normal local free left its source retirement
-countdown nonzero. The route
+`abandon_mapped_regular_pages_to_process_route` is the bounded source-traversal
+extension: before any mutation, every direct slot must match its source queue
+head and every queue member must be a nonfull regular small, medium, or large
+arena page. Direct small members retain `reserved >= 16` for the source partial
+collector; an empty member is admitted only when normal local free left its
+source retirement countdown nonzero. The route
 then ports `_mi_theap_collect_retired(theap, true)`'s regular-bin pass, so an
 already-empty retired span releases before the remaining
 `mi_theap_page_collect` / `_mi_page_abandon` decisions: force-collect, release
-pages made all-free, false-collect still-live pages, queue/page-count detach,
-and publish the exact static-main mapped identity/bit/count pair. Its typed
+pages made all-free, false-collect still-live pages, queue detach, direct-cache
+refresh, page-count detach, and publish the exact static-main mapped
+identity/bit/count pair. Its typed
 aggregate registry retains no old-Theap pointer or raw page list; every later
 linear client free re-resolves one PageMap entry, selects its bin only after
 the source low owner-bit claim, preserves map/bit/count while nonempty, and
 re-derives the supported page's complete regular span before the terminal
 PageMap -> `pages_main` -> metadata -> slice release on empty. The current
-medium and large cases therefore prove their respective 8- and 64-slice
+small, medium, and large cases therefore prove their one-, 8-, and 64-slice
 releases. If retirement/force collection empties every page, it returns the
 ordinary drain. Fresh engines may serialize independent PageMap operations
 between client frees, but no current path can adopt, reclaim, or requeue a
-registered route page. Small/full/singleton/unmapped/huge/foreign pages,
-concurrent client routes, deferred callbacks, arena collection, and retry/reuse
+registered route page. Full/singleton/unmapped/huge/foreign pages, malformed
+direct-cache images, concurrent client routes, deferred callbacks, arena
+collection, and retry/reuse
 as a normal allocator remain outside this owner. Only an empty drain permits
 `finish_after_page_drain` to reset default/cached, detach its shared heap list
 member before its TLD list member, and retire metadata/TLD. A force/release
@@ -332,7 +335,7 @@ process/thread lifecycle hooks, full teardown traversal, and reusable
 abandoned-page lifetime remain absent.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole small-or-medium route and
-medium-and-large aggregate, allocation-time
+regular-pages aggregate, allocation-time
 claim/reclaim/requeue after later-thread exit, general dynamic heap/Theap
 attachment and remote-free routing, complete concurrency modeling and stress,
 libc integration, the remaining upstream suites, and performance promotion

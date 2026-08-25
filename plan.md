@@ -117,37 +117,41 @@ bitmap/count, while the final free clears them before PageMap -> `pages_main`
 but is not concurrent routing, allocation-time claim, reclaim, or requeue.
 
 The bounded aggregate extension,
-`MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_large_pages_to_process_route`,
+`MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`,
 now performs one source-shaped traversal over more than one live page. Its
 complete structural preflight leaves queue, direct-cache, and page ownership
-untouched unless every direct slot is empty and every queued member is a
-nonfull regular medium-or-large page in the paired arena: live members require
-`reserved > 1` and `0 < used < reserved`, while an empty member is admitted
-only with a nonzero source retirement countdown. It proves each intrusive
-queue's complete bounded doubly linked image before the unsafe queue-removal
-kernel: zero-count queues have null endpoints; nonempty queues have a null
-head predecessor, correct predecessor links, and a counted forward walk ending
-at the registered null-terminated tail. Small, full, singleton/huge, unmapped,
-foreign, malformed, and mixed queues reject before any queue/page mutation.
+untouched unless every direct slot matches the source-derived
+`pages_free_direct` queue-head image and every queued member is a nonfull
+regular small, medium, or large page in the paired arena: live members require
+`reserved > 1` and `0 < used < reserved`; direct small members additionally
+require `reserved >= 16` for `free.c`'s partial collector; and an empty member
+is admitted only with a nonzero source retirement countdown. It proves each
+intrusive queue's complete bounded doubly linked image before the unsafe
+queue-removal kernel: zero-count queues have null endpoints; nonempty queues
+have a null head predecessor, correct predecessor links, and a counted forward
+walk ending at the registered null-terminated tail. Full, singleton/huge,
+unmapped, foreign, malformed, and unsupported mixed queues reject before any
+queue/page mutation.
 After that refusal boundary it ports
 `_mi_theap_collect_retired(theap, true)`: tracked empty retired pages release
 through the ordinary PageMap -> `pages_main` -> metadata -> slice path before
 the remaining traversal follows `mi_theap_collect_abandon`'s force collect,
-all-free release, false collect, and otherwise queue/page-count detach plus
-mapped identity/bit/count/unown publication. It does not add the absent
+all-free release, false collect, and otherwise queue detach, direct-cache
+queue-head refresh, page-count detach, plus mapped identity/bit/count/unown
+publication. It does not add the absent
 deferred-callback, arena-collection, or stats-merge work. It keeps no raw page
 list: every survivor is represented by its PageMap registration plus the exact
 static-main `pages_abandoned[bin]` bit and paired
 `Heap::abandoned_count[bin]`. A fully retired/force-collected result returns
 the normal drained owner. Otherwise the former Theap/TLD tears down and the linear
-`MainHeapThreadProcessPageExitMappedMediumLargePagesRoute` re-resolves each client
+`MainHeapThreadProcessPageExitMappedRegularPagesRoute` re-resolves each client
 free under a short PageMap lock. Only after the free tail has claimed the low
 owner bit does it select that page's bin-specific bitmap/count capability;
-this permits distinct medium and large bins without retaining stale page
-metadata. A nonempty free retains its pairing, while a final free re-derives
-the supported page's complete regular span (8 slices for medium, 64 for large)
-before clearing identity/bit/count and performing PageMap -> `pages_main` ->
-metadata -> slice release. A fresh engine
+this permits distinct small, medium, and large bins without retaining stale
+page metadata. A nonempty free retains its pairing, while a final free
+re-derives the supported page's complete regular span (one slice for small,
+eight for medium, and 64 for large) before clearing identity/bit/count and
+performing PageMap -> `pages_main` -> metadata -> slice release. A fresh engine
 may serialize an independent map operation between frees, but no current
 allocator path receives a capability to adopt, reclaim, or requeue a registry
 member.
@@ -180,7 +184,7 @@ coordinator.
 
 General producer routing, concurrent/general shared/later-thread page-bearing
 ownership, full/singleton/unmapped/huge owner-exit pages and behavior beyond
-the bounded sole small-or-medium route and medium-and-large registry, terminal reuse, automatic
+the bounded sole small-or-medium route and aggregate regular-pages registry, terminal reuse, automatic
 and multiple dynamic arenas, complete process options/TLS/shutdown,
 pthread/TLS teardown hooks, fork repair, public libc backend integration,
 performance qualification, and default promotion remain unfinished. The next
@@ -199,12 +203,12 @@ pairing or unmapped abandonment to `src/arena.c:1304-1409`. The current
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit transfer
 now has two narrow forms: the sole small-or-medium route and the aggregate
-medium-and-large registry both convert the long mutation lease into a short
+regular-pages registry both convert the long mutation lease into a short
 locked free owner,
 retain stable span/arena/Heap facts rather than the old Theap/TLD, and prove
 bitmap/count pairing through actual teardown and sequential later frees. The
-aggregate registry intentionally stops at nonfull regular medium-and-large
-pages. Do not extend it to another page shape without its source-specific
+aggregate registry intentionally stops at nonfull regular small, medium, and
+large pages. Do not extend it to another page shape without its source-specific
 publication, terminal-release, allocation-time claim/reclaim, and concurrency
 evidence.
 
@@ -224,9 +228,10 @@ mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
 regular route's medium, threshold-adjacent non-direct small, upper direct and
 non-direct small boundaries, direct-image preflight refusal, full-small
 pre-detach refusal, one-page-refusal, and cross-thread movement
-regressions, and the aggregate medium-and-large registry's mixed-page
-release, retired-large prepass, small-class and malformed-predecessor preflight
-refusal, post-claim distinct-large-bin selection, large-span terminal release,
+regressions, and the aggregate regular-pages registry's mixed small/medium/large
+release, retired-large prepass, malformed direct-image and malformed-predecessor
+preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
+selection, large-span terminal release,
 and large force-collection-to-drained regressions), and
 `abandoned::tests::mapped_one_block_owner_exit_free_retains_a_nonempty_medium_page`,
 which proves the mapped endpoint cannot reclaim or requeue a still-live page,
@@ -243,7 +248,7 @@ and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/allocator/ratchet-v3.5.0.json` snapshot with 77 items and 81
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
-all-free scan/three sole-page handoffs/aggregate medium-and-large registry, or either
+all-free scan/three sole-page handoffs/aggregate regular-pages registry, or either
 bounded process page owner. The next frontier is another page-bearing
 owner-exit class or registry adoption policy, then complete process and real
 pthread/TLS lifecycle integration—not routing that general policy through either

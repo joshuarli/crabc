@@ -17,7 +17,7 @@ engines over their matched pair, including one all-free later-main exit drain
 and its three sole-page handoffs (a full arena singleton, a mapped medium
 one-block page, and a nonfull mapped small-or-medium post-exit client-free
 route) plus
-one aggregate medium-and-large post-exit registry, ordinary
+one aggregate regular small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
 kernels, the allocation-free recursive once protocol, pure page geometry, and
@@ -60,7 +60,7 @@ normal fresh/release ordering through map, bitmap, metadata, and slices. It
 chooses no reserve policy, does not model the C `mi_page_map_empty` pre-root,
 and has no concurrent/general later-thread page routing, general owner exit
 beyond the recorded all-free later-main scan, its three sole-page handoffs,
-and the bounded aggregate medium-and-large traversal, teardown, or public
+and the bounded aggregate regular-pages traversal, teardown, or public
 routing.
 The coordinator deliberately does not reserve this shared arena or supply a
 full process lifecycle. An unpublished
@@ -259,7 +259,7 @@ full-singleton terminal release, bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
 all-free exit drain plus its full-singleton, mapped-medium-one-block, and
 sole mapped small-or-medium post-exit client-free handoffs and
-aggregate medium-and-large
+aggregate regular-pages
 post-exit registry, these pieces are
 not yet wired into general
 allocation/free routing, integrated allocator TLS/process/thread teardown,
@@ -270,8 +270,10 @@ mapped empty-before-reclaim handoff, and one sole nonfull small-or-medium
 process route whose linear client frees begin after actual old Theap/TLD
 teardown. Its direct-small member validates and clears the exact rounded source
 direct-cache range before that teardown; full small pages remain excluded. The
-separate medium-and-large source-order aggregate traversal's retired/force-empty
-result remains an ordinary drain. It still does not claim a general thread
+separate regular-pages source-order aggregate traversal validates the complete
+source direct-cache image, refreshes its queue head before page-count detach,
+and returns an ordinary drain when retirement/force collection empties every
+page. It still does not claim a general thread
 lifecycle, abandonment traversal, or `pthread`
 integration claim. The compiler-TLS codegen probe proves hidden
 initial-exec AArch64 root access and direct thread-pointer identity without a
