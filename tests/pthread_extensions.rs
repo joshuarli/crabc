@@ -20,14 +20,12 @@ fn pthread_extensions_under_loader() {
 
     let source = fixtures.join("pthread_extensions_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-pthread-extensions");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),

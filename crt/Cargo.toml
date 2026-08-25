@@ -1,0 +1,13 @@
+[package]
+name = "crabc-crt"
+version.workspace = true
+edition.workspace = true
+description = "Rust-owned Linux/AArch64 application CRT object builder"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false

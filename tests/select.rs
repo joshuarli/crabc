@@ -16,15 +16,13 @@ fn select_exports_under_libc_so() {
 
     let src = fixtures.join("select_test.c");
     let bin = test_support::TempArtifact::new("crabc-c-abi-select");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -34,8 +32,8 @@ fn select_exports_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for select_test");
-    assert!(status.success(), "musl-gcc select_test compilation failed");
+        .expect("failed to run crabc-cc for select_test");
+    assert!(status.success(), "crabc-cc select_test compilation failed");
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", &target)

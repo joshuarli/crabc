@@ -13,7 +13,7 @@ fn loader_debug_exports_report_post_startup_rendezvous() {
     assert!(target.join("libldso.so").exists(), "libldso.so not found");
     assert!(target.join("libc.so").exists(), "libc.so not found");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -22,8 +22,6 @@ fn loader_debug_exports_report_post_startup_rendezvous() {
             "-I",
             root.join("include").to_str().unwrap(),
             source.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
@@ -35,7 +33,7 @@ fn loader_debug_exports_report_post_startup_rendezvous() {
         .expect("failed to compile loader_debug_exports_test");
     assert!(
         status.success(),
-        "musl-gcc loader_debug_exports_test compilation failed"
+        "crabc-cc loader_debug_exports_test compilation failed"
     );
 
     let output = Command::new(&binary)

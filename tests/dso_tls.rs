@@ -16,7 +16,7 @@ fn dso_tls_works_in_main_and_pthread_threads() {
     let libtls_src = fixtures.join("libtls.c");
     let libtls_so = test_support::TempArtifact::new("libtls.so");
     let temp_dir = libtls_so.parent();
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-shared",
             "-fPIC",
@@ -25,19 +25,17 @@ fn dso_tls_works_in_main_and_pthread_threads() {
             libtls_so.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for libtls.so");
-    assert!(status.success(), "musl-gcc libtls.so compilation failed");
+        .expect("failed to run crabc-cc for libtls.so");
+    assert!(status.success(), "crabc-cc libtls.so compilation failed");
 
     let src = fixtures.join("dso_tls_test.c");
     let bin = test_support::TempArtifact::new("dso_tls_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             temp_dir.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -48,8 +46,8 @@ fn dso_tls_works_in_main_and_pthread_threads() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for dso_tls_test");
-    assert!(status.success(), "musl-gcc dso_tls_test compilation failed");
+        .expect("failed to run crabc-cc for dso_tls_test");
+    assert!(status.success(), "crabc-cc dso_tls_test compilation failed");
 
     let readelf = Command::new("readelf")
         .args(["-r", libtls_so.to_str().unwrap()])

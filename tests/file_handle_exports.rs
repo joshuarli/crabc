@@ -9,7 +9,7 @@ fn file_handle_exports_under_libc_so() {
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/file_handle_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-file-handle");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-std=c11",
             "-fPIE",
@@ -17,8 +17,6 @@ fn file_handle_exports_under_libc_so() {
             "-fno-builtin",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -28,10 +26,10 @@ fn file_handle_exports_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for file_handle_exports_test");
+        .expect("failed to run crabc-cc for file_handle_exports_test");
     assert!(
         status.success(),
-        "musl-gcc file_handle_exports_test compilation failed"
+        "crabc-cc file_handle_exports_test compilation failed"
     );
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)

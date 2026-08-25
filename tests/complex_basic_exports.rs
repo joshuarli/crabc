@@ -16,8 +16,6 @@ fn complex_basic_exports_under_libc_so() {
         "-fno-builtin".to_string(),
         "-I".to_string(),
         root.join("include").to_str().unwrap().to_string(),
-        "-Wl,--dynamic-linker".to_string(),
-        target.join("libldso.so").to_str().unwrap().to_string(),
         "-L".to_string(),
         target.to_str().unwrap().to_string(),
         source.to_str().unwrap().to_string(),
@@ -26,7 +24,7 @@ fn complex_basic_exports_under_libc_so() {
         "-o".to_string(),
         binary.to_str().unwrap().to_string(),
     ];
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args(&args)
         .status()
         .expect("failed to compile complex-basic fixture");

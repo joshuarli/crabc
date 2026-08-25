@@ -9,7 +9,7 @@ fn filesystem_traversal_under_libc_so() {
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/filesystem_traversal_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-filesystem-traversal");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -17,8 +17,6 @@ fn filesystem_traversal_under_libc_so() {
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -28,7 +26,7 @@ fn filesystem_traversal_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for filesystem_traversal_test");
+        .expect("failed to run crabc-cc for filesystem_traversal_test");
     assert!(
         status.success(),
         "filesystem_traversal_test compilation failed"

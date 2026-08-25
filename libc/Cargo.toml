@@ -329,6 +329,21 @@ path = "../tests/init_fini_exports.rs"
 
 
 [[test]]
+name = "startup_stack_guard"
+path = "../tests/startup_stack_guard.rs"
+
+
+[[test]]
+name = "startup_private_boundary"
+path = "../tests/startup_private_boundary.rs"
+
+
+[[test]]
+name = "cxa_finalize"
+path = "../tests/cxa_finalize.rs"
+
+
+[[test]]
 name = "integer_numeric"
 path = "../tests/integer_numeric.rs"
 

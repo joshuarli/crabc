@@ -14,7 +14,7 @@ fn public_tls_get_addr_resolves_a_dso_tls_image() {
     let temp_dir = dso.parent();
     let binary = test_support::TempArtifact::new("tls_get_addr_test");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-shared",
             "-fPIC",
@@ -26,15 +26,13 @@ fn public_tls_get_addr_resolves_a_dso_tls_image() {
         .expect("failed to build TLS DSO");
     assert!(status.success(), "TLS DSO compilation failed");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
             fixtures.join("tls_get_addr_test.c").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",

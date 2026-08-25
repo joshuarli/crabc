@@ -1,36 +1,33 @@
-# Lua adapter-sysroot evidence
+# Lua owned-sysroot evidence
 
-The pinned Lua 5.4.8 source-build gate is completed current evidence. Run it
-through `./scripts/dev.sh lua` (or `--offline` with a warm verified cache).
-The owning design and exact boundary are in
-[`docs/design/source-build.md`](../design/source-build.md); this note records
-what the completed gate proves and does not prove.
+`./scripts/dev.sh lua` is the completed native Linux/AArch64 Lua 5.4.8
+source-build gate. It first produces the two-clean-build owned sysroot proof,
+then invokes `target/crabc-sysroot/bin/crabc-cc` for every candidate Lua
+compile and link.
 
-## Completed contract
+The generated report is `compat/reports/lua/latest.json`. It retains the
+tarball pin, compiler commands, header traces, resolved linker-input audits,
+ELF metadata, raw stdout/stderr/status comparisons, candidate process maps,
+and diagnostic `strace` records. A passing report requires all of the
+following:
 
-The generated adapter sysroot uses crabc public headers and staged `libc.so`,
-`libc.a`, and `libldso.so`. The harness builds a real shared `liblua.so`, a
-dynamically linked `lua` interpreter, a statically composed upstream-valid
-`luac`, and separately compiled success and controlled-failure extension DSOs.
-It compares source and bytecode execution with the pinned musl reference
-byte-for-byte, validates module success/failure behavior, and proves the
-candidate maps crabc loader/libc, `liblua`, and the requested extension with no
-musl libc mapping.
+- every candidate target link is limited to installed crabc runtime artifacts
+  and declared Lua application objects/libraries;
+- candidate `lua` and `luac` name `/lib/ld-crabc-aarch64.so.1`, and candidate
+  maps hash-match the installed crabc loader/libc plus `liblua` and the loaded
+  probe extension;
+- no musl libc, glibc loader, GCC runtime, or compiler-runtime target input
+  appears in the candidate boundary;
+- source and bytecode workloads match pinned musl 1.2.6 byte-for-byte; and
+- module success, cached reload, missing-symbol, and controlled-init-failure
+  cases all follow the fixture contract.
 
-The generated report at `compat/reports/lua/latest.json` retains source and
-artifact pins, expanded commands, header/link probes, ELF and dynamic-link
-information, raw streams/status, process maps, and non-timing normal/failure
-`strace` diagnostics.
+The musl lane is an execution oracle only. It launches the exact candidate
+executable/application DSOs under musl's loader and copied musl `libc.so`
+without a preload shim. The owned CRT advertises its crabc-only lifecycle
+handoff through a private ELF note; under musl it accepts the ordinary direct
+loader finalizer and musl's normal dependency construction path.
 
-## Boundary retained by the evidence
-
-The gate deliberately uses pinned musl `Scrt1.o`, `crti.o`, and `crtn.o`, plus
-the compiler's CRT support objects, as explicitly recorded build support. It
-does not provide a crabc-owned C CRT or compiler wrapper. The harness rejects
-musl `libc.so` as a target link or runtime mapping, but borrowed CRT objects do
-not become crabc runtime artifacts or establish a self-hosting toolchain.
-
-The precise adapter-sysroot design and failure taxonomy remain stable current
-documentation because later CPython and owned-sysroot work must classify a
-failure before attempting a workaround. Their future acceptance contracts are
-in [`docs/roadmap/source-build.md`](../roadmap/source-build.md).
+`--offline` requires the verified archive cache at
+`compat/lua/.cache/lua-5.4.8.tar.gz`; a cache miss is intentionally an error.
+The cache and reports are ignored generated artifacts.

@@ -12,42 +12,41 @@ fn ldso_runs_pie_with_dependency() {
         .canonicalize()
         .expect("target/debug is not built");
 
-    // Build ldso
+    // These intentionally naked loader probes own `_start` and pass
+    // `-nostdlib`; raw Clang is explicit so musl cannot contribute any target
+    // startup or helper runtime input.
 
-    let ldso_path = manifest_dir.join("target/debug/libldso.so");
-    assert!(
-        ldso_path.exists(),
-        "libldso.so not found at {}",
-        ldso_path.display()
-    );
-
-    // Build libfoo.so
+    // Build libfoo.so without a C runtime.
     let libfoo_src = fixtures.join("libfoo.c");
     let libfoo_so = test_support::TempArtifact::new("libfoo.so");
     let temp_dir = libfoo_so.parent();
-    let status = Command::new("musl-gcc")
+    let mut command = test_support::naked_aarch64_command();
+    let status = command
         .args([
             "-shared",
             "-fPIC",
+            "-nostdlib",
             libfoo_src.to_str().unwrap(),
             "-o",
             libfoo_so.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for libfoo.so");
-    assert!(status.success(), "musl-gcc libfoo.so compilation failed");
+        .expect("failed to compile naked libfoo.so");
+    assert!(status.success(), "naked libfoo.so compilation failed");
 
-    // Build needfoo (PIE, nostdlib, nostartfiles, dynamic-linker=ldso, -lfoo)
+    // Build needfoo with a raw syscall `_start` and the canonical owned
+    // interpreter. The test dispatcher temporarily stages the debug loader
+    // at that path for the normal kernel exec below.
     let needfoo_src = fixtures.join("needfoo.c");
     let needfoo_bin = test_support::TempArtifact::new("needfoo");
-    let status = Command::new("musl-gcc")
+    let mut command = test_support::naked_aarch64_command();
+    let status = command
         .args([
             "-fPIE",
             "-pie",
             "-nostdlib",
             "-nostartfiles",
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
+            "-Wl,--dynamic-linker,/lib/ld-crabc-aarch64.so.1",
             "-L",
             temp_dir.to_str().unwrap(),
             needfoo_src.to_str().unwrap(),
@@ -57,8 +56,8 @@ fn ldso_runs_pie_with_dependency() {
             needfoo_bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for needfoo");
-    assert!(status.success(), "musl-gcc needfoo compilation failed");
+        .expect("failed to compile naked needfoo");
+    assert!(status.success(), "naked needfoo compilation failed");
 
     // Run needfoo with LD_LIBRARY_PATH pointing at the temporary dependency.
     let output = Command::new(&needfoo_bin)

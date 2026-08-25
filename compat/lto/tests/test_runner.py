@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+import tempfile
 import unittest
 
 
@@ -36,6 +37,38 @@ class RunnerHelpersTest(unittest.TestCase):
         self.assertEqual(runner.CONFIGURATIONS[3].runtime, "crabc-static-lto")
         self.assertEqual(runner.CONFIGURATIONS[3].lto, "fat")
         self.assertTrue(runner.CONFIGURATIONS[3].linker_plugin_lto)
+
+    def test_controlled_c_candidate_uses_only_the_owned_driver_contract(self) -> None:
+        command = runner.owned_static_command(
+            pathlib.Path("/owned/bin/crabc-cc"),
+            pathlib.Path("/application/static.c"),
+            pathlib.Path("/work/static-b"),
+            pathlib.Path("/work/link.map"),
+        )
+        self.assertEqual(command[0], "/owned/bin/crabc-cc")
+        self.assertIn("-static", command)
+        self.assertIn("-no-pie", command)
+        self.assertIn("-Wl,--trace", command)
+        self.assertIn("-Wl,-Map=/work/link.map", command)
+        for forbidden in ("musl-gcc", "crtbegin", "crtend", "libgcc", "libssp"):
+            self.assertFalse(any(forbidden in argument for argument in command))
+
+    def test_controlled_c_candidate_does_not_require_musl_gcc_before_its_sysroot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = runner.run_static_c_configuration(
+                runner.CONFIGURATIONS[1],
+                {
+                    "tools": {},
+                    "static_fixture": ROOT / "compat/lto/fixtures/static.c",
+                    "sysroot": pathlib.Path(temporary) / "missing-sysroot",
+                },
+                {},
+                1.0,
+                pathlib.Path(temporary) / "work",
+            )
+        self.assertEqual(result["status"], "unsupported")
+        self.assertIn("owned crabc sysroot", result["reason"])
+        self.assertNotIn("musl-gcc", result["reason"])
 
     def test_snapshot_retains_hash_and_truncates_only_preview(self) -> None:
         value = b"abc" * 20

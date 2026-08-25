@@ -37,7 +37,8 @@ Commands:
   rust-std-dependent  run the dependency-bearing stock Rust application
   lto [options]       run the AArch64 static/build-std LTO evidence matrix
   lto-native-facade [options] run the native crabc-rs facade LTO proof
-  lua [options]       build Lua 5.4 against the crabc adapter sysroot
+  sysroot [options]   build and prove the owned CRT/sysroot and sealed C driver
+  lua [options]       build Lua 5.4 through the owned crabc sysroot
   allocator --quick|--full
                       build/check the pinned mimalloc v3.5.0 C-oracle baseline
   allocator-tls       prove private initial-exec allocator TLS codegen
@@ -178,18 +179,27 @@ run_workspace_tests() {
         # An explicit package selector is already a complete Cargo scope.
         # Injecting `--workspace` also selects unrelated no_std runtime lib-test
         # targets and makes focused package commands fail during their link.
-        run_in_container cargo test "$@"
+        run_in_container python3 scripts/run_owned_test_suite.py \
+            --sysroot target/crabc-sysroot \
+            --loader target/debug/libldso.so \
+            -- cargo test "$@"
         return
     fi
     for argument in "$@"; do
         case "$argument" in
             --lib|--bins|--tests|--examples|--benches|--all-targets|--doc|--bin|--bin=*|--example|--example=*|--test|--test=*|--bench|--bench=*)
-                run_in_container cargo test --workspace "$@"
+                run_in_container python3 scripts/run_owned_test_suite.py \
+                    --sysroot target/crabc-sysroot \
+                    --loader target/debug/libldso.so \
+                    -- cargo test --workspace "$@"
                 return
                 ;;
         esac
     done
-    run_in_container cargo test --workspace --tests "$@"
+    run_in_container python3 scripts/run_owned_test_suite.py \
+        --sysroot target/crabc-sysroot \
+        --loader target/debug/libldso.so \
+        -- cargo test --workspace --tests "$@"
 }
 
 if [ "$#" -eq 0 ]; then
@@ -224,11 +234,12 @@ case "$command" in
         # Integration tests execute target/debug/lib{c,ldso}.so directly, so
         # build their runtime artifacts before compiling the test harness.
         run_in_container cargo build --workspace
-        # The generic integration suite includes `static_hello`, whose C
-        # executable has no unwinder and therefore links the aborting release
-        # archive. Keep that same conventional archive contract as the
-        # dedicated static pthread/TLS gate.
+        # The generic integration suite includes conventional static C
+        # programs. Build the sealed installed tree first so those tests link
+        # through crabc's own CRT and helper archive rather than a musl CRT
+        # bridge.
         run_in_container cargo build --workspace --release
+        run_in_container python3 scripts/build_owned_sysroot.py
         # crabc-rs examples are no_std static-library proofs with their own
         # panic handlers. Cargo's default test target set compiles them with
         # the package's default std feature; its manifest-driven crabc-rs gate
@@ -297,13 +308,11 @@ case "$command" in
         ;;
     static-pthread-tls)
         ensure_image
-        # `libc.a` is linked directly with musl's CRT, so use the aborting
-        # release archive. The debug archive retains unwind-only Rust alloc
-        # code under the project-wide dead-code linker setting and cannot be
-        # linked into this no-unwinder static fixture.
-        run_in_container cargo build --workspace --release
+        # Build the installed tree once; the candidate then uses only its
+        # sealed driver, CRT, libc archive, and compiler-helper archive.
+        run_in_container python3 scripts/build_owned_sysroot.py
         run_in_container python3 scripts/collect_environment.py
-        run_in_container python3 compat/static-pthread-tls/run.py --target-dir /workspace/target/release "$@"
+        run_in_container python3 compat/static-pthread-tls/run.py --sysroot target/crabc-sysroot "$@"
         refresh_dashboard run_in_container
         ;;
     signal-process)
@@ -353,26 +362,37 @@ case "$command" in
     lto)
         ensure_image
         run_in_container cargo build --workspace
+        # Controlled-C candidate B links through the sealed installed driver,
+        # not musl/GCC CRT or compiler-runtime support files.
+        run_in_container python3 scripts/build_owned_sysroot.py
         run_in_container python3 scripts/collect_environment.py
         run_in_container python3 compat/lto/run.py "$@"
         refresh_dashboard run_in_container
         ;;
     lto-native-facade)
         ensure_image
-        # The native-facade proof builds its own application lanes, but the staged
-        # candidate loader/libc is the runtime comparison subject.
-        run_in_container cargo build --workspace
+        # Native-facade candidate lanes link only through the installed sealed
+        # driver. Build the owned CRT/sysroot first; the retained stock-std
+        # musl comparison is a separately labelled oracle lane, not candidate
+        # build provenance.
+        run_in_container python3 scripts/build_owned_sysroot.py
         run_in_container python3 scripts/collect_environment.py
-        run_in_container python3 compat/lto/native_facade_lto.py "$@"
+        run_in_container python3 compat/lto/native_facade_lto.py --sysroot target/crabc-sysroot "$@"
         refresh_dashboard run_in_container
+        ;;
+    sysroot)
+        ensure_image
+        # The Python entry point performs two independently clean production
+        # builds, assembly, mode/link/map evidence, and the reproducibility
+        # comparison. It owns all generated sysroot paths deliberately.
+        run_in_container python3 scripts/build_owned_sysroot.py "$@"
         ;;
     lua)
         ensure_image
-        # Lua is built from the hash-pinned upstream source once, with crabc
-        # headers/link names and an explicitly recorded musl CRT bridge.  The
-        # runner then compares those exact program bytes under musl and crabc.
-        run_in_container cargo build --workspace --release
-        run_in_container python3 compat/lua/run.py --target-dir target/release "$@"
+        # Lua is built from the hash-pinned upstream source through the
+        # installed sealed driver. Musl remains an execution oracle only.
+        run_in_container python3 scripts/build_owned_sysroot.py
+        run_in_container python3 compat/lua/run.py --sysroot target/crabc-sysroot "$@"
         refresh_dashboard run_in_container
         ;;
     allocator)

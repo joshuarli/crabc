@@ -7,22 +7,35 @@ use std::process::Command;
 fn ldso_deduplicates_needed_symlink_aliases() {
     let manifest_dir = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let fixtures = manifest_dir.join("tests/fixtures");
-    let fake_libs = manifest_dir.join("libc-test-harness/fake-libs");
     let target = manifest_dir.join("target/debug");
     let ldso_path = target.join("libldso.so");
+    let libc_path = target.join("libc.so");
     let bin = test_support::TempArtifact::new("ldso_alias_dedup_test");
+    let fake_libs = bin.parent().join("fake-libs");
 
-    assert!(fake_libs.is_dir(), "fake library directory is missing");
     assert!(ldso_path.exists(), "libldso.so not found");
+    assert!(libc_path.exists(), "libc.so not found");
+    std::fs::create_dir(&fake_libs).expect("failed to create isolated fake-library directory");
+    for library in [
+        "libc",
+        "libpthread",
+        "libm",
+        "librt",
+        "libcrypt",
+        "libdl",
+        "libresolv",
+        "libutil",
+    ] {
+        std::os::unix::fs::symlink(&libc_path, fake_libs.join(format!("{library}.so")))
+            .expect("failed to create isolated libc alias");
+    }
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             manifest_dir.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             fake_libs.to_str().unwrap(),
             "-Wl,--no-as-needed",

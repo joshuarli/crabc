@@ -11,15 +11,13 @@ fn dynamic_loader_introspection_reports_real_objects() {
     let target = root.join("target/debug");
     let ldso = target.join("libldso.so");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             root.join("include").to_str().unwrap(),
             source.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",

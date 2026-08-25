@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -48,6 +49,15 @@ TARGET = "aarch64-unknown-linux-musl"
 TOOLCHAIN = "nightly-2026-07-24"
 MUSL_VERSION = "1.2.6"
 MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
+SYSROOT_TOOL = ROOT / "scripts/crabc_sysroot.py"
+DEFAULT_SYSROOT = ROOT / "target/crabc-sysroot"
+
+
+SYSROOT_SPEC = importlib.util.spec_from_file_location("crabc_lto_sysroot", SYSROOT_TOOL)
+assert SYSROOT_SPEC is not None and SYSROOT_SPEC.loader is not None
+SYSROOT = importlib.util.module_from_spec(SYSROOT_SPEC)
+sys.modules[SYSROOT_SPEC.name] = SYSROOT
+SYSROOT_SPEC.loader.exec_module(SYSROOT)
 
 
 class RunnerError(RuntimeError):
@@ -552,7 +562,9 @@ def queried_gcc_file(musl_gcc: str, name: str) -> tuple[Path | None, dict[str, o
     return path, record
 
 
-def static_crt_evidence(inputs: Mapping[str, object], musl_gcc: str) -> tuple[dict[str, Path], list[dict[str, object]]]:
+def musl_static_crt_evidence(inputs: Mapping[str, object], musl_gcc: str) -> tuple[dict[str, Path], list[dict[str, object]]]:
+    """Resolve A's musl/GCC static support inputs as oracle evidence only."""
+
     musl_root = inputs["musl_root"]
     assert isinstance(musl_root, Path)
     paths = {
@@ -580,6 +592,57 @@ def static_crt_evidence(inputs: Mapping[str, object], musl_gcc: str) -> tuple[di
     return paths, records
 
 
+def owned_static_sysroot_evidence(inputs: Mapping[str, object]) -> dict[str, object]:
+    """Resolve B's sealed application-CRT inputs without a musl fallback.
+
+    Configuration B is a direct consumer of the installed application sysroot.
+    Its C source remains an application input, while the CRT, libc archive, and
+    compiler-helper archive are selected only by ``crabc-cc``. Keep this
+    boundary here instead of reconstructing an owned link from individual
+    paths: the wrapper seals target search paths and ordering.
+    """
+
+    configured = inputs["sysroot"]
+    assert isinstance(configured, Path)
+    try:
+        sysroot = SYSROOT.require_directory(configured, "owned crabc sysroot")
+        manifest = SYSROOT.load_installed_manifest(sysroot)
+        runtime = SYSROOT.installed_runtime_paths(sysroot)
+    except SYSROOT.SysrootError as error:
+        raise RunnerError(str(error)) from error
+    wrapper = sysroot / "bin/crabc-cc"
+    if not wrapper.is_file() or not os.access(wrapper, os.X_OK):
+        raise RunnerError(f"owned crabc compiler wrapper is missing or not executable: {wrapper}")
+    for name in ("crt1.o", "crti.o", "crtn.o", "libc.a", "builtins"):
+        runtime_path = runtime[name]
+        if not runtime_path.is_file():
+            raise RunnerError(f"owned sysroot runtime input is absent ({name}): {runtime_path}")
+    return {
+        "sysroot": sysroot,
+        "wrapper": wrapper,
+        "manifest": manifest,
+        "runtime": runtime,
+    }
+
+
+def owned_static_command(wrapper: Path, source: Path, binary: Path, map_file: Path) -> list[str]:
+    """Build B through the sealed driver, including its resolved-link trace."""
+
+    return [
+        str(wrapper),
+        "-O3",
+        "-static",
+        "-no-pie",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        str(source),
+        f"-Wl,-Map={map_file}",
+        "-Wl,--trace",
+        "-o",
+        str(binary),
+    ]
+
+
 def run_static_c_configuration(
     configuration: Configuration,
     inputs: Mapping[str, object],
@@ -587,25 +650,24 @@ def run_static_c_configuration(
     timeout: float,
     workspace: Path,
 ) -> dict[str, object]:
-    """Build A/B from one C source with explicit CRT and archive provenance."""
+    """Build the musl oracle A and owned-sysroot candidate B from one C source."""
 
     tools = inputs["tools"]
     source = inputs["static_fixture"]
     musl_gcc = tools.get("musl_gcc")
     assert isinstance(tools, Mapping) and isinstance(source, Path)
-    if musl_gcc is None:
-        return {"status": "unsupported", "reason": "musl-gcc is unavailable"}
     project = workspace
     project.mkdir(parents=True)
     binary = project / f"static-{configuration.key.lower()}"
     map_file = project / "link.map"
     command_records: list[dict[str, object]] = []
-    try:
-        crt, crt_records = static_crt_evidence(inputs, musl_gcc)
-    except RunnerError as error:
-        return {"status": "unsupported", "reason": str(error)}
-
     if configuration.key == "A":
+        if musl_gcc is None:
+            return {"status": "unsupported", "reason": "musl-gcc is unavailable"}
+        try:
+            crt, crt_records = musl_static_crt_evidence(inputs, musl_gcc)
+        except RunnerError as error:
+            return {"status": "unsupported", "reason": str(error)}
         command = [
             musl_gcc,
             "-O3",
@@ -621,55 +683,20 @@ def run_static_c_configuration(
         record = command_record(command, cwd=project)
         command_records.append(record)
     else:
-        object_file = project / "static.o"
-        compile_command = [
-            musl_gcc,
-            "-O3",
-            "-fno-builtin",
-            "-fno-stack-protector",
-            "-c",
-            str(source),
-            "-o",
-            str(object_file),
-        ]
-        compile_record = command_record(compile_command, cwd=project)
-        command_records.append(compile_record)
-        if compile_record["returncode"] != 0 or not object_file.is_file():
-            return {
-                "status": "unbuildable",
-                "reason": "controlled C compilation failed",
-                "build": {"commands": command_records, "crt_queries": crt_records},
-            }
-        candidate_archive = inputs["candidate_archive"]
-        assert isinstance(candidate_archive, Path)
-        musl_libdir = inputs["musl_root"] / "lib"
-        gcc_libdir = crt["libgcc"].parent
-        link_command = [
-            musl_gcc,
-            "-nostdlib",
-            "-static",
-            "-no-pie",
-            f"-Wl,-Map={map_file}",
-            str(crt["crt1"]),
-            str(crt["crti"]),
-            str(crt["crtbeginS"]),
-            str(object_file),
-            f"-L{musl_libdir}",
-            f"-L{gcc_libdir}",
-            "-lssp_nonshared",
-            "-Wl,--start-group",
-            str(candidate_archive),
-            "-lgcc",
-            "-lgcc_eh",
-            "-Wl,--end-group",
-            str(crt["crtendS"]),
-            str(crt["crtn"]),
-            "-o",
-            str(binary),
-        ]
-        link_record = command_record(link_command, cwd=project)
-        command_records.append(link_record)
-        record = link_record
+        try:
+            owned = owned_static_sysroot_evidence(inputs)
+        except RunnerError as error:
+            return {"status": "unsupported", "reason": str(error)}
+        wrapper = owned["wrapper"]
+        assert isinstance(wrapper, Path)
+        command = owned_static_command(wrapper, source, binary, map_file)
+        # The wrapper itself seals all target search paths. Supplying the same
+        # environment makes the recorded command independent from a caller's
+        # target-runtime shell variables.
+        record = command_record(command, cwd=project, environment=SYSROOT.seal_environment())
+        command_records.append(record)
+        crt = {}
+        crt_records = []
 
     build: dict[str, object] = {
         "commands": command_records,
@@ -689,7 +716,9 @@ def run_static_c_configuration(
         return {"status": "invalid", "reason": str(error), "build": build}
     build.update({"binary_sha256": sha256_file(binary), "artifact": inspection})
     map_text = map_file.read_text(encoding="utf-8", errors="replace") if map_file.is_file() else ""
-    candidate_archive = inputs["candidate_archive"]
+    candidate_archive = (
+        owned["runtime"]["libc.a"] if configuration.key == "B" else inputs["candidate_archive"]
+    )
     assert isinstance(candidate_archive, Path)
     candidate_marker = str(candidate_archive)
     candidate_nm_record: dict[str, object] | None = None
@@ -706,9 +735,36 @@ def run_static_c_configuration(
     contains_candidate_member = bool(candidate_member_matches)
     contains_candidate = contains_candidate_path or contains_candidate_member
     contains_musl_archive = str(inputs["musl_archive"]) in map_text
+    owned_trace_audit: dict[str, object] | None = None
+    if configuration.key == "B":
+        trace_bytes = b""
+        trace_truncated = False
+        for stream_name in ("stdout", "stderr"):
+            stream = record.get(stream_name, {})
+            if isinstance(stream, Mapping):
+                trace_bytes += str(stream.get("preview", "")).encode()
+                trace_truncated = trace_truncated or bool(stream.get("preview_truncated"))
+        sysroot = owned["sysroot"]
+        assert isinstance(sysroot, Path)
+        owned_trace_audit = (
+            {"status": "unverified", "reason": "controlled-C linker trace exceeded retained evidence"}
+            if trace_truncated
+            else SYSROOT.audit_linker_trace(trace_bytes, sysroot, [source], [project])
+        )
+        build["owned_sysroot"] = {
+            "path": str(sysroot),
+            "manifest": owned["manifest"],
+            "runtime": {
+                name: str(path)
+                for name, path in owned["runtime"].items()
+                if name in {"crt1.o", "crti.o", "crtn.o", "libc.a", "builtins"}
+            },
+            "link_trace_audit": owned_trace_audit,
+        }
     claims = {
         "controlled_c_fixture": True,
-        "static_crt_explicit": True,
+        "static_crt_explicit": configuration.key == "A",
+        "static_crt_owned_sysroot": configuration.key == "B",
         "static_link_map": snapshot(map_text.encode()),
         "static_link_map_sha256": sha256_bytes(map_text.encode()),
         "static_link_map_contains_candidate": contains_candidate,
@@ -718,14 +774,22 @@ def run_static_c_configuration(
         "static_link_map_contains_musl": contains_musl_archive,
         "static_link_map_contains_musl_root": str(inputs["musl_root"]) in map_text,
         "static_crabc_linkage_proven": (
-            configuration.key == "B" and contains_candidate and not contains_musl_archive
+            configuration.key == "B"
+            and contains_candidate
+            and not contains_musl_archive
+            and owned_trace_audit is not None
+            and owned_trace_audit.get("status") == "passed"
         ),
         "runtime_status_zero": None,
         "whole_program_lto_proven": False,
     }
     build["claims"] = claims
     if configuration.key == "B" and not claims["static_crabc_linkage_proven"]:
-        return {"status": "invalid", "reason": "candidate archive absent from explicit static link map", "build": build}
+        return {
+            "status": "invalid",
+            "reason": "owned static link does not prove exclusive crabc sysroot inputs",
+            "build": build,
+        }
     runtime_workspace = project / "runtime"
     runtime_workspace.mkdir()
     runtime = run_binary(binary, environment, timeout, cwd=runtime_workspace)
@@ -989,6 +1053,7 @@ def validate_inputs(args: argparse.Namespace, tools: Mapping[str, str]) -> dict[
         raise RunnerError("--timeout must be positive")
     musl_root = args.musl_root.expanduser().resolve()
     target_dir = args.target_dir.expanduser().resolve()
+    sysroot = args.sysroot.expanduser().resolve()
     fixture = args.fixture.expanduser().resolve()
     if musl_root.name != f"musl-{MUSL_VERSION}":
         raise RunnerError(f"--musl-root must name pinned musl-{MUSL_VERSION}: {musl_root}")
@@ -1000,6 +1065,7 @@ def validate_inputs(args: argparse.Namespace, tools: Mapping[str, str]) -> dict[
         "musl_libc": musl_root / "lib/libc.so",
         "musl_archive": musl_root / "lib/libc.a",
         "target_dir": target_dir,
+        "sysroot": sysroot,
         "candidate_loader": target_dir / "libldso.so",
         "candidate_libc": target_dir / "libc.so",
         "candidate_archive": target_dir / "libc.a",
@@ -1026,6 +1092,10 @@ def host_capability_reasons(inputs: Mapping[str, object], tool_attempts: Mapping
         assert isinstance(path, Path)
         if not path.is_file():
             reasons.append(f"pinned musl artifact unavailable: {path}")
+    try:
+        owned_static_sysroot_evidence(inputs)
+    except RunnerError as error:
+        reasons.append(f"owned static B sysroot unavailable: {error}")
     if platform.system() == "Linux" and platform.machine().lower() in {"aarch64", "arm64"}:
         active = command_record([inputs["tools"]["rustup"], "show", "active-toolchain"])
         active_text = command_text(active)
@@ -1481,6 +1551,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--musl-root", type=Path, default=Path(os.environ.get("MUSL_ROOT", MUSL_ROOT)))
     parser.add_argument("--target-dir", type=Path, default=ROOT / "target/debug")
+    parser.add_argument(
+        "--sysroot",
+        type=Path,
+        default=Path(os.environ.get("CRABC_SYSROOT", DEFAULT_SYSROOT)),
+        help="installed owned crabc sysroot used by controlled-C candidate B",
+    )
     parser.add_argument("--fixture", type=Path, default=FIXTURE)
     parser.add_argument("--report", type=Path, default=REPORT)
     parser.add_argument("--timeout", type=float, default=20.0)

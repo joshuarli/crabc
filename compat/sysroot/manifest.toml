@@ -1,0 +1,22 @@
+[target]
+triple = "aarch64-unknown-linux-musl"
+interpreter = "/lib/ld-crabc-aarch64.so.1"
+kernel_minimum = "5.10"
+
+[fixtures]
+main = "mode_main.c"
+shared = "mode_shared.c"
+header_trace = "header_trace.c"
+startup_contract = "startup_contract.c"
+exit_contract = "exit_contract.c"
+exit_contract_dso = "exit_contract_dso.c"
+cxa_finalize = "cxa_finalize.c"
+lifecycle_main = "lifecycle_main.c"
+lifecycle_leaf = "lifecycle_leaf.c"
+lifecycle_mid = "lifecycle_mid.c"
+lifecycle_late = "lifecycle_late.c"
+lifecycle_late_tls = "lifecycle_late_tls.c"
+stack_guard = "stack_guard.c"
+stack_smash = "stack_smash.c"
+tls_threads = "tls_threads.c"
+compiler_helpers = "compiler_helpers.c"

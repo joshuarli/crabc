@@ -10,28 +10,24 @@ fn ldso_sets_up_tls() {
     let tlstest_src = fixtures.join("tlstest.c");
     let tlstest_bin = test_support::TempArtifact::new("tlstest");
 
-    let ldso_path = manifest_dir.join("target/debug/libldso.so");
-    assert!(
-        ldso_path.exists(),
-        "libldso.so not found at {}",
-        ldso_path.display()
-    );
-
-    let status = Command::new("musl-gcc")
+    // This is a naked `_start` loader/TLS probe, not a libc/CRT candidate
+    // link. Raw Clang prevents a musl compiler wrapper from contributing
+    // target headers, startup objects, or compiler helper archives.
+    let mut command = test_support::naked_aarch64_command();
+    let status = command
         .args([
             "-fPIE",
             "-pie",
             "-nostdlib",
             "-nostartfiles",
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
+            "-Wl,--dynamic-linker,/lib/ld-crabc-aarch64.so.1",
             tlstest_src.to_str().unwrap(),
             "-o",
             tlstest_bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for tlstest");
-    assert!(status.success(), "musl-gcc tlstest compilation failed");
+        .expect("failed to compile naked TLS loader probe");
+    assert!(status.success(), "naked TLS loader probe compilation failed");
 
     let output = Command::new(&tlstest_bin)
         .output()

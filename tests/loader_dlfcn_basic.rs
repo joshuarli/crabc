@@ -12,7 +12,7 @@ fn build_dso(
 ) {
     let state_define = format!("-DLOADER_STATE_SYMBOL={state_symbol}");
     let value_define = format!("-DLOADER_VALUE_SYMBOL={value_symbol}");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-shared",
             "-fPIC",
@@ -25,7 +25,7 @@ fn build_dso(
             output.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for loader DSO");
+        .expect("failed to run crabc-cc for loader DSO");
     assert!(status.success(), "loader DSO compilation failed");
 }
 
@@ -80,14 +80,12 @@ fn native_loader_basic_owns_handles_and_uses_private_runtime() {
     assert!(debug.join("libc.so").is_file(), "libc.so not found");
     assert!(archive.is_file(), "native loader probe archive not found");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            debug.join("libldso.so").to_str().unwrap(),
             "-L",
             debug.to_str().unwrap(),
             fixture.to_str().unwrap(),

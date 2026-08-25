@@ -24,9 +24,12 @@ defines the measurable Linux/AArch64 performance bar;
 [`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md)
 defines the sequenced real-software and `crabc-rs` application corpus; and
 [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) retains the
-future CPython and crabc-owned-sysroot work. The completed Lua adapter-sysroot
-gate is current evidence in
-[`docs/design/source-build.md`](docs/design/source-build.md).
+future CPython source-build contract. The completed Rust-owned application
+CRT/sysroot and Lua source-build gates are documented in
+[`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md) and
+[`docs/design/source-build.md`](docs/design/source-build.md). Their purity
+evidence distinguishes the completed CRT/sysroot boundary from the remaining
+native allocator dependency.
 
 The selected musl/Rustix performance evidence and current optimization frontier
 are documented in [`docs/design/performance.md`](docs/design/performance.md).
@@ -52,6 +55,7 @@ The image and compatibility oracles are pinned in
 ./scripts/dev.sh test
 ./scripts/dev.sh crabc-rs    # native Rust capability suite and proofs
 ./scripts/dev.sh lto-native-facade # native crabc-rs O3/fat-LTO evidence
+./scripts/dev.sh sysroot     # Rust-owned CRT, sealed driver, and purity proof
 ./scripts/dev.sh lua         # pinned Lua 5.4 source-build/extension-loading gate
 ./scripts/dev.sh perf --label baseline # controlled musl-vs-crabc performance evidence
 ./scripts/dev.sh perf-native --label baseline # crabc-rs vs Rustix direct facade evidence
@@ -72,6 +76,8 @@ project scope.
 |---|---|
 | `libc/` | `libc.so` / `libc.a`: Rust `no_std` C ABI and libc-owned runtime state |
 | `ldso/` | `libldso.so`: AArch64 dynamic linker |
+| `crt/` | Rust-produced application CRT start/end objects |
+| `builtins/` | Rust `no_std` compiler-helper archive for final C links |
 | `crabc-core/` | Shared typed `no_std` Linux/AArch64 implementation layer |
 | `crabc-rs/` | Idiomatic Rust OS/runtime capabilities |
 | `include/` | Public C headers |

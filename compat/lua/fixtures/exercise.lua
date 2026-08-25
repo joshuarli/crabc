@@ -81,7 +81,7 @@ if os.getenv("CRABC_LUA_MAPS_WAIT") == "1" then
     io.stdout:flush()
     check(io.stdin:read("*l") == "continue", "stdin round trip mismatch")
 end
-check(os.getenv("CRABC_LUA_ENV") == "adapter-sysroot", "environment lookup mismatch")
+check(os.getenv("CRABC_LUA_ENV") == "owned-sysroot", "environment lookup mismatch")
 check(type(os.time()) == "number", "time lookup mismatch")
 check(os.date("!%Y-%m-%dT%H:%M:%SZ", 0) == "1970-01-01T00:00:00Z",
       "UTC epoch formatting mismatch")

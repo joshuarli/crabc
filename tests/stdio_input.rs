@@ -18,14 +18,12 @@ fn stdio_input_functions_under_libc_so() {
 
     let src = fixtures.join("stdio_input_test.c");
     let bin = test_support::TempArtifact::new("stdio_input_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -35,10 +33,10 @@ fn stdio_input_functions_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for stdio_input_test");
+        .expect("failed to run crabc-cc for stdio_input_test");
     assert!(
         status.success(),
-        "musl-gcc stdio_input_test compilation failed"
+        "crabc-cc stdio_input_test compilation failed"
     );
 
     let input_path = test_support::TempArtifact::new("stdio_input_test.txt");

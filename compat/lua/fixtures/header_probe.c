@@ -1,4 +1,4 @@
-/* C header-only probe used by the Lua adapter-sysroot harness. */
+/* C header-only probe used by the Lua owned-sysroot harness. */
 
 #include <errno.h>
 #include <fcntl.h>

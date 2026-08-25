@@ -9,6 +9,18 @@ allocator invention or another platform. [`COMPATIBILITY.md`](COMPATIBILITY.md)
 remains the generated record of current compatibility evidence and
 measurements; it is not edited by hand.
 
+The Rust-owned Linux/AArch64 application CRT/sysroot is also complete current
+evidence. `./scripts/dev.sh sysroot` produces two clean reproducible installed
+trees with `crabc-cc`, Rust CRT objects, Rust compiler helpers, the canonical
+crabc loader, and explicit source/dependency/link/artifact purity accounting.
+`./scripts/dev.sh lua` consumes that installed tree for the pinned Lua
+source-build gate; the static pthread/TLS gate and static integration fixtures
+do the same. This completed boundary is documented in
+[`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md). It is
+precisely **CRT/sysroot** purity: the report keeps complete target-runtime
+purity `blocked_by_native_allocator` until the separate mimalloc port replaces
+the current `libmimalloc-sys` backend.
+
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free
 small, medium, large, singleton, aligned, and offset-aligned blocks from a
@@ -429,8 +441,8 @@ Future acceptance contracts are deliberately specific:
   governs performance completion.
 - [`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md)
   governs real-software and native-application validation.
-- [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) governs
-  source-build and sysroot progression.
+- [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) governs the
+  remaining CPython source-build progression on the completed sysroot.
 
 Historical documents preserve provenance only; they are never an active
 backlog. No chronological microtask list is a project authority. Read the

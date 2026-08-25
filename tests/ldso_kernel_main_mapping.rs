@@ -11,6 +11,8 @@ fn ldso_reuses_the_kernel_mapped_main_pie() {
     let reference = test_support::TempArtifact::new("ldso-kernel-main-reference");
     let candidate = test_support::TempArtifact::new("ldso-kernel-main-candidate");
 
+    // This is the separately retained musl oracle executable. The crabc
+    // candidate below links through the sealed owned driver.
     let status = Command::new("musl-gcc")
         .args([
             "-fPIE",
@@ -27,13 +29,11 @@ fn ldso_reuses_the_kernel_mapped_main_pie() {
         "pinned-musl main-image fixture compilation failed"
     );
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             fixture.to_str().unwrap(),

@@ -16,14 +16,12 @@ fn iconv_utf8_errors_commit_musl_progress() {
 
     let src = fixtures.join("iconv_error_progress_test.c");
     let bin = test_support::TempArtifact::new("iconv_error_progress_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -33,10 +31,10 @@ fn iconv_utf8_errors_commit_musl_progress() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for iconv_error_progress_test");
+        .expect("failed to run crabc-cc for iconv_error_progress_test");
     assert!(
         status.success(),
-        "musl-gcc iconv_error_progress_test compilation failed"
+        "crabc-cc iconv_error_progress_test compilation failed"
     );
 
     let output = Command::new(&bin)

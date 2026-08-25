@@ -91,6 +91,10 @@ name = "crabc-core"
 version = "0.3.0"
 
 [[package]]
+name = "crabc-crt"
+version = "0.3.0"
+
+[[package]]
 name = "crabc-ldso"
 version = "0.3.0"
 

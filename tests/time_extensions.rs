@@ -9,7 +9,7 @@ fn c11_time_extension_under_libc_so() {
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/time_extensions_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-time");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-std=c11",
             "-fPIE",
@@ -17,8 +17,6 @@ fn c11_time_extension_under_libc_so() {
             "-fno-builtin",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -28,10 +26,10 @@ fn c11_time_extension_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for time_extensions_test");
+        .expect("failed to run crabc-cc for time_extensions_test");
     assert!(
         status.success(),
-        "musl-gcc time_extensions_test compilation failed"
+        "crabc-cc time_extensions_test compilation failed"
     );
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)

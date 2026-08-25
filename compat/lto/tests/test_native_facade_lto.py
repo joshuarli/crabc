@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 import tempfile
@@ -123,8 +124,27 @@ class NativeFacadeLtoInspectionTests(unittest.TestCase):
             )
 
     def test_rlib_and_runtime_observations_are_not_byte_claims(self) -> None:
-        self.assertIn("-C lto=fat", RUNNER.rustflags(lto="fat", dynamic=False, no_start_files=True))
-        self.assertIn("-C lto=off", RUNNER.rustflags(lto="off", dynamic=False, no_start_files=True))
+        with tempfile.TemporaryDirectory() as temporary:
+            sysroot = Path(temporary) / "crabc-sysroot"
+            owned = RUNNER.rustflags(
+                lto="fat",
+                dynamic=True,
+                no_start_files=True,
+                runtime=RUNNER.OWNED_SYSROOT_RUNTIME,
+                sysroot=sysroot,
+            )
+        oracle = RUNNER.rustflags(
+            lto="off",
+            dynamic=True,
+            no_start_files=True,
+            runtime=RUNNER.MUSL_ORACLE_RUNTIME,
+        )
+        self.assertIn("-C lto=fat", owned)
+        self.assertIn("-C link-self-contained=no", owned)
+        self.assertIn("-l:libcrabc-builtins.a", owned)
+        self.assertNotIn("/opt/musl-", owned)
+        self.assertIn("-C lto=off", oracle)
+        self.assertIn("/opt/musl-1.2.6", oracle)
         parsed = RUNNER.parse_syscall_summary(
             """
 % time seconds usecs/call calls errors syscall
@@ -134,6 +154,79 @@ class NativeFacadeLtoInspectionTests(unittest.TestCase):
 """
         )
         self.assertEqual(parsed["total_calls"], 3)
+
+    def test_cargo_linker_audit_rejects_foreign_target_runtime_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "linker.jsonl"
+            record.write_text(
+                '["-L/opt/musl-1.2.6/lib", "-lgcc_s"]\n'
+                '["-L/workspace/target/crabc-sysroot/usr/lib", "-lc"]\n',
+                encoding="utf-8",
+            )
+            audit = RUNNER.cargo_linker_argument_audit(record)
+        self.assertEqual(audit["status"], "rejected")
+        self.assertEqual(
+            audit["forbidden_target_runtime_arguments"],
+            ["-L/opt/musl-1.2.6/lib", "-lgcc_s"],
+        )
+
+    def test_cargo_linker_audit_expands_recorded_response_file_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "linker.jsonl"
+            record.write_text(
+                json.dumps(
+                    {
+                        "argv": ["@/tmp/rustc-linker.rsp"],
+                        "response_files": {"@/tmp/rustc-linker.rsp": ["-L/usr/lib/gcc/aarch64", "-lc"]},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            audit = RUNNER.cargo_linker_argument_audit(record)
+        self.assertEqual(audit["status"], "rejected")
+        self.assertEqual(audit["forbidden_target_runtime_arguments"], ["-L/usr/lib/gcc/aarch64"])
+
+    def test_cargo_linker_audit_accepts_owned_sysroot_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            record = Path(temporary) / "linker.jsonl"
+            record.write_text(
+                '["-L/workspace/target/crabc-sysroot/usr/lib", "-lc", "-l:libcrabc-builtins.a"]\n',
+                encoding="utf-8",
+            )
+            audit = RUNNER.cargo_linker_argument_audit(record)
+        self.assertEqual(audit["status"], "passed")
+        self.assertEqual(audit["invocation_count"], 1)
+
+    def test_owned_sysroot_contract_requires_the_sealed_runtime_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sysroot = Path(temporary) / "crabc-sysroot"
+            (sysroot / "bin").mkdir(parents=True)
+            (sysroot / "lib").mkdir()
+            (sysroot / "usr/lib").mkdir(parents=True)
+            (sysroot / "share/crabc").mkdir(parents=True)
+            (sysroot / "share/crabc/manifest.json").write_text(
+                json.dumps(
+                    {
+                        "target": RUNNER.TARGET,
+                        "canonical_interpreter": RUNNER.CANONICAL_INTERPRETER,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (sysroot / "share/crabc/purity.json").write_text(
+                json.dumps({"crt_sysroot_pure_rust": True}), encoding="utf-8"
+            )
+            driver = sysroot / "bin/crabc-cc"
+            driver.write_text("#!/bin/sh\n", encoding="utf-8")
+            driver.chmod(0o755)
+            (sysroot / "lib/ld-crabc-aarch64.so.1").write_bytes(b"loader")
+            for name in ("libc.so", "libc.a", "libcrabc-builtins.a", "crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o"):
+                (sysroot / "usr/lib" / name).write_bytes(name.encode())
+            self.assertEqual(RUNNER.owned_sysroot_reasons(sysroot), [])
+            (sysroot / "usr/lib/libcrabc-builtins.a").unlink()
+            reasons = RUNNER.owned_sysroot_reasons(sysroot)
+        self.assertIn("libcrabc-builtins.a", "\n".join(reasons))
 
 
 if __name__ == "__main__":

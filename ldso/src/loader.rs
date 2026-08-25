@@ -22,6 +22,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
+const PT_NOTE: u32 = 4;
 const PT_PHDR: u32 = 6;
 const PT_TLS: u32 = 7;
 const PT_GNU_RELRO: u32 = 0x6474e552;
@@ -111,6 +112,16 @@ const PH_VADDR: usize = 16;
 const PH_FILESZ: usize = 32;
 const PH_MEMSZ: usize = 40;
 const PH_ALIGN: usize = 48;
+
+// Private `Scrt1.o` lifecycle capability note. The marker deliberately lives
+// in a mapped ELF note instead of libc's dynamic export namespace; `crt` and
+// this parser are its only producers/consumers.
+const OWNED_CRT_NOTE_NAME: &[u8] = b"CRABC\0";
+const OWNED_CRT_NOTE_TYPE: u32 = 0x4352_5401;
+const OWNED_CRT_NOTE_REVISION: u32 = 1;
+const MAX_OWNED_CRT_NOTE_BYTES: usize = 64 * 1024;
+const OWNED_CRT_STARTUP_HANDOFF_MAGIC: u64 = 0x4352_4142_435f_4831;
+const OWNED_CRT_STARTUP_HANDOFF_VERSION: u32 = 1;
 
 const SYMTAB_ENT_SIZE: usize = 24;
 const MAX_LOADED: usize = 16;
@@ -274,6 +285,19 @@ const EMPTY_OBJ: LoadedObject = LoadedObject {
 // Safety: only accessed from single-threaded _start -> run_main
 static mut LOADED: [LoadedObject; MAX_LOADED] = [EMPTY_OBJ; MAX_LOADED];
 static mut LOADED_COUNT: usize = 0;
+// `exit` reaches this hook through the dynamic CRT's `rtld_fini` callback.
+// It is deliberately one-shot: a nested/duplicated finalization request must
+// never replay DSO fini arrays after their mappings or runtime state have
+// begun to wind down.
+static mut PROCESS_FINALIZED: bool = false;
+// The executable CRT enters this callback after its preinit array.  Keep the
+// initial graph one-shot even if malformed application code reaches the
+// private libc bridge again; runtime dlopen uses `run_constructors_for`
+// directly and is not covered by this flag.
+static mut INITIAL_CONSTRUCTORS_RAN: bool = false;
+// Set exactly once after the main image's mapped ELF note is inspected and
+// before libc can invoke the private conventional-CRT callback.
+static mut INITIAL_MAIN_USES_OWNED_CRT: bool = false;
 // No application code runs while the initial DT_NEEDED graph is discovered.
 // This makes the process's loader search path stable for the narrowly scoped
 // bare-name reuse cache below. Runtime dlopen deliberately never uses it.
@@ -2895,14 +2919,203 @@ unsafe fn apply_rela_table(
     }
 }
 
-unsafe fn run_constructors() {
-    // The executable records its preload and DT_NEEDED roots in loader search
-    // order. Recursing from it gives every direct/transitive dependency a
-    // chance to initialize before the consumer, without reversing unrelated
-    // sibling objects merely because of their registration order.
-    for i in 0..LOADED_COUNT {
+unsafe extern "C" fn run_dependency_constructors() {
+    if INITIAL_CONSTRUCTORS_RAN {
+        return;
+    }
+    INITIAL_CONSTRUCTORS_RAN = true;
+    // The CRT owns the main executable's preinit/_init/init-array sequence.
+    // The loader owns only its dependency closure, whose roots begin after
+    // LOADED[0]. libc invokes this callback after main preinit but before
+    // main `_init`, matching musl's documented dynamic-start ordering.
+    for i in 1..LOADED_COUNT {
         run_constructors_for(i);
     }
+}
+
+/// Private x0 handoff from crabc ldso into a recognized owned `Scrt1.o`.
+///
+/// Function pointers are used rather than integer addresses so this immutable
+/// static remains a normal Rust value. `crt/src/startup.rs` reads their exact
+/// one-word C-layout representation as raw addresses after validating the
+/// magic, revision, and complete record size.
+#[repr(C)]
+struct OwnedCrtStartupHandoff {
+    magic: u64,
+    version: u32,
+    abi_size: u32,
+    dependency_constructors: unsafe extern "C" fn(),
+    process_fini: unsafe extern "C" fn(),
+}
+
+static OWNED_CRT_STARTUP_HANDOFF: OwnedCrtStartupHandoff = OwnedCrtStartupHandoff {
+    magic: OWNED_CRT_STARTUP_HANDOFF_MAGIC,
+    version: OWNED_CRT_STARTUP_HANDOFF_VERSION,
+    abi_size: core::mem::size_of::<OwnedCrtStartupHandoff>() as u32,
+    dependency_constructors: run_dependency_constructors,
+    process_fini: __ldso_process_fini,
+};
+
+/// Preserve the historical constructor boundary for an executable linked with
+/// a conventional musl CRT. That CRT has no owned lifecycle note and expects
+/// its main `.init_array` to have run before `main`.
+///
+/// This is intentionally separate from `run_dependency_constructors`: owned
+/// CRT objects must never let ldso run the main executable because they own
+/// preinit, legacy `_init`, and init-array ordering themselves. Calling the
+/// main recursive walk here keeps the legacy main array after its dependency
+/// closure and retains the existing one-shot protection.
+unsafe fn run_legacy_crt_initial_constructors() {
+    if INITIAL_CONSTRUCTORS_RAN {
+        return;
+    }
+    INITIAL_CONSTRUCTORS_RAN = true;
+    run_constructors_for(0);
+}
+
+/// Private operation reached through libc's already-registered ldso dlsym
+/// callback. It runs only for a conventional CRT, after libc has initialized
+/// its guard and initial TLS. An owned `Scrt1.o` receives the dependency-only
+/// callback through x0 and invokes it after its executable preinit array.
+unsafe extern "C" fn run_initial_legacy_constructors_from_libc() {
+    if !INITIAL_MAIN_USES_OWNED_CRT {
+        unsafe { run_legacy_crt_initial_constructors() };
+    }
+}
+
+/// Return whether the main image was linked with the owned application CRT.
+///
+/// `Scrt1.o` emits one small `CRABC` ELF note. It is a lifecycle capability
+/// marker, not an ldso API: the owned CRT consumes the x0 handoff after the
+/// executable preinit array, while a conventional musl CRT keeps a direct x0
+/// finalizer. Inspect the mapped note rather than requiring a libc export.
+///
+/// A malformed or unrecognized note is deliberately treated as the legacy
+/// path. The parser bounds every address through the main image's PT_LOAD
+/// segments before reading the note payload; it never manufactures a Rust
+/// reference to kernel-owned ELF storage.
+unsafe fn main_uses_owned_crt_lifecycle(
+    program_headers: *const u8,
+    program_header_count: usize,
+    image_base: u64,
+) -> bool {
+    for index in 0..program_header_count {
+        let Some(offset) = index.checked_mul(PHDR_SIZE) else {
+            return false;
+        };
+        let header = unsafe { program_headers.add(offset) };
+        let program_type = unsafe { core::ptr::read_unaligned(header.cast::<u32>()) };
+        if program_type != PT_NOTE {
+            continue;
+        }
+        let note_vaddr = unsafe {
+            u64::from_le_bytes(core::ptr::read_unaligned(header.add(PH_VADDR).cast::<[u8; 8]>()))
+        };
+        let note_size = unsafe {
+            u64::from_le_bytes(core::ptr::read_unaligned(header.add(PH_FILESZ).cast::<[u8; 8]>()))
+        };
+        let Ok(note_size) = usize::try_from(note_size) else {
+            return false;
+        };
+        if note_size == 0 || note_size > MAX_OWNED_CRT_NOTE_BYTES {
+            continue;
+        }
+        if !main_range_is_loaded(program_headers, program_header_count, note_vaddr, note_size as u64) {
+            continue;
+        }
+        let Some(note_address) = image_base.checked_add(note_vaddr).map(|value| value as usize) else {
+            return false;
+        };
+        let Some(note_end) = note_address.checked_add(note_size) else {
+            return false;
+        };
+        let mut cursor = note_address;
+        while cursor < note_end {
+            let Some(header_end) = cursor.checked_add(12) else {
+                return false;
+            };
+            if header_end > note_end {
+                return false;
+            }
+            let namesz = unsafe { core::ptr::read_unaligned(cursor as *const u32) } as usize;
+            let descsz = unsafe { core::ptr::read_unaligned((cursor + 4) as *const u32) } as usize;
+            let note_type = unsafe { core::ptr::read_unaligned((cursor + 8) as *const u32) };
+            let Some(names_padded) = note_word_padded_size(namesz) else {
+                return false;
+            };
+            let Some(names_end) = header_end.checked_add(names_padded) else {
+                return false;
+            };
+            let Some(desc_padded) = note_word_padded_size(descsz) else {
+                return false;
+            };
+            let Some(next) = names_end.checked_add(desc_padded) else {
+                return false;
+            };
+            if names_end > note_end || next > note_end {
+                return false;
+            }
+            if note_type == OWNED_CRT_NOTE_TYPE
+                && namesz == OWNED_CRT_NOTE_NAME.len()
+                && descsz == core::mem::size_of::<u32>()
+            {
+                let name = header_end as *const u8;
+                let mut name_matches = true;
+                for name_index in 0..OWNED_CRT_NOTE_NAME.len() {
+                    if unsafe { core::ptr::read(name.add(name_index)) } != OWNED_CRT_NOTE_NAME[name_index] {
+                        name_matches = false;
+                        break;
+                    }
+                }
+                let revision = unsafe { core::ptr::read_unaligned(names_end as *const u32) };
+                if name_matches && revision == OWNED_CRT_NOTE_REVISION {
+                    return true;
+                }
+            }
+            cursor = next;
+        }
+    }
+    false
+}
+
+fn note_word_padded_size(size: usize) -> Option<usize> {
+    size.checked_add(3).map(|value| value & !3)
+}
+
+/// Confirm a PT_NOTE payload lies in one mapped main-image PT_LOAD segment
+/// before its raw bytes are examined.
+unsafe fn main_range_is_loaded(
+    program_headers: *const u8,
+    program_header_count: usize,
+    address: u64,
+    size: u64,
+) -> bool {
+    let Some(end) = address.checked_add(size) else {
+        return false;
+    };
+    for index in 0..program_header_count {
+        let Some(offset) = index.checked_mul(PHDR_SIZE) else {
+            return false;
+        };
+        let header = unsafe { program_headers.add(offset) };
+        let program_type = unsafe { core::ptr::read_unaligned(header.cast::<u32>()) };
+        if program_type != PT_LOAD {
+            continue;
+        }
+        let segment_address = unsafe {
+            u64::from_le_bytes(core::ptr::read_unaligned(header.add(PH_VADDR).cast::<[u8; 8]>()))
+        };
+        let segment_size = unsafe {
+            u64::from_le_bytes(core::ptr::read_unaligned(header.add(PH_MEMSZ).cast::<[u8; 8]>()))
+        };
+        let Some(segment_end) = segment_address.checked_add(segment_size) else {
+            continue;
+        };
+        if address >= segment_address && end <= segment_end {
+            return true;
+        }
+    }
+    false
 }
 
 unsafe fn run_constructors_for(idx: usize) {
@@ -2961,6 +3174,64 @@ unsafe fn run_destructors_for(idx: usize) {
                 f();
             }
         }
+    }
+}
+
+/// Complete the initial DSO graph after the CRT has finalized the main
+/// executable. This callback is handed to dynamic `Scrt1.o` in x0 at entry,
+/// then registered by libc as `rtld_fini`; ordinary application `atexit`
+/// callbacks and the executable fini callback therefore run before this
+/// reverse dependency walk.
+#[no_mangle]
+unsafe extern "C" fn __ldso_process_fini() {
+    if PROCESS_FINALIZED {
+        return;
+    }
+    PROCESS_FINALIZED = true;
+
+    // LOADED[0] is the main program and belongs to the CRT lifecycle. Walk
+    // its roots in dependency-*reverse* order: each consumer's fini array
+    // precedes the providers it used during construction. Raw load-index
+    // reversal is not sufficient because recursive mapping naturally places
+    // a provider after its consumer (leaf-before-middle would be wrong).
+    let root_count = LOADED[0].dependency_count;
+    let roots = LOADED[0].dependencies;
+    for root in roots[..root_count].iter().copied() {
+        finalize_dependency_graph(root);
+    }
+
+    // Preloads or loader-private images need not be direct main dependencies.
+    // Finalize any such residual initial object once, preserving the same
+    // consumer-before-provider recursion when it has its own graph.
+    let mut index = LOADED_COUNT;
+    while index > 1 {
+        index -= 1;
+        finalize_dependency_graph(index);
+    }
+}
+
+// The owned-CRT handoff stores this function's address directly in loader
+// state. It is not an ELF lookup ABI: keeping the Rust `no_mangle` name lets
+// the handoff retain a stable code address while this visibility directive
+// prevents it from escaping through the loader's default dynamic namespace.
+core::arch::global_asm!(".hidden __ldso_process_fini");
+
+/// Finalize one dependency graph in the inverse of its constructor relation.
+///
+/// `run_constructors_for` visits providers before consumers. This function
+/// intentionally invokes a consumer's fini hooks first, then descends to its
+/// providers. The `finalized` bit handles a shared provider and makes the
+/// traversal exactly-once even if the initial graph contains a cycle.
+unsafe fn finalize_dependency_graph(idx: usize) {
+    if idx == 0 || idx >= LOADED_COUNT || !LOADED[idx].active || LOADED[idx].finalized {
+        return;
+    }
+    LOADED[idx].finalized = true;
+    let dependency_count = LOADED[idx].dependency_count;
+    let dependencies = LOADED[idx].dependencies;
+    run_destructors_for(idx);
+    for dependency in dependencies[..dependency_count].iter().copied() {
+        finalize_dependency_graph(dependency);
     }
 }
 
@@ -3496,7 +3767,13 @@ pub unsafe extern "C" fn __ldso_dlsym(handle: *mut u8, symbol: *const u8) -> *mu
     }
     let (name_len, name_gnu_hash) = gnu_symbol_hash_c_string(symbol);
     if handle == DL_PRIVATE_SENTINEL {
-        let private = if str_eq(symbol, name_len, b"__crabc_ldso_iterate_phdr\0".as_ptr()) {
+        let private = if str_eq(
+            symbol,
+            name_len,
+            b"__crabc_ldso_run_initial_legacy_constructors\0".as_ptr(),
+        ) {
+            run_initial_legacy_constructors_from_libc as *mut u8
+        } else if str_eq(symbol, name_len, b"__crabc_ldso_iterate_phdr\0".as_ptr()) {
             __ldso_dl_iterate_phdr as *mut u8
         } else if str_eq(symbol, name_len, b"__crabc_ldso_dladdr\0".as_ptr()) {
             __ldso_dladdr as *mut u8
@@ -4684,6 +4961,12 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
     }
     register_self(ldso_base);
 
+    // Inspect the mapped main image before any constructor runs. The owned
+    // CRT note selects the private x0 handoff; every other executable retains
+    // the conventional direct `rtld_fini` pointer.
+    let owned_crt_lifecycle = unsafe { main_uses_owned_crt_lifecycle(phdr, e_phnum, exec_base) };
+    INITIAL_MAIN_USES_OWNED_CRT = owned_crt_lifecycle;
+
     // `LD_PRELOAD` belongs ahead of the executable's DT_NEEDED graph: its
     // definitions must already be visible when the ordinary dependencies'
     // PLT/GOT relocations are resolved. Preserve the kernel envp pointer until
@@ -4749,8 +5032,6 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
         core::ptr::write(auxv_sym as *mut *const usize, auxv);
     }
 
-    run_constructors();
-
     // Publish the complete post-relocation object graph.  This mirrors musl's
     // initial RT_CONSISTENT rendezvous and leaves `_dl_debug_addr` pointing at
     // the same map snapshot that runtime dl* queries use.
@@ -4763,9 +5044,10 @@ unsafe fn load_and_jump(sp: usize, ldso_base: u64) -> ! {
             e_phnum as u16,
             sp,
             true,
+            owned_crt_lifecycle,
         )
     }
-    jump_to_entry(main_image.entry, sp)
+    jump_to_entry(main_image.entry, sp, owned_crt_lifecycle)
 }
 
 // ============================================================
@@ -4778,6 +5060,7 @@ unsafe fn build_and_jump(
     phnum: u16,
     orig_sp: usize,
     secure: bool,
+    owned_crt_lifecycle: bool,
 ) -> ! {
     let argc = *(orig_sp as *const u64) as usize;
     let argv_start = orig_sp + 8;
@@ -4982,22 +5265,30 @@ unsafe fn build_and_jump(
         core::ptr::write(auxv_sym as *mut *const usize, aux_base as *const usize);
     }
 
-    jump_to_entry(entry, sp)
+    jump_to_entry(entry, sp, owned_crt_lifecycle)
 }
 
 /// Transfer to the already relocated main image while retaining Linux's
 /// original startup stack. Non-secure startup needs no copied argv/envp/auxv
 /// because their kernel addresses continue to describe the same main mapping.
-unsafe fn jump_to_entry(entry: u64, sp: usize) -> ! {
-
-        core::arch::asm!(
+unsafe fn jump_to_entry(entry: u64, sp: usize, owned_crt_lifecycle: bool) -> ! {
+    // The ELF dynamic-entry convention reserves x0 for the loader's process
+    // finalizer. A recognized owned Scrt1 receives a private record containing
+    // both that finalizer and the dependency callback; a conventional CRT
+    // receives the musl-shaped direct finalizer function unchanged.
+    let startup = if owned_crt_lifecycle {
+        core::ptr::addr_of!(OWNED_CRT_STARTUP_HANDOFF) as usize
+    } else {
+        __ldso_process_fini as *const () as usize
+    };
+    core::arch::asm!(
         "mov sp, {sp}",
         "br {entry}",
         sp = in(reg) sp,
+        in("x0") startup,
         entry = in(reg) entry,
         options(noreturn)
     );
-
 }
 
 // ============================================================

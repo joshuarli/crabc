@@ -1,0 +1,19 @@
+[package]
+name = "crabc-builtins"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+autobins = false
+build = false
+
+# This component intentionally stays outside the repository workspace.  The
+# production archive is made by build.py: direct rustc emits crabc's local
+# object, and a locked `-Zbuild-std=core,compiler_builtins` Cargo invocation
+# source-builds the pinned upstream Rust helpers before llvm-ar combines them.
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]

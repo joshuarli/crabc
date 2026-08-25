@@ -87,11 +87,7 @@ int main() {
     std::fs::write(&src_path, test_src).expect("failed to write crypt test source");
 
     let bin_path = test_support::TempArtifact::new("crypt_test");
-    let dynamic_linker = format!(
-        "-Wl,--dynamic-linker={}",
-        manifest_dir.join("target/debug/libldso.so").display()
-    );
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -106,7 +102,6 @@ int main() {
             "-o",
             bin_path.to_str().unwrap(),
         ])
-        .arg(dynamic_linker)
         .status()
         .expect("failed to compile crypt test");
     assert!(status.success(), "crypt test compilation failed");

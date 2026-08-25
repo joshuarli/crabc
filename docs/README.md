@@ -26,12 +26,16 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Fixed mimalloc semantic-port design](design/allocator.md) — provenance,
   dependency direction, integration ownership, and promotion boundary for the
   active Linux/AArch64 allocator compatibility program.
-- [Source-build adapter-sysroot design](design/source-build.md) — completed Lua
-  gate and the permanent adapter boundary.
+- [Owned CRT/sysroot design](design/crt-and-sysroot.md) — application startup,
+  sealed driver, purity boundary, and runtime ownership.
+- [Source-build design](design/source-build.md) — completed Lua gate through
+  the installed sysroot and its musl-oracle boundary.
 - [Rust-subsumption evidence](evidence/crabc-rs-subsumption.md) — why selected
   C groups have no native Rust wrapper.
+- [Owned CRT/sysroot evidence](evidence/crabc-owned-sysroot.md) — completed
+  native sysroot/reproducibility proof and allocator-purity distinction.
 - [Lua source-build evidence](evidence/lua-source-build.md) — completed Lua
-  isolation proof and its toolchain boundary.
+  owned-sysroot integration proof.
 - [`compat/crabc-rs/coverage.toml`](../compat/crabc-rs/coverage.toml) — exact
   machine-readable capability accounting.
 
@@ -43,7 +47,7 @@ them; this router should explain ownership, not duplicate command contracts.
   sequenced C0–C4 real-software and native-application program after the
   focused scorecard passes.
 - [Source-build progression](roadmap/source-build.md) — future CPython
-  adapter-sysroot and later crabc-owned CRT/sysroot acceptance stages.
+  acceptance contract on the completed owned-sysroot boundary.
 
 ## Historical rationale and naming provenance
 

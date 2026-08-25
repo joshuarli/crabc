@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pure host-side tests for the Lua adapter-sysroot runner."""
+"""Pure host-side tests for the Lua owned-sysroot runner."""
 
 from __future__ import annotations
 

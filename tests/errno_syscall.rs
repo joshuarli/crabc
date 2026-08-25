@@ -15,14 +15,12 @@ fn errno_is_thread_local_and_fd_wrappers_translate_failures() {
 
     let src = fixtures.join("errno_syscall_test.c");
     let bin = test_support::TempArtifact::new("errno_syscall_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             src.to_str().unwrap(),
             "-L",
             lib_dir.to_str().unwrap(),
@@ -32,7 +30,7 @@ fn errno_is_thread_local_and_fd_wrappers_translate_failures() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("musl-gcc failed");
+        .expect("crabc-cc failed");
     assert!(status.success(), "errno_syscall_test compilation failed");
 
     let output = Command::new(&bin)

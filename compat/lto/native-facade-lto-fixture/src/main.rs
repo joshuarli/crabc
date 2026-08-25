@@ -1,8 +1,8 @@
 //! Bounded application workload for native `crabc-rs` LTO inspection.
 //!
 //! This is an actual no-std Linux/AArch64 executable rather than a static
-//! library probe. The target CRT enters its C-ABI `main`; every operation
-//! below reaches the kernel through the direct `crabc-rs` facade.
+//! library probe. The installed crabc CRT enters its C-ABI `main`; every
+//! operation below reaches the kernel through the direct `crabc-rs` facade.
 //! In particular, there are no public C ABI calls, C `errno` reads, or
 //! allocator dependencies to hide the application-to-syscall path.
 //!
@@ -147,7 +147,7 @@ pub extern "C" fn native_facade_direct_route() -> i32 {
     0
 }
 
-/// C-ABI entry point used by the target's normal dynamic musl startup object.
+/// C-ABI entry point used by the owned crabc dynamic startup object.
 ///
 /// The startup path is intentionally outside the named direct-route proof.
 /// The route itself reaches the kernel through `crabc-rs` rather than calling

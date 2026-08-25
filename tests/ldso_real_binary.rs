@@ -24,12 +24,10 @@ fn ldso_runs_real_printf_binary() {
 
     let hello_src = fixtures.join("hello.c");
     let hello_bin = test_support::TempArtifact::new("hello");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             hello_src.to_str().unwrap(),
@@ -39,8 +37,8 @@ fn ldso_runs_real_printf_binary() {
             hello_bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for hello");
-    assert!(status.success(), "musl-gcc hello compilation failed");
+        .expect("failed to run crabc-cc for hello");
+    assert!(status.success(), "crabc-cc hello compilation failed");
 
     let output = Command::new(&hello_bin)
         .env(

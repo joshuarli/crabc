@@ -14,20 +14,20 @@ This is a measurement dashboard for crabc's modern runtime profile (Linux AArch6
 | reference libc | musl 1.2.6 |
 | Docker platform | linux/arm64 |
 | Rust toolchain | nightly-2026-07-24 |
-| tested source | `83a6a3def25df6d1ad9c5b28c20ea7f3c7d14b9d` |
-| tested source tree | clean |
+| tested source | `89132c62b004c146a5fdfdc1939c621d65406503` |
+| tested source tree | DIRTY (not final evidence) |
 | environment report | `compat/reports/environment.json` |
 
 ## Evidence provenance
 
 | input / artifact | path | SHA-256 |
 | --- | --- | --- |
-| `libc.so` | `target/debug/libc.so` | `fd9c76382a4130286e177f580f71fd53c251864f3079d46984e6721307eef83b` |
-| `libc.a` | `target/release/libc.a` | `4f025022dca5a9e7b4062030fd463e4b5d38f0f2c38bc1f30ef72cf8d421dab9` |
-| `libldso.so` | `target/debug/libldso.so` | `5fb953fee27ea7d85b2d67370b9af41ce1ea8ec6e86610c3100046fe307be387` |
+| `libc.so` | `target/debug/libc.so` | `401e36846bd3b4629708923ffec93ad203d975350ae96cc23dc5e32a368a8664` |
+| `libc.a` | `target/release/libc.a` | `9a63fed42f4c3538026d459c12306a5a84d89c43dcba68c3a3b3d35f01515945` |
+| `libldso.so` | `target/debug/libldso.so` | `33cbdd170e41bd2e8fe9c0edd3b1a244726fe9cf914751a5d53f536176f91691` |
 | public headers | `include` | `880f408edd250166ed56037c856cd4371109dff7d04bcced57e428054de06f4a` |
-| workspace lockfile | `Cargo.lock` | `16e3bf8cf039540bbd8f83812e65584ea5a757a7103658edb70cfae993171086` |
-| oracle pins | `compat/upstreams.toml` | `62c105b9d3bca6bef89cc37d35b4cae34c4928de905cd29a7be53d53b4b3440c` |
+| workspace lockfile | `Cargo.lock` | `954266060bfe576a95820aa3fa2496b7e2e6b8808e344fc5aa4868d542853f5b` |
+| oracle pins | `compat/upstreams.toml` | `94a83ac2cab349b6f12da64de7e35f3c145657913917dd242ba35a6e8fe5540f` |
 The checked-in dashboard is an evidence-only child of the tested source commit above; it does not hash itself.
 
 ## Public dynamic-symbol ABI
@@ -56,12 +56,7 @@ Ratchet: **pass** (0 regression violation(s)).
 
 ## Generated static/header ABI evidence
 
-Generated pinned-musl public-header/static-archive evidence: **pass**; report `compat/reports/abi/latest.json`.
-| surface | status / count | oracle scope |
-| --- | --- | --- |
-| public-header declaration probes | 183/183 compile-ok | generated from pinned musl header names |
-| layout/constant probes | {'match': 9} | candidate executable linked/run with pinned musl |
-| static archive symbols | triage | nm classes; non-equal archives remain explicit triage |
+No generated static/header ABI report. Run `./scripts/dev.sh abi-probe`.
 
 ## Loader feature inventory
 
@@ -103,51 +98,12 @@ Synthetic AArch64 loader comparison: **pass** (21 case(s), timeout=5.0s); report
 
 ## real Alpine package corpus
 
-Pinned Alpine 3.24.1 AArch64 package corpus: **pass** (34/34 cases); report `compat/reports/corpus/latest.json`.
-Reference and candidate use the same kernel/image/non-libc DSOs; the candidate is entered as the package binary through an interpreter overlay, with raw stdout/stderr/status and no normalization.
-Stateful Tier B–D operations: **12**; every package in those tiers is required by the manifest validator to have at least one.
+No real-package corpus result. Run `./scripts/dev.sh corpus`.
 
-| case | tier | package | result | status | stdout | stderr |
-| --- | --- | --- | --- | --- | --- | --- |
-| tier-a-cat | A | coreutils | pass | match | match | match |
-| tier-a-cp | A | coreutils | pass | match | match | match |
-| tier-a-echo | A | coreutils | pass | match | match | match |
-| tier-a-env | A | coreutils-env | pass | match | match | match |
-| tier-a-mkdir | A | coreutils | pass | match | match | match |
-| tier-a-mv | A | coreutils | pass | match | match | match |
-| tier-a-printf | A | coreutils | pass | match | match | match |
-| tier-a-rm | A | coreutils | pass | match | match | match |
-| tier-a-sleep | A | coreutils | pass | match | match | match |
-| tier-a-true | A | coreutils | pass | match | match | match |
-| tier-b-file | B | file | pass | match | match | match |
-| tier-b-file-created-input | B | file | pass | match | match | match |
-| tier-b-grep | B | grep | pass | match | match | match |
-| tier-b-grep-count | B | grep | pass | match | match | match |
-| tier-b-gzip | B | gzip | pass | match | match | match |
-| tier-b-gzip-compress | B | gzip | pass | match | match | match |
-| tier-b-sed | B | sed | pass | match | match | match |
-| tier-b-sed-in-place | B | sed | pass | match | match | match |
-| tier-b-sqlite | B | sqlite | pass | match | match | match |
-| tier-b-sqlite-state | B | sqlite | pass | match | match | match |
-| tier-b-tar | B | tar | pass | match | match | match |
-| tier-b-tar-create | B | tar | pass | match | match | match |
-| tier-b-zstd | B | zstd | pass | match | match | match |
-| tier-b-zstd-compress | B | zstd | pass | match | match | match |
-| tier-c-curl | C | curl | pass | match | match | match |
-| tier-c-curl-file | C | curl | pass | match | match | match |
-| tier-c-openssl | C | openssl | pass | match | match | match |
-| tier-c-openssl-digest | C | openssl | pass | match | match | match |
-| tier-c-ssh-config | C | openssh-client-default | pass | match | match | match |
-| tier-c-ssh-version | C | openssh-client-default | pass | match | match | match |
-| tier-d-git | D | git | pass | match | match | match |
-| tier-d-git-init | D | git | pass | match | match | match |
-| tier-d-python | D | python3 | pass | match | match | match |
-| tier-d-python-file-state | D | python3 | pass | match | match | match |
+## Lua source-build owned-sysroot gate
 
-## Lua source-build adapter-sysroot gate
-
-Pinned Lua 5.4.8 shared-runtime adapter-sysroot build: **pass**; report `compat/reports/lua/latest.json`.
-The interpreter is dynamically linked to source-built `liblua`; `luac` statically composes Lua-private compiler units but runs through the same crabc loader/libc. The build uses crabc headers/link names with explicitly recorded CRT bridge objects, so it is not a self-hosting compiler-sysroot claim.
+Pinned Lua 5.4.8 shared-runtime owned-sysroot build: **pass**; report `compat/reports/lua/latest.json`.
+The interpreter is dynamically linked to source-built `liblua`; `luac` statically composes Lua-private compiler units but runs through the same crabc loader/libc. The candidate link uses the installed crabc headers, CRT objects, builtins archive, and canonical interpreter; the pinned musl runtime is retained only as the execution oracle.
 
 | lane | status | stdout | stderr |
 | --- | --- | --- | --- |
@@ -157,106 +113,48 @@ The interpreter is dynamically linked to source-built `liblua`; `luac` staticall
 
 ## stock Rust std
 
-Pinned stock Rust std (`-Z build-std`) musl-vs-crabc fixture: **pass** (1/1 normal Rust workload); report `compat/reports/rust-std/latest.json`.
-The same dynamic AArch64 PIE runs as the kernel program under the pinned musl or crabc interpreter; its raw status, stdout, and stderr are compared without normalization.
-
-| metric | result |
-| --- | --- |
-| stock std built with `-Z build-std` | pass |
-| dynamic musl ABI executable | pass |
-| status | match |
-| stdout | match |
-| stderr | match |
+No stock Rust std result. Run `./scripts/dev.sh rust-std`.
 
 ## Dependency-bearing Rust workload
 
-Pinned dependency-bearing stock Rust application (filesystem, async TCP, synchronization, subprocess, and error path): **pass**; fixture `crabc-rust-dependent-fixture`, report `compat/reports/rust-std-dependent/latest.json`.
-| metric | result |
-| --- | --- |
-| locked dependency build | pass |
-| status | match |
-| stdout | match |
-| stderr | match |
+No dependency-bearing Rust workload result. Run `./scripts/dev.sh rust-std-dependent`.
 
 ## LTO research
 
-Static/build-std LTO evidence matrix: **partial** (3/4 built artifact/runtime lanes); report `compat/reports/lto/latest.json`.
-`built` records an artifact and its run, not a whole-program claim. An `invalid` lane is retained as evidence when its link map disproves the requested boundary.
-
-| case | configuration | status | .text | stripped ELF | symbols | run | scope / boundary |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| A | musl static (controlled C) | built | 2964 | 66408 | 50 | 0 | static control |
-| B | crabc static (controlled C) | built | 1060688 | 1665920 | 1569 | 0 | crabc archive selected |
-| C | crabc build-std | built | 253892 | 397744 | 348 | 0 | Rust application/std rlibs only; crabc libc is external and opaque |
-| D | crabc build-std fat/linker-plugin LTO | invalid | 304272 | 379448 | 128 | 0 | cross-boundary LTO unproven |
+No static/build-std LTO result. Run `./scripts/dev.sh lto`.
 
 ## native `crabc-rs` LTO proof
 
-Bounded native-facade O3/fat-LTO evidence: **pass**; report `compat/reports/lto/native-facade/latest.json`.
-The named witness proves a direct Linux syscall route and raw musl/crabc runtime comparison; it does not assert whole-program LTO or optimization inside dynamic `libc.so`.
-
-| lane | artifact | raw runtime | direct getpid witness |
-| --- | --- | --- | --- |
-| control-o3 | built | pass | yes |
-| fat-lto | built | pass | yes |
-| stock-std-fat | built | pass | yes |
-Claims: direct route=True; facade boundary eliminated=True; whole-program LTO=False; dynamic-libc LTO=False.
+No native-facade result. Run `./scripts/dev.sh lto-native-facade`.
 
 ## libc-test
 
 | subset | total | PASS | FAIL | BUILDERROR | TIMEOUT | SKIP |
 | --- | --- | --- | --- | --- | --- | --- |
-| all | 420 | 405 | 0 | 0 | 0 | 15 |
-| api | 79 | 79 | 0 | 0 | 0 | 0 |
 | functional | 74 | 73 | 0 | 0 | 0 | 1 |
-| math | 199 | 186 | 0 | 0 | 0 | 13 |
 | regression | 68 | 67 | 0 | 0 | 0 | 1 |
 
-`all` missing-symbol graph: 0 blocker symbol(s).
-`api` missing-symbol graph: 0 blocker symbol(s).
 `functional` missing-symbol graph: 0 blocker symbol(s).
-`math` missing-symbol graph: 0 blocker symbol(s).
 `regression` missing-symbol graph: 0 blocker symbol(s).
 
 ## Differential workloads
 
-Pass: **5**; fail: **0**.
-
-| case | result | errno | report |
-| --- | --- | --- | --- |
-| allocator | pass | 0 | `compat/reports/differential/allocator.json` |
-| fd-filesystem | pass | 2 | `compat/reports/differential/fd-filesystem.json` |
-| foundational | pass | 34 | `compat/reports/differential/foundational.json` |
-| stdio-fdopen | pass | 9 | `compat/reports/differential/stdio-fdopen.json` |
-| string-memory | pass | 0 | `compat/reports/differential/string-memory.json` |
+No differential result. Run `./scripts/dev.sh differential`.
 
 ## standards and stress evidence
 
-Pinned os-test (5e9456d510612f83b6ec8b1a0c06d6b1303a2512): **pass** (10/10 selected suite(s)); report `compat/reports/os-test/latest.json`.
+No pinned os-test profile result. Run `./scripts/dev.sh os-test`.
 
-| suite | oracle | result | source contract | outcome differences | raw runtime differences | crabc source failures | musl source failures | source improvements |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| include | pinned-musl-differential | pass | n/a | 0 | 0 | 0 | 0 | 0 |
-| namespace | os-test-source-good | pass | n/a | 0 | 30 | 0 | 0 | 0 |
-| basic | pinned-musl-differential | pass-with-source-improvements | True | 50 | 50 | 0 | 50 | 50 |
-| io | pinned-musl-differential | pass | n/a | 0 | 0 | 0 | 0 | 0 |
-| limits | pinned-musl-differential | pass | n/a | 0 | 0 | 0 | 0 | 0 |
-| malloc | pinned-musl-differential | pass | n/a | 0 | 0 | 0 | 0 | 0 |
-| process | pinned-musl-differential | pass | n/a | 3 | 3 | 0 | 0 | 0 |
-| pty | pinned-musl-differential | pass | n/a | 0 | 0 | 0 | 0 | 0 |
-| signal | pinned-musl-differential | pass | n/a | 0 | 0 | 0 | 0 | 0 |
-| stdio | pinned-musl-differential | pass | n/a | 0 | 0 | 0 | 0 | 0 |
-
-Pthread/TLS stress differential: **pass** (10/10 iterations, timeout=10.0s, exact streams=False, source improvements=10); report `compat/reports/pthread-stress/latest.json`.
+No pthread/TLS stress result. Run `./scripts/dev.sh pthread-stress`.
 
 Static libc.a pthread/TLS lifecycle: **pass** (pinned musl CRT/archive link and run, exact raw streams); report `compat/reports/static-pthread-tls/latest.json`.
 
-Signal/process isolated comparison: **pass** (12 subcase(s), exact streams=True); report `compat/reports/signal-process.json`.
+No signal/process result. Run `./scripts/dev.sh signal-process`.
 
-Deterministic local resolver/network comparison: **pass** (22 contract item(s), DNS event contract=True); report `compat/reports/resolver-network.json`.
+No deterministic resolver/network result. Run `./scripts/dev.sh resolver-network`.
 
 ## Unmeasured frontier
 
 The selected POSIX, signal/process, and resolver/network contracts above are not full standards conformance.
-Static candidate ABI parity, exhaustive header declaration/layout parity, cross-boundary Rust/crabc LTO are not measured by this dashboard yet.
+Static candidate ABI parity, exhaustive header declaration/layout parity, real Alpine corpus, stock Rust `std` compatibility, dependency-bearing Rust application, cross-boundary Rust/crabc LTO are not measured by this dashboard yet.
 The synthetic suite measures bounded loader contracts; it is not a claim that arbitrary Alpine DSO graphs are supported.
