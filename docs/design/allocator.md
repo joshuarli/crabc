@@ -144,9 +144,12 @@ operation only after its fixed fast-slot clear; ordinary regular/full and
 detached paths still use false force. Its separate sole full-singleton handoff
 uses false force after its preflight and before queue detach, while both
 mapped-medium sole-page handoffs preserve the source force-then-false sequence
-before bitmap publication. The one-block handoff accepts only its empty final
-free. Separate full-medium and full-large routes first preserve the source
-full-queue detach and ordinary unmapped abandonment. A separate full
+before bitmap publication. The full-origin medium branch retains that origin
+after force collection, so it remains client-free-only rather than borrowing
+the separate initially-nonfull medium adoption/requeue authority. The one-block
+handoff accepts only its empty final free. Separate full-medium and full-large
+routes first preserve the source full-queue detach and ordinary unmapped
+abandonment. A separate full
 non-direct-small route preserves that same unmapped tail while detaching from
 its ordinary small bin instead of `BIN_FULL`; it requires
 `block_size > SMALL_SIZE_MAX`, has no direct-cache image, and takes the
@@ -358,6 +361,23 @@ into its exact static-main `pages_abandoned[bin]` bit plus paired
 the final PageMap -> `pages_main` -> metadata -> slice release. The large
 route validates the complete 64-slice PageMap span before terminal release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
+
+`MainHeapThreadProcessPageExitDrain::abandon_full_medium_after_force_collect_to_mapped_process_route`
+is a separate, source-specific predecessor of the eighth mapped route rather
+than a new full-page state machine. It accepts the same sole full medium
+`BIN_FULL` page only when one different allocation has already been published
+through a joined remote producer. The `MI_ABANDON` force collector changes
+`used` from `reserved` to exactly `reserved - 1` while source still leaves the
+page linked and marked full; its following false collector must preserve that
+state. `_mi_page_abandon` then removes the exact `BIN_FULL` member, clearing
+the full flag and page count, and immediately publishes the ordinary medium
+mapped-abandoned identity plus the exact static-main bitmap/count pair. The
+old Theap/TLD tears down before the remaining linear client frees enter
+`MainHeapThreadProcessPageExitMappedRegularRoute`. Regular/nonfull input
+rejects before mutation, and a collector fault retains the drain terminally.
+It deliberately excludes multiple joined frees, local-free variants,
+small/large pages, all-free release, normal full-page unmapped abandonment,
+allocation-time adoption/requeue, mixed traversal, and concurrent frees.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`
 is the sixth handoff. It accepts only a sole full `PageKind::Small` arena page

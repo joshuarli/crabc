@@ -309,8 +309,15 @@ small-or-medium route, and aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
 span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
 pairing through actual teardown and sequential later frees. The sole
-mapped-medium route also has the separately completed explicit inverse bridge
-into one fresh later-main mutation lease. Its bounded reserved-prefix fixture
+mapped regular route additionally has one source-specific full-medium
+predecessor: exactly one joined remote free makes the sole `BIN_FULL` page
+nonfull during force collection, then false collection removes that same full
+member and immediately publishes the ordinary medium mapped bit/count pair
+before old-Theap/TLD teardown. It is not a general full-page traversal. The
+full-origin predecessor remains client-free-only even though its final geometry
+is medium/nonfull. Only the separately completed source-initially-nonfull
+sole mapped-medium route has the explicit inverse bridge into one fresh
+later-main mutation lease. Its bounded reserved-prefix fixture
 now covers source direct page-area commitment and failed-commit reabandonment
 before a same-candidate retry; it is not a generic allocation policy. The
 aggregate registry intentionally stops
@@ -335,6 +342,10 @@ final-free/reject-before-detach regressions, the sole-medium
 mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
 full-medium and full-large routes' unmapped mostly-used thresholds and later
 mapped tails (including the full-large route's 64-slice terminal release), the
+full-medium one-joined-remote force-collection predecessor's immediate mapped
+publication, client-free-only allocation-adoption refusal, eight-slice
+client-free release, pre-mutation regular-medium refusal, and terminal
+collection-failure retention, the
 full non-direct-small route's ordinary-bin detach, threshold-adjacent
 unmapped-to-mapped transition, and terminal release, the full direct-small
 route's exact rounded cache preflight/clear boundary, partial-head-lag
@@ -363,7 +374,7 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 83 items and 87
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 84 items and 88
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
 all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or either

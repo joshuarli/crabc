@@ -457,7 +457,14 @@ result may refine it only when it can prove retained ownership.
   `pages_abandoned[bin]` bit/count pair, and later frees use the mapped tail
   until the same terminal PageMap -> main bitmap -> metadata -> slice release.
   The full-large route additionally proves its complete 64-slice span before
-  that release. The sixth handoff accepts one full non-direct small page only
+  that release. A distinct source-specific predecessor also accepts one sole
+  full medium page with one joined remote free: force collection changes
+  `used` to exactly `reserved - 1` while the page remains linked and marked
+  full in `BIN_FULL`; false collection then removes that same member and
+  immediately publishes the ordinary medium mapped bit/count pair into the
+  existing mapped regular route. It is not a general full-page traversal:
+  regular/nonfull input rejects before mutation and a collector fault retains
+  the drain terminally. The sixth handoff accepts one full non-direct small page only
   when its rounded `block_size > SMALL_SIZE_MAX`: unlike the `BIN_FULL` medium
   and large shapes, it remains in its ordinary small bin, has no direct-cache
   range, and takes the ordinary collector. It follows the same
@@ -483,8 +490,10 @@ result may refine it only when it can prove retained ownership.
 
   One explicit consuming allocation-time edge is complete for the sole route
   only: `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
-  accepts exactly its mapped nonfull medium page. Before it consumes the short
-  route, the target proves the source subprocess, frozen configuration,
+  accepts exactly its source-initially-nonfull mapped medium page. A full
+  `BIN_FULL` medium that force collection makes nonfull preserves that origin
+  and remains client-free-only. Before it consumes the short route, the target
+  proves the source subprocess, frozen configuration,
   PageMap-root identity, static main Heap, selected arena, complete span, and
   PageMap page identity. It turns `ProcessPageMapPostExitAccess` into the one
   long `ProcessPageMapMutationLease`, claims the exact bitmap/count member,
@@ -569,6 +578,18 @@ aggregate-registry adoption remain absent.
   stays PageMap-routable but unmapped through its exact mostly-used threshold,
   then publishes the paired static-main bitmap/count before its mapped tail
   clears all terminal ownership; and
+  `later_thread_exit_full_medium_force_collects_to_a_client_free_only_mapped_process_route`
+  proves one joined remote free is collected while the page remains linked in
+  `BIN_FULL`, then source removes that full member, immediately publishes the
+  mapped medium bit/count, tears down the old Theap/TLD, rejects allocation-time
+  adoption before a fresh target can claim/requeue its bitmap member, retains
+  all eight PageMap slices through sequential client frees, and releases them
+  in source order; `later_thread_exit_full_medium_force_collect_route_rejects_a_regular_medium_before_mutation`
+  proves the distinct entry shape leaves a regular medium queue/map/count
+  untouched, while
+  `later_thread_exit_full_medium_force_collect_route_retains_a_collection_failure`
+  proves a force-collector failure records terminal drain poison rather than
+  fabricating a retry; and
   `later_thread_exit_full_large_route_reabandons_after_mostly_used_frees`
   proves the same full-regular owner-exit state machine for a large page,
   including old-Theap/TLD teardown before client frees, the threshold-adjacent

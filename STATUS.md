@@ -75,14 +75,19 @@ member before clipped PageMap/alias/metadata/mapping release, a mapped medium pa
 with one live block, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that remain unmapped until
 their mostly-used free boundary then reabandon to the static-main bitmap, and a sole nonfull
-small-or-medium page whose process-owned route survives old-Theap/TLD teardown);
+small-or-medium page whose process-owned route survives old-Theap/TLD teardown,
+including one exact full-medium predecessor where a joined remote free is
+force-collected while the page remains in `BIN_FULL` before immediate mapped
+publication);
 and one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
 through sequential client frees. A fresh later-main owner can explicitly
-reclaim only the sole mapped nonfull medium route. Its bounded test fixture
-also covers a real reserved on-demand prefix, direct page-area commitment, and
-failed-commit mapped reabandonment before a same-candidate retry; small/direct
-and aggregate members remain sequential client-free-only.
+reclaim only a sole mapped medium route that began owner exit nonfull; the
+force-collected full-medium predecessor remains sequential client-free-only.
+Its bounded test fixture also covers a real reserved on-demand prefix, direct
+page-area commitment, and failed-commit mapped reabandonment before a
+same-candidate retry; small/direct and aggregate members remain sequential
+client-free-only.
 The regular owner uses the process-static metadata allocator for the exact
 flexible `mi_thread_locals_t` request, source growth rule, header-before-root
 publication, generation-checked regular slots, and free-before-dynamic-root-
@@ -358,7 +363,7 @@ then arena slices—and returns the drained engine; an existing owner remains a
 terminal handoff. Separately, `free_unmapped_after_failed_reclaim` remains the
 source terminal-empty/reabandon/unown substrate after failed reclaim, including
 the expected-head CAS and no-second-reclaim conflict path. The post-TLS full
-singleton above and the bounded later-main full-medium, full-large, and full
+singleton above and the bounded later-main normal full-medium, full-large, and full
 non-direct-small process routes are its lifecycle-integrated raw-release
 callers; other regular or
 nonempty unmapped pages, general producer routing, terminal reuse, multi-arena dynamic heap
