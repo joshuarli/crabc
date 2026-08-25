@@ -94,6 +94,16 @@ releases the first page and records an empty route. This is a narrow private
 native x86 engine trace, not general teardown, routing or concurrency, public
 `mi_*` behavior or runtime, libc integration, backend promotion, public x86
 support, or AArch64 evidence.
+A separate 46-field native x86-only C/Rust differential covers two distinct
+clients on one nonfull medium arena page A plus a one-client medium arena page
+B in a distinct bin. The real worker runs `mi_thread_done()` and returns; the consumer
+calls `pthread_join()` before any free. Both selected pages are mapped-abandoned
+after teardown. The first A free returns `StillLive`, preserving A, B, and the
+route; the B free returns `ReleasedPage`, terminally releasing only B; and the
+second A free returns `ReleasedAll`, completing the route. This remains narrow
+private native x86 engine evidence, not general teardown, routing or
+concurrency, public `mi_*` behavior or runtime, libc integration, backend
+promotion, public x86 support, or AArch64 evidence.
 These bounded results do not claim general routing or concurrent collection,
 general behavior or Rust implementation parity, a Rust full-medium route, general
 abandonment/adoption, cross-thread reclaim, general thread teardown, CMake

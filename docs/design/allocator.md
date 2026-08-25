@@ -207,7 +207,16 @@ empty route.
 Rust compares only this bounded private aggregate post-exit traversal. It does
 not establish general teardown, routing or concurrency, public `mi_*` behavior
 or runtime, libc integration, backend promotion, public x86 support, or
-AArch64 evidence. The selected
+AArch64 evidence. The same native x86-only track additionally has a 46-field
+aggregate still-live differential: a real worker creates two distinct clients
+on one nonfull medium page A and a one-client medium page B in a distinct bin,
+calls `mi_thread_done()`, and returns; the consumer calls `pthread_join()` before any
+free. Its first A free is `StillLive`, preserving A, B, and the route; its B
+free is `ReleasedPage`, releasing only B; and its second A free is
+`ReleasedAll`, completing the route. Rust compares only that bounded private
+traversal, not general teardown, routing or concurrency, public `mi_*`
+behavior or runtime, libc integration, backend promotion, public x86 support,
+or AArch64 evidence. The selected
 normal-release source surface is also
 accounted per item for native object/dynamic symbol presence, while a separate
 five-mode staged public-header gate proves selected C/C++ compile/linkability
@@ -1491,6 +1500,14 @@ first page remains
 registered, bit-set, mapped-abandoned, and `used == 1`, followed by the first
 terminal release and empty route. It is not general teardown, routing,
 concurrency, public API/runtime, backend, public x86, or AArch64 evidence.
+The separate 46-field aggregate still-live lane is equally bounded: a real
+worker creates two distinct clients on one nonfull medium page A and a
+one-client medium page B in a distinct bin, runs `mi_thread_done()` and
+returns, and the consumer calls `pthread_join()` before frees. A's first client yields `StillLive` and
+preserves both pages plus the route; B yields `ReleasedPage` and releases only
+B; A's second client yields `ReleasedAll` and completes the route. It remains
+private native x86 evidence, not general teardown, routing, concurrency,
+public API/runtime, backend, public x86, or AArch64 evidence.
 
 The port preserves mimalloc v3.5.0's algorithms, data structures, memory
 orderings, lifecycle behavior, and valid-program observable behavior until

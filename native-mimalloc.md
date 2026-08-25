@@ -501,8 +501,14 @@ contracts, reports, and status.
   trace is likewise narrow: exactly two distinct live nonfull medium pages in
   distinct bins survive a worker `mi_thread_done()`/return and consumer join;
   the consumer frees the second first while the first remains registered/bit-set/mapped-abandoned/
-  `used == 1`, then frees the first and observes an empty route. Broader
-  retirement, teardown, routing, concurrency, public API/runtime, backend,
+  `used == 1`, then frees the first and observes an empty route. A completed
+  46-field aggregate still-live trace is also narrow: two distinct clients on
+  one nonfull medium page A plus a one-client distinct-bin medium page B survive
+  a worker `mi_thread_done()`/return and consumer join; A's first free is
+  `StillLive` and preserves both pages plus the route, B's free is
+  `ReleasedPage` and releases only B, and A's second free is `ReleasedAll` and
+  completes the route. Broader retirement, teardown, routing, concurrency,
+  public API/runtime, backend,
   and architecture qualification remain open.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
   measurements into qualified whole-engine performance evidence.

@@ -1114,6 +1114,25 @@ general teardown, routing or concurrency, public `mi_*` behavior or runtime,
 libc integration, backend promotion, public x86 support, or AArch64 evidence;
 its report is `compat/reports/allocator/x86_64/aggregate-post-exit.json`.
 
+A separate aggregate still-live route is available on native x86-64:
+
+```sh
+./scripts/dev-amd64.sh allocator-aggregate-still-live
+```
+
+This private 46-field C/Rust differential has a real worker `pthread` create
+two distinct clients on one nonfull medium arena page A and a one-client medium
+arena page B in a distinct bin, then run real `mi_thread_done()` and return.
+The consumer calls `pthread_join()` before any free. Both pages are mapped-abandoned after
+teardown. The consumer's first A free returns `StillLive`, preserving A, B, and
+the route; its B free returns `ReleasedPage`, terminally releasing only B; its
+second A free returns `ReleasedAll` and completes the route. Rust compares only
+this equivalent bounded private aggregate still-live traversal. This lane does
+not establish general teardown, routing or concurrency, public `mi_*` behavior
+or runtime, libc integration, backend promotion, public x86 support, or
+AArch64 evidence; its report is
+`compat/reports/allocator/x86_64/aggregate-still-live.json`.
+
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
 
@@ -1205,6 +1224,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. It is dispatched by `allocator-mapped-post-exit`; Rust covers only one bounded process-owned mapped regular handoff and directly observes PageMap, ordinary arena-page bitmap, and free-slice bitmap release. The lane does not claim general thread exit/routing, public API, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_retired_prepass_evidence.py` and `x86_64-retired-prepass-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for one worker-local retirement, real `mi_thread_done()`/`pthread_join()` retired-page force-release, one distinct live mapped-abandoned page, and one consumer terminal free. It is dispatched by `allocator-retired-prepass`; it directly records PageMap, ordinary arena bitmap, exact slice-span, and empty-route checks, and does not claim general retirement/teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_aggregate_post_exit_evidence.py` and `x86_64-aggregate-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for exactly two distinct live nonfull medium arena pages in distinct bins: the real worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before freeing, both pages are mapped-abandoned after teardown, then a second-first selective terminal release is followed by a first-page terminal release and empty route. It is dispatched by `allocator-aggregate-post-exit`; it directly records PageMap, ordinary arena bitmap, exact slice span, and the first page's registered/bit-set/mapped-abandoned/`used == 1` state after the second-page free. It does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
+| `x86_64_aggregate_still_live_evidence.py` and `x86_64-aggregate-still-live-evidence-v3.5.0.json` | Native x86-64-only private 46-field pinned-C/Rust differential for two distinct clients on one nonfull medium page A and a one-client distinct-bin medium page B: the worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before every free, A's first free is `StillLive` and preserves A/B/the route, B's free is `ReleasedPage` and terminally releases only B, and A's second free is `ReleasedAll` and completes the route. It is dispatched by `allocator-aggregate-still-live`; it does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
