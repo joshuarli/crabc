@@ -60,11 +60,12 @@ FORBIDDEN_TLS_FORMS = (
 # generated instruction sequence.
 EXPECTED_TLS_RELOCATION = "R_X86_64_GOTTPOFF"
 FS_SEGMENT_ACCESS = re.compile(r"\bfs\s*:", re.IGNORECASE)
-# GNU objdump normally renders the identity load as ``%fs:0x0``. Accept the
-# equivalent Intel spelling as well, but do not mistake an FS-relative TLS
-# access such as ``%fs:(%rax)`` for the direct thread-pointer identity load.
+# GNU objdump normally renders the identity load as ``%fs:0x0,%rax``. Accept
+# the equivalent Intel bracket spelling as well, but require the end of the
+# AT&T source operand after the zero displacement: ``%fs:0x0(%rax)`` is an
+# indexed TLS access, not the direct thread-pointer identity load.
 FS_ZERO_ACCESS = re.compile(
-    r"\bfs\s*:\s*(?:0x0+|0+)(?=\b|[,\)])|\bfs\s*:\s*\[\s*(?:0x0+|0+)\s*\]",
+    r"\bfs\s*:\s*(?:0x0+|0+)\s*(?=,)|\bfs\s*:\s*\[\s*(?:0x0+|0+)\s*\]",
     re.IGNORECASE,
 )
 

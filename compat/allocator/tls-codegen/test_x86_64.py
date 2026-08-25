@@ -42,6 +42,16 @@ class X86_64TlsWitnessEvidenceTests(unittest.TestCase):
                 "   0: 64 48 8b 00 mov    %fs:(%rax),%rax\n",
             )
 
+    def test_identity_rejects_an_indexed_zero_displacement_fs_offset(self) -> None:
+        for operand in ("%fs:0x0(%rax)", "%fs:0(%rax)"):
+            with self.subTest(operand=operand), self.assertRaisesRegex(
+                RUNNER.VerificationError, r"%fs:0 identity word"
+            ):
+                RUNNER.witness_access_evidence(
+                    RUNNER.IDENTITY_WITNESS,
+                    f"   0: 64 48 8b 00 mov    {operand},%rax\n",
+                )
+
     def test_root_witness_requires_fs_segment_access_and_gottpoff(self) -> None:
         evidence = RUNNER.witness_access_evidence(
             "crabc_mimalloc_tls_probe_dynamic_get",
