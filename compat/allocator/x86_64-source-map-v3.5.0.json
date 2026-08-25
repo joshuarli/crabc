@@ -380,12 +380,12 @@
     },
     {
       "id": "ordinary-allocation-paths",
-      "source_scope": "Ordinary small allocation, zeroing, counted allocation, and reallocation entry paths.",
+      "source_scope": "Ordinary small allocation, zeroing, checked counted allocation/reallocation, no-padding expand, and reallocation entry paths.",
       "source_anchor": {
         "member": "src/alloc.c",
         "start_line": 209,
-        "end_line": 476,
-        "sha256": "3202bfa66fd72cfc5c503fa43c7a487c6f3a2b678e542a75051b4dd64f8ad5d2"
+        "end_line": 483,
+        "sha256": "606a3045b4cb3e08d6f22c7126fbbb3284c49054abc5774b7f8fd4c07a96dd7d"
       },
       "rust_modules": [
         "crabc_mimalloc::alloc",
@@ -393,7 +393,7 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "The mapped engine includes the fixed no-padding mi_expand decision for one current private allocation, but remains a caller-managed private single-thread lifecycle rather than general public allocation routing or process-owned allocation.",
+      "difference": "The mapped engine includes the fixed no-padding mi_expand decision and checked private mi_recalloc preflight/delegation for one current allocation, but remains a caller-managed private single-thread lifecycle rather than general public allocation routing or process-owned allocation.",
       "evidence": [
         "crabc-mimalloc/src/alloc.rs",
         "crabc-mimalloc/src/free_list.rs",
@@ -898,6 +898,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "58508aa78f8e3ad11dfc0c22034e8579bb01c3c5399735e62e454c98e080f9ed"
+    "units_sha256": "2374f2af4d2a82552cbc0f479e69535575a55b9b8833a7faedc3630784df33a0"
   }
 }

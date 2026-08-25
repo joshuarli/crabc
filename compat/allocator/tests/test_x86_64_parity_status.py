@@ -135,6 +135,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-private-adapter-performance",
                 "native-tls-codegen",
                 "native-bounded-lifecycle-concurrency",
+                "native-pinned-c-release-mode-object-symbols",
                 "native-bounded-fault-injection",
                 "native-allocator-unit",
             },
@@ -171,6 +172,18 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-bounded-fault-injection"]["report"],
             "compat/reports/allocator/x86_64/fault-injection.json",
         )
+        self.assertEqual(
+            gates["native-pinned-c-release-mode-object-symbols"]["command"],
+            "./scripts/dev-amd64.sh allocator-release-evidence",
+        )
+        self.assertEqual(
+            gates["native-pinned-c-release-mode-object-symbols"]["report"],
+            "compat/reports/allocator/x86_64/release-evidence.json",
+        )
+        self.assertIn("preprocessor", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
+        self.assertIn("object", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
+        self.assertIn("default-visible", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
+        self.assertIn("does not claim public x86", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
@@ -178,9 +191,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("not a staticlib/cdylib", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("private prefixed", gates["native-private-test-adapter"]["claim"])
         self.assertIn("no mi_* symbols", gates["native-private-test-adapter"]["claim"])
-        self.assertIn("58-field fundamental-operation trace", gates["native-direct-rust-c-differential"]["claim"])
+        self.assertIn("75-field fundamental-operation trace", gates["native-direct-rust-c-differential"]["claim"])
         self.assertIn("no-padding mi_expand", gates["native-direct-rust-c-differential"]["claim"])
         self.assertIn("NULL/nonzero", gates["native-direct-rust-c-differential"]["claim"])
+        self.assertIn("mi_recalloc", gates["native-direct-rust-c-differential"]["claim"])
         self.assertIn("bounded single-thread private-adapter", gates["native-private-adapter-performance"]["claim"])
         self.assertIn("no promotion threshold", gates["native-private-adapter-performance"]["claim"])
         self.assertIn("does not qualify general mimalloc performance", gates["native-private-adapter-performance"]["claim"])

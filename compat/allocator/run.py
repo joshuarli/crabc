@@ -898,6 +898,75 @@ int main(void) {
   printf("trace.fundamental.realloc_size_zero.usable=%zu\n", mi_usable_size(size_zero));
   mi_free(size_zero);
 
+#if defined(__x86_64__)
+  const size_t recalloc_original_size = 257;
+  const size_t recalloc_count = 3;
+  const size_t recalloc_size = 2731;
+  const size_t recalloc_total = recalloc_count * recalloc_size;
+  uint8_t* recalloc = (uint8_t*)mi_malloc(recalloc_original_size);
+  if (recalloc == NULL) return 16;
+  const size_t recalloc_old_usable = mi_usable_size(recalloc);
+  memset(recalloc, 0x54, recalloc_old_usable);
+  const uint64_t recalloc_before = content_hash(recalloc, recalloc_old_usable);
+  recalloc = (uint8_t*)mi_recalloc(recalloc, recalloc_count, recalloc_size);
+  if (recalloc == NULL) return 17;
+  const size_t recalloc_new_usable = mi_usable_size(recalloc);
+  const bool recalloc_preserved =
+      content_hash(recalloc, recalloc_old_usable) == recalloc_before;
+  const bool recalloc_tail_zeroed =
+      recalloc_new_usable >= recalloc_old_usable
+      && bytes_equal(recalloc + recalloc_old_usable,
+                     recalloc_new_usable - recalloc_old_usable, 0);
+  const bool recalloc_valid =
+      recalloc_new_usable >= recalloc_total
+      && recalloc_preserved
+      && recalloc_tail_zeroed;
+  printf("trace.fundamental.recalloc.count=%zu\n", recalloc_count);
+  printf("trace.fundamental.recalloc.size=%zu\n", recalloc_size);
+  printf("trace.fundamental.recalloc.total=%zu\n", recalloc_total);
+  printf("trace.fundamental.recalloc.old_usable=%zu\n", recalloc_old_usable);
+  printf("trace.fundamental.recalloc.new_usable=%zu\n", recalloc_new_usable);
+  printf("trace.fundamental.recalloc.preserved=%u\n", recalloc_preserved);
+  printf("trace.fundamental.recalloc.tail_zeroed=%u\n", recalloc_tail_zeroed);
+  printf("trace.fundamental.recalloc.valid=%u\n", recalloc_valid);
+  mi_free(recalloc);
+  if (!recalloc_valid) return 18;
+
+  const size_t recalloc_zero_count = 0;
+  const size_t recalloc_zero_size = SIZE_MAX;
+  uint8_t* const recalloc_zero =
+      (uint8_t*)mi_recalloc(NULL, recalloc_zero_count, recalloc_zero_size);
+  if (recalloc_zero == NULL) return 19;
+  printf("trace.fundamental.recalloc_zero.count=%zu\n", recalloc_zero_count);
+  printf("trace.fundamental.recalloc_zero.size=%zu\n", recalloc_zero_size);
+  printf("trace.fundamental.recalloc_zero.total=0\n");
+  printf("trace.fundamental.recalloc_zero.returns_nonnull=1\n");
+  printf("trace.fundamental.recalloc_zero.first_byte_zero=%u\n", recalloc_zero[0] == 0);
+  mi_free(recalloc_zero);
+
+  const size_t recalloc_overflow_count = SIZE_MAX;
+  const size_t recalloc_overflow_size = 2;
+  uint8_t* const recalloc_overflow = (uint8_t*)mi_malloc(59);
+  if (recalloc_overflow == NULL) return 20;
+  const size_t recalloc_overflow_usable = mi_usable_size(recalloc_overflow);
+  memset(recalloc_overflow, 0x7c, recalloc_overflow_usable);
+  const uint64_t recalloc_overflow_before =
+      content_hash(recalloc_overflow, recalloc_overflow_usable);
+  void* const recalloc_overflow_result = mi_recalloc(
+      recalloc_overflow, recalloc_overflow_count, recalloc_overflow_size);
+  if (recalloc_overflow_result != NULL) {
+    mi_free(recalloc_overflow_result);
+    return 21;
+  }
+  const bool recalloc_overflow_preserved =
+      content_hash(recalloc_overflow, recalloc_overflow_usable)
+          == recalloc_overflow_before;
+  printf("trace.fundamental.recalloc_overflow.count=%zu\n", recalloc_overflow_count);
+  printf("trace.fundamental.recalloc_overflow.size=%zu\n", recalloc_overflow_size);
+  printf("trace.fundamental.recalloc_overflow.returns_null=1\n");
+  printf("trace.fundamental.recalloc_overflow.preserved=%u\n", recalloc_overflow_preserved);
+  mi_free(recalloc_overflow);
+
   const size_t expand_request = 59;
   uint8_t* const expand = (uint8_t*)mi_malloc(expand_request);
   if (expand == NULL) return 19;
@@ -931,6 +1000,7 @@ int main(void) {
       && expand_before == expand_after;
   mi_free(expand);
   if (!expand_valid) return 21;
+#endif
 
   const size_t aligned_size = 97;
   const size_t aligned_alignment = 256;
@@ -976,9 +1046,10 @@ int main(void) {
 
 # This schema freezes the selected direct C/Rust fundamental trace. Comparing
 # only the two observed maps would allow a synchronized deletion to silently
-# shrink the recorded contract. The trace algorithm is target-neutral; native
-# evidence qualification remains in the architecture-specific ledgers.
-FUNDAMENTAL_TRACE_EXPECTED_KEYS = frozenset(
+# shrink the recorded contract. The 51-field base is shared, while the 24-field
+# `mi_expand`/`mi_recalloc` extension is explicitly native x86-64-only; evidence
+# qualification remains in the architecture-specific ledgers.
+FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS = frozenset(
     {
         *(
             f"trace.fundamental.class.{kind}.{field}"
@@ -1012,6 +1083,23 @@ FUNDAMENTAL_TRACE_EXPECTED_KEYS = frozenset(
         "trace.fundamental.realloc_size_zero.request",
         "trace.fundamental.realloc_size_zero.returns_nonnull",
         "trace.fundamental.realloc_size_zero.usable",
+        "trace.fundamental.recalloc.count",
+        "trace.fundamental.recalloc.size",
+        "trace.fundamental.recalloc.total",
+        "trace.fundamental.recalloc.old_usable",
+        "trace.fundamental.recalloc.new_usable",
+        "trace.fundamental.recalloc.preserved",
+        "trace.fundamental.recalloc.tail_zeroed",
+        "trace.fundamental.recalloc.valid",
+        "trace.fundamental.recalloc_zero.count",
+        "trace.fundamental.recalloc_zero.size",
+        "trace.fundamental.recalloc_zero.total",
+        "trace.fundamental.recalloc_zero.returns_nonnull",
+        "trace.fundamental.recalloc_zero.first_byte_zero",
+        "trace.fundamental.recalloc_overflow.count",
+        "trace.fundamental.recalloc_overflow.size",
+        "trace.fundamental.recalloc_overflow.returns_null",
+        "trace.fundamental.recalloc_overflow.preserved",
         "trace.fundamental.expand.usable",
         "trace.fundamental.expand.null_nonzero_returns_null",
         "trace.fundamental.expand.zero_returns_input",
@@ -1033,7 +1121,31 @@ FUNDAMENTAL_TRACE_EXPECTED_KEYS = frozenset(
         "trace.fundamental.oom.returns_null",
     }
 )
-FUNDAMENTAL_TRACE_EXPECTED_COUNT = 58
+FUNDAMENTAL_TRACE_X86_64_EXPECTED_COUNT = 75
+FUNDAMENTAL_TRACE_X86_64_EXTENSION_KEYS = frozenset(
+    key
+    for key in FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS
+    if key.startswith(("trace.fundamental.recalloc", "trace.fundamental.expand."))
+)
+FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS = frozenset(
+    FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS - FUNDAMENTAL_TRACE_X86_64_EXTENSION_KEYS
+)
+FUNDAMENTAL_TRACE_AARCH64_EXPECTED_COUNT = 51
+
+# Keep the historical names bound to the production/AArch64 contract. Native
+# x86-64 evidence must opt into its explicitly extended 75-field record.
+FUNDAMENTAL_TRACE_EXPECTED_KEYS = FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS
+FUNDAMENTAL_TRACE_EXPECTED_COUNT = FUNDAMENTAL_TRACE_AARCH64_EXPECTED_COUNT
+
+
+def fundamental_trace_schema(architecture: str) -> tuple[frozenset[str], int]:
+    """Return the fixed trace schema for one explicitly selected architecture."""
+
+    if architecture == "aarch64":
+        return FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS, FUNDAMENTAL_TRACE_AARCH64_EXPECTED_COUNT
+    if architecture == "x86_64":
+        return FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS, FUNDAMENTAL_TRACE_X86_64_EXPECTED_COUNT
+    raise HarnessError(f"unsupported fundamental trace architecture: {architecture}")
 
 
 class HarnessError(RuntimeError):
@@ -2831,12 +2943,15 @@ def compare_small_trace(
 
 
 def compare_fundamental_trace(
-    c_trace: Mapping[str, int], rust_trace: Mapping[str, int]
+    c_trace: Mapping[str, int],
+    rust_trace: Mapping[str, int],
+    *,
+    architecture: str = "aarch64",
 ) -> dict[str, Any]:
-    """Require a future Rust fundamental trace to equal the pinned C record."""
+    """Require one architecture's Rust trace to equal its pinned C record."""
 
-    validate_fundamental_trace_schema(c_trace, source="pinned C")
-    validate_fundamental_trace_schema(rust_trace, source="Rust")
+    validate_fundamental_trace_schema(c_trace, source="pinned C", architecture=architecture)
+    validate_fundamental_trace_schema(rust_trace, source="Rust", architecture=architecture)
 
     missing_from_c = sorted(set(rust_trace).difference(c_trace))
     missing_from_rust = sorted(set(c_trace).difference(rust_trace))
@@ -2860,17 +2975,19 @@ def compare_fundamental_trace(
     return {"compared_value_count": len(rust_trace), "status": "matched"}
 
 
-def validate_fundamental_trace_schema(trace: Mapping[str, int], *, source: str) -> None:
-    """Reject a trace whose fields drift from the fixed 58-key record."""
+def validate_fundamental_trace_schema(
+    trace: Mapping[str, int], *, source: str, architecture: str = "aarch64"
+) -> None:
+    """Reject a trace whose fields drift from its architecture's fixed record."""
 
-    expected_count = FUNDAMENTAL_TRACE_EXPECTED_COUNT
-    if len(FUNDAMENTAL_TRACE_EXPECTED_KEYS) != expected_count:
+    expected_keys, expected_count = fundamental_trace_schema(architecture)
+    if len(expected_keys) != expected_count:
         raise HarnessError(
             "internal fundamental-operation trace schema has an unexpected key count"
         )
     observed = set(trace)
-    missing = sorted(FUNDAMENTAL_TRACE_EXPECTED_KEYS.difference(observed))
-    unexpected = sorted(observed.difference(FUNDAMENTAL_TRACE_EXPECTED_KEYS))
+    missing = sorted(expected_keys.difference(observed))
+    unexpected = sorted(observed.difference(expected_keys))
     if missing or unexpected:
         problems: list[str] = []
         if missing:
@@ -3289,6 +3406,8 @@ def build_fundamental_trace(
     source: Path,
     profile_dir: Path,
     profile_flags: Sequence[str],
+    *,
+    architecture: str = "aarch64",
 ) -> dict[str, Any]:
     """Build the pinned-C baseline for the Milestone 4 public API slice."""
 
@@ -3318,9 +3437,12 @@ def build_fundamental_trace(
     require_success(build, "pinned C fundamental-operation trace build")
     run = command_record((str(trace_binary),), cwd=source)
     require_success(run, "pinned C fundamental-operation trace execution")
+    record = parse_fundamental_trace(str(run["stdout"]))
+    validate_fundamental_trace_schema(record, source="pinned C", architecture=architecture)
     return {
         "command": command,
-        "record": parse_fundamental_trace(str(run["stdout"])),
+        "record": record,
+        "architecture": architecture,
     }
 
 
@@ -3402,7 +3524,9 @@ def build_profile(
             compiler, source, profile_dir, flags
         )
         result["fundamental_trace"] = {
-            "c_oracle": build_fundamental_trace(compiler, source, profile_dir, flags),
+            "c_oracle": build_fundamental_trace(
+                compiler, source, profile_dir, flags, architecture=architecture
+            ),
             "rust_comparison": pending_fundamental_trace_comparison(),
         }
     return result
@@ -3857,6 +3981,19 @@ def x86_64_normal_engine_artifact() -> dict[str, Any]:
         }
 
 
+def fundamental_trace_architecture_for_rust_target(rust_target: str | None) -> str:
+    """Map an admitted direct-engine target to its fixed trace contract."""
+
+    if rust_target is None or rust_target == PRODUCTION_RUST_TARGET:
+        return "aarch64"
+    if rust_target == X86_64_RUST_TARGET:
+        return "x86_64"
+    raise HarnessError(
+        "direct Rust fundamental trace has no schema for target: "
+        f"{rust_target}"
+    )
+
+
 def rust_layout_probe(
     c_release_layout: Mapping[str, int],
     c_release_small_trace: Mapping[str, int],
@@ -3872,6 +4009,7 @@ def rust_layout_probe(
     AArch64 test artifact or report by accident.
     """
 
+    architecture = fundamental_trace_architecture_for_rust_target(rust_target)
     command = [
         "cargo",
         "test",
@@ -3916,7 +4054,9 @@ def rust_layout_probe(
         },
         "single_thread_fundamental_trace": {
             "comparison": compare_fundamental_trace(
-                c_release_fundamental_trace, rust_fundamental_trace
+                c_release_fundamental_trace,
+                rust_fundamental_trace,
+                architecture=architecture,
             ),
             "record": rust_fundamental_trace,
         },

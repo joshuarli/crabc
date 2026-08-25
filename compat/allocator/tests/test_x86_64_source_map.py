@@ -131,13 +131,15 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertEqual(implemented, ["x86-64-width-and-bit-operations"])
         self.assertGreater(self.contract["ratchet"]["unfinished_unit_count"], 0)
 
-    def test_ordinary_allocation_scope_records_the_private_no_padding_expand_slice(self) -> None:
+    def test_ordinary_allocation_scope_records_private_expand_and_recalloc_slices(self) -> None:
         ordinary = next(
             unit for unit in self.contract["units"] if unit["id"] == "ordinary-allocation-paths"
         )
         self.assertEqual(ordinary["status"], "partial")
         self.assertIn("no-padding mi_expand", ordinary["difference"])
+        self.assertIn("mi_recalloc", ordinary["difference"])
         self.assertIn("caller-managed private single-thread lifecycle", ordinary["difference"])
+        self.assertGreaterEqual(ordinary["source_anchor"]["end_line"], 483)
 
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(

@@ -316,6 +316,30 @@ impl TestAllocatorContext {
         }
     }
 
+    /// Performs checked counted zeroed reallocation.
+    ///
+    /// # Safety
+    ///
+    /// `block` has the same current-allocation and exclusive-access
+    /// obligations as [`Self::realloc`]. An overflowing `count * size` and a
+    /// failed replacement preserve a present old block. A null block follows
+    /// the private zero-allocation path, including a freeable zero-product
+    /// allocation.
+    pub unsafe fn recalloc(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        count: usize,
+        size: usize,
+    ) -> Result<NonNull<u8>, TestContextPointerError> {
+        // SAFETY: this method repeats the inner allocator's current-block
+        // contract in its public safety documentation.
+        unsafe {
+            self.reallocate_with(block, |allocator, block| {
+                allocator.reallocate_zeroed_count(block, count, size)
+            })
+        }
+    }
+
     /// Reallocates a zero-offset aligned context allocation.
     ///
     /// # Safety
@@ -854,6 +878,56 @@ mod tests {
         }
         assert_eq!(context.outstanding_allocations(), 1);
         unsafe { context.free(replacement) }.unwrap();
+        assert_eq!(context.shutdown(), Ok(()));
+    }
+
+    #[test]
+    fn context_recalloc_preflights_overflow_and_preserves_its_one_block_accounting() {
+        let mut context = TestAllocatorContext::new().unwrap();
+        let allocation = context.alloc(23).unwrap();
+        let old_usable = unsafe { context.usable_size(allocation) }.unwrap();
+        // SAFETY: `allocation` remains this context's sole current block
+        // through the failed counted preflight below.
+        unsafe { core::ptr::write_bytes(allocation.as_ptr(), 0x5a, old_usable) };
+
+        assert_eq!(
+            unsafe { context.recalloc(Some(allocation), usize::MAX, 2) },
+            Err(TestContextPointerError::AllocationFailed),
+        );
+        assert_eq!(context.outstanding_allocations(), 1);
+        assert_eq!(unsafe { context.usable_size(allocation) }, Ok(old_usable));
+        for index in 0..old_usable {
+            assert_eq!(unsafe { allocation.as_ptr().add(index).read() }, 0x5a);
+        }
+
+        let count = 3usize;
+        let element_size = old_usable.checked_add(2048).unwrap();
+        let total = count.checked_mul(element_size).unwrap();
+        let replacement = unsafe {
+            context.recalloc(Some(allocation), count, element_size)
+        }
+        .unwrap();
+        let new_usable = unsafe { context.usable_size(replacement) }.unwrap();
+        assert_ne!(replacement, allocation);
+        assert!(new_usable >= total);
+        for index in 0..old_usable {
+            assert_eq!(unsafe { replacement.as_ptr().add(index).read() }, 0x5a);
+        }
+        for index in old_usable..new_usable {
+            assert_eq!(unsafe { replacement.as_ptr().add(index).read() }, 0);
+        }
+        assert_eq!(context.outstanding_allocations(), 1);
+
+        let zero_product = unsafe { context.recalloc(Some(replacement), 0, usize::MAX) }.unwrap();
+        assert_ne!(zero_product, replacement);
+        assert_eq!(unsafe { zero_product.as_ptr().read() }, 0);
+        assert_eq!(context.outstanding_allocations(), 1);
+        unsafe { context.free(zero_product) }.unwrap();
+
+        let null_zero_product = unsafe { context.recalloc(None, 0, usize::MAX) }.unwrap();
+        assert_eq!(context.outstanding_allocations(), 1);
+        assert_eq!(unsafe { null_zero_product.as_ptr().read() }, 0);
+        unsafe { context.free(null_zero_product) }.unwrap();
         assert_eq!(context.shutdown(), Ok(()));
     }
 

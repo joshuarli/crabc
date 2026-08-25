@@ -555,7 +555,7 @@ class InventoryTests(unittest.TestCase):
         c_layout = {"config.value": 1}
         c_small_trace = {"small.value": 2}
         c_fundamental_trace = {
-            key: 3 for key in RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS
+            key: 3 for key in RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS
         }
         with mock.patch.object(
             RUNNER,
@@ -742,7 +742,7 @@ ok
 
     def test_native_x86_64_direct_engine_probe_selects_its_explicit_target(self) -> None:
         fundamental_trace = {
-            key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS
+            key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS
         }
         fundamental_output = "\n".join(
             f"{key}={value}" for key, value in sorted(fundamental_trace.items())
@@ -794,8 +794,20 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         )
         self.assertEqual(
             result["single_thread_fundamental_trace"]["comparison"],
-            {"compared_value_count": 58, "status": "matched"},
+            {"compared_value_count": 75, "status": "matched"},
         )
+
+    def test_direct_engine_probe_rejects_a_target_without_a_trace_schema(self) -> None:
+        with self.assertRaisesRegex(
+            RUNNER.HarnessError,
+            "direct Rust fundamental trace has no schema for target: riscv64gc-unknown-linux-musl",
+        ):
+            RUNNER.rust_layout_probe(
+                {"config.value": 1},
+                {"small.value": 1},
+                {key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS},
+                rust_target="riscv64gc-unknown-linux-musl",
+            )
 
     def test_native_x86_64_adapter_contract_is_target_local_and_source_bound(self) -> None:
         source_contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
@@ -1036,10 +1048,10 @@ noise after
             RUNNER.parse_fundamental_trace("trace.fundamental.class.small.request=10240\n")
 
     def test_fundamental_trace_comparison_names_value_mismatch_after_schema_validation(self) -> None:
-        c_trace = {key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS}
+        c_trace = {key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS}
         self.assertEqual(
-            RUNNER.compare_fundamental_trace(c_trace, c_trace),
-            {"compared_value_count": 58, "status": "matched"},
+            RUNNER.compare_fundamental_trace(c_trace, c_trace, architecture="x86_64"),
+            {"compared_value_count": 75, "status": "matched"},
         )
         mismatched = dict(c_trace)
         mismatched["trace.fundamental.class.small.success"] = 0
@@ -1047,19 +1059,26 @@ noise after
             RUNNER.HarnessError,
             r"value mismatches: trace\.fundamental\.class\.small\.success \(C=1, Rust=0\)",
         ):
-            RUNNER.compare_fundamental_trace(c_trace, mismatched)
+            RUNNER.compare_fundamental_trace(c_trace, mismatched, architecture="x86_64")
 
     def test_fundamental_trace_comparison_rejects_a_synchronized_schema_regression(self) -> None:
         # Comparing only the two observed maps would let a matching deletion
         # silently reduce the pinned trace contract. The durable record has a
-        # fixed 58-key schema, including the nonzero null-pointer expand case.
-        self.assertEqual(RUNNER.FUNDAMENTAL_TRACE_EXPECTED_COUNT, 58)
-        self.assertEqual(len(RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS), 58)
+        # fixed 75-key schema, including the nonzero null-pointer expand case
+        # and checked counted zeroed reallocation outcomes.
+        self.assertEqual(RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_COUNT, 75)
+        self.assertEqual(len(RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS), 75)
         self.assertIn(
             "trace.fundamental.expand.null_nonzero_returns_null",
-            RUNNER.FUNDAMENTAL_TRACE_EXPECTED_KEYS,
+            RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS,
         )
+        self.assertIn(
+            "trace.fundamental.recalloc_overflow.preserved",
+            RUNNER.FUNDAMENTAL_TRACE_X86_64_EXPECTED_KEYS,
+        )
+        self.assertIn("mi_recalloc", RUNNER.FUNDAMENTAL_TRACE_PROBE)
         self.assertIn("mi_expand(NULL, expand_request)", RUNNER.FUNDAMENTAL_TRACE_PROBE)
+        self.assertIn("#if defined(__x86_64__)", RUNNER.FUNDAMENTAL_TRACE_PROBE)
         synchronized_but_incomplete = {
             "trace.fundamental.class.small.request": 10240,
             "trace.fundamental.class.small.success": 1,
@@ -1067,11 +1086,39 @@ noise after
         }
         with self.assertRaisesRegex(
             RUNNER.HarnessError,
-            r"fixed 58-key schema.*trace\.fundamental\.expand\.null_nonzero_returns_null",
+            r"fixed 75-key schema.*trace\.fundamental\.expand\.null_nonzero_returns_null",
         ):
             RUNNER.compare_fundamental_trace(
-                synchronized_but_incomplete, synchronized_but_incomplete
+                synchronized_but_incomplete,
+                synchronized_but_incomplete,
+                architecture="x86_64",
             )
+
+    def test_fundamental_trace_schema_keeps_aarch64_baseline_separate_from_x86_extension(self) -> None:
+        self.assertEqual(RUNNER.FUNDAMENTAL_TRACE_AARCH64_EXPECTED_COUNT, 51)
+        self.assertEqual(len(RUNNER.FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS), 51)
+        self.assertEqual(RUNNER.FUNDAMENTAL_TRACE_EXPECTED_COUNT, 51)
+        self.assertNotIn(
+            "trace.fundamental.expand.usable",
+            RUNNER.FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS,
+        )
+        self.assertNotIn(
+            "trace.fundamental.recalloc.valid",
+            RUNNER.FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS,
+        )
+        self.assertEqual(
+            len(RUNNER.FUNDAMENTAL_TRACE_X86_64_EXTENSION_KEYS),
+            24,
+        )
+        aarch_trace = {key: 1 for key in RUNNER.FUNDAMENTAL_TRACE_AARCH64_EXPECTED_KEYS}
+        self.assertEqual(
+            RUNNER.compare_fundamental_trace(aarch_trace, aarch_trace),
+            {"compared_value_count": 51, "status": "matched"},
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "fixed 51-key schema"):
+            RUNNER.compare_fundamental_trace(aarch_trace, aarch_trace | {
+                "trace.fundamental.expand.usable": 1,
+            })
 
     def test_fundamental_trace_parser_rejects_raw_address_fields(self) -> None:
         output = """

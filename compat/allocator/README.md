@@ -833,8 +833,9 @@ records a separate 51-key exact-C baseline for page-kind, calloc, realloc,
 aligned/offset-aligned, usable-size, preservation, and invalid-size OOM
 behavior. The same library run emits an independent 51-key Rust record and
 requires exact equality with that pinned C baseline. The native x86-64 lane
-below extends its own trace to 58 fields with no-padding `mi_expand`; native
-AArch64 revalidation of that extension remains pending. This proves the bounded
+below extends its own trace to 75 fields with no-padding `mi_expand` and
+checked `mi_recalloc`; native AArch64 revalidation of that extension remains
+pending. This proves the bounded
 single-thread engine's fundamental operation slice; it is not a production C
 adapter, process lifecycle, or whole-allocator parity claim. A
 default-off `test-adapter` feature now owns one allocation-backed, creating-
@@ -912,10 +913,28 @@ executable also records a PT_INTERP loader whose basename is
 `ld-musl-x86_64.so.1`. Its first native run may populate the architecture-local
 Cargo cache from the checked-in lockfile; it never updates that lockfile.
 
-The direct native C/Rust fundamental trace currently contains 58 exact logical
+The direct native C/Rust fundamental trace currently contains 75 exact logical
 fields, including the fixed no-padding `mi_expand` nonzero null-pointer, zero-size,
-below-half, exact-fit, oversize, and state-preservation cases. It remains
-private engine evidence rather than a public x86 allocator API.
+below-half, exact-fit, oversize, and state-preservation cases plus checked
+`mi_recalloc` growth/tail-zeroing, zero-product, and overflow-preservation
+outcomes. It remains private engine evidence rather than a public x86 allocator
+API.
+
+The target-local native C release boundary has a dedicated evidence-only
+command:
+
+```sh
+./scripts/dev-amd64.sh allocator-release-evidence
+```
+
+It compiles the pinned mimalloc v3.5.0 release source set with the recorded
+release flags, proves the selected x86-64 preprocessor mode, inventories
+globally defined `mi_*` symbols across the individual release objects, and
+separately inventories default-visible defined `mi_*` dynamic symbols in the
+linked shared object. Its report is
+`compat/reports/allocator/x86_64/release-evidence.json`. This is native x86-64
+evidence only: it does not add public x86 `crabc`, libc, or ldso support and
+does not reuse AArch64 status.
 
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
@@ -997,6 +1016,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
 | `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
 | `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
+| `x86_64_release_evidence.py` and `x86_64-release-evidence-v3.5.0.json` | Native x86-64-only C release-mode, ELF identity, object-symbol, and dynamic-symbol evidence. It is dispatched by `allocator-release-evidence`; it does not claim public x86 support or reuse AArch64 status. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |

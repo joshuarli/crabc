@@ -1,6 +1,14 @@
 {
   "evidence_gates": [
     {
+      "claim": "On an attested native x86-64 host, compiles the pinned mimalloc C release source set with the exact recorded release flags, proves the selected x86-64 preprocessor mode and ELF identity, inventories globally defined mi_* symbols across the individual release objects, and separately inventories default-visible defined mi_* dynamic symbols in the linked shared object. This is evidence-only and does not claim public x86 crabc, libc, or ldso support or reuse AArch64 status.",
+      "command": "./scripts/dev-amd64.sh allocator-release-evidence",
+      "id": "native-pinned-c-release-mode-object-symbols",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/release-evidence.json",
+      "state": "available"
+    },
+    {
       "claim": "Builds and inspects the separately compiled, pinned mimalloc C oracle. It does not claim a Rust C-API adapter or public allocator support.",
       "command": "./scripts/dev-amd64.sh allocator --quick",
       "id": "native-c-oracle",
@@ -9,7 +17,7 @@
       "state": "available"
     },
     {
-      "claim": "Compares the native direct Rust engine's configuration/layout, small-allocation trace, and 58-field fundamental-operation trace (including fixed no-padding mi_expand NULL/nonzero, fitting, oversize, and preservation cases) against the selected pinned C release profile. It does not claim a C-API adapter, general lifecycle, or public allocator integration.",
+      "claim": "Compares the native direct Rust engine's configuration/layout, small-allocation trace, and 75-field fundamental-operation trace (including fixed no-padding mi_expand NULL/nonzero, fitting, oversize, and preservation cases plus checked mi_recalloc growth, zero-product, and overflow-preservation cases) against the selected pinned C release profile. It does not claim a C-API adapter, general lifecycle, or public allocator integration.",
       "command": "./scripts/dev-amd64.sh allocator --quick",
       "id": "native-direct-rust-c-differential",
       "native_required": true,

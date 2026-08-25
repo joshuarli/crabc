@@ -1,0 +1,60 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-release-object-symbol-evidence",
+  "profile": "linux-x86_64-pinned-mimalloc-release",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "system": "linux",
+    "rust_target": "x86_64-unknown-linux-musl"
+  },
+  "upstream": {
+    "version": "3.5.0",
+    "archive_root": "mimalloc-3.5.0"
+  },
+  "release_source_set": [
+    "src/alloc.c", "src/alloc-aligned.c", "src/alloc-posix.c", "src/arena.c",
+    "src/bitmap.c", "src/heap.c", "src/init.c", "src/libc.c", "src/options.c",
+    "src/os.c", "src/page.c", "src/page-map.c", "src/random.c", "src/stats.c",
+    "src/subproc.c", "src/theap.c", "src/threadlocal.c", "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "release_flags": ["-O3", "-DNDEBUG", "-DMI_BUILD_RELEASE=1", "-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=0", "-DMI_GUARDED=0"],
+  "compile_definitions": ["-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1"],
+  "target_mode_assertions": ["__linux__", "__x86_64__", "MI_ARCH_X64=1", "MI_INTPTR_SIZE=8", "MI_SIZE_SIZE=8", "MI_MAX_VABITS=47", "MI_BUILD_RELEASE=1", "MI_DEBUG=0", "MI_STAT=0", "MI_SECURE=0", "MI_GUARDED=0", "MI_SHARED_LIB", "MI_SHARED_LIB_EXPORT", "MI_LIBC_MUSL=1"],
+  "source_declaration_inventory": {
+    "base_header": {
+      "path": "compat/allocator/x86_64-api-v3.5.0.json",
+      "declaration_count": 180,
+      "declaration_names_sha256": "5a17248c61dccbb5abd9b8fe742a4243594793c125e229b2156a7f5172915975"
+    },
+    "statistics_header": {
+      "path": "compat/allocator/x86_64-api-coverage-v3.5.0.json",
+      "declaration_count": 15,
+      "declaration_names_sha256": "9a9c4bf51cde6774f22488f0e92200d1909cc6bc688cc4b824aa3aa92020cdda"
+    },
+    "normal_release_exceptions": [
+      "mi_collect_reduce",
+      "mi_malloc_size",
+      "mi_malloc_usable_size",
+      "mi_stats_merge"
+    ]
+  },
+  "object_global_mi_symbol_inventory": {
+    "meaning": "Fixed hash of the sorted, globally defined mi_* symbols across the individually compiled normal-release objects.",
+    "count": 225,
+    "sorted_names_sha256": "cac001c206f05e1b50803e04c6fadc3fa6d328c786678e6664a4dc0ba5381d69"
+  },
+  "dynamic_default_visible_mi_symbol_inventory": {
+    "meaning": "Fixed hash of the sorted, default-visible, defined mi_* symbols in the linked normal-release shared object.",
+    "count": 190,
+    "sorted_names_sha256": "709aee61c11e48167de7a56b2986d0efe89848b51f1cf7d0b0db7b851dc0ed38"
+  },
+  "scope": {
+    "native_linux_x86_64_required": true,
+    "public_crabc_support": false,
+    "public_x86_libc_or_ldso_support": false,
+    "aarch64_status_reused": false,
+    "emulation_accepted": false
+  }
+}

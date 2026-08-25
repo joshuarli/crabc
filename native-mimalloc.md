@@ -468,9 +468,11 @@ contracts, reports, and status.
 ### Remaining native x86-64 allocator-parity work
 
 - [ ] Resolve the target-local source API/mode/test/symbol coverage ledger's
-  explicitly unassessed target-mode, object-symbol, behavior, and
-  implementation statuses into reviewed per-item outcomes; never reuse AArch64
-  statuses.
+  remaining per-item target-mode, object-symbol, behavior, and implementation
+  statuses into reviewed outcomes. The aggregate normal-release C
+  mode/object-symbol gate does not classify individual declarations,
+  inline/C++ forms, behavior, or Rust/public-runtime support; never reuse
+  AArch64 statuses.
 - [ ] Close the source-applicable engine behavior holes identified by the x86
   source map and ledger, record every intentional difference, and add native
   pinned-C differential evidence for each completed behavior.

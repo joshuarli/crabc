@@ -29240,6 +29240,28 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         unsafe { self.reallocate_inner(block, new_size, true) }
     }
 
+    /// Performs checked counted zeroed reallocation.
+    ///
+    /// This is the private `mi_count_size_overflow` + `recalloc` path. An
+    /// unrepresentable product returns `None` before it observes, allocates,
+    /// frees, or otherwise mutates a present current block. A representable
+    /// zero product remains the source-compatible zero-size reallocation
+    /// case; it is not an implicit free.
+    ///
+    /// # Safety
+    ///
+    /// The caller obligations are identical to [`Self::reallocate`].
+    #[inline]
+    pub(crate) unsafe fn reallocate_zeroed_count(
+        &mut self,
+        block: Option<NonNull<u8>>,
+        count: usize,
+        size: usize,
+    ) -> Option<NonNull<u8>> {
+        let new_size = size_class::count_size(count, size)?;
+        unsafe { self.reallocate_zeroed(block, new_size) }
+    }
+
     /// Core `mi_theap_realloc_zero_ex` behavior for the one owning heap.
     unsafe fn reallocate_inner(
         &mut self,
@@ -32655,6 +32677,68 @@ mod tests {
     }
 
     #[test]
+    fn counted_zero_reallocation_preflights_overflow_and_clears_the_replacement_extent() {
+        with_allocator(|allocator| {
+            let original = allocator.allocate(257, false).unwrap();
+            let old_usable = unsafe { allocator.usable_size(original) }.unwrap();
+            // SAFETY: `original` remains the sole current allocation through
+            // the overflow observation below, so its full usable extent is
+            // available for a preservation sentinel.
+            unsafe { write_bytes(original, old_usable, 0xa7) };
+            let before = unsafe { content_hash(original, old_usable) };
+
+            // SAFETY: a checked counted reallocation must reject overflow
+            // before it observes, allocates, frees, or otherwise mutates the
+            // still-current source allocation.
+            assert!(unsafe {
+                allocator.reallocate_zeroed_count(Some(original), usize::MAX, 2)
+            }
+            .is_none());
+            assert_eq!(unsafe { allocator.usable_size(original) }, Some(old_usable));
+            assert_eq!(unsafe { content_hash(original, old_usable) }, before);
+
+            let count = 3usize;
+            let element_size = old_usable.checked_add(2048).unwrap();
+            let total = count.checked_mul(element_size).unwrap();
+            // SAFETY: `original` is still current after the failed overflow
+            // preflight. The product is deliberately larger than its usable
+            // extent, so the source must initialize a replacement before it
+            // releases this original block.
+            let replacement = unsafe {
+                allocator.reallocate_zeroed_count(Some(original), count, element_size)
+            }
+            .unwrap();
+            let new_usable = unsafe { allocator.usable_size(replacement) }.unwrap();
+            assert_ne!(replacement, original);
+            assert!(new_usable >= total);
+            assert!(unsafe { bytes_equal(replacement, old_usable, 0xa7) });
+            let zero_tail = NonNull::new(unsafe { replacement.as_ptr().add(old_usable) }).unwrap();
+            assert!(unsafe { bytes_equal(zero_tail, new_usable - old_usable, 0) });
+
+            // A zero product is not an overflow or an implicit free: source
+            // `recalloc` creates one distinct, zeroed, freeable zero-size
+            // allocation after replacement initialization succeeds.
+            let zero_product = unsafe {
+                allocator.reallocate_zeroed_count(Some(replacement), 0, usize::MAX)
+            }
+            .unwrap();
+            assert_ne!(zero_product, replacement);
+            assert_eq!(unsafe { zero_product.as_ptr().read() }, 0);
+            // SAFETY: this is the sole current zero-product replacement.
+            unsafe { allocator.free(zero_product).unwrap() };
+
+            let null_zero_product = unsafe {
+                allocator.reallocate_zeroed_count(None, 0, usize::MAX)
+            }
+            .unwrap();
+            let null_zero_usable = unsafe { allocator.usable_size(null_zero_product) }.unwrap();
+            assert!(unsafe { bytes_equal(null_zero_product, null_zero_usable, 0) });
+            // SAFETY: this null-input allocation is distinct and current.
+            unsafe { allocator.free(null_zero_product).unwrap() };
+        });
+    }
+
+    #[test]
     fn os_aligned_singletons_publish_clipped_maps_aliases_and_reclaim_their_mapping() {
         with_allocator(|allocator| {
             for (request, alignment, aliases_expected) in [
@@ -33204,6 +33288,110 @@ mod tests {
             );
             unsafe { allocator.free(size_zero).unwrap() };
 
+            // The 51-field production/AArch64 record stays frozen until a
+            // native revalidation extends it. These private `expand` and
+            // `recalloc` facts belong only to the native x86-64 evidence
+            // profile selected by `compat/allocator/run.py`.
+            #[cfg(target_arch = "x86_64")]
+            {
+            let recalloc_original_size = 257usize;
+            let recalloc_count = 3usize;
+            let recalloc_size = 2731usize;
+            let recalloc_total = recalloc_count.checked_mul(recalloc_size).unwrap();
+            let recalloc = allocator.allocate(recalloc_original_size, false).unwrap();
+            let recalloc_old_usable = unsafe { allocator.usable_size(recalloc) }.unwrap();
+            unsafe { write_bytes(recalloc, recalloc_old_usable, 0x54) };
+            let recalloc_before = unsafe { content_hash(recalloc, recalloc_old_usable) };
+            let recalloc = unsafe {
+                allocator.reallocate_zeroed_count(Some(recalloc), recalloc_count, recalloc_size)
+            }
+            .unwrap();
+            let recalloc_new_usable = unsafe { allocator.usable_size(recalloc) }.unwrap();
+            let recalloc_preserved = unsafe {
+                content_hash(recalloc, recalloc_old_usable) == recalloc_before
+            };
+            let recalloc_tail_zeroed = recalloc_new_usable >= recalloc_old_usable
+                && unsafe {
+                    bytes_equal(
+                        NonNull::new(recalloc.as_ptr().wrapping_add(recalloc_old_usable)).unwrap(),
+                        recalloc_new_usable - recalloc_old_usable,
+                        0,
+                    )
+                };
+            let recalloc_valid = recalloc_new_usable >= recalloc_total
+                && recalloc_preserved
+                && recalloc_tail_zeroed;
+            std::println!("trace.fundamental.recalloc.count={recalloc_count}");
+            std::println!("trace.fundamental.recalloc.size={recalloc_size}");
+            std::println!("trace.fundamental.recalloc.total={recalloc_total}");
+            std::println!("trace.fundamental.recalloc.old_usable={recalloc_old_usable}");
+            std::println!("trace.fundamental.recalloc.new_usable={recalloc_new_usable}");
+            std::println!(
+                "trace.fundamental.recalloc.preserved={}",
+                u8::from(recalloc_preserved),
+            );
+            std::println!(
+                "trace.fundamental.recalloc.tail_zeroed={}",
+                u8::from(recalloc_tail_zeroed),
+            );
+            std::println!(
+                "trace.fundamental.recalloc.valid={}",
+                u8::from(recalloc_valid),
+            );
+            assert!(recalloc_valid);
+            unsafe { allocator.free(recalloc).unwrap() };
+
+            let recalloc_zero_count = 0usize;
+            let recalloc_zero_size = usize::MAX;
+            let recalloc_zero = unsafe {
+                allocator.reallocate_zeroed_count(None, recalloc_zero_count, recalloc_zero_size)
+            }
+            .unwrap();
+            let recalloc_zero_first_byte = unsafe { recalloc_zero.as_ptr().read() == 0 };
+            std::println!("trace.fundamental.recalloc_zero.count={recalloc_zero_count}");
+            std::println!("trace.fundamental.recalloc_zero.size={recalloc_zero_size}");
+            std::println!("trace.fundamental.recalloc_zero.total=0");
+            std::println!("trace.fundamental.recalloc_zero.returns_nonnull=1");
+            std::println!(
+                "trace.fundamental.recalloc_zero.first_byte_zero={}",
+                u8::from(recalloc_zero_first_byte),
+            );
+            assert!(recalloc_zero_first_byte);
+            unsafe { allocator.free(recalloc_zero).unwrap() };
+
+            let recalloc_overflow_count = usize::MAX;
+            let recalloc_overflow_size = 2usize;
+            let recalloc_overflow = allocator.allocate(59, false).unwrap();
+            let recalloc_overflow_usable = unsafe { allocator.usable_size(recalloc_overflow) }.unwrap();
+            unsafe { write_bytes(recalloc_overflow, recalloc_overflow_usable, 0x7c) };
+            let recalloc_overflow_before = unsafe {
+                content_hash(recalloc_overflow, recalloc_overflow_usable)
+            };
+            let recalloc_overflow_result = unsafe {
+                allocator.reallocate_zeroed_count(
+                    Some(recalloc_overflow),
+                    recalloc_overflow_count,
+                    recalloc_overflow_size,
+                )
+            };
+            let recalloc_overflow_preserved = unsafe {
+                content_hash(recalloc_overflow, recalloc_overflow_usable)
+                    == recalloc_overflow_before
+            };
+            std::println!("trace.fundamental.recalloc_overflow.count={recalloc_overflow_count}");
+            std::println!("trace.fundamental.recalloc_overflow.size={recalloc_overflow_size}");
+            std::println!(
+                "trace.fundamental.recalloc_overflow.returns_null={}",
+                u8::from(recalloc_overflow_result.is_none()),
+            );
+            std::println!(
+                "trace.fundamental.recalloc_overflow.preserved={}",
+                u8::from(recalloc_overflow_preserved),
+            );
+            assert!(recalloc_overflow_result.is_none());
+            assert!(recalloc_overflow_preserved);
+            unsafe { allocator.free(recalloc_overflow).unwrap() };
+
             let expand_request = 59usize;
             let expand = allocator.allocate(expand_request, false).unwrap();
             let expand_usable = unsafe { allocator.usable_size(expand) }.unwrap();
@@ -33253,6 +33441,7 @@ mod tests {
             assert!(expand_oversize.is_none());
             assert_eq!(expand_before, expand_after);
             unsafe { allocator.free(expand).unwrap() };
+            }
 
             let aligned_size = 97usize;
             let aligned_alignment = 256usize;

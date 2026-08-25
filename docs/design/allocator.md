@@ -151,7 +151,8 @@ v3.5.0 across all 62 small-bin transition requests. A second 51-key exact
 differential record covers page-kind selection, checked calloc, ordinary
 reallocation, aligned and offset-aligned allocation, usable size, preservation,
 and invalid-size failure. The native x86-64 evidence lane separately extends
-its private trace to 58 fields with fixed no-padding `mi_expand`; native
+its private trace to 75 fields with fixed no-padding `mi_expand` and checked
+`mi_recalloc` growth, zero-product, and overflow-preservation cases; native
 AArch64 revalidation of that extension remains pending. Those operations are
 live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above

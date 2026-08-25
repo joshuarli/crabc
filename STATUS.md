@@ -29,11 +29,12 @@ pinned allocator source and its direct pinned `cc` compiler-discovery helper;
 the sysroot audit rejects any other native production input, including
 compiler-rt target objects.
 
-The same native x86-64 profile has a 58-field direct C/Rust fundamental trace
+The same native x86-64 profile has a 75-field direct C/Rust fundamental trace
 that includes the fixed no-padding `mi_expand` nonzero null-pointer, zero-size,
-below-half, exact-fit, oversize, and state-preservation cases. This remains
-private engine evidence, not public allocator API or AArch64 production
-evidence.
+below-half, exact-fit, oversize, and state-preservation cases plus checked
+`mi_recalloc` growth/tail-zeroing, zero-product, and overflow-preservation
+outcomes. This remains private engine evidence, not public allocator API or
+AArch64 production evidence.
 
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free
@@ -63,7 +64,7 @@ non-owning decommit, preserves the external mapping owner, and retains retry sta
 an injected decommit failure. The ordinary allocator gate
 matches 447 Rust-owned layout/configuration values, 378 address-independent
 small-allocation trace values, and 51 fundamental-operation values against
-exact pinned C v3.5.0. The native x86-64-only 58-field expansion extension
+exact pinned C v3.5.0. The native x86-64-only 75-field expansion extension
 recorded above does not revalidate this AArch64 production-oriented result.
 A standalone default-off test package now exports 16
 strictly prefixed `crabc_test_*` symbols, passes the existing crabc allocator
