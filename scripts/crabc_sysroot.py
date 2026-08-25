@@ -58,6 +58,21 @@ RUNTIME_ALIAS_NAMES = (
     "librt.so",
     "libutil.so",
 )
+# These are the application-facing link-mode names published in a sysroot
+# manifest and attested by the packaged-archive smoke report.  They describe
+# the user-visible driver invocations, not the more implementation-specific
+# ``LinkMode`` enum spellings: ``-no-pie`` is dynamic non-PIE and ``-static``
+# is the normal static executable mode.
+PUBLISHED_APPLICATION_LINK_MODE_ATTESTATIONS = (
+    ("dynamic-pie", "dynamic_pie"),
+    ("dynamic-non-pie", "dynamic_non_pie"),
+    ("static", "static"),
+    ("static-pie", "static_pie"),
+)
+PUBLISHED_APPLICATION_LINK_MODES = tuple(
+    mode for mode, _report_key in PUBLISHED_APPLICATION_LINK_MODE_ATTESTATIONS
+)
+PUBLISHED_APPLICATION_LINK_MODE_REPORT_KEYS = dict(PUBLISHED_APPLICATION_LINK_MODE_ATTESTATIONS)
 SEALED_ENVIRONMENT_KEYS = (
     "CPATH",
     "C_INCLUDE_PATH",
@@ -2190,6 +2205,7 @@ def assemble_sysroot(
             "platform": {"os": "linux", "architecture": "aarch64", "endianness": "little", "kernel_minimum": "5.10"},
             "canonical_interpreter": CANONICAL_INTERPRETER,
             "toolchain": toolchain.record(),
+            "supported_link_modes": list(PUBLISHED_APPLICATION_LINK_MODES),
             "layout": {
                 "bin": "bin/crabc-cc",
                 "loader": "lib/ld-crabc-aarch64.so.1",

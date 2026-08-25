@@ -24,7 +24,7 @@ typedef struct {
 #define WRDE_CMDSUB 4
 #define WRDE_SYNTAX 5
 
-int wordexp(const char *restrict, wordexp_t *restrict, int);
+int wordexp(const char *__restrict, wordexp_t *__restrict, int);
 void wordfree(wordexp_t *);
 
 #endif

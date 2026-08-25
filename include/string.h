@@ -44,9 +44,9 @@ char *strerror(int);
 
 #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
-char *strtok_r(char *restrict, const char *restrict, char **restrict);
-char *stpcpy(char *restrict, const char *restrict);
-char *stpncpy(char *restrict, const char *restrict, size_t);
+char *strtok_r(char *__restrict, const char *__restrict, char **__restrict);
+char *stpcpy(char *__restrict, const char *__restrict);
+char *stpncpy(char *__restrict, const char *__restrict, size_t);
 size_t strnlen(const char *, size_t);
 char *strdup(const char *);
 char *strndup(const char *, size_t);
@@ -59,7 +59,7 @@ int strerror_r(int, char *, size_t);
 #endif
 
 #if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
-void *memccpy(void *restrict, const void *restrict, int, size_t);
+void *memccpy(void *__restrict, const void *__restrict, int, size_t);
 #endif
 
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
@@ -72,7 +72,7 @@ void explicit_bzero(void *, size_t);
 #ifdef _GNU_SOURCE
 char *strcasestr(const char *, const char *);
 void *memrchr(const void *, int, size_t);
-void *mempcpy(void *restrict, const void *, size_t);
+void *mempcpy(void *__restrict, const void *, size_t);
 #endif
 
 #ifdef __cplusplus

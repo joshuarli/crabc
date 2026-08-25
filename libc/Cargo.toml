@@ -294,6 +294,11 @@ path = "../tests/header_surface.rs"
 
 
 [[test]]
+name = "cxx_header_compat"
+path = "../tests/cxx_header_compat.rs"
+
+
+[[test]]
 name = "host_process_exports"
 path = "../tests/host_process_exports.rs"
 

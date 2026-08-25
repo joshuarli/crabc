@@ -11,7 +11,7 @@ int utimes(const char *, const struct timeval [2]);
 /* GNU/BSD clock-administration interfaces. */
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 struct timezone;
-int gettimeofday(struct timeval *restrict, void *restrict);
+int gettimeofday(struct timeval *__restrict, void *__restrict);
 int settimeofday(const struct timeval *, const struct timezone *);
 struct timezone {
     int tz_minuteswest;

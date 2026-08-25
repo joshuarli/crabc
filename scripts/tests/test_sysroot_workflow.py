@@ -52,6 +52,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_release_verifier_requires_every_application_link_mode(self) -> None:
+        script = workflow_shell_block("Independently verify the archive and attestations")
+
+        self.assertIn("required_manifest_modes", script)
+        for mode in ("dynamic_pie", "dynamic_non_pie", "static", "static_pie"):
+            self.assertIn(f'"{mode}"', script)
+
 
 if __name__ == "__main__":
     unittest.main()

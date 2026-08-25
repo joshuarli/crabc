@@ -325,7 +325,7 @@ int killpg(pid_t, int);
 void psiginfo(const siginfo_t *, const char *);
 void psignal(int, const char *);
 int pthread_kill(pthread_t, int);
-int pthread_sigmask(int, const sigset_t *restrict, sigset_t *restrict);
+int pthread_sigmask(int, const sigset_t *__restrict, sigset_t *__restrict);
 /* These System V signal helpers are legacy XSI. POSIX.1-2024 no longer
  * reserves them in the current XSI namespace; retain them for older X/Open,
  * BSD, and GNU source contracts. */

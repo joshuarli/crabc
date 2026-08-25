@@ -115,11 +115,23 @@ jobs:
           platform = manifest.get("platform")
           if not isinstance(platform, dict) or platform.get("architecture") != "aarch64" or platform.get("endianness") != "little":
               raise SystemExit("manifest platform is not little-endian AArch64")
+          required_manifest_modes = ["dynamic-pie", "dynamic-non-pie", "static", "static-pie"]
+          if manifest.get("supported_link_modes") != required_manifest_modes:
+              raise SystemExit("manifest does not publish the required application link-mode contract")
           if smoke.get("source_commit") != source_commit_text or smoke.get("passed") is not True or smoke.get("target") != "aarch64":
               raise SystemExit("smoke report does not attest to this AArch64 commit")
           archive = smoke.get("archive")
           if not isinstance(archive, dict) or archive.get("sha256") != archive_hash:
               raise SystemExit("smoke report archive SHA-256 does not match the verified asset")
+          tests = smoke.get("tests")
+          link_modes = tests.get("link_modes") if isinstance(tests, dict) else None
+          required_report_modes = ("dynamic_pie", "dynamic_non_pie", "static", "static_pie")
+          if not isinstance(link_modes, dict) or any(
+              not isinstance(link_modes.get(mode), dict)
+              or link_modes[mode].get("passed") is not True
+              for mode in required_report_modes
+          ):
+              raise SystemExit("smoke report does not pass every required application link mode")
           PY
 
       - name: Create or verify the immutable prerelease

@@ -51,7 +51,7 @@ void call_once(once_flag *, void (*)(void));
 int mtx_init(mtx_t *, int);
 void mtx_destroy(mtx_t *);
 int mtx_lock(mtx_t *);
-int mtx_timedlock(mtx_t *restrict, const struct timespec *restrict);
+int mtx_timedlock(mtx_t *__restrict, const struct timespec *__restrict);
 int mtx_trylock(mtx_t *);
 int mtx_unlock(mtx_t *);
 
@@ -59,7 +59,7 @@ int cnd_init(cnd_t *);
 void cnd_destroy(cnd_t *);
 int cnd_broadcast(cnd_t *);
 int cnd_signal(cnd_t *);
-int cnd_timedwait(cnd_t *restrict, mtx_t *restrict, const struct timespec *restrict);
+int cnd_timedwait(cnd_t *__restrict, mtx_t *__restrict, const struct timespec *__restrict);
 int cnd_wait(cnd_t *, mtx_t *);
 
 int tss_create(tss_t *, tss_dtor_t);

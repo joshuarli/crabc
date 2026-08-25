@@ -28,8 +28,8 @@ int poll(struct pollfd [], nfds_t, int);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #include <signal.h>
 #include <time.h>
-int ppoll(struct pollfd [], nfds_t, const struct timespec *restrict,
-          const sigset_t *restrict);
+int ppoll(struct pollfd [], nfds_t, const struct timespec *__restrict,
+          const sigset_t *__restrict);
 #endif
 
 #endif

@@ -23,8 +23,12 @@ python3 compat/sysroot-smoke/run.py \
 ```
 
 The smoke includes manifest/hash/symlink validation, isolated public-header
-tracing, explicit sealed-driver/lld link plans and maps for a shared module and
-dynamic PIE, a `dlopen`/`dlsym`/`dlclose` runtime probe in a scratch `chroot`,
-and the repository's static pthread/TLS fixture through the extracted driver.
-The report retains raw subprocess streams, ELF parser/tool output, linker
-traces/maps, and the archive SHA-256.
+tracing, explicit sealed-driver/lld link plans and maps, a
+`dlopen`/`dlsym`/`dlclose` runtime probe in a scratch `chroot`, and the
+repository's static pthread/TLS fixture through the extracted driver. Its
+release contract requires and executes all four application link modes:
+dynamic PIE, dynamic non-PIE, static, and static PIE. The stable
+`tests.link_modes` report entries (`dynamic_pie`, `dynamic_non_pie`, `static`,
+and `static_pie`) each attest a passing detailed probe. The report retains raw
+subprocess streams, ELF parser/tool output, linker traces/maps, and the archive
+SHA-256.

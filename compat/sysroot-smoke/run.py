@@ -22,7 +22,7 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +52,19 @@ def _load_module(name: str, path: Path):
 SYSROOT = _load_module("crabc_sysroot_smoke_tool", ROOT / "scripts/crabc_sysroot.py")
 SYSROOT_RUNNER = _load_module("crabc_sysroot_smoke_runner", ROOT / "compat/sysroot/run.py")
 DIST = _load_module("crabc_sysroot_smoke_dist", ROOT / "scripts/sysroot_dist.py")
+REQUIRED_RELEASE_LINK_MODE_REPORT_KEYS = dict(
+    SYSROOT.PUBLISHED_APPLICATION_LINK_MODE_ATTESTATIONS
+)
+SUPPORTED_ARCHIVE_SMOKE_LINK_MODES = frozenset(
+    {
+        *REQUIRED_RELEASE_LINK_MODE_REPORT_KEYS,
+        # These are smoke-covered auxiliary driver modes, not part of the
+        # release prerequisite consumed by llvm-clang-crabc.
+        "dynamic-executable",
+        "static-executable",
+        "shared",
+    }
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -436,9 +449,24 @@ def link_artifact(root: Path, wrapper: Path, arguments: Sequence[str], output: P
         application_paths=application,
         application_library_roots=(work,),
     )
-    result = {"plan": plan, "link": record, "link_trace_audit": trace_audit, "link_map": {"path": str(map_path), "present": map_path.is_file(), "text": map_path.read_text(encoding="utf-8", errors="replace") if map_path.is_file() else ""}}
+    result = {
+        "plan": plan,
+        "link": record,
+        "link_trace_audit": trace_audit,
+        "link_map": {
+            "path": str(map_path),
+            "present": map_path.is_file(),
+            "text": map_path.read_text(encoding="utf-8", errors="replace") if map_path.is_file() else "",
+        },
+    }
     if record.get("status") != 0 or not output.is_file() or trace_audit.get("status") != "passed" or not map_path.is_file():
         raise SmokeError(f"extracted link failed or consumed an unapproved input: {output.name}")
+    # ``complete_link_probe`` records every detailed phase independently.  A
+    # raw command record is useful evidence, but its successful exit alone is
+    # not the phase contract: this marker means the output, trace audit, and
+    # link map all passed together.
+    result["link"]["passed"] = True
+    result["passed"] = True
     return result
 
 
@@ -500,7 +528,7 @@ def elf_record(path: Path, timeout: float, *, kind: str, interpreter: str | None
 
 
 def run_chroot_dynamic(root: Path, binary: Path, module: Path, work: Path, timeout: float) -> dict[str, object]:
-    scratch = work / "scratch-root"
+    scratch = work / f"scratch-root-{binary.name}"
     # Deliberately construct only the runtime view needed by the test.  In
     # particular, no Alpine loader/libc and no host `/lib` are visible inside
     # this root; the executable's absolute PT_INTERP must resolve to the
@@ -510,13 +538,13 @@ def run_chroot_dynamic(root: Path, binary: Path, module: Path, work: Path, timeo
     (scratch / "usr").mkdir()
     shutil.copytree(root / "usr/lib", scratch / "usr/lib", symlinks=True)
     (scratch / "bin").mkdir()
-    scratch_bin = scratch / "bin/sysroot-dynamic"
+    scratch_bin = scratch / "bin" / binary.name
     scratch_module = scratch / "usr/lib/libcrabc-sysroot-smoke.so"
     shutil.copy2(binary, scratch_bin)
     shutil.copy2(module, scratch_module)
     environment = SYSROOT.seal_environment()
     environment.update({"LD_LIBRARY_PATH": "/usr/lib", "CRABC_SYSROOT_SMOKE": "1", "CRABC_SYSROOT_SMOKE_WAIT": "1"})
-    command = ["chroot", str(scratch), "/bin/sysroot-dynamic", "/usr/lib/libcrabc-sysroot-smoke.so"]
+    command = ["chroot", str(scratch), f"/bin/{binary.name}", "/usr/lib/libcrabc-sysroot-smoke.so"]
     try:
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
     except OSError as error:
@@ -649,64 +677,126 @@ def static_pthread_tls(root: Path, work: Path, timeout: float) -> dict[str, obje
     return result
 
 
-def optional_modes(root: Path, wrapper: Path, work: Path, timeout: float, manifest: Mapping[str, object]) -> dict[str, object]:
-    if "supported_link_modes" in manifest:
-        declared = manifest["supported_link_modes"]
-    elif "link_modes" in manifest:
-        declared = manifest["link_modes"]
-    else:
-        return {}
-    if isinstance(declared, dict):
-        declared_values: Iterable[object] = declared.keys()
-    elif isinstance(declared, (list, tuple, set, frozenset)):
-        declared_values = declared
-    else:
-        raise SmokeError("manifest link-mode declaration must be a collection")
+def declared_link_modes(manifest: Mapping[str, object]) -> set[str]:
+    """Read the archive's explicit application link-mode declaration."""
 
+    declared = manifest.get("supported_link_modes")
+    if not isinstance(declared, (list, tuple, set, frozenset)):
+        raise SmokeError("manifest supported_link_modes must be a collection")
     aliases: set[str] = set()
-    for value in declared_values:
+    for value in declared:
         if not isinstance(value, str) or not value:
-            raise SmokeError("manifest link-mode declaration contains an invalid name")
+            raise SmokeError("manifest supported_link_modes contains an invalid name")
         aliases.add(value.replace("_", "-"))
-    covered = {
-        # These three are always exercised by the mandatory probes below.
-        "dynamic-pie",
-        "static",
-        "static-executable",
-        "shared",
-        # These require their dedicated extra link/ELF paths below.
-        "dynamic-executable",
-        "dynamic-non-pie",
-        "static-pie",
-    }
-    unsupported = sorted(aliases - covered)
+    return aliases
+
+
+def require_release_link_modes(manifest: Mapping[str, object]) -> set[str]:
+    """Require the immutable release contract consumed by llvm-clang-crabc."""
+
+    declared = declared_link_modes(manifest)
+    missing = sorted(set(REQUIRED_RELEASE_LINK_MODE_REPORT_KEYS) - declared)
+    if missing:
+        raise SmokeError(
+            "manifest does not declare every required application link mode: "
+            + ", ".join(missing)
+        )
+    unsupported = sorted(declared - SUPPORTED_ARCHIVE_SMOKE_LINK_MODES)
     if unsupported:
         raise SmokeError(
             "manifest declares link modes without a corresponding archive smoke: "
             + ", ".join(unsupported)
         )
+    return declared
 
-    result: dict[str, object] = {}
-    source = FIXTURES / "dynamic.c"
-    if {"dynamic-non-pie", "dynamic-executable"} & aliases:
-        output = work / "dynamic-non-pie"
-        result["dynamic_non_pie"] = link_artifact(root, wrapper, ["-no-pie", str(source), "-o", str(output)], output, work, timeout, [source])
-        result["dynamic_non_pie"]["elf"] = elf_record(
-            output,
-            timeout,
-            kind="dynamic-executable",
-            interpreter=SYSROOT.CANONICAL_INTERPRETER,
-        )
-    if {"static-pie"} & aliases:
-        output = work / "static-pie"
-        result["static_pie"] = link_artifact(root, wrapper, ["-static-pie", str(source), "-o", str(output)], output, work, timeout, [source])
-        result["static_pie"]["elf"] = elf_record(
-            output,
-            timeout,
-            kind="static-pie",
-            interpreter=None,
-        )
+
+def run_static_program(binary: Path, timeout: float) -> dict[str, object]:
+    """Run one static executable directly, with no host runtime fallthrough."""
+
+    run = command_record([str(binary)], environment=SYSROOT.seal_environment(), timeout=timeout)
+    result = {
+        "command": [str(binary)],
+        "run": run,
+        "passed": run.get("status") == 0
+        and bytes.fromhex(str(run["stdout"]["hex"])) == EXPECTED_STATIC_OUTPUT
+        and bytes.fromhex(str(run["stderr"]["hex"])) == b"",
+    }
+    if not result["passed"]:
+        raise SmokeError(f"static smoke output or status mismatched: {binary.name}")
     return result
+
+
+def complete_link_probe(name: str, probe: dict[str, object]) -> dict[str, object]:
+    """Mark a link/ELF/runtime probe as passing only when every phase passed."""
+
+    failed = [
+        phase
+        for phase in ("link", "elf", "runtime")
+        if not isinstance(probe.get(phase), Mapping) or probe[phase].get("passed") is not True
+    ]
+    if failed:
+        raise SmokeError(f"{name} archive smoke did not pass: {', '.join(failed)}")
+    probe["passed"] = True
+    return probe
+
+
+def dynamic_non_pie_probe(
+    root: Path,
+    wrapper: Path,
+    module: Path,
+    work: Path,
+    timeout: float,
+) -> dict[str, object]:
+    """Build and run a non-PIE dynamic executable in an owned scratch root."""
+
+    source = FIXTURES / "dynamic.c"
+    output = work / "dynamic-non-pie"
+    probe = link_artifact(
+        root,
+        wrapper,
+        ["-no-pie", str(source), "-o", str(output)],
+        output,
+        work,
+        timeout,
+        [source],
+    )
+    probe["elf"] = elf_record(
+        output,
+        timeout,
+        kind="dynamic-executable",
+        interpreter=SYSROOT.CANONICAL_INTERPRETER,
+    )
+    probe["runtime"] = run_chroot_dynamic(root, output, module, work, timeout)
+    return complete_link_probe("dynamic non-PIE", probe)
+
+
+def static_pie_probe(root: Path, wrapper: Path, work: Path, timeout: float) -> dict[str, object]:
+    """Build and run a static PIE through the extracted sealed driver."""
+
+    source = ROOT / "tests/fixtures/static_pthread_tls_test.c"
+    if not source.is_file():
+        raise SmokeError(f"static pthread/TLS fixture is absent: {source}")
+    output = work / "static-pie"
+    probe = link_artifact(
+        root,
+        wrapper,
+        ["-static-pie", str(source), "-o", str(output)],
+        output,
+        work,
+        timeout,
+        [source],
+    )
+    probe["elf"] = elf_record(output, timeout, kind="static-pie", interpreter=None)
+    probe["runtime"] = run_static_program(output, timeout)
+    return complete_link_probe("static PIE", probe)
+
+
+def link_mode_attestation(probe_name: str, probe: Mapping[str, object]) -> dict[str, object]:
+    """Publish a compact, stable pointer to a passing detailed mode probe."""
+
+    if probe.get("passed") is not True:
+        raise SmokeError(f"link-mode attestation has no passing probe: {probe_name}")
+    return {"passed": True, "probe": probe_name}
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
@@ -738,6 +828,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         root = safe_extract_archive(archive, work / "extracted", expected_root=archive_root)
         structural = validate_manifest(root, args.source_commit)
         report["tests"]["structural"] = structural
+        declared_modes = require_release_link_modes(structural["manifest"])
+        report["tests"]["declared_link_modes"] = {
+            "modes": sorted(declared_modes),
+            "passed": True,
+        }
         wrapper = root / "bin/crabc-cc"
         report["tests"]["headers"] = header_probe(root, work, args.timeout)
         module = work / "libcrabc-sysroot-smoke.so"
@@ -752,8 +847,26 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             interpreter=SYSROOT.CANONICAL_INTERPRETER,
         )
         report["tests"]["dynamic"]["runtime"] = run_chroot_dynamic(root, dynamic, module, work, args.timeout)
+        complete_link_probe("dynamic PIE", report["tests"]["dynamic"])
         report["tests"]["static_pthread_tls"] = static_pthread_tls(root, work, args.timeout)
-        report["tests"]["optional_modes"] = optional_modes(root, wrapper, work, args.timeout, structural["manifest"])
+        report["tests"]["dynamic_non_pie"] = dynamic_non_pie_probe(
+            root,
+            wrapper,
+            module,
+            work,
+            args.timeout,
+        )
+        report["tests"]["static_pie"] = static_pie_probe(root, wrapper, work, args.timeout)
+        report["tests"]["link_modes"] = {
+            "dynamic_pie": link_mode_attestation("dynamic", report["tests"]["dynamic"]),
+            "dynamic_non_pie": link_mode_attestation(
+                "dynamic_non_pie", report["tests"]["dynamic_non_pie"]
+            ),
+            "static": link_mode_attestation(
+                "static_pthread_tls", report["tests"]["static_pthread_tls"]
+            ),
+            "static_pie": link_mode_attestation("static_pie", report["tests"]["static_pie"]),
+        }
     report["passed"] = True
     return report
 

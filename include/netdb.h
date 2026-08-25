@@ -83,7 +83,7 @@ int getservbyport_r(int, const char *, struct servent *, char *, size_t, struct 
 #endif
 void sethostent(int); void setnetent(int); void setprotoent(int); void setservent(int);
 void freeaddrinfo(struct addrinfo *);
-int getaddrinfo(const char *restrict, const char *restrict, const struct addrinfo *restrict, struct addrinfo **restrict);
-int getnameinfo(const struct sockaddr *restrict, socklen_t, char *restrict, socklen_t, char *restrict, socklen_t, int);
+int getaddrinfo(const char *__restrict, const char *__restrict, const struct addrinfo *__restrict, struct addrinfo **__restrict);
+int getnameinfo(const struct sockaddr *__restrict, socklen_t, char *__restrict, socklen_t, char *__restrict, socklen_t, int);
 
 #endif

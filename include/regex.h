@@ -30,9 +30,9 @@ typedef struct { regoff_t rm_so; regoff_t rm_eo; } regmatch_t;
 #define REG_ESPACE 12
 #define REG_BADRPT 13
 
-int regcomp(regex_t *restrict, const char *restrict, int);
-size_t regerror(int, const regex_t *restrict, char *restrict, size_t);
-int regexec(const regex_t *restrict, const char *restrict, size_t, regmatch_t [restrict], int);
+int regcomp(regex_t *__restrict, const char *__restrict, int);
+size_t regerror(int, const regex_t *__restrict, char *__restrict, size_t);
+int regexec(const regex_t *__restrict, const char *__restrict, size_t, regmatch_t [__restrict], int);
 void regfree(regex_t *);
 
 #endif
