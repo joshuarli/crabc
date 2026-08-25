@@ -279,9 +279,13 @@ nonfull medium page: it proves the same subprocess/configuration/PageMap root,
 static main Heap, arena, span, and page identity; transfers short PageMap
 access into one long lifecycle; claims the bitmap/count member; collects and
 reassociates it; then restores source queue-tail order. It requires an
-immediate free-list head and retains bitmap misses or post-transfer failures
-terminally, without a fresh allocation fallback. Small/direct, full, and
-aggregate members remain client-free-only. The
+immediate head or an exhausted nonfull fully committed medium page
+(`slice_pcommitted == 0` and `capacity < reserved`), in which case it performs
+the scalar source capacity extension after tail insertion. Page-area
+commit/failure-reabandon remains absent: a nonzero commit prefix, bitmap miss,
+scalar extension error, or post-transfer failure is retained terminally,
+without a fresh allocation fallback. Small/direct, full, and aggregate members
+remain client-free-only. The
 full non-direct-small route detaches from its regular size bin, requires
 `block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
 only after the source mostly-used boundary. The full direct-small route also

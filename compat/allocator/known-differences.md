@@ -460,14 +460,18 @@ result may refine it only when it can prove retained ownership.
   PageMap-root identity, static main Heap, selected arena, complete span, and
   PageMap page identity. It turns `ProcessPageMapPostExitAccess` into the one
   long `ProcessPageMapMutationLease`, claims the exact bitmap/count member,
-  collects abandoned state, reassociates the page with the fresh Theap/thread,
-  collects live state, re-proves the complete span, and appends the detached
-  page at the target queue tail. This initial source-shaped branch requires an
-  immediate free-list head. A bitmap miss, extension/reabandon condition, or
-  any post-transfer failure retains the target terminally; it never falls back
-  to fresh allocation. Small/direct, full, singleton, unmapped, huge, foreign,
-  automatic-scanning, concurrent, and aggregate-registry adoption remain
-  absent.
+collects abandoned state, reassociates the page with the fresh Theap/thread,
+collects live state, re-proves the complete span, and appends the detached
+page at the target queue tail. This source-shaped branch also handles an
+exhausted nonfull fully committed medium page (`slice_pcommitted == 0` and
+`capacity < reserved`) by applying the scalar `mi_page_extend_free` list and
+capacity transition after tail insertion. The intentional remaining difference
+is page-area commitment: a nonzero commit prefix is retained terminally and
+the source's failed-commit `_mi_page_abandon` reabandon path is not yet
+implemented. A bitmap miss, scalar extension error, or any post-transfer
+failure likewise retains the target; it never falls back to fresh allocation.
+Small/direct, full, singleton, unmapped, huge, foreign, automatic-scanning,
+concurrent, and aggregate-registry adoption remain absent.
 
   `abandon_mapped_regular_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete

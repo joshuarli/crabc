@@ -207,7 +207,10 @@ subprocess/configuration/PageMap-root/static-main-Heap/arena/page-identity
 preflight: the short map access becomes one long lifecycle, the matching
 bitmap/count member is claimed, source abandoned/live collection and Theap
 reassociation run, and the page returns at the target queue tail. The first
-slice requires an immediate free-list head; a miss or post-transfer failure
+slice accepts an immediate head or an exhausted nonfull fully committed medium
+page (`slice_pcommitted == 0` and `capacity < reserved`), extending the latter
+after tail insertion. Page-area commit/failure-reabandon remains absent: a
+nonzero commit prefix, miss, scalar extension error, or post-transfer failure
 retains the target rather than taking a fresh allocation fallback. Small/direct
 members remain client-free-only. A direct small member must prove the exact
 rounded source direct-cache range before collection; queue removal clears that

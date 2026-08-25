@@ -1087,6 +1087,12 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
 
     #[cfg(test)]
     #[inline]
+    fn test_queue_count(&self, bin: usize) -> Option<usize> {
+        self.engine.queue_count(bin)
+    }
+
+    #[cfg(test)]
+    #[inline]
     fn test_set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
         self.engine.set_direct_page_for_test(index, page)
     }
@@ -4132,9 +4138,10 @@ mod tests {
         .expect("post-exit mapped regular route fixture remains current-thread local");
     }
 
-    #[test]
-    fn later_thread_exit_mapped_medium_route_adopts_into_a_fresh_later_owner() {
-        thread::spawn(|| {
+    fn assert_later_thread_exit_mapped_medium_route_adoption(
+        exhaust_immediate_blocks: bool,
+    ) {
+        thread::spawn(move || {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
             let subprocess = MainSubprocess::test_static_owner();
@@ -4173,9 +4180,6 @@ mod tests {
                     let second = source_allocator
                         .allocate(request, false)
                         .expect("the source keeps two client blocks live in that page");
-                    let spare = source_allocator
-                        .allocate(request, false)
-                        .expect("the source can retain one immediately reusable medium block");
                     let page = NonNull::new(unsafe { source_allocator.test_page_for_block(first) })
                         .expect("the source medium page stays PageMap-published");
                     assert_eq!(
@@ -4183,16 +4187,55 @@ mod tests {
                         page.as_ptr(),
                         "the source fixture keeps both client blocks in the sole medium page"
                     );
-                    assert_eq!(
-                        unsafe { source_allocator.test_page_for_block(spare) },
-                        page.as_ptr(),
-                        "the source's reusable block belongs to the same sole medium page"
-                    );
-                    unsafe {
-                        source_allocator
-                            .free(spare)
-                            .expect("the source returns one block to the immediate local free list");
-                    }
+                    let mut inherited = std::vec![first, second];
+                    let extension = if exhaust_immediate_blocks {
+                        while !unsafe { page.as_ref().free_list_head() }.is_null() {
+                            let block = source_allocator
+                                .allocate(request, false)
+                                .expect("the source extends only its sole medium page");
+                            assert_eq!(
+                                unsafe { source_allocator.test_page_for_block(block) },
+                                page.as_ptr(),
+                                "exhausting immediate capacity never takes a fresh arena page"
+                            );
+                            inherited.push(block);
+                        }
+                        let page_ref = unsafe { page.as_ref() };
+                        assert!(
+                            page_ref.used() == usize::from(page_ref.capacity())
+                                && page_ref.capacity() < page_ref.reserved(),
+                            "the source route leaves a nonfull medium page exactly at its extend boundary"
+                        );
+                        assert_eq!(
+                            page_ref.slice_pcommitted(),
+                            0,
+                            "the committed arena fixture admits only the source no-commit extension branch"
+                        );
+                        let extend = crate::page::page_extend_count(
+                            page_ref.capacity(),
+                            page_ref.reserved(),
+                            page_ref.block_size(),
+                            usize::from(page_ref.slice_pcommitted()),
+                        )
+                        .expect("the exhausted source medium page has one valid extension count");
+                        assert!(extend > 0, "the bounded branch has capacity left to extend");
+                        Some((page_ref.capacity(), extend))
+                    } else {
+                        let spare = source_allocator
+                            .allocate(request, false)
+                            .expect("the source can retain one immediately reusable medium block");
+                        assert_eq!(
+                            unsafe { source_allocator.test_page_for_block(spare) },
+                            page.as_ptr(),
+                            "the source's reusable block belongs to the same sole medium page"
+                        );
+                        unsafe {
+                            source_allocator
+                                .free(spare)
+                                .expect("the source returns one block to the immediate local free list");
+                        }
+                        None
+                    };
                     let page_ref = unsafe { page.as_ref() };
                     assert_eq!(
                         crate::size_class::page_kind_for_block_size(page_ref.block_size()),
@@ -4201,8 +4244,14 @@ mod tests {
                     );
                     assert!(
                         page_ref.used() > 0 && page_ref.used() < usize::from(page_ref.reserved()),
-                        "the source page is nonfull and immediately reusable before its owner exits"
+                        "the source page is nonfull before its owner exits"
                     );
+                    if exhaust_immediate_blocks {
+                        assert!(
+                            page_ref.free_list_head().is_null(),
+                            "the exhausted fixture reaches the source extension boundary before exit"
+                        );
+                    }
                     let bin = crate::size_class::bin(page_ref.block_size())
                         .expect("the medium source page has one regular bin");
                     let memory = page_ref.memid();
@@ -4228,6 +4277,11 @@ mod tests {
                         "the source Theap/TLD is gone before a fresh owner can reclaim its page"
                     );
                     assert_eq!(route.test_abandoned_count(), Some(1));
+                    assert_eq!(
+                        unsafe { page.as_ref().free_list_head().is_null() },
+                        exhaust_immediate_blocks,
+                        "source owner-exit collection exposes either an immediate block or the extension boundary"
+                    );
                     assert_eq!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
                         page.as_ptr(),
@@ -4288,6 +4342,23 @@ mod tests {
                         Some(false),
                         "reclaim retains the original ordinary arena-page ownership instead of taking a fresh slice"
                     );
+                    assert_eq!(
+                        target_allocator.test_queue_count(bin),
+                        Some(1),
+                        "source reclaim restores the exact page at the target regular queue tail"
+                    );
+                    if let Some((capacity_before, extend)) = extension {
+                        let page_ref = unsafe { page.as_ref() };
+                        assert_eq!(
+                            page_ref.capacity(),
+                            capacity_before + extend,
+                            "source reclaim extends the exact page before normal allocation resumes"
+                        );
+                        assert!(
+                            !page_ref.free_list_head().is_null(),
+                            "the source extension publishes an immediate block before return"
+                        );
+                    }
 
                     let reused = target_allocator
                         .allocate(request, false)
@@ -4299,12 +4370,11 @@ mod tests {
                     );
 
                     unsafe {
-                        target_allocator
-                            .free(first)
-                            .expect("the target frees the first inherited client block");
-                        target_allocator
-                            .free(second)
-                            .expect("the target frees the second inherited client block");
+                        for block in inherited {
+                            target_allocator
+                                .free(block)
+                                .expect("the target frees every inherited client block");
+                        }
                         target_allocator
                             .free(reused)
                             .expect("the target frees its reclaimed-page allocation");
@@ -4341,6 +4411,16 @@ mod tests {
         })
         .join()
         .expect("mapped medium reclaim fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_medium_route_adopts_into_a_fresh_later_owner() {
+        assert_later_thread_exit_mapped_medium_route_adoption(false);
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_medium_route_extends_before_returning_a_fresh_later_owner() {
+        assert_later_thread_exit_mapped_medium_route_adoption(true);
     }
 
     /// Independent source model of `mi_theap_queue_first_update`'s direct

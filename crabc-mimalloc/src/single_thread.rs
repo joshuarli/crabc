@@ -834,7 +834,19 @@ pub(crate) enum ThreadExitMappedRegularPostExitAdoptError {
     Claimed(RetainedAdoptFailure),
     ReclaimedPageMismatch,
     ReclaimedPageState,
-    NeedsExtension,
+    /// The source page has exhausted its immediate list but records an
+    /// on-demand-commit prefix. This bounded handoff has no page-area commit
+    /// capability or source reabandon transition, so the target remains
+    /// terminally retained after its source queue restoration.
+    NeedsPageCommit,
+    /// A reclaimed nonfull page had neither an immediate block nor remaining
+    /// capacity after its source false-force collection. Pinned source treats
+    /// this as an assertion-only impossible state, never as fresh fallback.
+    NotExpandable,
+    /// Scalar page extension rejected the target-owned page after it was
+    /// source-tail-enqueued. This is not a commit failure and must remain a
+    /// retained target rather than fabricating `_mi_page_abandon`.
+    Extension(FreeListError),
     Queue,
 }
 
@@ -4442,13 +4454,6 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         {
             return Err(ThreadExitMappedRegularPostExitAdoptError::ReclaimedPageState);
         }
-        // `_mi_theap_page_reclaim` returns the page to allocation only after
-        // its collector. This narrow route deliberately requires an immediate
-        // free-list head; source's later extension/reabandon branch remains a
-        // separately retained frontier rather than a fabricated fresh page.
-        if page_ref.free_list_head().is_null() {
-            return Err(ThreadExitMappedRegularPostExitAdoptError::NeedsExtension);
-        }
         let Some(queue) = target.session.queue_mut(self.bin) else {
             return Err(ThreadExitMappedRegularPostExitAdoptError::Queue);
         };
@@ -4458,6 +4463,25 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
         target.session.note_page_added();
         target.update_direct_cache(self.bin);
+        // `mi_page_fresh_alloc` makes this decision only after
+        // `_mi_theap_page_reclaim` has restored the target queue tail. This
+        // committed-arena branch has no page-area commit operation: a nonzero
+        // source `slice_pcommitted` must remain terminally retained until the
+        // matching commit/reabandon ownership transition exists.
+        if unsafe { page.as_ref() }.free_list_head().is_null() {
+            if unsafe { page.as_ref() }.slice_pcommitted() != 0 {
+                return Err(ThreadExitMappedRegularPostExitAdoptError::NeedsPageCommit);
+            }
+            match target.page_make_immediate(page) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err(ThreadExitMappedRegularPostExitAdoptError::NotExpandable);
+                }
+                Err(error) => {
+                    return Err(ThreadExitMappedRegularPostExitAdoptError::Extension(error));
+                }
+            }
+        }
         Ok(ThreadExitMappedRegularPostExitAdoptOutcome::Reclaimed)
     }
 

@@ -28,6 +28,7 @@ use crate::arena::ArenaAbandonedPages;
 use crate::atomic::{word_cas_weak_release, word_load_relaxed};
 use crate::bitmap::AbandonedBitmapClaim;
 use crate::config::ARENA_BIN_COUNT;
+use crate::free_list::{self, FreeListError};
 use crate::remote_free::{
     self, AbandonedOwnerClaim, AbandonedOwnerHeadTransition, RemoteFreeError,
 };
@@ -217,6 +218,11 @@ pub(crate) enum AbandonError {
     /// outside that handoff's contract, so it must remain terminally retained.
     MappedPageNotEmpty,
     RemoteFree(RemoteFreeError),
+    /// A reclaimed page passed its atomic remote-free collection but rejected
+    /// the source false-force local-list transfer. The low owner, target
+    /// association, and consumed bitmap/count state remain with the caller's
+    /// retained adoption owner.
+    LocalFree(FreeListError),
 }
 
 /// Result of abandoning one page without performing terminal page release.
@@ -908,6 +914,17 @@ where
 /// Unlike the earlier substrate helper, a failure after successful bitmap/low
 /// owner claim is not compressed into a bare error: its caller must retain the
 /// exact page until an explicit later terminal policy exists.
+///
+/// # Safety
+///
+/// `target_theap` and every page yielded by `resolve` must remain initialized
+/// and address-stable. `target_thread` must be the live identity of
+/// `target_theap`. Each resolved page must be live mapped-abandoned metadata
+/// for that exact map slice. The caller must keep its complete
+/// `reserved * block_size` area writable and unreleased through the source
+/// false-force collection below; no producer may mutate ordinary page fields
+/// during that transfer. It must likewise prevent page reuse or release while
+/// the returned [`AdoptedPage`] exists.
 pub(crate) unsafe fn try_adopt_retained<M: MappedAbandonedPages + ?Sized, F>(
     map: &M,
     thread_sequence: usize,
@@ -949,7 +966,8 @@ where
     let fail = |error| RetainedAdoptFailure { page, error };
 
     // Source arena claim first drains while the page retains its abandoned
-    // identity, then page reclaim reassociates and drains the live owner.
+    // identity, then page reclaim reassociates and completes its live
+    // false-force collection before queue insertion.
     let abandoned_collected = match unsafe { remote_free::collect_abandoned(page) } {
         Ok(collected) => collected,
         Err(error) => return Err(fail(AbandonError::RemoteFree(error))),
@@ -967,6 +985,21 @@ where
         Ok(collected) => collected,
         Err(error) => return Err(fail(AbandonError::RemoteFree(error))),
     };
+    // `_mi_page_free_collect(page, false)` completes the remote detach with
+    // the non-forcing local transfer. The target thread identity and held low
+    // owner bit prove this narrow raw projection without manufacturing a
+    // whole-page mutable borrow.
+    let local = match unsafe { Page::local_collect_state_for_owner_at(page, Some(target_thread)) }
+    {
+        Some(local) => local,
+        None => return Err(fail(AbandonError::InvalidPageGeometry)),
+    };
+    // SAFETY: `local` describes the same live target-owned page after source
+    // remote collection. The consuming adoption retains its complete page
+    // area and all ordinary-field mutation authority through this transfer.
+    if let Err(error) = unsafe { free_list::collect_local_false(local) } {
+        return Err(fail(AbandonError::LocalFree(error)));
+    }
     Ok(Some(AdoptedPage {
         page,
         collected_remote_blocks: abandoned_collected + collected,

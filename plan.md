@@ -175,11 +175,16 @@ arena) and re-proves the source span and page identity. It transfers the short
 `ProcessPageMapPostExitAccess` into one long mutation lease, claims the exact
 bitmap/count member, collects abandoned state, reassociates the page with the
 fresh Theap/thread, collects live state, and restores source queue-tail order.
-The initial branch requires an immediate free-list head. A bitmap miss,
-extension/reabandon condition, or post-transfer failure retains the target
-terminally and never takes a fresh-page fallback. Small/direct, full,
-singleton, unmapped, huge, foreign, aggregate-registry, automatic-scanning,
-and concurrent adoption remain deliberately absent.
+The completed branch accepts either an immediate head or an exhausted but
+nonfull fully committed medium page (`slice_pcommitted == 0` and
+`capacity < reserved`): after tail insertion it performs the source scalar
+`mi_page_extend_free` list/capacity transition before normal allocation
+resumes. Page-area on-demand commitment and its failed-commit
+`_mi_page_abandon` reabandon path remain absent; a nonzero commit prefix,
+bitmap miss, scalar extension error, or any other post-transfer failure
+retains the target terminally and never takes a fresh-page fallback.
+Small/direct, full, singleton, unmapped, huge, foreign, aggregate-registry,
+automatic-scanning, and concurrent adoption remain deliberately absent.
 
 The bounded aggregate extension,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`,
@@ -255,9 +260,10 @@ and aggregate regular-pages registry, terminal reuse, automatic and multiple
 dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
 hooks, fork repair, public libc backend integration, performance qualification,
 and default promotion remain unfinished. The next safe lifecycle frontier is
-another source-shaped owner-exit page class, the exact route's
-extension/reabandon branch, or a separately proven aggregate-registry policy—
-not a superficial broad abandonment loop or generic allocation-time scan.
+another source-shaped owner-exit page class, the exact route's page-area
+commit/failure-reabandon branch, or a separately proven aggregate-registry
+policy—not a superficial broad abandonment loop or generic allocation-time
+scan.
 
 A fresh pinned-source audit makes that prerequisite concrete: after its absent
 deferred-callback edge, `mi_theap_collect_ex(MI_ABANDON)` first calls
@@ -306,8 +312,9 @@ threshold transition, terminal release, and stale-cache refusal, the
 post-exit regular route's medium, threshold-adjacent non-direct small, upper direct and
 non-direct small boundaries, direct-image preflight refusal, full-small
 pre-detach refusal, one-page-refusal, and cross-thread movement regressions;
-the sole mapped-medium route's explicit fresh-owner adoption and direct-small
-pre-transfer refusal regressions; and the aggregate regular-pages registry's mixed small/medium/large
+the sole mapped-medium route's immediate and exhausted-fully-committed
+fresh-owner adoption, scalar capacity-extension, and direct-small pre-transfer
+refusal regressions; and the aggregate regular-pages registry's mixed small/medium/large
 release, retired-large prepass, malformed direct-image and malformed-predecessor
 preflight refusal, full-small preflight refusal, post-claim distinct-large-bin
 selection, large-span terminal release,
@@ -329,8 +336,9 @@ implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
 all-free scan/seven sole-page handoffs/aggregate regular-pages registry, or either
 bounded process page owner. The next frontier is another page-bearing
-owner-exit class, the exact medium handoff's source extension/reabandon branch,
-or a separately proven aggregate-registry policy, then complete process and real
+owner-exit class, the exact medium handoff's source page-area
+commit/failure-reabandon branch, or a separately proven aggregate-registry
+policy, then complete process and real
 pthread/TLS lifecycle integration—not a generic allocation-time scan routed
 through a bounded singleton, mapped-one-block handoff, no-page finish, or these
 sequential ticket-zero/later page-owner slices.

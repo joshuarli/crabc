@@ -407,11 +407,16 @@ static-main bitmap member and paired count, collects while abandoned,
 reassociates the page with the new Theap/thread identity, collects live state,
 re-proves the complete PageMap span and medium geometry, and appends the
 queue-detached page with `page_queue_push_at_end_metadata` at the target queue
-tail before restoring its page count/direct-cache image. This initial slice
-requires an immediate free-list head; a source extension/reabandon condition
-is retained terminally rather than guessed. A bitmap miss or any post-transfer
-failure likewise retains the target owner: there is no fresh-page fallback.
-Small/direct, full, aggregate-registry, singleton, unmapped, huge, foreign,
+tail before restoring its page count/direct-cache image. It accepts either an
+immediate head or an exhausted nonfull fully committed medium page
+(`slice_pcommitted == 0` and `capacity < reserved`): only after that tail
+restoration does it perform the scalar `mi_page_extend_free` free-list and
+capacity transition. The handoff deliberately has no page-area commit
+capability, so a nonzero commit prefix and the source failed-commit
+`_mi_page_abandon` reabandon path remain terminally retained rather than
+guessed. A bitmap miss, scalar extension error, or any post-transfer failure
+likewise retains the target owner: there is no fresh-page fallback. Small/direct,
+full, aggregate-registry, singleton, unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_regular_pages_to_process_route`
