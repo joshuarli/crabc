@@ -14,15 +14,13 @@ fn ldso_preserves_static_tls_initializers_and_alignment() {
     let binary = test_support::TempArtifact::new("ldso_tls_alignment_test");
 
     assert!(ldso.exists(), "libldso.so not found");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso.to_str().unwrap(),
             source.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
@@ -32,7 +30,7 @@ fn ldso_preserves_static_tls_initializers_and_alignment() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("musl-gcc failed");
+        .expect("crabc-cc failed");
     assert!(status.success(), "TLS alignment fixture compilation failed");
 
     let output = Command::new(&binary)

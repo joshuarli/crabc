@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Compare the conventional static pthread/TLS fixture with pinned musl.
 
-The source is compiled once with the pinned musl headers, then linked into
-both a pinned-musl reference and a crabc ``libc.a`` candidate using the same
-musl CRT objects.  The report preserves link commands, raw process results,
-and artifact hashes so a passing static lifecycle check remains auditable.
+The musl reference keeps musl's own headers and CRT objects.  The crabc
+candidate is independently compiled and linked through the installed
+``crabc-cc`` wrapper, so it consumes crabc's `crt1.o`/`crti.o`/`crtn.o`,
+`libc.a`, and pure-Rust builtins rather than borrowing a musl startup bridge.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -27,6 +28,7 @@ from typing import Any
 MUSL_VERSION = "1.2.6"
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "tests/fixtures/static_pthread_tls_test.c"
+SYSROOT_TOOL = ROOT / "scripts/crabc_sysroot.py"
 DEFAULT_REPORT = ROOT / "compat/reports/static-pthread-tls/latest.json"
 EXPECTED_STDOUT = b"static pthread tls ok\n"
 DEFAULT_TIMEOUT = 10.0
@@ -35,6 +37,13 @@ MAX_TIMEOUT = 300.0
 
 class RunnerError(RuntimeError):
     """A setup or build failure, distinct from a runtime mismatch."""
+
+
+SPEC = importlib.util.spec_from_file_location("crabc_static_pthread_sysroot", SYSROOT_TOOL)
+assert SPEC is not None and SPEC.loader is not None
+SYSROOT = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = SYSROOT
+SPEC.loader.exec_module(SYSROOT)
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,10 +60,10 @@ def parse_args() -> argparse.Namespace:
         help="pinned musl compiler command (default: MUSL_CC or musl-gcc)",
     )
     parser.add_argument(
-        "--target-dir",
+        "--sysroot",
         type=Path,
-        default=Path(os.environ.get("CRABC_TARGET_DIR", ROOT / "target/debug")),
-        help="directory containing crabc libc.a",
+        default=Path(os.environ.get("CRABC_SYSROOT", ROOT / "target/crabc-sysroot")),
+        help="installed owned crabc sysroot containing bin/crabc-cc",
     )
     parser.add_argument(
         "--report",
@@ -145,6 +154,22 @@ def build_command(
     ]
 
 
+def owned_candidate_command(wrapper: Path, source: Path, output: Path) -> list[str]:
+    """Use the sealed driver for the candidate's complete static link."""
+
+    return [
+        str(wrapper),
+        "-static",
+        "-no-pie",
+        "-pthread",
+        "-fno-stack-protector",
+        str(source),
+        "-o",
+        str(output),
+        "-Wl,--trace",
+    ]
+
+
 def compile_source(compiler: list[str], source: Path, headers: Path, output: Path) -> list[str]:
     return compiler + [
         "-std=c11",
@@ -176,8 +201,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     crtn = require_file(root / "lib/crtn.o", "musl crtn.o")
     musl_libc = require_file(root / "lib/libc.a", "musl libc.a")
     source = require_file(SOURCE, "static pthread/TLS fixture")
-    target_dir = args.target_dir.expanduser().resolve()
-    crabc_libc = require_file(target_dir / "libc.a", "crabc libc.a")
+    sysroot = SYSROOT.require_directory(args.sysroot, "owned crabc sysroot")
+    wrapper = require_file(sysroot / "bin/crabc-cc", "owned crabc compiler wrapper")
+    if not os.access(wrapper, os.X_OK):
+        raise RunnerError(f"owned crabc compiler wrapper is not executable: {wrapper}")
+    runtime = SYSROOT.installed_runtime_paths(sysroot)
+    crabc_libc = require_file(runtime["libc.a"], "owned crabc libc.a")
+    for name in ("crt1.o", "crti.o", "crtn.o", "builtins"):
+        require_file(runtime[name], f"owned crabc runtime input {name}")
 
     report: dict[str, Any] = {
         "runner": "crabc-static-pthread-tls",
@@ -189,6 +220,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "artifacts": {
             "musl_libc": {"path": str(musl_libc), "sha256": sha256_file(musl_libc)},
             "crabc_libc": {"path": str(crabc_libc), "sha256": sha256_file(crabc_libc)},
+            "crabc_sysroot": {"path": str(sysroot), "manifest": SYSROOT.load_installed_manifest(sysroot)},
         },
         "provenance": {
             "platform": platform.platform(),
@@ -196,7 +228,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "python": sys.version,
             "compiler": compiler_parts,
             "musl_root": str(root),
-            "target_dir": str(target_dir),
+            "sysroot": str(sysroot),
             "timeout_seconds": args.timeout,
         },
     }
@@ -217,18 +249,35 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         reference_binary = work / "musl-reference"
         candidate_binary = work / "crabc-candidate"
         reference_cmd = build_command(compiler_parts, crt, crti, object_file, musl_libc, crtn, reference_binary)
-        candidate_cmd = build_command(compiler_parts, crt, crti, object_file, crabc_libc, crtn, candidate_binary)
+        candidate_cmd = owned_candidate_command(wrapper, source, candidate_binary)
         report["links"] = {
             "reference": command_text(reference_cmd),
             "candidate": command_text(candidate_cmd),
         }
         reference_link = subprocess.run(reference_cmd, check=False, capture_output=True)
-        candidate_link = subprocess.run(candidate_cmd, check=False, capture_output=True)
+        candidate_link = subprocess.run(
+            candidate_cmd,
+            check=False,
+            capture_output=True,
+            env=SYSROOT.seal_environment(),
+        )
+        candidate_trace = candidate_link.stdout + candidate_link.stderr
+        candidate_audit = SYSROOT.audit_linker_trace(
+            candidate_trace,
+            sysroot,
+            application_paths=[source],
+            application_library_roots=[work],
+        )
         report["link_results"] = {
             "reference": {"status": reference_link.returncode, "stderr": stream_record(reference_link.stderr)},
-            "candidate": {"status": candidate_link.returncode, "stderr": stream_record(candidate_link.stderr)},
+            "candidate": {
+                "status": candidate_link.returncode,
+                "stdout": stream_record(candidate_link.stdout),
+                "stderr": stream_record(candidate_link.stderr),
+                "link_trace_audit": candidate_audit,
+            },
         }
-        if reference_link.returncode != 0 or candidate_link.returncode != 0:
+        if reference_link.returncode != 0 or candidate_link.returncode != 0 or candidate_audit["status"] != "passed":
             return report
         reference = run_binary(reference_binary, args.timeout)
         candidate = run_binary(candidate_binary, args.timeout)
@@ -246,6 +295,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             and report["comparison"]["stderr_match"]
             and candidate["status"] == 0
             and candidate["stdout"]["hex"] == EXPECTED_STDOUT.hex()
+            and candidate_audit["status"] == "passed"
         )
     return report
 

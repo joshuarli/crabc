@@ -13,7 +13,7 @@ fn filesystem_stats_and_legacy_time_exports_under_libc_so() {
     assert!(target.join("libldso.so").exists(), "libldso.so not found");
     assert!(target.join("libc.so").exists(), "libc.so not found");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -21,8 +21,6 @@ fn filesystem_stats_and_legacy_time_exports_under_libc_so() {
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -32,10 +30,10 @@ fn filesystem_stats_and_legacy_time_exports_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for filesystem_stats_exports_test");
+        .expect("failed to run crabc-cc for filesystem_stats_exports_test");
     assert!(
         status.success(),
-        "musl-gcc filesystem_stats_exports_test compilation failed"
+        "crabc-cc filesystem_stats_exports_test compilation failed"
     );
 
     let output = Command::new(&binary)

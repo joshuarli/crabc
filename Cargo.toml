@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crt",
     "ldso",
     "libc",
     "crabc-core",

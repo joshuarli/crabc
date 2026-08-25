@@ -35,14 +35,12 @@ fn native_loader_runtime_uses_ldso_owned_state() {
     assert!(debug.join("libc.so").is_file(), "libc.so not found");
     assert!(archive.is_file(), "native loader probe archive not found");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            debug.join("libldso.so").to_str().unwrap(),
             "-L",
             debug.to_str().unwrap(),
             fixture.to_str().unwrap(),

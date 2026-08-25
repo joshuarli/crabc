@@ -16,14 +16,12 @@ fn wave3_regressions_under_libc_so() {
 
     let src = fixtures.join("wave3_test.c");
     let bin = test_support::TempArtifact::new("wave3_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -33,8 +31,8 @@ fn wave3_regressions_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for wave3_test");
-    assert!(status.success(), "musl-gcc wave3_test compilation failed");
+        .expect("failed to run crabc-cc for wave3_test");
+    assert!(status.success(), "crabc-cc wave3_test compilation failed");
 
     let output = Command::new(&bin)
         .env(

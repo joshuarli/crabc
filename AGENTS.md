@@ -25,6 +25,8 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | --- | --- |
 | `libc/` | `crabc-libc`: `no_std` C ABI, producing `libc.so` and `libc.a`. `libc/src/lib.rs` is the target/linkage root; `libc/src/c_abi.rs` owns shared C ABI translation and libc runtime state, while independent ABI leaves are normal private modules. |
 | `ldso/` | `crabc-ldso`: AArch64 dynamic linker and private runtime-state owner. `ldso/src/lib.rs` is the target/linkage root; `ldso/src/loader.rs` owns loader algorithms and state. |
+| `crt/` | `crabc-crt`: Rust-produced `crt1.o`, `Scrt1.o`, `rcrt1.o`, `crti.o`, and `crtn.o`; `crt/build.py` owns deterministic object production and provenance. |
+| `builtins/` | Rust `no_std` compiler-helper archive and deterministic builder for `libcrabc-builtins.a`; it replaces foreign target compiler-runtime archives. |
 | `crabc-core/` | Shared typed `no_std` Linux/AArch64 primitives used by the Rust facade. |
 | `crabc-rs/` | Public idiomatic Rust facade, direct probes, and native tests. |
 | `crabc-mimalloc/` | Fixed-upstream allocator provenance and incomplete `#![no_std]` engine. It is a Linux/AArch64 semantic port of pinned mimalloc, not a new allocator design or the current production backend. |
@@ -45,8 +47,9 @@ and [`STATUS.md`](STATUS.md) before selecting new work.
 | Public support/limitation boundary | [`COMPATIBILITY-PROFILE.md`](COMPATIBILITY-PROFILE.md) |
 | Current completion state and roadmap router | [`STATUS.md`](STATUS.md) |
 | Runtime ownership and dependency architecture | [`docs/design/architecture.md`](docs/design/architecture.md) |
+| Owned application CRT/sysroot design and purity boundary | [`docs/design/crt-and-sysroot.md`](docs/design/crt-and-sysroot.md) and [`docs/evidence/crabc-owned-sysroot.md`](docs/evidence/crabc-owned-sysroot.md) |
 | Completed Lua source-build gate | [`docs/design/source-build.md`](docs/design/source-build.md) and [`docs/evidence/lua-source-build.md`](docs/evidence/lua-source-build.md) |
-| Future CPython and crabc-owned sysroot contract | [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) |
+| Future CPython source-build contract | [`docs/roadmap/source-build.md`](docs/roadmap/source-build.md) |
 | Performance completion contract | [`docs/roadmap/performance-completion.md`](docs/roadmap/performance-completion.md) |
 | Follow-on software-corpus validation | [`docs/roadmap/software-corpus-validation.md`](docs/roadmap/software-corpus-validation.md) |
 | Current measured results | [`COMPATIBILITY.md`](COMPATIBILITY.md) and `compat/reports/**` |
@@ -90,6 +93,7 @@ container.
 ./scripts/dev.sh os-test | pthread-stress | static-pthread-tls
 ./scripts/dev.sh signal-process | resolver-network | ldso | corpus
 ./scripts/dev.sh rust-std | rust-std-dependent | lto | lto-native-facade
+./scripts/dev.sh sysroot
 ./scripts/dev.sh lua [--offline]
 ./scripts/dev.sh perf [--label NAME]
 ./scripts/dev.sh perf-native [--label NAME]

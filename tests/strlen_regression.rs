@@ -7,14 +7,16 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let fixture = root.join("tests/fixtures/strlen_regression_test.c");
-    let mut command = Command::new("musl-gcc");
+    let mut command = if candidate {
+        Command::new(test_support::crabc_cc())
+    } else {
+        Command::new("musl-gcc")
+    };
     command.args(["-fPIE", "-pie", "-fno-builtin"]);
     if candidate {
         command.args([
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
         ]);

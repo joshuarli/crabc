@@ -10,7 +10,7 @@ fn credential_mutation_profile_limitation_preserves_ids() {
     let source = root.join("tests/fixtures/credentials_profile_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-credentials-profile");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-std=c11",
             "-fPIE",
@@ -19,8 +19,6 @@ fn credential_mutation_profile_limitation_preserves_ids() {
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -33,7 +31,7 @@ fn credential_mutation_profile_limitation_preserves_ids() {
         .expect("failed to compile credentials_profile_test");
     assert!(
         status.success(),
-        "musl-gcc credentials_profile_test compilation failed"
+        "crabc-cc credentials_profile_test compilation failed"
     );
 
     let output = Command::new(&binary)

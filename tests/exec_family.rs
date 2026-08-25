@@ -10,7 +10,7 @@ fn exec_family_under_libc_so() {
     let source = root.join("tests/fixtures/exec_family_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-exec-family");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -18,8 +18,6 @@ fn exec_family_under_libc_so() {
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -29,10 +27,10 @@ fn exec_family_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for exec_family_test");
+        .expect("failed to run crabc-cc for exec_family_test");
     assert!(
         status.success(),
-        "musl-gcc exec_family_test compilation failed"
+        "crabc-cc exec_family_test compilation failed"
     );
 
     let output = Command::new(&binary)

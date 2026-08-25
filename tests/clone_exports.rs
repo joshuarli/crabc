@@ -18,7 +18,7 @@ fn clone_exports_under_libc_so() {
     // loader-test convention and keeping the workspace free of ELF outputs.
     let binary = test_support::TempArtifact::new("crabc-c-abi-clone");
     assert!(binary.starts_with(std::env::temp_dir()));
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -26,8 +26,6 @@ fn clone_exports_under_libc_so() {
             "-D_GNU_SOURCE",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -37,7 +35,7 @@ fn clone_exports_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for clone_exports_test");
+        .expect("failed to run crabc-cc for clone_exports_test");
     assert!(status.success(), "clone_exports_test compilation failed");
 
     let output = Command::new(&binary)

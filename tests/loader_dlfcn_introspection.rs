@@ -4,7 +4,7 @@ mod test_support;
 use std::process::Command;
 
 fn build_dso(source: &std::path::Path, output: &std::path::Path) {
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-shared",
             "-fPIC",
@@ -17,7 +17,7 @@ fn build_dso(source: &std::path::Path, output: &std::path::Path) {
             output.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for loader introspection DSO");
+        .expect("failed to run crabc-cc for loader introspection DSO");
     assert!(
         status.success(),
         "loader introspection DSO compilation failed"
@@ -64,14 +64,12 @@ fn native_loader_introspection_copies_bounded_records() {
         "loader introspection probe archive not found"
     );
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            debug.join("libldso.so").to_str().unwrap(),
             "-L",
             debug.to_str().unwrap(),
             fixture.to_str().unwrap(),

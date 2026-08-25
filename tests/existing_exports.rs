@@ -24,8 +24,6 @@ fn existing_math_exports_have_musl_abi() {
     args.extend_from_slice(&[
         "-I".to_string(),
         include.to_str().unwrap().to_string(),
-        "-Wl,--dynamic-linker".to_string(),
-        ldso_path.to_str().unwrap().to_string(),
         "-L".to_string(),
         target.to_str().unwrap().to_string(),
         src.to_str().unwrap().to_string(),
@@ -34,13 +32,13 @@ fn existing_math_exports_have_musl_abi() {
         "-o".to_string(),
         bin.to_str().unwrap().to_string(),
     ]);
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args(&args)
         .status()
-        .expect("failed to run musl-gcc for existing_exports_test");
+        .expect("failed to run crabc-cc for existing_exports_test");
     assert!(
         status.success(),
-        "musl-gcc existing_exports_test compilation failed"
+        "crabc-cc existing_exports_test compilation failed"
     );
 
     let output = Command::new(&bin)

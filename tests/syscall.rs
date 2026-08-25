@@ -16,15 +16,13 @@ fn syscall_sign_extend_under_libldso() {
 
     let src = fixtures.join("syscall_test.c");
     let bin = test_support::TempArtifact::new("syscall_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-D_GNU_SOURCE",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -34,8 +32,8 @@ fn syscall_sign_extend_under_libldso() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for syscall_test");
-    assert!(status.success(), "musl-gcc syscall_test compilation failed");
+        .expect("failed to run crabc-cc for syscall_test");
+    assert!(status.success(), "crabc-cc syscall_test compilation failed");
 
     let output = Command::new(&bin)
         .env(

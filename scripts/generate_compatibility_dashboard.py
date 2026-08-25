@@ -271,7 +271,7 @@ def lto_report_state() -> dict[str, Any] | None:
 
 
 def native_facade_lto_report_state() -> dict[str, Any] | None:
-    """Return bounded native-facade LTO evidence with its three named lanes."""
+    """Return candidate owned-sysroot evidence and its separate musl oracle."""
 
     report = read_json(NATIVE_FACADE_LTO_REPORT)
     if report is None:
@@ -285,17 +285,20 @@ def native_facade_lto_report_state() -> dict[str, Any] | None:
         lane = lanes[name]
         if not isinstance(lane, dict) or not isinstance(lane.get("status"), str):
             raise RuntimeError(f"invalid lane {name} in {NATIVE_FACADE_LTO_REPORT}")
+    candidate_groups = report.get("lane_groups")
+    if isinstance(candidate_groups, dict) and candidate_groups.get("candidate_native_facade") != ["control-o3", "fat-lto"]:
+        raise RuntimeError(f"unexpected candidate lane group in {NATIVE_FACADE_LTO_REPORT}")
     report["_path"] = str(NATIVE_FACADE_LTO_REPORT.relative_to(ROOT_DIR))
     return report
 
 
 def lua_report_state() -> dict[str, Any] | None:
-    """Return the adapter-sysroot Lua gate only with its complete two-lane evidence."""
+    """Return the owned-sysroot Lua gate only with its complete two-lane evidence."""
 
     report = read_json(LUA_REPORT)
     if report is None:
         return None
-    if report.get("schema_version") != 1 or report.get("runner") != "crabc-lua-adapter-sysroot":
+    if report.get("schema_version") != 1 or report.get("runner") != "crabc-lua-owned-sysroot":
         raise RuntimeError(f"unexpected Lua source-build report identity in {LUA_REPORT}")
     workloads = report.get("workloads")
     if not isinstance(workloads, dict):
@@ -303,8 +306,10 @@ def lua_report_state() -> dict[str, Any] | None:
     for name in ("source", "bytecode"):
         if not isinstance(workloads.get(name), dict):
             raise RuntimeError(f"Lua source-build report lacks {name} comparison in {LUA_REPORT}")
-    if report.get("result") == "pass" and not isinstance(workloads.get("candidate_maps"), dict):
-        raise RuntimeError(f"Lua pass report lacks candidate map isolation evidence in {LUA_REPORT}")
+    if report.get("result") == "pass":
+        maps = workloads.get("candidate_maps")
+        if not isinstance(maps, dict) or maps.get("status") != "passed":
+            raise RuntimeError(f"Lua pass report lacks owned-runtime map isolation evidence in {LUA_REPORT}")
     report["_path"] = str(LUA_REPORT.relative_to(ROOT_DIR))
     return report
 
@@ -605,9 +610,9 @@ def main() -> int:
                 )
             )
 
-    lines.extend(["", "## Lua source-build adapter-sysroot gate", ""])
+    lines.extend(["", "## Lua source-build owned-sysroot gate", ""])
     if lua is None:
-        lines.append("No Lua adapter-sysroot result. Run `./scripts/dev.sh lua`.")
+        lines.append("No Lua owned-sysroot result. Run `./scripts/dev.sh lua`.")
     else:
         workloads = lua["workloads"]
         assert isinstance(workloads, dict)
@@ -615,7 +620,11 @@ def main() -> int:
         bytecode = workloads["bytecode"]
         maps = workloads.get("candidate_maps")
         assert isinstance(source, dict) and isinstance(bytecode, dict)
-        map_isolation = isinstance(maps, dict) and maps.get("no_musl_libc") is True
+        map_isolation = (
+            isinstance(maps, dict)
+            and maps.get("status") == "passed"
+            and maps.get("no_musl_libc") is True
+        )
         passed = (
             lua.get("result") == "pass"
             and lua.get("passed") is True
@@ -627,14 +636,14 @@ def main() -> int:
         contents = manifest.get("contents") if isinstance(manifest, dict) else {}
         version = contents.get("lua", {}).get("version", "unknown") if isinstance(contents, dict) else "unknown"
         lines.append(
-            f"Pinned Lua {version} shared-runtime adapter-sysroot build: "
+            f"Pinned Lua {version} shared-runtime owned-sysroot build: "
             f"**{'pass' if passed else 'FAIL'}**; report `{lua['_path']}`."
         )
         lines.append(
             "The interpreter is dynamically linked to source-built `liblua`; `luac` statically composes "
-            "Lua-private compiler units but runs through the same crabc loader/libc. The build uses crabc "
-            "headers/link names with explicitly recorded CRT bridge objects, so it is not a self-hosting "
-            "compiler-sysroot claim."
+            "Lua-private compiler units but runs through the same crabc loader/libc. The candidate link "
+            "uses the installed crabc headers, CRT objects, builtins archive, and canonical interpreter; "
+            "the pinned musl runtime is retained only as the execution oracle."
         )
         lines.append("")
         lines.extend(
@@ -817,15 +826,16 @@ def main() -> int:
             f"**{'pass' if passed else 'FAIL'}**; report `{native_facade_lto['_path']}`."
         )
         lines.append(
-            "The named witness proves a direct Linux syscall route and raw musl/crabc runtime comparison; "
-            "it does not assert whole-program LTO or optimization inside dynamic `libc.so`."
+            "The two candidate lanes link and run through the owned crabc sysroot; "
+            "the stock-std musl comparison is a separately labelled oracle. "
+            "This does not assert whole-program LTO or optimization inside dynamic `libc.so`."
         )
         rows = []
         for name in ("control-o3", "fat-lto", "stock-std-fat"):
             lane = lanes[name]
             assert isinstance(lane, dict)
-            comparison = lane.get("runtime_comparison")
-            comparison = comparison if isinstance(comparison, dict) else {}
+            runtime = lane.get("runtime") if name != "stock-std-fat" else lane.get("runtime_comparison")
+            runtime = runtime if isinstance(runtime, dict) else {}
             inspection = lane.get("inspection")
             inspection = inspection if isinstance(inspection, dict) else {}
             route = inspection.get("route", {})
@@ -834,12 +844,12 @@ def main() -> int:
                 (
                     name,
                     lane.get("status", "unknown"),
-                    comparison.get("status", "n/a"),
+                    runtime.get("status", "n/a"),
                     "yes" if route.get("witness_direct_getpid") is True else "no",
                 )
             )
         lines.append("")
-        lines.extend(markdown_table(("lane", "artifact", "raw runtime", "direct getpid witness"), rows))
+        lines.extend(markdown_table(("lane", "artifact", "runtime observation", "direct getpid witness"), rows))
         lines.append(
             "Claims: direct route="
             f"{claims.get('direct_syscall_route_proven') is True}; facade boundary eliminated="

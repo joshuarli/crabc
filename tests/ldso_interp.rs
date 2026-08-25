@@ -10,29 +10,25 @@ fn ldso_runs_tiny_pie() {
     let tiny_src = fixtures.join("tiny.c");
     let tiny_bin = test_support::TempArtifact::new("tiny_ldso");
 
-    let ldso_path = manifest_dir.join("target/debug/libldso.so");
-    assert!(
-        ldso_path.exists(),
-        "libldso.so not found at {}",
-        ldso_path.display()
-    );
-
-    let status = Command::new("musl-gcc")
+    // This is a naked `_start` loader probe, not a libc/CRT candidate link.
+    // It uses raw Clang with no target headers/startup/default libraries and
+    // the same canonical interpreter that ordinary owned-driver outputs use.
+    let mut command = test_support::naked_aarch64_command();
+    let status = command
         .args([
             "-fPIE",
             "-pie",
             "-nostdlib",
             "-nostartfiles",
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
+            "-Wl,--dynamic-linker,/lib/ld-crabc-aarch64.so.1",
             tiny_src.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",
             "-o",
             tiny_bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc");
-    assert!(status.success(), "musl-gcc compilation failed");
+        .expect("failed to compile naked tiny loader probe");
+    assert!(status.success(), "naked tiny loader probe compilation failed");
 
     let output = Command::new(&tiny_bin)
         .output()

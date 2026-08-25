@@ -24,8 +24,6 @@ fn strtold_preserves_long_double_precision() {
     args.extend([
         "-I".to_string(),
         include.to_str().unwrap().to_string(),
-        "-Wl,--dynamic-linker".to_string(),
-        ldso_path.to_str().unwrap().to_string(),
         "-L".to_string(),
         target.to_str().unwrap().to_string(),
         src.to_str().unwrap().to_string(),
@@ -34,11 +32,11 @@ fn strtold_preserves_long_double_precision() {
         "-o".to_string(),
         bin.to_str().unwrap().to_string(),
     ]);
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args(&args)
         .status()
-        .expect("failed to run musl-gcc for strtold_test");
-    assert!(status.success(), "musl-gcc strtold_test compilation failed");
+        .expect("failed to run crabc-cc for strtold_test");
+    assert!(status.success(), "crabc-cc strtold_test compilation failed");
 
     let output = Command::new(&bin)
         .env("LD_LIBRARY_PATH", target.to_str().unwrap())

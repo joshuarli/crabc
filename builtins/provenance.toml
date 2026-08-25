@@ -1,0 +1,82 @@
+[component]
+package = "crabc-builtins"
+archive_name = "libcrabc-builtins.a"
+target = "aarch64-unknown-linux-musl"
+purpose = "C-linkable compiler helper archive for the crabc Linux/AArch64 sysroot"
+
+[implementation]
+source_languages = ["Rust"]
+upstream = "crabc Rust helpers plus the source-built compiler_builtins 0.1.160 selected from the pinned rust-src component"
+rust_sources = ["src/lib.rs", "pinned rust-src compiler-builtins/compiler-builtins/src/**/*.rs", "pinned rust-src compiler-builtins/libm/src/math/support/**/*.rs"]
+native_sources = []
+build_dependencies = []
+normal_dependencies = []
+links = false
+uses_alloc = false
+uses_unwinding = false
+requires_panic_runtime = false
+uses_external_assembly = false
+inline_assembly = "the selected upstream Rust sources may use target inline assembly (for example AArch64 libm FMA); no external .S/.s source or object is selected or installed"
+
+[archive]
+local_member = "crabc-builtins.o"
+local_symbol_source = "src/lib.rs"
+required_symbols = [
+  "__addoti4",
+  "__addtf3",
+  "__ashlti3",
+  "__ashrti3",
+  "__bswapdi2",
+  "__bswapsi2",
+  "__bswapti2",
+  "__clzti2",
+  "__ctzti2",
+  "__divmodti4",
+  "__divtf3",
+  "__divti3",
+  "__eqtf2",
+  "__extenddftf2",
+  "__extendsftf2",
+  "__ffsti2",
+  "__floatditf",
+  "__floatsitf",
+  "__floatunditf",
+  "__gttf2",
+  "__letf2",
+  "__lshrti3",
+  "__lttf2",
+  "__modti3",
+  "__muldc3",
+  "__muloti4",
+  "__multf3",
+  "__multi3",
+  "__netf2",
+  "__parityti2",
+  "__popcountti2",
+  "__suboti4",
+  "__subtf3",
+  "__trunctfdf2",
+  "__trunctfsf2",
+  "__udivmodti4",
+  "__udivti3",
+  "__umodti3",
+  "__unordtf2",
+]
+
+[upstream_compiler_builtins]
+package = "compiler_builtins"
+version = "0.1.160"
+source = "pinned rust-src"
+source_build = ["core", "compiler_builtins"]
+locked_resolution = true
+required_features = ["arch", "compiler-builtins", "default", "unmangled-names"]
+forbidden_features = ["c", "mem"]
+links_metadata = "compiler-rt"
+native_build = false
+prebuilt_target_archive = false
+
+[excluded]
+memory_intrinsics = "crabc libc owns memcpy, memmove, and memset; compiler_builtins's mem feature is disabled and its archive is rejected if it exports them"
+unwind = "C++ exceptions and unwind registration are outside the supported sysroot; every member is rejected if it contains unwind sections"
+outline_atomics = "the builder disables AArch64 outline atomics and rejects any __aarch64_* helper export"
+native_compiler_rt = "compiler_builtins retains links = compiler-rt metadata upstream, but the source build verifies that its c feature is disabled, no native build command runs, and no prebuilt compiler_builtins target archive is consumed"

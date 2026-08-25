@@ -42,7 +42,7 @@ fn weak_init_fini_exports_preserve_startup_and_finalization_order() {
     assert_weak_function_export(&target.join("libc.so"), "_init");
     assert_weak_function_export(&target.join("libc.so"), "_fini");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -50,8 +50,6 @@ fn weak_init_fini_exports_preserve_startup_and_finalization_order() {
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -61,10 +59,10 @@ fn weak_init_fini_exports_preserve_startup_and_finalization_order() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for init_fini_exports_test");
+        .expect("failed to run crabc-cc for init_fini_exports_test");
     assert!(
         status.success(),
-        "musl-gcc init_fini_exports_test compilation failed"
+        "crabc-cc init_fini_exports_test compilation failed"
     );
 
     let output = Command::new(&binary)
@@ -82,6 +80,6 @@ fn weak_init_fini_exports_preserve_startup_and_finalization_order() {
     );
     assert_eq!(
         std::fs::read_to_string(&*marker).expect("failed to read init/fini marker"),
-        "exports\ninit\nmain\nfini\n"
+        "exports\ninit\nmain\natexit\nfini\n"
     );
 }

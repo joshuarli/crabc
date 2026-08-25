@@ -13,7 +13,7 @@ fn getdate_under_libc_so() {
     std::fs::write(&template, b"%Y-%m-%d %H:%M:%S\n%Y-%m-%d\n")
         .expect("failed to write getdate DATEMSK template");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-std=c11",
             "-D_XOPEN_SOURCE=700",
@@ -22,8 +22,6 @@ fn getdate_under_libc_so() {
             "-fno-builtin",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -33,8 +31,8 @@ fn getdate_under_libc_so() {
             artifact.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for getdate_test");
-    assert!(status.success(), "musl-gcc getdate_test compilation failed");
+        .expect("failed to run crabc-cc for getdate_test");
+    assert!(status.success(), "crabc-cc getdate_test compilation failed");
 
     let output = Command::new(&*artifact)
         .env("LD_LIBRARY_PATH", &target)

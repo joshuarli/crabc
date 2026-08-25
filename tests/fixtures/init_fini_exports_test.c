@@ -10,10 +10,10 @@
 typedef int (*main_fn)(int, char **, char **);
 typedef void (*init_fini_fn)(void);
 
-/* This is the historical musl ABI used by crt1.o. */
+/* This is musl 1.2.6's six-argument crt1 ABI. */
 extern void __libc_start_main(main_fn, int, char **,
                               init_fini_fn, init_fini_fn,
-                              init_fini_fn, const void *)
+                              init_fini_fn)
     __attribute__((noreturn));
 
 static const char *marker_path;
@@ -36,12 +36,19 @@ static void finalization_callback(void)
     append_marker("fini\n");
 }
 
+static void exit_callback(void)
+{
+    append_marker("atexit\n");
+}
+
 static int callback_main(int argc, char **argv, char **envp)
 {
     (void)argc;
     (void)argv;
     (void)envp;
     append_marker("main\n");
+    if (atexit(exit_callback) != 0)
+        _exit(92);
     return 37;
 }
 
@@ -73,10 +80,10 @@ int main(int argc, char **argv)
     weak_init();
     weak_fini();
 
-    /* Enter the same callback contract that musl crt1.o uses.  crabc's
-     * implementation must invoke init, callback_main, then fini and exit
-     * with callback_main's status. */
+    /* Enter the same callback contract that musl crt1.o uses.  `exit` owns
+     * normal finalization, so handlers registered by main run before the
+     * executable's final startup callback. */
     __libc_start_main(callback_main, argc, argv,
                       startup_callback, finalization_callback,
-                      NULL, NULL);
+                      NULL);
 }

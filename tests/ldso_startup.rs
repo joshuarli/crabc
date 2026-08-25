@@ -16,15 +16,13 @@ fn ldso_startup_argv_env() {
 
     let src = fixtures.join("startup_argv_env.c");
     let bin = test_support::TempArtifact::new("startup_argv_env");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-D_GNU_SOURCE",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -34,10 +32,10 @@ fn ldso_startup_argv_env() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for startup_argv_env");
+        .expect("failed to run crabc-cc for startup_argv_env");
     assert!(
         status.success(),
-        "musl-gcc startup_argv_env compilation failed"
+        "crabc-cc startup_argv_env compilation failed"
     );
 
     let output = Command::new(&bin)

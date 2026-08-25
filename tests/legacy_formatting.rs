@@ -16,7 +16,7 @@ fn legacy_formatting_exports_under_libc_so() {
 
     let src = fixtures.join("legacy_formatting_test.c");
     let bin = test_support::TempArtifact::new("legacy_formatting_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -24,8 +24,6 @@ fn legacy_formatting_exports_under_libc_so() {
             "-D_GNU_SOURCE",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -35,10 +33,10 @@ fn legacy_formatting_exports_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for legacy_formatting_test");
+        .expect("failed to run crabc-cc for legacy_formatting_test");
     assert!(
         status.success(),
-        "musl-gcc legacy_formatting_test compilation failed"
+        "crabc-cc legacy_formatting_test compilation failed"
     );
 
     let output = Command::new(&bin)

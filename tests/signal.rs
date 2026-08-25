@@ -16,14 +16,12 @@ fn signal_functions_under_libc_so() {
 
     let src = fixtures.join("signal_test.c");
     let bin = test_support::TempArtifact::new("signal_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -33,8 +31,8 @@ fn signal_functions_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for signal_test");
-    assert!(status.success(), "musl-gcc signal_test compilation failed");
+        .expect("failed to run crabc-cc for signal_test");
+    assert!(status.success(), "crabc-cc signal_test compilation failed");
 
     let output = Command::new(&bin)
         .env(

@@ -25,8 +25,6 @@ fn math_functions_under_libc_so() {
     args.extend_from_slice(&[
         "-I".to_string(),
         include.to_str().unwrap().to_string(),
-        "-Wl,--dynamic-linker".to_string(),
-        ldso_path.to_str().unwrap().to_string(),
         "-L".to_string(),
         manifest_dir
             .join("target/debug")
@@ -39,11 +37,11 @@ fn math_functions_under_libc_so() {
         "-o".to_string(),
         bin.to_str().unwrap().to_string(),
     ]);
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args(&args)
         .status()
-        .expect("failed to run musl-gcc for math_test");
-    assert!(status.success(), "musl-gcc math_test compilation failed");
+        .expect("failed to run crabc-cc for math_test");
+    assert!(status.success(), "crabc-cc math_test compilation failed");
 
     let output = Command::new(&bin)
         .env(

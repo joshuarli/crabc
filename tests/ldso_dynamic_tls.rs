@@ -16,7 +16,7 @@ fn ldso_preserves_pthread_identity_across_dlopen_tls_replacement() {
 
     // Optimized AArch64 TLSDESC access retains TP across the resolver call;
     // this 4-KiB-aligned image forces the existing worker onto a new TLS block.
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-O3",
             "-shared",
@@ -29,7 +29,7 @@ fn ldso_preserves_pthread_identity_across_dlopen_tls_replacement() {
         .expect("failed to build dynamic TLS test DSO");
     assert!(status.success(), "dynamic TLS test DSO compilation failed");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-O3",
             "-fPIE",
@@ -37,8 +37,6 @@ fn ldso_preserves_pthread_identity_across_dlopen_tls_replacement() {
             "-I",
             include.to_str().unwrap(),
             fixtures.join("ldso_dynamic_tls_test.c").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",

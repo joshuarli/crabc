@@ -16,7 +16,7 @@ fn c11_threads_exports_under_libc_so() {
 
     let src = fixtures.join("c11_threads_test.c");
     let bin = test_support::TempArtifact::new("crabc-c-abi-c11-threads");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-std=c11",
             "-fPIE",
@@ -24,8 +24,6 @@ fn c11_threads_exports_under_libc_so() {
             "-fno-builtin",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -35,10 +33,10 @@ fn c11_threads_exports_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for c11_threads_test");
+        .expect("failed to run crabc-cc for c11_threads_test");
     assert!(
         status.success(),
-        "musl-gcc c11_threads_test compilation failed"
+        "crabc-cc c11_threads_test compilation failed"
     );
 
     let output = Command::new(&bin)

@@ -12,15 +12,13 @@ fn ldso_preserves_large_startup_vectors_and_auxv() {
     let target = manifest_dir.join("target/debug");
     let binary = test_support::TempArtifact::new("ldso_startup_limits_test");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-D_GNU_SOURCE",
             "-I",
             manifest_dir.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             fixture.to_str().unwrap(),
@@ -30,7 +28,7 @@ fn ldso_preserves_large_startup_vectors_and_auxv() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for startup limits fixture");
+        .expect("failed to run crabc-cc for startup limits fixture");
     assert!(
         status.success(),
         "startup limits fixture compilation failed"

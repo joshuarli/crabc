@@ -9,7 +9,7 @@ fn dup_exports_preserve_linux_equal_descriptor_contracts() {
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/dup_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-descriptor-dup-exports");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -17,8 +17,6 @@ fn dup_exports_preserve_linux_equal_descriptor_contracts() {
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -28,7 +26,7 @@ fn dup_exports_preserve_linux_equal_descriptor_contracts() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for dup_exports_test");
+        .expect("failed to run crabc-cc for dup_exports_test");
     assert!(status.success(), "dup_exports_test compilation failed");
 
     let output = Command::new(&binary)

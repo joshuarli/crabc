@@ -7,14 +7,12 @@ use std::process::Command;
 fn stdio_printf_wide_character_conversion_under_libc_so() {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let binary = test_support::TempArtifact::new("stdio_wide_char_printf_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            root.join("target/debug/libldso.so").to_str().unwrap(),
             "-L",
             root.join("target/debug").to_str().unwrap(),
             root.join("tests/fixtures/stdio_wide_char_printf_test.c")

@@ -9,15 +9,13 @@ fn quick_exit_handlers_under_libc_so() {
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/quick_exit_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-quick-exit");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -27,7 +25,7 @@ fn quick_exit_handlers_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for quick_exit_exports_test");
+        .expect("failed to run crabc-cc for quick_exit_exports_test");
     assert!(
         status.success(),
         "quick_exit_exports_test compilation failed"

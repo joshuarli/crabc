@@ -16,7 +16,7 @@ fn pthread_atfork_handlers_fire_in_order() {
 
     let src = fixtures.join("pthread_atfork_test.c");
     let bin = test_support::TempArtifact::new("pthread_atfork_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -24,8 +24,6 @@ fn pthread_atfork_handlers_fire_in_order() {
             include.to_str().unwrap(),
             "-I",
             wave1.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             src.to_str().unwrap(),
             "-L",
             lib_dir.to_str().unwrap(),
@@ -35,10 +33,10 @@ fn pthread_atfork_handlers_fire_in_order() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("musl-gcc failed");
+        .expect("crabc-cc failed");
     assert!(
         status.success(),
-        "musl-gcc pthread_atfork_test compilation failed"
+        "crabc-cc pthread_atfork_test compilation failed"
     );
 
     let output = Command::new(&bin)

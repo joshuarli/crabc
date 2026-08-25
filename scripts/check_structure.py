@@ -46,6 +46,36 @@ LIBC_C_ABI_MODULES = (
     "syscall",
     "time_extensions_exports",
 )
+# These fixtures are the deliberately retained pinned-musl *oracle* side of
+# differential tests. Every other root C-runtime fixture must name
+# `test_support::crabc_cc()` directly; keeping the exception set here makes a
+# new borrowed-CRT test path visible in the ordinary structure gate.
+MUSL_ORACLE_C_TESTS = frozenset(
+    {
+        "aarch64_abi_layout.rs",
+        "aarch64_network_headers.rs",
+        "header_surface.rs",
+        "cxa_finalize.rs",
+        "dynamic_tls_dependency.rs",
+        "fdopen_lifecycle.rs",
+        "gettimeofday_regression.rs",
+        "ldso_dlsym_error.rs",
+        "ldso_kernel_main_mapping.rs",
+        "ldso_main_self_dlopen.rs",
+        "ldso_no_relro_relocation.rs",
+        "memchr_regression.rs",
+        "memcpy_memset_regression.rs",
+        "memmem_regression.rs",
+        "pthread_create_join_tls_regression.rs",
+        "pthread_mutex_cond_ping_pong_regression.rs",
+        "pthread_mutex_uncontended_regression.rs",
+        "stdio_format_parse_regression.rs",
+        "strlen_regression.rs",
+        "strstr_regression.rs",
+        "tls_growth_regression.rs",
+    }
+)
+NAKED_LOADER_TESTS = frozenset({"ldso_deps.rs", "ldso_interp.rs", "ldso_tls.rs"})
 
 
 def text_files() -> list[Path]:
@@ -75,6 +105,34 @@ def report_matches(
         for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
             if matcher.search(line):
                 errors.append(f"{relative}:{line_number}: {message}")
+
+
+def check_root_c_link_boundaries(errors: list[str]) -> None:
+    """Keep C-runtime candidate fixtures on the explicit owned driver path."""
+
+    test_root = ROOT / "tests"
+    for path in sorted(test_root.glob("*.rs")):
+        text = path.read_text(errors="replace")
+        relative = path.relative_to(ROOT)
+        uses_musl_driver = 'Command::new("musl-gcc")' in text
+        if uses_musl_driver and path.name not in MUSL_ORACLE_C_TESTS:
+            errors.append(
+                f"{relative}: musl-gcc is reserved for the explicit musl oracle side; "
+                "crabc candidates must use test_support::crabc_cc()"
+            )
+        if "dynamic-linker" in text and path.name not in NAKED_LOADER_TESTS:
+            errors.append(
+                f"{relative}: crabc candidate fixture overrides the owned canonical interpreter"
+            )
+    for name in NAKED_LOADER_TESTS:
+        path = test_root / name
+        text = path.read_text(errors="replace")
+        if "test_support::naked_aarch64_command()" not in text:
+            errors.append(f"tests/{name}: naked loader probe must use the explicit raw-Clang boundary")
+        if '"-nostdlib"' not in text:
+            errors.append(f"tests/{name}: naked loader probe must remain no-libc")
+        if '"-Wl,--dynamic-linker,/lib/ld-crabc-aarch64.so.1"' not in text:
+            errors.append(f"tests/{name}: naked loader probe must name the canonical crabc interpreter")
 
 
 def main() -> int:
@@ -213,6 +271,7 @@ def main() -> int:
         evidence_files,
         "machine-readable/source documentation must name the extracted core module",
     )
+    check_root_c_link_boundaries(errors)
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):

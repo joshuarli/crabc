@@ -11,15 +11,13 @@ fn c_clock_gettime_uses_vdso_in_the_steady_state_hot_loop() {
     let binary = test_support::TempArtifact::new("vdso-clock-gettime");
     let trace = binary.parent().join("clock_gettime.trace");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             source.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),

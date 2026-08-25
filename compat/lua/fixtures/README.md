@@ -9,7 +9,7 @@ cc -fPIC -shared -I/path/to/lua-5.4/src -o crabc_fail.so crabc_fail.c
 ```
 
 The harness should create a disposable directory and set
-`CRABC_LUA_ENV=adapter-sysroot`.  With `CRABC_LUA_MAPS_WAIT=1`, the script
+`CRABC_LUA_ENV=owned-sysroot`.  With `CRABC_LUA_MAPS_WAIT=1`, the script
 first prints `maps-ready` and waits for the line `continue` on standard input;
 this is the harness's synchronization point for `/proc/<pid>/maps` capture.
 Run either source or bytecode with the DSO directory as `arg[1]` and the

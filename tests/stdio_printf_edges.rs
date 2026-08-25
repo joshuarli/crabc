@@ -12,11 +12,6 @@ fn stdio_printf_edge_cases_under_libc_so() {
         "-pie".to_string(),
         "-I".to_string(),
         root.join("include").to_str().unwrap().to_string(),
-        "-Wl,--dynamic-linker".to_string(),
-        root.join("target/debug/libldso.so")
-            .to_str()
-            .unwrap()
-            .to_string(),
         "-L".to_string(),
         root.join("target/debug").to_str().unwrap().to_string(),
         root.join("tests/fixtures/stdio_printf_edges_test.c")
@@ -28,7 +23,7 @@ fn stdio_printf_edge_cases_under_libc_so() {
         "-o".to_string(),
         binary.to_str().unwrap().to_string(),
     ];
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args(args)
         .status()
         .expect("failed to compile stdio printf edge fixture");

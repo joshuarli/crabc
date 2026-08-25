@@ -9,15 +9,13 @@ fn program_break_exports_under_libc_so() {
     let target = root.join("target/debug");
     let source = root.join("tests/fixtures/break_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-break");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -27,7 +25,7 @@ fn program_break_exports_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for break_exports_test");
+        .expect("failed to run crabc-cc for break_exports_test");
     assert!(status.success(), "break_exports_test compilation failed");
     let output = Command::new(&binary)
         .env("LD_LIBRARY_PATH", &target)

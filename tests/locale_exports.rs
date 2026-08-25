@@ -16,15 +16,13 @@ fn locale_aware_exports_under_libc_so() {
 
     let src = fixtures.join("locale_exports_test.c");
     let bin = test_support::TempArtifact::new("locale_exports_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -34,10 +32,10 @@ fn locale_aware_exports_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for locale_exports_test");
+        .expect("failed to run crabc-cc for locale_exports_test");
     assert!(
         status.success(),
-        "musl-gcc locale_exports_test compilation failed"
+        "crabc-cc locale_exports_test compilation failed"
     );
 
     let output = Command::new(&bin)

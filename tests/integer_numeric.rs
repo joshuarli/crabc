@@ -16,15 +16,13 @@ fn integer_and_nan_exports_under_libc_so() {
 
     let src = fixtures.join("integer_numeric_test.c");
     let bin = test_support::TempArtifact::new("crabc-c-abi-integer-numeric");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -34,10 +32,10 @@ fn integer_and_nan_exports_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for integer_numeric_test");
+        .expect("failed to run crabc-cc for integer_numeric_test");
     assert!(
         status.success(),
-        "musl-gcc integer_numeric_test compilation failed"
+        "crabc-cc integer_numeric_test compilation failed"
     );
 
     let output = Command::new(&bin)

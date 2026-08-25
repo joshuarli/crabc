@@ -10,7 +10,7 @@ fn system_and_legacy_utility_exports_under_libc_so() {
     let source = root.join("tests/fixtures/system_utils_exports_test.c");
     let binary = test_support::TempArtifact::new("crabc-c-abi-system-utils");
 
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -18,8 +18,6 @@ fn system_and_legacy_utility_exports_under_libc_so() {
             "-D_GNU_SOURCE",
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             source.to_str().unwrap(),
@@ -29,10 +27,10 @@ fn system_and_legacy_utility_exports_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for system_utils_exports_test");
+        .expect("failed to run crabc-cc for system_utils_exports_test");
     assert!(
         status.success(),
-        "musl-gcc system_utils_exports_test compilation failed"
+        "crabc-cc system_utils_exports_test compilation failed"
     );
 
     let output = Command::new(&binary)

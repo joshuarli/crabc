@@ -6,8 +6,9 @@ direct write, and emits `native-std-lto:ok`.
 There are no C `extern` declarations in the fixture; the normal `std` runtime
 is intentionally part of this lane's LTO/dynamic-linking boundary.
 
-The Docker harness should build it as an AArch64 musl binary with its selected
-fat-LTO flags, then stage the matching musl interpreter and `libc.so` beside
-the executable before running it. The direct facade witness is exported as
+This is the separately labelled musl-oracle lane, not a candidate
+CRT/sysroot-provenance lane. The Docker harness builds it as an AArch64 musl
+binary with its selected fat-LTO flags, then stages the matching musl
+interpreter and `libc.so` beside the executable before running it. The direct facade witness is exported as
 `crabc_rs_native_facade_getpid_witness` and consumed by `native_std_direct_route`; the main
 function's `std` output remains the runtime assertion for the stock-`std` lane.

@@ -15,15 +15,13 @@ fn allocator_contract_under_libc_so() {
 
     assert!(ldso.exists(), "libldso.so not found");
     assert!(target.join("libc.so").exists(), "libc.so not found");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-fno-builtin",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso.to_str().unwrap(),
             source.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
@@ -33,7 +31,7 @@ fn allocator_contract_under_libc_so() {
             binary.to_str().unwrap(),
         ])
         .status()
-        .expect("musl-gcc failed");
+        .expect("crabc-cc failed");
     assert!(status.success(), "allocator fixture compilation failed");
 
     let output = Command::new(&binary)

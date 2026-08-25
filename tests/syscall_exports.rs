@@ -19,7 +19,7 @@ fn syscall_filesystem_exports_under_libc_so() {
     // serialized by the workspace test configuration, so its PID is enough
     // to make this path distinct from other fixture runs.
     let bin = test_support::TempArtifact::new("crabc-c-abi-syscall-exports");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
@@ -27,8 +27,6 @@ fn syscall_filesystem_exports_under_libc_so() {
             "-D_GNU_SOURCE",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             src.to_str().unwrap(),
@@ -38,10 +36,10 @@ fn syscall_filesystem_exports_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for syscall_exports_test");
+        .expect("failed to run crabc-cc for syscall_exports_test");
     assert!(
         status.success(),
-        "musl-gcc syscall_exports_test compilation failed"
+        "crabc-cc syscall_exports_test compilation failed"
     );
 
     let output = Command::new(&bin)

@@ -20,14 +20,12 @@ fn pthread_functions_under_libc_so() {
 
     let src = fixtures.join("pthread_test.c");
     let bin = test_support::TempArtifact::new("pthread_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -37,8 +35,8 @@ fn pthread_functions_under_libc_so() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for pthread_test");
-    assert!(status.success(), "musl-gcc pthread_test compilation failed");
+        .expect("failed to run crabc-cc for pthread_test");
+    assert!(status.success(), "crabc-cc pthread_test compilation failed");
 
     let output = Command::new(&bin)
         .env(
@@ -69,14 +67,12 @@ fn pthread_full_test() {
 
     let src = fixtures.join("pthread_full_test.c");
     let bin = test_support::TempArtifact::new("pthread_full_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -86,10 +82,10 @@ fn pthread_full_test() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for pthread_full_test");
+        .expect("failed to run crabc-cc for pthread_full_test");
     assert!(
         status.success(),
-        "musl-gcc pthread_full_test compilation failed"
+        "crabc-cc pthread_full_test compilation failed"
     );
 
     let output = Command::new(&bin)

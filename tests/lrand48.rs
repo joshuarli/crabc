@@ -16,15 +16,13 @@ fn lrand48_musl_vectors_under_libldso() {
 
     let src = fixtures.join("lrand48_test.c");
     let bin = test_support::TempArtifact::new("lrand48_test");
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-fPIE",
             "-pie",
             "-D_GNU_SOURCE",
             "-I",
             include.to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            ldso_path.to_str().unwrap(),
             "-L",
             manifest_dir.join("target/debug").to_str().unwrap(),
             src.to_str().unwrap(),
@@ -34,8 +32,8 @@ fn lrand48_musl_vectors_under_libldso() {
             bin.to_str().unwrap(),
         ])
         .status()
-        .expect("failed to run musl-gcc for lrand48_test");
-    assert!(status.success(), "musl-gcc lrand48_test compilation failed");
+        .expect("failed to run crabc-cc for lrand48_test");
+    assert!(status.success(), "crabc-cc lrand48_test compilation failed");
 
     let output = Command::new(&bin)
         .env(

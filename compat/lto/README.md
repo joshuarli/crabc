@@ -6,7 +6,7 @@ configurations documented in the [historical runtime plan](../../docs/history/ru
 | ID | Configuration | Build contract |
 | --- | --- | --- |
 | A | musl static | Controlled `fixtures/static.c` probe linked by `musl-gcc -static -no-pie` against pinned musl |
-| B | crabc static | The same C object linked with explicit musl/GCC startup files and `target/debug/libc.a` in a recorded start-group |
+| B | crabc static | The same controlled C source linked by `target/crabc-sysroot/bin/crabc-cc -static -no-pie`; its CRT, libc archive, and compiler helpers are the driver's sealed owned inputs |
 | C | crabc build-std | pinned, unmodified Rust sources through `-Z build-std=std,panic_abort`, dynamic crabc runtime |
 | D | crabc build-std fat/linker-plugin LTO | `-Z build-std=std,panic_abort`, `lto=fat`, `codegen-units=1`, embedded bitcode, `linker-plugin-lto`, and clang/lld musl target flags |
 
@@ -25,11 +25,13 @@ python3 compat/lto/run.py
 ```
 
 The runner expects Rust `nightly-2026-07-24`, musl `1.2.6` under
-`/opt/musl-1.2.6`, and the already-built `target/debug/{libc.a,libc.so,libldso.so}`.
-`MUSL_ROOT` or `--musl-root`, `--target-dir`, `--timeout`, and `--report` can
-override those paths without changing the pinned version contract. The report
-is written atomically to `compat/reports/lto/latest.json` by default (the
-repository-wide reports directory is ignored by git).
+`/opt/musl-1.2.6`, the already-built `target/debug/{libc.a,libc.so,libldso.so}`
+for C/D, and the installed owned sysroot at `target/crabc-sysroot/` for B.
+`./scripts/dev.sh lto` builds that sysroot before running the matrix.
+`MUSL_ROOT` or `--musl-root`, `--target-dir`, `--sysroot`, `--timeout`, and
+`--report` can override those paths without changing the pinned version
+contract. The report is written atomically to `compat/reports/lto/latest.json`
+by default (the repository-wide reports directory is ignored by git).
 
 Every attempted build records the exact Cargo argv, working directory, linker,
 RUSTFLAGS, selected environment (and its hash), compiler output hashes and
@@ -45,15 +47,17 @@ deliberately distinct:
 * `invalid` means output was produced but violated the requested ELF shape or
   the no-glibc boundary.
 
-`built` does not silently become an optimization claim. B records the exact
-startup/support files, the candidate archive's `llvm-nm` output, and a bounded
-link-map snapshot/hash. Selection requires the candidate's exact path or a
-member anchor derived from that archive, while the map separately records
-whether the pinned musl `libc.a` was selected; musl startup paths are retained
-as expected CRT evidence. A missing candidate anchor, a selected musl libc,
-a byte-identical result, or a nonzero run prevents B from being counted as a
-usable crabc-static measurement. Asking the linker for `libc.a` alone does not
-prove that no default archive was also used. D records the requested LTO/linker-plugin flags,
+`built` does not silently become an optimization claim. A remains the explicit
+musl oracle and retains musl/GCC startup/support evidence. B records the
+installed driver/sysroot manifest, its owned CRT/libc/builtins paths, the
+candidate archive's `llvm-nm` output, a bounded link-map snapshot/hash, and
+the driver's resolved linker trace audit. The B audit rejects musl/GCC CRT,
+`crtbegin`/`crtend`, `libgcc`, `libssp`, or any other target runtime outside the
+installed sysroot. Selection requires the candidate's exact path or a member
+anchor derived from that archive, while the map separately records whether the
+pinned musl `libc.a` was selected. A missing candidate anchor, an unapproved
+resolved input, a selected musl libc, a byte-identical result, or a nonzero run
+prevents B from being counted as a usable crabc-static measurement. D records the requested LTO/linker-plugin flags,
 the rebuilt bitcode-bearing archive, and both absolute-path and archive-member
 map anchors. If LLD instead selects Rust's self-contained musl archive, or no
 candidate anchor appears, D is `invalid`; `whole_program_lto_proven` stays
@@ -101,6 +105,7 @@ does not change the static/build-std A/B/C/D matrix above. In the pinned native
 Linux/AArch64 Docker image, run:
 
 ```bash
+./scripts/dev.sh sysroot
 python3 compat/lto/native_facade_lto.py
 ```
 
@@ -111,12 +116,27 @@ uses `--stock-std-manifest`, defaulting to
 `compat/lto/native-std-lto-fixture/Cargo.toml`. Both manifests carry checked-in lock
 files and path-pin `crabc-rs`/`crabc-core` to this repository.
 
-The report records three lanes:
+The report records three deliberately distinct lanes:
 
-* `control-o3`: the custom no-std application with LTO off;
-* `fat-lto`: the same application with fat LTO and embedded bitcode;
-* `stock-std-fat`: a build-std `std` application run once with pinned musl and
-  once with the staged crabc loader/libc.
+* `control-o3`: the custom no-std candidate application with LTO off, linked
+  through `target/crabc-sysroot/bin/crabc-cc` and run with the installed crabc
+  loader and `libc.so`;
+* `fat-lto`: the same owned-sysroot candidate application with fat LTO and
+  embedded bitcode;
+* `stock-std-fat`: a separately labelled build-std **musl oracle**. It is
+  linked through the pinned musl target path and run once with musl and once
+  with staged crabc runtime bytes; it does not establish candidate CRT or
+  sysroot provenance.
+
+Before either candidate build, the harness requires the installed sysroot's
+purity record and routes Cargo through a recorder into the sealed
+`crabc-cc` driver. Candidate Rust flags disable Rust's self-contained target
+linking and name only the installed crabc library directory, `-lc`, and
+`libcrabc-builtins.a`. The recorded Cargo-to-driver argv rejects an attempted
+musl root, Rust self-contained input, GCC/compiler-rt runtime, or CRT support
+file. This is intentionally a Cargo/driver boundary audit rather than an
+unavailable claim to trace every resolved LLD input. A Cargo/linker constraint
+that still requests one of those inputs makes the candidate lane `invalid`.
 
 For each native lane the verifier extracts the named witness function and
 accepts instruction spelling variations (`w8`/`x8`, decimal/hex immediates)
@@ -129,7 +149,8 @@ semantic assembly/symbol evidence, not a compiler-byte comparison. Rust
 provenance; they do not prove unique inlining.
 `strace -f -c` output is retained as corroboration when available.
 
-The stock-`std` lane compares status and raw stdout/stderr with no
+The stock-`std` musl-oracle lane compares status and raw stdout/stderr with no
 normalization. It explicitly records `lto_into_dynamic_libc_proven: false`:
 fat LTO evidence for the Rust application does not establish optimization
-inside the dynamically loaded C `libc.so`.
+inside the dynamically loaded C `libc.so`, and its musl CRT/link boundary is
+not candidate native-facade evidence.

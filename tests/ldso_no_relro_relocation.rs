@@ -4,7 +4,7 @@ mod test_support;
 use std::process::{Command, Output};
 
 fn compile_shared(source: &std::path::Path, output: &std::path::Path) {
-    let status = Command::new("musl-gcc")
+    let status = Command::new(test_support::crabc_cc())
         .args([
             "-O3",
             "-shared",
@@ -25,14 +25,16 @@ fn compile_fixture(binary: &std::path::Path, candidate: bool) {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
     let target = root.join("target/debug");
     let fixture = root.join("tests/fixtures/ldso_no_relro_relocation_test.c");
-    let mut command = Command::new("musl-gcc");
+    let mut command = if candidate {
+        Command::new(test_support::crabc_cc())
+    } else {
+        Command::new("musl-gcc")
+    };
     command.args(["-O3", "-fPIE", "-pie", "-fno-builtin"]);
     if candidate {
         command.args([
             "-I",
             root.join("include").to_str().unwrap(),
-            "-Wl,--dynamic-linker",
-            target.join("libldso.so").to_str().unwrap(),
             "-L",
             target.to_str().unwrap(),
             "-Wl,--allow-shlib-undefined",

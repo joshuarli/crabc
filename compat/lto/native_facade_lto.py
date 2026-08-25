@@ -2,11 +2,20 @@
 """Collect bounded native-facade crabc-rs LTO evidence.
 
 This is a focused Linux/AArch64 fixture, separate from ``run.py``'s older
-four-configuration experiment.  The fixture is a normal Cargo application
-whose manifest is supplied explicitly (and defaults to the fixture
-manifest).  Fat LTO is requested for the application and its Rust path
-dependencies, then the resulting ELF is checked for the two representative
-direct syscall paths used by the fixture: ``getpid`` (172) and ``write`` (64).
+four-configuration experiment. The two native-facade candidate lanes are
+normal Cargo applications whose manifests are supplied explicitly (and
+default to the fixture manifest). They link through the installed
+``target/crabc-sysroot/bin/crabc-cc`` driver: that driver's Rust CRT objects,
+``libc.so``, compiler-helper archive, and canonical interpreter are the only
+candidate C-runtime boundary. Fat LTO is requested for the application and
+its Rust path dependencies, then the resulting ELF is checked for the two
+representative direct syscall paths used by the fixture: ``getpid`` (172) and
+``write`` (64).
+
+The optional stock-``std`` lane remains a separately labelled pinned-musl
+oracle. Its musl target link and patched musl/crabc runtime comparison do not
+contribute candidate CRT/sysroot provenance and must never be mistaken for a
+native-facade candidate lane.
 
 The checks intentionally assert properties of the generated program rather
 than compiler-version-specific bytes. Seeing both syscall-number-to-``svc``
@@ -28,6 +37,7 @@ compat/lto subdirectory.  No source filename is assumed by the harness.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -41,7 +51,7 @@ import tempfile
 import time
 import tomllib
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterator, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,10 +61,14 @@ LTO_ROOT = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = LTO_ROOT / "native-facade-lto-fixture/Cargo.toml"
 DEFAULT_STOCK_STD_MANIFEST = LTO_ROOT / "native-std-lto-fixture/Cargo.toml"
 DEFAULT_REPORT = ROOT / "compat/reports/lto/native-facade/latest.json"
+DEFAULT_SYSROOT = ROOT / "target/crabc-sysroot"
 TARGET = "aarch64-unknown-linux-musl"
 TOOLCHAIN = "nightly-2026-07-24"
 MUSL_VERSION = "1.2.6"
 MUSL_ROOT = Path(f"/opt/musl-{MUSL_VERSION}")
+CANONICAL_INTERPRETER = "/lib/ld-crabc-aarch64.so.1"
+OWNED_SYSROOT_RUNTIME = "owned-crabc-sysroot"
+MUSL_ORACLE_RUNTIME = "pinned-musl-oracle"
 
 # These are the public edges that the representative facade route must not
 # use.  malloc/free are intentionally not forbidden here: a normal std
@@ -254,7 +268,7 @@ def sanitize_environment() -> dict[str, str]:
             "PWD": "/tmp",
             "OLDPWD": "/tmp",
             "LC_ALL": "C",
-            "CRABC_NATIVE_FACADE_LTO_FIXTURE": "aarch64-musl",
+            "CRABC_NATIVE_FACADE_LTO_FIXTURE": "aarch64-native-facade",
         }
     )
     return environment
@@ -285,8 +299,15 @@ def environment_evidence(environment: Mapping[str, str]) -> dict[str, object]:
     }
 
 
-def rustflags(*, lto: str, dynamic: bool, no_start_files: bool) -> str:
-    """Return a complete optimization/link contract, independent of repo config."""
+def rustflags(
+    *,
+    lto: str,
+    dynamic: bool,
+    no_start_files: bool,
+    runtime: str,
+    sysroot: Path | None = None,
+) -> str:
+    """Return the complete optimization and explicitly selected runtime contract."""
 
     flags = [
         "-C opt-level=3",
@@ -295,15 +316,36 @@ def rustflags(*, lto: str, dynamic: bool, no_start_files: bool) -> str:
         f"-C lto={lto}",
         "-C embed-bitcode=yes",
         f"-C target-feature={'-' if dynamic else '+'}crt-static",
-        "-C link-arg=-L/usr/lib",
     ]
-    flags.extend(
-        (
-            "-C link-arg=--target=aarch64-unknown-linux-musl",
-            f"-C link-arg=--sysroot=/opt/musl-{MUSL_VERSION}",
-            "-C link-arg=-fuse-ld=lld",
+    if runtime == OWNED_SYSROOT_RUNTIME:
+        if sysroot is None:
+            raise RunnerError("owned-sysroot Rust flags require an installed sysroot")
+        # Rust's built-in musl target otherwise selects its self-contained
+        # CRT/libc/GCC support path. The installed driver owns CRT selection;
+        # these explicit libraries satisfy Cargo's -nodefaultlibs final link
+        # with only the installed crabc runtime inputs.
+        owned_lib = sysroot / "usr/lib"
+        flags.extend(
+            (
+                "-C link-self-contained=no",
+                f"-C link-arg=-L{owned_lib}",
+                "-C link-arg=-lc",
+                "-C link-arg=-l:libcrabc-builtins.a",
+            )
         )
-    )
+    elif runtime == MUSL_ORACLE_RUNTIME:
+        # This is intentionally retained only for the separately named stock
+        # std oracle lane. Candidate native-facade lanes must not reach here.
+        flags.extend(
+            (
+                "-C link-arg=-L/usr/lib",
+                "-C link-arg=--target=aarch64-unknown-linux-musl",
+                f"-C link-arg=--sysroot=/opt/musl-{MUSL_VERSION}",
+                "-C link-arg=-fuse-ld=lld",
+            )
+        )
+    else:
+        raise RunnerError(f"unknown native-facade runtime contract: {runtime}")
     if no_start_files:
         flags.append("-C link-arg=-nostartfiles")
     return " ".join(flags)
@@ -356,31 +398,21 @@ def validate_manifest(manifest: Path) -> dict[str, object]:
     return fixture_metadata(manifest)
 
 
-def capability_reasons(
+def common_capability_reasons(
     metadata: Mapping[str, object],
     tools: Mapping[str, str],
     attempts: Mapping[str, object],
-    musl_root: Path,
+    *,
+    required_tools: Sequence[str],
 ) -> list[str]:
     reasons: list[str] = []
     if platform.system() != "Linux":
         reasons.append(f"requires Linux, got {platform.system()}")
     if platform.machine().lower() not in {"aarch64", "arm64"}:
         reasons.append(f"requires native AArch64, got {platform.machine()!r}")
-    required = ("cargo", "rustc", "rustup", "musl_gcc", "clang", "llvm_nm", "readelf", "objdump", "file")
-    for name in required:
+    for name in required_tools:
         if name not in tools:
             reasons.append(f"required tool unavailable: {attempts.get(name)}")
-    if musl_root.name != f"musl-{MUSL_VERSION}":
-        reasons.append(f"musl root must name pinned musl-{MUSL_VERSION}: {musl_root}")
-    for path in (
-        musl_root / "include",
-        musl_root / "lib/libc.so",
-        musl_root / "lib/libc.a",
-        musl_root / "lib/ld-musl-aarch64.so.1",
-    ):
-        if not path.exists():
-            reasons.append(f"pinned musl artifact unavailable: {path}")
     lockfile = metadata["lockfile"]
     if isinstance(lockfile, Path) and not lockfile.is_file():
         reasons.append(f"fixture requires a checked-in Cargo.lock: {lockfile}")
@@ -402,15 +434,101 @@ def capability_reasons(
                 reject_glibc(version_text, "rustc -Vv")
             except RunnerError as error:
                 reasons.append(str(error))
-        musl_gcc = tools.get("musl_gcc")
-        if musl_gcc:
-            wrapper = Path(musl_gcc)
-            try:
-                wrapper_text = wrapper.read_text(encoding="utf-8")
-            except OSError:
-                wrapper_text = ""
-            if f"/opt/musl-{MUSL_VERSION}" not in wrapper_text:
-                reasons.append(f"musl-gcc is not the pinned wrapper: {wrapper}")
+    return reasons
+
+
+def owned_sysroot_reasons(sysroot: Path) -> list[str]:
+    """Reject an incomplete or unproven installed tree before a candidate build."""
+
+    reasons: list[str] = []
+    if not sysroot.is_dir():
+        return [f"owned crabc sysroot is unavailable: {sysroot}"]
+    manifest_path = sysroot / "share/crabc/manifest.json"
+    purity_path = sysroot / "share/crabc/purity.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        reasons.append(f"owned crabc sysroot manifest is unavailable or invalid: {manifest_path}: {error}")
+        manifest = None
+    if isinstance(manifest, Mapping):
+        if manifest.get("target") != TARGET:
+            reasons.append(f"owned crabc sysroot has unexpected target: {manifest.get('target')!r}")
+        if manifest.get("canonical_interpreter") != CANONICAL_INTERPRETER:
+            reasons.append("owned crabc sysroot does not select the canonical crabc interpreter")
+    try:
+        purity = json.loads(purity_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        reasons.append(f"owned crabc sysroot purity record is unavailable or invalid: {purity_path}: {error}")
+        purity = None
+    if isinstance(purity, Mapping) and purity.get("crt_sysroot_pure_rust") is not True:
+        reasons.append("owned crabc sysroot does not pass its CRT/sysroot purity contract")
+    for path in (
+        sysroot / "bin/crabc-cc",
+        sysroot / "lib/ld-crabc-aarch64.so.1",
+        sysroot / "usr/lib/libc.so",
+        sysroot / "usr/lib/libc.a",
+        sysroot / "usr/lib/libcrabc-builtins.a",
+        *(sysroot / "usr/lib" / name for name in ("crt1.o", "Scrt1.o", "rcrt1.o", "crti.o", "crtn.o")),
+    ):
+        if not path.is_file():
+            reasons.append(f"owned crabc sysroot runtime input is unavailable: {path}")
+    driver = sysroot / "bin/crabc-cc"
+    if driver.is_file() and not os.access(driver, os.X_OK):
+        reasons.append(f"owned crabc sysroot driver is not executable: {driver}")
+    return reasons
+
+
+def candidate_capability_reasons(
+    metadata: Mapping[str, object],
+    tools: Mapping[str, str],
+    attempts: Mapping[str, object],
+    sysroot: Path,
+) -> list[str]:
+    reasons = common_capability_reasons(
+        metadata,
+        tools,
+        attempts,
+        required_tools=("cargo", "rustc", "rustup", "llvm_nm", "readelf", "objdump", "file"),
+    )
+    reasons.extend(owned_sysroot_reasons(sysroot))
+    if platform.system() == "Linux" and platform.machine().lower() in {"aarch64", "arm64"} and os.geteuid() != 0:
+        reasons.append("candidate runtime needs root to stage the absent canonical crabc interpreter")
+    return reasons
+
+
+def musl_oracle_capability_reasons(
+    metadata: Mapping[str, object],
+    tools: Mapping[str, str],
+    attempts: Mapping[str, object],
+    musl_root: Path,
+) -> list[str]:
+    """Keep the stock-std musl comparison explicitly outside candidate provenance."""
+
+    reasons = common_capability_reasons(
+        metadata,
+        tools,
+        attempts,
+        required_tools=("cargo", "rustc", "rustup", "musl_gcc", "llvm_nm", "readelf", "objdump", "file"),
+    )
+    if musl_root.name != f"musl-{MUSL_VERSION}":
+        reasons.append(f"musl oracle root must name pinned musl-{MUSL_VERSION}: {musl_root}")
+    for path in (
+        musl_root / "include",
+        musl_root / "lib/libc.so",
+        musl_root / "lib/libc.a",
+        musl_root / "lib/ld-musl-aarch64.so.1",
+    ):
+        if not path.exists():
+            reasons.append(f"pinned musl oracle artifact unavailable: {path}")
+    musl_gcc = tools.get("musl_gcc")
+    if musl_gcc:
+        wrapper = Path(musl_gcc)
+        try:
+            wrapper_text = wrapper.read_text(encoding="utf-8")
+        except OSError:
+            wrapper_text = ""
+        if f"/opt/musl-{MUSL_VERSION}" not in wrapper_text:
+            reasons.append(f"musl-gcc is not the pinned oracle wrapper: {wrapper}")
     return reasons
 
 
@@ -433,6 +551,15 @@ def parse_named_section_sizes(readelf_text: str, prefix: str) -> list[int]:
 def parse_text_size(readelf_text: str) -> int | None:
     sizes = parse_named_section_sizes(readelf_text, ".text")
     return sum(sizes) if sizes else None
+
+
+def elf_interpreter(readelf_text: str) -> str | None:
+    match = re.search(r"Requesting program interpreter:\s*([^\]\s]+)", readelf_text)
+    return match.group(1) if match is not None else None
+
+
+def elf_needed_libraries(readelf_text: str) -> list[str]:
+    return re.findall(r"Shared library:\s*\[([^\]]+)\]", readelf_text)
 
 
 def symbol_names(nm_text: str) -> tuple[list[str], list[str]]:
@@ -558,12 +685,15 @@ def artifact_inspection(
     binary: Path,
     tools: Mapping[str, str],
     entry_symbol: str | None,
+    *,
+    expected_interpreter: str | None,
+    runtime: str,
 ) -> dict[str, object]:
     records: dict[str, object] = {}
     file_record = command_record([tools["file"], str(binary)])
     nm_record = command_record([tools["llvm_nm"], "-a", "-C", str(binary)], preview_limit=2_000_000)
     readelf_record = command_record(
-        [tools["readelf"], "-h", "-l", "-S", str(binary)], preview_limit=2_000_000
+        [tools["readelf"], "-h", "-l", "-S", "-d", str(binary)], preview_limit=2_000_000
     )
     objdump_record = command_record(
         [tools["objdump"], "-d", "--demangle", str(binary)], preview_limit=2_000_000
@@ -581,6 +711,23 @@ def artifact_inspection(
     readelf_text = command_text(readelf_record)
     disassembly = command_text(objdump_record)
     reject_glibc(file_text + nm_text + readelf_text + disassembly, "ELF inspection")
+    observed_interpreter = elf_interpreter(readelf_text)
+    if expected_interpreter is not None and observed_interpreter != expected_interpreter:
+        raise RunnerError(
+            "fixture interpreter does not match its runtime contract: "
+            f"expected {expected_interpreter!r}, observed {observed_interpreter!r}"
+        )
+    needed_libraries = elf_needed_libraries(readelf_text)
+    if runtime == OWNED_SYSROOT_RUNTIME:
+        forbidden_needed = [
+            name
+            for name in needed_libraries
+            if any(marker in name.lower() for marker in ("musl", "gcc", "atomic", "ssp", "compiler_rt"))
+        ]
+        if forbidden_needed:
+            raise RunnerError(
+                "candidate ELF retains a foreign target runtime dependency: " + ", ".join(forbidden_needed)
+            )
     route = (
         inspect_direct_route(
             readelf_text=readelf_text,
@@ -596,7 +743,11 @@ def artifact_inspection(
             "binary_sha256": sha256_file(binary),
             "file_size_bytes": binary.stat().st_size,
             "text_size_bytes": parse_text_size(readelf_text),
-            "has_interpreter": "INTERP" in readelf_text,
+            "runtime_contract": runtime,
+            "interpreter": observed_interpreter,
+            "expected_interpreter": expected_interpreter,
+            "interpreter_matches_contract": observed_interpreter == expected_interpreter,
+            "dynamic_needed_libraries": needed_libraries,
             "readelf_sha256": sha256_bytes(readelf_text.encode()),
             "disassembly_sha256": sha256_bytes(disassembly.encode()),
             "route": route,
@@ -612,7 +763,8 @@ def sanitize_build_environment(
     lto: str,
     dynamic: bool,
     no_start_files: bool,
-    candidate_dir: Path | None = None,
+    runtime: str,
+    sysroot: Path | None = None,
 ) -> dict[str, str]:
     environment = dict(os.environ)
     for key in tuple(environment):
@@ -620,13 +772,13 @@ def sanitize_build_environment(
             "CARGO_TARGET_"
         ):
             environment.pop(key, None)
-    flags = rustflags(lto=lto, dynamic=dynamic, no_start_files=no_start_files)
-    if dynamic and candidate_dir is not None:
-        # The pinned Docker image's clang/lld needs the candidate C runtime in
-        # its search path.  This is only a link/runtime boundary; Rust LTO is
-        # not claimed to cross into the dynamically loaded DSO.
-        gcc_support = "/usr/lib/gcc/aarch64-alpine-linux-musl/15.2.0"
-        flags += f" -C link-arg=-L{candidate_dir} -C link-arg=-lc -C link-arg=-B{gcc_support} -C link-arg=-L{gcc_support}"
+    flags = rustflags(
+        lto=lto,
+        dynamic=dynamic,
+        no_start_files=no_start_files,
+        runtime=runtime,
+        sysroot=sysroot,
+    )
     environment.update(
         {
             "CARGO_TARGET_DIR": str(target_dir),
@@ -635,6 +787,113 @@ def sanitize_build_environment(
         }
     )
     return environment
+
+
+def write_linker_recorder(temporary: Path, driver: Path, lane: str) -> tuple[Path, Path]:
+    """Create a transparent Cargo-link argv recorder around the sealed driver.
+
+    Rust's final link argv is otherwise only compiler diagnostic text. Recording
+    it lets the report reject an attempted musl, self-contained, or GCC target
+    runtime selection rather than inferring purity from the final ELF alone.
+    The wrapper only records and ``execv``s the installed ``crabc-cc`` driver.
+    """
+
+    record = temporary / f"{lane}-cargo-linker.jsonl"
+    wrapper = temporary / f"{lane}-cargo-linker.py"
+    wrapper.write_text(
+        "#!" + sys.executable + "\n"
+        "from __future__ import annotations\n"
+        "import json\n"
+        "import os\n"
+        "import shlex\n"
+        "import sys\n"
+        f"_DRIVER = {str(driver)!r}\n"
+        f"_RECORD = {str(record)!r}\n"
+        "_argv = sys.argv[1:]\n"
+        "_response_files = {}\n"
+        "for _argument in _argv:\n"
+        "    if not _argument.startswith('@'):\n"
+        "        continue\n"
+        "    try:\n"
+        "        with open(_argument[1:], encoding='utf-8') as _response:\n"
+        "            _response_files[_argument] = shlex.split(_response.read())\n"
+        "    except (OSError, ValueError):\n"
+        "        _response_files[_argument] = None\n"
+        "with open(_RECORD, 'a', encoding='utf-8') as _stream:\n"
+        "    _stream.write(json.dumps({'argv': _argv, 'response_files': _response_files}) + '\\n')\n"
+        "os.execv(_DRIVER, [_DRIVER, *_argv])\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    return wrapper, record
+
+
+def cargo_linker_argument_audit(record: Path) -> dict[str, object]:
+    """Classify actual Cargo linker arguments without pretending to trace LLD."""
+
+    invocations: list[dict[str, object]] = []
+    if record.is_file():
+        for line in record.read_text(encoding="utf-8").splitlines():
+            try:
+                arguments = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise RunnerError(f"invalid Cargo linker record: {record}: {error}") from error
+            # Accept the original list form so the host-only parser contract
+            # remains backwards compatible with historical diagnostic records.
+            if isinstance(arguments, list):
+                invocation = {"argv": arguments, "response_files": {}}
+            elif isinstance(arguments, Mapping):
+                invocation = dict(arguments)
+            else:
+                raise RunnerError(f"invalid Cargo linker argv in record: {record}")
+            argv = invocation.get("argv")
+            response_files = invocation.get("response_files")
+            if not isinstance(argv, list) or not all(isinstance(value, str) for value in argv):
+                raise RunnerError(f"invalid Cargo linker argv in record: {record}")
+            if not isinstance(response_files, Mapping) or not all(isinstance(key, str) for key in response_files):
+                raise RunnerError(f"invalid Cargo linker response-file record: {record}")
+            for value in response_files.values():
+                if value is not None and (not isinstance(value, list) or not all(isinstance(item, str) for item in value)):
+                    raise RunnerError(f"invalid Cargo linker response-file arguments: {record}")
+            invocations.append({"argv": argv, "response_files": dict(response_files)})
+    forbidden_markers = (
+        "/opt/musl-",
+        "/usr/lib/gcc/",
+        "crtbegin",
+        "crtend",
+        "-lgcc",
+        "libgcc",
+        "libatomic",
+        "libssp",
+        "compiler-rt",
+        "self-contained",
+    )
+    forbidden: list[str] = []
+    for invocation in invocations:
+        argv = invocation["argv"]
+        response_files = invocation["response_files"]
+        assert isinstance(argv, list) and isinstance(response_files, Mapping)
+        expanded_response_arguments = [
+            item
+            for value in response_files.values()
+            if isinstance(value, list)
+            for item in value
+        ]
+        for argument in [*argv, *expanded_response_arguments]:
+            lowered = argument.lower()
+            if any(marker in lowered for marker in forbidden_markers):
+                forbidden.append(argument)
+    return {
+        "status": "passed" if invocations and not forbidden else "rejected" if forbidden else "unverified",
+        "scope": (
+            "Cargo-to-sealed-driver argv only; the installed driver owns final CRT/library selection "
+            "and this is not an LLD resolved-input trace."
+        ),
+        "invocation_count": len(invocations),
+        "invocations": invocations,
+        "forbidden_target_runtime_arguments": forbidden,
+        "forbidden_markers": list(forbidden_markers),
+    }
 
 
 def rlib_provenance(target_dir: Path, tools: Mapping[str, str]) -> dict[str, object]:
@@ -706,14 +965,26 @@ def build_fixture(
     dynamic: bool = False,
     binary_name: str | None = None,
     build_std: bool = False,
-    candidate_dir: Path | None = None,
+    runtime: str,
+    sysroot: Path | None = None,
 ) -> tuple[Path, dict[str, object]]:
     manifest = metadata["manifest"]
     lockfile = metadata["lockfile"]
     default_binary_name = metadata["binary_name"]
     assert isinstance(manifest, Path) and isinstance(lockfile, Path) and isinstance(default_binary_name, str)
     binary_name = binary_name or default_binary_name
-    linker = tools["clang"] if (lto == "fat" or not build_std) else tools["musl_gcc"]
+    if runtime == OWNED_SYSROOT_RUNTIME:
+        if sysroot is None:
+            raise RunnerError("candidate fixture build requires an owned crabc sysroot")
+        sealed_driver = sysroot / "bin/crabc-cc"
+        linker_path, linker_record = write_linker_recorder(temporary, sealed_driver, lane)
+        linker = str(linker_path)
+    elif runtime == MUSL_ORACLE_RUNTIME:
+        sealed_driver = None
+        linker_record = None
+        linker = tools["musl_gcc"]
+    else:
+        raise RunnerError(f"unknown fixture runtime contract: {runtime}")
     command = [
         "cargo",
         f"+{TOOLCHAIN}",
@@ -738,11 +1009,12 @@ def build_fixture(
         linker,
         lto=lto,
         dynamic=dynamic,
-        # The fixture uses the target's normal Rust/musl CRT startup.  A
-        # custom _start plus Rust's self-contained crt1.o is not a stable
-        # linker contract, so the harness keeps this false for every lane.
+        # The fixture's C ABI main still needs startup. In candidate lanes the
+        # sealed installed driver owns that choice; Rust's self-contained CRT
+        # is disabled by `link-self-contained=no` in `rustflags` above.
         no_start_files=False,
-        candidate_dir=candidate_dir,
+        runtime=runtime,
+        sysroot=sysroot,
     )
     # Running Cargo outside the repository prevents the checked-in .cargo
     # configuration from adding target-feature or dead-code flags to this
@@ -762,6 +1034,7 @@ def build_fixture(
         "cwd": str(build_cwd),
         "cwd_isolated_from_repository_config": True,
         "linker": linker,
+        "runtime_contract": runtime,
         "rustflags": environment["RUSTFLAGS"],
         "environment": environment_evidence(environment),
         "returncode": result.returncode,
@@ -777,8 +1050,12 @@ def build_fixture(
             "embed_bitcode": True,
             "build_std": build_std,
             "dynamic": dynamic,
+            "rust_link_self_contained": "no" if runtime == OWNED_SYSROOT_RUNTIME else "target-default",
         },
     }
+    if sealed_driver is not None:
+        build["sealed_driver"] = str(sealed_driver)
+        build["owned_sysroot"] = str(sysroot)
     output_text = result.stdout.decode("utf-8", errors="replace") + result.stderr.decode(
         "utf-8", errors="replace"
     )
@@ -789,6 +1066,15 @@ def build_fixture(
         return binary, {**build, "status": "unbuildable", "reason": "Cargo returned non-zero"}
     if not binary.is_file() or not os.access(binary, os.X_OK):
         return binary, {**build, "status": "unbuildable", "reason": f"executable unavailable: {binary}"}
+    if linker_record is not None:
+        linker_audit = cargo_linker_argument_audit(linker_record)
+        build["cargo_linker_argument_audit"] = linker_audit
+        if linker_audit["status"] != "passed":
+            return binary, {
+                **build,
+                "status": "invalid",
+                "reason": "Cargo requested a foreign or self-contained target runtime input",
+            }
     build["rlib_provenance"] = rlib_provenance(target_dir, tools)
     return binary, {**build, "status": "built", "binary_sha256": sha256_file(binary)}
 
@@ -842,6 +1128,80 @@ def run_binary(
         "stdout_exact": stdout == expected_stdout,
         "stderr_empty": not stderr,
     }
+
+
+def owned_sysroot_evidence(sysroot: Path) -> dict[str, object]:
+    """Record the installed candidate inputs selected before Cargo starts."""
+
+    manifest = sysroot / "share/crabc/manifest.json"
+    purity = sysroot / "share/crabc/purity.json"
+    runtime_paths = {
+        "driver": sysroot / "bin/crabc-cc",
+        "loader": sysroot / "lib/ld-crabc-aarch64.so.1",
+        "libc_shared": sysroot / "usr/lib/libc.so",
+        "libc_static": sysroot / "usr/lib/libc.a",
+        "compiler_helpers": sysroot / "usr/lib/libcrabc-builtins.a",
+        "crt1": sysroot / "usr/lib/crt1.o",
+        "Scrt1": sysroot / "usr/lib/Scrt1.o",
+        "rcrt1": sysroot / "usr/lib/rcrt1.o",
+        "crti": sysroot / "usr/lib/crti.o",
+        "crtn": sysroot / "usr/lib/crtn.o",
+    }
+    return {
+        "runtime_contract": OWNED_SYSROOT_RUNTIME,
+        "sysroot": str(sysroot),
+        "manifest": {"path": str(manifest), "sha256": sha256_file(manifest)},
+        "purity": {"path": str(purity), "sha256": sha256_file(purity)},
+        "canonical_interpreter": CANONICAL_INTERPRETER,
+        "runtime_inputs": {
+            name: {"path": str(path), "sha256": sha256_file(path)} for name, path in runtime_paths.items()
+        },
+        "forbidden_candidate_inputs": ["musl CRT", "musl libc", "GCC target runtime", "Rust self-contained CRT"],
+    }
+
+
+@contextlib.contextmanager
+def staged_canonical_loader(sysroot: Path) -> Iterator[None]:
+    """Temporarily make only the owned canonical interpreter kernel-resolvable."""
+
+    if os.geteuid() != 0:
+        raise RunnerError("candidate runtime needs root to stage the absent canonical crabc interpreter")
+    source = sysroot / "lib/ld-crabc-aarch64.so.1"
+    canonical = Path(CANONICAL_INTERPRETER)
+    if canonical.exists() or canonical.is_symlink():
+        raise RunnerError(f"refusing to replace existing canonical loader: {canonical}")
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, canonical)
+    canonical.chmod(canonical.stat().st_mode | 0o100)
+    try:
+        yield
+    finally:
+        if canonical.exists() and sha256_file(canonical) == sha256_file(source):
+            canonical.unlink()
+        elif canonical.exists():
+            raise RunnerError(f"staged canonical loader changed unexpectedly and was retained: {canonical}")
+
+
+def owned_runtime_run(binary: Path, sysroot: Path, expected_stdout: bytes, timeout: float) -> dict[str, object]:
+    """Run a candidate ELF through the kernel-visible owned loader and libc only."""
+
+    environment = sanitize_environment()
+    environment["LD_LIBRARY_PATH"] = str(sysroot / "usr/lib")
+    with staged_canonical_loader(sysroot):
+        result = run_binary(binary, expected_stdout, timeout, environment=environment)
+    result.update(
+        {
+            "runtime": OWNED_SYSROOT_RUNTIME,
+            "loader": str(sysroot / "lib/ld-crabc-aarch64.so.1"),
+            "loader_sha256": sha256_file(sysroot / "lib/ld-crabc-aarch64.so.1"),
+            "libc": str(sysroot / "usr/lib/libc.so"),
+            "libc_sha256": sha256_file(sysroot / "usr/lib/libc.so"),
+            "status": "pass"
+            if result["status"] == 0 and result["stdout_exact"] and result["stderr_empty"]
+            else "fail",
+        }
+    )
+    return result
 
 
 def parse_syscall_summary(text: str) -> dict[str, object]:
@@ -947,25 +1307,24 @@ def patch_interpreter(source: Path, destination: Path, interpreter: str) -> None
     destination.chmod(source.stat().st_mode | 0o100)
 
 
-def stock_std_comparison(
+def stock_std_musl_oracle_comparison(
     binary: Path,
     tools: Mapping[str, str],
     musl_root: Path,
-    target_dir: Path,
-    candidate_dir: Path,
+    sysroot: Path,
     expected_stdout: bytes,
     timeout: float,
     temporary: Path,
 ) -> dict[str, object]:
-    """Run one build-std binary against raw musl and crabc loader/libc bytes."""
+    """Run the separately labelled musl-linked stock-std oracle comparison."""
 
-    del target_dir  # The build target is retained in the lane report; runtime artifacts are separate.
-    candidate_loader = candidate_dir / "libldso.so"
-    candidate_libc = candidate_dir / "libc.so"
+    del tools  # Retained in the report's top-level tool provenance.
+    candidate_loader = sysroot / "lib/ld-crabc-aarch64.so.1"
+    candidate_libc = sysroot / "usr/lib/libc.so"
     if not candidate_loader.is_file() or not candidate_libc.is_file():
         return {
             "status": "unsupported",
-            "reason": "crabc target/debug/libldso.so and libc.so are required for stock-std comparison",
+            "reason": "owned crabc dynamic interpreter and libc are required for the stock-std oracle comparison",
         }
     # musl's PT_INTERP slot is short. Keep the disposable absolute runtime
     # root under /tmp with a short generated name, then remove that exact
@@ -994,7 +1353,7 @@ def stock_std_comparison(
         timeout,
         environment={**environment, "LD_LIBRARY_PATH": str(library)},
     )
-    reference["runtime"] = "pinned-musl"
+    reference["runtime"] = "pinned-musl-oracle"
     reference["loader_sha256"] = sha256_file(reference_loader)
     reference["libc_sha256"] = sha256_file(library / "libc.musl-aarch64.so.1")
     reference["strace"] = strace_measurement(
@@ -1012,7 +1371,7 @@ def stock_std_comparison(
         timeout,
         environment={**environment, "LD_LIBRARY_PATH": str(library)},
     )
-    candidate["runtime"] = "crabc"
+    candidate["runtime"] = "owned-crabc-sysroot-runtime"
     candidate["loader_sha256"] = sha256_file(candidate_loader_path)
     candidate["libc_sha256"] = sha256_file(library / "libc.musl-aarch64.so.1")
     candidate["strace"] = strace_measurement(
@@ -1033,6 +1392,12 @@ def stock_std_comparison(
         and reference["stderr"]["sha256"] == candidate["stderr"]["sha256"]
         else "fail",
         "normalization": "none",
+        "lane_class": "musl-oracle",
+        "candidate_crt_or_sysroot_provenance": False,
+        "scope": (
+            "The binary was linked through pinned musl for a stock-std runtime oracle; "
+            "only its staged crabc runtime observation consumes the owned sysroot."
+        ),
         "reference": reference,
         "candidate": candidate,
         "same_status": reference["status"] == candidate["status"],
@@ -1069,7 +1434,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=Path(os.environ.get("CRABC_NATIVE_STD_LTO_MANIFEST", DEFAULT_STOCK_STD_MANIFEST)),
     )
     parser.add_argument("--target-dir", type=Path, default=ROOT / "target/native-facade-lto")
-    parser.add_argument("--candidate-dir", type=Path, default=ROOT / "target/debug")
+    parser.add_argument(
+        "--sysroot",
+        type=Path,
+        default=Path(os.environ.get("CRABC_NATIVE_FACADE_LTO_SYSROOT", DEFAULT_SYSROOT)),
+        help="installed crabc sysroot used by the candidate native-facade lanes",
+    )
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--timeout", type=float, default=20.0)
     parser.add_argument("--entry-symbol", default=None, help="override package.metadata.crabc-lto.entry-symbol")
@@ -1089,6 +1459,8 @@ def run(args: argparse.Namespace) -> tuple[str, Path]:
         metadata = {**metadata, "expected_stdout": args.expected_stdout.encode()}
     tools, attempts = discover_tools()
     musl_root = Path(os.environ.get("MUSL_ROOT", str(MUSL_ROOT)))
+    sysroot = args.sysroot.expanduser().resolve()
+    report_path = args.report.expanduser().resolve()
     report: dict[str, object] = {
         "schema_version": 1,
         "runner": "compat/lto/native_facade_lto.py",
@@ -1101,6 +1473,10 @@ def run(args: argparse.Namespace) -> tuple[str, Path]:
         "fixture": fixture_evidence(metadata),
         "stock_std_fixture": fixture_evidence(stock_metadata),
         "environment_contract": environment_evidence(sanitize_environment()),
+        "lane_groups": {
+            "candidate_native_facade": ["control-o3", "fat-lto"],
+            "separate_musl_oracle": ["stock-std-fat"],
+        },
         "claims": {
             "lto_requested": True,
             "assembly_byte_exactness_claimed": False,
@@ -1108,46 +1484,45 @@ def run(args: argparse.Namespace) -> tuple[str, Path]:
             "facade_boundary_eliminated": False,
             "direct_syscall_route_proven": False,
             "cross_boundary_unique_inlining_proven": False,
+            "candidate_lanes_use_owned_sysroot": False,
+            "stock_std_oracle_contributes_candidate_crt_sysroot_provenance": False,
         },
     }
-    reasons = capability_reasons(metadata, tools, attempts, musl_root)
-    reasons.extend(
-        f"stock-std fixture: {reason}"
-        for reason in capability_reasons(stock_metadata, tools, attempts, musl_root)
-        if reason not in reasons
-    )
-    report_path = args.report.expanduser().resolve()
-    if reasons:
-        report["result"] = "partial"
-        report["capability_reasons"] = reasons
-        report["status"] = "unsupported"
-        atomic_write_json(report_path, report)
-        return "partial", report_path
-
     target_dir = args.target_dir.expanduser().resolve()
-    candidate_dir = args.candidate_dir.expanduser().resolve()
+    candidate_reasons = candidate_capability_reasons(metadata, tools, attempts, sysroot)
+    oracle_reasons = musl_oracle_capability_reasons(stock_metadata, tools, attempts, musl_root)
+    oracle_reasons.extend(
+        reason
+        for reason in owned_sysroot_reasons(sysroot)
+        if reason not in oracle_reasons
+    )
+    report["capability_reasons"] = {
+        "candidate_native_facade": candidate_reasons,
+        "separate_musl_oracle": oracle_reasons,
+    }
     report["inputs"] = {
         "target_dir": str(target_dir),
-        "candidate_dir": str(candidate_dir),
-        "musl_root": str(musl_root),
-        "candidate_loader": str(candidate_dir / "libldso.so"),
-        "candidate_libc": str(candidate_dir / "libc.so"),
-        "candidate_loader_sha256": (
-            sha256_file(candidate_dir / "libldso.so")
-            if (candidate_dir / "libldso.so").is_file()
-            else None
-        ),
-        "candidate_libc_sha256": (
-            sha256_file(candidate_dir / "libc.so")
-            if (candidate_dir / "libc.so").is_file()
-            else None
-        ),
+        "candidate_owned_sysroot": owned_sysroot_evidence(sysroot) if not owned_sysroot_reasons(sysroot) else {
+            "runtime_contract": OWNED_SYSROOT_RUNTIME,
+            "sysroot": str(sysroot),
+            "status": "unavailable",
+        },
+        "separate_musl_oracle_root": str(musl_root),
     }
     lanes: dict[str, object] = {}
-    all_static_passed = True
+    candidate_passed = not candidate_reasons
     with tempfile.TemporaryDirectory(prefix="crabc-native-facade-lto-") as temporary_name:
         temporary = Path(temporary_name)
         for lane, lto in (("control-o3", "off"), ("fat-lto", "fat")):
+            if candidate_reasons:
+                lanes[lane] = {
+                    "lane_class": "candidate-native-facade",
+                    "runtime_contract": OWNED_SYSROOT_RUNTIME,
+                    "candidate_crt_sysroot_provenance": True,
+                    "status": "unsupported",
+                    "capability_reasons": candidate_reasons,
+                }
+                continue
             lane_target = target_dir / lane
             binary, build = build_fixture(
                 metadata,
@@ -1157,29 +1532,38 @@ def run(args: argparse.Namespace) -> tuple[str, Path]:
                 lane=lane,
                 lto=lto,
                 dynamic=True,
-                candidate_dir=candidate_dir,
+                runtime=OWNED_SYSROOT_RUNTIME,
+                sysroot=sysroot,
             )
-            lane_report: dict[str, object] = {"build": build}
+            lane_report: dict[str, object] = {
+                "lane_class": "candidate-native-facade",
+                "runtime_contract": OWNED_SYSROOT_RUNTIME,
+                "candidate_crt_sysroot_provenance": True,
+                "build": build,
+            }
             if build["status"] != "built":
-                lane_report["status"] = classify_build_failure(command_text(build))
-                all_static_passed = False
+                lane_report["status"] = (
+                    build["status"] if build["status"] == "invalid" else classify_build_failure(command_text(build))
+                )
+                candidate_passed = False
                 lanes[lane] = lane_report
                 continue
             try:
-                inspection = artifact_inspection(binary, tools, str(metadata["entry_symbol"]))
-                lane_report["inspection"] = inspection
-                lane_report["runtime_comparison"] = stock_std_comparison(
+                inspection = artifact_inspection(
                     binary,
                     tools,
-                    musl_root,
-                    lane_target,
-                    candidate_dir,
+                    str(metadata["entry_symbol"]),
+                    expected_interpreter=CANONICAL_INTERPRETER,
+                    runtime=OWNED_SYSROOT_RUNTIME,
+                )
+                lane_report["inspection"] = inspection
+                runtime = owned_runtime_run(
+                    binary,
+                    sysroot,
                     metadata["expected_stdout"],
                     args.timeout,
-                    temporary,
                 )
-                runtime = lane_report["runtime_comparison"]
-                assert isinstance(runtime, Mapping)
+                lane_report["runtime"] = runtime
                 route = inspection["route"]
                 assert isinstance(route, Mapping)
                 provenance = build.get("rlib_provenance", {})
@@ -1205,61 +1589,77 @@ def run(args: argparse.Namespace) -> tuple[str, Path]:
                     else "invalid"
                 )
                 if not direct or lane_report["status"] != "built":
-                    all_static_passed = False
+                    candidate_passed = False
                 if direct and lto == "fat":
                     report["claims"]["facade_boundary_eliminated"] = boundary_eliminated
                     report["claims"]["direct_syscall_route_proven"] = True
             except RunnerError as error:
                 lane_report["status"] = "invalid"
                 lane_report["error"] = str(error)
-                all_static_passed = False
+                candidate_passed = False
             lanes[lane] = lane_report
 
-        stock_target = target_dir / "stock-std-fat"
-        stock_binary, stock_build = build_fixture(
-            stock_metadata,
-            tools,
-            stock_target,
-            temporary,
-            lane="stock-std-fat",
-            lto="fat",
-            dynamic=True,
-            build_std=True,
-            candidate_dir=candidate_dir,
-        )
-        stock_report: dict[str, object] = {"build": stock_build}
-        if stock_build["status"] != "built":
-            stock_report["status"] = classify_build_failure(command_text(stock_build))
+        if oracle_reasons:
+            stock_report: dict[str, object] = {
+                "lane_class": "separate-musl-oracle",
+                "runtime_contract": MUSL_ORACLE_RUNTIME,
+                "candidate_crt_sysroot_provenance": False,
+                "status": "unsupported",
+                "capability_reasons": oracle_reasons,
+            }
         else:
-            try:
-                stock_report["inspection"] = artifact_inspection(
-                    stock_binary,
-                    tools,
-                    str(stock_metadata["entry_symbol"]),
-                )
-                stock_report["runtime_comparison"] = stock_std_comparison(
-                    stock_binary,
-                    tools,
-                    musl_root,
-                    stock_target,
-                    candidate_dir,
-                    stock_metadata["expected_stdout"],
-                    args.timeout,
-                    temporary,
-                )
-                comparison = stock_report["runtime_comparison"]
-                assert isinstance(comparison, Mapping)
-                stock_report["status"] = "built" if comparison["status"] == "pass" else comparison["status"]
-            except RunnerError as error:
-                stock_report["status"] = "invalid"
-                stock_report["error"] = str(error)
+            stock_target = target_dir / "stock-std-fat"
+            stock_binary, stock_build = build_fixture(
+                stock_metadata,
+                tools,
+                stock_target,
+                temporary,
+                lane="stock-std-fat",
+                lto="fat",
+                dynamic=True,
+                build_std=True,
+                runtime=MUSL_ORACLE_RUNTIME,
+            )
+            stock_report = {
+                "lane_class": "separate-musl-oracle",
+                "runtime_contract": MUSL_ORACLE_RUNTIME,
+                "candidate_crt_sysroot_provenance": False,
+                "build": stock_build,
+            }
+            if stock_build["status"] != "built":
+                stock_report["status"] = classify_build_failure(command_text(stock_build))
+            else:
+                try:
+                    stock_report["inspection"] = artifact_inspection(
+                        stock_binary,
+                        tools,
+                        str(stock_metadata["entry_symbol"]),
+                        expected_interpreter="/lib/ld-musl-aarch64.so.1",
+                        runtime=MUSL_ORACLE_RUNTIME,
+                    )
+                    stock_report["runtime_comparison"] = stock_std_musl_oracle_comparison(
+                        stock_binary,
+                        tools,
+                        musl_root,
+                        sysroot,
+                        stock_metadata["expected_stdout"],
+                        args.timeout,
+                        temporary,
+                    )
+                    comparison = stock_report["runtime_comparison"]
+                    assert isinstance(comparison, Mapping)
+                    stock_report["status"] = "built" if comparison["status"] == "pass" else comparison["status"]
+                except RunnerError as error:
+                    stock_report["status"] = "invalid"
+                    stock_report["error"] = str(error)
         lanes["stock-std-fat"] = stock_report
 
     report["lanes"] = lanes
     stock_passed = lanes["stock-std-fat"].get("status") == "built" if isinstance(lanes["stock-std-fat"], Mapping) else False
     report["claims"]["stock_std_musl_crabc_raw_output_match"] = bool(stock_passed)
     report["claims"]["stock_std_lto_into_dynamic_libc_proven"] = False
-    report["status"] = "built" if all_static_passed and stock_passed else "partial"
+    report["claims"]["candidate_lanes_use_owned_sysroot"] = bool(candidate_passed)
+    report["status"] = "built" if candidate_passed else "partial"
     report["result"] = "complete" if report["status"] == "built" else "partial"
     atomic_write_json(report_path, report)
     return str(report["result"]), report_path

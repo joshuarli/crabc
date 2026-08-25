@@ -11,7 +11,7 @@ use core::ffi::{
     VaList,
 };
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::{compiler_fence, AtomicI32, AtomicUsize, Ordering};
 
 // Public allocation entry points remain ELF-preemptible. A `FILE` can be
 // allocated by an executable's interposed `malloc`, so its matching release
@@ -14040,8 +14040,13 @@ pub unsafe extern "C" fn __funcs_on_exit() {
         let head = ATEXIT_HEAD;
         while ATEXIT_SLOT > 0 {
             ATEXIT_SLOT -= 1;
-            if let Some(f) = (*head).f[ATEXIT_SLOT] {
-                let a = (*head).a[ATEXIT_SLOT];
+            let slot = ATEXIT_SLOT;
+            // Clear the slot before invoking user code. A callback may reenter
+            // the process-exit walk; it must observe this registration as
+            // already consumed rather than calling it a second time.
+            let callback = (*head).f[slot].take();
+            if let Some(f) = callback {
+                let a = (*head).a[slot];
                 f(a);
             }
         }
@@ -14089,7 +14094,14 @@ pub unsafe extern "C" fn atexit(func: unsafe extern "C" fn()) -> c_int {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn __cxa_finalize(_dso: *mut c_void) {}
+pub unsafe extern "C" fn __cxa_finalize(_dso: *mut c_void) {
+    // musl 1.2.6 exports this C++ ABI entry point but deliberately gives it
+    // no DSO-specific dispatch semantics. `__cxa_atexit` registrations stay
+    // live until the normal `exit` -> `__funcs_on_exit` LIFO walk. Keeping
+    // this as an explicit no-op preserves that observable oracle behavior
+    // and prevents a later process exit from being reordered by a premature
+    // DSO finalization attempt.
+}
 
 // ============================================================
 // getenv / setenv / putenv / unsetenv / clearenv
@@ -21769,14 +21781,153 @@ pub unsafe extern "C" fn shmctl(shmid: c_int, cmd: c_int, buf: *mut c_void) -> c
 // ============================================================
 // Startup: __libc_start_main
 //
-// musl crt1.o _start_c calls:
-//   __libc_start_main(main, argc, argv, _init, _fini, rtld_fini, stack_end)
+// musl 1.2.6 crt1 calls:
+//   __libc_start_main(main, argc, argv, init, fini, rtld_fini)
+//
+// The startup vector is kernel-owned raw memory. Keep it as raw pointers
+// through the bounded validation stage; neither this boundary nor the CRT may
+// manufacture long-lived Rust references to argv, envp, or auxv.
 // ============================================================
 
 // Auxiliary vector pointer, populated by the dynamic linker before
 // constructors run so getauxval() works during early startup.
 #[no_mangle]
 pub static mut __auxv: *const usize = core::ptr::null();
+
+const CABI_STARTUP_MAX_ARGC: usize = 1 << 20;
+const CABI_STARTUP_MAX_ENVC: usize = 1 << 20;
+const CABI_STARTUP_MAX_AUX_ENTRIES: usize = 4096;
+const AT_NULL: usize = 0;
+const AT_RANDOM: usize = 25;
+
+#[derive(Clone, Copy)]
+struct StartupVectors {
+    envp: *const *const c_char,
+    auxv: *const usize,
+}
+
+/// Validate the kernel/CRT startup-vector delimiters before publishing any
+/// libc-visible process state. The pointer validity itself is the `_start`
+/// caller's ABI obligation; bounds here turn malformed terminator-free input
+/// into a closed startup failure instead of an unbounded memory walk.
+unsafe fn startup_vectors(argc: c_int, argv: *const *const c_char) -> Option<StartupVectors> {
+    let argc = usize::try_from(argc).ok()?;
+    if argc > CABI_STARTUP_MAX_ARGC || argv.is_null() {
+        return None;
+    }
+    // SAFETY: The CRT contract guarantees argv storage through argv[argc].
+    if unsafe { !(*argv.add(argc)).is_null() } {
+        return None;
+    }
+    // SAFETY: The validated argv terminator is immediately followed by envp.
+    let envp = unsafe { argv.add(argc + 1) };
+    let mut envc = 0usize;
+    while envc < CABI_STARTUP_MAX_ENVC {
+        // SAFETY: The kernel/CRT startup ABI supplies a terminated envp
+        // vector; the explicit bound prevents an unbounded walk on malformed
+        // synthetic input.
+        if unsafe { (*envp.add(envc)).is_null() } {
+            break;
+        }
+        envc += 1;
+    }
+    if envc == CABI_STARTUP_MAX_ENVC {
+        return None;
+    }
+    // SAFETY: argv/envp are machine-word vectors; the validated envp
+    // terminator is immediately followed by the auxv `(tag, value)` pairs.
+    let auxv = unsafe { envp.add(envc + 1).cast::<usize>() };
+    for index in 0..CABI_STARTUP_MAX_AUX_ENTRIES {
+        // SAFETY: The startup ABI supplies pairs ending in AT_NULL. The
+        // bounded iteration above ensures malformed vectors cannot run away.
+        if unsafe { *auxv.add(index * 2) } == AT_NULL {
+            return Some(StartupVectors { envp, auxv });
+        }
+    }
+    None
+}
+
+/// Return one validated auxiliary-vector value without exposing the raw
+/// vector as a Rust slice.
+unsafe fn startup_auxv_value(auxv: *const usize, wanted: usize) -> Option<usize> {
+    if auxv.is_null() {
+        return None;
+    }
+    for index in 0..CABI_STARTUP_MAX_AUX_ENTRIES {
+        // SAFETY: Every caller first accepts `auxv` through `startup_vectors`
+        // or the identical dynamic-loader startup contract.
+        let tag = unsafe { *auxv.add(index * 2) };
+        if tag == AT_NULL {
+            return None;
+        }
+        if tag == wanted {
+            // SAFETY: auxv records are two machine words.
+            return Some(unsafe { *auxv.add(index * 2 + 1) });
+        }
+    }
+    None
+}
+
+/// Fill exactly one machine-word guard through the raw Linux entropy syscall.
+/// This is used only before TLS/errno or allocator state is available.
+unsafe fn startup_guard_from_getrandom() -> Option<usize> {
+    let mut guard = 0usize;
+    let mut filled = 0usize;
+    while filled < core::mem::size_of::<usize>() {
+        // SAFETY: `guard` remains live and writable for the requested suffix.
+        let result = unsafe {
+            crabc_core::rand::getrandom_raw(
+                (core::ptr::addr_of_mut!(guard) as *mut u8).add(filled),
+                core::mem::size_of::<usize>() - filled,
+                0,
+            )
+        };
+        match result {
+            Ok(0) | Err(_) => return None,
+            Ok(count) => filled += count,
+        }
+    }
+    (guard != 0).then_some(guard)
+}
+
+/// Establish the AArch64 global stack canary before any constructor or
+/// application code can execute. `AT_RANDOM` is the normal kernel source;
+/// absence or an all-zero word falls back to the raw getrandom syscall. A
+/// process without secure entropy fails closed instead of receiving a public
+/// deterministic canary.
+unsafe fn initialize_stack_guard(auxv: *const usize) -> bool {
+    // SAFETY: The symbol is process-global storage owned by libc. A nonzero
+    // value is published once before constructors; later calls are idempotent.
+    if unsafe { core::ptr::read_volatile(core::ptr::addr_of!(__stack_chk_guard)) } != 0 {
+        return true;
+    }
+
+    let from_auxv = unsafe { startup_auxv_value(auxv, AT_RANDOM) }
+        .filter(|address| *address != 0)
+        .and_then(|address| {
+            // SAFETY: Linux guarantees that an AT_RANDOM value addresses at
+            // least 16 initialized random bytes for this live process.
+            let first = unsafe { core::ptr::read_unaligned(address as *const usize) };
+            if first != 0 {
+                return Some(first);
+            }
+            // SAFETY: See the AT_RANDOM contract above; this is its second
+            // machine word on the only supported 64-bit AArch64 target.
+            let second = unsafe {
+                core::ptr::read_unaligned((address as *const u8).add(core::mem::size_of::<usize>()) as *const usize)
+            };
+            (second != 0).then_some(second)
+        });
+    let Some(guard) = from_auxv.or_else(|| unsafe { startup_guard_from_getrandom() }) else {
+        return false;
+    };
+
+    // SAFETY: This is the one early process-wide publication point. Using a
+    // raw write avoids forming a mutable reference to exported static storage.
+    unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(__stack_chk_guard), guard) };
+    compiler_fence(Ordering::SeqCst);
+    true
+}
 
 #[no_mangle]
 #[linkage = "weak"]
@@ -21785,7 +21936,7 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
     if p.is_null() {
         return 0;
     }
-    loop {
+    for _ in 0..CABI_STARTUP_MAX_AUX_ENTRIES {
         let tag = *p;
         if tag == 0 {
             return 0;
@@ -21795,6 +21946,7 @@ pub unsafe extern "C" fn getauxval(type_: c_ulong) -> c_ulong {
         }
         p = p.add(2);
     }
+    0
 }
 
 #[no_mangle]
@@ -21810,21 +21962,45 @@ pub unsafe extern "C" fn __libc_start_main(
     main: MainFn,
     argc: c_int,
     argv: *const *const c_char,
-    _init: *const c_void,
-    _fini: *const c_void,
-    _rtld_fini: *const c_void,
-    _stack_end: *const c_void,
+    init: Option<InitFn>,
+    fini: Option<InitFn>,
+    rtld_fini: Option<InitFn>,
 ) -> ! {
-    // The musl CRT does not initialize static TLS itself.  Do this before
-    // libc constructors: mimalloc and compiler-generated TLS accesses are
-    // already valid during `_init` on a conventional static executable.
-    static_tls_startup(argv);
-    let envp = argv.add((argc + 1) as usize);
-    __environ = envp as *mut *mut c_char;
+    let Some(vectors) = (unsafe { startup_vectors(argc, argv) }) else {
+        // A malformed kernel/CRT vector cannot safely use formatting, TLS, or
+        // allocator state. Terminate through the raw process exit boundary.
+        unsafe { _exit(127) };
+    };
+
+    // The static CRT does not initialize TLS itself. A dynamic invocation
+    // already owns an ldso-installed TP and this helper deliberately leaves
+    // it untouched. Both cases complete before guard/constructor work.
+    unsafe { static_tls_startup(argv) };
+    __auxv = vectors.auxv;
+    __environ = vectors.envp as *mut *mut c_char;
     sync_environ();
     __stdio_init();
     if argc > 0 && !argv.is_null() {
         cabi_set_program_names(*argv);
+    }
+
+    if !unsafe { initialize_stack_guard(vectors.auxv) } {
+        unsafe { _exit(127) };
+    }
+
+    // Register finalizers before app code can install atexit callbacks. The
+    // LIFO chain then gives application callbacks first, executable fini
+    // second, and the optional loader finalizer last. `exit(main(...))`
+    // owns the actual dispatch; nothing calls fini immediately after main.
+    if let Some(rtld_fini) = rtld_fini {
+        if unsafe { atexit(rtld_fini) } != 0 {
+            unsafe { _exit(127) };
+        }
+    }
+    if let Some(fini) = fini {
+        if unsafe { atexit(fini) } != 0 {
+            unsafe { _exit(127) };
+        }
     }
 
     // See `thread_entry`: public signal-set helpers intentionally cannot
@@ -21832,33 +22008,19 @@ pub unsafe extern "C" fn __libc_start_main(
     let cancel_set: SigSetT = 1_u64 << (SIGCANCEL - 1);
     sys_rt_sigprocmask(SIG_UNBLOCK, &cancel_set, core::ptr::null_mut(), 8);
 
-    if !_init.is_null() {
-        let init_fn: InitFn = core::mem::transmute(_init);
-        init_fn();
+    // A conventional CRT has no owned preinit/dependency handoff. Ask the
+    // already-registered loader callback to run its complete initial graph at
+    // this point, after TLS and the guard exist but before the legacy CRT's
+    // `_init` callback. An owned Scrt1 note makes the loader return a no-op;
+    // that CRT dispatches dependencies itself after executable preinit.
+    unsafe { run_legacy_loader_initial_constructors() };
+
+    if let Some(init) = init {
+        unsafe { init() };
     }
 
-    // AArch64 GCC reads __stack_chk_guard as a global (GOT-based for PIE), so
-    // initialize it from AT_RANDOM before calling main.
-        {
-        let random_ptr = getauxval(25) as *const u8; // AT_RANDOM = 25
-        if !random_ptr.is_null() {
-            let a = core::ptr::read_unaligned(random_ptr as *const u64);
-            let b = core::ptr::read_unaligned(random_ptr.add(8) as *const u64);
-            __stack_chk_guard = (a ^ b) as usize;
-        } else {
-            // ponytail: fallback entropy, not crypto-grade but nonzero
-            __stack_chk_guard = 0xdefaced_cafebeef;
-        }
-    }
-
-    let result = main(argc, argv, envp);
-
-    if !_fini.is_null() {
-        let fini_fn: InitFn = core::mem::transmute(_fini);
-        fini_fn();
-    }
-
-    exit(result);
+    let result = unsafe { main(argc, argv, vectors.envp) };
+    unsafe { exit(result) };
 }
 
 type LdsoDlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
@@ -21866,6 +22028,14 @@ type LdsoDlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_vo
 type LdsoDlcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
 type LdsoDlerrorFn = unsafe extern "C" fn() -> *const c_char;
 type LdsoMarkMultithreadedFn = unsafe extern "C" fn();
+type LdsoInitialStartupFn = unsafe extern "C" fn();
+
+// This sentinel is meaningful only to the already-registered `libldso.so`
+// dlsym callback. It never crosses `dlfcn.h`: using that established private
+// path prevents another default-visible libc registration symbol merely for
+// initial-constructor ordering.
+const LDSO_PRIVATE_SENTINEL: *mut c_void = 2usize as *mut c_void;
+const LDSO_LEGACY_INITIAL_CONSTRUCTORS: &[u8] = b"__crabc_ldso_run_initial_legacy_constructors\0";
 
 static mut LDSO_DLOPEN: Option<LdsoDlopenFn> = None;
 static mut LDSO_DLSYM: Option<LdsoDlsymFn> = None;
@@ -21875,6 +22045,30 @@ static mut LDSO_MARK_MULTITHREADED: Option<LdsoMarkMultithreadedFn> = None;
 // This state is written once and otherwise read only through `a_cas`, whose
 // exclusive loop provides the publication edge before the first `clone`.
 static mut LDSO_MULTITHREAD_PUBLISHED: c_int = 0;
+
+/// Invoke the loader's private conventional-CRT startup operation, if this
+/// process has the crabc dynamic-loader callback installed.
+///
+/// Static links and foreign loader/libc combinations have no matching
+/// callback, which is the normal no-loader boundary. The resolved code stays
+/// owned by the loaded interpreter through process exit and is called only
+/// after `__libc_start_main` established initial TLS and the stack guard.
+unsafe fn run_legacy_loader_initial_constructors() {
+    let Some(resolve) = (unsafe { LDSO_DLSYM }) else {
+        return;
+    };
+    let callback = unsafe {
+        resolve(
+            LDSO_PRIVATE_SENTINEL,
+            LDSO_LEGACY_INITIAL_CONSTRUCTORS.as_ptr().cast::<c_char>(),
+        )
+    };
+    if callback.is_null() {
+        return;
+    }
+    let callback: LdsoInitialStartupFn = unsafe { core::mem::transmute(callback) };
+    unsafe { callback() };
+}
 
 // `libldso.so` owns the loaded-object graph, its recursive loader lock, and
 // the TLS-backed dlerror storage. `crabc-rs` therefore cannot link a second
