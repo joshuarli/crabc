@@ -467,23 +467,27 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "The engine has bounded local, remote-free, and abandonment substrates. A 25-field native C/Rust differential proves two quiescent live-owner publications and owner-side collection; a separate 28-field native C/Rust differential proves real small direct-cache remote publication, owner collection, and exact reuse; an 8-field native C/Rust differential proves one arena-backed mapped page queue-detach, same-origin mi_free reclaim, re-association, and nonempty requeue; and a separate 13-field native C/Rust differential proves the pinned C full-medium queue to unmapped abandonment followed by its mi_free threshold reabandon, with only Rust's synthetic failed-reclaim tail as a counterpart. None proves general asynchronous public free routing, abandonment, or complete thread exit.",
+      "difference": "The engine has bounded local, remote-free, and abandonment substrates. A 25-field native C/Rust differential proves two quiescent live-owner publications and owner-side collection; a separate 28-field native C/Rust differential proves real small direct-cache remote publication, owner collection, and exact reuse; an 8-field native C/Rust differential proves one arena-backed mapped page queue-detach, same-origin mi_free reclaim, re-association, and nonempty requeue; a separate 13-field native C/Rust differential proves the pinned C full-medium queue to unmapped abandonment followed by its mi_free threshold reabandon, with only Rust's synthetic failed-reclaim tail as a counterpart; and an 18-field native C/Rust differential proves one real worker mi_thread_done followed by pthread join before consumer frees, selected mapped failed-reclaim/unown, and terminal checks `page_map_unregistered_after_final_free`, `arena_page_bitmap_clear_after_final_free`, and `arena_slice_released_after_final_free`, with Rust only covering one bounded process-owned mapped regular handoff and equivalent release observations. None proves general asynchronous public free routing, abandonment/adoption, concurrent collection, or general thread exit.",
       "evidence": [
         "compat/allocator/tests/test_x86_64_direct_remote_evidence.py",
+        "compat/allocator/tests/test_x86_64_mapped_post_exit_evidence.py",
         "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
         "compat/allocator/tests/test_x86_64_unmapped_reabandon_evidence.py",
         "compat/allocator/x86_64-direct-remote-evidence-v3.5.0.json",
+        "compat/allocator/x86_64-mapped-post-exit-evidence-v3.5.0.json",
         "compat/allocator/x86_64-mapped-reclaim-evidence-v3.5.0.json",
         "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
         "compat/allocator/x86_64-unmapped-reabandon-evidence-v3.5.0.json",
         "compat/allocator/x86_64_direct_remote_evidence.py",
+        "compat/allocator/x86_64_mapped_post_exit_evidence.py",
         "compat/allocator/x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/x86_64_remote_free_evidence.py",
         "compat/allocator/x86_64_unmapped_reabandon_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/dynamic_theap.rs",
         "crabc-mimalloc/src/free_list.rs",
+        "crabc-mimalloc/src/main_heap_page.rs",
         "crabc-mimalloc/src/remote_free.rs",
         "crabc-mimalloc/src/single_thread.rs"
       ]
@@ -505,12 +509,15 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "Rust supports bounded caller-supplied arena ownership and selected release transitions. An 8-field native C/Rust differential additionally proves one arena-backed mapped-abandon bitmap transition followed by same-origin nonempty reclaim and requeue. A distinct 13-field C/Rust differential observes one full medium arena page's initially-unmapped source abandonment and threshold-driven mapped bitmap publication; the Rust half remains only a synthetic failed-reclaim tail. Registry-wide reservation, multi-arena policy, and general abandonment/adoption remain absent.",
+      "difference": "Rust supports bounded caller-supplied arena ownership and selected release transitions. An 8-field native C/Rust differential additionally proves one arena-backed mapped-abandon bitmap transition followed by same-origin nonempty reclaim and requeue. A distinct 13-field C/Rust differential observes one full medium arena page's initially-unmapped source abandonment and threshold-driven mapped bitmap publication; the Rust half remains only a synthetic failed-reclaim tail. A further 18-field C/Rust differential observes one worker Theap/TLD teardown followed by pthread join, selected mapped failed-reclaim/unown, and terminal checks `page_map_unregistered_after_final_free`, `arena_page_bitmap_clear_after_final_free`, and `arena_slice_released_after_final_free`, while Rust remains a bounded process-owned regular handoff with equivalent release observations. Registry-wide reservation, multi-arena policy, general abandonment/adoption, and general thread teardown remain absent.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_mapped_post_exit_evidence.py",
         "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/tests/test_x86_64_unmapped_reabandon_evidence.py",
+        "compat/allocator/x86_64-mapped-post-exit-evidence-v3.5.0.json",
         "compat/allocator/x86_64-mapped-reclaim-evidence-v3.5.0.json",
         "compat/allocator/x86_64-unmapped-reabandon-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_mapped_post_exit_evidence.py",
         "compat/allocator/x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/x86_64_unmapped_reabandon_evidence.py",
         "crabc-mimalloc/src/arena.rs",
@@ -600,10 +607,14 @@
         "crabc_mimalloc::subproc"
       ],
       "status": "partial",
-      "difference": "Rust models reviewed bounded initialization lifecycles, not loader integration, pthread callbacks, fork repair, or general shutdown.",
+      "difference": "Rust models reviewed bounded initialization lifecycles and one process-owned mapped regular handoff after a selected worker Theap/TLD teardown. The 18-field native differential records the real mi_thread_done/pthread-join ordering and direct PageMap, ordinary arena bitmap, and exact free-slice release observations; this is not loader integration, general pthread callbacks, fork repair, or general shutdown.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_mapped_post_exit_evidence.py",
+        "compat/allocator/x86_64-mapped-post-exit-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_mapped_post_exit_evidence.py",
         "crabc-mimalloc/src/bootstrap.rs",
         "crabc-mimalloc/src/dynamic_theap.rs",
+        "crabc-mimalloc/src/main_heap_page.rs",
         "crabc-mimalloc/src/main_heap_thread.rs",
         "crabc-mimalloc/src/main_theap.rs",
         "crabc-mimalloc/src/process_init.rs",
@@ -723,23 +734,27 @@
         "crabc_mimalloc::single_thread"
       ],
       "status": "partial",
-      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions. A 25-field native C/Rust differential proves the quiescent live-owner xthread detach and local-free merge; a separate 28-field native C/Rust differential proves a real small direct-cache page exhausting its local list, remote publication, owner collection, and exact reuse; an 8-field native C/Rust differential proves one mapped arena page's nonempty same-origin reclaim and queue restoration; and a separate 13-field native C/Rust differential observes one real C full medium page moving through the full queue, unmapped abandonment, and threshold reabandon while Rust models only the private failed-reclaim tail. None proves general page routing or complete owner-exit traversal.",
+      "difference": "Rust maps bounded page-engine sessions and selected abandoned-page transitions. A 25-field native C/Rust differential proves the quiescent live-owner xthread detach and local-free merge; a separate 28-field native C/Rust differential proves a real small direct-cache page exhausting its local list, remote publication, owner collection, and exact reuse; an 8-field native C/Rust differential proves one mapped arena page's nonempty same-origin reclaim and queue restoration; a separate 13-field native C/Rust differential observes one real C full medium page moving through the full queue, unmapped abandonment, and threshold reabandon while Rust models only the private failed-reclaim tail; and an 18-field native C/Rust differential observes one worker Theap/TLD teardown followed by pthread join, selected mapped failed-reclaim/unown, and terminal checks `page_map_unregistered_after_final_free`, `arena_page_bitmap_clear_after_final_free`, and `arena_slice_released_after_final_free`, while Rust models one bounded process-owned regular handoff with equivalent release observations. None proves general page routing, concurrent collection, or complete owner-exit traversal.",
       "evidence": [
         "compat/allocator/tests/test_x86_64_direct_remote_evidence.py",
+        "compat/allocator/tests/test_x86_64_mapped_post_exit_evidence.py",
         "compat/allocator/tests/test_x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/tests/test_x86_64_remote_free_evidence.py",
         "compat/allocator/tests/test_x86_64_unmapped_reabandon_evidence.py",
         "compat/allocator/x86_64-direct-remote-evidence-v3.5.0.json",
+        "compat/allocator/x86_64-mapped-post-exit-evidence-v3.5.0.json",
         "compat/allocator/x86_64-mapped-reclaim-evidence-v3.5.0.json",
         "compat/allocator/x86_64-remote-free-evidence-v3.5.0.json",
         "compat/allocator/x86_64-unmapped-reabandon-evidence-v3.5.0.json",
         "compat/allocator/x86_64_direct_remote_evidence.py",
+        "compat/allocator/x86_64_mapped_post_exit_evidence.py",
         "compat/allocator/x86_64_mapped_reclaim_evidence.py",
         "compat/allocator/x86_64_remote_free_evidence.py",
         "compat/allocator/x86_64_unmapped_reabandon_evidence.py",
         "crabc-mimalloc/src/abandoned.rs",
         "crabc-mimalloc/src/dynamic_theap.rs",
         "crabc-mimalloc/src/free_list.rs",
+        "crabc-mimalloc/src/main_heap_page.rs",
         "crabc-mimalloc/src/page.rs",
         "crabc-mimalloc/src/remote_free.rs",
         "crabc-mimalloc/src/single_thread.rs"
@@ -830,10 +845,14 @@
         "crabc_mimalloc::types"
       ],
       "status": "partial",
-      "difference": "Rust maps explicit bounded Theap sessions, not general cached switching, public heap APIs, or all thread teardown paths.",
+      "difference": "Rust maps explicit bounded Theap sessions and one process-owned mapped regular handoff after selected Theap/TLD teardown. The 18-field native differential records the real mi_thread_done/pthread-join ordering and direct PageMap, ordinary arena bitmap, and exact free-slice release observations; this is not general cached switching, public heap APIs, or all thread teardown paths.",
       "evidence": [
+        "compat/allocator/tests/test_x86_64_mapped_post_exit_evidence.py",
+        "compat/allocator/x86_64-mapped-post-exit-evidence-v3.5.0.json",
+        "compat/allocator/x86_64_mapped_post_exit_evidence.py",
         "crabc-mimalloc/src/bootstrap.rs",
         "crabc-mimalloc/src/dynamic_theap.rs",
+        "crabc-mimalloc/src/main_heap_page.rs",
         "crabc-mimalloc/src/main_theap.rs",
         "crabc-mimalloc/src/single_thread.rs",
         "crabc-mimalloc/src/types.rs"
@@ -933,6 +952,6 @@
     "unfinished_unit_count": 30,
     "unit_count": 34,
     "unit_ids_sha256": "dca679d8587cb38bcf6e6c62379284ed35a55d1b7991d07b0d30eac767670052",
-    "units_sha256": "71e85a3ce87d09a8954a6b4ebbd372019296ec74c6239c811e2321456dacb6f8"
+    "units_sha256": "745755c0d10acacf922d0be19be01f1a036847a896ed79a61ed7acb85582bd12"
   }
 }

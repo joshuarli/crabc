@@ -61,11 +61,21 @@ compile/linking. A separate 13-field C/Rust differential covers one real C
 full-medium arena page forced from the full queue to unmapped abandonment, then
 through the `mi_free` threshold that republishes its mapped bitmap; its Rust
 side is explicitly only the deterministic synthetic failed-reclaim tail.
+A separate 18-field C/Rust differential uses a real pinned-C worker `pthread`
+to perform `mi_thread_done()` followed by `pthread_join()` before the consumer's
+two public `mi_free` calls. It records the selected mapped failed-reclaim/unown
+transition and terminal checks for
+`page_map_unregistered_after_final_free`,
+`arena_page_bitmap_clear_after_final_free`, and
+`arena_slice_released_after_final_free` on the exact eight-slice medium-page
+span. Rust covers only one bounded process-owned mapped regular handoff after
+teardown and directly observes its PageMap, ordinary arena-page bitmap, and
+free-slice bitmap release.
 These bounded results do not claim general routing or concurrent collection,
 behavior or Rust implementation parity, a Rust full-medium route, general
-abandonment/adoption, cross-thread reclaim, CMake installation, consumer
-execution, thread teardown, public API/runtime support, libc integration,
-backend promotion, or AArch64 evidence.
+abandonment/adoption, cross-thread reclaim, general thread teardown, CMake
+installation, consumer execution, public API/runtime support, libc integration,
+backend promotion, public x86 support, or AArch64 evidence.
 
 The allocator program currently has one bounded executable vertical slice:
 an explicit pinned default theap can allocate, reallocate, and locally free

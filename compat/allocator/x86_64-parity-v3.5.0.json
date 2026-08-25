@@ -121,6 +121,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 18 address-independent values from a real pinned-C worker pthread that allocates two same-page regular medium arena blocks, performs real mi_thread_done followed by pthread join before the consumer's public mi_free calls, and records producer_teardown_completed_before_consumer_free for that ordering while observing the selected mapped failed-reclaim/unown transition plus three terminal checks: page_map_unregistered_after_final_free, arena_page_bitmap_clear_after_final_free, and arena_slice_released_after_final_free. Rust compares only one bounded process-owned mapped regular handoff after Theap/TLD teardown and directly observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does not establish general thread exit, general routing or concurrency, adoption or reclaim, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./scripts/dev-amd64.sh allocator-mapped-post-exit",
+      "id": "native-mapped-post-theap-teardown-failed-reclaim-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/mapped-post-exit.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, runs five named crate-private fault-injection state-preservation regressions covering selected Map, Commit, Unmap, and Decommit points. It does not establish general fault-injection or misuse parity, syscall interposition, lifecycle/stress coverage, C-oracle differential behavior, public mi_* behavior, libc integration, or a backend.",
       "command": "./scripts/dev-amd64.sh allocator-fault",
       "id": "native-bounded-fault-injection",

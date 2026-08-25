@@ -6012,7 +6012,9 @@ mod tests {
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
-    use crate::types::{BIN_BLOCK_SIZES, EMPTY_PAGE, THREAD_ID_ABANDONED_MAPPED};
+    use crate::types::{
+        BIN_BLOCK_SIZES, EMPTY_PAGE, MemoryKind, PageKind, THREAD_ID_ABANDONED_MAPPED,
+    };
     use crabc_core::Errno;
     use std::thread;
 
@@ -9447,6 +9449,333 @@ mod tests {
         })
         .join()
         .expect("one-block large refusal fixture remains current-thread local");
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_mapped_post_exit_trace_matches_pinned_c_protocol() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let arena = pair
+                .arena()
+                .expect("the paired process arena remains published");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            config,
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let origin_theap = owner
+                        .test_theap_pointer()
+                        .expect("the originating Theap remains live before exit");
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the post-exit route");
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let first = allocator
+                        .allocate(request, false)
+                        .expect("the fixture creates the first medium block");
+                    let survivor = allocator
+                        .allocate(request, false)
+                        .expect("the survivor keeps the page nonempty");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first block remains PageMap-published");
+                    assert_eq!(
+                        unsafe { allocator.test_page_for_block(survivor) },
+                        page.as_ptr(),
+                        "both client blocks share one page"
+                    );
+                    let page_ref = unsafe { page.as_ref() };
+                    let memory = page_ref.memid();
+                    let arena_memory = memory
+                        .arena_memory()
+                        .expect("the page belongs to the paired arena");
+                    let slice = arena_memory.slice_index as usize;
+                    let slice_count = arena_memory.slice_count as usize;
+                    let bin = crate::size_class::bin(page_ref.block_size())
+                        .expect("the medium page has a source bin");
+                    let arena_backed = memory.kind() == MemoryKind::Arena;
+                    let medium_page =
+                        crate::size_class::page_kind_for_block_size(page_ref.block_size())
+                            == Some(PageKind::Medium);
+                    let same_page = unsafe { allocator.test_page_for_block(first) }
+                        == unsafe { allocator.test_page_for_block(survivor) };
+                    let origin_theap_present_before_exit = page_ref.theap() == origin_theap;
+                    let page_identity = page.as_ptr().addr();
+                    assert_eq!(
+                        slice_count, 8,
+                        "the fixed medium-page fixture spans eight arena slices"
+                    );
+
+                    let drain = match allocator.begin_thread_exit_drain() {
+                        Ok(drain) => drain,
+                        Err(MainHeapThreadProcessPageExitDrainFailure::Retained {
+                            allocator,
+                            error,
+                        }) => {
+                            core::mem::forget(allocator);
+                            panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                        }
+                    };
+                    let route = match unsafe {
+                        drain.abandon_mapped_small_or_medium_to_process_route(first)
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!("the sole medium page enters the post-exit route"),
+                    };
+                    let producer_teardown_completed_before_consumer_free = matches!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown)
+                    );
+                    assert!(producer_teardown_completed_before_consumer_free);
+
+                    (
+                        route,
+                        first.as_ptr().expose_provenance(),
+                        survivor.as_ptr().expose_provenance(),
+                        page_identity,
+                        slice,
+                        slice_count,
+                        bin,
+                        arena_backed,
+                        medium_page,
+                        same_page,
+                        origin_theap_present_before_exit,
+                        producer_teardown_completed_before_consumer_free,
+                    )
+                });
+                let (
+                    route,
+                    first_address,
+                    survivor_address,
+                    page_identity,
+                    slice,
+                    slice_count,
+                    bin,
+                    arena_backed,
+                    medium_page,
+                    same_page,
+                    origin_theap_present_before_exit,
+                    producer_teardown_completed_before_consumer_free,
+                ) = worker
+                    .join()
+                    .expect("the post-exit route transfers from the producer thread");
+
+                // Every lookup while the route owns post-exit map access stays
+                // inside that capability's short exclusion closure. Only
+                // scalar observations leave the closure; no Page reference or
+                // pointer-based owner right escapes it.
+                let observe = |route: &MainHeapThreadProcessPageExitMappedRegularRoute<'_>,
+                               block_address: usize| {
+                    route
+                        .page_map_access
+                        .with_page_map(|map| {
+                            let page = unsafe {
+                                map.checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                                    block_address,
+                                ))
+                            };
+                            let Some(page) = NonNull::new(page) else {
+                                return (false, false, false, 0usize);
+                            };
+                            let page_ref = unsafe { page.as_ref() };
+                            (
+                                page.as_ptr().addr() == page_identity,
+                                page_ref.abandoned_test_thread_id()
+                                    == THREAD_ID_ABANDONED_MAPPED,
+                                page_ref.is_queue_detached(),
+                                page_ref.used(),
+                            )
+                        })
+                        .expect("the route retains its one short PageMap observation")
+                };
+
+                let (
+                    registered_before_free,
+                    abandoned_before_free,
+                    _queue_detached_before_free,
+                    _used_before_free,
+                ) = observe(&route, first_address);
+                let mapped_before_free = registered_before_free
+                    && arena
+                        .abandoned_pages(bin)
+                        .expect("the medium abandoned bitmap exists after abandonment")
+                        .is_published(slice);
+                let free_block_is_same_page = same_page;
+
+                let first = NonNull::new(core::ptr::with_exposed_provenance_mut(first_address))
+                    .expect("the first client address remains non-null");
+                let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
+                        route
+                    }
+                    Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {
+                        panic!("the survivor prevents terminal release")
+                    }
+                    Err(_) => panic!("the failed-reclaim route preserves the live page"),
+                };
+
+                let (
+                    survivor_keeps_page_live,
+                    abandoned_after_free,
+                    page_still_queue_detached,
+                    used_after_free,
+                ) = observe(&route, survivor_address);
+                let mapped_after_free = survivor_keeps_page_live
+                    && arena
+                        .abandoned_pages(bin)
+                        .expect("the medium abandoned bitmap remains available")
+                        .is_published(slice);
+                let used_one_after_free = used_after_free == 1;
+                let reclaim_not_performed_after_free = survivor_keeps_page_live
+                    && mapped_after_free
+                    && abandoned_after_free
+                    && page_still_queue_detached;
+
+                let survivor =
+                    NonNull::new(core::ptr::with_exposed_provenance_mut(survivor_address))
+                        .expect("the survivor client address remains non-null");
+                match unsafe { route.remote_free_after_thread_exit(survivor) } {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::Released) => {}
+                    Ok(MainHeapThreadProcessPageExitMappedRegularFreeResult::StillLive(route)) => {
+                        core::mem::forget(route);
+                        panic!("the survivor must release the detached page");
+                    }
+                    Err(_) => panic!("the survivor release completes the post-exit route"),
+                }
+
+                // The released route completed its post-exit access
+                // capability. Reopen one ordinary lifecycle only for the
+                // terminal scalar lookup, then finish that same lease.
+                let final_lifecycle = page_map
+                    .begin_page_lifecycle()
+                    .expect("the released route reopens the process-map lifecycle");
+                let page_map_unregistered_after_final_free = unsafe {
+                    final_lifecycle
+                        .page_map()
+                        .expect("the reopened lifecycle retains the map")
+                        .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                            first_address,
+                        ))
+                }
+                .is_null();
+                let arena_page_bitmap_clear_after_final_free = unsafe { arena.pages() }
+                    .expect("the ordinary main-arena bitmap remains available")
+                    .is_clear_range(slice, 1)
+                    == Some(true);
+                let arena_slice_released_after_final_free = unsafe { arena.slices_free() }
+                    .expect("the arena free-slice bitmap remains available")
+                    .is_set_range(slice, slice_count)
+                    == Some(true);
+                let final_lifecycle_reopened = final_lifecycle.finish().is_ok();
+
+                let valid = arena_backed
+                    && medium_page
+                    && same_page
+                    && mapped_before_free
+                    && abandoned_before_free
+                    && origin_theap_present_before_exit
+                    && producer_teardown_completed_before_consumer_free
+                    && free_block_is_same_page
+                    && survivor_keeps_page_live
+                    && reclaim_not_performed_after_free
+                    && mapped_after_free
+                    && abandoned_after_free
+                    && page_still_queue_detached
+                    && used_one_after_free
+                    && page_map_unregistered_after_final_free
+                    && arena_page_bitmap_clear_after_final_free
+                    && arena_slice_released_after_final_free
+                    && final_lifecycle_reopened;
+
+                std::println!("CRABC_MI_MAPPED_POST_EXIT_TRACE_BEGIN");
+                std::println!("trace.mapped_post_exit.arena_backed={}", arena_backed as u8);
+                std::println!("trace.mapped_post_exit.medium_page={}", medium_page as u8);
+                std::println!("trace.mapped_post_exit.same_page={}", same_page as u8);
+                std::println!(
+                    "trace.mapped_post_exit.mapped_before_free={}",
+                    mapped_before_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.abandoned_before_free={}",
+                    abandoned_before_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.origin_theap_present_before_exit={}",
+                    origin_theap_present_before_exit as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.producer_teardown_completed_before_consumer_free={}",
+                    producer_teardown_completed_before_consumer_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.free_block_is_same_page={}",
+                    free_block_is_same_page as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.survivor_keeps_page_live={}",
+                    survivor_keeps_page_live as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.reclaim_not_performed_after_free={}",
+                    reclaim_not_performed_after_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.mapped_after_free={}",
+                    mapped_after_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.abandoned_after_free={}",
+                    abandoned_after_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.page_still_queue_detached={}",
+                    page_still_queue_detached as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.used_one_after_free={}",
+                    used_one_after_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.page_map_unregistered_after_final_free={}",
+                    page_map_unregistered_after_final_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.arena_page_bitmap_clear_after_final_free={}",
+                    arena_page_bitmap_clear_after_final_free as u8
+                );
+                std::println!(
+                    "trace.mapped_post_exit.arena_slice_released_after_final_free={}",
+                    arena_slice_released_after_final_free as u8
+                );
+                std::println!("trace.mapped_post_exit.valid={}", valid as u8);
+                std::println!("CRABC_MI_MAPPED_POST_EXIT_TRACE_END");
+                assert!(valid, "mapped post-exit trace diverged from pinned C");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("post-exit mapped trace fixture remains current-thread local");
     }
 
     fn assert_later_thread_exit_mapped_medium_route_adoption(

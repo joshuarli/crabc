@@ -1052,6 +1052,28 @@ The isolated C probe frees its blocks and heap; its exclusive reserved arena
 remains process-lifetime fixture state and is reclaimed when that short-lived
 probe exits, not a reusable long-lived harness.
 
+One selected mapped post-Theap-teardown route has a separate native private
+differential:
+
+```sh
+./scripts/dev-amd64.sh allocator-mapped-post-exit
+```
+
+Its pinned-C producer uses one worker `pthread` to allocate two same-page
+regular medium arena blocks, calls real `mi_thread_done()` before joining, and
+has the consumer perform two public `mi_free` calls after the real
+`mi_thread_done()` and `pthread_join()` boundary. The 18-field trace records
+the mapped failed-reclaim/unown transition plus terminal checks for
+`page_map_unregistered_after_final_free`,
+`arena_page_bitmap_clear_after_final_free`, and
+`arena_slice_released_after_final_free`. Rust compares only one bounded
+process-owned mapped regular handoff after Theap/TLD teardown and directly
+observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap
+release. This lane does not establish general thread exit, general free
+routing or concurrency, adoption or reclaim, public `mi_*` behavior, libc
+integration, backend promotion, public x86 support, or AArch64 evidence; its
+report is `compat/reports/allocator/x86_64/mapped-post-exit.json`.
+
 A separate native private-adapter measurement lane is available through the
 same dispatcher:
 
@@ -1140,6 +1162,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. It is dispatched by `allocator-mapped-reclaim` and does not claim general abandonment/adoption, public API, or AArch64 evidence. |
 | `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon tail. It is dispatched by `allocator-unmapped-reabandon`; Rust models only the synthetic failed-reclaim tail and it does not claim general routing, lifecycle, public API, or AArch64 evidence. |
+| `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. It is dispatched by `allocator-mapped-post-exit`; Rust covers only one bounded process-owned mapped regular handoff and directly observes PageMap, ordinary arena-page bitmap, and free-slice bitmap release. The lane does not claim general thread exit/routing, public API, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its eight lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |

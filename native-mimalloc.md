@@ -484,11 +484,17 @@ contracts, reports, and status.
   including five finite Loom models), five bounded fault-state regressions, the
   25-field quiescent live-owner pinned-C/Rust differential, the 28-field real
   small direct-page remote-free/reuse differential, the 8-field mapped arena
-  same-origin reclaim differential, and the 13-field initially-unmapped
-  full-medium reabandon differential with its synthetic Rust tail into
-  init/done, general remote free or concurrent collection,
-  abandonment/adoption, pthread/TLS/fork, fault/misuse isolation, remaining
-  upstream tests, and stress evidence.
+  same-origin reclaim differential, the 13-field initially-unmapped full-medium
+  reabandon differential with its synthetic Rust tail, and the completed
+  18-field post-Theap-teardown mapped failed-reclaim/unown differential with
+  `pthread_join()` ordering and terminal PageMap, ordinary arena-page bitmap,
+  and exact eight-slice-span release checks into init/done, general remote free
+  or concurrent collection, abandonment/adoption, pthread/TLS/fork,
+  fault/misuse isolation, remaining upstream tests, and stress evidence. The
+  18-field lane is only the selected real-C worker `mi_thread_done()` plus
+  joined consumer `mi_free` transition; its Rust side is one bounded
+  process-owned mapped regular handoff and does not close general thread exit
+  or routing work.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
   measurements into qualified whole-engine performance evidence.
 

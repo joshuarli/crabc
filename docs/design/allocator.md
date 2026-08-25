@@ -172,7 +172,19 @@ same-page live blocks, applies the source queue-detach abandonment transition,
 and frees one block through the same-origin reclaim path while the survivor
 keeps the page nonempty. It proves only mapped abandonment clearing,
 re-association, and requeue for that one route—not general abandonment/adoption
-or cross-thread reclaim. The selected normal-release source surface is also
+or cross-thread reclaim. A further native x86-only 18-field C/Rust differential
+uses a worker `pthread` that performs real `mi_thread_done()` and `pthread_join()`
+before the consumer performs two public `mi_free` calls. It records the
+selected mapped failed-reclaim/unown transition and terminal checks for
+`page_map_unregistered_after_final_free`,
+`arena_page_bitmap_clear_after_final_free`, and
+`arena_slice_released_after_final_free`. Rust covers only one bounded
+process-owned mapped regular handoff after teardown and directly observes its
+PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does
+not establish general thread exit, routing or concurrency, adoption or reclaim,
+public `mi_*` behavior, libc integration, backend promotion, public x86 support,
+or AArch64 evidence. The selected
+normal-release source surface is also
 accounted per item for native object/dynamic symbol presence, while a separate
 five-mode staged public-header gate proves selected C/C++ compile/linkability
 and ELF identity. Neither accounting nor the header gate establishes behavior,
@@ -1438,7 +1450,13 @@ real pinned-C full-queue page and public `mi_free` to observe the source
 threshold reabandon/map publication tail. The Rust record intentionally models
 only `abandoned::free_unmapped_after_failed_reclaim` after the reclaim decision
 has failed, using synthetic metadata; it is not a Rust full-medium routing,
-owner-exit, general abandonment, or public API claim.
+owner-exit, general abandonment, or public API claim. A separate 18-field
+post-Theap-teardown lane uses a real pinned-C worker `mi_thread_done()` followed
+by `pthread_join()` before consumer `mi_free`, and observes PageMap, ordinary
+arena-page bitmap, and exact 8-slice-span release after the final free. The Rust
+side remains one bounded process-owned mapped regular handoff with equivalent
+release observations; it does not claim general thread exit, routing/concurrency,
+adoption/reclaim, public behavior, backend, public x86, or AArch64 support.
 
 The port preserves mimalloc v3.5.0's algorithms, data structures, memory
 orderings, lifecycle behavior, and valid-program observable behavior until

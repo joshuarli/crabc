@@ -154,6 +154,7 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("28-field native C/Rust differential", unit["difference"])
                 self.assertIn("8-field native C/Rust differential", unit["difference"])
                 self.assertIn("13-field native C/Rust differential", unit["difference"])
+                self.assertIn("18-field native C/Rust differential", unit["difference"])
                 self.assertIn(
                     "compat/allocator/x86_64_remote_free_evidence.py", unit["evidence"]
                 )
@@ -180,6 +181,18 @@ class X86_64SourceMapTests(unittest.TestCase):
                     unit["evidence"],
                 )
                 self.assertIn(
+                    "compat/allocator/x86_64_mapped_post_exit_evidence.py",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/x86_64-mapped-post-exit-evidence-v3.5.0.json",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/tests/test_x86_64_mapped_post_exit_evidence.py",
+                    unit["evidence"],
+                )
+                self.assertIn(
                     "compat/allocator/tests/test_x86_64_unmapped_reabandon_evidence.py",
                     unit["evidence"],
                 )
@@ -193,6 +206,30 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("compat/allocator/x86_64_mapped_reclaim_evidence.py", arena["evidence"])
         self.assertIn("13-field C/Rust differential", arena["difference"])
         self.assertIn("compat/allocator/x86_64_unmapped_reabandon_evidence.py", arena["evidence"])
+        self.assertIn("18-field C/Rust differential", arena["difference"])
+        self.assertIn("compat/allocator/x86_64_mapped_post_exit_evidence.py", arena["evidence"])
+        for terminal_field in (
+            "page_map_unregistered_after_final_free",
+            "arena_page_bitmap_clear_after_final_free",
+            "arena_slice_released_after_final_free",
+        ):
+            self.assertIn(terminal_field, arena["difference"])
+
+        initialization = next(
+            unit
+            for unit in self.contract["units"]
+            if unit["id"] == "process-and-thread-initialization"
+        )
+        theap = next(
+            unit
+            for unit in self.contract["units"]
+            if unit["id"] == "thread-local-heap-lifecycle"
+        )
+        for unit in (initialization, theap):
+            self.assertEqual(unit["status"], "partial")
+            self.assertIn("18-field native differential", unit["difference"])
+            self.assertIn("Theap/TLD teardown", unit["difference"])
+            self.assertIn("compat/allocator/x86_64_mapped_post_exit_evidence.py", unit["evidence"])
 
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(

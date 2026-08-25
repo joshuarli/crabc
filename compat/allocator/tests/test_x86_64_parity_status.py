@@ -139,6 +139,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-small-direct-remote-free-differential",
                 "native-mapped-arena-same-origin-reclaim-differential",
                 "native-unmapped-full-medium-reabandon-differential",
+                "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
@@ -208,6 +209,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "compat/reports/allocator/x86_64/unmapped-reabandon.json",
         )
         self.assertEqual(
+            gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-mapped-post-exit",
+        )
+        self.assertEqual(
+            gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["report"],
+            "compat/reports/allocator/x86_64/mapped-post-exit.json",
+        )
+        self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
             "compat/reports/allocator/x86_64/fault-injection.json",
         )
@@ -255,6 +264,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("ar t", gates["native-static-library-and-override-object-linkability"]["claim"])
         self.assertIn("src/static.c", gates["native-static-library-and-override-object-linkability"]["claim"])
         self.assertIn("does not execute a consumer", gates["native-static-library-and-override-object-linkability"]["claim"])
+        self.assertIn("18 address-independent values", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("real pinned-C worker pthread", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("producer_teardown_completed_before_consumer_free", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("page_map_unregistered_after_final_free", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("arena_page_bitmap_clear_after_final_free", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("arena_slice_released_after_final_free", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("does not establish general thread exit", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("public x86 support", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        self.assertIn("AArch64 evidence", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])
