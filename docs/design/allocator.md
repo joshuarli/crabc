@@ -183,7 +183,17 @@ process-owned mapped regular handoff after teardown and directly observes its
 PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does
 not establish general thread exit, routing or concurrency, adoption or reclaim,
 public `mi_*` behavior, libc integration, backend promotion, public x86 support,
-or AArch64 evidence. The selected
+or AArch64 evidence. The same native x86-only track also has a 21-field
+retired-page prepass differential. Its real worker-local `mi_free` retires one
+medium page; real `mi_thread_done()` and `pthread_join()` force-release that
+retired page before one distinct live medium page is mapped-abandoned, and one
+consumer `mi_free` then terminally releases the live page. C and Rust compare
+retired/local-retirement state, teardown PageMap/ordinary arena bitmap/exact
+slice-span release, live mapped-abandoned state, terminal PageMap/ordinary
+bitmap/exact slice-span release, and an empty route. This remains private
+native x86 engine evidence only: it does not establish general retirement,
+teardown, routing or concurrency, public `mi_*` behavior, libc integration,
+backend promotion, public x86 support, or AArch64 evidence. The selected
 normal-release source surface is also
 accounted per item for native object/dynamic symbol presence, while a separate
 five-mode staged public-header gate proves selected C/C++ compile/linkability
@@ -1457,6 +1467,8 @@ arena-page bitmap, and exact 8-slice-span release after the final free. The Rust
 side remains one bounded process-owned mapped regular handoff with equivalent
 release observations; it does not claim general thread exit, routing/concurrency,
 adoption/reclaim, public behavior, backend, public x86, or AArch64 support.
+The retired-page prepass is only a narrow antecedent to broader
+retirement/teardown/routing work, not a general lifecycle result.
 
 The port preserves mimalloc v3.5.0's algorithms, data structures, memory
 orderings, lifecycle behavior, and valid-program observable behavior until

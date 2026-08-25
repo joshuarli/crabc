@@ -494,7 +494,12 @@ contracts, reports, and status.
   18-field lane is only the selected real-C worker `mi_thread_done()` plus
   joined consumer `mi_free` transition; its Rust side is one bounded
   process-owned mapped regular handoff and does not close general thread exit
-  or routing work.
+  or routing work. A completed 21-field retired-page prepass is only a narrow
+  antecedent: it covers one real worker-local `mi_free` retirement, real
+  `mi_thread_done()`/join force-release, one distinct live-page mapped handoff,
+  and one terminal consumer free. Broader retirement, teardown, routing,
+  concurrency, public API/runtime, backend, and architecture qualification
+  remain open.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
   measurements into qualified whole-engine performance evidence.
 

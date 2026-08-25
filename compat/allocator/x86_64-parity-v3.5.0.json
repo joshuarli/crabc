@@ -129,6 +129,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 21 address-independent values for one real pinned-C worker local mi_free that retires one medium page, then real mi_thread_done() and pthread join force-release it before abandoning a distinct live medium page, followed by one consumer mi_free that terminally releases the live page. The trace covers retired/local-retirement state, retired teardown checks retired_page_map_unregistered_after_teardown, retired_arena_page_bitmap_clear_after_teardown, and retired_arena_slice_released_after_teardown, then live mapped-abandoned state and terminal checks live_page_map_unregistered_after_final_free, live_arena_page_bitmap_clear_after_final_free, live_arena_slice_released_after_final_free, and route_empty_after_final_free (an empty route); Rust directly observes the equivalent bounded private transitions. This does not establish general retirement, general teardown, routing or concurrency, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./scripts/dev-amd64.sh allocator-retired-prepass",
+      "id": "native-retired-page-prepass-before-live-post-exit-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/retired-prepass.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, runs five named crate-private fault-injection state-preservation regressions covering selected Map, Commit, Unmap, and Decommit points. It does not establish general fault-injection or misuse parity, syscall interposition, lifecycle/stress coverage, C-oracle differential behavior, public mi_* behavior, libc integration, or a backend.",
       "command": "./scripts/dev-amd64.sh allocator-fault",
       "id": "native-bounded-fault-injection",

@@ -71,6 +71,17 @@ transition and terminal checks for
 span. Rust covers only one bounded process-owned mapped regular handoff after
 teardown and directly observes its PageMap, ordinary arena-page bitmap, and
 free-slice bitmap release.
+A separate 21-field native x86-only C/Rust differential is a retired-page
+prepass: a real worker-local `mi_free` retires one medium page, real
+`mi_thread_done()` and `pthread_join()` force-release it before one distinct
+live medium page is mapped-abandoned, and one consumer `mi_free` terminally
+releases the live page. It records retired/local-retirement state, retired
+teardown PageMap/ordinary arena bitmap/exact slice-span release, then live
+mapped-abandoned and terminal PageMap/ordinary bitmap/exact slice-span release
+plus an empty route. This is a narrow private native x86 engine antecedent and
+does not claim general retirement, teardown, routing or concurrency, public
+`mi_*` behavior, libc integration, backend promotion, public x86 support, or
+AArch64 evidence.
 These bounded results do not claim general routing or concurrent collection,
 behavior or Rust implementation parity, a Rust full-medium route, general
 abandonment/adoption, cross-thread reclaim, general thread teardown, CMake

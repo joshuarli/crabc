@@ -1,0 +1,116 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-retired-prepass-evidence",
+  "profile": "linux-x86_64-private-retired-page-prepass",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "aarch64_status_reused": false,
+    "emulation_accepted": false,
+    "general_lifecycle_claimed": false,
+    "general_retired_page_claimed": false,
+    "native_linux_x86_64_required": true,
+    "one_retired_page_and_one_live_page_only": true,
+    "private_engine_evidence_only": true,
+    "producer_theap_teardown_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "real_pinned_c_mi_free_trigger": true
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {"member": "src/free.c", "start_line": 364, "end_line": 515, "sha256": "073739d4f87219076fb8f087093b775d3a61ed8bf84c0588765bed0e6d619d68"},
+    {"member": "src/page.c", "start_line": 414, "end_line": 518, "sha256": "7816ab31e29ea080a6e54da8bb851b5b8f6b7c27e987a00149a5f83256f5f5de"},
+    {"member": "src/theap.c", "start_line": 89, "end_line": 152, "sha256": "5281d80ac6e2103f30d680e38dff6b5117ae5b7f921e2e28f4082161dec71a06"},
+    {"member": "src/init.c", "start_line": 378, "end_line": 417, "sha256": "c31e558c1bf6c292aecab8e4a4fe3ef8c2616d2f10d9ac6549fe987ad72cac62"},
+    {"member": "src/init.c", "start_line": 448, "end_line": 480, "sha256": "81710fd90ab37ebaf517e33c88e82c8a847eafad277c376eb18c196d9d86838d"},
+    {"member": "src/arena.c", "start_line": 1216, "end_line": 1297, "sha256": "5f42cce2e334fe6146608499cfd545049832daaf683cab8d707d044623404437"},
+    {"member": "src/arena.c", "start_line": 1304, "end_line": 1355, "sha256": "d7328658d88aa8c24dabcd1a093e5857b6bc699b03677eb4e8ab3c7d160c6dbb"},
+    {"member": "src/arena.c", "start_line": 1383, "end_line": 1423, "sha256": "9c7568705a74690b5c291dce159b31869f817e613c96870e67e96cd1f7d8d22e"},
+    {"member": "src/arena.c", "start_line": 1433, "end_line": 1479, "sha256": "631f8f26d44bdd530c61980d7f2cb94196051f350c58d2532ad3ff9bd2a95da2"},
+    {"member": "src/page-map.c", "start_line": 484, "end_line": 515, "sha256": "33e2c50551c2ebc989adb01835fc6dc4e9ace9f4817ff8160ce8b33ca22a6aad"},
+    {"member": "include/mimalloc/internal.h", "start_line": 753, "end_line": 767, "sha256": "bdbdaa6d7cc27818bd997d2b6d149e8be8424940d5ad6c57960fe7aa338da186"},
+    {"member": "src/arena.c", "start_line": 207, "end_line": 222, "sha256": "aebd0a1e5aea4a2635853c0330b8eabd1d029891745889fa4007adb3261d53fb"},
+    {"member": "src/arena.c", "start_line": 677, "end_line": 696, "sha256": "4c9eddf754a5717b7ed72f11fd7c1b10977afdb3bdb78ef72801e41e8a13d0c0"},
+    {"member": "include/mimalloc/types.h", "start_line": 315, "end_line": 350, "sha256": "46e218a5dd1c5456b3e73458c2a8179d6b910d2aa615ef8574d2d9142bd804d2"},
+    {"member": "src/bitmap.h", "start_line": 177, "end_line": 186, "sha256": "cf4b43b2a4f327a54e7827e6daa7fe27f517459e2e6c61eb467b2b049e35d4ef"},
+    {"member": "src/bitmap.h", "start_line": 308, "end_line": 317, "sha256": "9c25d2dbef5f5a78db4f585724a714f057799339c27cf709a795aeed39e3b20f"}
+  ],
+  "rust_test": {
+    "path": "crabc-mimalloc/src/main_heap_page.rs",
+    "target_arch": "x86_64",
+    "test_filter": "main_heap_page::tests::x86_64_retired_prepass_trace_matches_pinned_c_protocol"
+  },
+  "c_probe_sha256": "39018e0c1fa86b1b5ee617ead483e15f526e3e73cb9523431e446b77e7687f61",
+  "trace": {
+    "begin": "CRABC_MI_RETIRED_PREPASS_TRACE_BEGIN",
+    "end": "CRABC_MI_RETIRED_PREPASS_TRACE_END",
+    "expected_values": {
+      "trace.retired_prepass.arena_backed": 1,
+      "trace.retired_prepass.both_medium": 1,
+      "trace.retired_prepass.distinct_pages": 1,
+      "trace.retired_prepass.distinct_bins": 1,
+      "trace.retired_prepass.retired_page_map_present_before_local_free": 1,
+      "trace.retired_prepass.retired_used_zero_before_exit": 1,
+      "trace.retired_prepass.retired_retirement_pending_before_exit": 1,
+      "trace.retired_prepass.retired_page_map_present_before_exit": 1,
+      "trace.retired_prepass.live_used_one_before_exit": 1,
+      "trace.retired_prepass.producer_teardown_completed_before_consumer_free": 1,
+      "trace.retired_prepass.retired_page_map_unregistered_after_teardown": 1,
+      "trace.retired_prepass.retired_arena_page_bitmap_clear_after_teardown": 1,
+      "trace.retired_prepass.retired_arena_slice_released_after_teardown": 1,
+      "trace.retired_prepass.live_page_map_registered_after_teardown": 1,
+      "trace.retired_prepass.live_arena_page_bitmap_set_after_teardown": 1,
+      "trace.retired_prepass.live_mapped_abandoned_after_teardown": 1,
+      "trace.retired_prepass.live_page_map_unregistered_after_final_free": 1,
+      "trace.retired_prepass.live_arena_page_bitmap_clear_after_final_free": 1,
+      "trace.retired_prepass.live_arena_slice_released_after_final_free": 1,
+      "trace.retired_prepass.route_empty_after_final_free": 1,
+      "trace.retired_prepass.valid": 1
+    }
+  }
+}

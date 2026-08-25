@@ -140,6 +140,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-mapped-arena-same-origin-reclaim-differential",
                 "native-unmapped-full-medium-reabandon-differential",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
+                "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
@@ -217,6 +218,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "compat/reports/allocator/x86_64/mapped-post-exit.json",
         )
         self.assertEqual(
+            gates["native-retired-page-prepass-before-live-post-exit-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-retired-prepass",
+        )
+        self.assertEqual(
+            gates["native-retired-page-prepass-before-live-post-exit-differential"]["report"],
+            "compat/reports/allocator/x86_64/retired-prepass.json",
+        )
+        self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
             "compat/reports/allocator/x86_64/fault-injection.json",
         )
@@ -273,6 +282,24 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("does not establish general thread exit", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
         self.assertIn("public x86 support", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
         self.assertIn("AArch64 evidence", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
+        retired = gates["native-retired-page-prepass-before-live-post-exit-differential"]["claim"]
+        for fragment in (
+            "21 address-independent values",
+            "real pinned-C worker local mi_free",
+            "retires one medium page",
+            "real mi_thread_done() and pthread join",
+            "retired_page_map_unregistered_after_teardown",
+            "retired_arena_page_bitmap_clear_after_teardown",
+            "retired_arena_slice_released_after_teardown",
+            "live_page_map_unregistered_after_final_free",
+            "live_arena_page_bitmap_clear_after_final_free",
+            "live_arena_slice_released_after_final_free",
+            "empty route",
+            "does not establish general retirement",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, retired)
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])

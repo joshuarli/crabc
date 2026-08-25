@@ -18654,6 +18654,236 @@ mod tests {
         .expect("retired-page aggregate fixture remains current-thread local");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_retired_prepass_trace_matches_pinned_c_protocol() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the paired arena remains published through the route");
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the retirement fixture");
+                    let retired = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the fixture creates the retired medium page");
+                    let retired_page = NonNull::new(unsafe { allocator.test_page_for_block(retired) })
+                        .expect("the retired medium page is PageMap-published");
+                    let live = allocator
+                        .allocate(MEDIUM_MAX_OBJ_SIZE / 2, false)
+                        .expect("the fixture creates the live medium page");
+                    let live_page = NonNull::new(unsafe { allocator.test_page_for_block(live) })
+                        .expect("the live medium page is PageMap-published");
+                    let retired_memory = unsafe { retired_page.as_ref().memid() };
+                    let live_memory = unsafe { live_page.as_ref().memid() };
+                    let retired_arena_memory = retired_memory
+                        .arena_memory()
+                        .expect("the retired page belongs to the paired arena");
+                    let live_arena_memory = live_memory
+                        .arena_memory()
+                        .expect("the live page belongs to the paired arena");
+                    let retired_slice = retired_arena_memory.slice_index as usize;
+                    let retired_slice_count = retired_arena_memory.slice_count as usize;
+                    let live_slice = live_arena_memory.slice_index as usize;
+                    let live_slice_count = live_arena_memory.slice_count as usize;
+                    let retired_bin = crate::size_class::bin(unsafe {
+                        retired_page.as_ref().block_size()
+                    })
+                    .expect("the retired page has a source bin");
+                    let live_bin = crate::size_class::bin(unsafe { live_page.as_ref().block_size() })
+                        .expect("the live page has a source bin");
+                    let arena_backed = retired_memory.kind() == MemoryKind::Arena
+                        && live_memory.kind() == MemoryKind::Arena;
+                    let both_medium = crate::size_class::page_kind_for_block_size(unsafe {
+                        retired_page.as_ref().block_size()
+                    }) == Some(PageKind::Medium)
+                        && crate::size_class::page_kind_for_block_size(unsafe {
+                            live_page.as_ref().block_size()
+                        }) == Some(PageKind::Medium);
+                    let distinct_pages = retired_page != live_page;
+                    let distinct_bins = retired_bin != live_bin;
+                    let retired_address = retired.as_ptr().expose_provenance();
+                    let live_address = live.as_ptr().expose_provenance();
+                    let retired_page_map_present_before_local_free = unsafe {
+                        page_map
+                            .page_map()
+                            .unwrap()
+                            .checked_lookup(core::ptr::with_exposed_provenance::<u8>(retired_address))
+                    } == retired_page.as_ptr();
+
+                    // SAFETY: `retired` is the one current local allocation
+                    // in this page. The other page remains live in another
+                    // medium bin, so this free produces a retired page.
+                    unsafe { allocator.free(retired) }
+                        .expect("the ordinary local free retires the empty medium page");
+                    let retired_used_zero_before_exit =
+                        unsafe { retired_page.as_ref().used() } == 0;
+                    let retired_retirement_pending_before_exit = unsafe {
+                        retired_page.as_ref().retire_expire()
+                    } != 0;
+                    let retired_page_map_present_before_exit = unsafe {
+                        page_map
+                            .page_map()
+                            .unwrap()
+                            .checked_lookup(core::ptr::with_exposed_provenance::<u8>(retired_address))
+                    } == retired_page.as_ptr();
+                    let live_used_one_before_exit = unsafe { live_page.as_ref().used() } == 1;
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                            core::mem::forget(drain);
+                            panic!("the live medium page still requires a process route")
+                        }
+                        Err(_) => panic!("the retired prepass admits the live medium route"),
+                    };
+                    let producer_teardown_completed_before_consumer_free = matches!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown)
+                    );
+                    let retired_page_map_unregistered_after_teardown = unsafe {
+                        page_map
+                            .page_map()
+                            .unwrap()
+                            .checked_lookup(core::ptr::with_exposed_provenance::<u8>(retired_address))
+                    }
+                    .is_null();
+                    let retired_arena_page_bitmap_clear_after_teardown = unsafe { arena.pages() }
+                        .expect("the ordinary arena bitmap remains available")
+                        .is_clear_range(retired_slice, 1)
+                        == Some(true);
+                    let retired_arena_slice_released_after_teardown = unsafe { arena.slices_free() }
+                        .expect("the arena free-slice bitmap remains available")
+                        .is_set_range(retired_slice, retired_slice_count)
+                        == Some(true);
+                    let live_page_map_registered_after_teardown = unsafe {
+                        page_map
+                            .page_map()
+                            .unwrap()
+                            .checked_lookup(core::ptr::with_exposed_provenance::<u8>(live_address))
+                    } == live_page.as_ptr();
+                    let live_arena_page_bitmap_set_after_teardown = unsafe { arena.pages() }
+                        .expect("the ordinary arena bitmap remains available")
+                        .is_set_range(live_slice, 1)
+                        == Some(true);
+                    let live_mapped_abandoned_after_teardown = unsafe {
+                        live_page.as_ref().abandoned_test_thread_id()
+                    } == THREAD_ID_ABANDONED_MAPPED;
+
+                    match unsafe { route.remote_free_after_thread_exit(live) } {
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {}
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
+                        | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                            core::mem::forget(route);
+                            panic!("the live routed page releases after its final client free")
+                        }
+                        Err(_) => panic!("the final live client releases through the aggregate route"),
+                    }
+                    let live_page_map_unregistered_after_final_free = unsafe {
+                        page_map
+                            .page_map()
+                            .unwrap()
+                            .checked_lookup(core::ptr::with_exposed_provenance::<u8>(live_address))
+                    }
+                    .is_null();
+                    let live_arena_page_bitmap_clear_after_final_free = unsafe { arena.pages() }
+                        .expect("the ordinary arena bitmap remains available")
+                        .is_clear_range(live_slice, 1)
+                        == Some(true);
+                    let live_arena_slice_released_after_final_free = unsafe { arena.slices_free() }
+                        .expect("the arena free-slice bitmap remains available")
+                        .is_set_range(live_slice, live_slice_count)
+                        == Some(true);
+                    let route_empty_after_final_free = matches!(
+                        page_map.begin_page_lifecycle().and_then(|lease| lease.finish()),
+                        Ok(())
+                    );
+                    let valid = arena_backed
+                        && both_medium
+                        && distinct_pages
+                        && distinct_bins
+                        && retired_page_map_present_before_local_free
+                        && retired_used_zero_before_exit
+                        && retired_retirement_pending_before_exit
+                        && retired_page_map_present_before_exit
+                        && live_used_one_before_exit
+                        && producer_teardown_completed_before_consumer_free
+                        && retired_page_map_unregistered_after_teardown
+                        && retired_arena_page_bitmap_clear_after_teardown
+                        && retired_arena_slice_released_after_teardown
+                        && live_page_map_registered_after_teardown
+                        && live_arena_page_bitmap_set_after_teardown
+                        && live_mapped_abandoned_after_teardown
+                        && live_page_map_unregistered_after_final_free
+                        && live_arena_page_bitmap_clear_after_final_free
+                        && live_arena_slice_released_after_final_free
+                        && route_empty_after_final_free;
+
+                    std::println!("CRABC_MI_RETIRED_PREPASS_TRACE_BEGIN");
+                    std::println!("trace.retired_prepass.arena_backed={}", arena_backed as u8);
+                    std::println!("trace.retired_prepass.both_medium={}", both_medium as u8);
+                    std::println!("trace.retired_prepass.distinct_pages={}", distinct_pages as u8);
+                    std::println!("trace.retired_prepass.distinct_bins={}", distinct_bins as u8);
+                    std::println!("trace.retired_prepass.retired_page_map_present_before_local_free={}", retired_page_map_present_before_local_free as u8);
+                    std::println!("trace.retired_prepass.retired_used_zero_before_exit={}", retired_used_zero_before_exit as u8);
+                    std::println!("trace.retired_prepass.retired_retirement_pending_before_exit={}", retired_retirement_pending_before_exit as u8);
+                    std::println!("trace.retired_prepass.retired_page_map_present_before_exit={}", retired_page_map_present_before_exit as u8);
+                    std::println!("trace.retired_prepass.live_used_one_before_exit={}", live_used_one_before_exit as u8);
+                    std::println!("trace.retired_prepass.producer_teardown_completed_before_consumer_free={}", producer_teardown_completed_before_consumer_free as u8);
+                    std::println!("trace.retired_prepass.retired_page_map_unregistered_after_teardown={}", retired_page_map_unregistered_after_teardown as u8);
+                    std::println!("trace.retired_prepass.retired_arena_page_bitmap_clear_after_teardown={}", retired_arena_page_bitmap_clear_after_teardown as u8);
+                    std::println!("trace.retired_prepass.retired_arena_slice_released_after_teardown={}", retired_arena_slice_released_after_teardown as u8);
+                    std::println!("trace.retired_prepass.live_page_map_registered_after_teardown={}", live_page_map_registered_after_teardown as u8);
+                    std::println!("trace.retired_prepass.live_arena_page_bitmap_set_after_teardown={}", live_arena_page_bitmap_set_after_teardown as u8);
+                    std::println!("trace.retired_prepass.live_mapped_abandoned_after_teardown={}", live_mapped_abandoned_after_teardown as u8);
+                    std::println!("trace.retired_prepass.live_page_map_unregistered_after_final_free={}", live_page_map_unregistered_after_final_free as u8);
+                    std::println!("trace.retired_prepass.live_arena_page_bitmap_clear_after_final_free={}", live_arena_page_bitmap_clear_after_final_free as u8);
+                    std::println!("trace.retired_prepass.live_arena_slice_released_after_final_free={}", live_arena_slice_released_after_final_free as u8);
+                    std::println!("trace.retired_prepass.route_empty_after_final_free={}", route_empty_after_final_free as u8);
+                    std::println!("trace.retired_prepass.valid={}", valid as u8);
+                    std::println!("CRABC_MI_RETIRED_PREPASS_TRACE_END");
+                    assert!(valid, "retired prepass trace diverged from pinned C");
+                });
+                worker
+                    .join()
+                    .expect("retired prepass trace remains local to its owner fixture");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("retired prepass trace fixture remains current-thread local");
+    }
+
     #[test]
     fn later_thread_exit_mapped_regular_pages_route_rejects_malformed_direct_image_before_mutation() {
         thread::spawn(|| {
