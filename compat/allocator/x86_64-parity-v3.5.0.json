@@ -153,6 +153,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 53 address-independent all-1 `trace.aggregate_same_bin_still_live.*` values for one private aggregate route with two distinct clients on one nonfull medium arena page A and a one-client medium arena page B in the same bin from a real pinned-C worker pthread. The worker fills A before it creates B, locally restores A to two clients, then runs real mi_thread_done() and returns; the consumer calls pthread_join() before any free. Both selected pages are mapped-abandoned after teardown. The trace proves same-bin queue count/link/saved-successor traversal before exit and same-bin abandoned count/bitmap transitions 2 -> 2 -> 1 -> 0. The consumer frees A's first client for StillLive, preserving A, B, and the two-page route; frees B for ReleasedPage, terminally releasing only B; then frees A's second client for ReleasedAll, completing the route. Rust compares the equivalent bounded private aggregate same-bin traversal. This does not establish general teardown, routing or concurrency, public mi_* behavior or runtime, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./scripts/dev-amd64.sh allocator-aggregate-same-bin-still-live",
+      "id": "native-same-bin-two-page-aggregate-still-live-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/aggregate-same-bin-still-live.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, runs five named crate-private fault-injection state-preservation regressions covering selected Map, Commit, Unmap, and Decommit points. It does not establish general fault-injection or misuse parity, syscall interposition, lifecycle/stress coverage, C-oracle differential behavior, public mi_* behavior, libc integration, or a backend.",
       "command": "./scripts/dev-amd64.sh allocator-fault",
       "id": "native-bounded-fault-injection",

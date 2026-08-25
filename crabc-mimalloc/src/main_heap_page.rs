@@ -19992,6 +19992,724 @@ mod tests {
         .expect("aggregate StillLive trace fixture remains current-thread local");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_aggregate_same_bin_still_live_trace_matches_pinned_c_protocol() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let paired_arena = process_arena
+                .arena()
+                .expect("the paired arena remains published through the same-bin aggregate route");
+            let paired_arena_address = core::ptr::from_ref(paired_arena.arena())
+                .expose_provenance();
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the same-bin aggregate StillLive fixture");
+
+                    // Fill the first regular medium page before asking the
+                    // same source bin for a second page. Returning all but
+                    // two first-page clients makes both pages nonfull while
+                    // preserving the exact two-page queue topology that the
+                    // source owner-exit walk must traverse.
+                    let request = SMALL_MAX_OBJ_SIZE + 1;
+                    let first_a = allocator
+                        .allocate(request, false)
+                        .expect("the fixture creates the first same-bin medium client");
+                    let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first_a) })
+                        .expect("the first same-bin client page is PageMap-published");
+                    let capacity = usize::from(unsafe { first_page.as_ref().reserved() });
+                    assert!(capacity > 2, "the medium fixture retains two clients after a full-page split");
+                    let mut first_page_blocks = std::vec::Vec::with_capacity(capacity);
+                    first_page_blocks.push(first_a);
+                    while first_page_blocks.len() < capacity {
+                        let block = allocator
+                            .allocate(request, false)
+                            .expect("the fixture fills exactly the first same-bin medium page");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(block) },
+                            first_page.as_ptr(),
+                            "the first source page is full before the second same-bin page is created"
+                        );
+                        first_page_blocks.push(block);
+                    }
+                    let first_b = first_page_blocks[1];
+                    let first_b_page = NonNull::new(unsafe { allocator.test_page_for_block(first_b) })
+                        .expect("the second first-page client is PageMap-published");
+                    let second = allocator
+                        .allocate(request, false)
+                        .expect("the fixture creates the second same-bin medium page");
+                    let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
+                        .expect("the second same-bin page is PageMap-published");
+                    assert_ne!(
+                        first_page,
+                        second_page,
+                        "a full first page forces a distinct page in the same source bin"
+                    );
+                    for block in first_page_blocks.drain(2..) {
+                        unsafe { allocator.free(block) }
+                            .expect("local frees restore the first page to the same-bin regular queue");
+                    }
+
+                    // Retain only stable geometry and exposed identities over
+                    // the producer handoff. The joined consumer resolves page
+                    // metadata afresh through the route-owned PageMap access.
+                    let first_memory = unsafe { first_page.as_ref().memid() };
+                    let second_memory = unsafe { second_page.as_ref().memid() };
+                    let first_arena_memory = first_memory
+                        .arena_memory()
+                        .expect("the two-client page belongs to the paired arena");
+                    let second_arena_memory = second_memory
+                        .arena_memory()
+                        .expect("the second same-bin page belongs to the paired arena");
+                    let first_slice = first_arena_memory.slice_index as usize;
+                    let first_slice_count = first_arena_memory.slice_count as usize;
+                    let second_slice = second_arena_memory.slice_index as usize;
+                    let second_slice_count = second_arena_memory.slice_count as usize;
+                    let first_bin = crate::size_class::bin(unsafe {
+                        first_page.as_ref().block_size()
+                    })
+                    .expect("the two-client page has a source bin");
+                    let second_bin = crate::size_class::bin(unsafe {
+                        second_page.as_ref().block_size()
+                    })
+                    .expect("the second same-bin page has a source bin");
+                    let first_page_identity = first_page.as_ptr().expose_provenance();
+                    let second_page_identity = second_page.as_ptr().expose_provenance();
+                    let first_a_address = first_a.as_ptr().expose_provenance();
+                    let first_b_address = first_b.as_ptr().expose_provenance();
+                    let second_address = second.as_ptr().expose_provenance();
+                    let arena_backed = first_memory.kind() == MemoryKind::Arena
+                        && second_memory.kind() == MemoryKind::Arena;
+                    let both_medium = crate::size_class::page_kind_for_block_size(unsafe {
+                        first_page.as_ref().block_size()
+                    }) == Some(PageKind::Medium)
+                        && crate::size_class::page_kind_for_block_size(unsafe {
+                            second_page.as_ref().block_size()
+                        }) == Some(PageKind::Medium);
+                    let first_distinct_clients_share_page = first_a_address != first_b_address
+                        && first_page == first_b_page;
+                    let distinct_pages = first_page != second_page;
+                    let same_bin = first_bin == second_bin;
+                    let same_bin_queue_count_two_before_exit = allocator.engine.queue_count(first_bin)
+                        == Some(2);
+                    let first_next = unsafe { first_page.as_ref().next() };
+                    let first_prev = unsafe { first_page.as_ref().test_queue_prev() };
+                    let second_next = unsafe { second_page.as_ref().next() };
+                    let second_prev = unsafe { second_page.as_ref().test_queue_prev() };
+                    let same_bin_queue_successor_visits_both_before_exit =
+                        (first_next == second_page.as_ptr() && second_next.is_null())
+                            || (second_next == first_page.as_ptr() && first_next.is_null());
+                    let same_bin_queue_bidirectional_links_before_exit =
+                        same_bin_queue_count_two_before_exit
+                            && ((first_next == second_page.as_ptr()
+                                && first_prev.is_null()
+                                && second_next.is_null()
+                                && second_prev == first_page.as_ptr())
+                                || (second_next == first_page.as_ptr()
+                                    && second_prev.is_null()
+                                    && first_next.is_null()
+                                    && first_prev == second_page.as_ptr()));
+                    let first_used_two_before_exit = unsafe { first_page.as_ref().used() } == 2;
+                    let second_used_one_before_exit = unsafe { second_page.as_ref().used() } == 1;
+                    let first_nonfull_before_exit = unsafe {
+                        first_page.as_ref().used()
+                            < usize::from(first_page.as_ref().reserved())
+                    };
+                    let second_nonfull_before_exit = unsafe {
+                        second_page.as_ref().used()
+                            < usize::from(second_page.as_ref().reserved())
+                    };
+                    let slice_spans_nonempty_and_disjoint = match (
+                        first_slice.checked_add(first_slice_count),
+                        second_slice.checked_add(second_slice_count),
+                    ) {
+                        (Some(first_end), Some(second_end)) => {
+                            first_slice_count != 0
+                                && second_slice_count != 0
+                                && (first_end <= second_slice || second_end <= first_slice)
+                        }
+                        _ => false,
+                    };
+                    let bins_fit_paired_arena = first_bin < crate::config::ARENA_BIN_COUNT
+                        && second_bin < crate::config::ARENA_BIN_COUNT;
+                    let pages_share_paired_arena = first_arena_memory
+                        .arena
+                        .expose_provenance()
+                        == paired_arena_address
+                        && second_arena_memory.arena.expose_provenance() == paired_arena_address;
+                    assert!(
+                        arena_backed
+                            && both_medium
+                            && first_distinct_clients_share_page
+                            && distinct_pages
+                            && same_bin
+                            && same_bin_queue_count_two_before_exit
+                            && same_bin_queue_bidirectional_links_before_exit
+                            && same_bin_queue_successor_visits_both_before_exit
+                            && first_used_two_before_exit
+                            && second_used_one_before_exit
+                            && first_nonfull_before_exit
+                            && second_nonfull_before_exit
+                            && slice_spans_nonempty_and_disjoint
+                            && bins_fit_paired_arena
+                            && pages_share_paired_arena,
+                        "the same-bin aggregate fixture retains two nonfull medium pages with an exact two-page source queue"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                            core::mem::forget(drain);
+                            panic!("two same-bin live medium pages cannot become an empty drain")
+                        }
+                        Err(_) => panic!("the source-shaped aggregate traversal publishes both same-bin live medium pages"),
+                    };
+                    let producer_teardown_completed_before_consumer_free = matches!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown)
+                    );
+                    let route_two_pages_before_join = route.test_remaining_pages() == 2;
+                    assert!(
+                        producer_teardown_completed_before_consumer_free && route_two_pages_before_join,
+                        "the producer tears down only after it transfers both same-bin pages to the aggregate route"
+                    );
+
+                    (
+                        route,
+                        first_a_address,
+                        first_b_address,
+                        second_address,
+                        first_page_identity,
+                        second_page_identity,
+                        first_slice,
+                        first_slice_count,
+                        second_slice,
+                        second_slice_count,
+                        first_bin,
+                        arena_backed,
+                        both_medium,
+                        first_distinct_clients_share_page,
+                        distinct_pages,
+                        same_bin,
+                        same_bin_queue_count_two_before_exit,
+                        same_bin_queue_bidirectional_links_before_exit,
+                        same_bin_queue_successor_visits_both_before_exit,
+                        first_used_two_before_exit,
+                        second_used_one_before_exit,
+                        first_nonfull_before_exit,
+                        second_nonfull_before_exit,
+                        slice_spans_nonempty_and_disjoint,
+                        pages_share_paired_arena,
+                        route_two_pages_before_join,
+                        producer_teardown_completed_before_consumer_free,
+                    )
+                });
+                let (
+                    route,
+                    first_a_address,
+                    first_b_address,
+                    second_address,
+                    first_page_identity,
+                    second_page_identity,
+                    first_slice,
+                    first_slice_count,
+                    second_slice,
+                    second_slice_count,
+                    first_bin,
+                    arena_backed,
+                    both_medium,
+                    first_distinct_clients_share_page,
+                    distinct_pages,
+                    same_bin,
+                    same_bin_queue_count_two_before_exit,
+                    same_bin_queue_bidirectional_links_before_exit,
+                    same_bin_queue_successor_visits_both_before_exit,
+                    first_used_two_before_exit,
+                    second_used_one_before_exit,
+                    first_nonfull_before_exit,
+                    second_nonfull_before_exit,
+                    slice_spans_nonempty_and_disjoint,
+                    pages_share_paired_arena,
+                    route_two_pages_before_join,
+                    producer_teardown_completed_before_consumer_free,
+                ) = worker
+                    .join()
+                    .expect("the same-bin aggregate StillLive route transfers to the joined consumer");
+                let consumer_joined_before_first_free = true;
+                let arena = paired_arena;
+                let observe_routed_page = |
+                    route: &MainHeapThreadProcessPageExitMappedMediumPagesRoute<'_>,
+                    address: usize,
+                    expected_identity: usize,
+                | {
+                    route
+                        .page_map_access
+                        .with_page_map(|page_map| {
+                            let page = unsafe {
+                                page_map.checked_lookup(
+                                    core::ptr::with_exposed_provenance::<u8>(address),
+                                )
+                            };
+                            if page.is_null() {
+                                return (false, true, false, 0usize);
+                            }
+                            if page.expose_provenance() != expected_identity {
+                                return (false, false, false, 0usize);
+                            }
+                            // SAFETY: the route-owned short PageMap operation
+                            // keeps this exact registered page stable only
+                            // through this data-only observation.
+                            let page = unsafe { &*page };
+                            (
+                                true,
+                                false,
+                                page.abandoned_test_thread_id() == THREAD_ID_ABANDONED_MAPPED,
+                                page.used(),
+                            )
+                        })
+                        .expect("the same-bin aggregate route retains its short PageMap observation access")
+                };
+
+                // Re-resolve both live pages only through the route-owned
+                // short PageMap access. No raw page pointer or reference
+                // crosses this handoff boundary.
+                let (
+                    first_page_map_registered_after_join,
+                    _,
+                    first_mapped_abandoned_after_join,
+                    _,
+                ) = observe_routed_page(&route, first_a_address, first_page_identity);
+                let (
+                    second_page_map_registered_after_join,
+                    _,
+                    second_mapped_abandoned_after_join,
+                    _,
+                ) = observe_routed_page(&route, second_address, second_page_identity);
+                if !first_page_map_registered_after_join || !second_page_map_registered_after_join {
+                    core::mem::forget(route);
+                    panic!("the joined consumer observes both same-bin pages through their exact PageMap identities");
+                }
+                let first_arena_page_bitmap_set_after_join = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(first_slice, 1)
+                    == Some(true);
+                let second_arena_page_bitmap_set_after_join = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(second_slice, 1)
+                    == Some(true);
+                let same_bin_abandoned_count_two_after_join = {
+                    let mut heap = main_heap
+                        .lock_heap()
+                        .expect("the shared main heap remains live after producer teardown");
+                    let count = heap
+                        .heap_mut()
+                        .abandoned_count(first_bin)
+                        .expect("the shared medium bin has a paired abandoned counter");
+                    heap.unlock()
+                        .expect("the static heap projection unlocks after joined same-bin count observation");
+                    count == 2
+                };
+                let same_bin_abandoned_bitmap_both_set_after_join = arena
+                    .abandoned_pages(first_bin)
+                    .is_some_and(|pages| {
+                        pages.is_published(first_slice) && pages.is_published(second_slice)
+                    });
+                if !first_arena_page_bitmap_set_after_join
+                    || !second_arena_page_bitmap_set_after_join
+                    || !first_mapped_abandoned_after_join
+                    || !second_mapped_abandoned_after_join
+                    || !same_bin_abandoned_count_two_after_join
+                    || !same_bin_abandoned_bitmap_both_set_after_join
+                {
+                    core::mem::forget(route);
+                    panic!("the joined consumer sees both same-bin PageMap/bitmap/count publications");
+                }
+
+                // A1 has a distinct live sibling in its page, so this exact
+                // consuming free must leave both same-bin registrations in
+                // the aggregate route.
+                let first_a_for_free = NonNull::new(
+                    core::ptr::with_exposed_provenance_mut(first_a_address),
+                )
+                .expect("the first same-bin client address remains non-null until its free");
+                let route = match unsafe { route.remote_free_after_thread_exit(first_a_for_free) } {
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                        route
+                    }
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                        core::mem::forget(route);
+                        panic!("one of two first-page clients cannot release either same-bin aggregate page")
+                    }
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                        panic!("the remaining first-page client and second same-bin page prevent terminal release")
+                    }
+                    Err(_) => panic!("the first same-bin client free stays mapped-abandoned and routable"),
+                };
+                let first_free_still_live_route_two_pages = route.test_remaining_pages() == 2;
+                assert!(
+                    first_free_still_live_route_two_pages,
+                    "the first StillLive result retains both same-bin page registrations"
+                );
+                let (
+                    first_page_map_registered_after_first_free,
+                    _,
+                    first_mapped_abandoned_after_first_free,
+                    first_used_after_first_free,
+                ) = observe_routed_page(&route, first_b_address, first_page_identity);
+                let (
+                    second_page_map_registered_after_first_free,
+                    _,
+                    second_mapped_abandoned_after_first_free,
+                    second_used_after_first_free,
+                ) = observe_routed_page(&route, second_address, second_page_identity);
+                if !first_page_map_registered_after_first_free
+                    || !second_page_map_registered_after_first_free
+                {
+                    core::mem::forget(route);
+                    panic!("the StillLive free keeps both exact same-bin PageMap identities registered");
+                }
+                let first_arena_page_bitmap_set_after_first_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(first_slice, 1)
+                    == Some(true);
+                let second_arena_page_bitmap_set_after_first_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(second_slice, 1)
+                    == Some(true);
+                let first_used_one_after_first_free = first_used_after_first_free == 1;
+                let second_used_one_after_first_free = second_used_after_first_free == 1;
+                let same_bin_abandoned_count_two_after_first_free = {
+                    let mut heap = main_heap
+                        .lock_heap()
+                        .expect("the shared main heap remains live after the same-bin StillLive free");
+                    let count = heap
+                        .heap_mut()
+                        .abandoned_count(first_bin)
+                        .expect("the shared medium bin keeps its paired abandoned counter");
+                    heap.unlock()
+                        .expect("the static heap projection unlocks after same-bin StillLive count observation");
+                    count == 2
+                };
+                let same_bin_abandoned_bitmap_both_set_after_first_free = arena
+                    .abandoned_pages(first_bin)
+                    .is_some_and(|pages| {
+                        pages.is_published(first_slice) && pages.is_published(second_slice)
+                    });
+                if !first_arena_page_bitmap_set_after_first_free
+                    || !second_arena_page_bitmap_set_after_first_free
+                    || !first_mapped_abandoned_after_first_free
+                    || !second_mapped_abandoned_after_first_free
+                    || !first_used_one_after_first_free
+                    || !second_used_one_after_first_free
+                    || !same_bin_abandoned_count_two_after_first_free
+                    || !same_bin_abandoned_bitmap_both_set_after_first_free
+                {
+                    core::mem::forget(route);
+                    panic!("the StillLive free preserves both same-bin PageMap/bitmap/count registrations");
+                }
+
+                // B is a one-client page in the same source bin. Its release
+                // must consume only B's PageMap span/arena bit/abandoned bit
+                // and decrement the shared counter from two to one.
+                let second_for_free = NonNull::new(
+                    core::ptr::with_exposed_provenance_mut(second_address),
+                )
+                .expect("the second same-bin client address remains non-null until its free");
+                let route = match unsafe { route.remote_free_after_thread_exit(second_for_free) } {
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                        route
+                    }
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                        core::mem::forget(route);
+                        panic!("the second same-bin one-client page must terminally release")
+                    }
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                        panic!("the remaining first-page client prevents aggregate terminal release")
+                    }
+                    Err(_) => panic!("the second same-bin client free releases exactly its page"),
+                };
+                let second_free_released_page_route_one_page = route.test_remaining_pages() == 1;
+                assert!(
+                    second_free_released_page_route_one_page,
+                    "the second same-bin release leaves only the first page in the aggregate registry"
+                );
+                let (
+                    _,
+                    second_page_map_unregistered_after_second_free,
+                    _,
+                    _,
+                ) = observe_routed_page(&route, second_address, second_page_identity);
+                let second_arena_page_bitmap_clear_after_second_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_clear_range(second_slice, 1)
+                    == Some(true);
+                let second_arena_slice_released_after_second_free = unsafe { arena.slices_free() }
+                    .expect("the arena free-slice bitmap remains available")
+                    .is_set_range(second_slice, second_slice_count)
+                    == Some(true);
+                let (
+                    first_page_map_registered_after_second_free,
+                    _,
+                    first_mapped_abandoned_after_second_free,
+                    first_used_after_second_free,
+                ) = observe_routed_page(&route, first_b_address, first_page_identity);
+                if !first_page_map_registered_after_second_free {
+                    core::mem::forget(route);
+                    panic!("the remaining same-bin first client stays PageMap-routable after the second release");
+                }
+                let first_arena_page_bitmap_set_after_second_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_set_range(first_slice, 1)
+                    == Some(true);
+                let first_used_one_after_second_free = first_used_after_second_free == 1;
+                let same_bin_abandoned_count_one_after_second_free = {
+                    let mut heap = main_heap
+                        .lock_heap()
+                        .expect("the shared main heap remains live after the second same-bin release");
+                    let count = heap
+                        .heap_mut()
+                        .abandoned_count(first_bin)
+                        .expect("the shared medium bin remains published after the second release");
+                    heap.unlock()
+                        .expect("the static heap projection unlocks after second same-bin release count observation");
+                    count == 1
+                };
+                let same_bin_abandoned_bitmap_first_only_after_second_free = arena
+                    .abandoned_pages(first_bin)
+                    .is_some_and(|pages| {
+                        pages.is_published(first_slice) && !pages.is_published(second_slice)
+                    });
+                if !second_page_map_unregistered_after_second_free
+                    || !second_arena_page_bitmap_clear_after_second_free
+                    || !second_arena_slice_released_after_second_free
+                    || !first_arena_page_bitmap_set_after_second_free
+                    || !first_mapped_abandoned_after_second_free
+                    || !first_used_one_after_second_free
+                    || !same_bin_abandoned_count_one_after_second_free
+                    || !same_bin_abandoned_bitmap_first_only_after_second_free
+                {
+                    core::mem::forget(route);
+                    panic!("the second same-bin release clears only its PageMap/bitmap/count/span publication");
+                }
+
+                // The final first-page client is reconstructed only after a
+                // fresh PageMap identity/survivor observation. `ReleasedAll`
+                // makes every saved page pointer stale, so terminal checks use
+                // only scalar addresses and stable arena structures.
+                let first_b_for_free = NonNull::new(
+                    core::ptr::with_exposed_provenance_mut(first_b_address),
+                )
+                .expect("the remaining same-bin first client address stays non-null until its final free");
+                let final_free_released_all = match unsafe {
+                    route.remote_free_after_thread_exit(first_b_for_free)
+                } {
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => true,
+                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
+                    | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                        core::mem::forget(route);
+                        panic!("the final same-bin first client releases every remaining aggregate page")
+                    }
+                    Err(_) => panic!("the final same-bin first client completes the aggregate route"),
+                };
+                // `ReleasedAll` consumes the post-exit access and explicitly
+                // reopens the process root. Hold the ordinary lifecycle lease
+                // for the final PageMap lookup, preserving this fixture's
+                // quiescence proof without leaking a raw page observation.
+                let (
+                    first_page_map_unregistered_after_final_free,
+                    page_map_reopened_after_final_free,
+                ) = match page_map.begin_page_lifecycle() {
+                    Ok(terminal) => {
+                        let unregistered = terminal
+                            .page_map()
+                            .map(|page_map| unsafe {
+                                page_map
+                                    .checked_lookup(core::ptr::with_exposed_provenance::<u8>(
+                                        first_b_address,
+                                    ))
+                                    .is_null()
+                            })
+                            .unwrap_or(false);
+                        let reopened = terminal.finish().is_ok();
+                        (unregistered, reopened)
+                    }
+                    Err(_) => (false, false),
+                };
+                let first_arena_page_bitmap_clear_after_final_free = unsafe { arena.pages() }
+                    .expect("the ordinary arena bitmap remains available")
+                    .is_clear_range(first_slice, 1)
+                    == Some(true);
+                let first_arena_slice_released_after_final_free = unsafe { arena.slices_free() }
+                    .expect("the arena free-slice bitmap remains available")
+                    .is_set_range(first_slice, first_slice_count)
+                    == Some(true);
+                let same_bin_abandoned_count_zero_after_final_free = {
+                    let mut heap = main_heap
+                        .lock_heap()
+                        .expect("the shared main heap remains live after same-bin aggregate completion");
+                    let count = heap
+                        .heap_mut()
+                        .abandoned_count(first_bin)
+                        .expect("the shared medium bin clears after its terminal release");
+                    heap.unlock()
+                        .expect("the static heap projection unlocks after final same-bin count observation");
+                    count == 0
+                };
+                let same_bin_abandoned_bitmap_empty_after_final_free = arena
+                    .abandoned_pages(first_bin)
+                    .is_some_and(|pages| {
+                        !pages.is_published(first_slice) && !pages.is_published(second_slice)
+                    });
+                let final_free_released_all_route_empty = final_free_released_all
+                    && page_map_reopened_after_final_free
+                    && same_bin_abandoned_count_zero_after_final_free
+                    && same_bin_abandoned_bitmap_empty_after_final_free;
+
+                let valid = arena_backed
+                    && both_medium
+                    && first_distinct_clients_share_page
+                    && distinct_pages
+                    && same_bin
+                    && same_bin_queue_count_two_before_exit
+                    && same_bin_queue_bidirectional_links_before_exit
+                    && same_bin_queue_successor_visits_both_before_exit
+                    && first_used_two_before_exit
+                    && second_used_one_before_exit
+                    && first_nonfull_before_exit
+                    && second_nonfull_before_exit
+                    && slice_spans_nonempty_and_disjoint
+                    && pages_share_paired_arena
+                    && route_two_pages_before_join
+                    && producer_teardown_completed_before_consumer_free
+                    && consumer_joined_before_first_free
+                    && first_page_map_registered_after_join
+                    && second_page_map_registered_after_join
+                    && first_arena_page_bitmap_set_after_join
+                    && second_arena_page_bitmap_set_after_join
+                    && first_mapped_abandoned_after_join
+                    && second_mapped_abandoned_after_join
+                    && same_bin_abandoned_count_two_after_join
+                    && same_bin_abandoned_bitmap_both_set_after_join
+                    && first_free_still_live_route_two_pages
+                    && first_page_map_registered_after_first_free
+                    && first_arena_page_bitmap_set_after_first_free
+                    && first_mapped_abandoned_after_first_free
+                    && first_used_one_after_first_free
+                    && second_page_map_registered_after_first_free
+                    && second_arena_page_bitmap_set_after_first_free
+                    && second_mapped_abandoned_after_first_free
+                    && second_used_one_after_first_free
+                    && same_bin_abandoned_count_two_after_first_free
+                    && same_bin_abandoned_bitmap_both_set_after_first_free
+                    && second_free_released_page_route_one_page
+                    && second_page_map_unregistered_after_second_free
+                    && second_arena_page_bitmap_clear_after_second_free
+                    && second_arena_slice_released_after_second_free
+                    && first_page_map_registered_after_second_free
+                    && first_arena_page_bitmap_set_after_second_free
+                    && first_mapped_abandoned_after_second_free
+                    && first_used_one_after_second_free
+                    && same_bin_abandoned_count_one_after_second_free
+                    && same_bin_abandoned_bitmap_first_only_after_second_free
+                    && final_free_released_all_route_empty
+                    && first_page_map_unregistered_after_final_free
+                    && first_arena_page_bitmap_clear_after_final_free
+                    && first_arena_slice_released_after_final_free
+                    && same_bin_abandoned_count_zero_after_final_free
+                    && same_bin_abandoned_bitmap_empty_after_final_free;
+
+                std::println!("CRABC_MI_AGGREGATE_SAME_BIN_STILL_LIVE_TRACE_BEGIN");
+                std::println!("trace.aggregate_same_bin_still_live.arena_backed={}", arena_backed as u8);
+                std::println!("trace.aggregate_same_bin_still_live.both_medium={}", both_medium as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_distinct_clients_share_page={}", first_distinct_clients_share_page as u8);
+                std::println!("trace.aggregate_same_bin_still_live.distinct_pages={}", distinct_pages as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin={}", same_bin as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_queue_count_two_before_exit={}", same_bin_queue_count_two_before_exit as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_queue_bidirectional_links_before_exit={}", same_bin_queue_bidirectional_links_before_exit as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_queue_successor_visits_both_before_exit={}", same_bin_queue_successor_visits_both_before_exit as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_used_two_before_exit={}", first_used_two_before_exit as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_used_one_before_exit={}", second_used_one_before_exit as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_nonfull_before_exit={}", first_nonfull_before_exit as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_nonfull_before_exit={}", second_nonfull_before_exit as u8);
+                std::println!("trace.aggregate_same_bin_still_live.slice_spans_nonempty_and_disjoint={}", slice_spans_nonempty_and_disjoint as u8);
+                std::println!("trace.aggregate_same_bin_still_live.pages_share_paired_arena={}", pages_share_paired_arena as u8);
+                std::println!("trace.aggregate_same_bin_still_live.route_two_pages_before_join={}", route_two_pages_before_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.producer_teardown_completed_before_consumer_free={}", producer_teardown_completed_before_consumer_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.consumer_joined_before_first_free={}", consumer_joined_before_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_page_map_registered_after_join={}", first_page_map_registered_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_page_map_registered_after_join={}", second_page_map_registered_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_arena_page_bitmap_set_after_join={}", first_arena_page_bitmap_set_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_arena_page_bitmap_set_after_join={}", second_arena_page_bitmap_set_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_mapped_abandoned_after_join={}", first_mapped_abandoned_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_mapped_abandoned_after_join={}", second_mapped_abandoned_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_count_two_after_join={}", same_bin_abandoned_count_two_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_bitmap_both_set_after_join={}", same_bin_abandoned_bitmap_both_set_after_join as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_free_still_live_route_two_pages={}", first_free_still_live_route_two_pages as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_page_map_registered_after_first_free={}", first_page_map_registered_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_arena_page_bitmap_set_after_first_free={}", first_arena_page_bitmap_set_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_mapped_abandoned_after_first_free={}", first_mapped_abandoned_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_used_one_after_first_free={}", first_used_one_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_page_map_registered_after_first_free={}", second_page_map_registered_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_arena_page_bitmap_set_after_first_free={}", second_arena_page_bitmap_set_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_mapped_abandoned_after_first_free={}", second_mapped_abandoned_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_used_one_after_first_free={}", second_used_one_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_count_two_after_first_free={}", same_bin_abandoned_count_two_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_bitmap_both_set_after_first_free={}", same_bin_abandoned_bitmap_both_set_after_first_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_free_released_page_route_one_page={}", second_free_released_page_route_one_page as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_page_map_unregistered_after_second_free={}", second_page_map_unregistered_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_arena_page_bitmap_clear_after_second_free={}", second_arena_page_bitmap_clear_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.second_arena_slice_released_after_second_free={}", second_arena_slice_released_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_page_map_registered_after_second_free={}", first_page_map_registered_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_arena_page_bitmap_set_after_second_free={}", first_arena_page_bitmap_set_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_mapped_abandoned_after_second_free={}", first_mapped_abandoned_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_used_one_after_second_free={}", first_used_one_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_count_one_after_second_free={}", same_bin_abandoned_count_one_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_bitmap_first_only_after_second_free={}", same_bin_abandoned_bitmap_first_only_after_second_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.final_free_released_all_route_empty={}", final_free_released_all_route_empty as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_page_map_unregistered_after_final_free={}", first_page_map_unregistered_after_final_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_arena_page_bitmap_clear_after_final_free={}", first_arena_page_bitmap_clear_after_final_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.first_arena_slice_released_after_final_free={}", first_arena_slice_released_after_final_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_count_zero_after_final_free={}", same_bin_abandoned_count_zero_after_final_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.same_bin_abandoned_bitmap_empty_after_final_free={}", same_bin_abandoned_bitmap_empty_after_final_free as u8);
+                std::println!("trace.aggregate_same_bin_still_live.valid={}", valid as u8);
+                std::println!("CRABC_MI_AGGREGATE_SAME_BIN_STILL_LIVE_TRACE_END");
+                assert!(valid, "aggregate same-bin StillLive trace diverged from pinned C protocol");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("aggregate same-bin StillLive trace fixture remains current-thread local");
+    }
+
     #[test]
     fn later_thread_exit_mapped_regular_pages_route_rejects_malformed_direct_image_before_mutation() {
         thread::spawn(|| {

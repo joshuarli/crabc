@@ -158,6 +158,7 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("21-field native C/Rust differential", unit["difference"])
                 self.assertIn("25-field native C/Rust differential", unit["difference"])
                 self.assertIn("46-field native C/Rust differential", unit["difference"])
+                self.assertIn("53-field native C/Rust differential", unit["difference"])
                 self.assertIn(
                     "compat/allocator/x86_64_aggregate_post_exit_evidence.py",
                     unit["evidence"],
@@ -180,6 +181,18 @@ class X86_64SourceMapTests(unittest.TestCase):
                 )
                 self.assertIn(
                     "compat/allocator/tests/test_x86_64_aggregate_still_live_evidence.py",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/x86_64_aggregate_same_bin_still_live_evidence.py",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/x86_64-aggregate-same-bin-still-live-evidence-v3.5.0.json",
+                    unit["evidence"],
+                )
+                self.assertIn(
+                    "compat/allocator/tests/test_x86_64_aggregate_same_bin_still_live_evidence.py",
                     unit["evidence"],
                 )
                 self.assertIn(
@@ -248,16 +261,29 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("21-field C/Rust differential", arena["difference"])
         self.assertIn("25-field C/Rust differential", arena["difference"])
         self.assertIn("46-field C/Rust differential", arena["difference"])
+        self.assertIn("53-field C/Rust differential", arena["difference"])
         self.assertIn("compat/allocator/x86_64_mapped_post_exit_evidence.py", arena["evidence"])
         self.assertIn("compat/allocator/x86_64_retired_prepass_evidence.py", arena["evidence"])
         self.assertIn("compat/allocator/x86_64_aggregate_post_exit_evidence.py", arena["evidence"])
         self.assertIn("compat/allocator/x86_64_aggregate_still_live_evidence.py", arena["evidence"])
+        self.assertIn(
+            "compat/allocator/x86_64_aggregate_same_bin_still_live_evidence.py",
+            arena["evidence"],
+        )
         self.assertIn(
             "compat/allocator/x86_64-aggregate-still-live-evidence-v3.5.0.json",
             arena["evidence"],
         )
         self.assertIn(
             "compat/allocator/tests/test_x86_64_aggregate_still_live_evidence.py",
+            arena["evidence"],
+        )
+        self.assertIn(
+            "compat/allocator/x86_64-aggregate-same-bin-still-live-evidence-v3.5.0.json",
+            arena["evidence"],
+        )
+        self.assertIn(
+            "compat/allocator/tests/test_x86_64_aggregate_same_bin_still_live_evidence.py",
             arena["evidence"],
         )
         for terminal_field in (
@@ -283,6 +309,7 @@ class X86_64SourceMapTests(unittest.TestCase):
             self.assertIn("21-field native differential", unit["difference"])
             self.assertIn("25-field native differential", unit["difference"])
             self.assertIn("46-field native differential", unit["difference"])
+            self.assertIn("53-field native differential", unit["difference"])
             self.assertIn(
                 "compat/allocator/x86_64_aggregate_post_exit_evidence.py",
                 unit["evidence"],
@@ -301,6 +328,18 @@ class X86_64SourceMapTests(unittest.TestCase):
             )
             self.assertIn(
                 "compat/allocator/tests/test_x86_64_aggregate_still_live_evidence.py",
+                unit["evidence"],
+            )
+            self.assertIn(
+                "compat/allocator/x86_64_aggregate_same_bin_still_live_evidence.py",
+                unit["evidence"],
+            )
+            self.assertIn(
+                "compat/allocator/x86_64-aggregate-same-bin-still-live-evidence-v3.5.0.json",
+                unit["evidence"],
+            )
+            self.assertIn(
+                "compat/allocator/tests/test_x86_64_aggregate_same_bin_still_live_evidence.py",
                 unit["evidence"],
             )
             self.assertIn("compat/allocator/x86_64_retired_prepass_evidence.py", unit["evidence"])

@@ -143,6 +143,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
                 "native-two-client-aggregate-still-live-differential",
+                "native-same-bin-two-page-aggregate-still-live-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
@@ -242,6 +243,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-two-client-aggregate-still-live-differential"]["report"],
             "compat/reports/allocator/x86_64/aggregate-still-live.json",
+        )
+        self.assertEqual(
+            gates["native-same-bin-two-page-aggregate-still-live-differential"]["command"],
+            "./scripts/dev-amd64.sh allocator-aggregate-same-bin-still-live",
+        )
+        self.assertEqual(
+            gates["native-same-bin-two-page-aggregate-still-live-differential"]["report"],
+            "compat/reports/allocator/x86_64/aggregate-same-bin-still-live.json",
         )
         self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
@@ -361,6 +370,28 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, aggregate_still_live)
+        aggregate_same_bin_still_live = gates[
+            "native-same-bin-two-page-aggregate-still-live-differential"
+        ]["claim"]
+        for fragment in (
+            "53 address-independent all-1 `trace.aggregate_same_bin_still_live.*` values",
+            "two distinct clients on one nonfull medium arena page A",
+            "one-client medium arena page B in the same bin",
+            "worker fills A before it creates B",
+            "then runs real mi_thread_done() and returns; the consumer calls pthread_join()",
+            "same-bin queue count/link/saved-successor traversal",
+            "same-bin abandoned count/bitmap transitions 2 -> 2 -> 1 -> 0",
+            "consumer frees A's first client for StillLive",
+            "preserving A, B, and the two-page route",
+            "B for ReleasedPage",
+            "terminally releasing only B",
+            "A's second client for ReleasedAll",
+            "completing the route",
+            "does not establish general teardown",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, aggregate_same_bin_still_live)
         self.assertIn("cpufeatures", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("no selected libc package", gates["native-normal-engine-build-boundary"]["claim"])
         self.assertIn("lockfile-verified", gates["native-normal-engine-build-boundary"]["claim"])

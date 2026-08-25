@@ -507,7 +507,13 @@ contracts, reports, and status.
   a worker `mi_thread_done()`/return and consumer join; A's first free is
   `StillLive` and preserves both pages plus the route, B's free is
   `ReleasedPage` and releases only B, and A's second free is `ReleasedAll` and
-  completes the route. Broader retirement, teardown, routing, concurrency,
+  completes the route. A completed 53-field aggregate same-bin still-live trace
+  is also narrow: the worker fills medium page A, creates B in the same bin,
+  locally restores A to two clients, then `mi_thread_done()`/return and
+  consumer join expose selected same-bin queue count/link/saved-successor
+  traversal plus mapped-abandoned count/bitmap transitions `2 -> 2 -> 1 -> 0`;
+  A's first free is `StillLive`, B's is `ReleasedPage`, and A's second is
+  `ReleasedAll`. Broader retirement, teardown, routing, concurrency,
   public API/runtime, backend,
   and architecture qualification remain open.
 - [ ] Broaden the bounded private-adapter C/Rust timing and post-init memory
