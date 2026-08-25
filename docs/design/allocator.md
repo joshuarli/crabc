@@ -134,9 +134,12 @@ detached paths still use false force. Its separate sole full-singleton handoff
 uses false force after its preflight and before queue detach, while both
 mapped-medium sole-page handoffs preserve the source force-then-false sequence
 before bitmap publication. The one-block handoff accepts only its empty final
-free; the older process route can keep one sole nonfull non-direct
-small-or-medium page mapped while its linear client frees finish after the old
-Theap/TLD is gone. The
+free; the process route can keep one sole nonfull small-or-medium page mapped
+while its linear client frees finish after the old Theap/TLD is gone. A direct
+small member is recognized by rounded source block size, preflights its exact
+`pages_free_direct` range, and clears that range with queue removal before the
+former Theap page count drops; the small partial-free tail retains its source
+`reserved >= 16` invariant. Full small pages remain outside that route. The
 aggregate medium-and-large route applies that same source sequence to every
 qualifying medium-or-large page, releases force-empty pages, and stores
 PageMap/bitmap registry. Neither process route broadens the drain into general
@@ -301,13 +304,16 @@ clears the mapped identity/bit, consumes that paired count, and performs the
 same PageMap -> `pages_main` -> metadata -> slice release; a still-live page
 is terminally retained rather than reclaimed or requeued.
 
-`MainHeapThreadProcessPageExitDrain::abandon_mapped_non_direct_small_or_medium_to_process_route`
+`MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`
 is the third handoff. It accepts one sole nonfull arena page with one or more
-live blocks when it is a medium page or a small page above the source
-direct-cache threshold. The small decision uses the rounded source block size,
-not the request size. It preserves the same force -> false -> queue/page-count
-detach -> mapped identity/bit/count -> unown order, and retains the exact complete
-PageMap span plus static-main arena/Heap witnesses. It then calls
+live blocks when it is a medium page or any small page. The small decision uses
+the rounded source block size, not the request size. A direct small page must
+have its complete source direct-cache range point at that sole page with every
+other direct slot empty; queue removal clears that range before page-count
+detach. It also retains the source partial-collector `reserved >= 16`
+invariant. It preserves the same force -> false -> queue/direct/page-count
+detach -> mapped identity/bit/count -> unown order, and retains the exact
+complete PageMap span plus static-main arena/Heap witnesses. It then calls
 `MainHeapThreadAttachment::finish_after_detached_process_page_route`, so the
 old Theap/TLD is genuinely detached and freed before a later client free.
 `MainHeapThreadProcessPageExitMappedRegularRoute` holds only those stable
@@ -317,9 +323,9 @@ mapped-abandoned page, and runs the source no-current-Theap free tail. A
 nonempty result keeps the paired mapped identity/bit/count and returns the
 linear route; the final free clears that pairing before the PageMap ->
 `pages_main` -> metadata -> slice release. The route is movable to a client
-free thread but is not shareable as concurrent routes. Direct-cache small
-pages and every full small page remain outside this sole route; the latter is
-checked by `used < reserved` because it can remain in a regular queue.
+free thread but is not shareable as concurrent routes. Every full small page
+remains outside this sole route, checked by `used < reserved` because it can
+remain in a regular queue.
 
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_large_pages_to_process_route`
 is a separate aggregate boundary, not a loop over the older sole-page token.

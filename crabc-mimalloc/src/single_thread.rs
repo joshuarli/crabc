@@ -433,8 +433,8 @@ pub(crate) struct ThreadExitMappedOneBlockHandoff<'arena, 'map, Session: TheapPa
 ///
 /// Unlike [`ThreadExitMappedOneBlockHandoff`], this intentionally carries no
 /// engine and no page pointer. Its sole role is to bridge one exactly
-/// queue-detached, mapped-abandoned non-direct small-or-medium page into a
-/// process-owned route.
+/// queue-detached, mapped-abandoned small-or-medium page into a process-owned
+/// route.
 /// The final route re-resolves the page under a short PageMap guard for every
 /// client free, so it cannot retain a Rust borrow of the departed Theap.
 #[must_use = "a detached mapped regular page must become a process route or remain terminally retained"]
@@ -1567,7 +1567,7 @@ impl<'attachment, 'main, 'arena, 'map>
         unsafe { abandon_mapped_one_block_after_thread_exit(self, block) }
     }
 
-    /// Detaches one sole nonfull non-direct small-or-medium arena page into a
+    /// Detaches one sole nonfull small-or-medium arena page into a
     /// process-owned route after the fixed main fast slot has cleared.
     ///
     /// This is the first route that actually releases the old later
@@ -1576,19 +1576,23 @@ impl<'attachment, 'main, 'arena, 'map>
     /// `_mi_theap_collect_abandon`, `_mi_page_abandon`'s false collection,
     /// queue/page-count detach, mapped identity/bitmap/count publication,
     /// then transfer to a short process PageMap route. It does not yet claim
-    /// allocation-time bitmap adoption, requeue/reclaim, direct-small or
-    /// large pages, multiple pages, or concurrent client-free routing.
-    /// A small page is non-direct only when its rounded source `block_size`
-    /// exceeds `SMALL_SIZE_MAX`; request size alone is not the boundary.
+    /// allocation-time bitmap adoption, requeue/reclaim, full small or large
+    /// pages, multiple pages, or concurrent client-free routing. A direct
+    /// small page validates the complete source `pages_free_direct` range
+    /// derived from its rounded `block_size`, then clears that range when the
+    /// source queue removal makes it empty; request size alone is not the
+    /// boundary.
     ///
     /// # Safety
     ///
     /// `block` must be one current canonical allocation in the exact sole
-    /// non-direct small-or-medium regular page owned by this draining engine.
+    /// small-or-medium regular page owned by this draining engine. A direct
+    /// small page must be the sole source direct-cache image for its rounded
+    /// block-size range; every other direct slot must be empty.
     /// No scoped producer may survive. Every client alias in that page must
     /// remain valid only through the returned process route or an explicitly
     /// retained terminal owner.
-    pub(crate) unsafe fn abandon_mapped_non_direct_small_or_medium_to_process_route(
+    pub(crate) unsafe fn abandon_mapped_small_or_medium_to_process_route(
         mut self,
         block: NonNull<u8>,
     ) -> Result<
@@ -1638,14 +1642,12 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
             ));
         };
-        if !matches!(
-            size_class::page_kind_for_block_size(page_ref.block_size()),
-            Some(PageKind::Small | PageKind::Medium)
-        )
-            || page_ref.block_size() <= SMALL_SIZE_MAX
+        let page_kind = size_class::page_kind_for_block_size(page_ref.block_size());
+        if !matches!(page_kind, Some(PageKind::Small | PageKind::Medium))
             || bin >= ARENA_BIN_COUNT
             || bin == BIN_FULL
             || page_ref.reserved() <= 1
+            || (page_ref.block_size() <= SMALL_SIZE_MAX && page_ref.reserved() < 16)
             || page_ref.used() == 0
             || page_ref.used() >= usize::from(page_ref.reserved())
             || page_is_in_full(page_ref)
@@ -1659,6 +1661,19 @@ impl<'attachment, 'main, 'arena, 'map>
         // This first post-exit route intentionally cannot skip source queue
         // traversal or leave a second page behind. Verify the complete owner
         // image before its first force collection can change local state.
+        let direct_range = if page_ref.block_size() <= SMALL_SIZE_MAX {
+            match self.direct_cache_range_for_small_bin(bin, page_ref.block_size()) {
+                Some(range) => Some(range),
+                None => {
+                    return Err(reject(
+                        self,
+                        ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
+                    ));
+                }
+            }
+        } else {
+            None
+        };
         let mut sole_page = self.session.theap().page_count() == 1;
         for queue_bin in 0..BIN_COUNT {
             let expected = if queue_bin == bin { 1 } else { 0 };
@@ -1673,7 +1688,11 @@ impl<'attachment, 'main, 'arena, 'map>
         }
         if sole_page {
             for index in 0..PAGES_DIRECT {
-                if self.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                let expected = match direct_range {
+                    Some((start, end)) if index >= start && index <= end => page.as_ptr(),
+                    _ => EMPTY_PAGE.as_ptr(),
+                };
+                if self.session.direct_page(index) != Some(expected) {
                     sole_page = false;
                     break;
                 }
@@ -1761,13 +1780,11 @@ impl<'attachment, 'main, 'arena, 'map>
         }
         // SAFETY: both source collectors completed under the exclusive drain.
         let after_collect = unsafe { page.as_ref() };
-        if !matches!(
-            size_class::page_kind_for_block_size(after_collect.block_size()),
-            Some(PageKind::Small | PageKind::Medium)
-        )
+        let after_collect_kind = size_class::page_kind_for_block_size(after_collect.block_size());
+        if !matches!(after_collect_kind, Some(PageKind::Small | PageKind::Medium))
             || size_class::bin(after_collect.block_size()) != Some(bin)
-            || after_collect.block_size() <= SMALL_SIZE_MAX
             || after_collect.reserved() <= 1
+            || (after_collect.block_size() <= SMALL_SIZE_MAX && after_collect.reserved() < 16)
             || after_collect.used() == 0
             || after_collect.used() >= usize::from(after_collect.reserved())
             || page_is_in_full(after_collect)
@@ -1790,16 +1807,18 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: the exact sole active queue member was prevalidated and no
         // producer can coexist with this consuming post-fast-slot drain.
         unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        // `mi_page_queue_remove` updates the source direct-cache range from
+        // the now-empty queue before it decrements the owning Theap count.
+        // For a direct small page this clears precisely the prevalidated
+        // rounded-size range; non-direct small and medium pages have no
+        // direct entries to change.
+        self.update_direct_cache(bin);
         if !self.session.note_page_removed() {
             return Err(retained(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Queue,
             ));
         }
-        // The admitted small subset is above the direct-cache threshold, as
-        // are medium pages, but preserve the normal queue-remove boundary in
-        // case a stale image would otherwise hide a broken source invariant.
-        self.update_direct_cache(bin);
 
         let abandoned = match self.main_heap_abandoned_page(bin) {
             Some(map) => {
@@ -5500,8 +5519,16 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     }
 
     #[cfg(test)]
-    fn direct_page(&self, index: usize) -> Option<*mut Page> {
+    pub(crate) fn direct_page(&self, index: usize) -> Option<*mut Page> {
         self.session.direct_page(index)
+    }
+
+    /// Test-only corruption seam for a direct-cache preflight regression.
+    /// Production callers can change this image only through the source
+    /// queue-update transition.
+    #[cfg(test)]
+    pub(crate) fn set_direct_page_for_test(&mut self, index: usize, page: *mut Page) -> bool {
+        self.session.set_direct_page(index, page)
     }
 
     fn pop_or_extend(
@@ -6218,46 +6245,53 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         }
     }
 
-    fn update_direct_cache(&mut self, bin: usize) {
-        let (block_size, first) = match self.session.queue(bin) {
-            Some(queue) => (queue.block_size(), queue.first()),
-            None => return,
-        };
+    /// Returns the exact source `pages_free_direct` range for one small queue
+    /// bin. The range is based on the queue's rounded block size and adjacent
+    /// same-bin sizes, never on the user request that selected the page.
+    ///
+    /// `None` means that the caller supplied a non-small or structurally
+    /// invalid queue image. It is a closed failure for owner-exit preflight;
+    /// ordinary queue maintenance retains its existing no-op behavior.
+    fn direct_cache_range_for_small_bin(
+        &self,
+        bin: usize,
+        block_size: usize,
+    ) -> Option<(usize, usize)> {
         if block_size > SMALL_SIZE_MAX {
-            return;
+            return None;
         }
-        let Some(index) = invariants::word_count(block_size) else {
-            return;
-        };
+        let index = invariants::word_count(block_size)?;
         if index >= PAGES_DIRECT {
-            return;
-        }
-        let page = if first.is_null() { EMPTY_PAGE.as_ptr() } else { first };
-        if self.session.direct_page(index) == Some(page) {
-            return;
+            return None;
         }
 
         let mut start = 0usize;
         if index > 1 && bin > 0 {
             let mut previous = bin - 1;
             while previous > 0 {
-                let previous_size = match self.session.queue(previous) {
-                    Some(queue) => queue.block_size(),
-                    None => return,
-                };
+                let previous_size = self.session.queue(previous)?.block_size();
                 if size_class::bin(previous_size) != Some(bin) {
                     break;
                 }
                 previous -= 1;
             }
-            let previous_size = match self.session.queue(previous) {
-                Some(queue) => queue.block_size(),
-                None => return,
-            };
-            start = invariants::word_count(previous_size)
-                .and_then(|value| value.checked_add(1))
-                .unwrap_or(index)
-                .min(index);
+            let previous_size = self.session.queue(previous)?.block_size();
+            start = invariants::word_count(previous_size)?.checked_add(1)?.min(index);
+        }
+        Some((start, index))
+    }
+
+    fn update_direct_cache(&mut self, bin: usize) {
+        let (block_size, first) = match self.session.queue(bin) {
+            Some(queue) => (queue.block_size(), queue.first()),
+            None => return,
+        };
+        let Some((start, index)) = self.direct_cache_range_for_small_bin(bin, block_size) else {
+            return;
+        };
+        let page = if first.is_null() { EMPTY_PAGE.as_ptr() } else { first };
+        if self.session.direct_page(index) == Some(page) {
+            return;
         }
         for direct in start..=index {
             let _ = self.session.set_direct_page(direct, page);

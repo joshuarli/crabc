@@ -416,13 +416,16 @@ result may refine it only when it can prove retained ownership.
   before reclamation: it clears the bit/identity, consumes that count, and
   performs the same terminal release. A nonempty result remains terminally
   retained rather than reclaimed or requeued. The third handoff accepts one
-  sole nonfull medium page or small page whose rounded `block_size` is above
-  `MI_SMALL_SIZE_MAX`, with one or more live blocks, tears down the old
-  Theap/TLD, and returns a linear
-  `ProcessPageMapPostExitAccess` route. Direct-cache small pages and every
-  full small page remain excluded before source collection; the full guard is
-  explicit because a small page can stay in its regular queue with
-  `used == reserved`.
+  sole nonfull medium page or small page with one or more live blocks, tears
+  down the old Theap/TLD, and returns a linear
+  `ProcessPageMapPostExitAccess` route. A direct small member derives its
+  cache class from rounded `block_size`, requires the complete source direct
+  range to name that sole page with every other direct slot empty, and clears
+  the range during queue removal before page-count detach. It requires the
+  source partial-collection `reserved >= 16` invariant. Every full small page
+  remains excluded before source collection through the explicit `used <
+  reserved` guard, because it can stay in its regular queue with `used ==
+  reserved`.
 
   `abandon_mapped_medium_large_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
@@ -482,14 +485,18 @@ result may refine it only when it can prove retained ownership.
   proves the mapped identity/bit/count survives actual old attachment teardown,
   stays paired after the first client free, and clears before the final span
   release; `later_thread_exit_mapped_regular_route_tears_down_before_two_non_direct_small_client_frees`
-  proves the same complete lifecycle for a small page above the source direct
-  cache threshold, while
-  `later_thread_exit_mapped_regular_route_accepts_non_direct_small_upper_boundary`
-  proves the upper small-object boundary uses that same route;
-  `later_thread_exit_mapped_regular_route_refuses_direct_small_before_detach`
-  and `later_thread_exit_mapped_regular_route_refuses_full_non_direct_small_before_detach`
-  prove both small exclusions occur before collection, queue detachment, or
-  PageMap mutation; `later_thread_exit_mapped_regular_route_refuses_another_live_page_before_detach`
+  proves the same complete lifecycle for a non-direct small page, while
+  `later_thread_exit_mapped_regular_route_accepts_non_direct_small_upper_boundary`,
+  `later_thread_exit_mapped_regular_route_tears_down_before_two_direct_small_client_frees`,
+  and `later_thread_exit_mapped_regular_route_accepts_direct_small_upper_boundary`
+  prove both rounded small boundaries use that same route. The direct success
+  path proves old-Theap/TLD teardown precedes its two partial-tail client frees;
+  `later_thread_exit_mapped_regular_route_refuses_malformed_direct_image_before_detach`
+  proves a stale direct slot rejects before collection, queue detachment, or
+  PageMap mutation; and
+  `later_thread_exit_mapped_regular_route_refuses_full_non_direct_small_before_detach`
+  proves the full-small exclusion occurs before collection, queue detachment,
+  or PageMap mutation; `later_thread_exit_mapped_regular_route_refuses_another_live_page_before_detach`
   proves the route remains one-page only; and
   `later_thread_exit_mapped_regular_route_can_move_to_the_client_free_thread`
   proves the linear route can cross to its later client-free thread without
@@ -520,8 +527,8 @@ result may refine it only when it can prove retained ownership.
   proves terminal retention rather than forged thread cleanup.
 - **Decision/removal:** accepted until the PageMap supports its source
   concurrent consumers, automatic reservation/multi-arena routing exists, and
-  the remaining `_mi_theap_collect_abandon` direct-small/full/singleton/
-  unmapped/huge owner-exit traversal plus pthread/TLS integration is proved.
+  the remaining aggregate-small/full/singleton/unmapped/huge owner-exit
+  traversal plus pthread/TLS integration is proved.
   It does not
   authorize concurrent later-thread allocation routing, a public thread
   attachment API, process shutdown, or default backend use.

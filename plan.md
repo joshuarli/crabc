@@ -96,11 +96,16 @@ same release; a still-live result is terminally retained rather than reclaimed
 or requeued.
 
 The third handoff,
-`MainHeapThreadProcessPageExitDrain::abandon_mapped_non_direct_small_or_medium_to_process_route`,
+`MainHeapThreadProcessPageExitDrain::abandon_mapped_small_or_medium_to_process_route`,
 accepts one sole nonfull arena page with one or more live blocks when it is a
-medium page or a small page above the source direct-cache threshold. It
-uses the rounded source block size rather than the request to classify that
-small-page boundary. It preserves source force -> false collection, queue/page-count detach, and mapped
+medium page or any small page. A direct small member is classified by rounded
+source `block_size`, not request size: before collection, its exact source
+`pages_free_direct` range must name the sole page and every other direct slot
+must be empty. Queue removal then clears that exact range before the Theap
+page-count decrement. A direct small page retains the source `reserved >= 16`
+partial-collection invariant; full small pages remain excluded through `used <
+reserved`, since they can remain in a regular queue. The handoff preserves
+source force -> false collection, queue/direct/page-count detach, and mapped
 identity/bit/count/unown publication, then retains exact arena/span/static-main
 Heap facts while `MainHeapThreadAttachment::finish_after_detached_process_page_route`
 actually tears down the former Theap/TLD. The resulting
@@ -110,8 +115,6 @@ map lock briefly: a nonempty result keeps PageMap registration and the paired
 bitmap/count, while the final free clears them before PageMap -> `pages_main`
 -> metadata -> slice release. The route is movable to one client-free thread,
 but is not concurrent routing, allocation-time claim, reclaim, or requeue.
-Direct-cache and full small pages remain excluded; full-state validation must
-use `used < reserved` because small pages can stay in a regular queue.
 
 The bounded aggregate extension,
 `MainHeapThreadProcessPageExitDrain::abandon_mapped_medium_large_pages_to_process_route`,
@@ -176,9 +179,8 @@ attachment remains a test-only seam; production static startup must use this
 coordinator.
 
 General producer routing, concurrent/general shared/later-thread page-bearing
-ownership, direct-small/full/singleton/unmapped/huge owner-exit pages and
-behavior beyond the bounded non-direct-small-or-medium sole route and
-medium-and-large registry, terminal reuse, automatic
+ownership, full/singleton/unmapped/huge owner-exit pages and behavior beyond
+the bounded sole small-or-medium route and medium-and-large registry, terminal reuse, automatic
 and multiple dynamic arenas, complete process options/TLS/shutdown,
 pthread/TLS teardown hooks, fork repair, public libc backend integration,
 performance qualification, and default promotion remain unfinished. The next
@@ -196,7 +198,7 @@ pairing or unmapped abandonment to `src/arena.c:1304-1409`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit transfer
-now has two narrow forms: the sole non-direct-small-or-medium route and the aggregate
+now has two narrow forms: the sole small-or-medium route and the aggregate
 medium-and-large registry both convert the long mutation lease into a short
 locked free owner,
 retain stable span/arena/Heap facts rather than the old Theap/TLD, and prove
@@ -213,15 +215,15 @@ and the raw false/force-local-list order/cycle regressions in `free_list::tests`
 the no-page shared-main regressions in `main_heap_thread::tests`, the
 process-map commit/once/lifecycle regressions in `process_page_map::tests`, the
 root-pairing regressions in `process_arena::tests`, the five bounded
-static-main page-owner regressions in `main_static_page::tests`, the twenty-five
+static-main page-owner regressions in `main_static_page::tests`, the twenty-seven
 bounded later-main page-owner regressions in `main_heap_page::tests` (including
 the joined remote-full all-free exit drain, its later-queue collection behind a
 retained live page, the retained-live-page boundary, the sole-full-singleton
 final-free/reject-before-detach regressions, the sole-medium
 mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
-regular route's medium, threshold-adjacent non-direct-small, and upper-small-
-boundary teardown-before-free, direct-small and full-small pre-detach refusals,
-one-page-refusal, and cross-thread movement
+regular route's medium, threshold-adjacent non-direct small, upper direct and
+non-direct small boundaries, direct-image preflight refusal, full-small
+pre-detach refusal, one-page-refusal, and cross-thread movement
 regressions, and the aggregate medium-and-large registry's mixed-page
 release, retired-large prepass, small-class and malformed-predecessor preflight
 refusal, post-claim distinct-large-bin selection, large-span terminal release,
@@ -238,7 +240,7 @@ schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 76 items and 80
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 77 items and 81
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS singleton case, the later-main
 all-free scan/three sole-page handoffs/aggregate medium-and-large registry, or either
