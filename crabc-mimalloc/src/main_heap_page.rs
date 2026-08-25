@@ -3173,6 +3173,114 @@ mod tests {
     }
 
     #[test]
+    fn later_thread_exit_mapped_medium_pages_route_rejects_malformed_prev_before_mutation() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the malformed-queue fixture");
+                    let block = allocator
+                        .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
+                        .expect("the fixture creates one live medium page");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                        .expect("the page remains PageMap-published before thread exit");
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+
+                    // SAFETY: the test owns the complete drain and injects a
+                    // self predecessor only to prove the aggregate preflight
+                    // rejects before it calls the unsafe queue-removal kernel.
+                    unsafe { (*page.as_ptr()).test_set_queue_prev(page.as_ptr()) };
+                    let drain = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::Rejected {
+                            drain,
+                            error,
+                        }) => {
+                            assert_eq!(
+                                error,
+                                ThreadExitMappedMediumPagesPostExitAbandonError::Queue,
+                                "a malformed predecessor link rejects before source retirement or collection"
+                            );
+                            drain
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::RetainedDrain {
+                            drain,
+                            error,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("the malformed predecessor must reject before mutation: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::Teardown {
+                            terminal,
+                            ..
+                        }) => {
+                            core::mem::forget(terminal);
+                            panic!("the malformed predecessor must reject before Theap/TLD teardown")
+                        }
+                        Err(MainHeapThreadProcessPageExitMappedMediumPagesRouteBeginFailure::PageMap {
+                            parts,
+                            error,
+                        }) => {
+                            core::mem::forget(parts);
+                            panic!("the malformed predecessor must reject before PageMap-route transfer: {error:?}")
+                        }
+                        Ok(route) => {
+                            core::mem::forget(route);
+                            panic!("the malformed predecessor cannot cross into an aggregate route")
+                        }
+                    };
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) },
+                        page.as_ptr(),
+                        "the malformed preflight leaves PageMap publication untouched"
+                    );
+                    assert_eq!(unsafe { page.as_ref().used() }, 1);
+                    drop(drain);
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::Poisoned),
+                        "dropping the malformed retained drain cannot imitate an owner-exit route"
+                    );
+                    core::mem::forget(owner);
+                });
+                worker
+                    .join()
+                    .expect("the malformed queue regression remains local to its later owner");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("the malformed aggregate queue fixture remains current-thread local");
+    }
+
+    #[test]
     fn later_thread_exit_mapped_medium_pages_route_selects_each_page_bin_after_claim() {
         thread::spawn(|| {
             let config = memory_config();

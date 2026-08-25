@@ -422,8 +422,12 @@ result may refine it only when it can prove retained ownership.
   `abandon_mapped_medium_pages_to_process_route` is a distinct aggregate
   transition, not a local repetition of that sole-page handoff. Its complete
   structural preflight rejects before mutation unless every direct slot is
-  empty and every queued page is a nonfull medium arena page; it accepts an
-  empty page only with a nonzero source retirement countdown. It then ports
+  empty and every queued page is a nonfull medium arena page. It proves the
+  complete bounded doubly linked queue image before the unsafe removal kernel:
+  zero-count queues have null endpoints, nonempty heads have null predecessors,
+  every successor points back to its predecessor, and the counted forward walk
+  ends at the registered null-terminated tail. It accepts an empty page only
+  with a nonzero source retirement countdown. It then ports
   `_mi_theap_collect_retired(theap, true)`'s regular-bin release before source
   force collection, ordinary all-free release, false collection, queue/page
   detach, and mapped identity/bit/count/unown for each live survivor. Its typed
@@ -479,6 +483,9 @@ result may refine it only when it can prove retained ownership.
   `later_thread_exit_mapped_medium_pages_route_releases_retired_page_before_live_route`
   proves a normally retired all-free medium span releases before the remaining
   live medium page becomes a post-exit registry member;
+  `later_thread_exit_mapped_medium_pages_route_rejects_malformed_prev_before_mutation`
+  proves a malformed predecessor rejects before retirement, collection, queue
+  removal, or PageMap mutation; and
   `later_thread_exit_mapped_medium_pages_route_selects_each_page_bin_after_claim`
   proves two distinct medium bins select their paired static-main capability
   only after the source low owner-bit claim; and

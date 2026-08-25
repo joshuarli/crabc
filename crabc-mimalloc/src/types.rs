@@ -2785,6 +2785,25 @@ impl Page {
         self.next
     }
 
+    /// Returns the predecessor raw queue link for exclusive queue validation.
+    ///
+    /// Queue mutation remains confined to `page_queue`; callers may only
+    /// inspect this pointer while the owning single-thread session guarantees
+    /// that the page stays queue-linked and live.
+    #[inline]
+    pub(crate) const fn prev(&self) -> *mut Page {
+        self.prev
+    }
+
+    /// Corrupts one intrusive predecessor link for an isolated queue-boundary
+    /// regression. Production queue mutations remain confined to
+    /// `page_queue`.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_set_queue_prev(&mut self, prev: *mut Page) {
+        self.prev = prev;
+    }
+
     /// Whether neither intrusive queue link names this page.
     ///
     /// Terminal release validates this before it clears map/arena metadata:

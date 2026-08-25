@@ -115,9 +115,13 @@ complete structural preflight leaves queue, direct-cache, and page ownership
 untouched unless every direct slot is empty and every queued member is a
 nonfull regular medium page in the paired arena: live members require
 `reserved > 1` and `0 < used < reserved`, while an empty member is admitted
-only with a nonzero source retirement countdown. Small, full, large,
-singleton/huge, unmapped, foreign, malformed, and mixed queues reject before
-any queue/page mutation. After that refusal boundary it ports
+only with a nonzero source retirement countdown. It proves each intrusive
+queue's complete bounded doubly linked image before the unsafe queue-removal
+kernel: zero-count queues have null endpoints; nonempty queues have a null
+head predecessor, correct predecessor links, and a counted forward walk ending
+at the registered null-terminated tail. Small, full, large, singleton/huge,
+unmapped, foreign, malformed, and mixed queues reject before any queue/page
+mutation. After that refusal boundary it ports
 `_mi_theap_collect_retired(theap, true)`: tracked empty retired pages release
 through the ordinary PageMap -> `pages_main` -> metadata -> slice path before
 the remaining traversal follows `mi_theap_collect_abandon`'s force collect,
@@ -198,7 +202,7 @@ and the raw false/force-local-list order/cycle regressions in `free_list::tests`
 the no-page shared-main regressions in `main_heap_thread::tests`, the
 process-map commit/once/lifecycle regressions in `process_page_map::tests`, the
 root-pairing regressions in `process_arena::tests`, the five bounded
-static-main page-owner regressions in `main_static_page::tests`, the seventeen
+static-main page-owner regressions in `main_static_page::tests`, the eighteen
 bounded later-main page-owner regressions in `main_heap_page::tests` (including
 the joined remote-full all-free exit drain, its later-queue collection behind a
 retained live page, the retained-live-page boundary, the sole-full-singleton
@@ -206,8 +210,8 @@ final-free/reject-before-detach regressions, the sole-medium
 mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
 medium route's teardown-before-free, one-page-refusal, and cross-thread
 movement regressions, and the aggregate medium registry's two-page release,
-retired-page prepass, post-claim distinct-bin selection, and
-force-collection-to-drained regressions), and
+retired-page prepass, malformed-predecessor preflight refusal, post-claim
+distinct-bin selection, and force-collection-to-drained regressions), and
 `abandoned::tests::mapped_one_block_owner_exit_free_retains_a_nonempty_medium_page`,
 which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,

@@ -2005,9 +2005,13 @@ impl<'attachment, 'main, 'arena, 'map>
         // ownership, prove that *every* page has the one bounded
         // mapped-medium route. This is the aggregate registry boundary: it
         // rejects full/small/large/OS pages and malformed queue images without
-        // partially detaching an earlier member. A zero-used member is valid
-        // only when normal local free left it in the source retired state; the
-        // following source-order prepass must release it before live routing.
+        // partially detaching an earlier member. In particular, prove each
+        // queue's empty endpoints, head predecessor, every predecessor link,
+        // terminal successor, and tail before the later unsafe remove kernel
+        // relies on that complete doubly linked image. A zero-used member is
+        // valid only when normal local free left it in the source retired
+        // state; the following source-order prepass must release it before
+        // live routing.
         let expected_page_count = self.session.theap().page_count();
         let mut observed_page_count = 0usize;
         for queue_bin in 0..BIN_COUNT {
@@ -2017,8 +2021,19 @@ impl<'attachment, 'main, 'arena, 'map>
                     ThreadExitMappedMediumPagesPostExitAbandonError::Queue,
                 ));
             };
-            let mut page = queue.first();
             let mut remaining = queue.count();
+            if remaining == 0 {
+                if !queue.is_empty() {
+                    return Err(reject(
+                        self,
+                        ThreadExitMappedMediumPagesPostExitAbandonError::Queue,
+                    ));
+                }
+                continue;
+            }
+
+            let mut page = queue.first();
+            let mut previous = core::ptr::null_mut();
             while remaining != 0 {
                 let Some(page_nonnull) = NonNull::new(page) else {
                     return Err(reject(
@@ -2030,6 +2045,12 @@ impl<'attachment, 'main, 'arena, 'map>
                 // initialized metadata for this preflight. No source state is
                 // changed until this complete pass succeeds.
                 let page_ref = unsafe { page_nonnull.as_ref() };
+                if page_ref.prev() != previous {
+                    return Err(reject(
+                        self,
+                        ThreadExitMappedMediumPagesPostExitAbandonError::Queue,
+                    ));
+                }
                 if !self.owns_page(page_ref) || page_ref.heap() != self.session.theap().heap() {
                     return Err(reject(
                         self,
@@ -2091,9 +2112,10 @@ impl<'attachment, 'main, 'arena, 'map>
                 // preflight; bounded `remaining` makes a malformed cycle
                 // reject through the final tail check rather than loop.
                 page = unsafe { page_nonnull.as_ref().next() };
+                previous = page_nonnull.as_ptr();
                 remaining -= 1;
             }
-            if !page.is_null() {
+            if !page.is_null() || queue.last() != previous {
                 return Err(reject(
                     self,
                     ThreadExitMappedMediumPagesPostExitAbandonError::Queue,
@@ -2293,7 +2315,7 @@ impl<'attachment, 'main, 'arena, 'map>
             if !self
                 .session
                 .queue(queue_bin)
-                .is_some_and(|queue| queue.count() == 0)
+                .is_some_and(|queue| queue.is_empty())
             {
                 return Err(retained(
                     self,
