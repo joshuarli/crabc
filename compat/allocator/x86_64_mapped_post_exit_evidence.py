@@ -144,7 +144,6 @@ C_TRACE_PROBE = r'''
 typedef struct producer_context_s {
   mi_arena_id_t arena_id;
   mi_heap_t* heap;
-  mi_page_t* page;
   void* block;
   void* survivor;
   bool setup_valid;
@@ -155,7 +154,9 @@ typedef struct producer_context_s {
   bool producer_done;
 } producer_context_t;
 
-static const size_t request = MI_SMALL_MAX_OBJ_SIZE + 1024;
+// Keep this at the source boundary: the fixture proves one regular-medium
+// page, not an arbitrary larger size class.
+static const size_t request = MI_SMALL_MAX_OBJ_SIZE + 1;
 static const size_t expected_medium_slice_count = 8;
 
 static void* producer_main(void* arg) {
@@ -189,7 +190,6 @@ static void* producer_main(void* arg) {
                                                 && _mi_page_associated_theap_peek(page) == theap);
 
   context->heap = heap;
-  context->page = page;
   context->block = block;
   context->survivor = survivor;
   context->setup_valid = (context->producer_theap_initialized
@@ -209,7 +209,6 @@ failed:
   if (survivor != NULL) mi_free(survivor);
   if (heap != NULL) mi_heap_destroy(heap);
   context->heap = NULL;
-  context->page = NULL;
   context->block = NULL;
   context->survivor = NULL;
   context->setup_valid = false;
@@ -277,11 +276,16 @@ int main(void) {
   stage = 4;
 
   heap = context.heap;
-  page = context.page;
   block = context.block;
   survivor = context.survivor;
-  if (!context.setup_valid || !context.producer_done || heap == NULL || page == NULL
-      || block == NULL || survivor == NULL) goto cleanup;
+  if (!context.setup_valid || !context.producer_done || heap == NULL
+      || block == NULL || survivor == NULL || block == survivor) goto cleanup;
+
+  // The producer owns no live page pointer across `mi_thread_done()`.  After
+  // pthread_join, reacquire the page from both still-live client pointers so
+  // every subsequent page-field observation has a current safe lookup.
+  page = _mi_safe_ptr_page(block);
+  if (page == NULL || _mi_safe_ptr_page(survivor) != page) goto cleanup;
 
   arena_backed = (page->memid.memkind == MI_MEM_ARENA);
   medium_page = (page->block_size > MI_SMALL_MAX_OBJ_SIZE
@@ -323,6 +327,10 @@ int main(void) {
   // The requested order is exact: first block, then survivor during cleanup.
   mi_free(block);
   block = NULL;
+  // The survivor keeps this page live, so reacquire it rather than retaining
+  // a page pointer across the first public free.
+  page = _mi_safe_ptr_page(survivor);
+  if (page == NULL || (uintptr_t)mi_page_start(page) != page_start_address) goto cleanup;
   mapped_after_free = mi_page_is_abandoned_mapped(page);
   abandoned_after_free = mi_page_is_abandoned(page);
   survivor_keeps_page_live = (_mi_ptr_page(survivor) == page && !mi_page_all_free(page));

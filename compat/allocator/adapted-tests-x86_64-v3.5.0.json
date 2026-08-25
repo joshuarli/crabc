@@ -21,19 +21,7 @@
   "compile_requirements": {
     "adapter_feature": "test-adapter",
     "compiler": "musl-gcc",
-    "expected_cdylib_elf": {
-      "class": "ELF64",
-      "endianness": "little",
-      "machine": "Advanced Micro Devices X86-64"
-    },
-    "expected_dynamic_dependencies": [
-      "libc.musl-x86_64.so.1",
-      "libgcc_s.so.1"
-    ],
-    "expected_executable_dynamic_dependencies": [
-      "libc.musl-x86_64.so.1",
-      "libgcc_s.so.1"
-    ],
+    "expected_executable_dynamic_dependencies": [],
     "expected_executable_elf": {
       "class": "ELF64",
       "endianness": "little",
@@ -41,17 +29,16 @@
     },
     "expected_fixture_stdout": "allocator ok\n",
     "language": "C11",
-    "link_command_shape": "musl-gcc <fixture-or-patched-source> <rust-staticlib> -L/usr/lib -lgcc_s -lc -o <native-binary>",
+    "link_command_shape": "musl-gcc <fixture-or-patched-source> <rust-staticlib> -L<rust-target-self-contained> -lunwind -lc -o <native-binary>",
     "link_order": "C fixture or selected patched source, adapter staticlib, then musl/system libraries",
-    "native_library_search_paths": [
-      "/usr/lib"
-    ],
+    "native_library_search_paths": [],
     "native_static_libs": [
-      "-lgcc_s",
+      "-lunwind",
       "-lc"
     ],
     "required_header": "crabc-mimalloc-test-adapter.h",
-    "rust_cdylib_filename": "libcrabc_mimalloc_test_adapter.so",
+    "rust_cdylib_supported": false,
+    "rust_target_self_contained_native_library": "libunwind.a",
     "rust_staticlib_filename": "libcrabc_mimalloc_test_adapter.a"
   },
   "evidence_boundary": {

@@ -155,7 +155,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         for gate in gates.values():
             self.assertEqual(gate["state"], "available")
             self.assertTrue(gate["native_required"])
-            self.assertTrue(gate["command"].startswith("./scripts/dev-amd64.sh "))
+            self.assertTrue(gate["command"].startswith("./compat/allocator/run-x86_64.sh "))
         self.assertEqual(
             gates["native-c-oracle"]["report"],
             "compat/reports/allocator/x86_64/latest.json",
@@ -182,7 +182,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-live-owner-remote-free-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-remote-free",
+            "./compat/allocator/run-x86_64.sh allocator-remote-free",
         )
         self.assertEqual(
             gates["native-live-owner-remote-free-differential"]["report"],
@@ -190,7 +190,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-small-direct-remote-free-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-direct-remote",
+            "./compat/allocator/run-x86_64.sh allocator-direct-remote",
         )
         self.assertEqual(
             gates["native-small-direct-remote-free-differential"]["report"],
@@ -198,7 +198,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-mapped-arena-same-origin-reclaim-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-mapped-reclaim",
+            "./compat/allocator/run-x86_64.sh allocator-mapped-reclaim",
         )
         self.assertEqual(
             gates["native-mapped-arena-same-origin-reclaim-differential"]["report"],
@@ -206,7 +206,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-unmapped-full-medium-reabandon-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-unmapped-reabandon",
+            "./compat/allocator/run-x86_64.sh allocator-unmapped-reabandon",
         )
         self.assertEqual(
             gates["native-unmapped-full-medium-reabandon-differential"]["report"],
@@ -214,7 +214,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-mapped-post-exit",
+            "./compat/allocator/run-x86_64.sh allocator-mapped-post-exit",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["report"],
@@ -222,7 +222,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-retired-page-prepass-before-live-post-exit-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-retired-prepass",
+            "./compat/allocator/run-x86_64.sh allocator-retired-prepass",
         )
         self.assertEqual(
             gates["native-retired-page-prepass-before-live-post-exit-differential"]["report"],
@@ -230,7 +230,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-two-live-page-aggregate-post-exit-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-aggregate-post-exit",
+            "./compat/allocator/run-x86_64.sh allocator-aggregate-post-exit",
         )
         self.assertEqual(
             gates["native-two-live-page-aggregate-post-exit-differential"]["report"],
@@ -238,7 +238,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-two-client-aggregate-still-live-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-aggregate-still-live",
+            "./compat/allocator/run-x86_64.sh allocator-aggregate-still-live",
         )
         self.assertEqual(
             gates["native-two-client-aggregate-still-live-differential"]["report"],
@@ -246,7 +246,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-same-bin-two-page-aggregate-still-live-differential"]["command"],
-            "./scripts/dev-amd64.sh allocator-aggregate-same-bin-still-live",
+            "./compat/allocator/run-x86_64.sh allocator-aggregate-same-bin-still-live",
         )
         self.assertEqual(
             gates["native-same-bin-two-page-aggregate-still-live-differential"]["report"],
@@ -258,7 +258,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-pinned-c-release-mode-object-symbols"]["command"],
-            "./scripts/dev-amd64.sh allocator-release-evidence",
+            "./compat/allocator/run-x86_64.sh allocator-release-evidence",
         )
         self.assertEqual(
             gates["native-pinned-c-release-mode-object-symbols"]["report"],
@@ -266,7 +266,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-release-api-mode-object-symbol-assessment"]["command"],
-            "./scripts/dev-amd64.sh allocator-api-coverage",
+            "./compat/allocator/run-x86_64.sh allocator-api-coverage",
         )
         self.assertEqual(
             gates["native-release-api-mode-object-symbol-assessment"]["report"],
@@ -274,7 +274,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-staged-public-header-mode-linkability"]["command"],
-            "./scripts/dev-amd64.sh allocator-header-modes",
+            "./compat/allocator/run-x86_64.sh allocator-header-modes",
         )
         self.assertEqual(
             gates["native-staged-public-header-mode-linkability"]["report"],
@@ -282,7 +282,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertEqual(
             gates["native-static-library-and-override-object-linkability"]["command"],
-            "./scripts/dev-amd64.sh allocator-static-modes",
+            "./compat/allocator/run-x86_64.sh allocator-static-modes",
         )
         self.assertEqual(
             gates["native-static-library-and-override-object-linkability"]["report"],
@@ -439,7 +439,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertTrue(regression["native_required"])
         self.assertEqual(
             regression["command"],
-            "./scripts/dev-amd64.sh cargo test -p crabc-core --lib",
+            "./compat/allocator/run-x86_64.sh allocator-core-unit",
         )
         self.assertIn("implementation regression", regression["claim"])
         self.assertIn("not independent C-oracle", regression["claim"])

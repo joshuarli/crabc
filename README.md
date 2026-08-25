@@ -96,7 +96,7 @@ not built.
 | `ldso/` | `libldso.so`: AArch64 dynamic linker |
 | `crt/` | Rust-produced application CRT start/end objects |
 | `builtins/` | Rust `no_std` compiler-helper archive for final C links |
-| `crabc-core/` | Shared typed `no_std` Linux/AArch64 implementation layer |
+| `crabc-core/` | Shared typed `no_std` Linux/AArch64 implementation layer; private native x86-64 primitives exist only for fixed-mimalloc evidence |
 | `crabc-rs/` | Idiomatic Rust OS/runtime capabilities |
 | `include/` | Public C headers |
 | `tests/` | Runtime integration tests and C fixtures |

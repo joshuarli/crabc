@@ -19,7 +19,28 @@ PRODUCTION_SOURCE = (
     ROOT / "crabc-rs" / "src",
 )
 HISTORICAL_OR_TASK_SOURCES = {Path("cleanup.md")}
-ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"(?:x86_64|riscv64)"')
+X86_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"x86_64"')
+RISC_V_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"riscv64"')
+# The user-authorized native x86-64 lane is deliberately confined to the
+# internal fixed-mimalloc evidence engine and the two exact core cfg-boundary
+# files it needs. Keep this list specific: a new production x86 branch must
+# be reviewed rather than inheriting the exception from a directory-wide rule.
+X86_ALLOCATOR_EVIDENCE_CORE_SOURCES = {
+    Path("crabc-core/src/lib.rs"),
+    Path("crabc-core/src/thread.rs"),
+}
+X86_ALLOCATOR_EVIDENCE_MIMALLOC_SOURCES = {
+    Path("crabc-mimalloc/src/abandoned.rs"),
+    Path("crabc-mimalloc/src/config.rs"),
+    Path("crabc-mimalloc/src/dynamic_theap.rs"),
+    Path("crabc-mimalloc/src/lib.rs"),
+    Path("crabc-mimalloc/src/main_heap_page.rs"),
+    Path("crabc-mimalloc/src/os.rs"),
+    Path("crabc-mimalloc/src/os_host_model.rs"),
+    Path("crabc-mimalloc/src/os_page.rs"),
+    Path("crabc-mimalloc/src/remote_free.rs"),
+    Path("crabc-mimalloc/src/single_thread.rs"),
+}
 INLINE_CORE_MODULE = re.compile(r"(?m)^\s*(?:pub\s+)?mod\s+\w+\s*\{")
 REMOVED_ROOT_LOADER = re.compile(r"src/loader_core\.rs|root[- ]loader|loader helper", re.IGNORECASE)
 LIBC_C_ABI_MODULES = (
@@ -134,6 +155,21 @@ def check_root_c_link_boundaries(errors: list[str]) -> None:
             errors.append(f"tests/{name}: naked loader probe must remain no-libc")
         if '"-Wl,--dynamic-linker,/lib/ld-crabc-aarch64.so.1"' not in text:
             errors.append(f"tests/{name}: naked loader probe must name the canonical crabc interpreter")
+
+
+def is_authorized_x86_allocator_evidence_branch(relative: Path, line: str) -> bool:
+    """Return whether one exact production x86 cfg belongs to the private lane.
+
+    `crabc-core` remains an internal crate, but its public Rust modules are
+    consumed by the public facade.  Its two x86 cfgs must therefore name the
+    private feature on the same cfg line.  The fixed-mimalloc port has a small,
+    explicit source-file allowlist because it is the only user-authorized x86
+    implementation boundary.
+    """
+
+    if relative in X86_ALLOCATOR_EVIDENCE_CORE_SOURCES:
+        return 'feature = "allocator-x86-evidence"' in line
+    return relative in X86_ALLOCATOR_EVIDENCE_MIMALLOC_SOURCES
 
 
 def main() -> int:
@@ -276,10 +312,15 @@ def main() -> int:
 
     for source_root in PRODUCTION_SOURCE:
         for path in source_root.rglob("*.rs"):
+            relative = path.relative_to(ROOT)
             for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
-                if ARCH_BRANCH.search(line):
+                if RISC_V_ARCH_BRANCH.search(line):
+                    errors.append(f"{relative}:{line_number}: inactive RISC-V architecture branch")
+                if X86_ARCH_BRANCH.search(line) and not is_authorized_x86_allocator_evidence_branch(
+                    relative, line
+                ):
                     errors.append(
-                        f"{path.relative_to(ROOT)}:{line_number}: inactive architecture branch"
+                        f"{relative}:{line_number}: x86-64 branch is outside private allocator evidence"
                     )
 
     core_root = ROOT / "crabc-core" / "src" / "lib.rs"
@@ -288,6 +329,13 @@ def main() -> int:
         errors.append("crabc-core/src/lib.rs: composition root exceeds 300 lines")
     if INLINE_CORE_MODULE.search(core_text):
         errors.append("crabc-core/src/lib.rs: inline domain modules are not allowed")
+
+    rust_facade_root = ROOT / "crabc-rs" / "src" / "lib.rs"
+    rust_facade_text = rust_facade_root.read_text()
+    if 'compile_error!("crabc-rs supports Linux/AArch64 little-endian only")' not in rust_facade_text:
+        errors.append(
+            "crabc-rs/src/lib.rs: public facade must reject non-Linux/AArch64 targets explicitly"
+        )
 
     libc_root = ROOT / "libc" / "src" / "lib.rs"
     libc_text = libc_root.read_text()

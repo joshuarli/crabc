@@ -90,12 +90,18 @@ class FixtureBuildCommandTests(unittest.TestCase):
         rust_command = perf.rust_fixture_command(
             "musl-gcc",
             Path("/build/libcrabc_mimalloc_test_adapter.a"),
-            ["-lgcc_s", "-lc"],
+            ["/rust/sysroot/lib/rustlib/x86_64-unknown-linux-musl/lib/self-contained"],
+            ["-lunwind", "-lc"],
             Path("/build/rust-private-adapter-fixture"),
         )
         cargo_command = perf.rust_adapter_cargo_command(Path("/build/rust-target"))
 
         self.assertEqual(perf.FIXTURE_RELEASE_FLAGS, ("-O3", "-DNDEBUG"))
+        self.assertEqual(perf.EXPECTED_RUST_NATIVE_STATIC_LIBRARIES, ("-lunwind", "-lc"))
+        self.assertIn(
+            "-L/rust/sysroot/lib/rustlib/x86_64-unknown-linux-musl/lib/self-contained",
+            rust_command,
+        )
         self.assertEqual(
             [flag for flag in c_command if flag in perf.FIXTURE_RELEASE_FLAGS],
             list(perf.FIXTURE_RELEASE_FLAGS),

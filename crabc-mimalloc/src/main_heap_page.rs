@@ -18759,9 +18759,9 @@ mod tests {
                         core::mem::forget(allocator);
                         panic!("thread exit enters its post-fast-slot drain: {error:?}");
                     });
-                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                    let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("the live medium page still requires a process route")
                         }
@@ -18801,9 +18801,9 @@ mod tests {
                     } == THREAD_ID_ABANDONED_MAPPED;
 
                     match unsafe { route.remote_free_after_thread_exit(live) } {
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {}
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
-                        | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {}
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+                        | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                             core::mem::forget(route);
                             panic!("the live routed page releases after its final client free")
                         }
@@ -19011,9 +19011,9 @@ mod tests {
                         core::mem::forget(allocator);
                         panic!("thread exit enters its post-fast-slot drain: {error:?}");
                     });
-                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                    let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("two live medium pages cannot become an empty drain")
                         }
@@ -19151,14 +19151,14 @@ mod tests {
                 )
                 .expect("the second client address remains non-null until its free");
                 let route = match unsafe { route.remote_free_after_thread_exit(second_for_free) } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         route
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => {
                         core::mem::forget(route);
                         panic!("the only second-page client releases that page")
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {
                         panic!("the still-live first page prevents aggregate terminal release")
                     }
                     Err(_) => panic!("the second client free releases one aggregate page"),
@@ -19225,9 +19225,9 @@ mod tests {
                 )
                 .expect("the first client address remains non-null until its final free");
                 match unsafe { route.remote_free_after_thread_exit(first_for_free) } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {}
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
-                    | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {}
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+                    | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         core::mem::forget(route);
                         panic!("the final first-page free releases every aggregate route page")
                     }
@@ -19485,9 +19485,9 @@ mod tests {
                         core::mem::forget(allocator);
                         panic!("thread exit enters its post-fast-slot drain: {error:?}");
                     });
-                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                    let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("two live medium pages cannot become an empty drain")
                         }
@@ -19563,7 +19563,7 @@ mod tests {
                 let consumer_joined_before_first_free = true;
                 let arena = paired_arena;
                 let observe_routed_page = |
-                    route: &MainHeapThreadProcessPageExitMappedMediumPagesRoute<'_>,
+                    route: &MainHeapThreadProcessPageExitMappedRegularPagesRoute<'_>,
                     address: usize,
                     expected_identity: usize,
                 | {
@@ -19659,14 +19659,14 @@ mod tests {
                 )
                 .expect("the first client address remains non-null until its free");
                 let route = match unsafe { route.remote_free_after_thread_exit(first_a_for_free) } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => {
                         route
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         core::mem::forget(route);
                         panic!("one of two first-page clients cannot release either aggregate page")
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {
                         panic!("the remaining first-page client and distinct page prevent terminal release")
                     }
                     Err(_) => panic!("the first client free stays mapped-abandoned and routable"),
@@ -19743,14 +19743,14 @@ mod tests {
                 )
                 .expect("the distinct client address remains non-null until its free");
                 let route = match unsafe { route.remote_free_after_thread_exit(second_for_free) } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         route
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => {
                         core::mem::forget(route);
                         panic!("the distinct one-client page must terminally release")
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {
                         panic!("the remaining first-page client prevents aggregate terminal release")
                     }
                     Err(_) => panic!("the distinct client free releases exactly its page"),
@@ -19829,9 +19829,9 @@ mod tests {
                 )
                 .expect("the remaining first client address stays non-null until its final free");
                 match unsafe { route.remote_free_after_thread_exit(first_b_for_free) } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {}
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
-                    | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {}
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+                    | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         core::mem::forget(route);
                         panic!("the final first-page client releases every remaining aggregate page")
                     }
@@ -20117,9 +20117,9 @@ mod tests {
                     let same_bin_queue_count_two_before_exit = allocator.engine.queue_count(first_bin)
                         == Some(2);
                     let first_next = unsafe { first_page.as_ref().next() };
-                    let first_prev = unsafe { first_page.as_ref().test_queue_prev() };
+                    let first_prev = unsafe { first_page.as_ref().prev() };
                     let second_next = unsafe { second_page.as_ref().next() };
-                    let second_prev = unsafe { second_page.as_ref().test_queue_prev() };
+                    let second_prev = unsafe { second_page.as_ref().prev() };
                     let same_bin_queue_successor_visits_both_before_exit =
                         (first_next == second_page.as_ptr() && second_next.is_null())
                             || (second_next == first_page.as_ptr() && first_next.is_null());
@@ -20185,9 +20185,9 @@ mod tests {
                         core::mem::forget(allocator);
                         panic!("thread exit enters its post-fast-slot drain: {error:?}");
                     });
-                    let route = match unsafe { drain.abandon_mapped_medium_pages_to_process_route() } {
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Route(route)) => route,
-                        Ok(MainHeapThreadProcessPageExitMappedMediumPagesRouteBegin::Drained(drain)) => {
+                    let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("two same-bin live medium pages cannot become an empty drain")
                         }
@@ -20267,7 +20267,7 @@ mod tests {
                 let consumer_joined_before_first_free = true;
                 let arena = paired_arena;
                 let observe_routed_page = |
-                    route: &MainHeapThreadProcessPageExitMappedMediumPagesRoute<'_>,
+                    route: &MainHeapThreadProcessPageExitMappedRegularPagesRoute<'_>,
                     address: usize,
                     expected_identity: usize,
                 | {
@@ -20362,14 +20362,14 @@ mod tests {
                 )
                 .expect("the first same-bin client address remains non-null until its free");
                 let route = match unsafe { route.remote_free_after_thread_exit(first_a_for_free) } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => {
                         route
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         core::mem::forget(route);
                         panic!("one of two first-page clients cannot release either same-bin aggregate page")
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {
                         panic!("the remaining first-page client and second same-bin page prevent terminal release")
                     }
                     Err(_) => panic!("the first same-bin client free stays mapped-abandoned and routable"),
@@ -20445,14 +20445,14 @@ mod tests {
                 )
                 .expect("the second same-bin client address remains non-null until its free");
                 let route = match unsafe { route.remote_free_after_thread_exit(second_for_free) } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         route
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route)) => {
                         core::mem::forget(route);
                         panic!("the second same-bin one-client page must terminally release")
                     }
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {
                         panic!("the remaining first-page client prevents aggregate terminal release")
                     }
                     Err(_) => panic!("the second same-bin client free releases exactly its page"),
@@ -20532,9 +20532,9 @@ mod tests {
                 let final_free_released_all = match unsafe {
                     route.remote_free_after_thread_exit(first_b_for_free)
                 } {
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedAll) => true,
-                    Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::StillLive(route))
-                    | Ok(MainHeapThreadProcessPageExitMappedMediumPagesFreeResult::ReleasedPage(route)) => {
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => true,
+                    Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+                    | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
                         core::mem::forget(route);
                         panic!("the final same-bin first client releases every remaining aggregate page")
                     }

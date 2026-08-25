@@ -95,7 +95,9 @@ ORACLE_SOURCES = (
     "src/prim/prim.c",
     "src/prim/prim-tls.c",
 )
-EXPECTED_RUST_NATIVE_STATIC_LIBRARIES = ("-lgcc_s", "-lc")
+# Match rustc's target-specific staticlib consumer tail.  The C link resolves
+# libunwind.a from this target's rustc self-contained library directory.
+EXPECTED_RUST_NATIVE_STATIC_LIBRARIES = ("-lunwind", "-lc")
 
 
 @dataclass(frozen=True)
@@ -439,6 +441,24 @@ def parse_native_static_libraries(output: str) -> list[str]:
     return libraries
 
 
+def rust_target_self_contained_unwind_search_path() -> str:
+    """Resolve rustc's x86 musl static unwinder for a C staticlib consumer."""
+
+    rustc = require_tool("rustc")
+    record = command_record((rustc, "--print", "sysroot"), cwd=ROOT)
+    require_success(record, "Rust sysroot discovery for private adapter link")
+    lines = [line.strip() for line in str(record["stdout"]).splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise HarnessError("Rust sysroot discovery is absent or ambiguous")
+    sysroot = Path(lines[0])
+    if not sysroot.is_absolute():
+        raise HarnessError("Rust sysroot for private adapter link is not absolute")
+    search_path = sysroot / "lib" / "rustlib" / RUST_TARGET / "lib" / "self-contained"
+    if not (search_path / "libunwind.a").is_file():
+        raise HarnessError(f"Rust target self-contained libunwind is absent: {search_path / 'libunwind.a'}")
+    return str(search_path)
+
+
 def fixture_compiler_prefix(compiler: str) -> list[str]:
     """Return the release-mode flags shared by the C and Rust fixture code."""
 
@@ -495,7 +515,11 @@ def rust_adapter_cargo_command(cargo_target: Path) -> list[str]:
 
 
 def rust_fixture_command(
-    compiler: str, static_library: Path, native_libraries: Sequence[str], binary: Path
+    compiler: str,
+    static_library: Path,
+    native_library_search_paths: Sequence[str],
+    native_libraries: Sequence[str],
+    binary: Path,
 ) -> list[str]:
     """Build the shared fixture with the same release flags as the C lane."""
 
@@ -508,7 +532,7 @@ def rust_fixture_command(
         str(FIXTURE_ROOT / "fixture.c"),
         str(FIXTURE_ROOT / "rust-backend.c"),
         str(static_library),
-        "-L/usr/lib",
+        *(f"-L{path}" for path in native_library_search_paths),
         *native_libraries,
         "-pthread",
         "-o",
@@ -547,7 +571,14 @@ def build_rust_fixture(
     if observed_symbols != expected_symbols:
         raise HarnessError("Rust adapter static archive no longer exposes exactly the private prefixed symbols")
     binary = build_root / "rust-private-adapter-fixture"
-    fixture_command = rust_fixture_command(compiler, static_library, native_libraries, binary)
+    native_library_search_paths = [rust_target_self_contained_unwind_search_path()]
+    fixture_command = rust_fixture_command(
+        compiler,
+        static_library,
+        native_library_search_paths,
+        native_libraries,
+        binary,
+    )
     fixture = command_record(fixture_command, cwd=ROOT)
     require_success(fixture, "Rust private-adapter fixture build")
     return binary, {
@@ -556,6 +587,7 @@ def build_rust_fixture(
         "executable": audit_executable(readelf, binary),
         "fixture_release_flags": list(FIXTURE_RELEASE_FLAGS),
         "native_static_libraries": native_libraries,
+        "native_library_search_paths": native_library_search_paths,
         "static_archive": artifact_record(static_library),
         "static_archive_prefixed_symbols": observed_symbols,
         "fixture_build_command": fixture_command,

@@ -889,7 +889,7 @@ The native x86-64 quick lane is separate from the AArch64 allocator gate.
 Run it only through the architecture-aware native dispatcher:
 
 ```sh
-./scripts/dev-amd64.sh allocator --quick
+./compat/allocator/run-x86_64.sh allocator --quick
 ```
 
 The runner rejects emulation by requiring both the native x86-64 guest and
@@ -905,13 +905,16 @@ not falsely presented as a linked ELF/staticlib ABI. The lane then builds the
 pinned native C oracle, compares direct Rust-engine configuration/layout and
 small/fundamental traces, proves x86-64 TLS codegen, and builds/audits the
 private prefixed adapter. That adapter has exactly 16 `crabc_test_*` exports,
-no `mi_*` exports, the recorded musl dynamic dependencies, and native
-executions of both the existing allocator fixture and 33 selected patched
-upstream API checks. The adapter cdylib and both fixture executables are
-audited for their x86-64 ELF identity and dynamic dependencies; each
-executable also records a PT_INTERP loader whose basename is
-`ld-musl-x86_64.so.1`. Its first native run may populate the architecture-local
-Cargo cache from the checked-in lockfile; it never updates that lockfile.
+no `mi_*` exports, and native executions of both the existing allocator
+fixture and 33 selected patched upstream API checks. The x86 musl Rust target
+does not support a `cdylib`; this lane audits its staticlib instead. Rustc's
+recorded C-consumer tail is `-lunwind -lc`, and the private image makes the
+target toolchain's static `libunwind.a` available through its derived
+`rustc --print sysroot` target self-contained search directory. Both fixture
+executables are audited for their x86-64 ELF identity, empty `DT_NEEDED` set,
+and a PT_INTERP loader whose basename is `ld-musl-x86_64.so.1`. Its first
+native run may populate the architecture-local Cargo cache from the checked-in
+lockfile; it never updates that lockfile.
 
 The direct native C/Rust fundamental trace currently contains 75 exact logical
 fields, including the fixed no-padding `mi_expand` nonzero null-pointer, zero-size,
@@ -924,7 +927,7 @@ The target-local native C release boundary has a dedicated evidence-only
 command:
 
 ```sh
-./scripts/dev-amd64.sh allocator-release-evidence
+./compat/allocator/run-x86_64.sh allocator-release-evidence
 ```
 
 It compiles the pinned mimalloc v3.5.0 release source set with the recorded
@@ -940,7 +943,7 @@ The selected-release source API assessment is a separate native x86-only
 accounting gate:
 
 ```sh
-./scripts/dev-amd64.sh allocator-api-coverage
+./compat/allocator/run-x86_64.sh allocator-api-coverage
 ```
 
 It first creates the attested release-mode/object-symbol report, then records
@@ -956,7 +959,7 @@ Selected staged public-header C/C++ compile/linkability has a distinct native
 gate:
 
 ```sh
-./scripts/dev-amd64.sh allocator-header-modes
+./compat/allocator/run-x86_64.sh allocator-header-modes
 ```
 
 It builds the pinned C normal-release shared object, stages the exact four
@@ -969,7 +972,7 @@ behavior, Rust implementation, public x86 runtime support, or AArch64 status.
 Selected static artifact modes have a separate native gate:
 
 ```sh
-./scripts/dev-amd64.sh allocator-static-modes
+./compat/allocator/run-x86_64.sh allocator-static-modes
 ```
 
 It compiles the pinned normal-release source set into one static archive,
@@ -985,7 +988,7 @@ configure/install, or create public x86/AArch64 runtime support.
 The dedicated live-owner remote-free differential is likewise native x86-only:
 
 ```sh
-./scripts/dev-amd64.sh allocator-remote-free
+./compat/allocator/run-x86_64.sh allocator-remote-free
 ```
 
 It compiles a private `mimalloc/internal.h` C probe against the pinned release
@@ -1004,7 +1007,7 @@ the x86 `allocator --quick` lane.
 The real small direct-cache route has its own native private differential:
 
 ```sh
-./scripts/dev-amd64.sh allocator-direct-remote
+./compat/allocator/run-x86_64.sh allocator-direct-remote
 ```
 
 It fills one real small direct-cache page to its current capacity, sends one
@@ -1021,7 +1024,7 @@ One mapped-arena same-origin reclaim transition has its own native private
 differential:
 
 ```sh
-./scripts/dev-amd64.sh allocator-mapped-reclaim
+./compat/allocator/run-x86_64.sh allocator-mapped-reclaim
 ```
 
 Its pinned-C fixture queue-detaches one arena-backed mapped page with two
@@ -1036,7 +1039,7 @@ One initially-unmapped full-medium reabandon tail has a distinct native
 private differential:
 
 ```sh
-./scripts/dev-amd64.sh allocator-unmapped-reabandon
+./compat/allocator/run-x86_64.sh allocator-unmapped-reabandon
 ```
 
 The pinned-C side creates an arena Theap with reclaim-on-free and full-page
@@ -1056,7 +1059,7 @@ One selected mapped post-Theap-teardown route has a separate native private
 differential:
 
 ```sh
-./scripts/dev-amd64.sh allocator-mapped-post-exit
+./compat/allocator/run-x86_64.sh allocator-mapped-post-exit
 ```
 
 Its pinned-C producer uses one worker `pthread` to allocate two same-page
@@ -1077,7 +1080,7 @@ report is `compat/reports/allocator/x86_64/mapped-post-exit.json`.
 A separate retired-page prepass is also available on native x86-64:
 
 ```sh
-./scripts/dev-amd64.sh allocator-retired-prepass
+./compat/allocator/run-x86_64.sh allocator-retired-prepass
 ```
 
 This 21-field private C/Rust differential uses a real worker-local `mi_free`
@@ -1097,7 +1100,7 @@ A separate two-live-page aggregate post-exit route is available on native
 x86-64:
 
 ```sh
-./scripts/dev-amd64.sh allocator-aggregate-post-exit
+./compat/allocator/run-x86_64.sh allocator-aggregate-post-exit
 ```
 
 This private 25-field C/Rust differential has a real worker `pthread` create
@@ -1117,7 +1120,7 @@ its report is `compat/reports/allocator/x86_64/aggregate-post-exit.json`.
 A separate aggregate still-live route is available on native x86-64:
 
 ```sh
-./scripts/dev-amd64.sh allocator-aggregate-still-live
+./compat/allocator/run-x86_64.sh allocator-aggregate-still-live
 ```
 
 This private 46-field C/Rust differential has a real worker `pthread` create
@@ -1136,7 +1139,7 @@ AArch64 evidence; its report is
 A separate same-bin aggregate still-live route is available on native x86-64:
 
 ```sh
-./scripts/dev-amd64.sh allocator-aggregate-same-bin-still-live
+./compat/allocator/run-x86_64.sh allocator-aggregate-same-bin-still-live
 ```
 
 This private 53-field C/Rust differential has a real worker `pthread` fill
@@ -1158,8 +1161,8 @@ A separate native private-adapter measurement lane is available through the
 same dispatcher:
 
 ```sh
-./scripts/dev-amd64.sh allocator-perf --smoke --label x86-private-adapter-smoke
-./scripts/dev-amd64.sh allocator-perf --full --label x86-private-adapter-baseline
+./compat/allocator/run-x86_64.sh allocator-perf --smoke --label x86-private-adapter-smoke
+./compat/allocator/run-x86_64.sh allocator-perf --full --label x86-private-adapter-baseline
 ```
 
 It compiles one shared, release-optimized C fixture against pinned C mimalloc
@@ -1175,7 +1178,7 @@ or public x86 `crabc` support.
 The separate bounded lifecycle/concurrency judge is also native x86-only:
 
 ```sh
-./scripts/dev-amd64.sh allocator-lifecycle
+./compat/allocator/run-x86_64.sh allocator-lifecycle
 ```
 
 It records eight named private Rust lanes (12 selected tests, including five
@@ -1189,7 +1192,7 @@ parity, or whole-allocator stress evidence.
 The separate bounded fault-injection judge is also native x86-only:
 
 ```sh
-./scripts/dev-amd64.sh allocator-fault
+./compat/allocator/run-x86_64.sh allocator-fault
 ```
 
 It records five named crate-private state-preservation regressions at selected
@@ -1226,7 +1229,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64-source-map-v3.5.0.json` and `x86_64_source_map.py` | Target-local pinned-source mapping and ratchet foundation for 34 x86-relevant source units. Its statuses remain explicitly incomplete and never reuse the AArch64 port-map/ratchet. |
 | `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
 | `adapted-tests-v3.5.0.json` | Reviewed M4 selection, omissions, source hashes, patch identity, prefixed symbol inventory, and AArch64 native link contract for pinned upstream `test-api.c`. |
-| `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. It hashes only the extracted target-neutral patch/selection facts from the M4 record and separately records native x86-64 cdylib/executable ELF, PT_INTERP, dependency, and link expectations. |
+| `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. It hashes only the extracted target-neutral patch/selection facts from the M4 record and separately records the staticlib-only `-lunwind -lc` C-link tail, its derived rustc target self-contained search path, executable ELF, PT_INTERP, and empty `DT_NEEDED` expectations. |
 | `adapted/test-api-m4.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, six-symbol inventory, one-shot caller contract, and native link contract for the process-lifetime ticket-zero C witness, including one scoped worker round trip. |

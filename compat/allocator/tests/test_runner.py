@@ -143,8 +143,12 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(RUNNER.X86_64_RUST_TARGET, "x86_64-unknown-linux-musl")
         self.assertEqual(RUNNER.X86_64_INTERPRETER, "ld-musl-x86_64.so.1")
         self.assertEqual(
-            RUNNER.X86_64_TARGET_METADATA["expected_dynamic_dependencies"],
-            ["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+            RUNNER.X86_64_TARGET_METADATA,
+            {
+                "architecture": "x86_64",
+                "target": "x86_64-unknown-linux-musl",
+                "interpreter": "ld-musl-x86_64.so.1",
+            },
         )
         self.assertEqual(
             RUNNER.X86_64_ORACLE_REPORT_ROOT,
@@ -153,13 +157,17 @@ class InventoryTests(unittest.TestCase):
 
     def test_parser_selects_x86_64_without_changing_the_default(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("CRABC_DEV_ARCH", None)
+            os.environ.pop("CRABC_ALLOCATOR_EVIDENCE_ARCH", None)
             with mock.patch.object(sys, "argv", ["run.py", "--quick"]):
                 self.assertEqual(RUNNER.parse_arguments().architecture, "aarch64")
-        with mock.patch.dict(os.environ, {"CRABC_DEV_ARCH": "x86_64"}, clear=False):
+        with mock.patch.dict(
+            os.environ, {"CRABC_ALLOCATOR_EVIDENCE_ARCH": "x86_64"}, clear=False
+        ):
             with mock.patch.object(sys, "argv", ["run.py", "--quick"]):
                 self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
-        with mock.patch.dict(os.environ, {"CRABC_DEV_ARCH": ""}, clear=False):
+        with mock.patch.dict(
+            os.environ, {"CRABC_ALLOCATOR_EVIDENCE_ARCH": ""}, clear=False
+        ):
             with mock.patch.object(sys, "argv", ["run.py", "--quick", "--arch", "x86_64"]):
                 self.assertEqual(RUNNER.parse_arguments().architecture, "x86_64")
             with mock.patch.object(sys, "argv", ["run.py", "--quick", "--x86-64"]):
@@ -827,6 +835,51 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                 "target": "x86_64-unknown-linux-musl",
             },
         )
+        compile_requirements = x86_contract["compile_requirements"]
+        self.assertEqual(compile_requirements["native_library_search_paths"], [])
+        self.assertEqual(compile_requirements["native_static_libs"], ["-lunwind", "-lc"])
+        self.assertFalse(compile_requirements["rust_cdylib_supported"])
+        self.assertEqual(
+            compile_requirements["rust_target_self_contained_native_library"], "libunwind.a"
+        )
+        self.assertEqual(compile_requirements["expected_executable_dynamic_dependencies"], [])
+
+    def test_x86_64_adapter_resolves_rusts_target_self_contained_unwinder(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            sysroot = Path(temporary) / "rust"
+            search_path = (
+                sysroot
+                / "lib/rustlib/x86_64-unknown-linux-musl/lib/self-contained"
+            )
+            search_path.mkdir(parents=True)
+            (search_path / "libunwind.a").touch()
+            requirements = {
+                "native_library_search_paths": [],
+                "rust_target_self_contained_native_library": "libunwind.a",
+            }
+            with mock.patch.object(RUNNER, "require_tool", return_value="rustc"), mock.patch.object(
+                RUNNER,
+                "command_record",
+                return_value={"status": 0, "stdout": f"{sysroot}\n", "stderr": ""},
+            ):
+                self.assertEqual(
+                    RUNNER.native_static_library_search_paths(
+                        requirements, rust_target="x86_64-unknown-linux-musl"
+                    ),
+                    [str(search_path)],
+                )
+
+    def test_native_x86_64_adapter_contract_rejects_the_legacy_gcc_s_link_tail(self) -> None:
+        source_contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
+        x86_contract = RUNNER.read_json(RUNNER.X86_64_TEST_ADAPTER_CONTRACT)
+        x86_contract["compile_requirements"]["native_static_libs"] = ["-lgcc_s", "-lc"]
+        with self.assertRaisesRegex(RUNNER.HarnessError, "compile requirements"):
+            RUNNER.validate_x86_64_test_adapter_contract(
+                x86_contract,
+                source_contract,
+                RUNNER.load_pin(),
+                RUNNER.TEST_ADAPTER_HEADER.read_text(encoding="utf-8"),
+            )
 
     def test_native_x86_64_adapter_contract_rejects_source_selection_drift(self) -> None:
         source_contract = RUNNER.read_json(RUNNER.ADAPTED_TEST_CONTRACT)
@@ -920,10 +973,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
   Data:                              2's complement, little endian
   Machine:                           Advanced Micro Devices X86-64
 """
-        dynamic = """
- 0x0000000000000001 (NEEDED)             Shared library: [libgcc_s.so.1]
- 0x0000000000000001 (NEEDED)             Shared library: [libc.musl-x86_64.so.1]
-"""
+        dynamic = ""
 
         def records(interpreter: str) -> list[dict[str, object]]:
             return [
@@ -952,12 +1002,12 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                 architecture="x86_64",
                 expected_elf=expected_elf,
                 expected_interpreter="ld-musl-x86_64.so.1",
-                expected_dynamic_dependencies=["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+                expected_dynamic_dependencies=[],
             )
         self.assertEqual(
             evidence,
             {
-                "dynamic_dependencies": ["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+                "dynamic_dependencies": [],
                 "elf": expected_elf,
                 "interpreter": "/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1",
             },
@@ -975,7 +1025,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                     architecture="x86_64",
                     expected_elf=expected_elf,
                     expected_interpreter="ld-musl-x86_64.so.1",
-                    expected_dynamic_dependencies=["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
+                    expected_dynamic_dependencies=[],
                 )
 
     def test_small_trace_parser_requires_one_address_independent_machine_record(self) -> None:
@@ -1262,6 +1312,9 @@ note: native-static-libs: -lgcc_s -lc
             RUNNER.parse_optional_native_static_libraries(
                 "native-static-libs: /ambient/libbad.a\n"
             )
+    def test_native_x86_64_static_library_parser_preserves_the_unwind_tail(self) -> None:
+        output = "note: native-static-libs: -lunwind -lc\n"
+        self.assertEqual(RUNNER.parse_native_static_libraries(output), ["-lunwind", "-lc"])
 
     def test_rust_layout_comparison_names_missing_and_mismatched_values(self) -> None:
         c_layout = {

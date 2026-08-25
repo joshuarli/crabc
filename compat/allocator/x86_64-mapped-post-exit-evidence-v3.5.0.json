@@ -83,7 +83,7 @@
     "target_arch": "x86_64",
     "test_filter": "main_heap_page::tests::x86_64_mapped_post_exit_trace_matches_pinned_c_protocol"
   },
-  "c_probe_sha256": "d81f8a76b5a80804b2a79c4a212af7a8a7ce9cfc3b613d48f851ae7916a1cc3f",
+  "c_probe_sha256": "b296d1afc78f80cd82d2b04b5c589dbf50383f2f1ff74f7f709059d4c8ef50e9",
   "trace": {
     "begin": "CRABC_MI_MAPPED_POST_EXIT_TRACE_BEGIN",
     "end": "CRABC_MI_MAPPED_POST_EXIT_TRACE_END",

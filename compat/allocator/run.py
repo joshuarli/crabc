@@ -81,10 +81,6 @@ X86_64_TARGET_METADATA: Mapping[str, Any] = {
     "architecture": "x86_64",
     "target": X86_64_RUST_TARGET,
     "interpreter": X86_64_INTERPRETER,
-    "expected_dynamic_dependencies": [
-        "libc.musl-x86_64.so.1",
-        "libgcc_s.so.1",
-    ],
 }
 CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
 EXPECTED_PRODUCTION_DEPENDENCY_VERSIONS: Mapping[str, str] = {
@@ -1504,16 +1500,7 @@ def validate_x86_64_test_adapter_contract(
     expected_compile_requirements = {
         "adapter_feature": "test-adapter",
         "compiler": "musl-gcc",
-        "expected_cdylib_elf": {
-            "class": "ELF64",
-            "endianness": "little",
-            "machine": "Advanced Micro Devices X86-64",
-        },
-        "expected_dynamic_dependencies": ["libc.musl-x86_64.so.1", "libgcc_s.so.1"],
-        "expected_executable_dynamic_dependencies": [
-            "libc.musl-x86_64.so.1",
-            "libgcc_s.so.1",
-        ],
+        "expected_executable_dynamic_dependencies": [],
         "expected_executable_elf": {
             "class": "ELF64",
             "endianness": "little",
@@ -1522,14 +1509,16 @@ def validate_x86_64_test_adapter_contract(
         "expected_fixture_stdout": "allocator ok\n",
         "language": "C11",
         "link_command_shape": (
-            "musl-gcc <fixture-or-patched-source> <rust-staticlib> -L/usr/lib "
-            "-lgcc_s -lc -o <native-binary>"
+            "musl-gcc <fixture-or-patched-source> <rust-staticlib> "
+            "-L<rust-target-self-contained> "
+            "-lunwind -lc -o <native-binary>"
         ),
         "link_order": "C fixture or selected patched source, adapter staticlib, then musl/system libraries",
-        "native_library_search_paths": ["/usr/lib"],
-        "native_static_libs": ["-lgcc_s", "-lc"],
+        "native_library_search_paths": [],
+        "native_static_libs": ["-lunwind", "-lc"],
         "required_header": TEST_ADAPTER_HEADER.name,
-        "rust_cdylib_filename": "libcrabc_mimalloc_test_adapter.so",
+        "rust_cdylib_supported": False,
+        "rust_target_self_contained_native_library": "libunwind.a",
         "rust_staticlib_filename": "libcrabc_mimalloc_test_adapter.a",
     }
     if contract.get("compile_requirements") != expected_compile_requirements:
@@ -2416,7 +2405,7 @@ def require_native_x86_64() -> dict[str, str]:
         raise HarnessError(
             "native x86-64 allocator evidence requires canonical native provenance: "
             "CRABC_EXECUTION_MODE=native and CRABC_HOST_ARCH=x86_64 (or amd64); "
-            "use ./scripts/dev-amd64.sh allocator --quick"
+            "use ./compat/allocator/run-x86_64.sh allocator --quick"
         )
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise HarnessError(
@@ -2874,6 +2863,53 @@ def parse_optional_native_static_libraries(output: str) -> list[str]:
     if any(not re.fullmatch(r"-l[A-Za-z0-9_.+-]+", item) for item in libraries):
         raise HarnessError("Rust adapter has an invalid native static library record")
     return libraries
+def rust_target_self_contained_native_library_search_path(
+    rust_target: str, library: str
+) -> str:
+    """Resolve one rustc-shipped static library for a C staticlib consumer."""
+
+    if not re.fullmatch(r"[A-Za-z0-9_.+-]+", rust_target):
+        raise HarnessError("Rust target for a native static library search is invalid")
+    if not re.fullmatch(r"lib[A-Za-z0-9_.+-]+\.a", library):
+        raise HarnessError("Rust self-contained native library name is invalid")
+    rustc = require_tool("rustc")
+    record = command_record((rustc, "--print", "sysroot"), cwd=ROOT)
+    require_success(record, "Rust sysroot discovery for native static library link")
+    lines = [line.strip() for line in str(record["stdout"]).splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise HarnessError("Rust sysroot discovery is absent or ambiguous")
+    sysroot = Path(lines[0])
+    if not sysroot.is_absolute():
+        raise HarnessError("Rust sysroot for native static library link is not absolute")
+    search_path = sysroot / "lib" / "rustlib" / rust_target / "lib" / "self-contained"
+    if not (search_path / library).is_file():
+        raise HarnessError(
+            "Rust target self-contained native library is absent: "
+            f"{search_path / library}"
+        )
+    return str(search_path)
+
+
+def native_static_library_search_paths(
+    compile_requirements: Mapping[str, Any], *, rust_target: str
+) -> list[str]:
+    """Resolve declared C-link paths, including a named Rust target library."""
+
+    declared = compile_requirements.get("native_library_search_paths")
+    if (
+        not isinstance(declared, list)
+        or not all(isinstance(path, str) and path and Path(path).is_absolute() for path in declared)
+    ):
+        raise HarnessError("Rust test adapter native library search paths are invalid")
+    library = compile_requirements.get("rust_target_self_contained_native_library")
+    if library is None:
+        return list(declared)
+    if not isinstance(library, str):
+        raise HarnessError("Rust target self-contained native library contract is invalid")
+    return [
+        *declared,
+        rust_target_self_contained_native_library_search_path(rust_target, library),
+    ]
 
 
 def compare_configuration_layout(
@@ -3082,7 +3118,6 @@ def audit_native_executable(
     if (
         isinstance(expected_dynamic_dependencies, (str, bytes))
         or not isinstance(expected_dynamic_dependencies, Sequence)
-        or not expected_dynamic_dependencies
         or not all(isinstance(item, str) and item for item in expected_dynamic_dependencies)
     ):
         raise HarnessError("native executable dynamic dependency contract is invalid")
@@ -3144,7 +3179,7 @@ def adapter_header_function_names(header: str) -> list[str]:
 def validate_adapter_dynamic_symbols(
     symbols: Sequence[str], expected_symbols: Sequence[str]
 ) -> dict[str, Any]:
-    """Require the test-only cdylib to expose exactly its prefixed C surface."""
+    """Require one test-adapter artifact to expose exactly its prefixed C surface."""
 
     expected = sorted(set(expected_symbols))
     if len(expected) != len(expected_symbols) or not expected:
@@ -4152,7 +4187,7 @@ def build_test_adapter(
     artifact_root: Path | None = None,
     expected_symbols: Sequence[str] | None = None,
 ) -> tuple[Path, list[str], dict[str, Any]]:
-    """Build and audit the test-only prefixed Rust staticlib/cdylib pair."""
+    """Build and audit the test-only prefixed Rust staticlib and optional cdylib."""
 
     if artifact_root is None:
         artifact_root = REPORT_ROOT / "test-adapter"
@@ -4217,8 +4252,9 @@ def build_test_adapter(
     compile_requirements = contract.get("compile_requirements")
     if not isinstance(compile_requirements, dict):
         raise HarnessError("Rust test adapter lacks compile requirements")
-    native_search_paths = compile_requirements["native_library_search_paths"]
-    assert isinstance(native_search_paths, list)
+    native_search_paths = native_static_library_search_paths(
+        compile_requirements, rust_target=rust_target
+    )
     if native_libraries != compile_requirements["native_static_libs"]:
         raise HarnessError("Rust test adapter native static library order differs from the manifest")
 
@@ -4226,16 +4262,21 @@ def build_test_adapter(
     static_filename = compile_requirements.get(
         "rust_staticlib_filename", "libcrabc_mimalloc_test_adapter.a"
     )
-    shared_filename = compile_requirements.get(
-        "rust_cdylib_filename", "libcrabc_mimalloc_test_adapter.so"
-    )
-    if (
-        static_filename != "libcrabc_mimalloc_test_adapter.a"
-        or shared_filename != "libcrabc_mimalloc_test_adapter.so"
+    cdylib_supported = compile_requirements.get("rust_cdylib_supported", True)
+    if not isinstance(cdylib_supported, bool):
+        raise HarnessError("Rust test adapter cdylib-support contract is invalid")
+    if static_filename != "libcrabc_mimalloc_test_adapter.a":
+        raise HarnessError("Rust test adapter staticlib filename differs from the manifest")
+    if not cdylib_supported and any(
+        key in compile_requirements
+        for key in (
+            "expected_cdylib_elf",
+            "expected_dynamic_dependencies",
+            "rust_cdylib_filename",
+        )
     ):
-        raise HarnessError("Rust test adapter artifact filename differs from the manifest")
+        raise HarnessError("static-only Rust test adapter declares a cdylib contract")
     static_library = release_root / static_filename
-    shared_library = release_root / shared_filename
     if expected_symbols is None:
         expected_symbols = contract.get("expected_adapter_symbols")
     if (
@@ -4245,42 +4286,53 @@ def build_test_adapter(
         or not all(isinstance(symbol, str) and symbol for symbol in expected_symbols)
     ):
         raise HarnessError("Rust test adapter expected symbols are absent or invalid")
-    shared_symbols = validate_adapter_dynamic_symbols(
-        defined_dynamic_symbols(readelf, shared_library), expected_symbols
-    )
     archive_symbols = validate_adapter_dynamic_symbols(
         archive_defined_symbols(nm, static_library), expected_symbols
     )
-    needed = dynamic_dependencies(readelf, shared_library)
-    if needed != compile_requirements["expected_dynamic_dependencies"]:
-        raise HarnessError("Rust test adapter dynamic dependency set differs from the manifest")
-
-    cdylib_elf: dict[str, str] | None = None
-    expected_cdylib_elf = compile_requirements.get("expected_cdylib_elf")
-    if expected_cdylib_elf is not None:
-        if not isinstance(expected_cdylib_elf, dict):
-            raise HarnessError("Rust test adapter cdylib ELF contract is invalid")
-        header = command_record((readelf, "-h", str(shared_library)), cwd=ROOT)
-        require_success(header, "Rust test adapter cdylib ELF header")
-        cdylib_elf = parse_elf_identity(str(header["stdout"]), architecture)
-        if cdylib_elf != expected_cdylib_elf:
-            raise HarnessError("Rust test adapter cdylib ELF identity differs from the manifest")
 
     report = {
         "archive": artifact_record(static_library),
         "archive_symbols": archive_symbols,
+        "cdylib_supported": cdylib_supported,
         "clean_command": clean_command,
-        "dynamic_dependencies": needed,
         "native_library_search_paths": native_search_paths,
         "native_static_libraries": native_libraries,
         "rustc_command": rustc_command,
-        "shared_library": artifact_record(shared_library),
-        "shared_symbols": shared_symbols,
         "unit_test_command": test_command,
         "unit_test_count": parse_rust_test_count(test_output),
     }
-    if cdylib_elf is not None:
-        report["cdylib_elf"] = cdylib_elf
+    if cdylib_supported:
+        shared_filename = compile_requirements.get(
+            "rust_cdylib_filename", "libcrabc_mimalloc_test_adapter.so"
+        )
+        if shared_filename != "libcrabc_mimalloc_test_adapter.so":
+            raise HarnessError("Rust test adapter cdylib filename differs from the manifest")
+        shared_library = release_root / shared_filename
+        shared_symbols = validate_adapter_dynamic_symbols(
+            defined_dynamic_symbols(readelf, shared_library), expected_symbols
+        )
+        needed = dynamic_dependencies(readelf, shared_library)
+        expected_dynamic_dependencies = compile_requirements.get("expected_dynamic_dependencies")
+        if not isinstance(expected_dynamic_dependencies, list) or not all(
+            isinstance(dependency, str) and dependency for dependency in expected_dynamic_dependencies
+        ):
+            raise HarnessError("Rust test adapter cdylib dependency contract is invalid")
+        if needed != expected_dynamic_dependencies:
+            raise HarnessError("Rust test adapter dynamic dependency set differs from the manifest")
+
+        expected_cdylib_elf = compile_requirements.get("expected_cdylib_elf")
+        if expected_cdylib_elf is not None:
+            if not isinstance(expected_cdylib_elf, dict):
+                raise HarnessError("Rust test adapter cdylib ELF contract is invalid")
+            header = command_record((readelf, "-h", str(shared_library)), cwd=ROOT)
+            require_success(header, "Rust test adapter cdylib ELF header")
+            cdylib_elf = parse_elf_identity(str(header["stdout"]), architecture)
+            if cdylib_elf != expected_cdylib_elf:
+                raise HarnessError("Rust test adapter cdylib ELF identity differs from the manifest")
+            report["cdylib_elf"] = cdylib_elf
+        report["dynamic_dependencies"] = needed
+        report["shared_library"] = artifact_record(shared_library)
+        report["shared_symbols"] = shared_symbols
     return static_library, native_libraries, report
 
 
@@ -4375,6 +4427,7 @@ def run_test_adapter_fixtures(
     *,
     artifact_root: Path | None = None,
     target_compile_requirements: Mapping[str, Any] | None = None,
+    rust_target: str = PRODUCTION_RUST_TARGET,
     expected_fixture_stdout: str = "allocator ok\n",
     readelf: str | None = None,
     native_executable_expectations: Mapping[str, Any] | None = None,
@@ -4393,8 +4446,9 @@ def run_test_adapter_fixtures(
         target_compile_requirements = source_contract.get("compile_requirements")
     compile_requirements = target_compile_requirements
     assert isinstance(compile_requirements, dict)
-    native_search_paths = compile_requirements["native_library_search_paths"]
-    assert isinstance(native_search_paths, list)
+    native_search_paths = native_static_library_search_paths(
+        compile_requirements, rust_target=rust_target
+    )
     native_search_flags = [f"-L{path}" for path in native_search_paths]
     fixture_binary = artifact_root / "allocator-fixture-rust"
     fixture_command = [
@@ -4715,6 +4769,7 @@ def run_x86_64_oracle(
             adapter_source_contract,
             artifact_root=adapter_artifact_root,
             target_compile_requirements=adapter_compile_requirements,
+            rust_target=X86_64_RUST_TARGET,
             expected_fixture_stdout=str(
                 adapter_compile_requirements["expected_fixture_stdout"]
             ),
@@ -4946,13 +5001,14 @@ def parse_arguments() -> argparse.Namespace:
         const="x86_64",
         help="explicit native Linux/x86-64 C-oracle profile",
     )
-    # The architecture-specific Docker wrappers export CRABC_DEV_ARCH.  Keep
-    # direct invocation's historical AArch64 default, while allowing
-    # `scripts/dev-amd64.sh allocator --quick` to select the explicit x86-64
-    # lane without reusing an AArch64 report or target assumption.
+    # The private x86-64 evidence runner exports this allocator-specific
+    # selector. Keep direct invocation's historical AArch64 default, while
+    # preventing the AArch64 public dispatcher from becoming an x86 surface.
     parser.set_defaults(
         architecture=(
-            "x86_64" if os.environ.get("CRABC_DEV_ARCH") == "x86_64" else "aarch64"
+            "x86_64"
+            if os.environ.get("CRABC_ALLOCATOR_EVIDENCE_ARCH") == "x86_64"
+            else "aarch64"
         )
     )
     arguments = parser.parse_args()

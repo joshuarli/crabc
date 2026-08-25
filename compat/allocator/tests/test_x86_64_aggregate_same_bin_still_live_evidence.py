@@ -232,11 +232,11 @@ class AggregateSameBinStillLiveEvidenceTests(unittest.TestCase):
     def test_rust_fixture_directly_observes_the_same_bin_predecessor_link(self):
         source = evidence.RUST_TEST_SOURCE.read_text(encoding="utf-8")
         self.assertIn(
-            "let first_prev = unsafe { first_page.as_ref().test_queue_prev() };",
+            "let first_prev = unsafe { first_page.as_ref().prev() };",
             source,
         )
         self.assertIn(
-            "let second_prev = unsafe { second_page.as_ref().test_queue_prev() };",
+            "let second_prev = unsafe { second_page.as_ref().prev() };",
             source,
         )
         self.assertIn("first_prev.is_null()", source)

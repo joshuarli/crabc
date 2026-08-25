@@ -39,7 +39,8 @@ the sealed sysroot separately audits the final linked allocator/runtime ELF.
 
 The x86-64 proof is intentionally a separate runner so target-specific ELF
 relocations and register evidence cannot be confused with the AArch64 judge.
-Run it in the native amd64 laboratory (the wrapper refuses non-x86-64 hosts):
+Run it through the private native x86-64 evidence runner (which refuses
+non-x86-64 hosts and exposes no generic shell):
 
 ```sh
 ./compat/allocator/run-x86_64.sh allocator-tls

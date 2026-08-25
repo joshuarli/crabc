@@ -102,6 +102,16 @@ class MappedPostExitEvidenceTests(unittest.TestCase):
         self.assertTrue(schema["scope"]["producer_theap_teardown_only"])
         self.assertFalse(schema["scope"]["emulation_accepted"])
 
+    def test_c_probe_reacquires_live_page_after_producer_exit_and_first_free(self):
+        source = evidence.C_TRACE_PROBE
+        self.assertIn("static const size_t request = MI_SMALL_MAX_OBJ_SIZE + 1;", source)
+        self.assertNotIn("context->page", source)
+        self.assertIn("block == survivor", source)
+        self.assertIn("page = _mi_safe_ptr_page(block);", source)
+        self.assertIn("_mi_safe_ptr_page(survivor) != page", source)
+        self.assertIn("page = _mi_safe_ptr_page(survivor);", source)
+        self.assertIn("mi_page_start(page) != page_start_address", source)
+
     def test_schema_rejects_drift_and_emulation(self):
         mutations = (
             lambda value: value.update({"unexpected": 1}),

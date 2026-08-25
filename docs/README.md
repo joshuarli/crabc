@@ -25,7 +25,8 @@ them; this router should explain ownership, not duplicate command contracts.
   optimization doctrine, and current cost model.
 - [Fixed mimalloc semantic-port design](design/allocator.md) — provenance,
   dependency direction, integration ownership, and promotion boundary for the
-  active Linux/AArch64 allocator compatibility program.
+  active Linux/AArch64 allocator compatibility program and its private native
+  x86-64 evidence exception.
 - [Owned CRT/sysroot design](design/crt-and-sysroot.md) — application startup,
   sealed driver, purity boundary, and runtime ownership.
 - [Source-build design](design/source-build.md) — completed Lua gate through

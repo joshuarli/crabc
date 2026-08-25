@@ -10,6 +10,17 @@
 //! `alloc` feature is reserved for APIs that need owned allocation.
 #![no_std]
 
+// `crabc-rs` is a public facade, unlike the fixed-mimalloc engine's narrowly
+// scoped native x86-64 evidence lane. Keep its platform boundary explicit so
+// Cargo feature unification with that private engine cannot turn an internal
+// `crabc-core` evidence feature into an x86 facade build.
+#[cfg(not(all(
+    target_os = "linux",
+    target_arch = "aarch64",
+    target_endian = "little"
+)))]
+compile_error!("crabc-rs supports Linux/AArch64 little-endian only");
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 

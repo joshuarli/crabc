@@ -2,7 +2,7 @@
   "evidence_gates": [
     {
       "claim": "On an attested native x86-64 host, compiles the pinned mimalloc C release source set with the exact recorded release flags, proves the selected x86-64 preprocessor mode and ELF identity, inventories globally defined mi_* symbols across the individual release objects, and separately inventories default-visible defined mi_* dynamic symbols in the linked shared object. This is evidence-only and does not claim public x86 crabc, libc, or ldso support or reuse AArch64 status.",
-      "command": "./scripts/dev-amd64.sh allocator-release-evidence",
+      "command": "./compat/allocator/run-x86_64.sh allocator-release-evidence",
       "id": "native-pinned-c-release-mode-object-symbols",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/release-evidence.json",
@@ -10,7 +10,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, consumes a fresh pinned normal-release C mode/object-symbol report and classifies all 194 distinct source-declared C functions by object and dynamic-symbol presence, while classifying 183 C/C++/macro/type/option source forms as not-an-object-symbol. It is selected-release source accounting only and does not claim declaration behavior, Rust implementation, public mi_* API, libc, loader, or public x86 runtime compatibility.",
-      "command": "./scripts/dev-amd64.sh allocator-api-coverage",
+      "command": "./compat/allocator/run-x86_64.sh allocator-api-coverage",
       "id": "native-release-api-mode-object-symbol-assessment",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/api-native-coverage.json",
@@ -18,7 +18,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, builds the pinned C normal-release shared object and compile-links five selected staged public C/C++ header forms against it, recording ELF identity for the shared object and every consumer. It proves staged pinned-header compile/linkability only; it does not prove CMake configuration or installation, consumer execution or behavior, Rust implementation, public x86 runtime support, or AArch64 status.",
-      "command": "./scripts/dev-amd64.sh allocator-header-modes",
+      "command": "./compat/allocator/run-x86_64.sh allocator-header-modes",
       "id": "native-staged-public-header-mode-linkability",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/header-mode-evidence.json",
@@ -26,7 +26,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, builds the pinned normal-release static source set and observes every archive member with ar t, separately compiles src/static.c as the selected musl static override object, observes its malloc/free/mi_malloc/mi_free definitions with nm, and compile-links one static-library mi_malloc form plus one override-object malloc/free form. It proves only selected artifact and consumer compile/linkability; it does not execute a consumer, establish behavior, Rust implementation, CMake configuration/installation, public x86 runtime support, or AArch64 status.",
-      "command": "./scripts/dev-amd64.sh allocator-static-modes",
+      "command": "./compat/allocator/run-x86_64.sh allocator-static-modes",
       "id": "native-static-library-and-override-object-linkability",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/static-mode-evidence.json",
@@ -34,7 +34,7 @@
     },
     {
       "claim": "Builds and inspects the separately compiled, pinned mimalloc C oracle. It does not claim a Rust C-API adapter or public allocator support.",
-      "command": "./scripts/dev-amd64.sh allocator --quick",
+      "command": "./compat/allocator/run-x86_64.sh allocator --quick",
       "id": "native-c-oracle",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/latest.json",
@@ -42,7 +42,7 @@
     },
     {
       "claim": "Compares the native direct Rust engine's configuration/layout, small-allocation trace, and 75-field fundamental-operation trace (including fixed no-padding mi_expand NULL/nonzero, fitting, oversize, and preservation cases plus checked mi_recalloc growth, zero-product, and overflow-preservation cases) against the selected pinned C release profile. It does not claim a C-API adapter, general lifecycle, or public allocator integration.",
-      "command": "./scripts/dev-amd64.sh allocator --quick",
+      "command": "./compat/allocator/run-x86_64.sh allocator --quick",
       "id": "native-direct-rust-c-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/latest.json",
@@ -50,7 +50,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, verifies the exact unfeatured normal Rust engine graph (including cpufeatures and no selected libc package), then builds the #![no_std] engine as a fresh release fat-LTO rlib and records its LLVM bitcode codegen member. Cargo resolution is lockfile-verified; a fresh bind-mounted cache may populate from the network with lockfile-selected packages. This is not a final linked ELF, not a staticlib/cdylib, and not a public allocator ABI, libc integration, or backend-promotion claim.",
-      "command": "./scripts/dev-amd64.sh allocator --quick",
+      "command": "./compat/allocator/run-x86_64.sh allocator --quick",
       "id": "native-normal-engine-build-boundary",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/latest.json",
@@ -58,7 +58,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, builds and audits the private prefixed Rust C test adapter, then runs the checked-in allocator fixture and 33 selected patched upstream API checks. It exposes no mi_* symbols and does not establish a public crabc allocator ABI or backend.",
-      "command": "./scripts/dev-amd64.sh allocator --quick",
+      "command": "./compat/allocator/run-x86_64.sh allocator --quick",
       "id": "native-private-test-adapter",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/latest.json",
@@ -66,7 +66,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, measures one shared C fixture through pinned C mimalloc and the private crabc_test_* adapter, including post-initialization live-set memory observations. It is bounded single-thread private-adapter evidence with no promotion threshold; it does not qualify general mimalloc performance, public mi_* behavior, libc integration, or a backend.",
-      "command": "./scripts/dev-amd64.sh allocator-perf --smoke --label x86-private-adapter-smoke",
+      "command": "./compat/allocator/run-x86_64.sh allocator-perf --smoke --label x86-private-adapter-smoke",
       "id": "native-private-adapter-performance",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/perf/x86-private-adapter-smoke.json",
@@ -74,7 +74,7 @@
     },
     {
       "claim": "Proves the private compiler-TLS roots and direct x86-64 TLS access model; it does not prove process/thread lifecycle parity.",
-      "command": "./scripts/dev-amd64.sh allocator-tls",
+      "command": "./compat/allocator/run-x86_64.sh allocator-tls",
       "id": "native-tls-codegen",
       "native_required": true,
       "report": "compat/reports/allocator/tls-codegen-x86_64.json",
@@ -82,7 +82,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, runs eight named private Rust lifecycle/concurrency lanes with 12 selected tests, including five finite Loom head-protocol models. It is not general process/thread lifecycle, client routing, abandonment/adoption, pthread callback, general fault-injection or misuse parity, or whole-allocator stress evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-lifecycle",
+      "command": "./compat/allocator/run-x86_64.sh allocator-lifecycle",
       "id": "native-bounded-lifecycle-concurrency",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/lifecycle-concurrency.json",
@@ -90,7 +90,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 25 address-independent values from exactly two live-owner mi_free publications by one quiescent pthread and the pinned private owner false collector, _mi_page_free_collect(page, false). It proves only source-specific owner-bit preservation, LIFO publication, exact used-count transition, and post-join detach/local-free merge. It is private engine evidence, not general remote-free routing or concurrent collection, abandonment, thread teardown, public mi_* API, libc integration, backend promotion, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-remote-free",
+      "command": "./compat/allocator/run-x86_64.sh allocator-remote-free",
       "id": "native-live-owner-remote-free-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/live-owner-remote-free.json",
@@ -98,7 +98,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 28 address-independent values for one real small direct-cache page filled to its current capacity, one joined/quiescent pthread mi_free publication, and the owner direct-cache miss falling through the regular queue search to collect and reuse that exact block. It proves only this private small direct-page route; it is not general allocation/free routing or concurrent collection, abandonment, thread teardown, public mi_* API, libc integration, backend promotion, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-direct-remote",
+      "command": "./compat/allocator/run-x86_64.sh allocator-direct-remote",
       "id": "native-small-direct-remote-free-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/small-direct-remote.json",
@@ -106,7 +106,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares eight address-independent values for one private arena-backed mapped page with two same-page live blocks: source queue detachment and mapped abandonment, followed by one same-origin mi_free reclaim while the survivor keeps the page nonempty. It proves only this same-origin mapped reclaim and requeue transition; it is not general abandonment/adoption, cross-thread reclaim, public mi_* behavior, libc integration, backend promotion, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-mapped-reclaim",
+      "command": "./compat/allocator/run-x86_64.sh allocator-mapped-reclaim",
       "id": "native-mapped-arena-same-origin-reclaim-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/mapped-reclaim.json",
@@ -114,7 +114,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 13 address-independent values for one real pinned-C medium arena page forced through its source full queue to initially-unmapped abandonment, then through public mi_free calls that cross the exact reabandon threshold and publish its arena bitmap. Rust compares only its deterministic synthetic private failed-reclaim tail. This does not establish a Rust full-medium routing path, general abandonment/adoption or free routing, public mi_* behavior, libc integration, backend promotion, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-unmapped-reabandon",
+      "command": "./compat/allocator/run-x86_64.sh allocator-unmapped-reabandon",
       "id": "native-unmapped-full-medium-reabandon-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/unmapped-reabandon.json",
@@ -122,7 +122,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 18 address-independent values from a real pinned-C worker pthread that allocates two same-page regular medium arena blocks, performs real mi_thread_done followed by pthread join before the consumer's public mi_free calls, and records producer_teardown_completed_before_consumer_free for that ordering while observing the selected mapped failed-reclaim/unown transition plus three terminal checks: page_map_unregistered_after_final_free, arena_page_bitmap_clear_after_final_free, and arena_slice_released_after_final_free. Rust compares only one bounded process-owned mapped regular handoff after Theap/TLD teardown and directly observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap release. This does not establish general thread exit, general routing or concurrency, adoption or reclaim, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-mapped-post-exit",
+      "command": "./compat/allocator/run-x86_64.sh allocator-mapped-post-exit",
       "id": "native-mapped-post-theap-teardown-failed-reclaim-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/mapped-post-exit.json",
@@ -130,7 +130,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 21 address-independent values for one real pinned-C worker local mi_free that retires one medium page, then real mi_thread_done() and pthread join force-release it before abandoning a distinct live medium page, followed by one consumer mi_free that terminally releases the live page. The trace covers retired/local-retirement state, retired teardown checks retired_page_map_unregistered_after_teardown, retired_arena_page_bitmap_clear_after_teardown, and retired_arena_slice_released_after_teardown, then live mapped-abandoned state and terminal checks live_page_map_unregistered_after_final_free, live_arena_page_bitmap_clear_after_final_free, live_arena_slice_released_after_final_free, and route_empty_after_final_free (an empty route); Rust directly observes the equivalent bounded private transitions. This does not establish general retirement, general teardown, routing or concurrency, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-retired-prepass",
+      "command": "./compat/allocator/run-x86_64.sh allocator-retired-prepass",
       "id": "native-retired-page-prepass-before-live-post-exit-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/retired-prepass.json",
@@ -138,7 +138,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 25 address-independent values for exactly two distinct live nonfull medium arena pages in distinct bins from a real pinned-C worker pthread. The worker runs real mi_thread_done() and returns; the consumer calls pthread_join() before any free; both selected pages are mapped-abandoned after teardown. The consumer frees the second page first and records only its PageMap unregister, ordinary arena-page bitmap clear, and exact slice-span release while the first remains PageMap-registered, arena-bitmap-set, mapped-abandoned, and used == 1; the consumer then frees the first page and records an empty route. Rust compares the equivalent bounded private aggregate post-exit traversal. This does not establish general teardown, routing or concurrency, public mi_* behavior or runtime, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-aggregate-post-exit",
+      "command": "./compat/allocator/run-x86_64.sh allocator-aggregate-post-exit",
       "id": "native-two-live-page-aggregate-post-exit-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/aggregate-post-exit.json",
@@ -146,7 +146,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 46 address-independent all-1 `trace.aggregate_still_live.*` values for one private aggregate route with two distinct clients on one nonfull medium arena page A and a one-client medium arena page B in a distinct bin from a real pinned-C worker pthread. The worker runs real mi_thread_done() and returns; the consumer calls pthread_join() before any free; both selected pages are mapped-abandoned after teardown. The consumer frees A's first client for StillLive, preserving A, B, and the route; frees B for ReleasedPage, terminally releasing only B; then frees A's second client for ReleasedAll, completing the route. Rust compares the equivalent bounded private aggregate still-live traversal. This does not establish general teardown, routing or concurrency, public mi_* behavior or runtime, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-aggregate-still-live",
+      "command": "./compat/allocator/run-x86_64.sh allocator-aggregate-still-live",
       "id": "native-two-client-aggregate-still-live-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/aggregate-still-live.json",
@@ -154,7 +154,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, differentially compares 53 address-independent all-1 `trace.aggregate_same_bin_still_live.*` values for one private aggregate route with two distinct clients on one nonfull medium arena page A and a one-client medium arena page B in the same bin from a real pinned-C worker pthread. The worker fills A before it creates B, locally restores A to two clients, then runs real mi_thread_done() and returns; the consumer calls pthread_join() before any free. Both selected pages are mapped-abandoned after teardown. The trace proves same-bin queue count/link/saved-successor traversal before exit and same-bin abandoned count/bitmap transitions 2 -> 2 -> 1 -> 0. The consumer frees A's first client for StillLive, preserving A, B, and the two-page route; frees B for ReleasedPage, terminally releasing only B; then frees A's second client for ReleasedAll, completing the route. Rust compares the equivalent bounded private aggregate same-bin traversal. This does not establish general teardown, routing or concurrency, public mi_* behavior or runtime, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
-      "command": "./scripts/dev-amd64.sh allocator-aggregate-same-bin-still-live",
+      "command": "./compat/allocator/run-x86_64.sh allocator-aggregate-same-bin-still-live",
       "id": "native-same-bin-two-page-aggregate-still-live-differential",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/aggregate-same-bin-still-live.json",
@@ -162,7 +162,7 @@
     },
     {
       "claim": "On an attested native x86-64 host, runs five named crate-private fault-injection state-preservation regressions covering selected Map, Commit, Unmap, and Decommit points. It does not establish general fault-injection or misuse parity, syscall interposition, lifecycle/stress coverage, C-oracle differential behavior, public mi_* behavior, libc integration, or a backend.",
-      "command": "./scripts/dev-amd64.sh allocator-fault",
+      "command": "./compat/allocator/run-x86_64.sh allocator-fault",
       "id": "native-bounded-fault-injection",
       "native_required": true,
       "report": "compat/reports/allocator/x86_64/fault-injection.json",
@@ -170,7 +170,7 @@
     },
     {
       "claim": "Exercises the allocator engine's selected x86-64 configuration, including its one 4 KiB base-page profile.",
-      "command": "./scripts/dev-amd64.sh cargo test -p crabc-mimalloc --lib --quiet",
+      "command": "./compat/allocator/run-x86_64.sh allocator-unit",
       "id": "native-allocator-unit",
       "native_required": true,
       "state": "available"
@@ -226,7 +226,7 @@
   "implementation_regressions": [
     {
       "claim": "Compiles and runs the crabc-core `%fs:0` thread-pointer implementation on native x86-64. This is an implementation regression, not independent C-oracle or allocator lifecycle evidence.",
-      "command": "./scripts/dev-amd64.sh cargo test -p crabc-core --lib",
+      "command": "./compat/allocator/run-x86_64.sh allocator-core-unit",
       "id": "native-thread-pointer-unit",
       "native_required": true,
       "state": "available"

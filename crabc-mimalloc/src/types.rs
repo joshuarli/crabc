@@ -3062,18 +3062,6 @@ impl Page {
         self.prev = prev;
     }
 
-    /// Returns the predecessor queue link for a test-only queue-invariant
-    /// observation.
-    ///
-    /// Queue mutation stays private to `page_queue`; this exposes no
-    /// production surface and lets the bounded same-bin differential verify
-    /// the source-shaped two-page predecessor relation under sole ownership.
-    #[cfg(test)]
-    #[inline]
-    pub(crate) const fn test_queue_prev(&self) -> *mut Page {
-        self.prev
-    }
-
     /// Whether neither intrusive queue link names this page.
     ///
     /// Terminal release validates this before it clears map/arena metadata:
