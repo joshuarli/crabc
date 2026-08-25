@@ -116,15 +116,62 @@ class ElfValidationTests(unittest.TestCase):
 
 
 class LinkModeDeclarationTests(unittest.TestCase):
-    def test_rejects_a_declared_link_mode_without_a_smoke(self) -> None:
+    def test_requires_all_release_link_modes(self) -> None:
+        required = list(RUNNER.REQUIRED_RELEASE_LINK_MODE_REPORT_KEYS)
+        declared = RUNNER.require_release_link_modes({"supported_link_modes": required})
+
+        self.assertEqual(declared, set(required))
+
+    def test_rejects_a_missing_or_uncovered_declared_link_mode(self) -> None:
         with self.assertRaises(RUNNER.SmokeError):
-            RUNNER.optional_modes(
-                Path("/synthetic/sysroot"),
-                Path("/synthetic/crabc-cc"),
-                Path("/synthetic/work"),
-                1.0,
-                {"supported_link_modes": ["future-unverified-mode"]},
+            RUNNER.require_release_link_modes({"supported_link_modes": ["dynamic-pie"]})
+        with self.assertRaises(RUNNER.SmokeError):
+            RUNNER.require_release_link_modes(
+                {
+                    "supported_link_modes": [
+                        *RUNNER.REQUIRED_RELEASE_LINK_MODE_REPORT_KEYS,
+                        "future-unverified-mode",
+                    ]
+                }
             )
+
+    def test_attestation_requires_a_passing_detailed_probe(self) -> None:
+        self.assertEqual(
+            RUNNER.link_mode_attestation("dynamic", {"passed": True}),
+            {"passed": True, "probe": "dynamic"},
+        )
+        with self.assertRaises(RUNNER.SmokeError):
+            RUNNER.link_mode_attestation("dynamic", {"passed": False})
+
+
+class LinkModeProbeTests(unittest.TestCase):
+    def test_complete_link_probe_accepts_a_successful_link_artifact_phase(self) -> None:
+        """A verified link must carry the phase verdict consumed by the aggregator."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            output = work / "dynamic"
+            output.write_bytes(b"ELF")
+            (work / "dynamic.map").write_text("link map\n", encoding="utf-8")
+            with mock.patch.object(RUNNER, "link_plan", return_value={}), mock.patch.object(
+                RUNNER,
+                "command_record",
+                return_value={"status": 0, "stdout": {"hex": ""}, "stderr": {"hex": ""}},
+            ), mock.patch.object(RUNNER.SYSROOT, "audit_linker_trace", return_value={"status": "passed"}):
+                probe = RUNNER.link_artifact(
+                    work,
+                    work / "crabc-cc",
+                    ("input.c", "-o", str(output)),
+                    output,
+                    work,
+                    1.0,
+                    (),
+                )
+
+        probe["elf"] = {"passed": True}
+        probe["runtime"] = {"passed": True}
+        self.assertTrue(probe["link"]["passed"])
+        self.assertTrue(RUNNER.complete_link_probe("dynamic PIE", probe)["passed"])
 
 
 if __name__ == "__main__":

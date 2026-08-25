@@ -154,6 +154,44 @@ class ValidationTests(unittest.TestCase):
                 DIST.validate_sysroot(sysroot)
 
 
+class SmokeAttestationTests(unittest.TestCase):
+    SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567"
+
+    def test_requires_passing_attestations_for_every_published_link_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "crabc-sysroot-aarch64-0123456789ab.tar.xz"
+            archive.write_bytes(b"archive")
+            report_path = root / "smoke.json"
+            report = {
+                "schema": 1,
+                "passed": True,
+                "target": "aarch64",
+                "source_commit": self.SOURCE_COMMIT,
+                "archive": {
+                    "name": archive.name,
+                    "sha256": DIST.sha256_file(archive),
+                },
+                "tests": {
+                    "link_modes": {
+                        key: {"passed": True}
+                        for key in dict(
+                            DIST.TOOL.PUBLISHED_APPLICATION_LINK_MODE_ATTESTATIONS
+                        ).values()
+                    }
+                },
+            }
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            identity = DIST.SourceIdentity(self.SOURCE_COMMIT, 0)
+
+            self.assertEqual(DIST._validate_smoke_report(report_path, identity, archive), report)
+
+            del report["tests"]["link_modes"]["static_pie"]
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            with self.assertRaises(DIST.DistError):
+                DIST._validate_smoke_report(report_path, identity, archive)
+
+
 class ArchiveTests(unittest.TestCase):
     def test_deterministic_tar_xz_and_safe_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

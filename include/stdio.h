@@ -82,8 +82,8 @@ int putc_unlocked(int, FILE *);
 int putchar_unlocked(int);
 int dprintf(int, const char *, ...);
 int vdprintf(int, const char *, va_list);
-ssize_t getdelim(char **restrict, size_t *restrict, int, FILE *restrict);
-ssize_t getline(char **restrict, size_t *restrict, FILE *restrict);
+ssize_t getdelim(char **__restrict, size_t *__restrict, int, FILE *__restrict);
+ssize_t getline(char **__restrict, size_t *__restrict, FILE *__restrict);
 int renameat(int, const char *, int, const char *);
 FILE *popen(const char *, const char *);
 int pclose(FILE *);
@@ -195,8 +195,8 @@ FILE *fopencookie(void *, const char *, cookie_io_functions_t);
 #endif
 
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
-int asprintf(char **restrict, const char *restrict, ...);
-int vasprintf(char **restrict, const char *restrict, va_list);
+int asprintf(char **__restrict, const char *__restrict, ...);
+int vasprintf(char **__restrict, const char *__restrict, va_list);
 #endif
 
 #ifdef __cplusplus

@@ -18,7 +18,7 @@ extern "C" {
 
 void *dlopen(const char *, int);
 int dlclose(void *);
-void *dlsym(void *restrict, const char *restrict);
+void *dlsym(void *__restrict, const char *__restrict);
 char *dlerror(void);
 
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)

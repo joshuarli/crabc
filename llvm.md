@@ -214,21 +214,23 @@ crabc-sysroot-aarch64-<short-commit>/
 │   └── crabc-cc
 ├── lib/
 │   ├── ld-crabc-aarch64.so.1
-│   ├── libc.so
-│   └── compatibility link names
+│   └── ld-musl-aarch64.so.1 -> ld-crabc-aarch64.so.1  # compatibility only
+├── share/crabc/
+│   ├── manifest.json
+│   └── purity.json
 └── usr/
     ├── include/
     │   └── all crabc public headers
     └── lib/
+        ├── libc.so
         ├── libc.a
+        ├── libcrabc-builtins.a
         ├── crt1.o
         ├── Scrt1.o
         ├── rcrt1.o
         ├── crti.o
-        └── crtn.o
-└── share/crabc/
-    ├── manifest.json
-    └── purity.json
+        ├── crtn.o
+        └── compatibility library link names
 ```
 
 The embedded manifest must use the crabc sysroot schema and include the
@@ -737,7 +739,7 @@ Validate:
 * manifest schema;
 * exact target;
 * exact interpreter;
-* required link modes;
+* a passing smoke attestation, including its required link-mode witnesses;
 * hashes;
 * ELF machine and endianness;
 * no absolute symlinks escaping the sysroot;

@@ -398,7 +398,7 @@ int getopt(int, char *const [], const char *);
 int lchown(const char *, uid_t, gid_t);
 int linkat(int, const char *, int, const char *, int);
 long pathconf(const char *, int);
-ssize_t readlinkat(int, const char *restrict, char *restrict, size_t);
+ssize_t readlinkat(int, const char *__restrict, char *__restrict, size_t);
 int symlinkat(const char *, int, const char *);
 long sysconf(int);
 pid_t tcgetpgrp(int);
@@ -413,7 +413,7 @@ void encrypt(char [], int);
 long gethostid(void);
 int lockf(int, int, off_t);
 int nice(int);
-void swab(const void *restrict, void *restrict, ssize_t);
+void swab(const void *__restrict, void *__restrict, ssize_t);
 #endif
 
 #ifdef __cplusplus

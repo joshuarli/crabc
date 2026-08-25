@@ -10,10 +10,10 @@
 #endif
 #include <bits/alltypes.h>
 
-ssize_t strfmon(char *restrict, size_t, const char *restrict, ...);
+ssize_t strfmon(char *__restrict, size_t, const char *__restrict, ...);
 #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
-ssize_t strfmon_l(char *restrict, size_t, locale_t, const char *restrict, ...);
+ssize_t strfmon_l(char *__restrict, size_t, locale_t, const char *__restrict, ...);
 #endif
 
 #endif

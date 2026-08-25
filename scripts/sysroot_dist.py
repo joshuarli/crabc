@@ -607,6 +607,7 @@ def _load_json_object(path: Path, description: str) -> dict[str, object]:
 def _validate_smoke_report(report_path: Path, identity: SourceIdentity, archive: Path) -> dict[str, object]:
     report = _load_json_object(report_path, "sysroot smoke report")
     archive_record = report.get("archive")
+    tests = report.get("tests")
     if (
         report.get("schema") != 1
         or report.get("passed") is not True
@@ -615,9 +616,24 @@ def _validate_smoke_report(report_path: Path, identity: SourceIdentity, archive:
         or not isinstance(archive_record, dict)
         or archive_record.get("name") != archive.name
         or archive_record.get("sha256") != sha256_file(archive)
-        or not isinstance(report.get("tests"), dict)
+        or not isinstance(tests, dict)
     ):
         raise DistError("sysroot smoke report does not attest to the exact packaged archive")
+    link_modes = tests.get("link_modes")
+    if not isinstance(link_modes, dict):
+        raise DistError("sysroot smoke report has no application link-mode attestations")
+    required = dict(TOOL.PUBLISHED_APPLICATION_LINK_MODE_ATTESTATIONS)
+    failed = [
+        report_key
+        for report_key in required.values()
+        if not isinstance(link_modes.get(report_key), dict)
+        or link_modes[report_key].get("passed") is not True
+    ]
+    if failed:
+        raise DistError(
+            "sysroot smoke report does not pass every required application link mode: "
+            + ", ".join(failed)
+        )
     return report
 
 

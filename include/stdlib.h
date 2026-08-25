@@ -135,7 +135,7 @@ char *ptsname(int);
 #endif
 
 #if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
-char *realpath(const char *restrict, char *restrict);
+char *realpath(const char *__restrict, char *__restrict);
 #endif
 #if defined(_GNU_SOURCE)
 int ptsname_r(int, char *, size_t);
