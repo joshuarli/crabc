@@ -44,17 +44,18 @@
 //! by force collection and registers every survivor in one linear process
 //! route. Each route free serializes its plain PageMap operation briefly. One
 //! explicit consuming edge additionally reclaims a sole mapped medium route,
-//! or a sole direct-small route with either an immediate local free block or
-//! an exhausted fully committed scalar-extension shape, that entered source
-//! owner exit already nonfull into a fresh later-main engine: it claims that
+//! or a sole direct-small route with either an immediate local free block, an
+//! exhausted fully committed scalar-extension shape, or an exact exhausted
+//! on-demand page-area-commit shape, that entered source owner exit already
+//! nonfull into a fresh later-main engine: it claims that
 //! exact bitmap member and requeues it at the source tail. Non-direct-small,
-//! direct-small page-area-commit and other no-immediate shapes, full medium,
+//! other no-immediate direct-small shapes, full medium,
 //! large, and full small origins remain client-free-only.
-//! Its test-only real reserved on-demand medium
-//! prefix commits its next page area directly before extension; a direct-commit
-//! failure reabandones that same candidate for its one consuming retry. It has
+//! Its test-only real reserved on-demand medium and direct-small prefixes
+//! commit their next page area directly before extension; a direct-commit
+//! failure reabandons that same candidate for its one consuming retry. It has
 //! no automatic allocation scan or fresh-page fallback.
-//! Non-direct-small, direct-small page-area-commit and other no-immediate,
+//! Non-direct-small, other no-immediate direct-small,
 //! full, aggregate, concurrent, singleton, unmapped, and huge adoption remain
 //! absent, as do source deferred callbacks and arena collection.
 
@@ -181,11 +182,12 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedOneBlockHandoff<'attachment
 /// PageMap lookup -> abandoned-free -> terminal-release decision for each
 /// client block. It also admits one explicit consuming allocation-time
 /// handoff: only a sole mapped medium page, or a sole direct-small page with
-/// either an immediate local free block or the exact fully committed scalar
-/// extension shape, that entered source owner exit already nonfull may
+/// either an immediate local free block, the exact fully committed scalar
+/// extension shape, or the exact exhausted on-demand page-area-commit shape,
+/// that entered source owner exit already nonfull may
 /// transfer into a fresh later-main owner, claim its exact static-main bitmap
 /// member, and requeue at the source tail. Non-direct small pages,
-/// direct-small page-area-commit and other no-immediate cases, and every
+/// other no-immediate direct-small cases, and every
 /// force-collected full origin remain client-free-only. This route deliberately
 /// does not scan arbitrary routes, take a fresh-page fallback, adopt aggregate
 /// members, or expose concurrent producer protocol.
@@ -227,7 +229,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment
 /// while the registered page remains live. Its one consuming retry starts
 /// from the source-restored bitmap/count pair and may reclaim only the same
 /// retained `parts.page` candidate.
-#[must_use = "a reabandoned mapped-medium owner must retry its exact candidate or remain terminally retained"]
+#[must_use = "a reabandoned mapped-regular owner must retry its exact candidate or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<
     'attachment,
     'main,
@@ -366,10 +368,11 @@ pub(crate) enum MainHeapThreadProcessPageAllocatorBeginError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// Only a source-initially-nonfull medium or direct-small page with an
-    /// immediate local free block or exact fully committed scalar-extension
-    /// shape has the completed adoption proof. Non-direct-small pages,
-    /// direct-small page-area-commit and other no-immediate cases, and every
-    /// force-collected full origin retain their post-exit client-free route.
+    /// immediate local free block, exact fully committed scalar-extension
+    /// shape, or exact on-demand page-area-commit shape has the completed
+    /// adoption proof. Non-direct-small pages, other no-immediate cases, and
+    /// every force-collected full origin retain their post-exit client-free
+    /// route.
     SourceNotInitiallyNonfullAdoptable,
     Pair(ProcessPageArenaLeaseError),
     Attachment(MainHeapThreadAttachmentError),
@@ -2780,16 +2783,16 @@ impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main> {
 impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// Consumes this one mapped regular post-exit route into a fresh
     /// later-main page engine when it has a completed initially-nonfull
-    /// medium, immediate-head direct-small, or fully committed scalar-
-    /// extension direct-small shape.
+    /// medium, immediate-head direct-small, fully committed scalar-extension
+    /// direct-small, or exact on-demand page-area-commit direct-small shape.
     ///
     /// The source route is intentionally explicit rather than an allocation
     /// search: it transfers the same PageMap access capability to the new
     /// long engine, claims only its stable page identity, then restores source
     /// queue-tail order. A bitmap miss and every post-transfer failure retain
     /// the target owner; this slice never allocates a fresh replacement or
-    /// broadens into non-direct-small, direct-small page-area-commit or other
-    /// no-immediate, full-origin, aggregate, or concurrent adoption.
+    /// broadens into non-direct-small, other no-immediate, full-origin,
+    /// aggregate, or concurrent adoption.
     pub(crate) fn adopt_into_later_main<'attachment>(
         self,
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
@@ -3148,7 +3151,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
 impl<'attachment, 'main>
     MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<'attachment, 'main>
 {
-    /// Retries only the exact mapped-medium page whose failed direct commit
+    /// Retries only the exact mapped regular page whose failed direct commit
     /// re-published its original static-main bitmap/count pair.
     ///
     /// This is the bounded source retry shape after `mi_page_fresh_alloc`
@@ -5681,6 +5684,423 @@ mod tests {
     #[test]
     fn later_thread_exit_mapped_medium_on_demand_reabandons_after_commit_failure_then_retries() {
         assert_later_thread_exit_mapped_medium_on_demand_adoption(true);
+    }
+
+    fn assert_later_thread_exit_mapped_direct_small_on_demand_adoption(
+        fail_first_page_area_commit: bool,
+    ) {
+        thread::spawn(move || {
+            let fault = fault::install(fault::Plan::disabled());
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_reserved_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the reserved process map and arena form one source image");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let arena = process_arena
+                        .arena()
+                        .expect("the reserved paired arena remains published through the route");
+                    let mut source = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("on-demand direct-small source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("on-demand direct-small source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut source_allocator = MainHeapThreadProcessPageAllocator::begin(&mut source, pair)
+                        .expect("the reserved source attachment admits one direct-small page");
+                    source_allocator.test_enable_page_commit_on_demand();
+                    let request = SMALL_SIZE_MAX;
+                    let first = source_allocator
+                        .allocate(request, false)
+                        .expect("the source commits its first direct-small prefix");
+                    let page = NonNull::new(unsafe { source_allocator.test_page_for_block(first) })
+                        .expect("the first on-demand direct-small block is PageMap-published");
+                    let mut client_blocks = std::vec![first];
+                    let initial_page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        crate::size_class::page_kind_for_block_size(initial_page_ref.block_size()),
+                        Some(crate::types::PageKind::Small),
+                        "the source fixture selects the bounded direct-small page class"
+                    );
+                    assert!(
+                        initial_page_ref.block_size() <= SMALL_SIZE_MAX
+                            && initial_page_ref.reserved() >= 16,
+                        "the reserved fixture stays inside the direct-small source class"
+                    );
+                    assert!(
+                        initial_page_ref.slice_pcommitted() != 0,
+                        "the test-only fresh seam records an actual direct-small on-demand prefix"
+                    );
+                    let memory = initial_page_ref.memid();
+                    let slice = memory
+                        .arena_memory()
+                        .expect("the source page belongs to the paired reserved arena")
+                        .slice_index as usize;
+                    let slice_start = arena
+                        .slice_start(slice)
+                        .expect("the source slice still has its registered leading address");
+                    let page_start = page
+                        .as_ptr()
+                        .addr()
+                        .checked_add(initial_page_ref.page_offset())
+                        .expect("the fresh source page offset is representable");
+                    let page_slice_offset = page_start
+                        .checked_sub(slice_start.addr())
+                        .expect("the direct-small block area begins inside its leading slice");
+                    let page_span_size = crate::page::regular_page_slice_count(
+                        crate::types::PageKind::Small,
+                    )
+                    .expect("the direct-small source span is fixed")
+                        * crate::config::ARENA_SLICE_SIZE;
+                    let extension_plan = loop {
+                        while !unsafe { page.as_ref().free_list_head() }.is_null() {
+                            let block = source_allocator
+                                .allocate(request, false)
+                                .expect("the fixture exhausts only the source direct-small committed prefix");
+                            assert_eq!(
+                                unsafe { source_allocator.test_page_for_block(block) },
+                                page.as_ptr(),
+                                "exhausting the direct-small prefix cannot take a second page"
+                            );
+                            client_blocks.push(block);
+                        }
+                        let page_ref = unsafe { page.as_ref() };
+                        let plan = crate::page::page_area_commit_plan(
+                            page_ref.capacity(),
+                            page_ref.reserved(),
+                            page_ref.block_size(),
+                            page_ref.slice_pcommitted(),
+                            config.page_size().bytes(),
+                            page_slice_offset,
+                            page_span_size,
+                        )
+                        .expect("the exhausted direct-small prefix has one valid extension");
+                        assert!(plan.extend > 0, "the nonfull source page remains expandable");
+                        if plan.commit_size > 0 {
+                            break plan;
+                        }
+                        let block = source_allocator
+                            .allocate(request, false)
+                            .expect("a fully covered source extension remains on the exact direct-small page");
+                        assert_eq!(
+                            unsafe { source_allocator.test_page_for_block(block) },
+                            page.as_ptr(),
+                            "a source extension within its committed prefix cannot take a second page"
+                        );
+                        client_blocks.push(block);
+                    };
+                    let page_ref = unsafe { page.as_ref() };
+                    assert!(
+                        page_ref.free_list_head().is_null()
+                            && page_ref.used() == usize::from(page_ref.capacity())
+                            && page_ref.capacity() < page_ref.reserved(),
+                        "the source stops at the direct-small page-area commitment boundary while nonfull"
+                    );
+                    let source_capacity = page_ref.capacity();
+                    let source_pcommitted = page_ref.slice_pcommitted();
+                    let source_used = page_ref.used();
+                    let source_free = page_ref.free_list_head();
+                    let block_size = page_ref.block_size();
+                    let bin = crate::size_class::bin(block_size)
+                        .expect("the direct-small source page has one regular bin");
+                    let (direct_start, direct_end) = source_direct_cache_range(block_size);
+                    for index in 0..PAGES_DIRECT {
+                        let expected = if index >= direct_start && index <= direct_end {
+                            page.as_ptr()
+                        } else {
+                            EMPTY_PAGE.as_ptr()
+                        };
+                        assert_eq!(
+                            source_allocator.test_direct_page(index),
+                            Some(expected),
+                            "the source owns exactly its complete rounded direct-small cache range"
+                        );
+                    }
+                    assert!(
+                        extension_plan.commit_size > 0,
+                        "the selected direct-small exhaustion point requires source page-area commitment"
+                    );
+
+                    let drain = source_allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("on-demand direct-small source owner reaches its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe {
+                        drain.abandon_mapped_small_or_medium_to_process_route(first)
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "the sole on-demand nonfull direct-small page enters its mapped post-exit route"
+                        ),
+                    };
+                    assert_eq!(
+                        source.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the source Theap/TLD is gone before the fresh owner reclaims its prefix"
+                    );
+                    assert_eq!(route.test_abandoned_count(), Some(1));
+
+                    let mut target = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("on-demand direct-small target attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("on-demand direct-small target attachment retained: {error:?}")
+                        }
+                    };
+                    let target_theap = target
+                        .test_theap_pointer()
+                        .expect("the fresh target Theap remains live for source reassociation");
+                    let mut target_allocator = if fail_first_page_area_commit {
+                        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+                        let reabandoned = match route.adopt_into_later_main(&mut target, pair) {
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    adoption,
+                                    error:
+                                        MainHeapThreadProcessPageExitMappedRegularAdoptError::PageCommit(
+                                            ProcessPageArenaLeaseError::Arena(
+                                                crate::process_arena::ProcessSharedArenaError::Mapping(
+                                                    Errno::NOMEM,
+                                                ),
+                                            ),
+                                        ),
+                                },
+                            ) => adoption,
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                    route,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(route);
+                                panic!("the direct-small route must transfer before direct commit: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("a direct-small commit failure must reabandon rather than retain: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("the injected direct-small commit failure has the exact mapping error: {error:?}");
+                            }
+                            Ok(allocator) => {
+                                core::mem::forget(allocator);
+                                panic!("the injected direct-small commit failure cannot return a normal target");
+                            }
+                        };
+                        assert_eq!(unsafe { page.as_ref().slice_pcommitted() }, source_pcommitted);
+                        assert_eq!(unsafe { page.as_ref().capacity() }, source_capacity);
+                        assert_eq!(unsafe { page.as_ref().used() }, source_used);
+                        assert_eq!(unsafe { page.as_ref().free_list_head() }, source_free);
+                        assert_eq!(
+                            reabandoned.engine.queue_count(bin),
+                            Some(0),
+                            "source reabandon removes the page from the failed target queue"
+                        );
+                        for index in 0..PAGES_DIRECT {
+                            assert_eq!(
+                                reabandoned.engine.direct_page(index),
+                                Some(EMPTY_PAGE.as_ptr()),
+                                "source reabandon clears the complete direct-small cache image before page-count repair"
+                            );
+                        }
+                        assert_eq!(
+                            unsafe { page.as_ref().abandoned_test_thread_id() },
+                            THREAD_ID_ABANDONED_MAPPED,
+                            "source reabandon restores the mapped-abandoned identity"
+                        );
+                        assert_eq!(
+                            unsafe { page.as_ref().theap() },
+                            target_theap,
+                            "source reabandon retains the target Theap pointer for same-owner reclaim"
+                        );
+                        assert_eq!(
+                            unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                            page.as_ptr(),
+                            "the failed direct-small commit keeps the exact PageMap registration"
+                        );
+                        assert_eq!(unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1), Some(false));
+                        {
+                            let mut heap = main_heap
+                                .lock_heap()
+                                .expect("the static main Heap remains projectable after direct-small reabandon");
+                            assert_eq!(
+                                heap.heap_mut().abandoned_count(bin),
+                                Some(1),
+                                "source reabandon restores the exact paired static-main count"
+                            );
+                            heap.unlock()
+                                .expect("the reabandon observation releases the static-main heap projection");
+                        }
+                        assert!(matches!(
+                            page_map.begin_page_lifecycle(),
+                            Err(ProcessPageMapError::LifecycleBusy)
+                        ));
+                        fault.set(fault::Plan::disabled());
+                        match reabandoned.retry() {
+                            Ok(allocator) => allocator,
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("the disabled mapping fault permits the same direct-small candidate retry: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                    adoption,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(adoption);
+                                panic!("the same direct-small candidate retry cannot retain terminally: {error:?}");
+                            }
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                    route,
+                                    error,
+                                },
+                            ) => {
+                                core::mem::forget(route);
+                                panic!("a long same-candidate retry cannot reopen a short route: {error:?}");
+                            }
+                        }
+                    } else {
+                        match route.adopt_into_later_main(&mut target, pair) {
+                            Ok(allocator) => allocator,
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Rejected {
+                                    error,
+                                    ..
+                                },
+                            ) => panic!("the reserved direct-small source route transfers into the target: {error:?}"),
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Retained {
+                                    error,
+                                    ..
+                                },
+                            ) => panic!("the reserved direct-small source route cannot retain: {error:?}"),
+                            Err(
+                                MainHeapThreadProcessPageExitMappedRegularAdoptFailure::Reabandoned {
+                                    error,
+                                    ..
+                                },
+                            ) => panic!("the fault-free direct-small mapping commit cannot reabandon: {error:?}"),
+                        }
+                    };
+
+                    let page_ref = unsafe { page.as_ref() };
+                    assert_eq!(
+                        page_ref.slice_pcommitted(),
+                        extension_plan.next_slice_pcommitted,
+                        "successful direct-small commitment publishes its new OS-page count"
+                    );
+                    assert_eq!(
+                        page_ref.capacity(),
+                        source_capacity + extension_plan.extend,
+                        "direct-small commitment precedes exactly one source free-list extension"
+                    );
+                    assert!(!page_ref.free_list_head().is_null());
+                    assert_eq!(target_allocator.test_queue_count(bin), Some(1));
+                    for index in 0..PAGES_DIRECT {
+                        let expected = if index >= direct_start && index <= direct_end {
+                            page.as_ptr()
+                        } else {
+                            EMPTY_PAGE.as_ptr()
+                        };
+                        assert_eq!(
+                            target_allocator.test_direct_page(index),
+                            Some(expected),
+                            "the target restores exactly the rounded direct-small cache range before reuse"
+                        );
+                    }
+                    let reused = target_allocator
+                        .allocate(request, false)
+                        .expect("the target allocates the directly committed direct-small block");
+                    assert_eq!(
+                        unsafe { target_allocator.test_page_for_block(reused) },
+                        page.as_ptr(),
+                        "the target reuses the exact direct-small source page instead of taking a fresh slice"
+                    );
+                    unsafe {
+                        for block in client_blocks {
+                            target_allocator
+                                .free(block)
+                                .expect("every inherited direct-small block remains normally freeable");
+                        }
+                        target_allocator
+                            .free(reused)
+                            .expect("the directly committed direct-small block remains normally freeable");
+                    }
+                    match target_allocator.finish() {
+                        Ok(()) => {}
+                        Err(_) => panic!("the on-demand direct-small target lifecycle finishes after every free"),
+                    }
+                    assert!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) }.is_null(),
+                        "normal target cleanup unregisters the re-adopted direct-small page"
+                    );
+                    assert_eq!(unsafe { arena.pages() }.unwrap().is_clear_range(slice, 1), Some(true));
+                    assert_eq!(
+                        target.finish_after_user_destructors(),
+                        Ok(()),
+                        "the fresh target tears down after the direct-small page is released"
+                    );
+                    assert_eq!(
+                        page_map.begin_page_lifecycle().unwrap().finish(),
+                        Ok(()),
+                        "the finished direct-small re-adoption lifecycle reopens the process map"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("on-demand mapped direct-small adoption remains local to its fixture thread");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("reserved mapped direct-small adoption fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_direct_small_on_demand_commits_before_reuse() {
+        assert_later_thread_exit_mapped_direct_small_on_demand_adoption(false);
+    }
+
+    #[test]
+    fn later_thread_exit_mapped_direct_small_on_demand_reabandons_after_commit_failure_then_retries() {
+        assert_later_thread_exit_mapped_direct_small_on_demand_adoption(true);
     }
 
     /// Independent source model of `mi_theap_queue_first_update`'s direct

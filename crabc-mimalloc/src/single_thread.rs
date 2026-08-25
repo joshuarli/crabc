@@ -80,8 +80,9 @@
 // releases pages
 // made empty by force collection, and registers surviving mapped pages without
 // retaining a raw former-Theap page list. One explicit consumer can reclaim
-// only the sole mapped nonfull medium route or two direct-small source shapes
-// (an immediate head or a fully committed scalar extension) into a fresh
+// only the sole mapped nonfull medium route or three direct-small source shapes
+// (an immediate head, a fully committed scalar extension, or an exact
+// on-demand page-area commit) into a fresh
 // later-main Theap; it claims the exact page identity and appends it to the
 // source queue tail. All force-collected full origins remain client-free-only.
 // A test-only one-shot fresh on-demand seam reaches that route's real reserved
@@ -694,10 +695,14 @@ enum ThreadExitMappedRegularPostExitOrigin {
     /// collection left no immediate local free block, and its fully committed
     /// capacity can take the scalar source extension.
     InitiallyNonfullDirectSmallNeedsScalarExtension,
+    /// The page was already a nonfull direct-small regular member, source
+    /// collection left no immediate local free block, and its on-demand
+    /// committed prefix needs an exact direct page-area commit before source
+    /// free-list extension can publish the next local block.
+    InitiallyNonfullDirectSmallNeedsPageAreaCommit,
     /// The page was already a nonfull direct-small regular member, but source
-    /// collection left no immediate local free block without the exact fully
-    /// committed scalar-extension shape. It remains client-free-only until
-    /// the direct-commit or other source tail is proved.
+    /// collection left no immediate local free block without one of the exact
+    /// proven extension shapes. It remains client-free-only.
     InitiallyNonfullDirectSmallNoImmediateUnsupported,
     /// The page entered owner exit as a full medium `BIN_FULL` member and one
     /// joined remote free made it nonfull during force collection. It remains
@@ -2823,9 +2828,11 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: both source collectors completed under the exclusive drain.
         // Classify the final source shape before queue removal and bitmap
         // publication. The narrow direct-small adoption route accepts an
-        // immediate local free-list head or the exact fully committed scalar
-        // `mi_page_extend_free` shape; page-area commitment and every other
-        // no-immediate shape remain client-free-only.
+        // immediate local free-list head, the exact fully committed scalar
+        // `mi_page_extend_free` shape, or an exact on-demand page-area plan.
+        // Keep a nonzero committed prefix whose next extension remains wholly
+        // inside that prefix client-free-only: this slice owns only the
+        // distinct source `_mi_os_commit` tail.
         let (after_collect_kind, origin) = {
             let after_collect = unsafe { page.as_ref() };
             let after_collect_kind = size_class::page_kind_for_block_size(after_collect.block_size());
@@ -2843,6 +2850,27 @@ impl<'attachment, 'main, 'arena, 'map>
                     ThreadExitMappedRegularPostExitAbandonError::NotMappedRegular,
                 ));
             }
+            let direct_small_needs_page_area_commit = after_collect.free_list_head().is_null()
+                && after_collect.capacity() < after_collect.reserved()
+                && after_collect.slice_pcommitted() != 0
+                && page
+                    .as_ptr()
+                    .addr()
+                    .checked_add(after_collect.page_offset())
+                    .and_then(|page_start| page_start.checked_sub(slice_start.addr()))
+                    .filter(|&page_slice_offset| page_slice_offset < size)
+                    .and_then(|page_slice_offset| {
+                        page::page_area_commit_plan(
+                            after_collect.capacity(),
+                            after_collect.reserved(),
+                            after_collect.block_size(),
+                            after_collect.slice_pcommitted(),
+                            self.page_map.memory_config().page_size().bytes(),
+                            page_slice_offset,
+                            size,
+                        )
+                    })
+                    .is_some_and(|plan| plan.extend != 0 && plan.commit_size != 0);
             let origin = match after_collect_kind {
                 Some(PageKind::Medium) => ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullMedium,
                 Some(PageKind::Small) if after_collect.block_size() > SMALL_SIZE_MAX => {
@@ -2854,6 +2882,9 @@ impl<'attachment, 'main, 'arena, 'map>
                         && after_collect.slice_pcommitted() == 0 =>
                 {
                     ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsScalarExtension
+                }
+                Some(PageKind::Small) if direct_small_needs_page_area_commit => {
+                    ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsPageAreaCommit
                 }
                 Some(PageKind::Small) if after_collect.free_list_head().is_null() => {
                     ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNoImmediateUnsupported
@@ -6605,10 +6636,11 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
 impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     /// Whether this exact source route has an allocation-time reclaim tail
     /// completed in this slice: an initially-nonfull medium, or an
-    /// initially-nonfull direct-small page with an immediate local free block
-    /// or exact fully committed scalar-extension shape. Non-direct-small
-    /// pages, direct-small direct-commit cases, and every force-collected full
-    /// origin remain client-free-only.
+    /// initially-nonfull direct-small page with an immediate local free block,
+    /// exact fully committed scalar-extension shape, or exact on-demand
+    /// page-area-commit shape. Non-direct-small pages, other no-immediate
+    /// direct-small shapes, and every force-collected full origin remain
+    /// client-free-only.
     #[inline]
     pub(crate) fn supports_later_main_adoption(&self) -> bool {
         matches!(
@@ -6622,6 +6654,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
             ) | (
                 PageKind::Small,
                 ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsScalarExtension
+            ) | (
+                PageKind::Small,
+                ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsPageAreaCommit
             )
         )
     }
@@ -6643,9 +6678,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     }
 
     /// Reclaims one exact initially-nonfull mapped-abandoned medium or
-    /// direct-small route with either an immediate head or the exact scalar
-    /// extension shape into a fresh later-main engine, then appends it to the
-    /// target regular queue tail.
+    /// direct-small route with either an immediate head, exact scalar
+    /// extension shape, or exact page-area-commit shape into a fresh
+    /// later-main engine, then appends it to the target regular queue tail.
     ///
     /// The caller must already have consumed this route's short PageMap
     /// access into the target engine's long mutation lease. No generic page
@@ -6786,7 +6821,11 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
             == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallImmediate;
         let scalar_extension_direct_small = self.origin
             == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsScalarExtension;
-        let direct_small = immediate_direct_small || scalar_extension_direct_small;
+        let page_area_commit_direct_small = self.origin
+            == ThreadExitMappedRegularPostExitOrigin::InitiallyNonfullDirectSmallNeedsPageAreaCommit;
+        let direct_small = immediate_direct_small
+            || scalar_extension_direct_small
+            || page_area_commit_direct_small;
         let expected_kind = if direct_small {
             PageKind::Small
         } else {
@@ -6806,6 +6845,10 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                 && (!page_ref.free_list_head().is_null()
                     || page_ref.capacity() >= page_ref.reserved()
                     || page_ref.slice_pcommitted() != 0))
+            || (page_area_commit_direct_small
+                && (!page_ref.free_list_head().is_null()
+                    || page_ref.capacity() >= page_ref.reserved()
+                    || page_ref.slice_pcommitted() == 0))
             || page_ref.used() == 0
             || page_ref.used() >= usize::from(page_ref.reserved())
             || page_is_in_full(page_ref)
@@ -6866,6 +6909,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                 .ok_or(ThreadExitMappedRegularPostExitAdoptError::InvalidPageCommitPlan)?;
                 if plan.extend == 0 {
                     return Err(ThreadExitMappedRegularPostExitAdoptError::NotExpandable);
+                }
+                if page_area_commit_direct_small && plan.commit_size == 0 {
+                    return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidPageCommitPlan);
                 }
                 if plan.commit_size != 0 {
                     if let Err(error) =

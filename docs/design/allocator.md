@@ -452,9 +452,11 @@ One deliberately consuming allocation-time edge is now complete for this
 sole route only. `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
 accepts either an exact `PageKind::Medium` route, or an exact
 `PageKind::Small` direct-cache route whose source force/false collection left
-an immediate local free block or the exhausted fully committed scalar-
-extension shape (`free` null, `capacity < reserved`, and
-`slice_pcommitted == 0`). Both require a fresh
+an immediate local free block, the exhausted fully committed scalar-extension
+shape (`free` null, `capacity < reserved`, and `slice_pcommitted == 0`), or
+the separately proven exhausted on-demand page-area-commit shape (`free` null,
+`capacity < reserved`, `slice_pcommitted != 0`, and a
+`page_area_commit_plan` with nonzero `extend` and `commit_size`). Both require a fresh
 `MainHeapThreadAttachment` whose subprocess, frozen configuration, stable
 PageMap root, static main Heap, and selected arena all match. The handoff turns
 the route's `ProcessPageMapPostExitAccess` back into a
@@ -473,14 +475,16 @@ The medium branch accepts either an immediate head or an exhausted nonfull
 medium page (`capacity < reserved`). A fully committed medium page
 (`slice_pcommitted == 0`) performs scalar
 `mi_page_extend_free` free-list/capacity mutation after that tail restoration.
-The direct-small branch accepts its immediate head or that exact exhausted
-fully committed scalar-extension shape, applying the same scalar
-`mi_page_extend_free` free-list/capacity mutation after queue-tail/direct-cache
-restoration. A direct-small page needing page-area commitment, or any other
-no-immediate shape, stays client-free-only.
+The direct-small branch accepts its immediate head, the exact exhausted fully
+committed scalar-extension shape, or the exact exhausted page-area-commit
+shape. The latter restores the direct-cache range before page-count increment,
+then performs the same source direct commitment before it publishes the new
+prefix count or free-list/capacity state. Other no-immediate direct-small
+shapes, including a nonzero prefix whose next extension needs no direct commit,
+stay client-free-only.
 The bounded test-only `commit == false` seam creates one actual reserved medium
-page with the source initial callback-committed prefix. For that nonzero-prefix
-case, `page_area_commit_plan` separates OS-page counts from byte ranges, then
+or direct-small page with the source initial callback-committed prefix. For the
+nonzero-prefix case, `page_area_commit_plan` separates OS-page counts from byte ranges, then
 the paired retained mapping performs the direct `_mi_os_commit`-shape extension
 before `Page::set_slice_pcommitted_after_commit` or
 `LocalFreeList::extend_count` may publish state. If that commit fails,
@@ -490,8 +494,8 @@ publication. The resulting consuming owner can retry only the same candidate
 through its long lifecycle; it cannot reopen short map access, scan, or take a
 fresh fallback. This proves no production page-on-demand option. A bitmap miss,
 malformed state, scalar extension error, or any other post-transfer failure
-likewise retains the target owner. Non-direct-small, direct-small page-area-
-commit and other no-immediate cases, full, aggregate-registry, singleton,
+likewise retains the target owner. Non-direct-small, other no-immediate
+direct-small cases, full, aggregate-registry, singleton,
 unmapped, huge, foreign,
 automatic-scanning, and concurrent adoption remain deliberately unsupported.
 

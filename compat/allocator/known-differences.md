@@ -500,8 +500,9 @@ result may refine it only when it can prove retained ownership.
   One explicit consuming allocation-time edge is complete for the sole route
   only: `MainHeapThreadProcessPageExitMappedRegularRoute::adopt_into_later_main`
   accepts its source-initially-nonfull mapped medium page, or its direct-small
-  page when source force/false collection leaves an immediate local free block
-  or the exhausted fully committed scalar-extension shape. A full `BIN_FULL`
+  page when source force/false collection leaves an immediate local free block,
+  the exhausted fully committed scalar-extension shape, or the exact exhausted
+  on-demand page-area-commit shape. A full `BIN_FULL`
   medium or full ordinary-bin direct-small page that force collection makes
   nonfull preserves that origin and remains client-free-only.
   Before it consumes the short route, the target
@@ -514,14 +515,16 @@ collects live state, re-proves the complete span and exact source class, and
 appends the detached page at the target queue tail. For the direct-small class,
 it restores the complete rounded direct-cache range before target page-count
 increment and immediately reuses that same page; an exhausted fully committed
-direct-small page enters the scalar extension after tail restoration, while a
-page-area-commit or other no-immediate shape remains client-free-only. The
+direct-small page enters the scalar extension after tail restoration, while
+the exact exhausted on-demand page-area-commit shape performs the direct
+commit before prefix-count/free-list/capacity publication. Other no-immediate
+shapes remain client-free-only. The
 medium branch also handles an exhausted nonfull medium page (`capacity < reserved`).
 A fully committed medium page (`slice_pcommitted == 0`) applies scalar
 `mi_page_extend_free` list/capacity mutation after tail insertion. Its bounded
 test-only `commit == false` seam
-constructs one actual reserved medium page with the source initial callback-
-committed prefix. The nonzero-prefix branch derives the source direct
+constructs one actual reserved medium or direct-small page with the source
+initial callback-committed prefix. The nonzero-prefix branch derives the source direct
 `_mi_os_commit` byte range, commits it through the paired retained mapping,
 then publishes the monotonic OS-page count before free-list/capacity mutation.
 An injected commit failure repeats false collection, queue detachment,
@@ -529,8 +532,8 @@ direct-cache/page-count repair, and mapped identity/bit/count/unown
 publication; the returned consuming owner retries only the same candidate with
 its retained long lifecycle. This is not a production option, scan, or fresh
 fallback. A bitmap miss, malformed state, scalar extension error, or any other
-post-transfer failure remains terminally retained. Non-direct-small,
-direct-small page-area-commit and other no-immediate cases, full, singleton,
+post-transfer failure remains terminally retained. Non-direct-small, other
+no-immediate direct-small cases, full, singleton,
 unmapped, huge, foreign, automatic-scanning, concurrent, and aggregate-
 registry adoption remain absent.
 
