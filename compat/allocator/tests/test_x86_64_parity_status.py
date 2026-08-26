@@ -30,6 +30,10 @@ FULL_LARGE_HOMOGENEOUS_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-full-large-homogeneous-aggregate-evidence-v3.5.0.json"
 )
+FULL_MEDIUM_HOMOGENEOUS_AGGREGATE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-full-medium-homogeneous-aggregate-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -171,6 +175,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-dynamic-full-large-homogeneous-aggregate",
         )
 
+    def test_full_medium_homogeneous_aggregate_schema_profile_is_exact(self) -> None:
+        schema = json.loads(
+            FULL_MEDIUM_HOMOGENEOUS_AGGREGATE_SCHEMA.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-dynamic-full-medium-homogeneous-aggregate",
+        )
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -211,6 +224,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-dynamic-full-large-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-large-unmapped-reabandon-differential",
                 "native-dynamic-full-large-homogeneous-aggregate-differential",
+                "native-dynamic-full-medium-homogeneous-aggregate-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
@@ -530,6 +544,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-dynamic-full-large-homogeneous-aggregate-differential"]["report"],
             "compat/reports/allocator/x86_64/dynamic-full-large-homogeneous-aggregate.json",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-medium-homogeneous-aggregate-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-dynamic-full-medium-homogeneous-aggregate",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-medium-homogeneous-aggregate-differential"]["report"],
+            "compat/reports/allocator/x86_64/dynamic-full-medium-homogeneous-aggregate.json",
         )
         self.assertEqual(
             gates["native-dynamic-os-aligned-singleton-owner-exit-differential"]["command"],
@@ -1155,6 +1177,30 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, dynamic_full_large_aggregate)
+        dynamic_full_medium_aggregate = gates[
+            "native-dynamic-full-medium-homogeneous-aggregate-differential"
+        ]["claim"]
+        for fragment in (
+            "67 address-independent values",
+            "bounded dynamic homogeneous full-medium aggregate route",
+            "exactly two distinct full BIN_FULL medium arena pages",
+            "request 10248",
+            "12288-byte blocks",
+            "capacity/reserved 42",
+            "eight arena slices each",
+            "real mi_thread_done",
+            "pthread_join()",
+            "both members unmapped-abandoned",
+            "five-free mostly-used boundary",
+            "used 42 -> 37 unmapped",
+            "used 36 mapped",
+            "complete eight-slice arena span",
+            "bounded dynamic homogeneous full-medium aggregate owner-exit route",
+            "private native x86-64 engine evidence only",
+            "general lifecycle",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, dynamic_full_medium_aggregate)
         dynamic_os_aligned_singleton = gates[
             "native-dynamic-os-aligned-singleton-owner-exit-differential"
         ]["claim"]
