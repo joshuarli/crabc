@@ -1406,6 +1406,26 @@ establish general retirement or lifecycle, remote/concurrent collection,
 abandonment, thread teardown, public `mi_*` behavior, libc integration,
 backend promotion, public x86 support, or AArch64 evidence.
 
+The separate full direct-small regular-bin retirement differential is also
+native x86-64 only:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-direct-small-full-retire
+```
+
+It writes `compat/reports/allocator/x86_64/direct-small-full-retire.json`
+after comparing 38 fixed address-independent pinned-C/Rust values. One
+same-thread/same-Theap, arena-backed 1024-byte direct-small page has 1024-byte
+blocks, capacity 64, and one slice. When full (`used == reserved`), it remains
+the sole ordinary regular-bin member with its complete rounded direct-cache
+range; it does not enter `BIN_FULL` or take an unfull transition. Owner-local
+frees retire it at `retire_expire == 16` without queue or cache detachment, and
+forced retired collection restores the source empty-page cache image before
+queue, PageMap, ordinary arena-page bitmap, and slice release. This is only
+that bounded private engine route, not general retirement/lifecycle, remote or
+concurrent collection, thread exit, abandonment/adoption, public API/runtime,
+backend, public x86 support, or AArch64 evidence.
+
 The separate ordinary medium-page full-to-retire differential is also native
 x86-64 only:
 
@@ -1520,6 +1540,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 23-field pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. It is dispatched by `allocator-on-demand`; only C sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its deliberate Rust failed-commit same-page retry is not C fault-injection parity or a production option/API/policy, fresh-fallback, public-runtime, backend, or AArch64 claim. |
 | `x86_64_direct_on_demand_evidence.py` and `x86_64-direct-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 44-field pinned-C/Rust differential for one reserved 1024-byte small direct-cache page: direct exhaustion at eight objects, generic zero-commit extension at allocation nine, and direct prefix growth before the allocation-seventeen extension. It is dispatched by `allocator-direct-on-demand`; C alone sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its source-anchored poststate trace does not claim C fault-injection parity, a production option/API/policy, fresh fallback, public runtime, backend, or AArch64 evidence. |
 | `x86_64_regular_small_evidence.py` and `x86_64-regular-small-evidence-v3.5.0.json` | Native x86-64-only private 40-field pinned-C/Rust differential for one 1025-byte ordinary regular-small arena page: a 1280-byte 51-block one-slice class locally retires at 16, the next same-Theap generic allocation quick-collects/reuses a just-freed same-page block, and forced collection verifies queue/PageMap/ordinary arena bitmap/exact slice release. It is dispatched by `allocator-regular-small`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
+| `x86_64_direct_small_full_retire_evidence.py` and `x86_64-direct-small-full-retire-evidence-v3.5.0.json` | Native x86-64-only private 38-field pinned-C/Rust differential for one same-thread/same-Theap 1024-byte direct-small arena page (1024-byte blocks, capacity 64, one slice): when full it remains in its ordinary regular bin with its complete rounded direct-cache range, never enters `BIN_FULL` or takes an unfull transition, then owner-local frees retire it at 16 while that range remains populated. Forced retired collection restores the source empty-page cache image and releases queue/PageMap/ordinary arena bitmap/slice. It is dispatched by `allocator-direct-small-full-retire`; it does not claim general retirement/lifecycle, remote or concurrent collection, thread exit, abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_medium_full_retire_evidence.py` and `x86_64-medium-full-retire-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one same-thread/same-Theap, arena-backed ordinary 10241-byte medium page (12288-byte block size, 42 capacity, eight slices) under C full-retain `-1`: `BIN_FULL`, one local-free return to regular, retire expiry `4`, and forced queue/PageMap/arena-bit/slice-span release. It is dispatched by `allocator-medium-full-retire`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_full_non_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-non-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for one worker-owned arena full non-direct-small regular-bin page: a 1032-byte request uses the 1280-byte, 51-block, one-slice class; one remote `mi_free` is published before real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection makes the page nonfull/mapped-abandoned and detaches its ordinary queue, and only the final free releases the PageMap/arena bitmap/slice. It is dispatched by `allocator-full-non-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_full_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 28-field pinned-C/Rust differential for one worker-owned arena full direct-small regular-bin page: a 1024-byte request uses the 1024-byte, 64-block, one-slice class; a pre-remote preflight requires the complete rounded direct-cache range, one remote `mi_free` precedes real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection immediately publishes the mapped route while detaching the ordinary queue, and only the final free releases the PageMap/arena bitmap/slice and clears the terminal static-main abandoned-bin bitmap (`arena_abandoned_bin_bitmap_clear_after_final_free`). It is dispatched by `allocator-full-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |

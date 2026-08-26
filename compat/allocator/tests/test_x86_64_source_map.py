@@ -199,6 +199,53 @@ class X86_64SourceMapTests(unittest.TestCase):
         self.assertIn("queue stay single-member", units["page-queue-kernels"]["difference"])
         self.assertLessEqual(units["thread-local-heap-lifecycle"]["source_anchor"]["start_line"], 123)
 
+    def test_direct_small_full_regular_retire_lane_is_limited_to_local_engine_boundaries(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "ordinary-allocation-paths",
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_direct_small_full_retire_evidence.py",
+            "compat/allocator/x86_64-direct-small-full-retire-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_direct_small_full_retire_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                unit = units[unit_id]
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn("1024-byte direct-small page", unit["difference"])
+                self.assertIn("ordinary regular bin", unit["difference"])
+                self.assertIn("`retire_expire == 16`", unit["difference"])
+                self.assertIn("`BIN_FULL`", unit["difference"])
+                self.assertIn("unfull, remote, thread-exit", unit["difference"])
+
     def test_remote_free_scopes_record_both_bounded_native_differentials(self) -> None:
         remote = next(
             unit for unit in self.contract["units"] if unit["id"] == "local-and-remote-free"

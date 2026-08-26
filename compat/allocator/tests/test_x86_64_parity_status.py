@@ -16,6 +16,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT = ROOT / "compat/allocator/x86_64-parity-v3.5.0.json"
+DIRECT_SMALL_FULL_RETIRE_SCHEMA = (
+    ROOT / "compat/allocator/x86_64-direct-small-full-retire-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -123,6 +126,13 @@ class X86_64ParityStatusTests(unittest.TestCase):
             },
         )
 
+    def test_direct_small_full_regular_retire_schema_profile_is_exact(self) -> None:
+        schema = json.loads(DIRECT_SMALL_FULL_RETIRE_SCHEMA.read_text(encoding="utf-8"))
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-direct-small-full-regular-retire-force-release",
+        )
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -144,6 +154,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-reserved-small-direct-on-demand-differential",
                 "native-aligned-overalloc-realloc-differential",
                 "native-regular-small-retire-quick-collect-release-differential",
+                "native-direct-small-full-regular-retire-force-release-differential",
                 "native-medium-full-to-regular-retire-force-release-differential",
                 "native-full-non-direct-small-force-collect-post-exit-differential",
                 "native-full-direct-small-force-collect-post-exit-differential",
@@ -263,6 +274,18 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-regular-small-retire-quick-collect-release-differential"]["report"],
             "compat/reports/allocator/x86_64/regular-small.json",
+        )
+        self.assertEqual(
+            gates["native-direct-small-full-regular-retire-force-release-differential"][
+                "command"
+            ],
+            "./compat/allocator/run-x86_64.sh allocator-direct-small-full-retire",
+        )
+        self.assertEqual(
+            gates["native-direct-small-full-regular-retire-force-release-differential"][
+                "report"
+            ],
+            "compat/reports/allocator/x86_64/direct-small-full-retire.json",
         )
         self.assertEqual(
             gates["native-medium-full-to-regular-retire-force-release-differential"]["command"],
@@ -657,6 +680,32 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, regular_small)
+        direct_small_full_regular = gates[
+            "native-direct-small-full-regular-retire-force-release-differential"
+        ]["claim"]
+        for fragment in (
+            "38 address-independent values",
+            "1024-byte direct-small page",
+            "1024-byte blocks, capacity 64, one slice",
+            "full (`used == reserved`)",
+            "sole ordinary regular-bin member",
+            "complete rounded direct-cache range",
+            "does not enter `BIN_FULL`",
+            "unfull transition",
+            "retire_expire == 16",
+            "without detaching the regular queue or cache range",
+            "source empty-page direct-cache range",
+            "PageMap",
+            "ordinary arena-page bitmap",
+            "same-thread/same-Theap private engine evidence",
+            "does not establish general retirement or lifecycle",
+            "remote/concurrent collection",
+            "thread exit",
+            "abandonment/adoption",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, direct_small_full_regular)
         full_non_direct_small = gates[
             "native-full-non-direct-small-force-collect-post-exit-differential"
         ]["claim"]
@@ -809,6 +858,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("25-field native C/Rust quiescent live-owner", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("28-field real small direct-page", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("40-field same-Theap ordinary regular-small", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn(
+            "38-field same-Theap full direct-small regular-bin retire/force-release",
+            lanes["general-thread-lifecycle-and-stress"]["reason"],
+        )
         self.assertIn("13-field unmapped full-medium reabandon", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("18-value same-origin allocation-time mapped-adoption", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])

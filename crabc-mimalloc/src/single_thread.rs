@@ -32761,6 +32761,251 @@ mod tests {
         });
     }
 
+    /// Emits the fixed address-independent native x86-64 record for one
+    /// direct-small page that reaches `used == reserved` without entering
+    /// `BIN_FULL`: the source keeps small direct pages in their ordinary bin,
+    /// local free-all retires the sole page, and forced collection releases
+    /// its complete map/arena/direct-cache state.
+    ///
+    /// This is deliberately distinct from the full-page owner-exit routes.
+    /// The immediate post-allocation transition in
+    /// `mi_malloc_generic_fallback` only moves pages above `SMALL_MAX_OBJ_SIZE`
+    /// to `BIN_FULL`; this fixture stops after filling the direct page, so a
+    /// `SMALL_SIZE_MAX` page supplies the precise no-BIN_FULL boundary here.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_direct_small_full_regular_retire_force_release_trace_matches_pinned_c() {
+        with_allocator(|allocator| {
+            std::println!("CRABC_MI_DIRECT_SMALL_FULL_RETIRE_TRACE_BEGIN");
+            let request = SMALL_SIZE_MAX;
+            let bin = size_class::bin(request).unwrap();
+            let first = allocator.allocate(request, false).unwrap();
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+            let page_ptr = page.as_ptr();
+            // SAFETY: `first` is current and keeps this arena-backed page
+            // stable while its source geometry remains observed.
+            let (block_size, reserved, memory, arena_backed) = unsafe {
+                let page_ref = page.as_ref();
+                assert_eq!(
+                    size_class::page_kind_for_block_size(page_ref.block_size()),
+                    Some(PageKind::Small),
+                );
+                (
+                    page_ref.block_size(),
+                    page_ref.reserved() as usize,
+                    page_ref.memid().arena_memory().unwrap(),
+                    page_ref.memid().kind() == MemoryKind::Arena,
+                )
+            };
+            let slice_index = memory.slice_index as usize;
+            let slice_count = memory.slice_count as usize;
+            let slice_start = allocator.arena.slice_start(slice_index).unwrap();
+            let span_size = slice_count * ARENA_SLICE_SIZE;
+            let direct_cache_start = 113;
+            let direct_cache_end = invariants::word_count(block_size).unwrap();
+            let direct_small = block_size <= SMALL_SIZE_MAX;
+            let regular_queue_before_fill = allocator.queue_count(bin).unwrap();
+            let full_queue_before_fill = allocator.queue_count(BIN_FULL).unwrap();
+            assert_eq!(request, SMALL_SIZE_MAX);
+            assert_eq!(block_size, request);
+            assert_eq!(direct_cache_end, 128);
+            assert!(direct_small);
+            assert_eq!(regular_queue_before_fill, 1);
+            assert_eq!(full_queue_before_fill, 0);
+            assert!(reserved > 1);
+            assert!(arena_backed);
+
+            let mut blocks = Vec::with_capacity(reserved);
+            blocks.push(first);
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator.allocate(request, false).unwrap();
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page_ptr);
+                blocks.push(block);
+            }
+            let filled_used = unsafe { page.as_ref().used() };
+            let filled_capacity = unsafe { page.as_ref().capacity() as usize };
+            let filled_regular_queue = allocator.queue_count(bin).unwrap();
+            let filled_full_queue = allocator.queue_count(BIN_FULL).unwrap();
+            let filled_page_count = allocator.session.theap().page_count();
+            let filled_in_full = unsafe { page_is_in_full(page.as_ref()) };
+            let filled_free_empty = unsafe { page.as_ref().remote_free_test_free().is_null() };
+            let filled_local_empty = unsafe { page.as_ref().remote_free_test_local_free().is_null() };
+            let filled_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let filled_direct_cache_matches = (0..PAGES_DIRECT).all(|index| {
+                let expected = if index >= direct_cache_start && index <= direct_cache_end {
+                    page_ptr
+                } else {
+                    EMPTY_PAGE.as_ptr()
+                };
+                allocator.direct_page(index) == Some(expected)
+            });
+            assert_eq!(blocks.len(), reserved);
+            assert_eq!(filled_used, reserved);
+            assert_eq!(filled_capacity, reserved);
+            assert_eq!(filled_capacity, 64);
+            assert_eq!(slice_count, 1);
+            assert_eq!(filled_regular_queue, 1);
+            assert_eq!(filled_full_queue, 0);
+            assert_eq!(filled_page_count, 1);
+            assert!(!filled_in_full);
+            assert!(filled_free_empty && filled_local_empty && filled_remote_empty);
+            assert!(filled_direct_cache_matches);
+
+            for block in blocks {
+                // SAFETY: each exact current allocation is returned once to
+                // the same owner; no remote producer exists in this route.
+                unsafe { allocator.free(block).unwrap() };
+            }
+
+            let retired_used = unsafe { page.as_ref().used() };
+            let retired_expire = unsafe { page.as_ref().retire_expire() };
+            let retired_regular_queue = allocator.queue_count(bin).unwrap();
+            let retired_full_queue = allocator.queue_count(BIN_FULL).unwrap();
+            let retired_page_count = allocator.session.theap().page_count();
+            let retired_in_full = unsafe { page_is_in_full(page.as_ref()) };
+            let retired_free_empty = unsafe { page.as_ref().remote_free_test_free().is_null() };
+            let retired_local_nonempty = unsafe { !page.as_ref().remote_free_test_local_free().is_null() };
+            let retired_remote_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let retired_map_published = unsafe { allocator.page_map.checked_lookup(first.as_ptr()) == page_ptr };
+            let retired_arena_page_set = unsafe { allocator.arena.pages() }
+                .unwrap()
+                .is_set_range(slice_index, 1)
+                == Some(true);
+            let retired_slices_unreleased = unsafe { allocator.arena.slices_free() }
+                .unwrap()
+                .is_clear_range(slice_index, slice_count)
+                == Some(true);
+            let retired_direct_cache_matches = (0..PAGES_DIRECT).all(|index| {
+                let expected = if index >= direct_cache_start && index <= direct_cache_end {
+                    page_ptr
+                } else {
+                    EMPTY_PAGE.as_ptr()
+                };
+                allocator.direct_page(index) == Some(expected)
+            });
+            assert_eq!(retired_used, 0);
+            assert_eq!(retired_expire, RETIRE_CYCLES);
+            assert_eq!(retired_regular_queue, 1);
+            assert_eq!(retired_full_queue, 0);
+            assert_eq!(retired_page_count, 1);
+            assert!(!retired_in_full);
+            assert!(retired_free_empty && retired_local_nonempty && retired_remote_empty);
+            assert!(retired_map_published && retired_arena_page_set && retired_slices_unreleased);
+            assert!(retired_direct_cache_matches);
+
+            assert!(allocator.collect_retired(true));
+            let release_regular_queue = allocator.queue_count(bin).unwrap();
+            let release_full_queue = allocator.queue_count(BIN_FULL).unwrap();
+            let release_page_count = allocator.session.theap().page_count();
+            let release_map_clear = unsafe { allocator.page_map.checked_lookup(first.as_ptr()) }.is_null();
+            let release_span_map_clear = (0..span_size).step_by(ARENA_SLICE_SIZE).all(|offset| unsafe {
+                allocator
+                    .page_map
+                    .checked_lookup(slice_start.wrapping_add(offset))
+            }
+            .is_null());
+            let release_arena_page_clear = unsafe { allocator.arena.pages() }
+                .unwrap()
+                .is_clear_range(slice_index, 1)
+                == Some(true);
+            let release_slices_free = unsafe { allocator.arena.slices_free() }
+                .unwrap()
+                .is_set_range(slice_index, slice_count)
+                == Some(true);
+            let release_direct_cache_clear = (0..PAGES_DIRECT)
+                .all(|index| allocator.direct_page(index) == Some(EMPTY_PAGE.as_ptr()));
+            assert_eq!(release_regular_queue, 0);
+            assert_eq!(release_full_queue, 0);
+            assert_eq!(release_page_count, 0);
+            assert!(release_map_clear && release_span_map_clear);
+            assert!(release_arena_page_clear && release_slices_free);
+            assert!(release_direct_cache_clear);
+
+            let valid = request == SMALL_SIZE_MAX
+                && block_size == request
+                && filled_capacity == reserved
+                && filled_capacity == 64
+                && slice_count == 1
+                && direct_cache_start == 113
+                && direct_cache_end == 128
+                && arena_backed
+                && direct_small
+                && regular_queue_before_fill == 1
+                && full_queue_before_fill == 0
+                && filled_used == reserved
+                && filled_regular_queue == 1
+                && filled_full_queue == 0
+                && filled_page_count == 1
+                && !filled_in_full
+                && filled_free_empty
+                && filled_local_empty
+                && filled_remote_empty
+                && filled_direct_cache_matches
+                && retired_used == 0
+                && retired_expire == RETIRE_CYCLES
+                && retired_regular_queue == 1
+                && retired_full_queue == 0
+                && retired_page_count == 1
+                && !retired_in_full
+                && retired_free_empty
+                && retired_local_nonempty
+                && retired_remote_empty
+                && retired_map_published
+                && retired_arena_page_set
+                && retired_slices_unreleased
+                && retired_direct_cache_matches
+                && release_regular_queue == 0
+                && release_full_queue == 0
+                && release_page_count == 0
+                && release_map_clear
+                && release_span_map_clear
+                && release_arena_page_clear
+                && release_slices_free
+                && release_direct_cache_clear;
+            assert!(valid, "direct-small regular retirement trace diverged from pinned C");
+
+            std::println!("trace.direct_small_full.request={request}");
+            std::println!("trace.direct_small_full.block_size={block_size}");
+            std::println!("trace.direct_small_full.capacity={filled_capacity}");
+            std::println!("trace.direct_small_full.slice_count={slice_count}");
+            std::println!("trace.direct_small_full.arena_backed={}", u8::from(arena_backed));
+            std::println!("trace.direct_small_full.direct_range_start={direct_cache_start}");
+            std::println!("trace.direct_small_full.direct_range_end={direct_cache_end}");
+            std::println!("trace.direct_small_full.filled.used={filled_used}");
+            std::println!("trace.direct_small_full.filled.regular_queue={filled_regular_queue}");
+            std::println!("trace.direct_small_full.filled.full_queue={filled_full_queue}");
+            std::println!("trace.direct_small_full.filled.page_count={filled_page_count}");
+            std::println!("trace.direct_small_full.filled.not_in_full={}", u8::from(!filled_in_full));
+            std::println!("trace.direct_small_full.filled.free_empty={}", u8::from(filled_free_empty));
+            std::println!("trace.direct_small_full.filled.local_empty={}", u8::from(filled_local_empty));
+            std::println!("trace.direct_small_full.filled.remote_empty={}", u8::from(filled_remote_empty));
+            std::println!("trace.direct_small_full.filled.direct_range_matches={}", u8::from(filled_direct_cache_matches));
+            std::println!("trace.direct_small_full.retired.used={retired_used}");
+            std::println!("trace.direct_small_full.retired.expire={retired_expire}");
+            std::println!("trace.direct_small_full.retired.regular_queue={retired_regular_queue}");
+            std::println!("trace.direct_small_full.retired.full_queue={retired_full_queue}");
+            std::println!("trace.direct_small_full.retired.page_count={retired_page_count}");
+            std::println!("trace.direct_small_full.retired.not_in_full={}", u8::from(!retired_in_full));
+            std::println!("trace.direct_small_full.retired.free_empty={}", u8::from(retired_free_empty));
+            std::println!("trace.direct_small_full.retired.local_nonempty={}", u8::from(retired_local_nonempty));
+            std::println!("trace.direct_small_full.retired.remote_empty={}", u8::from(retired_remote_empty));
+            std::println!("trace.direct_small_full.retired.direct_range_matches={}", u8::from(retired_direct_cache_matches));
+            std::println!("trace.direct_small_full.retired.map_published={}", u8::from(retired_map_published));
+            std::println!("trace.direct_small_full.retired.arena_page_set={}", u8::from(retired_arena_page_set));
+            std::println!("trace.direct_small_full.retired.slices_unreleased={}", u8::from(retired_slices_unreleased));
+            std::println!("trace.direct_small_full.release.regular_queue={release_regular_queue}");
+            std::println!("trace.direct_small_full.release.full_queue={release_full_queue}");
+            std::println!("trace.direct_small_full.release.page_count={release_page_count}");
+            std::println!("trace.direct_small_full.release.direct_range_empty={}", u8::from(release_direct_cache_clear));
+            std::println!("trace.direct_small_full.release.map_clear={}", u8::from(release_map_clear));
+            std::println!("trace.direct_small_full.release.span_map_clear={}", u8::from(release_span_map_clear));
+            std::println!("trace.direct_small_full.release.arena_page_clear={}", u8::from(release_arena_page_clear));
+            std::println!("trace.direct_small_full.release.slices_free={}", u8::from(release_slices_free));
+            std::println!("trace.direct_small_full.valid={}", u8::from(valid));
+            std::println!("CRABC_MI_DIRECT_SMALL_FULL_RETIRE_TRACE_END");
+        });
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_64_medium_full_unfull_retire_force_release_trace_matches_pinned_c() {

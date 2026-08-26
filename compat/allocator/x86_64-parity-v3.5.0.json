@@ -169,6 +169,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 38 address-independent values for one same-thread/same-Theap, arena-backed 1024-byte direct-small page (1024-byte blocks, capacity 64, one slice). When full (`used == reserved`), it remains the sole ordinary regular-bin member with its complete rounded direct-cache range; it does not enter `BIN_FULL` or assert an unfull transition. Owner-local frees retire it with `retire_expire == 16` without detaching the regular queue or cache range. Forced retired collection then removes that queue member, restores the source empty-page direct-cache range, and verifies PageMap, ordinary arena-page bitmap, and slice release. This is only same-thread/same-Theap private engine evidence for that one route; it does not establish general retirement or lifecycle, remote/concurrent collection, thread exit, abandonment/adoption, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-direct-small-full-retire",
+      "id": "native-direct-small-full-regular-retire-force-release-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/direct-small-full-retire.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares a fixed address-independent trace for one same-thread/same-Theap, arena-backed ordinary medium page requested at 10241 bytes (12288-byte block size, 42 capacity, 8 slices) with C full-retain option -1. The page fills to BIN_FULL, one local free returns it to regular, the remaining local frees retire it with retire_expire == 4, and forced release verifies the terminal queue, PageMap, arena-page bitmap, and slice-span transitions. This is only private engine evidence for that one medium-page route; it does not establish general retirement or lifecycle, remote/concurrent collection, abandonment, thread teardown, public mi_* behavior, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-medium-full-retire",
       "id": "native-medium-full-to-regular-retire-force-release-differential",
@@ -348,7 +356,7 @@
     },
     {
       "id": "general-thread-lifecycle-and-stress",
-      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, one 40-field same-Theap ordinary regular-small retire/quick-collect/force-release differential, one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route, and one 18-value same-origin allocation-time mapped-adoption differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
+      "reason": "Eight bounded private Rust lifecycle/concurrency lanes (12 tests, including five finite Loom models), five bounded crate-private fault-injection state-preservation regressions, a separate 25-field native C/Rust quiescent live-owner remote-free protocol differential, one 28-field real small direct-page remote-free/reuse differential, one 40-field same-Theap ordinary regular-small retire/quick-collect/force-release differential, one 38-field same-Theap full direct-small regular-bin retire/force-release differential, one 13-field unmapped full-medium reabandon differential whose Rust side is a real bounded post-Theap-teardown route, and one 18-value same-origin allocation-time mapped-adoption differential are recorded, but general remote-free routing or concurrent collection, process/thread teardown, abandonment/adoption lifecycle, pthread callbacks, fault/misuse coverage, and stress remain incomplete allocator work.",
       "state": "not_covered"
     },
     {

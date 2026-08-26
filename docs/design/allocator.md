@@ -202,7 +202,19 @@ arena-page bitmap, and exact slice release. It is only same-thread/same-Theap
 private engine evidence for that route, not general retirement or lifecycle,
 remote/concurrent collection, abandonment, thread teardown, public `mi_*`
 behavior, libc integration, backend promotion, public x86 support, or AArch64
-evidence. A separate native x86-only medium-page differential covers one
+evidence. A separate native x86-only 38-field direct-small differential covers one
+same-thread/same-Theap, arena-backed 1024-byte direct-small page with
+1024-byte blocks, capacity 64, and one slice. When full (`used == reserved`),
+it remains the sole ordinary regular-bin member with its complete rounded
+direct-cache range; it does not enter `BIN_FULL` or take an unfull transition.
+Owner-local frees retire it at `retire_expire == 16` without queue or cache
+detachment, and forced retired collection restores the source empty-page cache
+image before queue, PageMap, ordinary arena-page bitmap, and exact slice
+release. This is one bounded private engine route only—not general retirement
+or lifecycle, remote/concurrent collection, thread exit, abandonment/adoption,
+public `mi_*` behavior, libc integration, backend promotion, public x86
+support, or AArch64 evidence. A separate native x86-only medium-page
+differential covers one
  same-thread/same-Theap, arena-backed ordinary 10241-byte request with a
  12288-byte block size, 42-block capacity, and eight slices. Under C
  full-retain option `-1`, it fills `BIN_FULL`, one local free returns the page
