@@ -795,6 +795,18 @@ broaden normal unmapped full non-direct-small abandonment to multiple frees,
 direct-small or other page classes, reclaim, adoption, requeue, scanning, or a
 general dynamic owner-exit traversal.
 
+The matching private native x86-64 differential fixes this source-shaped
+non-direct-small predecessor at 30 address-independent values: one sole full
+ordinary-bin page with a 1032-byte request, 1280-byte blocks,
+capacity/reserved 51, one slice, and an empty direct-cache image. The
+consumer/main thread publishes the one joined remote free before the worker's
+real `mi_thread_done()`; the consumer then joins before its frees. Force
+collection records `used == 50`, mapped bitmap/count state, and the normal
+first sequential failed-reclaim free's
+`used + 2 == reserved` geometry before the one-slice terminal release. It is
+private x86 evidence only, not a broader lifecycle, routing, concurrent, public
+runtime, or AArch64 claim.
+
 `DynamicThreadExitDrain::abandon_full_direct_small_after_force_collect_to_mapped`
 captures the separate dynamic full direct-small branch with exactly one joined
 remote free. Force collection changes the still-linked sole ordinary-bin member

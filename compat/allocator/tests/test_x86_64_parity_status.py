@@ -177,6 +177,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-two-client-aggregate-still-live-differential",
                 "native-same-bin-two-page-aggregate-still-live-differential",
                 "native-dynamic-full-direct-small-one-remote-force-collect-to-mapped-differential",
+                "native-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-large-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
@@ -398,6 +399,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
             ]["report"],
             "compat/reports/allocator/x86_64/"
             "dynamic-full-direct-small-one-remote-force-collect-to-mapped.json",
+        )
+        self.assertEqual(
+            gates[
+                "native-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-differential"
+            ]["command"],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped",
+        )
+        self.assertEqual(
+            gates[
+                "native-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-differential"
+            ]["report"],
+            "compat/reports/allocator/x86_64/"
+            "dynamic-full-non-direct-small-one-remote-force-collect-to-mapped.json",
         )
         self.assertEqual(
             gates["native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential"][
@@ -835,6 +850,28 @@ class X86_64ParityStatusTests(unittest.TestCase):
         ):
             self.assertIn(fragment, gates[
                 "native-dynamic-full-direct-small-one-remote-force-collect-to-mapped-differential"
+            ]["claim"])
+        for fragment in (
+            "30 address-independent values",
+            "sole full non-direct-small ordinary regular-bin arena page",
+            "request is 1032 with 1280-byte blocks",
+            "capacity/reserved 51",
+            "one arena slice",
+            "empty direct-cache image",
+            "consumer/main thread publishes exactly one remote mi_free",
+            "worker later runs real mi_thread_done",
+            "joins before its sequential frees",
+            "used 50",
+            "dynamic abandoned bitmap/count",
+            "used + 2 == reserved",
+            "keeps the mapped route",
+            "one-slice arena span",
+            "private native x86 engine evidence only",
+            "general lifecycle",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, gates[
+                "native-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-differential"
             ]["claim"])
         dynamic_full_medium = gates[
             "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential"

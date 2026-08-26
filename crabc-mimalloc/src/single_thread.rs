@@ -27104,6 +27104,19 @@ impl<'attach, 'heap, 'arena, 'map>
         unsafe { self.drain.engine.page_for_block(block) }
     }
 
+    /// Test-only witness for the dynamic session's heap-local `arena_pages`
+    /// bitmap while this linear non-direct-small handoff retains the page's
+    /// exact arena span. This is not the registry arena's independent
+    /// `pages_main` bitmap.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_dynamic_arena_page_is_set(&self) -> bool {
+        self.drain
+            .engine
+            .session
+            .test_dynamic_arena_page_is_set(self.memory)
+    }
+
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_page_map_entry(&self, address: *mut u8) -> *mut Page {
