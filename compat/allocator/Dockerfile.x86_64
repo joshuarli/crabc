@@ -27,6 +27,7 @@ RUN apk add --no-cache \
         build-base \
         ca-certificates \
         clang \
+        cmake \
         coreutils \
         curl \
         file \

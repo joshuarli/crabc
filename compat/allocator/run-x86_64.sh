@@ -21,7 +21,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   image
   allocator --quick
   allocator-tls | allocator-lifecycle | allocator-fault
-  allocator-release-evidence | allocator-api-coverage
+  allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
   allocator-remote-free | allocator-direct-remote | allocator-mapped-reclaim
   allocator-unmapped-reabandon | allocator-on-demand | allocator-direct-on-demand
@@ -109,7 +109,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-os-aligned-singleton|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
+    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-os-aligned-singleton|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
         ;;
     *)
         usage >&2
@@ -154,6 +154,11 @@ case "$command" in
         ensure_image
         run_in_container python3 compat/allocator/x86_64_release_evidence.py --offline
         run_in_container python3 compat/allocator/x86_64_api_native_coverage.py
+        ;;
+    allocator-cmake-modes)
+        [ "$#" -eq 0 ] || fail "allocator-cmake-modes takes no arguments"
+        ensure_image
+        run_in_container python3 compat/allocator/x86_64_cmake_mode_evidence.py --offline
         ;;
     allocator-header-modes)
         [ "$#" -eq 0 ] || fail "allocator-header-modes takes no arguments"

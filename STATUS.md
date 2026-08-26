@@ -59,7 +59,13 @@ that instantiates the five base-header `*_csize` static-inline dispatch helpers,
 and records all ELF identities. A further
 two-mode static gate observes every selected static archive member and the
 `src/static.c` override object's required symbols before C consumer
-compile/linking. A separate 13-field C/Rust differential covers one real C
+compile/linking. A separate native CMake gate configures, builds, and installs
+the selected normal-release shared profile with Unix Makefiles and musl; it
+records resolved cache/compiler selections, installed header bytes and manifest,
+and shared-object ELF, SONAME, and dynamic-dependency identity. It does not
+compile/link or execute a consumer, establish behavior or Rust implementation
+parity, cover static/object or unselected CMake modes, or create public x86 or
+AArch64 runtime support. A separate 13-field C/Rust differential covers one real C
 full-medium arena page forced from the full queue to unmapped abandonment, then
 through the `mi_free` threshold that republishes its mapped bitmap; its Rust
 side exercises the same bounded real post-Theap-teardown full-medium route.
@@ -120,7 +126,7 @@ libc integration, backend promotion, public x86 support, or AArch64 evidence.
 These bounded results do not claim general routing or concurrent collection,
 general behavior or Rust implementation parity, a Rust full-medium route, general
 abandonment/adoption, cross-thread reclaim, general thread teardown, CMake
-installation, consumer execution, public API/runtime support, libc integration,
+unselected-mode coverage, consumer execution, public API/runtime support, libc integration,
 backend promotion, public x86 support, or AArch64 evidence.
 
 The allocator program currently has one bounded executable vertical slice:

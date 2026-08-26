@@ -468,11 +468,12 @@ contracts, reports, and status.
 ### Remaining native x86-64 allocator-parity work
 
 - [ ] Resolve the target-local source API/mode/test/symbol coverage ledger's
-  remaining CMake and mode-dependent forms, unselected C/C++ inline/override
-  forms, upstream-test coverage, behavior, and Rust implementation statuses
-  into reviewed outcomes. Do not reuse AArch64 statuses or treat selected
-  native compile/link evidence as behavior, public-runtime, installation,
-  consumer-execution, or unselected-mode evidence.
+  remaining mode-dependent forms, unselected C/C++ inline/override forms,
+  upstream-test coverage, behavior, and Rust implementation statuses into
+  reviewed outcomes. The fixed native CMake normal-release shared
+  configure/build/install profile is covered, but it must not be generalized
+  into behavior, public-runtime, consumer-execution, or unselected-mode
+  evidence, and AArch64 statuses must not be reused.
 - [ ] Close the source-applicable engine behavior holes identified by the x86
   source map and ledger, record every intentional difference, and add native
   pinned-C differential evidence for each completed behavior.

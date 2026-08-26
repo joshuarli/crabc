@@ -33,6 +33,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, configures, builds, and installs one pinned CMake Unix-Makefiles normal-release shared-library profile with musl. It records the selected CMake cache values and alloc.c compiler mode, source-bound root/test CMake and public-header identities, the installed public-header bytes, and the installed shared library's ELF identity, SONAME, and DT_NEEDED entries. It does not compile-link or execute a consumer, establish allocator behavior or Rust implementation, cover static/object CMake modes, or claim public x86 runtime support or AArch64 status.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-cmake-modes",
+      "id": "native-cmake-normal-release-shared-configure-build-install",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/cmake-mode-evidence.json",
+      "state": "available"
+    },
+    {
       "claim": "Builds and inspects the separately compiled, pinned mimalloc C oracle. It does not claim a Rust C-API adapter or public allocator support.",
       "command": "./compat/allocator/run-x86_64.sh allocator --quick",
       "id": "native-c-oracle",

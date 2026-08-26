@@ -158,6 +158,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
                 "native-static-library-and-override-object-linkability",
+                "native-cmake-normal-release-shared-configure-build-install",
                 "native-bounded-fault-injection",
                 "native-allocator-unit",
             },
@@ -402,6 +403,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             gates["native-static-library-and-override-object-linkability"]["report"],
             "compat/reports/allocator/x86_64/static-mode-evidence.json",
         )
+        self.assertEqual(
+            gates["native-cmake-normal-release-shared-configure-build-install"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-cmake-modes",
+        )
+        self.assertEqual(
+            gates["native-cmake-normal-release-shared-configure-build-install"]["report"],
+            "compat/reports/allocator/x86_64/cmake-mode-evidence.json",
+        )
         self.assertIn("preprocessor", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("object", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
         self.assertIn("default-visible", gates["native-pinned-c-release-mode-object-symbols"]["claim"])
@@ -415,6 +424,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("ar t", gates["native-static-library-and-override-object-linkability"]["claim"])
         self.assertIn("src/static.c", gates["native-static-library-and-override-object-linkability"]["claim"])
         self.assertIn("does not execute a consumer", gates["native-static-library-and-override-object-linkability"]["claim"])
+        cmake = gates["native-cmake-normal-release-shared-configure-build-install"]["claim"]
+        for fragment in (
+            "configures, builds, and installs",
+            "CMake cache values",
+            "installed public-header bytes",
+            "SONAME",
+            "DT_NEEDED",
+            "does not compile-link or execute a consumer",
+            "allocator behavior or Rust implementation",
+            "static/object CMake modes",
+            "public x86 runtime support",
+            "AArch64 status",
+        ):
+            self.assertIn(fragment, cmake)
         self.assertIn("18 address-independent values", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
         self.assertIn("real pinned-C worker pthread", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])
         self.assertIn("producer_teardown_completed_before_consumer_free", gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["claim"])

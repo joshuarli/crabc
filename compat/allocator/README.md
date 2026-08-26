@@ -999,6 +999,24 @@ identity for every artifact. The report is
 CMake configure/install proof and it does not execute consumers or claim their
 behavior, Rust implementation, public x86 runtime support, or AArch64 status.
 
+One fixed CMake normal-release shared-library profile has its own native
+configure/build/install gate:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-cmake-modes
+```
+
+It configures the pinned source with Unix Makefiles and the selected musl
+release cache values, records the resolved cache and `src/alloc.c` compiler
+mode, builds and installs the shared object, and verifies the installed public
+header bytes, lexical install manifest, ELF identity, SONAME, and dynamic
+dependencies. Its report is
+`compat/reports/allocator/x86_64/cmake-mode-evidence.json`. This establishes
+only that one native CMake configure/build/install profile: it does not
+compile/link or execute a consumer, establish allocator behavior or Rust
+implementation parity, cover static/object or unselected CMake modes, create
+public x86 runtime support, or reuse AArch64 status.
+
 Selected static artifact modes have a separate native gate:
 
 ```sh
@@ -1471,6 +1489,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_release_evidence.py` and `x86_64-release-evidence-v3.5.0.json` | Native x86-64-only C release-mode, ELF identity, object-symbol, and dynamic-symbol evidence. It is dispatched by `allocator-release-evidence`; it does not claim public x86 support or reuse AArch64 status. |
 | `x86_64_api_native_coverage.py` and `x86_64-api-native-coverage-v3.5.0.json` | Native x86-64-only selected-release per-source-form object/dynamic-symbol assessment. It is dispatched by `allocator-api-coverage`; it does not claim behavior, Rust implementation, public API, or runtime compatibility. |
 | `x86_64_header_mode_evidence.py` and `x86_64-header-mode-evidence-v3.5.0.json` | Native x86-64-only staged public-header C/C++ compile/link evidence for six selected forms, including one C11 probe that instantiates five base-header `*_csize` static-inline dispatch helpers, plus the linked pinned C shared object. It is dispatched by `allocator-header-modes`; it does not validate CMake installation, execute consumers, or claim behavior/public runtime support. |
+| `x86_64_cmake_mode_evidence.py` and `x86_64-cmake-mode-evidence-v3.5.0.json` | Native x86-64-only CMake normal-release shared configure/build/install evidence. It is dispatched by `allocator-cmake-modes`; it records source-bound cache/compiler selections, installed headers/manifest, and shared-object ELF/SONAME/dependencies, but does not compile/link or execute consumers, claim behavior or Rust implementation parity, cover static/object or unselected CMake modes, or create public x86/AArch64 runtime support. |
 | `x86_64_static_mode_evidence.py` and `x86_64-static-mode-evidence-v3.5.0.json` | Native x86-64-only selected static archive and `src/static.c` override-object artifact evidence. It is dispatched by `allocator-static-modes`; it observes archive members and override symbols, compile-links two consumers, but does not execute them, configure/install CMake, or claim behavior/public runtime support. |
 | `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. It is dispatched by `allocator-remote-free` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |

@@ -300,9 +300,15 @@ accounted per item for native object/dynamic symbol presence, while a separate
 six-mode staged public-header gate proves selected C/C++ compile/linkability
 and ELF identity, including one C11 compile/link-only probe that instantiates
 the five base-header `*_csize` static-inline dispatch helpers. Neither
-accounting nor the header gate establishes behavior,
-Rust implementation, CMake installation, consumer execution, or public runtime
-compatibility.
+accounting nor the header gate establishes behavior, Rust implementation,
+consumer execution, or public runtime compatibility. A separate native CMake
+gate configures, builds, and installs the pinned normal-release shared profile
+with Unix Makefiles and musl. It records resolved cache/compiler selections,
+installed header bytes and manifest, and shared-object ELF, SONAME, and dynamic
+dependencies. That is configure/build/install evidence only: it does not
+compile/link or execute a consumer, establish behavior or Rust implementation
+parity, cover static/object or unselected CMake modes, or create public x86 or
+AArch64 runtime support.
 
 The same native x86-only track additionally has a 29-field dynamic
 full-medium one-remote force-collect-to-mapped differential. One C-oracle
@@ -1612,7 +1618,13 @@ The x86-64 profile's bounded artifact evidence separately compiles the pinned
 normal-release static source set, observes its archive members, and compiles
 the upstream `src/static.c` override object before compile-linking two selected
 consumers. That is neither consumer execution nor a CMake configure/install or
-behavior claim. Its separate 13-field unmapped-full-medium differential uses a
+behavior claim. Separately, the native normal-release shared CMake gate
+configures, builds, and installs only its fixed selected profile; its report
+binds the pinned source/cache/compiler selection to installed header/manifest
+and shared-object ELF/SONAME/dependency identity. It does not establish
+consumer use, allocator behavior, Rust implementation parity, static/object or
+unselected CMake modes, public x86 support, or AArch64 status. Its separate
+13-field unmapped-full-medium differential uses a
 real pinned-C full-queue page and public `mi_free` to observe the source
 threshold reabandon/map publication tail. The Rust record intentionally models
 only `abandoned::free_unmapped_after_failed_reclaim` after the reclaim decision
