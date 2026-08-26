@@ -428,19 +428,18 @@ retains the exact `OsAlignedPageOwner` terminally.
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_pages_to_process_route`
 is a separate aggregate boundary for two or more full medium arena pages in
 `BIN_FULL`. Its preflight requires every direct entry and every other queue to
-be empty, and every full member to have one rounded block size/static-main bin,
-`reserved > 1`, `used == reserved`, a zero retirement countdown, and one
+be empty, and every full member to have its own rounded block size/static-main
+bin, `reserved > 1`, `used == reserved`, a zero retirement countdown, and one
 paired-arena span. It then preserves source force -> false collection,
 full-queue/page-count detach, and ordinary unmapped abandonment for every
 member before old-Theap/TLD teardown. The resulting linear route retains no raw
 page list: each client free re-resolves a PageMap member under a short lock,
-uses its claimed abandoned identity to select the unmapped or mapped
-failed-reclaim tail, and can publish only the exact preselected static-main
-bitmap/count pair once its own mostly-used boundary permits it. A terminal free
-releases only that member through PageMap -> `pages_main` -> metadata -> arena
-slice; the final member closes the map route. A sole page rejects before
+claims its low owner bit, then selects that member's exact static-main
+bitmap/count capability and unmapped or mapped failed-reclaim tail. A terminal
+free releases only that member through PageMap -> `pages_main` -> metadata ->
+arena slice; the final member closes the map route. A sole page rejects before
 mutation, and the route neither adopts, reclaims, requeues, scans,
-allocation-routes, nor accepts a mixed bin/class or concurrent free.
+allocation-routes, nor accepts a mixed class or concurrent free.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_large_pages_to_process_route`
 is a parallel but separate aggregate boundary for two or more full large arena
@@ -696,9 +695,11 @@ aggregate requires two or more same-bin full arena small pages, its exact
 rounded direct-cache range to name the current queue head, every other direct
 slot and queue empty, and `reserved >= 16`; each removal advances the range
 before its page-count decrement, while its later frees use the partial
-collector's retained expected head. Heterogeneous full queues, stale cache
+collector's retained expected head. Mixed-class full queues, stale cache
 images, remote-force nonfull state, and every other owner-exit class remain
-separate work.
+separate work. The full-medium route is the narrow exception to same-bin
+geometry: it accepts distinct rounded medium bins only, and selects each
+member's bitmap/count capability after its low-owner claim.
 An empty drain may call `MainHeapThreadAttachment::finish_after_page_drain`;
 the detached routes instead use their narrowly typed finish once the old Theap
 image is empty. Any force/release failure is retained terminally; the drain
@@ -829,20 +830,21 @@ collection, private-list, or mapping-release ambiguity retains the sole owner.
 
 `DynamicThreadExitDrain::abandon_full_medium_pages` is a third, separately
 typed post-TLS dynamic aggregate boundary. It admits exactly two or more full
-`MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, with one rounded
-block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
-countdowns, empty local free lists, exact arena spans, the exact dynamic
-bitmap/count capability for every member, and every other queue/direct entry
-empty. It preserves source force -> false collection -> full-queue removal ->
-page-count decrement -> unmapped abandonment for every member. The returned
+`MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, each with its own
+rounded block size and regular bin, `reserved > 1`, `used == reserved`, zero
+retirement countdown, empty local free list, exact arena span, and exact
+dynamic bitmap/count capability. Every other queue/direct entry is empty. It
+preserves source force -> false collection -> full-queue removal -> page-count
+decrement -> unmapped abandonment for every member. The returned
 `DynamicThreadExitFullMediumPagesRoute` stores no raw former-Theap member
 pointer or per-member mapped state: each sequential canonical free re-resolves
-PageMap, claims its member's source abandoned identity, selects the unmapped or
-mapped full-medium failed-reclaim tail, and publishes that member's dynamic
-bitmap/count pair only after its own mostly-used boundary. A terminal free
-releases only that member through PageMap -> dynamic ordinary bit -> metadata
--> arena slices; the final member returns the empty drain for existing
-root/list/key teardown. Sole, mixed-size/class, non-medium, OS-backed,
+PageMap, claims its member's source low owner bit, then selects that member's
+exact dynamic bitmap/count capability and unmapped or mapped full-medium
+failed-reclaim tail. It publishes that member's pair only after its own
+mostly-used boundary. A terminal free releases only that member through PageMap
+-> dynamic ordinary bit -> metadata -> arena slices; the final member returns
+the empty drain for existing root/list/key teardown. Sole, mixed-class,
+non-medium, OS-backed,
 preexisting queue/direct state, allocation-time, reclaim/adoption/requeue,
 scan, producer, and concurrent cases reject before detach; a collection fault
 retains the drain.

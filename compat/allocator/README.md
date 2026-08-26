@@ -276,18 +276,19 @@ collection, list, or mapping-release failure retains the sole owner terminally.
 
 `DynamicThreadExitDrain::abandon_full_medium_pages` is a third bounded dynamic
 aggregate, not a general full-queue traversal. It admits only two or more full
-`MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, with one rounded
-block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
-countdowns, empty local free lists, exact arena spans, the matching dynamic
-bitmap/count capability for every member, and every other queue/direct entry
+`MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, each with its
+own rounded block size and regular bin, `reserved > 1`, `used == reserved`,
+zero retirement countdown, empty local free list, exact arena span, and a
+matching dynamic bitmap/count capability. Every other queue/direct entry is
 empty. Source force -> false collection -> full-queue/page-count detach ->
-unmapped abandonment runs for every member. The route retains the dynamic
-drain rather than raw member pointers or per-member mapped state; each
-sequential canonical free re-resolves PageMap, uses the member's abandoned
-identity to select its unmapped or mapped full-medium failed-reclaim tail, and
-releases only that member through PageMap -> dynamic ordinary bit -> metadata
--> arena slices. The final release returns the empty drain for existing
-teardown. Sole, mixed-size/class, non-medium, OS-backed, allocation-time,
+unmapped abandonment runs for every member. The route retains the dynamic drain
+rather than raw member pointers or per-member mapped state; each sequential
+canonical free re-resolves PageMap, claims the member low owner bit, then
+selects that member's exact dynamic bitmap/count capability and unmapped or
+mapped full-medium failed-reclaim tail. It releases only that member through
+PageMap -> dynamic ordinary bit -> metadata -> arena slices. The final release
+returns the empty drain for existing teardown. Sole, mixed-class, non-medium,
+OS-backed, allocation-time,
 reclaim/adoption/requeue, scan, producer, and concurrent cases remain outside
 this route; a collection failure retains the drain.
 
@@ -607,14 +608,14 @@ failed `munmap`, adoption, reclaim/requeue, scanning, allocation-time, and
 concurrent routing remain absent; a failed mapping release retains its exact
 `OsAlignedPageOwner` terminally.
 A separate later-main full-medium aggregate route accepts two or more full
-arena members in `BIN_FULL` only when they share one rounded block size/static-main
-bin and every direct slot and other queue is empty. It force- then
+arena members in `BIN_FULL`, each with its own rounded block size/static-main
+bin, only when every direct slot and other queue is empty. It force- then
 false-collects, detaches, and ordinary-unmapped-abandons every member before
 old-Theap/TLD teardown. Its linear client-free route retains no raw page list:
-each free re-resolves PageMap membership, uses the claimed abandoned identity
-to select the unmapped or mapped tail, and releases one member at a time. It
-does not admit a sole page, a mixed full queue, allocation-time adoption,
-reclaim/requeue, or concurrent routing.
+each free re-resolves PageMap membership, claims the member low owner bit, then
+selects that member's exact static-main bitmap/count capability and unmapped or
+mapped tail. It releases one member at a time. It does not admit a sole page, a
+mixed class, allocation-time adoption, reclaim/requeue, or concurrent routing.
 A parallel but separate full-large aggregate route accepts only two or more
 same-bin full `PageKind::Large` arena members under the same complete
 direct/queue, rounded-size, and zero-retirement preflight. Each member proves

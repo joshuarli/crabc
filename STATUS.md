@@ -307,20 +307,22 @@ list, list traversal, retry/reclaim/requeue, allocation-time, and concurrent
 routing remain absent; collection failure retains the drain and failed `munmap`
 retains its `OsAlignedPageOwner` terminally. Separately,
 `abandon_full_medium_pages_to_process_route` accepts only two or more full
-arena medium members in `BIN_FULL` with one rounded block size/bin, every
-direct slot and other queue empty, zero retirement countdowns, and exact paired
-arena spans. Its source force -> false collection then detaches every member
-and leaves each source-unmapped before old-Theap/TLD teardown. Later client
-frees re-resolve PageMap membership without a raw list, use their claimed
-abandoned identity to choose the unmapped or mapped tail, and release one
-member at a time through PageMap -> `pages_main` -> metadata -> slice; a sole
-full page rejects before mutation. The separate
+arena medium members in `BIN_FULL`, each with an independent rounded block
+size/bin, every direct slot and other queue empty, zero retirement countdowns,
+and an exact paired arena span. Its source force -> false collection then
+detaches every member and leaves each source-unmapped before old-Theap/TLD
+teardown. Later client frees re-resolve PageMap membership without a raw list,
+claim the member low owner bit, then choose that member's exact static-main
+bitmap/count capability and unmapped or mapped tail. They release one member at
+a time through PageMap -> `pages_main` -> metadata -> slice; a sole full page
+rejects before mutation. The separate
 `abandon_full_large_pages_to_process_route` has the same bounded aggregate
 shape only for `PageKind::Large`: every member has one exact 64-slice
 arena/PageMap span, and terminal release proves that complete span before the
-same PageMap -> `pages_main` -> metadata -> slice order. Both routes reject a
-mixed full queue before collection and expose no adoption, reclaim, requeue,
-allocation-time, or concurrent route. Separately,
+same PageMap -> `pages_main` -> metadata -> slice order. The medium route
+rejects a mixed class while the large route keeps its homogeneous full queue;
+neither exposes adoption, reclaim, requeue, allocation-time, or concurrent
+routing. Separately,
 `abandon_full_non_direct_small_pages_to_process_route` accepts two or more full
 arena `PageKind::Small` members only in one ordinary bin, with
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, every direct slot and
@@ -423,9 +425,10 @@ path can adopt, reclaim, or requeue an aggregate registry member, including a
 registry later reduced to one member by a client free. The nonfull regular
 registry continues to reject full/singleton/unmapped/huge/foreign pages and
 malformed direct-cache images; the separate full-singleton,
-full-medium, full-large, non-direct-small, and direct-small aggregates do not admit
-heterogeneous full queues, stale direct-cache images, or remote-force nonfull
-state. Concurrent client routes, deferred callbacks, arena
+full-medium, full-large, non-direct-small, and direct-small aggregates enforce
+their route-specific class and geometry preflights; full-medium members may use
+distinct rounded bins, while stale direct-cache images and remote-force nonfull
+state remain absent. Concurrent client routes, deferred callbacks, arena
 collection, and retry/reuse
 as a normal allocator remain outside this owner. Only an empty drain permits
 `finish_after_page_drain` to reset default/cached, detach its shared heap list
@@ -546,19 +549,20 @@ and general owner-exit cases reject before detach; collection, list, or mapping
 release failure retains the only owner terminally.
 
 `DynamicThreadExitDrain::abandon_full_medium_pages` separately admits a third
-bounded homogeneous dynamic aggregate: two or more full `MemoryKind::Arena`
-`PageKind::Medium` members in `BIN_FULL`, with one rounded block size and
-regular bin, `reserved > 1`, `used == reserved`, zero retirement countdowns,
-empty local free lists, exact arena spans, the matching dynamic bitmap/count
-capability for every member, and no other queue/direct state. It follows source
-force -> false collection -> full-queue/page-count detach -> unmapped
+bounded dynamic aggregate: two or more full `MemoryKind::Arena`
+`PageKind::Medium` members in `BIN_FULL`, each with an independent rounded
+block size and regular bin, `reserved > 1`, `used == reserved`, zero retirement
+countdown, empty local free list, exact arena span, and matching dynamic
+bitmap/count capability. No other queue/direct state is admitted. It follows
+source force -> false collection -> full-queue/page-count detach -> unmapped
 abandonment for every member. `DynamicThreadExitFullMediumPagesRoute` retains
 the existing dynamic drain rather than raw member pointers or per-member mapped
-state; each sequential canonical free re-resolves PageMap, selects its
-unmapped or mapped failed-reclaim tail from the member's abandoned identity,
-and releases that member through PageMap -> dynamic ordinary bit -> metadata ->
-arena slices. The final free returns the empty drain for existing teardown.
-Sole, mixed-size/class, non-medium, OS-backed, allocation-time,
+state; each sequential canonical free re-resolves PageMap, claims its member
+low owner bit, then selects that member's exact dynamic bitmap/count capability
+and unmapped or mapped failed-reclaim tail. It releases that member through
+PageMap -> dynamic ordinary bit -> metadata -> arena slices. The final free
+returns the empty drain for existing teardown. Sole, mixed-class, non-medium,
+OS-backed, allocation-time,
 reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
 detach; a collection failure retains the drain.
 
@@ -871,7 +875,7 @@ traversal remain open.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
 full-medium/full-large/full-non-direct-small/full-direct-small routes, six
-homogeneous full-page aggregates, sole small-or-medium route, and regular-pages
+bounded full-page aggregates, sole small-or-medium route, and regular-pages
 aggregate, allocation-time
 claim/reclaim/requeue after later-thread exit beyond the exact mapped one- and
 two-block handoffs, general dynamic heap/Theap

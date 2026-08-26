@@ -507,18 +507,16 @@ pub(crate) struct DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'ar
 /// A bounded source-order aggregate of two-or-more full arena medium pages
 /// retained by a post-TLS dynamic drain.
 ///
-/// Every member had one rounded `PageKind::Medium` block size and one regular
-/// source bin while linked in `BIN_FULL`. Full pages remain source-unmapped at
-/// owner exit. The route deliberately keeps only the dynamic drain plus the
-/// sealed size/bin/count facts: every later free re-resolves its PageMap
-/// member and obtains that member's exact dynamic abandoned-map capability.
-/// It has no raw page list, allocation-time claim/requeue, producer, or
+/// Every member had `PageKind::Medium` geometry and its own regular source
+/// bin while linked in `BIN_FULL`. Full pages remain source-unmapped at owner
+/// exit. The route deliberately keeps only the dynamic drain plus a count:
+/// every later free re-resolves its PageMap member and, after its low-owner
+/// claim, obtains that member's exact dynamic abandoned-map capability. It
+/// has no raw page list, allocation-time claim/requeue, producer, or
 /// concurrent-free authority.
 #[must_use = "a dynamic full medium aggregate route must release every member or remain terminally retained"]
 pub(crate) struct DynamicThreadExitFullMediumPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
-    block_size: usize,
-    bin: usize,
     remaining_pages: usize,
     terminal: bool,
 }
@@ -1681,22 +1679,21 @@ pub(crate) struct ThreadExitFullOsSingletonPagesPostExitTeardownTerminal<
 ///
 /// This deliberately records no raw page list. Each member remains reachable
 /// only through its PageMap registration, starts source-unmapped, and may
-/// later publish the one shared static-main bitmap/count pair after a client
-/// free crosses the source mostly-used boundary. The exact homogeneous rounded
-/// block size is retained so that pair is known before a later free claims its
-/// low owner bit. It is not a heterogeneous full-page registry or an
-/// allocation-time route.
+/// later publish its own static-main bitmap/count pair after a client free
+/// crosses the source mostly-used boundary. That free selects the member's
+/// rounded block size/bin capability only after it claims the low owner bit.
+/// It is not a mixed-class full-page registry or an allocation-time route.
 #[must_use = "detached full medium pages must become one process route or remain terminally retained"]
 pub(crate) struct ThreadExitFullMediumPagesPostExitDetach<'attachment, 'main, 'arena> {
     session: MainHeapThreadPageDrainSession<'attachment, 'main>,
     parts: ThreadExitFullMediumPagesPostExitParts<'main, 'arena>,
 }
 
-/// The process-lifetime facts shared by the sealed homogeneous full-page
-/// aggregate witnesses below. `remaining_pages` counts PageMap registrations
-/// that have not completed the source terminal release. No member pointer
-/// survives the former Theap: every client free re-resolves one PageMap entry
-/// under its short route access.
+/// The process-lifetime facts shared by the sealed full-page aggregate
+/// witnesses below. `remaining_pages` counts PageMap registrations that have
+/// not completed the source terminal release. No member pointer survives the
+/// former Theap: every client free re-resolves one PageMap entry under its
+/// short route access.
 ///
 /// This is deliberately private storage rather than a general full-page
 /// registry. The public crate-local Medium/Large/NonDirectSmall/DirectSmall wrappers below
@@ -1706,15 +1703,14 @@ pub(crate) struct ThreadExitFullMediumPagesPostExitDetach<'attachment, 'main, 'a
 struct ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
     arena: ArenaView<'arena>,
     main_heap: MainStaticHeapLease<'main>,
-    block_size: usize,
-    bin: usize,
+    geometry: FullRegularPagesPostExitGeometry,
     class: FullRegularPagesPostExitClass,
     kind: PageKind,
     remaining_pages: usize,
     _not_sync: PhantomData<Cell<()>>,
 }
 
-/// The sealed source class of one homogeneous full regular-page aggregate.
+/// The sealed source class of one bounded full regular-page aggregate.
 ///
 /// `PageKind::Small` is intentionally not enough: a direct small member has
 /// a rounded direct-cache image and free.c's partial collector, whereas this
@@ -1729,8 +1725,42 @@ enum FullRegularPagesPostExitClass {
     DirectSmall,
 }
 
-/// The class-specific process facts for one bounded homogeneous full-medium
-/// post-exit registry.
+/// Whether a full regular-page aggregate seals one source geometry or derives
+/// it independently for each member after the source low-owner claim.
+///
+/// Only the bounded medium aggregate takes the latter form. Its source queue
+/// contains only medium pages, but upstream chooses the member's current bin
+/// at free time; the other typed aggregates retain their exact homogeneous
+/// source geometry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FullRegularPagesPostExitGeometry {
+    Homogeneous { block_size: usize, bin: usize },
+    PerMember,
+}
+
+impl FullRegularPagesPostExitGeometry {
+    #[inline]
+    const fn matches(self, block_size: usize, bin: usize) -> bool {
+        match self {
+            Self::Homogeneous {
+                block_size: expected_block_size,
+                bin: expected_bin,
+            } => expected_block_size == block_size && expected_bin == bin,
+            Self::PerMember => true,
+        }
+    }
+
+    #[inline]
+    const fn homogeneous(self) -> Option<(usize, usize)> {
+        match self {
+            Self::Homogeneous { block_size, bin } => Some((block_size, bin)),
+            Self::PerMember => None,
+        }
+    }
+}
+
+/// The class-specific process facts for one bounded full-medium post-exit
+/// registry.
 #[must_use = "full-medium aggregate facts must remain coupled to PageMap access until every span releases"]
 pub(crate) struct ThreadExitFullMediumPagesPostExitParts<'main, 'arena> {
     inner: ThreadExitFullRegularPagesPostExitParts<'main, 'arena>,
@@ -2024,7 +2054,7 @@ pub(crate) enum ThreadExitFullOsSingletonPagesPostExitFreeError {
 }
 
 /// A source-boundary refusal while a later-main post-fast-slot drain prepares
-/// its homogeneous full-medium aggregate traversal. `Rejected` means the
+/// its bounded full-medium aggregate traversal. `Rejected` means the
 /// complete queue/direct/image preflight left source state untouched; once a
 /// force collection begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2064,7 +2094,7 @@ pub(crate) enum ThreadExitFullMediumPagesPostExitAbandonFailure<'attachment, 'ma
     },
 }
 
-/// One result while the homogeneous full-medium aggregate route handles one
+/// One result while the bounded full-medium aggregate route handles one
 /// client free.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThreadExitFullMediumPagesPostExitFreeOutcome {
@@ -2077,7 +2107,7 @@ pub(crate) enum ThreadExitFullMediumPagesPostExitFreeOutcome {
     ReleasedAll,
 }
 
-/// A terminal or rejecting condition while the homogeneous full-medium route
+/// A terminal or rejecting condition while the bounded full-medium route
 /// handles one client free. `Unmapped` is the sole pre-mutation lookup error;
 /// all other results may have acquired an owner bit or changed a source
 /// publication state.
@@ -2679,7 +2709,7 @@ pub(crate) enum DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure<
 }
 
 /// A source-boundary refusal while a post-TLS dynamic drain prepares its
-/// homogeneous full-medium aggregate traversal. `Rejected` means the complete
+/// bounded full-medium aggregate traversal. `Rejected` means the complete
 /// queue/direct preflight left source state untouched; once force collection
 /// begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2739,15 +2769,14 @@ pub(crate) enum DynamicThreadExitFullMediumPagesFreeResult<
 }
 
 /// A process-map or source-route reason one dynamic full-medium aggregate
-/// client free could not complete normally. `Unmapped`, `InvalidBlock`, and
-/// `MissingDynamicArenaPages` are pre-mutation observations; every other
-/// result may have acquired a source low owner bit or changed map state.
+/// client free could not complete normally. `Unmapped` and `InvalidBlock` are
+/// pre-mutation observations; every other result may have acquired a source
+/// low owner bit or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DynamicThreadExitFullMediumPagesRemoteFreeError {
     Terminal,
     Unmapped,
     InvalidBlock,
-    MissingDynamicArenaPages,
     ConcurrentOwner,
     Abandon(AbandonError),
     Release,
@@ -2763,8 +2792,7 @@ pub(crate) enum DynamicThreadExitFullMediumPagesRemoteFreeFailure<
     'map,
 > {
     /// The supplied block was absent from the current PageMap or did not name
-    /// a canonical homogeneous medium allocation, so no source owner bit
-    /// changed.
+    /// a canonical medium allocation, so no source owner bit changed.
     Rejected {
         route: DynamicThreadExitFullMediumPagesRoute<'attach, 'heap, 'arena, 'map>,
         error: DynamicThreadExitFullMediumPagesRemoteFreeError,
@@ -7389,8 +7417,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 inner: ThreadExitFullRegularPagesPostExitParts {
                     arena,
                     main_heap,
-                    block_size,
-                    bin,
+                    geometry: FullRegularPagesPostExitGeometry::Homogeneous { block_size, bin },
                     class: FullRegularPagesPostExitClass::NonDirectSmall,
                     kind: PageKind::Small,
                     remaining_pages: detached_pages,
@@ -7802,8 +7829,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 inner: ThreadExitFullRegularPagesPostExitParts {
                     arena,
                     main_heap,
-                    block_size,
-                    bin,
+                    geometry: FullRegularPagesPostExitGeometry::Homogeneous { block_size, bin },
                     class: FullRegularPagesPostExitClass::DirectSmall,
                     kind: PageKind::Small,
                     remaining_pages: detached_pages,
@@ -8545,31 +8571,31 @@ impl<'attachment, 'main, 'arena, 'map>
         })
     }
 
-    /// Traverses a bounded homogeneous full-medium source queue into one
-    /// process-owned post-exit registry.
+    /// Traverses a bounded full-medium source queue into one process-owned
+    /// post-exit registry.
     ///
     /// The source `MI_ABANDON` visitor keeps full medium pages in `BIN_FULL`
     /// and leaves each one unmapped. This route admits only two or more
-    /// arena-backed members with one exact rounded block size/bin, no direct
-    /// cache image, and no other queue member. It preserves force then false
-    /// collection, full-queue/page-count detach, ordinary unmapped abandonment,
-    /// old-Theap teardown, and the later per-page mostly-used reabandon tail.
+    /// arena-backed medium members, no direct cache image, and no other queue
+    /// member. A member may have a different rounded block size/bin from its
+    /// neighbor. It preserves force then false collection, full-queue/page-count
+    /// detach, ordinary unmapped abandonment, old-Theap teardown, and the later
+    /// per-page mostly-used reabandon tail.
     ///
-    /// The homogeneous bin proof is intentionally part of the boundary: it
-    /// lets a later client free retain one exact static-main bitmap/count
-    /// capability before its low-owner claim, without retaining a raw page
-    /// list or scanning PageMap/bitmap state. Heterogeneous full queues,
-    /// small/large pages, remote-force-collected nonfull pages, singleton,
-    /// unmapped/non-arena pages, allocation-time adoption, reclaim/requeue,
-    /// and concurrent routing remain absent.
+    /// Each later free chooses its member's exact static-main bitmap/count
+    /// capability only after it claims the source low owner bit; the registry
+    /// retains neither a raw page list nor a PageMap/bitmap scan capability.
+    /// Mixed-class full queues, small/large pages, remote-force-collected
+    /// nonfull pages, singleton, unmapped/non-arena pages, allocation-time
+    /// adoption, reclaim/requeue, and concurrent routing remain absent.
     ///
     /// # Safety
     ///
     /// No scoped producer may survive. Every current page must be a full
-    /// arena-backed medium member of the same source rounded size, and every
-    /// client alias must be consumed exactly once through the returned linear
-    /// route or retained terminally. This is valid only after the concrete
-    /// later-main fast-slot-clear transition.
+    /// arena-backed medium member, and every client alias must be consumed
+    /// exactly once through the returned linear route or retained terminally.
+    /// This is valid only after the concrete later-main fast-slot-clear
+    /// transition.
     pub(crate) unsafe fn abandon_full_medium_pages_to_process_route(
         mut self,
     ) -> Result<
@@ -8611,11 +8637,10 @@ impl<'attachment, 'main, 'arena, 'map>
         }
 
         // First prove the complete source queue image without changing a
-        // page. The full queue carries mixed C size classes, so preserving one
-        // rounded block size is the exact refusal boundary for this route.
+        // page. The full queue carries mixed C size classes, so this route
+        // seals every member as one regular arena-medium page while leaving
+        // each member's rounded size/bin independent.
         let mut observed_page_count = 0usize;
-        let mut expected_block_size = None;
-        let mut expected_bin = None;
         for queue_bin in 0..BIN_COUNT {
             let Some(queue) = self.session.queue(queue_bin) else {
                 return Err(reject(
@@ -8713,20 +8738,6 @@ impl<'attachment, 'main, 'arena, 'map>
                         ThreadExitFullMediumPagesPostExitAbandonError::MissingMainArenaPages,
                     ));
                 }
-                match (expected_block_size, expected_bin) {
-                    (None, None) => {
-                        expected_block_size = Some(page_ref.block_size());
-                        expected_bin = Some(bin);
-                    }
-                    (Some(expected_size), Some(expected_bin))
-                        if expected_size == page_ref.block_size() && expected_bin == bin => {}
-                    _ => {
-                        return Err(reject(
-                            self,
-                            ThreadExitFullMediumPagesPostExitAbandonError::NotFullMedium,
-                        ));
-                    }
-                }
                 observed_page_count = match observed_page_count.checked_add(1) {
                     Some(count) => count,
                     None => {
@@ -8755,16 +8766,6 @@ impl<'attachment, 'main, 'arena, 'map>
                 ThreadExitFullMediumPagesPostExitAbandonError::Queue,
             ));
         }
-        let (block_size, bin) = match (expected_block_size, expected_bin) {
-            (Some(block_size), Some(bin)) => (block_size, bin),
-            _ => {
-                return Err(reject(
-                    self,
-                    ThreadExitFullMediumPagesPostExitAbandonError::NotMultiplePages,
-                ));
-            }
-        };
-
         let mut detached_pages = 0usize;
         let mut page = match self.session.queue(BIN_FULL) {
             Some(queue) => queue.first(),
@@ -8794,10 +8795,13 @@ impl<'attachment, 'main, 'arena, 'map>
                 ));
             }
             let after_force = unsafe { page_nonnull.as_ref() };
-            if after_force.block_size() != block_size
+            if after_force.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_force.block_size())
                     != Some(PageKind::Medium)
-                || size_class::bin(after_force.block_size()) != Some(bin)
+                || !matches!(
+                    size_class::bin(after_force.block_size()),
+                    Some(bin) if bin < ARENA_BIN_COUNT && bin != BIN_FULL
+                )
                 || after_force.reserved() <= 1
                 || after_force.used() != usize::from(after_force.reserved())
                 || !page_is_in_full(after_force)
@@ -8815,10 +8819,13 @@ impl<'attachment, 'main, 'arena, 'map>
                 ));
             }
             let after_collect = unsafe { page_nonnull.as_ref() };
-            if after_collect.block_size() != block_size
+            if after_collect.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_collect.block_size())
                     != Some(PageKind::Medium)
-                || size_class::bin(after_collect.block_size()) != Some(bin)
+                || !matches!(
+                    size_class::bin(after_collect.block_size()),
+                    Some(bin) if bin < ARENA_BIN_COUNT && bin != BIN_FULL
+                )
                 || after_collect.reserved() <= 1
                 || after_collect.used() != usize::from(after_collect.reserved())
                 || !page_is_in_full(after_collect)
@@ -8939,8 +8946,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 inner: ThreadExitFullRegularPagesPostExitParts {
                     arena,
                     main_heap,
-                    block_size,
-                    bin,
+                    geometry: FullRegularPagesPostExitGeometry::PerMember,
                     class: FullRegularPagesPostExitClass::Medium,
                     kind: PageKind::Medium,
                     remaining_pages: detached_pages,
@@ -9363,8 +9369,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 inner: ThreadExitFullRegularPagesPostExitParts {
                     arena,
                     main_heap,
-                    block_size,
-                    bin,
+                    geometry: FullRegularPagesPostExitGeometry::Homogeneous { block_size, bin },
                     class: FullRegularPagesPostExitClass::Large,
                     kind: PageKind::Large,
                     remaining_pages: detached_pages,
@@ -11796,10 +11801,10 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
     /// # Safety
     ///
     /// `block` must be one exact once-live canonical allocation of a member
-    /// in this homogeneous full-page aggregate. The caller retains the
-    /// route linearly until every member has released or an explicit terminal
-    /// owner is retained. This never grants allocation-time reclaim, requeue,
-    /// or concurrent free authority.
+    /// in this sealed full-page aggregate. The caller retains the route
+    /// linearly until every member has released or an explicit terminal owner
+    /// is retained. This never grants allocation-time reclaim, requeue, or
+    /// concurrent free authority.
     pub(crate) unsafe fn remote_free_after_thread_exit(
         &mut self,
         page_map: &PageMap,
@@ -11818,36 +11823,38 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
         let page = NonNull::new(unsafe { page_map.checked_lookup(block.as_ptr()) })
             .ok_or(ThreadExitFullMediumPagesPostExitFreeError::Unmapped)?;
 
-        // Every source member shared one preselected regular bin, proved
-        // before queue mutation. Hold its static main-Heap projection across
-        // the whole failed-reclaim tail so a first below-mostly-used free
-        // cannot split bitmap publication from its paired count.
+        // Hold the static main-Heap projection across the whole failed-reclaim
+        // tail so a first below-mostly-used free cannot split bitmap
+        // publication from its paired count. The medium per-member selector
+        // runs only after the source low-owner claim; every other aggregate
+        // retains its preselected homogeneous bin.
         let mut heap = self
             .main_heap
             .lock_heap()
             .map_err(ThreadExitFullMediumPagesPostExitFreeError::MainHeap)?;
-        let map = match self
-            .arena
-            .main_heap_abandoned_page(NonNull::from(heap.heap_mut()), self.bin)
+        let result = if self.class == FullRegularPagesPostExitClass::Medium
+            && self.geometry == FullRegularPagesPostExitGeometry::PerMember
         {
-            Some(map) => map,
-            None => {
-                let unlock = heap.unlock();
-                return match unlock {
-                    Ok(()) => Err(ThreadExitFullMediumPagesPostExitFreeError::MissingMainArenaPages),
-                    Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::MainHeap(
-                        MainStaticHeapLeaseError::Lock(error),
-                    )),
-                };
-            }
-        };
-        let result = match self.class {
-            FullRegularPagesPostExitClass::Medium => match unsafe {
-                abandoned::free_full_medium_after_failed_reclaim(
+            match unsafe {
+                abandoned::free_full_medium_after_failed_reclaim_select_map(
                     page,
                     block,
-                    self.block_size,
-                    &map,
+                    |memory, block_size| {
+                        let Some(bin) = size_class::bin(block_size) else {
+                            return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+                        };
+                        if size_class::page_kind_for_block_size(block_size)
+                            != Some(PageKind::Medium)
+                            || bin >= ARENA_BIN_COUNT
+                            || bin == BIN_FULL
+                            || memory.kind() != MemoryKind::Arena
+                        {
+                            return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+                        }
+                        self.arena
+                            .main_heap_abandoned_page(NonNull::from(heap.heap_mut()), bin)
+                            .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                    },
                 )
             } {
                 Ok(abandoned::FullMediumAbandonedFreeAfterFailedReclaimResult::StillLive) => {
@@ -11862,70 +11869,77 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
                     Err(ThreadExitFullMediumPagesPostExitFreeError::ConcurrentOwner)
                 }
                 Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(error)),
-            },
-            FullRegularPagesPostExitClass::Large => match unsafe {
-                abandoned::free_full_large_after_failed_reclaim(
-                    page,
-                    block,
-                    self.block_size,
-                    &map,
-                )
-            } {
-                Ok(abandoned::FullLargeAbandonedFreeAfterFailedReclaimResult::StillLive) => {
-                    Ok(ThreadExitFullRegularPagesPostExitFreeOutcome::StillLive)
+            }
+        } else if let Some((block_size, bin)) = self.geometry.homogeneous() {
+            match self
+                .arena
+                .main_heap_abandoned_page(NonNull::from(heap.heap_mut()), bin)
+            {
+                Some(map) => match self.class {
+                FullRegularPagesPostExitClass::Medium => {
+                    Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(
+                        AbandonError::InvalidPageGeometry,
+                    ))
                 }
-                Ok(abandoned::FullLargeAbandonedFreeAfterFailedReclaimResult::Empty) => {
-                    // SAFETY: the helper retained this member's low owner bit
-                    // through the complete terminal-release transition.
-                    unsafe { self.finish_member_release(page_map, page) }
-                }
-                Ok(abandoned::FullLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
-                    Err(ThreadExitFullMediumPagesPostExitFreeError::ConcurrentOwner)
-                }
-                Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(error)),
-            },
-            FullRegularPagesPostExitClass::NonDirectSmall => match unsafe {
-                abandoned::free_full_non_direct_small_after_failed_reclaim(
-                    page,
-                    block,
-                    self.block_size,
-                    &map,
-                )
-            } {
-                Ok(abandoned::FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive) => {
-                    Ok(ThreadExitFullRegularPagesPostExitFreeOutcome::StillLive)
-                }
-                Ok(abandoned::FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty) => {
-                    // SAFETY: the helper retained this member's low owner bit
-                    // through the complete terminal-release transition.
-                    unsafe { self.finish_member_release(page_map, page) }
-                }
-                Ok(abandoned::FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
-                    Err(ThreadExitFullMediumPagesPostExitFreeError::ConcurrentOwner)
-                }
-                Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(error)),
-            },
-            FullRegularPagesPostExitClass::DirectSmall => match unsafe {
-                abandoned::free_full_direct_small_after_failed_reclaim(
-                    page,
-                    block,
-                    self.block_size,
-                    &map,
-                )
-            } {
-                Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive) => {
-                    Ok(ThreadExitFullRegularPagesPostExitFreeOutcome::StillLive)
-                }
-                Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty) => {
-                    // SAFETY: the helper retained this member's low owner bit
-                    // through the complete terminal-release transition.
-                    unsafe { self.finish_member_release(page_map, page) }
-                }
-                Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
-                    Err(ThreadExitFullMediumPagesPostExitFreeError::ConcurrentOwner)
-                }
-                Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(error)),
-            },
+                FullRegularPagesPostExitClass::Large => match unsafe {
+                    abandoned::free_full_large_after_failed_reclaim(page, block, block_size, &map)
+                } {
+                    Ok(abandoned::FullLargeAbandonedFreeAfterFailedReclaimResult::StillLive) => {
+                        Ok(ThreadExitFullRegularPagesPostExitFreeOutcome::StillLive)
+                    }
+                    Ok(abandoned::FullLargeAbandonedFreeAfterFailedReclaimResult::Empty) => {
+                        // SAFETY: the helper retained this member's low owner bit
+                        // through the complete terminal-release transition.
+                        unsafe { self.finish_member_release(page_map, page) }
+                    }
+                    Ok(abandoned::FullLargeAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
+                        Err(ThreadExitFullMediumPagesPostExitFreeError::ConcurrentOwner)
+                    }
+                    Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(error)),
+                },
+                FullRegularPagesPostExitClass::NonDirectSmall => match unsafe {
+                    abandoned::free_full_non_direct_small_after_failed_reclaim(
+                        page, block, block_size, &map,
+                    )
+                } {
+                    Ok(abandoned::FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive) => {
+                        Ok(ThreadExitFullRegularPagesPostExitFreeOutcome::StillLive)
+                    }
+                    Ok(abandoned::FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty) => {
+                        // SAFETY: the helper retained this member's low owner bit
+                        // through the complete terminal-release transition.
+                        unsafe { self.finish_member_release(page_map, page) }
+                    }
+                    Ok(abandoned::FullNonDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
+                        Err(ThreadExitFullMediumPagesPostExitFreeError::ConcurrentOwner)
+                    }
+                    Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(error)),
+                },
+                FullRegularPagesPostExitClass::DirectSmall => match unsafe {
+                    abandoned::free_full_direct_small_after_failed_reclaim(
+                        page, block, block_size, &map,
+                    )
+                } {
+                    Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::StillLive) => {
+                        Ok(ThreadExitFullRegularPagesPostExitFreeOutcome::StillLive)
+                    }
+                    Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::Empty) => {
+                        // SAFETY: the helper retained this member's low owner bit
+                        // through the complete terminal-release transition.
+                        unsafe { self.finish_member_release(page_map, page) }
+                    }
+                    Ok(abandoned::FullDirectSmallAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner) => {
+                        Err(ThreadExitFullMediumPagesPostExitFreeError::ConcurrentOwner)
+                    }
+                    Err(error) => Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(error)),
+                },
+                },
+                None => Err(ThreadExitFullMediumPagesPostExitFreeError::MissingMainArenaPages),
+            }
+        } else {
+            Err(ThreadExitFullMediumPagesPostExitFreeError::Abandon(
+                AbandonError::InvalidPageGeometry,
+            ))
         };
         match (result, heap.unlock()) {
             (Ok(outcome), Ok(())) => Ok(outcome),
@@ -11980,11 +11994,16 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
         let Some(slice_start) = self.arena.slice_start(slice_index) else {
             return false;
         };
-        if page_ref.block_size() != self.block_size
-            || size_class::page_kind_for_block_size(page_ref.block_size()) != Some(self.kind)
-            || size_class::bin(page_ref.block_size()) != Some(self.bin)
-            || self.bin >= ARENA_BIN_COUNT
-            || self.bin == BIN_FULL
+        let block_size = page_ref.block_size();
+        let Some(bin) = size_class::bin(block_size) else {
+            return false;
+        };
+        if !self.geometry.matches(block_size, bin)
+            || (self.geometry == FullRegularPagesPostExitGeometry::PerMember
+                && self.class != FullRegularPagesPostExitClass::Medium)
+            || size_class::page_kind_for_block_size(block_size) != Some(self.kind)
+            || bin >= ARENA_BIN_COUNT
+            || bin == BIN_FULL
             || page_ref.reserved() <= 1
             || page_ref.used() != 0
             || !page_ref.is_queue_detached()
@@ -11992,11 +12011,11 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
         {
             return false;
         }
-        let Some(usable_offset) = page::page_usable_start_offset(self.block_size) else {
+        let Some(usable_offset) = page::page_usable_start_offset(block_size) else {
             return false;
         };
         let Some(expected_reserved) =
-            page::reserved_object_count(size, usable_offset, self.block_size)
+            page::reserved_object_count(size, usable_offset, block_size)
         else {
             return false;
         };
@@ -12057,8 +12076,14 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
 
     #[cfg(test)]
     pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
+        let (_, bin) = self.geometry.homogeneous()?;
+        self.test_abandoned_count_for_bin(bin)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_abandoned_count_for_bin(&self, bin: usize) -> Option<usize> {
         let mut heap = self.main_heap.lock_heap().ok()?;
-        let count = heap.heap_mut().abandoned_count(self.bin);
+        let count = heap.heap_mut().abandoned_count(bin);
         heap.unlock().ok()?;
         count
     }
@@ -12071,7 +12096,7 @@ impl<'main, 'arena> ThreadExitFullMediumPagesPostExitParts<'main, 'arena> {
     /// # Safety
     ///
     /// `block` must be one exact once-live canonical allocation of a member
-    /// in this homogeneous full-medium aggregate.
+    /// in this bounded full-medium aggregate.
     pub(crate) unsafe fn remote_free_after_thread_exit(
         &mut self,
         page_map: &PageMap,
@@ -12104,8 +12129,8 @@ impl<'main, 'arena> ThreadExitFullMediumPagesPostExitParts<'main, 'arena> {
 
     #[cfg(test)]
     #[inline]
-    pub(crate) fn test_abandoned_count(&self) -> Option<usize> {
-        self.inner.test_abandoned_count()
+    pub(crate) fn test_abandoned_count_for_bin(&self, bin: usize) -> Option<usize> {
+        self.inner.test_abandoned_count_for_bin(bin)
     }
 }
 
@@ -13925,29 +13950,30 @@ impl<'attach, 'heap, 'arena, 'map>
         })
     }
 
-    /// Traverses a bounded homogeneous full-medium source queue into one
-    /// sequential post-TLS dynamic route.
+    /// Traverses a bounded full-medium source queue into one sequential
+    /// post-TLS dynamic route.
     ///
     /// `mi_theap_collect_ex(MI_ABANDON)` first performs its retired-page pass,
     /// then force-collects every current full-queue member and abandons the
     /// still-live pages. This boundary preserves that source order only when
-    /// the complete source image is two-or-more same-size, same-bin arena
-    /// medium pages. Each member starts source-unmapped; a later canonical
-    /// free alone can cross its own mostly-used threshold and publish the
-    /// exact dynamic bitmap/count pair before its terminal arena release.
+    /// the complete source image is two-or-more arena medium pages. Each
+    /// member starts source-unmapped and may have a distinct rounded size/bin;
+    /// a later canonical free alone can cross its own mostly-used threshold,
+    /// then select and publish its exact dynamic bitmap/count pair before
+    /// terminal arena release.
     ///
     /// It does not create a raw member list, scan after exit, reclaim/requeue,
     /// adopt pages, or grant allocation-time, producer, or concurrent-free
-    /// authority. Heterogeneous full queues, non-medium classes, OS pages,
+    /// authority. Mixed-class full queues, non-medium classes, OS pages,
     /// direct-cache images, and all other owner-exit shapes remain separate.
     ///
     /// # Safety
     ///
     /// No scoped producer may survive. Every current page must be a full
-    /// arena-backed medium member of the same rounded source size/bin, and
-    /// every client alias must be consumed exactly once through the returned
-    /// linear route or retained terminally. This is valid only after the
-    /// concrete dynamic regular-TLS-slot-clear transition.
+    /// arena-backed medium member, and every client alias must be consumed
+    /// exactly once through the returned linear route or retained terminally.
+    /// This is valid only after the concrete dynamic regular-TLS-slot-clear
+    /// transition.
     pub(crate) unsafe fn abandon_full_medium_pages(
         mut self,
     ) -> Result<
@@ -13989,11 +14015,9 @@ impl<'attach, 'heap, 'arena, 'map>
 
         // Prove the complete source queue image before force collection or
         // queue mutation. `BIN_FULL` deliberately mixes source classes, so
-        // one rounded medium size/bin is an entry invariant, not a later-free
-        // selection policy.
+        // this route seals every member's arena-medium geometry while each
+        // member's rounded size/bin remains source-distinct.
         let mut observed_page_count = 0usize;
-        let mut expected_block_size = None;
-        let mut expected_bin = None;
         for queue_bin in 0..BIN_COUNT {
             let Some(queue) = self.engine.session.queue(queue_bin) else {
                 return Err(reject(
@@ -14101,20 +14125,6 @@ impl<'attach, 'heap, 'arena, 'map>
                         DynamicThreadExitFullMediumPagesAbandonError::MissingDynamicArenaPages,
                     ));
                 }
-                match (expected_block_size, expected_bin) {
-                    (None, None) => {
-                        expected_block_size = Some(page_ref.block_size());
-                        expected_bin = Some(bin);
-                    }
-                    (Some(expected_size), Some(expected_bin))
-                        if expected_size == page_ref.block_size() && expected_bin == bin => {}
-                    _ => {
-                        return Err(reject(
-                            self,
-                            DynamicThreadExitFullMediumPagesAbandonError::NotFullMedium,
-                        ));
-                    }
-                }
                 observed_page_count = match observed_page_count.checked_add(1) {
                     Some(count) => count,
                     None => {
@@ -14143,16 +14153,6 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitFullMediumPagesAbandonError::Queue,
             ));
         }
-        let (block_size, bin) = match (expected_block_size, expected_bin) {
-            (Some(block_size), Some(bin)) => (block_size, bin),
-            _ => {
-                return Err(reject(
-                    self,
-                    DynamicThreadExitFullMediumPagesAbandonError::NotMultiplePages,
-                ));
-            }
-        };
-
         let mut detached_pages = 0usize;
         let mut page = match self.engine.session.queue(BIN_FULL) {
             Some(queue) => queue.first(),
@@ -14183,10 +14183,13 @@ impl<'attach, 'heap, 'arena, 'map>
                 ));
             }
             let after_force = unsafe { page_nonnull.as_ref() };
-            if after_force.block_size() != block_size
+            if after_force.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_force.block_size())
                     != Some(PageKind::Medium)
-                || size_class::bin(after_force.block_size()) != Some(bin)
+                || !matches!(
+                    size_class::bin(after_force.block_size()),
+                    Some(bin) if bin < ARENA_BIN_COUNT && bin != BIN_FULL
+                )
                 || after_force.reserved() <= 1
                 || after_force.used() != usize::from(after_force.reserved())
                 || !page_is_in_full(after_force)
@@ -14209,10 +14212,13 @@ impl<'attach, 'heap, 'arena, 'map>
                 ));
             }
             let after_collect = unsafe { page_nonnull.as_ref() };
-            if after_collect.block_size() != block_size
+            if after_collect.memid().kind() != MemoryKind::Arena
                 || size_class::page_kind_for_block_size(after_collect.block_size())
                     != Some(PageKind::Medium)
-                || size_class::bin(after_collect.block_size()) != Some(bin)
+                || !matches!(
+                    size_class::bin(after_collect.block_size()),
+                    Some(bin) if bin < ARENA_BIN_COUNT && bin != BIN_FULL
+                )
                 || after_collect.reserved() <= 1
                 || after_collect.used() != usize::from(after_collect.reserved())
                 || !page_is_in_full(after_collect)
@@ -14335,8 +14341,6 @@ impl<'attach, 'heap, 'arena, 'map>
 
         Ok(DynamicThreadExitFullMediumPagesRoute {
             drain: self,
-            block_size,
-            bin,
             remaining_pages: detached_pages,
             terminal: false,
         })
@@ -21552,14 +21556,13 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: PageMap registration and the linear route retain this page
         // metadata through the pre-mutation source-shape validation.
         let page_ref = unsafe { page.as_ref() };
-        let memory = page_ref.memid();
         if page_ref.memid().kind() != MemoryKind::Arena
-            || page_ref.block_size() != self.block_size
             || size_class::page_kind_for_block_size(page_ref.block_size())
                 != Some(PageKind::Medium)
-            || size_class::bin(page_ref.block_size()) != Some(self.bin)
-            || self.bin >= ARENA_BIN_COUNT
-            || self.bin == BIN_FULL
+            || !matches!(
+                size_class::bin(page_ref.block_size()),
+                Some(bin) if bin < ARENA_BIN_COUNT && bin != BIN_FULL
+            )
             || page_ref.reserved() <= 1
             || page_ref.used() == 0
             || page_ref.used() > usize::from(page_ref.reserved())
@@ -21590,27 +21593,32 @@ impl<'attach, 'heap, 'arena, 'map>
                 DynamicThreadExitFullMediumPagesRemoteFreeError::InvalidBlock,
             ));
         }
-        let Some(map) = self
-            .drain
-            .engine
-            .session
-            .mapped_abandoned_page_during_drain(&self.drain.engine.arena, self.bin, memory)
-        else {
-            return Err(reject(
-                self,
-                DynamicThreadExitFullMediumPagesRemoteFreeError::MissingDynamicArenaPages,
-            ));
-        };
-
         // Construction of `DynamicTheapPageDrainSession` cleared the dynamic
         // regular TLS slot. That is the exact source proof that reclaim fails
-        // before `free.c` chooses its failed-reclaim medium tail.
+        // before `free.c` chooses its failed-reclaim medium tail. The helper
+        // selects the current member's dynamic bitmap/count capability only
+        // after it has claimed that member's low owner bit.
         match unsafe {
-            abandoned::free_full_medium_after_failed_reclaim(
+            abandoned::free_full_medium_after_failed_reclaim_select_map(
                 page,
                 canonical_block,
-                self.block_size,
-                &map,
+                |memory, block_size| {
+                    let Some(bin) = size_class::bin(block_size) else {
+                        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+                    };
+                    if size_class::page_kind_for_block_size(block_size) != Some(PageKind::Medium)
+                        || bin >= ARENA_BIN_COUNT
+                        || bin == BIN_FULL
+                        || memory.kind() != MemoryKind::Arena
+                    {
+                        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+                    }
+                    self.drain
+                        .engine
+                        .session
+                        .mapped_abandoned_page_during_drain(&self.drain.engine.arena, bin, memory)
+                        .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)
+                },
             )
         } {
             Ok(abandoned::FullMediumAbandonedFreeAfterFailedReclaimResult::StillLive) => {

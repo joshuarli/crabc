@@ -485,18 +485,18 @@ result may refine it only when it can prove retained ownership.
   OS members, non-OS members, nonempty initial lists, list traversal, retry
   after failed `munmap`, adoption, reclaim/requeue, scanning, allocation-time,
   and concurrent routing remain absent; failed mapping release retains the
-  exact `OsAlignedPageOwner` terminally. A separate homogeneous full-medium aggregate route accepts two
-  or more arena `PageKind::Medium` members in `BIN_FULL` only when every direct
-  slot and other queue is empty and every member has one rounded block
-  size/static-main bin, `reserved > 1`, `used == reserved`, a zero retirement
-  countdown, and one paired-arena span. It force- then false-collects,
-  detaches, and ordinary-unmapped-abandons every member before old-Theap/TLD
-  teardown. Its route retains no raw member list: each sequential client free
-  re-resolves PageMap membership, holds the one preselected bitmap/count pair,
-  and uses the claimed abandoned identity to select the source unmapped or
-  mapped tail. Each terminal release removes only that member through PageMap
-  -> main bitmap -> metadata -> slice; a sole full page rejects before
-  mutation. The separate homogeneous full-large aggregate accepts only the
+  exact `OsAlignedPageOwner` terminally. A separate full-medium aggregate route
+  accepts two or more arena `PageKind::Medium` members in `BIN_FULL` only when
+  every direct slot and other queue is empty and every member has its own
+  rounded block size/static-main bin, `reserved > 1`, `used == reserved`, a
+  zero retirement countdown, and one paired-arena span. It force- then
+  false-collects, detaches, and ordinary-unmapped-abandons every member before
+  old-Theap/TLD teardown. Its route retains no raw member list: each sequential
+  client free re-resolves PageMap membership, claims the member low owner bit,
+  then selects that member's exact bitmap/count capability and source unmapped
+  or mapped tail. Each terminal release removes only that member through PageMap
+  -> main bitmap -> metadata -> slice; a sole full page rejects before mutation.
+  The separate homogeneous full-large aggregate accepts only the
   corresponding `PageKind::Large` members, with the same complete preflight
   plus every member's exact 64-slice arena/PageMap span; terminal release
   proves and removes that complete span. A fifth homogeneous full
@@ -518,10 +518,11 @@ result may refine it only when it can prove retained ownership.
   abandonment runs for every member. Each later free re-resolves PageMap
   membership, uses the partial collector, and preserves its just-pushed head
   through the source accounting lag before mapped reabandonment or terminal
-  release. All six aggregate routes reject heterogeneous full queues before
-  collection. Stale/mixed direct-cache images, remote-force nonfull state,
-  allocation-time adoption/reclaim/requeue, and concurrent routing remain
-  absent. Distinct source-specific predecessors accept one sole full
+  release. All six aggregate routes enforce their own complete class/geometry
+  preflight before collection; the full-medium route admits distinct rounded
+  medium bins, while mixed classes remain rejected. Stale/mixed direct-cache
+  images, remote-force nonfull state, allocation-time adoption/reclaim/requeue,
+  and concurrent routing remain absent. Distinct source-specific predecessors accept one sole full
   medium, non-direct-small, or direct-small page with one joined remote free:
   force collection changes `used` to exactly `reserved - 1` while each page
   remains linked in its source queue. The medium page remains marked full in
@@ -687,10 +688,11 @@ aggregate-registry adoption remain absent.
   stays PageMap-routable but unmapped through its exact mostly-used threshold,
   then publishes the paired static-main bitmap/count before its mapped tail
   clears all terminal ownership; and
-  `later_thread_exit_full_medium_pages_route_reabandons_each_same_bin_page_then_releases`
-  proves two same-bin full medium members detach before old-Theap/TLD teardown,
-  independently cross their source unmapped-to-mapped threshold, preserve the
-  paired static-main count, and release one PageMap span at a time; its sibling
+  `later_thread_exit_full_medium_pages_route_reabandons_each_distinct_bin_page_then_releases`
+  proves two distinct-bin full medium members detach before old-Theap/TLD
+  teardown, independently cross their source unmapped-to-mapped threshold,
+  preserve each paired static-main count, and release one PageMap span at a
+  time; its sibling
   `later_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation`
   proves the aggregate boundary never overlaps the established sole-page
   route. The corresponding
@@ -1056,19 +1058,20 @@ aggregate-registry adoption remain absent.
   terminally.
   `DynamicThreadExitDrain::abandon_full_medium_pages` is a third separate
   sequential dynamic aggregate, not a general `BIN_FULL` traversal: it
-  requires two or more full `MemoryKind::Arena` `PageKind::Medium` members with
-  one rounded block size and regular bin, `reserved > 1`, `used == reserved`,
-  zero retirement countdown, empty local free lists, exact arena spans, the
-  matching dynamic bitmap/count capability for every member, and every other
-  queue/direct entry empty. It force- then false-collects and detaches each
+  requires two or more full `MemoryKind::Arena` `PageKind::Medium` members,
+  each with its own rounded block size and regular bin, `reserved > 1`,
+  `used == reserved`, zero retirement countdown, empty local free list, exact
+  arena span, and matching dynamic bitmap/count capability. Every other
+  queue/direct entry is empty. It force- then false-collects and detaches each
   member before unmapped abandonment. The returned
   `DynamicThreadExitFullMediumPagesRoute` retains the original drain rather
   than raw member pointers or per-member mapped state; every sequential
-  canonical free re-resolves PageMap, uses the member's abandoned identity to
-  select its unmapped or mapped full-medium failed-reclaim tail, and releases
-  only that member through PageMap -> dynamic ordinary bit -> metadata -> arena
-  slices. The final free returns an empty drain for existing teardown. A sole,
-  mixed-size/class, non-medium, OS-backed, existing queue/direct,
+  canonical free re-resolves PageMap, claims the member low owner bit, then
+  selects that member's exact dynamic bitmap/count capability and unmapped or
+  mapped full-medium failed-reclaim tail. It releases only that member through
+  PageMap -> dynamic ordinary bit -> metadata -> arena slices. The final free
+  returns an empty drain for existing teardown. A sole, mixed-class, non-medium,
+  OS-backed, existing queue/direct,
   allocation-time, reclaim/adoption/requeue, scan, producer, or concurrent case
   remains absent, while a collection failure retains the drain.
   `DynamicThreadExitDrain::abandon_full_large_pages` is a fourth separate
@@ -1336,7 +1339,7 @@ aggregate-registry adoption remain absent.
   preflight, one-member-at-a-time PageMap/ordinary-bit/metadata/slice release,
   wholly pre-mutation sole refusal, and retained dynamic-drain collection
   failure.
-  `dynamic_thread_exit_full_medium_pages_route_reabandons_each_same_bin_page_then_releases`,
+  `dynamic_thread_exit_full_medium_pages_route_reabandons_each_distinct_bin_page_then_releases`,
   `dynamic_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation`,
   `dynamic_thread_exit_full_medium_pages_route_rejects_mixed_full_classes_before_mutation`,
   and
