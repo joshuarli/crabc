@@ -441,6 +441,15 @@ stay linked in `BIN_FULL`; the non-direct-small page stays in its ordinary bin
 with an empty direct-cache image; and the direct-small page clears its exact
 rounded direct-cache range before page-count detach. The large mapped route
 retains its complete 64-slice terminal-release proof.
+A separate later-main full-medium aggregate route accepts two or more full
+arena members in `BIN_FULL` only when they share one rounded block size/static-main
+bin and every direct slot and other queue is empty. It force- then
+false-collects, detaches, and ordinary-unmapped-abandons every member before
+old-Theap/TLD teardown. Its linear client-free route retains no raw page list:
+each free re-resolves PageMap membership, uses the claimed abandoned identity
+to select the unmapped or mapped tail, and releases one member at a time. It
+does not admit a sole page, a mixed full queue, allocation-time adoption,
+reclaim/requeue, or concurrent routing.
 A fresh later-main owner may explicitly consume a sole mapped medium page that
 entered source owner exit already nonfull, or a sole direct-small page whose
 source collection left an immediate local free block, the exhausted fully

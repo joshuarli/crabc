@@ -457,7 +457,20 @@ result may refine it only when it can prove retained ownership.
   `pages_abandoned[bin]` bit/count pair, and later frees use the mapped tail
   until the same terminal PageMap -> main bitmap -> metadata -> slice release.
   The full-large route additionally proves its complete 64-slice span before
-  that release. Distinct source-specific predecessors accept one sole full
+  that release. A separate homogeneous full-medium aggregate route accepts two
+  or more arena `PageKind::Medium` members in `BIN_FULL` only when every direct
+  slot and other queue is empty and every member has one rounded block
+  size/static-main bin, `reserved > 1`, `used == reserved`, a zero retirement
+  countdown, and one paired-arena span. It force- then false-collects,
+  detaches, and ordinary-unmapped-abandons every member before old-Theap/TLD
+  teardown. Its route retains no raw member list: each sequential client free
+  re-resolves PageMap membership, holds the one preselected bitmap/count pair,
+  and uses the claimed abandoned identity to select the source unmapped or
+  mapped tail. Each terminal release removes only that member through PageMap
+  -> main bitmap -> metadata -> slice; a sole full page rejects before
+  mutation. Heterogeneous full queues, small/large full pages, remote-force
+  nonfull state, allocation-time adoption/reclaim/requeue, and concurrent
+  routing remain absent. Distinct source-specific predecessors accept one sole full
   medium, non-direct-small, or direct-small page with one joined remote free:
   force collection changes `used` to exactly `reserved - 1` while each page
   remains linked in its source queue. The medium page remains marked full in
@@ -610,6 +623,13 @@ aggregate-registry adoption remain absent.
   stays PageMap-routable but unmapped through its exact mostly-used threshold,
   then publishes the paired static-main bitmap/count before its mapped tail
   clears all terminal ownership; and
+  `later_thread_exit_full_medium_pages_route_reabandons_each_same_bin_page_then_releases`
+  proves two same-bin full medium members detach before old-Theap/TLD teardown,
+  independently cross their source unmapped-to-mapped threshold, preserve the
+  paired static-main count, and release one PageMap span at a time; its sibling
+  `later_thread_exit_full_medium_pages_route_rejects_a_sole_full_medium_before_mutation`
+  proves the aggregate boundary never overlaps the established sole-page
+  route; and
   `later_thread_exit_full_medium_force_collects_to_a_client_free_only_mapped_process_route`
   proves one joined remote free is collected while the page remains linked in
   `BIN_FULL`, then source removes that full member, immediately publishes the
@@ -747,7 +767,7 @@ aggregate-registry adoption remain absent.
   proves terminal retention rather than forged thread cleanup.
 - **Decision/removal:** accepted until the PageMap supports its source
   concurrent consumers, automatic reservation/multi-arena routing exists, and
-  the remaining aggregate-full/singleton/unmapped/huge owner-exit
+  the remaining heterogeneous-full/singleton/unmapped/huge owner-exit
   traversal plus pthread/TLS integration is proved.
   It does not
   authorize concurrent later-thread allocation routing, a public thread

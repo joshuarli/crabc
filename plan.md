@@ -241,6 +241,25 @@ before that terminal release. They provide no reclaim, requeue, allocation-time
 adoption, concurrent client-free routing, or another full-regular owner-exit
 shape.
 
+Separately,
+`MainHeapThreadProcessPageExitDrain::abandon_full_medium_pages_to_process_route`
+is one bounded aggregate full-page route. It accepts two or more full arena
+medium members in `BIN_FULL` only when every direct slot and every other queue
+is empty, each member has one rounded block size/static-main bin, `reserved >
+1`, `used == reserved`, a zero retirement countdown, and one exact paired
+arena span. It preserves source force -> false collection, full-queue/page-count
+detach, and ordinary unmapped abandonment for every member before the old
+Theap/TLD tears down. Its `MainHeapThreadProcessPageExitFullMediumPagesRoute`
+retains no raw page list: a later sequential client free re-resolves its member
+through short PageMap access, claims the low owner bit, and uses the resulting
+abandoned identity to select the source unmapped or mapped tail. The first
+below-mostly-used free may independently publish that member's exact preselected
+static-main bitmap/count pair; terminal PageMap -> `pages_main` -> metadata ->
+slice release removes only that member, and the last one closes the map route.
+A sole full page rejects before mutation. Heterogeneous full queues, small or
+large full pages, remote-force nonfull state, allocation-time
+adoption/reclaim/requeue, scanning, and concurrent free routing remain absent.
+
 The sixth handoff,
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`,
 accepts one sole full small arena page only when its rounded `block_size`
@@ -414,10 +433,12 @@ attachment remains a test-only seam; production static startup must use this
 coordinator.
 
 General producer routing, concurrent/general shared/later-thread page-bearing
-ownership, remaining full/singleton/unmapped/huge owner-exit pages and behavior beyond
-the bounded sole full-medium/full-large/full-non-direct-small/full-direct-small routes, sole
-small-or-medium route (apart from its exact mapped-medium consuming handoff),
-and aggregate regular-pages registry, terminal reuse, automatic and multiple
+ownership, remaining heterogeneous full/singleton/unmapped/huge owner-exit
+pages and behavior beyond the bounded sole
+full-medium/full-large/full-non-direct-small/full-direct-small routes, the
+homogeneous full-medium aggregate route, sole small-or-medium route (apart
+from its exact mapped-medium consuming handoff), and aggregate regular-pages
+registry, terminal reuse, automatic and multiple
 dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
 hooks, fork repair, public libc backend integration, performance qualification,
 and default promotion remain unfinished. The next safe lifecycle frontier is
@@ -438,9 +459,10 @@ pairing or unmapped abandonment to `src/arena.c:1304-1424`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit
-client-free transfer has six narrow forms: the full-medium route, full-large
-route, full non-direct-small route, full direct-small route, sole
-small-or-medium route, and aggregate regular-pages registry. Each converts the
+client-free transfer has seven narrow forms: the sole full-medium route,
+full-large route, full non-direct-small route, full direct-small route,
+homogeneous full-medium aggregate route, sole small-or-medium route, and
+aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
 span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
 pairing through actual teardown and sequential later frees. The sole mapped
@@ -460,12 +482,14 @@ direct-small routes have the explicit inverse bridge into one fresh later-main
 mutation lease. The mapped-medium route's bounded reserved-prefix fixture now
 covers source direct page-area commitment and failed-commit reabandonment
 before a same-candidate retry; it is not a generic allocation policy. The
-aggregate registry intentionally stops at nonfull regular small, medium, and
-large pages and has no adoption capability; only the completed traversal's
-separately typed sole initial-medium/immediate-head outcome becomes the
-existing one-page route before registry construction. Do not extend either
-boundary to another page shape without its source-specific publication,
-terminal-release, allocation-time claim/reclaim, and concurrency evidence.
+nonfull aggregate registry intentionally stops at nonfull regular small,
+medium, and large pages and has no adoption capability; the separate full
+aggregate intentionally stops at homogeneous medium `BIN_FULL` pages. Only the
+completed nonfull traversal's separately typed sole
+initial-medium/immediate-head outcome becomes the existing one-page route
+before registry construction. Do not extend either boundary to another page
+shape without its source-specific publication, terminal-release,
+allocation-time claim/reclaim, and concurrency evidence.
 
 Checkpoint evidence is green: the focused
 `dynamic_theap::tests::dynamic_thread_exit_singleton_remote_free_clears_tls_then_releases_its_arena_page`,
@@ -510,6 +534,9 @@ final-free/reject-before-detach regressions, the sole-medium
 mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
 full-medium and full-large routes' unmapped mostly-used thresholds and later
 mapped tails (including the full-large route's 64-slice terminal release), the
+homogeneous full-medium aggregate's independent per-member unmapped-to-mapped
+thresholds, one-member-at-a-time terminal release, and sole-full-page
+preflight refusal, the
 full-medium one-joined-remote force-collection predecessor's immediate mapped
 publication, client-free-only allocation-adoption refusal, eight-slice
 client-free release, pre-mutation regular-medium refusal, and terminal
@@ -552,25 +579,25 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 477 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 479 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 104 items and 108
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 105 items and 109
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
-all-free scan/eight sole-page handoffs/aggregate regular-pages registry, or
+full-medium/full-medium-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
 The frozen-profile direct-small no-immediate source family is now exhaustive:
 after force/false collection, every valid nonfull page has either a fully
 committed scalar extension, a prefix-covered extension, or a positive
 page-area-commit extension. The defensive unsupported classifier is only for
 malformed or out-of-profile metadata. The next local frontier is therefore
-another separately proven aggregate-registry policy or another source-shaped
+a different separately proven aggregate-registry policy or another source-shaped
 owner-exit class, then complete process and real pthread/TLS lifecycle integration—not a
 generic allocation-time scan routed through a bounded singleton,
 mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later

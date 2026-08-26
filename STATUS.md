@@ -97,9 +97,13 @@ before immediate mapped publication (the medium and large pages remain in
 `BIN_FULL`; the non-direct-small page remains in its ordinary bin with every
 direct slot empty; the direct-small page remains in its ordinary bin until its
 rounded direct-cache range is cleared during removal));
-and one aggregate regular-pages post-exit
+and one homogeneous full-medium aggregate post-exit route for two or more
+same-bin `BIN_FULL` arena members, plus one aggregate regular-pages post-exit
 registry that can route every qualifying surviving regular small, medium, or large page
-through sequential client frees. When the completed aggregate traversal itself
+through sequential client frees. The full-medium route keeps no raw member
+list: each later free re-resolves its PageMap member and independently crosses
+the source unmapped-to-mapped threshold under the one preselected static-main
+bitmap/count pair. When the completed nonfull aggregate traversal itself
 releases every other member and leaves exactly one initial nonfull medium with
 an immediate local head, it returns the existing one-page mapped route before
 registry construction; multi-member routes and routes later reduced to one
@@ -243,7 +247,17 @@ reabandonment decision. Their normal sequential client frees remain unmapped thr
 below-mostly-used free publishes the exact static-main `pages_abandoned[bin]`
 bit plus paired `Heap::abandoned_count[bin]`, and the mapped tail preserves
 that pairing until the same terminal release. The full-large route validates
-its complete 64-slice span before release. The corresponding full non-direct-
+its complete 64-slice span before release. Separately,
+`abandon_full_medium_pages_to_process_route` accepts only two or more full
+arena medium members in `BIN_FULL` with one rounded block size/bin, every
+direct slot and other queue empty, zero retirement countdowns, and exact paired
+arena spans. Its source force -> false collection then detaches every member
+and leaves each source-unmapped before old-Theap/TLD teardown. Later client
+frees re-resolve PageMap membership without a raw list, use their claimed
+abandoned identity to choose the unmapped or mapped tail, and release one
+member at a time through PageMap -> `pages_main` -> metadata -> slice; a sole
+full page rejects before mutation. It exposes no adoption, reclaim, requeue,
+mixed full queue, allocation-time, or concurrent route. The corresponding full non-direct-
 small and direct-small one-joined-remote predecessors remain linked in their
 ordinary bins while force collection makes them nonfull; the former keeps its
 empty direct image, while the latter clears its rounded direct range before
@@ -315,8 +329,11 @@ one-page mapped route. Its reclaim revalidates the immediate head and cannot
 extend, commit, scan, or take a fresh-page fallback. Fresh engines may
 serialize independent PageMap operations between client frees, but no current
 path can adopt, reclaim, or requeue an aggregate registry member, including a
-registry later reduced to one member by a client free. Full/singleton/unmapped/huge/foreign pages, malformed
-direct-cache images, concurrent client routes, deferred callbacks, arena
+registry later reduced to one member by a client free. The nonfull regular
+registry continues to reject full/singleton/unmapped/huge/foreign pages and
+malformed direct-cache images; the separate homogeneous full-medium aggregate
+does not admit heterogeneous full queues, small/large full members, or
+remote-force nonfull state. Concurrent client routes, deferred callbacks, arena
 collection, and retry/reuse
 as a normal allocator remain outside this owner. Only an empty drain permits
 `finish_after_page_drain` to reset default/cached, detach its shared heap list

@@ -34,8 +34,8 @@ use crate::remote_free::{
 };
 use crate::size_class;
 use crate::types::{
-    LiveThreadId, MemoryId, MemoryKind, Page, PageAbandonmentState, Theap, PAGE_FLAG_MASK,
-    THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
+    LiveThreadId, MemoryId, MemoryKind, Page, PageAbandonmentState, PageKind, Theap,
+    PAGE_FLAG_MASK, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
 };
 
 const THREAD_FREE_OWNED: usize = 1;
@@ -313,6 +313,20 @@ pub(crate) enum UnmappedAbandonedFreeResult {
     Empty,
     ReabandonedMapped,
     UnownedUnmapped,
+}
+
+/// Result of the one bounded homogeneous full-medium aggregate free tail.
+///
+/// A member starts as a full source-unmapped page. Its first below-mostly-used
+/// client free can publish the aggregate's one exact static-main bitmap/count
+/// pair; later frees use the mapped half of the same source tail. The caller
+/// owns the registry count and terminal PageMap/span release, so this result
+/// intentionally does not expose a reusable page or a reclaim/requeue edge.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FullMediumAbandonedFreeAfterFailedReclaimResult {
+    PublishedToExistingOwner,
+    StillLive,
+    Empty,
 }
 
 impl RetainedAdoptFailure {
@@ -736,6 +750,127 @@ pub(crate) unsafe fn free_unmapped_after_failed_reclaim<M: MappedAbandonedPages 
     // page/block/map lifetime proof to the source-shaped inner protocol.
     unsafe {
         free_unmapped_after_failed_reclaim_inner(page, block, map, &mut before_expected_cas)
+    }
+}
+
+/// Ports the failed-reclaim tail for one member of the bounded homogeneous
+/// full-medium aggregate route.
+///
+/// Unlike the sole full-medium route, the aggregate owns no per-page mutable
+/// unmapped/mapped state. It instead proves all members had the same source
+/// rounded block size and static-main bin before owner exit, then uses the
+/// abandoned identity held after its low-bit claim to choose the exact source
+/// unmapped or mapped tail. This does not generalize to heterogeneous full
+/// queues, direct small pages, allocation-time reclaim, or requeue.
+///
+/// # Safety
+///
+/// `page` and `block` must be one exact live member/allocation of the
+/// aggregate route. `expected_block_size` and `map` must be the homogeneous
+/// source preflight's exact medium size/bin/arena capability. The caller must
+/// retain PageMap, metadata, arena, and terminal span-release ownership across
+/// every result; `Empty` retains the page low owner bit for that release.
+pub(crate) unsafe fn free_full_medium_after_failed_reclaim<M: MappedAbandonedPages + ?Sized>(
+    page: NonNull<Page>,
+    block: NonNull<u8>,
+    expected_block_size: usize,
+    map: &M,
+) -> Result<FullMediumAbandonedFreeAfterFailedReclaimResult, AbandonError> {
+    // SAFETY: the route owns this stable abandoned page and exact client
+    // block through the source `allow_collect=true` publication.
+    match unsafe { remote_free::push_abandoned(page, block) }.map_err(AbandonError::RemoteFree)? {
+        remote_free::AbandonedRemotePush::PublishedToExistingOwner => {
+            return Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner);
+        }
+        remote_free::AbandonedRemotePush::ClaimedUnownedPage => {}
+    }
+
+    // The successful low-bit claim is the first legal point to read the
+    // member's ordinary state. Keep the homogeneous source proof explicit so
+    // an unrelated PageMap entry cannot silently enter this route.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    let source_identity = source_thread_identity(&state);
+    if !is_owned(&state) {
+        return Err(AbandonError::NotOwnedAssociated);
+    }
+    if state.reserved <= 1
+        || state.block_size != expected_block_size
+        || size_class::page_kind_for_block_size(state.block_size) != Some(PageKind::Medium)
+    {
+        return Err(AbandonError::InvalidPageGeometry);
+    }
+    if state.memid.kind() != MemoryKind::Arena {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    let bin = size_class::bin(state.block_size).ok_or(AbandonError::InvalidPageGeometry)?;
+    if bin >= ARENA_BIN_COUNT
+        || map.bin() != bin
+        || map.page_slice_index(state.memid).is_none()
+    {
+        return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
+    }
+    // The source identity, rather than a fresh `used == reserved` check,
+    // selects the tail. `MI_ABANDON` proved the aggregate began full before
+    // it dropped the old owner; once a client free has entered the tail, this
+    // identity is the route-state discriminator. A serial route can cross
+    // from unmapped to mapped once, but never in reverse.
+    match source_identity {
+        THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED => {}
+        _ => return Err(AbandonError::NotAbandoned),
+    }
+
+    // Medium pages use the ordinary collector: direct-small's retained
+    // partial head is intentionally out of this homogeneous source class.
+    unsafe { remote_free::collect_abandoned(page) }.map_err(AbandonError::RemoteFree)?;
+    if page_is_empty(&state) {
+        if source_identity == THREAD_ID_ABANDONED_MAPPED {
+            unabandon_mapped(&state, Some(map))?;
+        }
+        return Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::Empty);
+    }
+
+    if source_identity == THREAD_ID_ABANDONED {
+        if let Some(result) = terminal_or_reabandon_unmapped(page, &state, map)? {
+            return Ok(match result {
+                UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                    FullMediumAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner
+                }
+                UnmappedAbandonedFreeResult::Empty => {
+                    FullMediumAbandonedFreeAfterFailedReclaimResult::Empty
+                }
+                UnmappedAbandonedFreeResult::ReabandonedMapped
+                | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                    FullMediumAbandonedFreeAfterFailedReclaimResult::StillLive
+                }
+            });
+        }
+        let mut no_test_hook: Option<fn()> = None;
+        return match unsafe {
+            unown_unmapped_from_free(page, &state, map, 0, &mut no_test_hook)
+        }? {
+            UnmappedAbandonedFreeResult::PublishedToExistingOwner => {
+                Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+            }
+            UnmappedAbandonedFreeResult::Empty => {
+                Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::Empty)
+            }
+            UnmappedAbandonedFreeResult::ReabandonedMapped
+            | UnmappedAbandonedFreeResult::UnownedUnmapped => {
+                Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::StillLive)
+            }
+        };
+    }
+
+    match unown_mapped_from_free(page, &state, map, 0)? {
+        MappedAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner => {
+            Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::PublishedToExistingOwner)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::Empty => {
+            Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::Empty)
+        }
+        MappedAbandonedFreeAfterFailedReclaimResult::UnownedMapped => {
+            Ok(FullMediumAbandonedFreeAfterFailedReclaimResult::StillLive)
+        }
     }
 }
 

@@ -363,6 +363,23 @@ the final PageMap -> `pages_main` -> metadata -> slice release. The large
 route validates the complete 64-slice PageMap span before terminal release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_medium_pages_to_process_route`
+is a separate aggregate boundary for two or more full medium arena pages in
+`BIN_FULL`. Its preflight requires every direct entry and every other queue to
+be empty, and every full member to have one rounded block size/static-main bin,
+`reserved > 1`, `used == reserved`, a zero retirement countdown, and one
+paired-arena span. It then preserves source force -> false collection,
+full-queue/page-count detach, and ordinary unmapped abandonment for every
+member before old-Theap/TLD teardown. The resulting linear route retains no raw
+page list: each client free re-resolves a PageMap member under a short lock,
+uses its claimed abandoned identity to select the unmapped or mapped
+failed-reclaim tail, and can publish only the exact preselected static-main
+bitmap/count pair once its own mostly-used boundary permits it. A terminal free
+releases only that member through PageMap -> `pages_main` -> metadata -> arena
+slice; the final member closes the map route. A sole page rejects before
+mutation, and the route neither adopts, reclaims, requeues, scans,
+allocation-routes, nor accepts a mixed bin/class or concurrent free.
+
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_after_force_collect_to_mapped_process_route`,
 `MainHeapThreadProcessPageExitDrain::abandon_full_large_after_force_collect_to_mapped_process_route`,
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped_process_route`,
@@ -551,9 +568,11 @@ aggregate member, including a registry that becomes one member only after a
 client free. Apart from the explicit one-page medium handoffs, it exposes no
 allocation-time claim, reclaim, or requeue for a post-exit route.
 
-Other live-page states are rejected before aggregate detach: full, singleton,
-huge, unmapped, foreign, malformed, or non-source-derived direct-cache state
-remain separate work.
+The nonfull regular aggregate continues to reject full, singleton, huge,
+unmapped, foreign, malformed, or non-source-derived direct-cache state before
+detach. The separate full-medium aggregate above is the only full aggregate
+exception; heterogeneous full queues, small/large full pages, remote-force
+nonfull state, and every other owner-exit class remain separate work.
 An empty drain may call `MainHeapThreadAttachment::finish_after_page_drain`;
 the detached routes instead use their narrowly typed finish once the old Theap
 image is empty. Any force/release failure is retained terminally; the drain
