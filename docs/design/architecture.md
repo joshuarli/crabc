@@ -5,9 +5,10 @@ boundaries.
 
 1. `crabc-core` owns stateless typed Linux kernel and vDSO operations. Linux/
    AArch64 is the current public target; the staged native x86-64 program has
-   a separately evidenced syscall, thread-pointer, and vDSO foundation here.
-   That foundation does not by itself enable x86 libc, loader, CRT, Rust
-   facade, or public-platform support. It has no process-global runtime owner.
+   a separately evidenced syscall, thread-pointer, vDSO, floating-point-state,
+   and raw-signal foundation here. That foundation does not by itself enable
+   x86 libc, loader, CRT, Rust facade, or public-platform support. It has no
+   process-global runtime owner.
 2. `libc` owns the public C ABI: `errno`, `FILE`, pthread and locale state,
    C layouts, compatibility translation, and other libc process state.
 3. `ldso` is the one production dynamic linker. It owns ELF loading,
@@ -15,7 +16,9 @@ boundaries.
 4. `crt` owns Rust-produced application entry/start/end objects and the
    conventional executable lifecycle boundary. `builtins` owns the separate
    Rust `no_std` compiler-helper archive. Neither owns libc or loader process
-   state.
+   state. The x86 program currently has only a separately proven static-PIE
+   `rcrt1.o`/`crti.o`/`crtn.o` foundation; it is not an installed x86 sysroot
+   or dynamic-CRT contract.
 5. `crabc-mimalloc` is the incomplete pinned, errno-free allocator engine. It
    consumes `crabc-core` and reviewed focused cryptographic primitives, but
    never libc. Before promotion, `libc` has one private Rust-only dependency

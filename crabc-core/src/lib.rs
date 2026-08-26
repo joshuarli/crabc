@@ -99,6 +99,15 @@ pub mod mm;
 /// around reserved libc signals, handler lifetimes, and safe Rust vocabulary
 /// belongs to `crabc-rs::signal`; C's public `sigaction` record is likewise a
 /// distinct ABI boundary in `libc`.
+#[cfg(target_arch = "aarch64")]
+pub mod signal;
+/// Direct Linux/x86-64 signal operations.
+///
+/// This raw kernel ABI boundary deliberately requires callers installing a
+/// handler to supply the target's `SA_RESTORER` trampoline; choosing the C or
+/// Rust runtime owner remains outside shared core.
+#[cfg(target_arch = "x86_64")]
+#[path = "signal_x86_64.rs"]
 pub mod signal;
 
 /// Direct process-identity, process-group, and signal operations.

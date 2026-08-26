@@ -29,6 +29,7 @@ RISC_V_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"riscv64"')
 X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/fenv_x86_64.rs"),
     Path("crabc-core/src/lib.rs"),
+    Path("crabc-core/src/signal_x86_64.rs"),
     Path("crabc-core/src/tests.rs"),
     Path("crabc-core/src/thread.rs"),
     Path("crabc-core/src/vdso.rs"),
