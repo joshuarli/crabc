@@ -44,6 +44,20 @@ it is not general remote-free routing or concurrent collection, abandonment,
 thread teardown, public `mi_*` API, libc integration, backend, or AArch64
 evidence.
 
+A separate 35-field native C/Rust differential now covers one live owner with
+a non-abandoning full-medium arena page (10248-byte request, 12288-byte blocks,
+capacity/reserved 42, eight slices) and one regular successor. A real pinned-C
+`pthread` worker frees all 42 first-page blocks, then `pthread_join()` completes
+before the still-live owner observes the non-atomic remote list or invokes
+`mi_heap_collect(heap, false)`. The false collector empties the full queue and
+releases only the first page's PageMap span, ordinary arena bitmap, and eight
+slices, while the successor remains regular and PageMap-published. Rust uses
+only 42 joined, staged scoped test workers for shared typed private facts; it
+does not claim pthread/TLS ABI parity, thread teardown, or broad remote-free
+routing/collection. This remains private native x86-64 engine evidence only,
+not public `mi_*` behavior or runtime, public x86 support, libc integration,
+backend promotion, or AArch64 evidence.
+
 The same native x86-64 profile separately has a 28-field C/Rust differential
 for one real small direct-cache page filled to its current capacity, one
 joined/quiescent `pthread` remote free, and the owner direct-cache miss falling

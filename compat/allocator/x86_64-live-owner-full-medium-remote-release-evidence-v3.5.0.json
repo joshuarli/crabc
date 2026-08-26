@@ -1,0 +1,200 @@
+{
+  "c_probe_sha256": "44fd93839f2f3fc8d3ba3b27df51fe36c681e12bb2daa08955e1cf8bf443f31b",
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "format": 1,
+  "profile": "linux-x86_64-private-live-owner-full-medium-remote-release",
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "rust_test": {
+    "path": "crabc-mimalloc/src/single_thread.rs",
+    "target_arch": "x86_64",
+    "test_filter": "single_thread::tests::x86_64_live_owner_full_medium_remote_release_trace_matches_pinned_c"
+  },
+  "schema": "crabc-mimalloc-x86_64-live-owner-full-medium-remote-release-evidence",
+  "scope": {
+    "aarch64_status_reused": false,
+    "c_oracle_all_first_page_remote_frees_required": true,
+    "c_oracle_join_before_non_atomic_owner_observation_required": true,
+    "c_oracle_live_owner_only": true,
+    "c_oracle_no_thread_teardown": true,
+    "c_oracle_non_abandoning_full_queue_only": true,
+    "c_oracle_real_pthread_required": true,
+    "c_oracle_successor_survives_first_page_release": true,
+    "c_rust_common_trace_facts_only": true,
+    "emulation_accepted": false,
+    "general_allocation_routing_claimed": false,
+    "general_lifecycle_claimed": false,
+    "general_remote_free_routing_claimed": false,
+    "native_linux_x86_64_required": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "real_pinned_c_mi_free_trigger": true,
+    "rust_scoped_joined_remote_producers_only": true
+  },
+  "source_anchors": [
+    {
+      "end_line": 97,
+      "member": "src/free.c",
+      "sha256": "6dc25419bcef550d5626841cfc8d3121526ceaaa3698bf215c16bfa5de665bd6",
+      "start_line": 62
+    },
+    {
+      "end_line": 161,
+      "member": "src/free.c",
+      "sha256": "51e79e158647a1a84d2f61321344600941750b4881632ead891b446a1ff1d8ea",
+      "start_line": 155
+    },
+    {
+      "end_line": 249,
+      "member": "src/free.c",
+      "sha256": "e755fc43b602a94ee89305924c28fcdbea5901bbccc2927c6cf5aa77f9e43942",
+      "start_line": 223
+    },
+    {
+      "end_line": 201,
+      "member": "src/page.c",
+      "sha256": "01d8f3f6a09d7d7b30e9e4f90f59c6738954fe5231d8fe9dac1ef5d0f96b967a",
+      "start_line": 150
+    },
+    {
+      "end_line": 243,
+      "member": "src/page.c",
+      "sha256": "35148cff687e602b8de307ca1abad524655f48bf4410b2c64a7e44af8909203b",
+      "start_line": 214
+    },
+    {
+      "end_line": 413,
+      "member": "src/page.c",
+      "sha256": "5b409a75471fbfec55eca726ffaeda2748f1ca0fd919d157dea9a04be01fbde6",
+      "start_line": 350
+    },
+    {
+      "end_line": 518,
+      "member": "src/page.c",
+      "sha256": "9e0c373ed5a817f9e9998319442aaf7b5870509e4821a57686179b54ff6428af",
+      "start_line": 460
+    },
+    {
+      "end_line": 274,
+      "member": "src/page-queue.c",
+      "sha256": "d72c1999eec27a2818fd657c62aa93ada275b1e63911569154a16619ca2f202b",
+      "start_line": 252
+    },
+    {
+      "end_line": 418,
+      "member": "src/page-queue.c",
+      "sha256": "575fa161a6e18b56f57b1e09dcb713e90c32f650193a9c9dbff03645c476c653",
+      "start_line": 344
+    },
+    {
+      "end_line": 165,
+      "member": "src/theap.c",
+      "sha256": "a84d17ad1b74eb93e79bb3b756f099fd60fe611eda6279c17db283c44cccc1bb",
+      "start_line": 123
+    },
+    {
+      "end_line": 232,
+      "member": "src/theap.c",
+      "sha256": "16c0e73a20b9a94bf994c4e83836c976f5683e3c6e8b18935782a934405adba0",
+      "start_line": 228
+    },
+    {
+      "end_line": 515,
+      "member": "src/page-map.c",
+      "sha256": "c752c966d40e6ebd16795295a1a87d3b8a762cdfc4ba752aa3a043df44dfb495",
+      "start_line": 460
+    },
+    {
+      "end_line": 1308,
+      "member": "src/arena.c",
+      "sha256": "d6649da0e0a6903b0e0bde04d12df78a99159d8c64b2acfb4c51a1827af9f3d1",
+      "start_line": 1285
+    }
+  ],
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "trace": {
+    "begin": "CRABC_MI_LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_TRACE_BEGIN",
+    "end": "CRABC_MI_LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_TRACE_END",
+    "expected_values": {
+      "trace.live_owner_full_medium_release.arena_backed": 1,
+      "trace.live_owner_full_medium_release.block_size": 12288,
+      "trace.live_owner_full_medium_release.capacity": 42,
+      "trace.live_owner_full_medium_release.first_arena_page_bitmap_clear_after_collect": 1,
+      "trace.live_owner_full_medium_release.first_arena_page_bitmap_set_before_remote": 1,
+      "trace.live_owner_full_medium_release.first_full_member_before_remote": 1,
+      "trace.live_owner_full_medium_release.first_page_map_all_slices_before_remote": 1,
+      "trace.live_owner_full_medium_release.first_page_map_all_slices_clear_after_collect": 1,
+      "trace.live_owner_full_medium_release.first_slices_free_after_collect": 1,
+      "trace.live_owner_full_medium_release.first_slices_unreleased_before_remote": 1,
+      "trace.live_owner_full_medium_release.full_queue_count_before_remote": 1,
+      "trace.live_owner_full_medium_release.full_queue_empty_after_collect": 1,
+      "trace.live_owner_full_medium_release.initial_remote_empty": 1,
+      "trace.live_owner_full_medium_release.initial_remote_head_owned": 1,
+      "trace.live_owner_full_medium_release.initial_used": 42,
+      "trace.live_owner_full_medium_release.joined_remote_free_count": 42,
+      "trace.live_owner_full_medium_release.non_abandoning_theap": 1,
+      "trace.live_owner_full_medium_release.ordinary_medium": 1,
+      "trace.live_owner_full_medium_release.owner_false_collect_called": 1,
+      "trace.live_owner_full_medium_release.page_count_after_collect": 1,
+      "trace.live_owner_full_medium_release.page_count_before_remote": 2,
+      "trace.live_owner_full_medium_release.published_list_acyclic": 1,
+      "trace.live_owner_full_medium_release.published_remote_count": 42,
+      "trace.live_owner_full_medium_release.published_remote_head_owned": 1,
+      "trace.live_owner_full_medium_release.published_used_unchanged": 1,
+      "trace.live_owner_full_medium_release.regular_queue_count_after_collect": 1,
+      "trace.live_owner_full_medium_release.regular_queue_count_before_remote": 1,
+      "trace.live_owner_full_medium_release.request": 10248,
+      "trace.live_owner_full_medium_release.reserved": 42,
+      "trace.live_owner_full_medium_release.slice_count": 8,
+      "trace.live_owner_full_medium_release.successor_page_map_all_slices_after_collect": 1,
+      "trace.live_owner_full_medium_release.successor_regular_member_after_collect": 1,
+      "trace.live_owner_full_medium_release.successor_regular_member_before_remote": 1,
+      "trace.live_owner_full_medium_release.valid": 1,
+      "trace.live_owner_full_medium_release.worker_joined_before_owner_collect": 1
+    }
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  }
+}

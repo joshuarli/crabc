@@ -46,6 +46,10 @@ DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json"
 )
+LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json"
+)
 AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA = (
     ROOT / "compat/allocator/x86_64-automatic-pthread-destructor-evidence-v3.5.0.json"
 )
@@ -237,6 +241,17 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
         )
 
+    def test_live_owner_full_medium_remote_release_schema_profile_is_exact(
+        self,
+    ) -> None:
+        schema = json.loads(
+            LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_SCHEMA.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-live-owner-full-medium-remote-release",
+        )
+
     def test_automatic_pthread_destructor_schema_profile_is_exact(self) -> None:
         schema = json.loads(AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA.read_text(encoding="utf-8"))
         self.assertEqual(
@@ -300,6 +315,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-tls-codegen",
                 "native-bounded-lifecycle-concurrency",
                 "native-live-owner-remote-free-differential",
+                "native-live-owner-full-medium-remote-release-differential",
                 "native-small-direct-remote-free-differential",
                 "native-mapped-arena-same-origin-reclaim-differential",
                 "native-mapped-arena-allocation-time-adoption-differential",
@@ -380,6 +396,19 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-live-owner-remote-free-differential"]["report"],
             "compat/reports/allocator/x86_64/live-owner-remote-free.json",
+        )
+        self.assertEqual(
+            gates["native-live-owner-full-medium-remote-release-differential"][
+                "command"
+            ],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-live-owner-full-medium-remote-release",
+        )
+        self.assertEqual(
+            gates["native-live-owner-full-medium-remote-release-differential"][
+                "report"
+            ],
+            "compat/reports/allocator/x86_64/live-owner-full-medium-remote-release.json",
         )
         self.assertEqual(
             gates["native-small-direct-remote-free-differential"]["command"],
@@ -975,6 +1004,29 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("quiescent pthread", gates["native-live-owner-remote-free-differential"]["claim"])
         self.assertIn("_mi_page_free_collect(page, false)", gates["native-live-owner-remote-free-differential"]["claim"])
         self.assertIn("not general remote-free routing", gates["native-live-owner-remote-free-differential"]["claim"])
+        live_owner_full_medium_remote_release = gates[
+            "native-live-owner-full-medium-remote-release-differential"
+        ]["claim"]
+        for fragment in (
+            "35 address-independent values",
+            "non-abandoning full-medium arena page",
+            "request 10248",
+            "12288-byte blocks",
+            "capacity/reserved 42",
+            "eight slices",
+            "real pinned-C pthread worker frees all 42 first-page blocks",
+            "pthread_join() completes before the owner inspects the non-atomic remote list",
+            "mi_heap_collect(heap, false)",
+            "releases only the empty first page",
+            "successor remains a regular member and PageMap-published",
+            "Rust uses only 42 joined, staged scoped test workers",
+            "does not claim pthread/TLS ABI parity",
+            "broad remote-free routing/collection",
+            "private native x86-64 engine evidence only",
+            "thread teardown",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, live_owner_full_medium_remote_release)
         self.assertIn("28 address-independent values", gates["native-small-direct-remote-free-differential"]["claim"])
         self.assertIn("small direct-cache page", gates["native-small-direct-remote-free-differential"]["claim"])
         self.assertIn("not general allocation/free routing", gates["native-small-direct-remote-free-differential"]["claim"])

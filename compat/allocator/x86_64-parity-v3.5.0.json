@@ -105,6 +105,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 35 address-independent values for one live owner with a non-abandoning full-medium arena page (request 10248, 12288-byte blocks, capacity/reserved 42, eight slices) and one regular successor. A real pinned-C pthread worker frees all 42 first-page blocks, then pthread_join() completes before the owner inspects the non-atomic remote list or invokes mi_heap_collect(heap, false). That normal false collector empties the full queue and releases only the empty first page's PageMap, ordinary arena bitmap, and complete slice span while the successor remains a regular member and PageMap-published. Rust uses only 42 joined, staged scoped test workers to compare shared typed private facts; it does not claim pthread/TLS ABI parity, thread teardown, or broad remote-free routing/collection. This is private native x86-64 engine evidence only, not public mi_* behavior or runtime, public x86 support, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-live-owner-full-medium-remote-release",
+      "id": "native-live-owner-full-medium-remote-release-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/live-owner-full-medium-remote-release.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 28 address-independent values for one real small direct-cache page filled to its current capacity, one joined/quiescent pthread mi_free publication, and the owner direct-cache miss falling through the regular queue search to collect and reuse that exact block. It proves only this private small direct-page route; it is not general allocation/free routing or concurrent collection, abandonment, thread teardown, public mi_* API, libc integration, backend promotion, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-direct-remote",
       "id": "native-small-direct-remote-free-differential",

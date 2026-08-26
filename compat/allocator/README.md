@@ -1052,6 +1052,28 @@ routing or concurrent collection, abandonment, thread teardown, public
 release gate, it runs offline against the verified archive cache populated by
 the x86 `allocator --quick` lane.
 
+The live-owner full-medium remote-release differential is another native
+x86-only private lane:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-live-owner-full-medium-remote-release
+```
+
+It fills one non-abandoning full-medium arena page (10248-byte request,
+12288-byte blocks, capacity/reserved 42, and eight slices) alongside one
+regular successor. A real pinned-C `pthread` worker frees all 42 first-page
+blocks and `pthread_join()` completes before the still-live owner inspects the
+non-atomic remote list or calls `mi_heap_collect(heap, false)`. That normal
+false collector empties the full queue and releases only the empty first page's
+PageMap span, ordinary arena bitmap, and complete slice span; the successor
+remains a regular member with its PageMap publication intact. Rust uses only 42
+joined, staged scoped test workers to compare shared typed private facts. The
+35 address-independent values are written to
+`compat/reports/allocator/x86_64/live-owner-full-medium-remote-release.json`.
+This does not claim pthread/TLS ABI parity, thread teardown, broad remote-free
+routing or collection, public `mi_*` behavior or runtime, public x86 support,
+libc integration, backend promotion, or AArch64 evidence.
+
 The real small direct-cache route has its own native private differential:
 
 ```sh
@@ -1763,6 +1785,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_cmake_mode_evidence.py` and `x86_64-cmake-mode-evidence-v3.5.0.json` | Native x86-64-only CMake normal-release shared configure/build/install evidence. It is dispatched by `allocator-cmake-modes`; it records source-bound cache/compiler selections, installed headers/manifest, and shared-object ELF/SONAME/dependencies, but does not compile/link or execute consumers, claim behavior or Rust implementation parity, cover static/object or unselected CMake modes, or create public x86/AArch64 runtime support. |
 | `x86_64_static_mode_evidence.py` and `x86_64-static-mode-evidence-v3.5.0.json` | Native x86-64-only selected static archive and `src/static.c` override-object artifact evidence. It is dispatched by `allocator-static-modes`; it observes archive members and override symbols, compile-links two consumers, but does not execute them, configure/install CMake, or claim behavior/public runtime support. |
 | `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. It is dispatched by `allocator-remote-free` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
+| `x86_64_live_owner_full_medium_remote_release_evidence.py` and `x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json` | Native x86-64-only private 35-field pinned-C/Rust differential for one live owner with a non-abandoning full-medium arena page (10248-byte request, 12288-byte blocks, capacity/reserved 42, eight slices) and a regular successor. A real C `pthread` worker frees all 42 first-page blocks and joins before the owner observes its non-atomic remote list or false-collects; only the empty first page's PageMap/ordinary-arena-bitmap/eight-slice span releases while the successor remains regular and PageMap-published. Rust uses only 42 joined, staged scoped test workers for shared typed private facts, not pthread/TLS ABI parity or broad routing/collection. It is dispatched by `allocator-live-owner-full-medium-remote-release`; it does not claim thread teardown, public API/runtime, backend, public x86 support, libc integration, or AArch64 evidence. |
 | `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. It is dispatched by `allocator-mapped-reclaim` and does not claim general abandonment/adoption, public API, or AArch64 evidence. |
 | `x86_64_mapped_adoption_evidence.py` and `x86_64-mapped-adoption-evidence-v3.5.0.json` | Native x86-64-only private 18-value pinned-C/Rust differential for one arena-backed, same-origin, one-thread nonfull medium page: the C next same-heap allocation claims, reassociates, and queue-tail requeues that exact PageMap/ordinary-arena-bitmap-preserved page, while Rust explicitly consumes its test-only `adopt()` adapter before its matching third allocation. It is dispatched by `allocator-mapped-adoption`; it does not claim general or cross-thread abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |

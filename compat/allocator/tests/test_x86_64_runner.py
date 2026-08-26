@@ -39,6 +39,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator --quick",
             "allocator-release-evidence",
             "allocator-cmake-modes",
+            "allocator-live-owner-full-medium-remote-release",
             "allocator-mapped-adoption",
             "allocator-direct-small-allocation-adoption",
             "allocator-aggregate-same-bin-still-live",
@@ -86,6 +87,26 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         result = self.run_launcher("allocator-cmake-modes", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-cmake-modes takes no arguments", result.stderr)
+
+    def test_live_owner_full_medium_remote_release_command_is_closed_and_uses_its_private_offline_probe(
+        self,
+    ) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-live-owner-full-medium-remote-release)", source)
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_live_owner_full_medium_remote_release_evidence.py "
+            "--offline",
+            source,
+        )
+        result = self.run_launcher(
+            "allocator-live-owner-full-medium-remote-release", "unexpected"
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-live-owner-full-medium-remote-release takes no arguments",
+            result.stderr,
+        )
 
     def test_mapped_adoption_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

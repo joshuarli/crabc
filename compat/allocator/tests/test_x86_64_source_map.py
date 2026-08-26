@@ -33,6 +33,10 @@ LATER_THREAD_EXIT_FULL_DIRECT_SMALL_PAGES_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-later-thread-exit-full-direct-small-pages-evidence-v3.5.0.json"
 )
+LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json"
+)
 DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json"
@@ -971,6 +975,89 @@ class X86_64SourceMapTests(unittest.TestCase):
         theap = units["thread-local-heap-lifecycle"]
         self.assertIn("exact eight-slice release", theap["difference"])
         self.assertIn("not general lifecycle", theap["difference"])
+
+    def test_live_owner_full_medium_remote_release_lane_is_scoped_to_reviewed_units(
+        self,
+    ) -> None:
+        # This follows the existing full-medium lane's reviewed setup, queue,
+        # free, ownership, PageMap, page, and arena release boundaries.
+        reviewed_unit_ids = {
+            "ordinary-allocation-paths",
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_live_owner_full_medium_remote_release_evidence.py",
+            "compat/allocator/x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_live_owner_full_medium_remote_release_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+
+        schema = json.loads(
+            LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_SCHEMA.read_text(encoding="utf-8")
+        )
+        expected = schema["trace"]["expected_values"]
+        prefix = "trace.live_owner_full_medium_release."
+        self.assertEqual(len(expected), 35)
+        self.assertEqual(expected[prefix + "request"], 10248)
+        self.assertEqual(expected[prefix + "block_size"], 12288)
+        self.assertEqual(expected[prefix + "capacity"], 42)
+        self.assertEqual(expected[prefix + "reserved"], 42)
+        self.assertEqual(expected[prefix + "slice_count"], 8)
+        self.assertEqual(expected[prefix + "joined_remote_free_count"], 42)
+        self.assertEqual(expected[prefix + "worker_joined_before_owner_collect"], 1)
+        self.assertEqual(expected[prefix + "full_queue_empty_after_collect"], 1)
+        self.assertEqual(expected[prefix + "regular_queue_count_after_collect"], 1)
+        self.assertEqual(expected[prefix + "page_count_after_collect"], 1)
+        self.assertEqual(
+            expected[prefix + "successor_regular_member_after_collect"], 1
+        )
+        self.assertEqual(
+            expected[prefix + "first_page_map_all_slices_clear_after_collect"], 1
+        )
+        self.assertEqual(
+            expected[prefix + "first_arena_page_bitmap_clear_after_collect"], 1
+        )
+        self.assertEqual(expected[prefix + "first_slices_free_after_collect"], 1)
+        scope = schema["scope"]
+        for field in (
+            "c_oracle_all_first_page_remote_frees_required",
+            "c_oracle_join_before_non_atomic_owner_observation_required",
+            "c_oracle_live_owner_only",
+            "c_oracle_no_thread_teardown",
+            "c_oracle_real_pthread_required",
+            "c_oracle_successor_survives_first_page_release",
+            "rust_scoped_joined_remote_producers_only",
+        ):
+            self.assertTrue(scope[field])
+        self.assertFalse(scope["general_remote_free_routing_claimed"])
+        self.assertFalse(scope["public_crabc_support"])
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                self.assertEqual(units[unit_id]["status"], "partial")
 
     def test_dynamic_full_medium_unmapped_reabandon_lane_is_scoped_to_reviewed_units(
         self,
