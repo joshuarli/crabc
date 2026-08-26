@@ -804,13 +804,18 @@ class: medium and one-slice non-direct-small each admit only a sole nonfull
 arena page with `reserved > 2`, `used == 2`, an empty direct image, and exactly
 two sequential canonical frees. The first retains the dynamic mapped
 bit/count through `UnownedMapped`; the final `Empty` free alone releases the
-page. The separate direct-small handoff admits only `block_size <=
-SMALL_SIZE_MAX`, `reserved >= 16`, its complete rounded direct-cache range,
-and `used == 2`; it clears that range before page-count detach. Its first
-partial-collector free deliberately leaves the published head atomic and the
-observed `used` count at two, then the final free consumes both heads and
-releases the page. Extra live blocks/pages, stale/mixed cache images, reclaim,
-adoption, requeue, scans, producers, and concurrent traversal remain open.
+page. The separate large handoff admits only `PageKind::Large` geometry with
+`MEDIUM_MAX_OBJ_SIZE < block_size <= LARGE_MAX_OBJ_SIZE`, an empty direct
+image, and an exact 64-slice arena/PageMap span; its normal first free retains
+that entire mapped span with `used == 1`, and its final `Empty` free alone
+clears the pair and releases all 64 slices. The separate direct-small handoff
+admits only `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, its complete
+rounded direct-cache range, and `used == 2`; it clears that range before
+page-count detach. Its first partial-collector free deliberately leaves the
+published head atomic and the observed `used` count at two, then the final free
+consumes both heads and releases the page. Extra live blocks/pages, stale/mixed
+cache images, reclaim, adoption, requeue, scans, producers, and concurrent
+traversal remain open.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
 full-medium/full-large/full-non-direct-small/full-direct-small routes, five

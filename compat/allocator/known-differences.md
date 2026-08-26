@@ -1402,6 +1402,23 @@ aggregate-registry adoption remain absent.
   prove the two-free `UnownedMapped` then `Empty` state transition, dynamic
   bitmap/count preservation then cleanup, wholly pre-detach live-count and
   sole-page refusals, and retained post-TLS collection poison. The distinct
+  two-block large
+  `dynamic_thread_exit_mapped_two_block_large_handoff_keeps_first_free_mapped_then_releases_complete_span`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_rejects_one_live_block_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_rejects_three_live_blocks_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_rejects_another_page_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_rejects_medium_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_rejects_singleton_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_refuses_stale_direct_cache_before_detach`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_retains_collection_failure`,
+  `dynamic_thread_exit_mapped_two_block_large_handoff_retains_false_collection_failure`,
+  and `dynamic_thread_exit_mapped_two_block_large_handoff_retains_post_force_shape_mismatch`
+  prove the normal large collector's `2 -> 1 -> 0` state transition, dynamic
+  bitmap/count and complete 64-slice PageMap preservation after the first
+  free, terminal full-span release, wholly pre-detach cardinality/class/
+  direct-cache/sole-page refusals, and retained post-TLS collection or
+  post-collection-shape poison.
+  The distinct
   two-block non-direct-small
   `dynamic_thread_exit_mapped_two_block_non_direct_small_handoff_keeps_first_free_mapped_then_releases`,
   `dynamic_thread_exit_mapped_two_block_non_direct_small_handoff_rejects_one_live_block_before_detach`,

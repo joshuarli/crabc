@@ -843,25 +843,40 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current pinned Linux/AArch64 container
-`cargo test -p crabc-mimalloc --lib` run passes all 543 tests. `./scripts/dev.sh test -p crabc-mimalloc
+`cargo test -p crabc-mimalloc --lib` run passes all 553 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 118 items and 122
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 119 items and 123
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small or mapped-two-block-medium/non-direct-small cases, the later-main
+dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small or mapped-two-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
-The two-block dynamic normal classes are deliberately separate: medium and
-one-slice non-direct-small pages each prove force -> false collection ->
+The two-block dynamic normal classes are deliberately separate: medium, large,
+and one-slice non-direct-small pages each prove force -> false collection ->
 ordinary detach -> mapped identity/bit/count/unown, then exactly one
-`UnownedMapped` first free and one `Empty` final free. Neither class admits
-direct-small's cache-range collector, a third client free, a second source
-member, or general post-TLS traversal.
+`UnownedMapped` first free and one `Empty` final free. The large class also
+proves that all 64 source PageMap slots remain mapped after its first normal
+free and release only after the final free. None admits direct-small's
+cache-range collector, a third client free, a second source member, or general
+post-TLS traversal.
+`DynamicThreadExitDrain::abandon_mapped_two_block_large` now records that
+separate large source boundary: one sole nonfull `MemoryKind::Arena`
+`PageKind::Large` page with `MEDIUM_MAX_OBJ_SIZE < block_size <=
+LARGE_MAX_OBJ_SIZE`, `reserved > 2`, `used == 2`, one matching regular queue
+member, an empty direct-cache image, and its exact 64-slice arena span. It
+keeps source force -> false collection -> ordinary removal -> page-count
+decrement -> large no-op direct-cache update -> dynamic
+identity/bit/count/unown. The first exact canonical normal free returns
+`UnownedMapped`, preserves the bit/count plus every span mapping with
+`used == 1`, and only the final `Empty` free clears the pair and releases
+PageMap/ordinary-bit/metadata/all 64 slices. This is not a generic multi-free,
+cache-repair, reclaim/adoption/requeue, scan, producer, concurrent routing, or
+owner-exit traversal path.
 `DynamicThreadExitDrain::abandon_mapped_two_block_direct_small` now records
 that remaining direct-small source boundary as its own post-TLS handoff: one
 sole nonfull one-slice `MemoryKind::Arena` `PageKind::Small` page with
@@ -885,8 +900,8 @@ malformed or out-of-profile metadata. The later-main and dynamic homogeneous
 full direct-small aggregates now each seal their exact rounded direct-cache
 image, advance their queue head before each count detach, and use free.c's
 partial collector through the source accounting lag. The next local frontier
-is another separately proven source-shaped owner-exit class, then a different
-aggregate-registry policy and complete process and real pthread/TLS lifecycle
+is a different aggregate-registry policy and complete process and real
+pthread/TLS lifecycle
 integration—not a
 generic allocation-time scan routed through a bounded singleton,
 mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later

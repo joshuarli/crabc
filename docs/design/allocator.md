@@ -1028,6 +1028,26 @@ slices. It cannot reclaim, adopt, requeue, scan, retain a general multi-free
 route, or cover another page, source class, producer, concurrent free, or
 owner-exit traversal.
 
+`DynamicThreadExitDrain::abandon_mapped_two_block_large` is a separate
+post-TLS dynamic handoff, not a widened medium or small token. It admits only
+one sole nonfull `MemoryKind::Arena` `PageKind::Large` page with
+`MEDIUM_MAX_OBJ_SIZE < block_size <= LARGE_MAX_OBJ_SIZE`, `reserved > 2`,
+`used == 2`, zero retirement countdown, one regular queue member, an empty
+direct-cache image, and an exact 64-slice arena/PageMap span. It preserves
+source force -> false collection -> regular-queue removal -> page-count
+decrement -> large no-op direct-cache update -> dynamic
+identity/bit/count/unown. Its private first/final-free state requires the
+first exact canonical free to return `UnownedMapped`, retain the dynamic
+bit/count and every span mapping with one block live, and permits only the
+final free to return `Empty`, clear that pair, and release PageMap -> dynamic
+ordinary bit -> metadata -> all 64 arena slices. Medium/non-direct-small
+normal collector siblings, direct-small's partial collector, one or three live
+blocks, another source member, stale direct-cache state, reclaim/adoption/
+requeue/scans, producers, concurrent routing, and general owner-exit traversal
+remain out of scope. Any collection error or post-collection shape/span/queue
+mismatch poisons the retained drain rather than exposing a retryable different
+source classification.
+
 `DynamicThreadExitDrain::abandon_mapped_two_block_non_direct_small` is a
 separate post-TLS dynamic handoff, not a widening of the medium token. It
 admits only one sole nonfull one-slice `MemoryKind::Arena` `PageKind::Small`
