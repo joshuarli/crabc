@@ -340,10 +340,14 @@ depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
 description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact."
 aarch64_gates = ["abi-probe", "build", "test"]
-source_owners = ["include", "include/bits/alltypes.h", "include/fenv.h", "include/float.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "libc/src/c_abi.rs", "libc/src/lib.rs"]
-x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags"]
-x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
-native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence. Do not select crabc-libc until all headers, layouts, static links, and errno translation are jointly evidenced." }]
+source_owners = ["include", "include/bits/alltypes.h", "include/bits/reg.h", "include/bits/setjmp.h", "include/fenv.h", "include/float.h", "include/setjmp.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "compat/x86_64/sys_reg_header_abi_probe.c", "compat/x86_64/run_sys_reg_header_abi.sh", "compat/x86_64/libc_setjmp_probe.c", "compat/x86_64/libc_setjmp_probe.rs", "compat/x86_64/run_libc_setjmp.sh", "libc/src/c_abi/x86_64/setjmp.rs", "libc/src/c_abi.rs", "libc/src/lib.rs"]
+x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags", "setjmp's six callee-saved GPRs, post-return stack, instruction pointer, and kernel-sized signal mask"]
+x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; the staged sys/reg.h register indices and setjmp public machine/signal-mask record match musl; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
+native_evidence = [
+  { state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh sys-reg-header-abi", scope = "This compile-only ptrace register-index slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh libc-setjmp", scope = "This source-only x86 control-transfer and signal-mask slice is partial evidence; it does not select crabc-libc." },
+]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 headers and ABI inventory", role = "C/POSIX layout and compatibility oracle." }]
 capabilities = []
 status = "planned"

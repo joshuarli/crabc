@@ -52,6 +52,13 @@ X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
 X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
     Path("ldso/src/x86_64_relocation.rs"),
 }
+# This control-transfer leaf is compiled only by its dedicated native probe.
+# It does not select crabc-libc or make the AArch64 C-ABI composition root an
+# x86 target; keeping a one-file boundary makes any later libc admission a
+# deliberate review decision.
+X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
+    Path("libc/src/c_abi/x86_64/setjmp.rs"),
+}
 # The fixed-mimalloc evidence lane remains a separate, private program. Its
 # historical feature is retained for compatibility but no longer governs the
 # explicitly admitted shared-core foundation above.
@@ -201,6 +208,8 @@ def is_authorized_x86_branch(relative: Path, line: str) -> bool:
     if relative in X86_RUNTIME_FOUNDATION_FACADE_SOURCES:
         return True
     if relative in X86_RUNTIME_FOUNDATION_LDSO_SOURCES:
+        return True
+    if relative in X86_RUNTIME_FOUNDATION_LIBC_SOURCES:
         return True
     if relative in X86_ALLOCATOR_EVIDENCE_CORE_SOURCES:
         return 'feature = "allocator-x86-evidence"' in line

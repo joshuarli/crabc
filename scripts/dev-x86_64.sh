@@ -22,10 +22,12 @@ Native Linux/x86-64 staged-foundation evidence commands:
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
   header-abi-project  compile the staged crabc x86 fenv/float header slice
+  sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
   facade run the bounded native x86_64 crabc-rs direct-facade tests
   libc-syscall  run the isolated x86 C-ABI syscall register probe
   libc-errno-tls  run the source-only x86 C errno/initial-TLS probe
+  libc-setjmp  run the source-only x86 C setjmp/signal-mask ABI probe
   ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
@@ -35,8 +37,10 @@ subset; `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-reference` proves only its pinned reference baseline.
 `header-abi-project` compiles only the staged public fenv/float/fundamental
 type declarations and does not link an x86 libc artifact.
+`sys-reg-header-abi` compiles only the staged ptrace register-index header.
 `libc-syscall` compiles only the unintegrated raw syscall module.
 `libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
+`libc-setjmp` compiles only the unintegrated control-transfer assembly leaf.
 `ldso-relocation` compiles only the unintegrated checked relocation source.
 None is a crabc-libc or crabc-ldso build, general facade admission, or C ABI
 support claim.
@@ -140,6 +144,10 @@ run_header_abi_project() {
     run_in_container bash /workspace/compat/x86_64/run_project_header_abi.sh
 }
 
+run_sys_reg_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_sys_reg_header_abi.sh
+}
+
 run_libc_syscall_probe() {
     run_in_container bash -ceu '
         probe=/tmp/crabc-x86-libc-syscall-probe
@@ -151,6 +159,10 @@ run_libc_syscall_probe() {
 
 run_libc_errno_tls_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_errno_tls.sh
+}
+
+run_libc_setjmp_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_setjmp.sh
 }
 
 run_ldso_relocation_tests() {
@@ -171,7 +183,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|core|facade|libc-syscall|libc-errno-tls|ldso-relocation) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation) ;;
     *)
         usage >&2
         exit 2
@@ -200,6 +212,11 @@ case "$command" in
         ensure_image
         run_header_abi_project
         ;;
+    sys-reg-header-abi)
+        [ "$#" -eq 0 ] || fail "sys-reg-header-abi takes no arguments"
+        ensure_image
+        run_sys_reg_header_abi
+        ;;
     core)
         [ "$#" -eq 0 ] || fail "core takes no arguments"
         ensure_image
@@ -222,6 +239,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-errno-tls takes no arguments"
         ensure_image
         run_libc_errno_tls_probe
+        ;;
+    libc-setjmp)
+        [ "$#" -eq 0 ] || fail "libc-setjmp takes no arguments"
+        ensure_image
+        run_libc_setjmp_probe
         ;;
     ldso-relocation)
         [ "$#" -eq 0 ] || fail "ldso-relocation takes no arguments"

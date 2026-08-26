@@ -12,10 +12,12 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh musl-oracle
 ./scripts/dev-x86_64.sh header-abi-reference
 ./scripts/dev-x86_64.sh header-abi-project
+./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
 ./scripts/dev-x86_64.sh libc-errno-tls
+./scripts/dev-x86_64.sh libc-setjmp
 ./scripts/dev-x86_64.sh ldso-relocation
 ```
 
@@ -44,6 +46,10 @@ and x87 evaluation modes. It deliberately has no link step: the declarations
 are a source-only ABI slice, not a selected `crabc-libc` artifact or general
 x86 C-header support.
 
+`sys-reg-header-abi` places the project headers first and compile-checks the
+27 Linux/x86-64 ptrace register-index macros in `<sys/reg.h>`. It is another
+declaration-only header ratchet, not a ptrace runtime or `crabc-libc` claim.
+
 [`parity.toml`](parity.toml) is the closed machine-readable x86 completion
 ledger. Its validator and focused tests account for the AArch64-equivalent
 capability/gate families separately from these foundation measurements.
@@ -65,6 +71,14 @@ local initial-TLS datum with `R_X86_64_TPOFF*`, no `__tls_get_addr` path, zero
 initialization, and independent main/pthread `errno` slots. It remains a
 source-only leaf rather than a selected `crabc-libc` artifact or a general C
 ABI claim; it is not a musl differential or compatibility-oracle gate.
+
+`libc-setjmp` compiles only `libc/src/c_abi/x86_64/setjmp.rs`, then runs the
+same C continuation fixture once against pinned musl and once against that
+isolated object with the project `<setjmp.h>` first. It proves the 200-byte
+x86 machine/signal-mask record, direct aliases, callee-saved register and
+stack restoration, zero-to-one return conversion, and `sigsetjmp` mask
+restore behavior. It remains a source-only control-transfer leaf, not a
+selected `crabc-libc` artifact or general x86 C ABI claim.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_param`, and
