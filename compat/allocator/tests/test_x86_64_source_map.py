@@ -764,6 +764,64 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("one-slice release", unit["difference"])
                 self.assertIn("not general lifecycle", unit["difference"])
 
+    def test_dynamic_full_non_direct_small_unmapped_reabandon_lane_is_scoped_to_reviewed_units(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_dynamic_full_non_direct_small_unmapped_reabandon_evidence.py",
+            "compat/allocator/x86_64-dynamic-full-non-direct-small-unmapped-reabandon-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_dynamic_full_non_direct_small_unmapped_reabandon_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                unit = units[unit_id]
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn("35-field native C/Rust differential", unit["difference"])
+                self.assertIn(
+                    "dynamic full non-direct-small unmapped-reabandon route",
+                    unit["difference"],
+                )
+                self.assertIn("1032-byte non-direct-small", unit["difference"])
+                self.assertIn("1280-byte blocks", unit["difference"])
+                self.assertIn("capacity/reserved 51", unit["difference"])
+                self.assertIn("empty direct-cache image", unit["difference"])
+                self.assertIn("no remote mi_free", unit["difference"])
+                self.assertIn("used == 51", unit["difference"])
+                self.assertIn("Six normal-collector frees", unit["difference"])
+                self.assertIn("used == 45", unit["difference"])
+                self.assertIn("seventh free", unit["difference"])
+                self.assertIn("used == 44", unit["difference"])
+                self.assertIn("dynamic bitmap/count 1", unit["difference"])
+                self.assertIn("one-slice release", unit["difference"])
+                self.assertIn("not general lifecycle", unit["difference"])
+
     def test_dynamic_os_aligned_singleton_owner_exit_lane_is_scoped_to_reviewed_units(
         self,
     ) -> None:

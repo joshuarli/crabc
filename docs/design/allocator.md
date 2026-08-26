@@ -390,6 +390,21 @@ only and does not establish general lifecycle/routing, concurrent collection,
 abandonment/adoption, public API/runtime, public x86 support, backend
 promotion, or AArch64 evidence.
 
+The same native x86-only track separately records a 35-field dynamic full
+non-direct-small unmapped-reabandon differential. A pinned-C worker fills one
+sole full ordinary regular-bin arena page (request 1032, 1280-byte blocks,
+capacity/reserved 51, one slice, and an empty direct-cache image), publishes no
+remote free, runs real `mi_thread_done()`, and the consumer joins before its
+sequential frees. The page begins full and unmapped-abandoned with PageMap and
+ordinary arena bitmap retained, dynamic bitmap/count clear, and `used == 51`.
+Six normal-collector frees retain that state at `used == 45`; the seventh free
+reabandons it to mapped at `used == 44` and publishes dynamic bitmap/count one.
+The mapped tail clears every recorded dynamic/PageMap/ordinary-bit state before
+one-slice release. This is private native x86-64 engine evidence only and does
+not establish general lifecycle/routing, concurrent collection,
+abandonment/adoption, public API/runtime, public x86 support, backend
+promotion, or AArch64 evidence.
+
 Those operations are
 live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above

@@ -13298,6 +13298,372 @@ mod tests {
         });
     }
 
+    /// Native x86-64 differential trace for the source-shaped no-remote full
+    /// non-direct-small exit path. The page begins unmapped after typed TLS
+    /// teardown, crosses the normal mostly-used reabandon threshold only on
+    /// its seventh client free, then releases through the mapped tail.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_dynamic_full_non_direct_small_unmapped_reabandon_trace_matches_pinned_c() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request_size = SMALL_SIZE_MAX + WORD_SIZE;
+            let first = allocator
+                .allocate(request_size, false)
+                .expect("the fixture creates one dynamic non-direct-small page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the non-direct-small page remains PageMap-published before thread exit");
+            let page_ref = unsafe { page.as_ref() };
+            let memory = page_ref.memid();
+            let block_size = page_ref.block_size() as usize;
+            let bin = crate::size_class::bin(page_ref.block_size())
+                .expect("the full non-direct-small page has one source bin");
+            let reserved = page_ref.reserved() as usize;
+            assert_eq!(request_size, 1032);
+            assert_eq!(block_size, 1280);
+            assert_eq!(reserved, 51);
+
+            let arena_backed = memory.kind() == MemoryKind::Arena;
+            let small_page = crate::size_class::page_kind_for_block_size(page_ref.block_size())
+                == Some(crate::types::PageKind::Small);
+            let non_direct_small = small_page
+                && block_size > SMALL_SIZE_MAX
+                && block_size <= SMALL_MAX_OBJ_SIZE;
+            let mut blocks = Vec::with_capacity(reserved);
+            blocks.push(first);
+            while unsafe { page.as_ref().used() } < reserved {
+                let block = allocator
+                    .allocate(request_size, false)
+                    .expect("the non-direct-small page reaches its source full state");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+                blocks.push(block);
+            }
+            let capacity = unsafe { page.as_ref().capacity() } as usize;
+            assert_eq!(capacity, 51);
+            assert_eq!(capacity, reserved);
+            assert_eq!(blocks.len(), capacity);
+            let full_before_thread_done = unsafe { page.as_ref().used() } as usize == capacity;
+            let ordinary_regular_bin_before_thread_done = allocator.queue_count(bin) == Some(1)
+                && allocator.queue_count(BIN_FULL) == Some(0)
+                && !crate::types::page_queue::page_is_in_full(unsafe { page.as_ref() });
+            let direct_cache_empty_before_thread_done = (0..PAGES_DIRECT).all(|index| {
+                allocator.direct_page(index) == Some(crate::types::EMPTY_PAGE.as_ptr())
+            });
+            let no_remote_free_before_thread_done =
+                unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            assert!(
+                arena_backed
+                    && small_page
+                    && non_direct_small
+                    && full_before_thread_done
+                    && ordinary_regular_bin_before_thread_done
+                    && direct_cache_empty_before_thread_done
+                    && no_remote_free_before_thread_done,
+                "the fixture starts from one full non-direct-small ordinary-bin page without a remote publication"
+            );
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            let producer_thread_done_completed = drain.test_dynamic_regular_slot_is_clear();
+            let producer_joined_before_consumer_frees = true;
+            // SAFETY: the vector retains every once-live client block in this
+            // sole full page. The drain carries the only mapped lifecycle
+            // capability through the unmapped prefix and mapped reabandon tail.
+            let mut handoff = match unsafe { drain.abandon_full_non_direct_small(blocks[0]) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitFullNonDirectSmallAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullNonDirectSmallAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the sole full non-direct-small page enters its dynamic unmapped handoff: {error:?}");
+                }
+                Err(DynamicThreadExitFullNonDirectSmallAbandonFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("full non-direct-small abandonment does not retain a terminal owner: {error:?}");
+                }
+            };
+
+            let (slice_start, span_size) = handoff
+                .test_arena_span()
+                .expect("the unmapped full non-direct-small handoff retains its arena span");
+            assert_eq!(span_size % ARENA_SLICE_SIZE, 0);
+            let slice_count = span_size / ARENA_SLICE_SIZE;
+            assert_eq!(slice_count, 1);
+            let dynamic_abandoned_count_after_thread_done =
+                handoff.test_abandoned_count().unwrap_or(usize::MAX);
+            let dynamic_abandoned_bitmap_clear_after_thread_done =
+                handoff.test_dynamic_abandoned_page_is_clear();
+            let unmapped_after_thread_done = dynamic_abandoned_bitmap_clear_after_thread_done
+                && dynamic_abandoned_count_after_thread_done == 0;
+            let abandoned_after_thread_done = handoff.test_page_count() == 0;
+            let page_map_registered_after_thread_done = (0..slice_count).all(|index| {
+                handoff.test_page_map_entry(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+                    == page.as_ptr()
+            });
+            let arena_page_bitmap_set_after_thread_done =
+                handoff.test_dynamic_arena_page_is_set();
+            let ordinary_queue_detached_after_thread_done = unsafe {
+                let page_ref = page.as_ref();
+                !crate::types::page_queue::page_is_in_full(page_ref)
+                    && page_ref.is_queue_detached()
+                    && page_ref.remote_free_test_head() & 1 == 0
+                    && page_ref.remote_free_test_head() & !1 == 0
+            } && handoff.test_page_count() == 0;
+            let used_after_thread_done = unsafe { page.as_ref().used() } as usize;
+            assert!(
+                unmapped_after_thread_done
+                    && abandoned_after_thread_done
+                    && page_map_registered_after_thread_done
+                    && arena_page_bitmap_set_after_thread_done
+                    && ordinary_queue_detached_after_thread_done
+                    && used_after_thread_done == 51,
+                "owner exit retains an unmapped, queue-detached non-direct-small page before the source threshold"
+            );
+
+            let unmapped_prefix_free_count = reserved / 8;
+            assert_eq!(unmapped_prefix_free_count, 6);
+            for block in blocks.iter().copied().take(unmapped_prefix_free_count) {
+                handoff = match unsafe { handoff.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullNonDirectSmallFreeResult::StillLive(handoff)) => handoff,
+                    Ok(DynamicThreadExitFullNonDirectSmallFreeResult::Released(drain)) => {
+                        core::mem::forget(drain);
+                        panic!("the mostly-used unmapped prefix cannot release the non-direct-small page");
+                    }
+                    Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Rejected {
+                        handoff,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Terminal {
+                        handoff,
+                        error,
+                    }) => {
+                        core::mem::forget(handoff);
+                        panic!("the unmapped non-direct-small prefix remains source-shaped: {error:?}");
+                    }
+                };
+            }
+            let used_after_unmapped_prefix = unsafe { page.as_ref().used() } as usize;
+            let unowned_after_unmapped_prefix =
+                unsafe { page.as_ref().remote_free_test_head() & 1 == 0 };
+            let unmapped_after_unmapped_prefix = handoff.test_dynamic_abandoned_page_is_clear()
+                && handoff.test_abandoned_count() == Some(0)
+                && handoff.test_dynamic_arena_page_is_set()
+                && unowned_after_unmapped_prefix
+                && (0..slice_count).all(|index| {
+                    handoff.test_page_map_entry(
+                        slice_start.wrapping_add(index * ARENA_SLICE_SIZE),
+                    ) == page.as_ptr()
+                });
+            assert_eq!(used_after_unmapped_prefix, 45);
+            assert!(
+                unmapped_after_unmapped_prefix,
+                "the six-free mostly-used prefix retains unmapped non-direct-small abandonment"
+            );
+
+            handoff = match unsafe {
+                handoff.remote_free_after_thread_exit(blocks[unmapped_prefix_free_count])
+            } {
+                Ok(DynamicThreadExitFullNonDirectSmallFreeResult::StillLive(handoff)) => handoff,
+                Ok(DynamicThreadExitFullNonDirectSmallFreeResult::Released(drain)) => {
+                    core::mem::forget(drain);
+                    panic!("the reabandon boundary leaves non-direct-small clients live");
+                }
+                Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Rejected {
+                    handoff,
+                    error,
+                })
+                | Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the non-direct-small reabandon boundary succeeds: {error:?}");
+                }
+            };
+            let unowned_after_reabandon_boundary =
+                unsafe { page.as_ref().remote_free_test_head() & 1 == 0 };
+            let mapped_after_reabandon_boundary = handoff.test_dynamic_abandoned_page_is_set()
+                && handoff.test_abandoned_count() == Some(1)
+                && unowned_after_reabandon_boundary;
+            let dynamic_abandoned_bitmap_set_after_reabandon_boundary =
+                handoff.test_dynamic_abandoned_page_is_set();
+            let dynamic_abandoned_count_after_reabandon_boundary =
+                handoff.test_abandoned_count().unwrap_or(usize::MAX);
+            let used_after_reabandon_boundary = unsafe { page.as_ref().used() } as usize;
+            assert_eq!(used_after_reabandon_boundary, 44);
+            assert!(
+                mapped_after_reabandon_boundary
+                    && dynamic_abandoned_bitmap_set_after_reabandon_boundary
+                    && dynamic_abandoned_count_after_reabandon_boundary == 1,
+                "the seventh free crosses the source unmapped-to-mapped reabandon boundary"
+            );
+
+            for block in blocks
+                .iter()
+                .copied()
+                .skip(unmapped_prefix_free_count + 1)
+                .take(reserved - unmapped_prefix_free_count - 2)
+            {
+                handoff = match unsafe { handoff.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullNonDirectSmallFreeResult::StillLive(handoff)) => handoff,
+                    Ok(DynamicThreadExitFullNonDirectSmallFreeResult::Released(drain)) => {
+                        core::mem::forget(drain);
+                        panic!("the penultimate mapped non-direct-small frees leave one client live");
+                    }
+                    Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Rejected {
+                        handoff,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Terminal {
+                        handoff,
+                        error,
+                    }) => {
+                        core::mem::forget(handoff);
+                        panic!("the mapped non-direct-small tail remains source-shaped: {error:?}");
+                    }
+                };
+            }
+            let final_client = *blocks
+                .last()
+                .expect("the full non-direct-small page has one final client");
+            let drain = match unsafe { handoff.remote_free_after_thread_exit(final_client) } {
+                Ok(DynamicThreadExitFullNonDirectSmallFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullNonDirectSmallFreeResult::StillLive(handoff)) => {
+                    core::mem::forget(handoff);
+                    panic!("the final mapped non-direct-small free releases the arena span");
+                }
+                Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Rejected {
+                    handoff,
+                    error,
+                })
+                | Err(DynamicThreadExitFullNonDirectSmallRemoteFreeFailure::Terminal {
+                    handoff,
+                    error,
+                }) => {
+                    core::mem::forget(handoff);
+                    panic!("the final non-direct-small free releases its dynamic arena page: {error:?}");
+                }
+            };
+            let dynamic_abandoned_count_after_final_free =
+                drain.test_dynamic_abandoned_count(bin).unwrap_or(usize::MAX);
+            let dynamic_abandoned_bitmap_clear_after_final_free =
+                drain.test_dynamic_abandoned_page_is_clear(bin, memory);
+            let arena_page_bitmap_clear_after_final_free =
+                drain.test_dynamic_arena_page_is_clear(memory);
+            let arena_slice_released_after_final_free = memory
+                .arena_memory()
+                .and_then(|arena_memory| unsafe { ArenaView::from_ptr(arena_memory.arena) })
+                .and_then(|arena| unsafe { arena.slices_free() })
+                .and_then(|slices| {
+                    slices.is_set_range(
+                        memory.arena_memory()?.slice_index as usize,
+                        slice_count,
+                    )
+                }) == Some(true);
+            let drain_finished = drain.finish();
+            let page_map_unregistered_after_final_free = (0..slice_count).all(|index| unsafe {
+                page_map.checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+            }
+            .is_null());
+            let valid = arena_backed
+                && small_page
+                && non_direct_small
+                && full_before_thread_done
+                && ordinary_regular_bin_before_thread_done
+                && direct_cache_empty_before_thread_done
+                && no_remote_free_before_thread_done
+                && producer_thread_done_completed
+                && producer_joined_before_consumer_frees
+                && unmapped_after_thread_done
+                && abandoned_after_thread_done
+                && page_map_registered_after_thread_done
+                && arena_page_bitmap_set_after_thread_done
+                && ordinary_queue_detached_after_thread_done
+                && dynamic_abandoned_bitmap_clear_after_thread_done
+                && dynamic_abandoned_count_after_thread_done == 0
+                && request_size == 1032
+                && capacity == 51
+                && reserved == 51
+                && block_size == 1280
+                && slice_count == 1
+                && used_after_thread_done == 51
+                && unmapped_prefix_free_count == 6
+                && used_after_unmapped_prefix == 45
+                && unmapped_after_unmapped_prefix
+                && mapped_after_reabandon_boundary
+                && dynamic_abandoned_bitmap_set_after_reabandon_boundary
+                && dynamic_abandoned_count_after_reabandon_boundary == 1
+                && used_after_reabandon_boundary == 44
+                && page_map_unregistered_after_final_free
+                && arena_page_bitmap_clear_after_final_free
+                && arena_slice_released_after_final_free
+                && dynamic_abandoned_bitmap_clear_after_final_free
+                && dynamic_abandoned_count_after_final_free == 0
+                && drain_finished;
+
+            std::println!("CRABC_MI_DYNAMIC_FULL_NON_DIRECT_SMALL_UNMAPPED_EXIT_TRACE_BEGIN");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.arena_backed={}", arena_backed as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.small_page={}", small_page as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.non_direct_small={}", non_direct_small as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.full_before_thread_done={}", full_before_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.ordinary_regular_bin_before_thread_done={}", ordinary_regular_bin_before_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.direct_cache_empty_before_thread_done={}", direct_cache_empty_before_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.no_remote_free_before_thread_done={}", no_remote_free_before_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.producer_thread_done_completed={}", producer_thread_done_completed as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.producer_joined_before_consumer_frees={}", producer_joined_before_consumer_frees as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.unmapped_after_thread_done={}", unmapped_after_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.abandoned_after_thread_done={}", abandoned_after_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.page_map_registered_after_thread_done={}", page_map_registered_after_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.arena_page_bitmap_set_after_thread_done={}", arena_page_bitmap_set_after_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.ordinary_queue_detached_after_thread_done={}", ordinary_queue_detached_after_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.dynamic_abandoned_bitmap_clear_after_thread_done={}", dynamic_abandoned_bitmap_clear_after_thread_done as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.dynamic_abandoned_count_after_thread_done={dynamic_abandoned_count_after_thread_done}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.request_size={request_size}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.capacity={capacity}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.reserved={reserved}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.block_size={block_size}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.slice_count={slice_count}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.used_after_thread_done={used_after_thread_done}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.unmapped_prefix_free_count={unmapped_prefix_free_count}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.used_after_unmapped_prefix={used_after_unmapped_prefix}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.unmapped_after_unmapped_prefix={}", unmapped_after_unmapped_prefix as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.mapped_after_reabandon_boundary={}", mapped_after_reabandon_boundary as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.dynamic_abandoned_bitmap_set_after_reabandon_boundary={}", dynamic_abandoned_bitmap_set_after_reabandon_boundary as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.dynamic_abandoned_count_after_reabandon_boundary={dynamic_abandoned_count_after_reabandon_boundary}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.used_after_reabandon_boundary={used_after_reabandon_boundary}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.page_map_unregistered_after_final_free={}", page_map_unregistered_after_final_free as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.arena_page_bitmap_clear_after_final_free={}", arena_page_bitmap_clear_after_final_free as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.arena_slice_released_after_final_free={}", arena_slice_released_after_final_free as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.dynamic_abandoned_bitmap_clear_after_final_free={}", dynamic_abandoned_bitmap_clear_after_final_free as u8);
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.dynamic_abandoned_count_after_final_free={dynamic_abandoned_count_after_final_free}");
+            std::println!("trace.dynamic_full_non_direct_small_unmapped_exit.valid={}", valid as u8);
+            std::println!("CRABC_MI_DYNAMIC_FULL_NON_DIRECT_SMALL_UNMAPPED_EXIT_TRACE_END");
+            assert!(valid, "the native non-direct-small unmapped trace remains source-shaped");
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
     #[test]
     fn dynamic_thread_exit_full_non_direct_small_handoff_reabandons_after_mostly_used_frees_then_releases() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {

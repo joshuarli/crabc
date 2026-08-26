@@ -940,6 +940,21 @@ evidence only: it does not establish general lifecycle/routing/concurrent
 collection, abandonment/adoption, public x86 support, backend promotion, or
 AArch64 evidence.
 
+The native x86-only track also has a separate 35-field dynamic full
+non-direct-small unmapped-reabandon differential. A pinned-C worker fills one
+sole full non-direct-small ordinary regular-bin arena page (request 1032,
+1280-byte blocks, capacity/reserved 51, one slice, and an empty direct-cache
+image), publishes no remote free, runs real `mi_thread_done()`, and the
+consumer joins before sequential frees. It initially remains full and
+unmapped-abandoned with PageMap and ordinary arena bitmap retained, dynamic
+bitmap/count clear, and `used == 51`. Six normal-collector frees retain the
+unmapped route at `used == 45`; the seventh maps it at `used == 44` and sets
+the dynamic bitmap/count to one. The terminal mapped tail clears PageMap,
+ordinary arena bitmap, dynamic bitmap/count, and the one slice. This remains
+private native x86-64 engine evidence only: it does not establish general
+lifecycle/routing/concurrent collection, abandonment/adoption, public x86
+support, backend promotion, or AArch64 evidence.
+
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
 dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
 page only in its ordinary regular bin, with

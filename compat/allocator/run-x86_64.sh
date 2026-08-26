@@ -34,6 +34,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-full-direct-small-force-collect-post-exit
   allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped
   allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped
+  allocator-dynamic-full-non-direct-small-unmapped-reabandon
   allocator-dynamic-full-medium-one-remote-force-collect-to-mapped
   allocator-dynamic-full-large-one-remote-force-collect-to-mapped
   allocator-dynamic-os-aligned-singleton
@@ -113,7 +114,7 @@ case "$command" in
         usage
         exit 0
         ;;
-    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-os-aligned-singleton|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
+    image|allocator|allocator-tls|allocator-lifecycle|allocator-fault|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-os-aligned-singleton|allocator-mapped-post-exit|allocator-retired-prepass|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-unit|allocator-core-unit)
         ;;
     *)
         usage >&2
@@ -253,6 +254,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/x86_64_dynamic_full_non_direct_small_one_remote_force_collect_to_mapped_evidence.py --offline
+        ;;
+    allocator-dynamic-full-non-direct-small-unmapped-reabandon)
+        [ "$#" -eq 0 ] || fail "allocator-dynamic-full-non-direct-small-unmapped-reabandon takes no arguments"
+        ensure_image
+        run_in_container python3 compat/allocator/x86_64_dynamic_full_non_direct_small_unmapped_reabandon_evidence.py --offline
         ;;
     allocator-dynamic-full-medium-one-remote-force-collect-to-mapped)
         [ "$#" -eq 0 ] || fail "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped takes no arguments"

@@ -178,6 +178,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-same-bin-two-page-aggregate-still-live-differential",
                 "native-dynamic-full-direct-small-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-differential",
+                "native-dynamic-full-non-direct-small-unmapped-reabandon-differential",
                 "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-large-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
@@ -413,6 +414,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
             ]["report"],
             "compat/reports/allocator/x86_64/"
             "dynamic-full-non-direct-small-one-remote-force-collect-to-mapped.json",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-non-direct-small-unmapped-reabandon-differential"][
+                "command"
+            ],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-dynamic-full-non-direct-small-unmapped-reabandon",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-non-direct-small-unmapped-reabandon-differential"][
+                "report"
+            ],
+            "compat/reports/allocator/x86_64/"
+            "dynamic-full-non-direct-small-unmapped-reabandon.json",
         )
         self.assertEqual(
             gates["native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential"][
@@ -872,6 +887,35 @@ class X86_64ParityStatusTests(unittest.TestCase):
         ):
             self.assertIn(fragment, gates[
                 "native-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-differential"
+            ]["claim"])
+        for fragment in (
+            "35 address-independent values",
+            "sole full non-direct-small ordinary regular-bin arena page",
+            "request is 1032 with 1280-byte blocks",
+            "capacity/reserved 51",
+            "one arena slice",
+            "empty direct-cache image",
+            "No remote mi_free is published",
+            "worker runs real mi_thread_done",
+            "joins before its sequential frees",
+            "unmapped-abandoned",
+            "PageMap-registered",
+            "ordinary-arena-bitmap-set",
+            "dynamic abandoned bitmap/count clear",
+            "used 51",
+            "Six sequential normal-collector frees",
+            "used 45",
+            "reserved / 8 == 6",
+            "seventh free",
+            "used 44",
+            "dynamic abandoned bitmap/count 1",
+            "one-slice arena span",
+            "private native x86 engine evidence only",
+            "general lifecycle",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, gates[
+                "native-dynamic-full-non-direct-small-unmapped-reabandon-differential"
             ]["claim"])
         dynamic_full_medium = gates[
             "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential"

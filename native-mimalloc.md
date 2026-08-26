@@ -781,6 +781,17 @@ arena-slice release. It rejects direct small before collection and cannot
 reclaim, adopt, requeue, scan, or cover full medium/direct-small/large,
 multi-page, or general dynamic thread-exit state.
 
+The matching private native x86-64 differential fixes this no-remote,
+source-unmapped route at 35 address-independent values: one sole full
+ordinary-bin page with a 1032-byte request, 1280-byte blocks,
+capacity/reserved 51, one slice, and an empty direct-cache image. The worker
+runs real `mi_thread_done()` without a remote free, and the consumer joins
+before its frees. It records the initial unmapped abandoned PageMap/ordinary
+bit state at `used == 51`, six unmapped frees at `used == 45`, then the seventh
+free's mapped bitmap/count publication at `used == 44`, before terminal
+one-slice release. It is private x86 evidence only, not a broader lifecycle,
+routing, concurrent collection, public runtime, or AArch64 claim.
+
 `DynamicThreadExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped`
 captures the separate dynamic full non-direct-small branch with exactly one
 joined remote free. Force collection changes the still-linked sole ordinary-bin
