@@ -144,6 +144,22 @@ TEST_LANES = (
         ),
     ),
     TestLane(
+        identifier="dynamic-arena-singleton-detached-post-exit-owner",
+        kind="native-unit",
+        test_filter="dynamic_theap::tests::x86_64_dynamic_arena_singleton_post_exit_route_moves_after_source_teardown",
+        exact_filter=True,
+        features=(),
+        expected_pass_count=1,
+        source_tests=(
+            "dynamic_theap::tests::x86_64_dynamic_arena_singleton_post_exit_route_moves_after_source_teardown",
+        ),
+        bounded_behavior=(
+            "one injected pre-mutation dynamic key-lock refusal returns only a retry source; its source-thread retry then tears down regular TLS backing, cached root, Theap, TLD, and key before returning a detached arena-singleton owner",
+            "a joined receiver with whole-PageMap exclusion consumes that owner's one exact client free and releases its PageMap entry, dynamic arena bit, metadata, arena span, image, and inert Heap binding",
+            "the source-bound dynamic attachment and ordinary singleton handoff remain outside this Send-only post-exit route",
+        ),
+    ),
+    TestLane(
         identifier="remote-free-joined-multi-producer",
         kind="native-unit",
         test_filter="remote_free::tests::std_multi_producer_pushes_are_all_collected_once",

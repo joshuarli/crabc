@@ -74,6 +74,7 @@
 #[cfg(test)]
 extern crate std;
 
+use core::cell::Cell;
 use core::marker::PhantomData;
 use core::mem::size_of;
 use core::pin::Pin;
@@ -261,7 +262,12 @@ impl UnrelatedRoots {
 /// also rechecks the captured direct target TLS identity.
 #[must_use = "a dynamic Theap attachment must explicitly tear down or remain terminally retained"]
 pub(crate) struct DynamicTheapAttachment<'heap> {
-    heap: Pin<&'heap mut Heap>,
+    // The source-current attachment owns this unique heap borrow until it
+    // either completes ordinary teardown or explicitly transfers the inert
+    // post-exit heap/image pair to `DynamicPostExitArenaOwner`. Keeping the
+    // field optional makes that one consuming split explicit: a torn-down
+    // attachment never retains an alias to a heap that a detached route owns.
+    heap: Option<Pin<&'heap mut Heap>>,
     binding: Option<DynamicHeapBinding>,
     backing: Option<ThreadLocalBackingOwner>,
     tld: Option<DynamicAttachedThreadLocalData>,
@@ -274,6 +280,103 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     thread: crate::types::LiveThreadId,
     state: DynamicAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// The only heap-local capability that may outlive a dynamic attachment's
+/// source thread after a bounded arena page has already been abandoned.
+///
+/// Construction is private to the source-order transition which has cleared
+/// the dynamic regular backing, restored the cached root, detached and freed
+/// the old Theap/TLD, and released the regular key on its originating thread.
+/// It retains no compiler-TLS state, TLD, Theap, attachment, or allocation
+/// interface. Its sole consumer clears the one retained arena-page bit,
+/// retires that exact page, unpublishes the now-empty dynamic arena image, and
+/// retires the inert caller Heap binding. Dropping an unfinished owner is a
+/// deliberate terminal leak, not cleanup: the caller Heap remains non-pristine
+/// and `Heap::initialize_dynamic_binding` rejects it, so it cannot be reused
+/// as a fresh dynamic attachment.
+#[must_use = "a detached dynamic post-exit arena owner must finish or remain terminally retained"]
+pub(crate) struct DynamicPostExitArenaOwner<'heap> {
+    heap: Pin<&'heap mut Heap>,
+    arena_pages: DynamicArenaPagesOwner,
+    // This owner is a linear transfer, not a shared allocator or general
+    // remote-free capability. The explicit Send implementation below grants
+    // one moved post-exit owner while keeping shared access unavailable.
+    _not_sync: PhantomData<Cell<()>>,
+}
+
+/// A failed terminal cleanup retains its unique post-exit owner. The page/map
+/// lifecycle may already have crossed a non-retryable source boundary, so the
+/// caller must retain this value as terminal rather than reconstructing a
+/// dynamic attachment or retrying the release sequence.
+#[must_use = "a failed detached dynamic post-exit cleanup retains its owner"]
+pub(crate) enum DynamicPostExitArenaOwnerFinishFailure<'heap> {
+    Terminal {
+        owner: DynamicPostExitArenaOwner<'heap>,
+        error: DynamicTheapError,
+    },
+}
+
+// SAFETY: construction consumes the source attachment only after its regular
+// TLS backing/key, Theap, TLD, and compiler-TLS roots are gone. The owner
+// carries one exclusive pinned Heap borrow and the matching dynamic arena-page
+// image; no source-thread capability can observe either after the transfer.
+// Its API is consuming and terminal-only, so moving it to one joined/scoped
+// receiver does not authorize concurrent allocation, requeue, or TLS access.
+unsafe impl Send for DynamicPostExitArenaOwner<'_> {}
+
+impl<'heap> DynamicPostExitArenaOwner<'heap> {
+    /// Clears one exact dynamic ordinary-page bit while the detached owner
+    /// retains the matching heap-local image. The source thread has already
+    /// torn down its TLS/TLD state, so this deliberately performs no current
+    /// thread identity check.
+    #[inline]
+    pub(crate) fn clear_arena_page(&self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
+        self.arena_pages.is_for_arena(arena) && self.arena_pages.clear_page(memory)
+    }
+
+    /// Finishes the detached heap/image lifetime only after its route has
+    /// released every retained page/map/arena slice predecessor.
+    pub(crate) fn finish(
+        mut self,
+    ) -> Result<(), DynamicPostExitArenaOwnerFinishFailure<'heap>> {
+        if !self.arena_pages.is_empty_published() {
+            return Err(DynamicPostExitArenaOwnerFinishFailure::Terminal {
+                owner: self,
+                error: DynamicTheapError::ArenaPages(DynamicArenaPagesOwnerError::NonEmpty),
+            });
+        }
+        if let Err(error) = self.arena_pages.unpublish_and_free(self.heap.as_ref().get_ref()) {
+            return Err(DynamicPostExitArenaOwnerFinishFailure::Terminal {
+                owner: self,
+                error: DynamicTheapError::ArenaPages(error),
+            });
+        }
+        // SAFETY: this owner is created only after the old Theap/TLD lists
+        // detached. Its arena-pages slot was just removed, and the unique
+        // pinned heap borrow excludes any source-thread mutation.
+        if !unsafe { Pin::get_unchecked_mut(self.heap.as_mut()).retire_dynamic_binding_after_detach() }
+        {
+            // `retire_dynamic_binding_after_detach` clears the dynamic
+            // subprocess/key fields only on success. A failure therefore
+            // leaves this borrowed Heap visibly non-pristine, so normal
+            // dynamic binding rejects reuse while this terminal owner retains
+            // the only authoritative release record.
+            return Err(DynamicPostExitArenaOwnerFinishFailure::Terminal {
+                owner: self,
+                error: DynamicTheapError::HeapRetire,
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_arena_page_is_set(&self, memory: MemoryId) -> bool {
+        // SAFETY: callers inherit the detached route's source-join/quiescence
+        // proof before observing the source-plain dynamic arena image.
+        self.arena_pages.page_is_set(memory)
+    }
 }
 
 impl<'heap> DynamicTheapAttachment<'heap> {
@@ -433,7 +536,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             }
         };
         let mut attachment = Self {
-            heap,
+            heap: Some(heap),
             binding: None,
             backing: None,
             tld: Some(tld),
@@ -569,7 +672,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     ) -> Result<(), DynamicTheapError> {
         self.ensure_attached_current()?;
         if let Some(owner) = self.arena_pages.as_ref() {
-            return if owner.is_for_arena(arena) && owner.is_published_for(self.heap.as_ref().get_ref()) {
+            return if owner.is_for_arena(arena) && owner.is_published_for(self.heap_ref()) {
                 Ok(())
             } else {
                 Err(self.poison(DynamicTheapError::ArenaPages(
@@ -585,7 +688,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             metadata,
             config,
             subprocess,
-            self.heap.as_ref().get_ref(),
+            self.heap_ref(),
             arena,
         ) {
             Ok(owner) => owner,
@@ -599,7 +702,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 )));
             }
         };
-        if let Err(error) = owner.publish(self.heap.as_ref().get_ref()) {
+        if let Err(error) = owner.publish(self.heap_ref()) {
             self.arena_pages = Some(owner);
             return Err(self.poison(DynamicTheapError::ArenaPages(error)));
         }
@@ -756,8 +859,11 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             Some(false) => return Err(self.poison(DynamicTheapError::TheapClear)),
             None => return Err(self.poison(DynamicTheapError::TheapProjection)),
         }
+        let heap = self.heap_ref() as *const Heap;
         if let Some(owner) = self.arena_pages.as_mut() {
-            if let Err(error) = owner.unpublish_and_free(self.heap.as_ref().get_ref()) {
+            // SAFETY: the attachment still owns this pinned Heap and the
+            // mutable arena-image owner is a disjoint field.
+            if let Err(error) = owner.unpublish_and_free(unsafe { &*heap }) {
                 return Err(self.poison(DynamicTheapError::ArenaPages(error)));
             }
         }
@@ -793,6 +899,132 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         }
         self.state = DynamicAttachmentState::AwaitingKeyRelease;
         self.finish_key_release()
+    }
+
+    /// Completes the source-thread-only half of one bounded arena singleton
+    /// exit route and transfers only the inert Heap/image pair to a detached
+    /// owner. This is intentionally not ordinary teardown: one exact arena
+    /// page is still PageMap-published, so the dynamic image cannot be
+    /// unpublished and the caller Heap cannot yet retire.
+    fn finish_after_detached_arena_page_route(
+        &mut self,
+        arena: &ArenaView<'_>,
+        memory: MemoryId,
+    ) -> Result<DynamicPostExitArenaOwner<'heap>, DynamicTheapError> {
+        // A key-lock failure is explicitly pre-mutation. At that point the
+        // source Theap/TLD has already detached, but the attachment still
+        // owns its exact Heap/image pair. Re-enter through the same handoff
+        // on the source thread to release the key and complete that transfer;
+        // do not run the pre-drain proof again because it correctly requires
+        // the earlier `DrainingPages` state.
+        if self.state == DynamicAttachmentState::AwaitingKeyRelease {
+            if !self
+                .arena_pages
+                .as_ref()
+                .is_some_and(|owner| owner.is_for_arena(arena) && owner.has_exactly_one_page(memory))
+            {
+                return Err(self.poison(DynamicTheapError::ArenaPages(
+                    DynamicArenaPagesOwnerError::NonEmpty,
+                )));
+            }
+            self.finish_key_release()?;
+            return self.take_post_exit_arena_owner();
+        }
+        self.prevalidate_draining_page_post_exit_arena_owner(arena, memory)?;
+        let theap_pointer = self.theap_pointer()?;
+        if let Err(error) = self.restore_empty_cached_root_and_release(theap_pointer) {
+            return Err(self.poison(error));
+        }
+
+        let detach_heap = match self.heap_and_tld_mut() {
+            Ok((heap, tld)) => tld.detach_one_theap_from_heap(heap, theap_pointer),
+            Err(error) => return Err(self.poison(error)),
+        };
+        if let Err(error) = detach_heap {
+            return Err(self.poison(DynamicTheapError::TheapList(error)));
+        }
+        let detach_tld = match self.tld.as_mut() {
+            Some(tld) => match tld.current_mut() {
+                Ok(tld) => tld.detach_one_theap_from_tld(theap_pointer),
+                Err(error) => return Err(self.poison(DynamicTheapError::ThreadLocalData(error))),
+            },
+            None => return Err(self.poison(DynamicTheapError::Poisoned)),
+        };
+        if let Err(error) = detach_tld {
+            return Err(self.poison(DynamicTheapError::TheapList(error)));
+        }
+        let clear_theap = self
+            .theap
+            .as_mut()
+            .and_then(MetaAllocation::dynamic_theap_mut)
+            .map(Theap::clear_dynamic_metadata_after_detach);
+        match clear_theap {
+            Some(true) => {}
+            Some(false) => return Err(self.poison(DynamicTheapError::TheapClear)),
+            None => return Err(self.poison(DynamicTheapError::TheapProjection)),
+        }
+
+        let mut theap = match self.theap.take() {
+            Some(theap) => theap,
+            None => return Err(self.poison(DynamicTheapError::Poisoned)),
+        };
+        let metadata = match self.tld.as_ref() {
+            Some(tld) => tld.metadata(),
+            None => return Err(self.poison(DynamicTheapError::Poisoned)),
+        };
+        if let Err(error) = metadata.free(&mut theap) {
+            return Err(self.poison(DynamicTheapError::TheapMetadata(error)));
+        }
+        let tld_teardown = match self.tld.as_mut() {
+            Some(tld) => tld.teardown_after_theap_detached(),
+            None => return Err(self.poison(DynamicTheapError::Poisoned)),
+        };
+        if let Err(error) = tld_teardown {
+            return Err(self.poison(DynamicTheapError::ThreadLocalData(error)));
+        }
+        self.tld = None;
+
+        // The key is source-thread-owned even though the inert Heap/image is
+        // not. Release it before moving either remaining capability; a lock
+        // failure leaves this attachment intact in `AwaitingKeyRelease`.
+        self.state = DynamicAttachmentState::AwaitingKeyRelease;
+        self.finish_key_release()?;
+
+        self.take_post_exit_arena_owner()
+    }
+
+    /// Splits the only source-thread-independent state after the regular key
+    /// release completed. Keeping this separate makes a documented
+    /// pre-mutation key-lock retry resume exactly at the state it reached,
+    /// rather than replaying Theap/TLD teardown.
+    fn take_post_exit_arena_owner(
+        &mut self,
+    ) -> Result<DynamicPostExitArenaOwner<'heap>, DynamicTheapError> {
+        if self.state != DynamicAttachmentState::TornDown
+            || self.binding.is_some()
+            || self.backing.is_some()
+            || self.tld.is_some()
+            || self.theap.is_some()
+            || self.terminal_os_release.is_some()
+        {
+            return Err(self.poison(DynamicTheapError::Poisoned));
+        }
+        let arena_pages = match self.arena_pages.take() {
+            Some(owner) => owner,
+            None => return Err(self.poison(DynamicTheapError::Poisoned)),
+        };
+        let heap = match self.heap.take() {
+            Some(heap) => heap,
+            None => {
+                self.arena_pages = Some(arena_pages);
+                return Err(self.poison(DynamicTheapError::Poisoned));
+            }
+        };
+        Ok(DynamicPostExitArenaOwner {
+            heap,
+            arena_pages,
+            _not_sync: PhantomData,
+        })
     }
 
     fn initialize_and_publish_theap(&mut self) -> Result<(), DynamicTheapError> {
@@ -870,7 +1102,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         }
         if require_empty {
             if let Some(owner) = self.arena_pages.as_ref() {
-                if !owner.is_published_for(self.heap.as_ref().get_ref())
+                if !owner.is_published_for(self.heap_ref())
                     || !owner.is_empty_published()
                 {
                     return Err(DynamicTheapError::ArenaPages(
@@ -892,7 +1124,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 .has_exact_theap_member(theap_pointer),
             None => return Err(DynamicTheapError::Poisoned),
         };
-        let heap = self.heap.as_ref().get_ref();
+        let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
@@ -952,7 +1184,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             return Err(DynamicTheapError::PageCountNonZero);
         }
         if let Some(owner) = self.arena_pages.as_ref() {
-            if !owner.is_published_for(self.heap.as_ref().get_ref())
+            if !owner.is_published_for(self.heap_ref())
                 || !owner.is_empty_published()
             {
                 return Err(DynamicTheapError::ArenaPages(
@@ -973,7 +1205,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 .has_exact_theap_member(theap_pointer),
             None => return Err(DynamicTheapError::Poisoned),
         };
-        let heap = self.heap.as_ref().get_ref();
+        let heap = self.heap_ref();
         if !matches_thread
             || !bound_to_subprocess
             || !tld_member
@@ -982,6 +1214,93 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 subprocess,
                 key.raw() as usize,
             )
+        {
+            return Err(DynamicTheapError::ListOwnership);
+        }
+        Ok(())
+    }
+
+    /// Validates the one live arena-page image that may cross the source
+    /// thread boundary after owner-exit abandonment. Unlike ordinary page-drain
+    /// teardown, this deliberately requires one exact outstanding dynamic
+    /// arena-page bit; the returned post-exit owner becomes solely responsible
+    /// for clearing it before it retires the inert Heap binding.
+    fn prevalidate_draining_page_post_exit_arena_owner(
+        &mut self,
+        arena: &ArenaView<'_>,
+        memory: MemoryId,
+    ) -> Result<(), DynamicTheapError> {
+        self.ensure_draining_current()?;
+        // A pre-existing terminal OS owner cannot coexist with the only
+        // detached arena-image transfer. Reject before cached-root/list/TLD
+        // teardown so this remains an unchanged source handoff.
+        if self.terminal_os_release.is_some() {
+            return Err(DynamicTheapError::Poisoned);
+        }
+        if !self.roots.default_and_fast_still_match() {
+            return Err(DynamicTheapError::RootOwnership);
+        }
+        let key = self.binding()?.key();
+        if self.binding()?.slot_bound || self.backing.is_some() {
+            return Err(DynamicTheapError::SlotOwnership);
+        }
+        let theap_pointer = self.theap_pointer()?;
+        let subprocess = self
+            .tld
+            .as_ref()
+            .ok_or(DynamicTheapError::Poisoned)?
+            .subprocess();
+        let (page_count, refcount, matches_thread, bound_to_subprocess) = {
+            let theap = self
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .ok_or(DynamicTheapError::TheapProjection)?;
+            (
+                theap.page_count(),
+                theap.refcount(),
+                theap.matches_thread(self.thread),
+                theap.is_bound_to_main_subprocess(subprocess),
+            )
+        };
+        if page_count != 0 {
+            return Err(DynamicTheapError::PageCountNonZero);
+        }
+        let owner = self
+            .arena_pages
+            .as_ref()
+            .ok_or(DynamicTheapError::ArenaPages(
+                DynamicArenaPagesOwnerError::NonEmpty,
+            ))?;
+        if !owner.is_for_arena(arena) {
+            return Err(DynamicTheapError::ArenaPages(
+                DynamicArenaPagesOwnerError::ForeignArena,
+            ));
+        }
+        if !owner.is_published_for(self.heap_ref()) || !owner.has_exactly_one_page(memory) {
+            return Err(DynamicTheapError::ArenaPages(
+                DynamicArenaPagesOwnerError::NonEmpty,
+            ));
+        }
+        if !self.cached_root_bound || !core::ptr::eq(cached_theap().as_ptr(), theap_pointer) {
+            return Err(DynamicTheapError::RootOwnership);
+        }
+        if refcount != 2 {
+            return Err(DynamicTheapError::CachedReference);
+        }
+        let tld_member = match self.tld.as_mut() {
+            Some(tld) => tld
+                .current_mut()
+                .map_err(DynamicTheapError::ThreadLocalData)?
+                .has_exact_theap_member(theap_pointer),
+            None => return Err(DynamicTheapError::Poisoned),
+        };
+        let heap = self.heap_ref();
+        if !matches_thread
+            || !bound_to_subprocess
+            || !tld_member
+            || !heap.has_exact_theap_member(theap_pointer)
+            || !heap.matches_dynamic_binding(subprocess, key.raw() as usize)
         {
             return Err(DynamicTheapError::ListOwnership);
         }
@@ -1186,16 +1505,38 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     }
 
     #[inline]
+    fn heap_ref(&self) -> &Heap {
+        self.heap
+            .as_ref()
+            .expect("a live dynamic attachment retains its pinned Heap")
+            .as_ref()
+            .get_ref()
+    }
+
+    #[inline]
     fn heap_mut(&mut self) -> &mut Heap {
         // SAFETY: the attachment exclusively owns the caller's pinned mutable
         // heap borrow for its whole lifetime.
-        unsafe { Pin::get_unchecked_mut(self.heap.as_mut()) }
+        unsafe {
+            Pin::get_unchecked_mut(
+                self.heap
+                    .as_mut()
+                    .expect("a live dynamic attachment retains its pinned Heap")
+                    .as_mut(),
+            )
+        }
     }
 
     fn heap_and_tld_mut(&mut self) -> Result<(&mut Heap, &mut crate::types::ThreadLocalData), DynamicTheapError> {
         let DynamicTheapAttachment { heap, tld, .. } = self;
         // SAFETY: this owner retains the sole pinned mutable heap borrow.
-        let heap = unsafe { Pin::get_unchecked_mut(heap.as_mut()) };
+        let heap = unsafe {
+            Pin::get_unchecked_mut(
+                heap.as_mut()
+                    .ok_or(DynamicTheapError::Poisoned)?
+                    .as_mut(),
+            )
+        };
         let tld = tld
             .as_mut()
             .ok_or(DynamicTheapError::Poisoned)?
@@ -1218,7 +1559,13 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             heap, tld, theap, ..
         } = self;
         // SAFETY: this owner retains the sole pinned mutable heap borrow.
-        let heap = unsafe { Pin::get_unchecked_mut(heap.as_mut()) };
+        let heap = unsafe {
+            Pin::get_unchecked_mut(
+                heap.as_mut()
+                    .ok_or(DynamicTheapError::Poisoned)?
+                    .as_mut(),
+            )
+        };
         let tld = tld
             .as_mut()
             .ok_or(DynamicTheapError::Poisoned)?
@@ -1411,6 +1758,15 @@ pub(crate) struct DynamicTheapPageDrainSession<'attach, 'heap> {
     attachment: &'attach mut DynamicTheapAttachment<'heap>,
 }
 
+/// The source-state classification after a detached-arena transfer attempt
+/// fails. A changed source must never be re-exposed as a regular drain.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum DynamicPostExitArenaOwnerTransitionState {
+    Unchanged,
+    RetryKeyRelease,
+    Terminal,
+}
+
 impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
     #[inline]
     fn dynamic_theap(&self) -> &Theap {
@@ -1451,6 +1807,50 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
             .arena_pages
             .as_ref()?
             .mapped_abandoned_page(arena, bin, memory)
+    }
+
+    /// Consumes the source-thread drain borrow after source queue detachment
+    /// and returns the only capability allowed to outlive that thread's TLS.
+    /// A failure keeps the same drain session so its terminal attachment is
+    /// retained rather than being mistaken for a completed post-exit owner.
+    pub(crate) fn into_post_exit_arena_owner(
+        self,
+        arena: &ArenaView<'_>,
+        memory: MemoryId,
+    ) -> Result<DynamicPostExitArenaOwner<'heap>, (Self, DynamicTheapError)> {
+        let Self { attachment } = self;
+        match attachment.finish_after_detached_arena_page_route(arena, memory) {
+            Ok(owner) => Ok(owner),
+            Err(error) => Err((Self { attachment }, error)),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn post_exit_arena_owner_transition_state(
+        &self,
+        error: DynamicTheapError,
+    ) -> DynamicPostExitArenaOwnerTransitionState {
+        match (self.attachment.state, error) {
+            (DynamicAttachmentState::DrainingPages, _) => {
+                DynamicPostExitArenaOwnerTransitionState::Unchanged
+            }
+            (
+                DynamicAttachmentState::AwaitingKeyRelease,
+                DynamicTheapError::Key(OwnedThreadLocalKeyError::Lock(_)),
+            ) => {
+                // The registry guarantees this exact lock failure is
+                // pre-mutation, so the retry-only source record may resume
+                // its one key-release continuation.
+                DynamicPostExitArenaOwnerTransitionState::RetryKeyRelease
+            }
+            (DynamicAttachmentState::Preparing, _)
+            | (DynamicAttachmentState::Attached, _)
+            | (DynamicAttachmentState::AwaitingKeyRelease, _)
+            | (DynamicAttachmentState::TornDown, _)
+            | (DynamicAttachmentState::Poisoned, _) => {
+                DynamicPostExitArenaOwnerTransitionState::Terminal
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1525,7 +1925,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
         // Heap borrow for the whole page-drain session. The caller's source
         // preflight retains the exact live page metadata until its terminal
         // handoff completes.
-        let heap = unsafe { Pin::get_unchecked_mut(self.attachment.heap.as_mut()) };
+        let heap = self.attachment.heap_mut();
         // SAFETY: forwarded from this method's dynamic page-drain ownership
         // proof; Heap serializes its private OS-list mutation internally.
         unsafe { heap.push_os_abandoned_page(&mut *page.as_ptr()) }
@@ -1561,7 +1961,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
     ) -> Result<(), HeapOsAbandonedPageListError> {
         // SAFETY: the attachment's pinned Heap and the exact live page remain
         // retained by the consuming page-drain handoff through this removal.
-        let heap = unsafe { Pin::get_unchecked_mut(self.attachment.heap.as_mut()) };
+        let heap = self.attachment.heap_mut();
         // SAFETY: forwarded from this method's all-free handoff proof; Heap
         // serializes its private OS-list mutation internally.
         unsafe { heap.remove_os_abandoned_page(&mut *page.as_ptr()) }
@@ -1572,11 +1972,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
     pub(crate) fn test_os_abandoned_page_head(&self) -> *mut Page {
         // The dynamic fixture holds this attachment exclusively and creates
         // no concurrent OS-list mutation path while it observes a handoff.
-        self.attachment
-            .heap
-            .as_ref()
-            .get_ref()
-            .test_os_abandoned_page_head()
+        self.attachment.heap_ref().test_os_abandoned_page_head()
     }
 }
 
@@ -1652,7 +2048,13 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
         // pinned Heap borrow, and its constructor proved the typed Theap/list
         // binding. The returned engine keeps this borrow for the complete
         // page lifecycle.
-        let heap = unsafe { Pin::get_unchecked_mut(heap.as_mut()) };
+        let heap = unsafe {
+            Pin::get_unchecked_mut(
+                heap.as_mut()
+                    .expect("an attached dynamic page session retains its pinned Heap")
+                    .as_mut(),
+            )
+        };
         let theap = theap
             .as_mut()
             .and_then(MetaAllocation::dynamic_theap_mut)?;
@@ -1826,6 +2228,9 @@ mod tests {
         DynamicMappedAbandonError, DynamicMappedAbandonFailure,
         DynamicMappedRemoteFreeFailure,
         DynamicTheapAllocator, DynamicThreadExitDrainFailure,
+        DynamicThreadExitArenaSingletonPostExitRoute,
+        DynamicThreadExitArenaSingletonPostExitRouteBeginError,
+        DynamicThreadExitArenaSingletonPostExitRouteBeginFailure,
         DynamicThreadExitFullMediumPagesAbandonError,
         DynamicThreadExitFullMediumPagesAbandonFailure,
         DynamicThreadExitFullMediumPagesFreeResult,
@@ -1944,6 +2349,12 @@ mod tests {
             unsafe { dealloc(self.pointer.as_ptr(), self.layout) };
         }
     }
+
+    // SAFETY: this test-only owner transfers one uniquely allocated external
+    // arena region only after its source worker has relinquished every Rust
+    // reference. The receiving test thread retains it through the detached
+    // route's terminal PageMap/arena release before Drop deallocates it.
+    unsafe impl Send for DynamicArenaRegion {}
 
     /// The real page fixture either completes its explicit shutdown or models
     /// one deliberately retained terminal owner. A boolean would make that
@@ -2229,7 +2640,7 @@ mod tests {
     #[test]
     fn non_abandoning_dynamic_page_session_allocates_on_its_exact_theap_and_pinned_heap() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
-            let heap = owner.heap.as_ref().get_ref() as *const Heap as *mut Heap;
+            let heap = owner.heap_ref() as *const Heap as *mut Heap;
             let fields = owner
                 .theap
                 .as_mut()
@@ -3096,6 +3507,245 @@ mod tests {
             assert!(drain.finish());
             DynamicPageFixtureOutcome::TearDown
         });
+    }
+
+    /// The worker must not retain its dynamic attachment merely because one
+    /// full arena singleton still has a client allocation. It tears down its
+    /// TLS/TLD/Theap/key state first, returns only the sealed post-exit route,
+    /// and a joined receiver consumes the exact final client free.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_dynamic_arena_singleton_post_exit_route_moves_after_source_teardown() {
+        fn assert_send<T: Send>() {}
+        assert_send::<DynamicThreadExitArenaSingletonPostExitRoute<'static, 'static, 'static>>();
+
+        thread::spawn(|| {
+            let mut page_map = PageMap::initialize(memory_config(), 0, true)
+                .expect("the cross-thread fixture initializes one page map");
+
+            let (
+                block_address,
+                slice_index,
+                slice_count,
+                arena_address,
+                _region,
+                _arena_registry,
+            ) = thread::scope(|scope| {
+                let source = scope.spawn(|| {
+                    let (subprocess, metadata, key_registry) = fixture();
+                    consume_static_ticket(subprocess, metadata);
+                    let mut owner = match unsafe {
+                        DynamicTheapAttachment::begin_non_abandoning_with_components(
+                            memory_config(),
+                            pinned_empty_heap(),
+                            subprocess,
+                            metadata,
+                            key_registry,
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(DynamicTheapBeginError::Rejected(error)) => {
+                            panic!("the dynamic source attachment succeeds: {error:?}")
+                        }
+                        Err(DynamicTheapBeginError::Retained { error, .. }) => {
+                            panic!("the dynamic source attachment is not terminal: {error:?}")
+                        }
+                    };
+                    let mut region = DynamicArenaRegion::zeroed();
+                    let arena_registry = ArenaRegistry::new(null_mut());
+                    assert!(unsafe {
+                        arena_registry.bind_subprocess_before_publication(subprocess.as_ptr())
+                    });
+                    let managed = unsafe {
+                        manage_external_in_place(
+                            &arena_registry,
+                            region.as_ptr(),
+                            ARENA_MIN_SIZE,
+                            PageSize::new(4096).expect("pinned page size"),
+                            true,
+                            true,
+                            true,
+                            -1,
+                            false,
+                            None,
+                        )
+                    }
+                    .expect("the source registers its external arena after attachment");
+                    let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+                        .expect("the registered arena has a source view");
+                    let arena_address = managed.arena_id().as_ptr().expose_provenance();
+                    let session = owner
+                        .page_session()
+                        .expect("the non-abandoning source admits one page session");
+                    let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                        session,
+                        arena,
+                        ArenaId::none(),
+                        &mut page_map,
+                    );
+                    let block = allocator
+                        .allocate(LARGE_MAX_OBJ_SIZE + 1, false)
+                        .expect("the cross-thread source allocates one arena singleton");
+                    let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                        .expect("the singleton is PageMap-published before source exit");
+                    let memory = unsafe { page.as_ref().memid() };
+                    let arena_memory = memory
+                        .arena_memory()
+                        .expect("the post-exit route is limited to an arena singleton");
+                    let slice_index = arena_memory.slice_index as usize;
+                    let slice_count = arena_memory.slice_count as usize;
+                    assert_eq!(unsafe { page.as_ref().capacity() }, 1);
+                    assert_eq!(unsafe { page.as_ref().reserved() }, 1);
+                    assert_eq!(unsafe { page.as_ref().used() }, 1);
+                    assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+                    let drain = match allocator.begin_thread_exit_drain() {
+                        Ok(drain) => drain,
+                        Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                            core::mem::forget(engine);
+                            panic!("the source enters its dynamic page drain: {error:?}");
+                        }
+                    };
+                    assert!(drain.test_dynamic_regular_slot_is_clear());
+                    let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                        Ok(handoff) => handoff,
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            panic!("the full arena singleton enters the source handoff");
+                        }
+                    };
+                    assert_eq!(handoff.test_page_count(), 0);
+                    // The source teardown has one explicitly retryable
+                    // boundary: the key registry's lock can reject before it
+                    // changes the retained lease. That retry must not
+                    // re-expose the already-drained general handoff.
+                    key_registry.test_fail_next_release_lock();
+                    let retry_source = match handoff.into_post_exit_arena_route() {
+                        Err(
+                            DynamicThreadExitArenaSingletonPostExitRouteBeginFailure::RetainedSource {
+                                source,
+                                error:
+                                    DynamicThreadExitArenaSingletonPostExitRouteBeginError::SourceTeardown(
+                                        DynamicTheapError::Key(
+                                            OwnedThreadLocalKeyError::Lock(crabc_core::Errno::INTR),
+                                        ),
+                                    ),
+                            },
+                        ) => source,
+                        Ok(route) => {
+                            core::mem::forget(route);
+                            panic!("the injected key lock retains only the retry source");
+                        }
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            panic!("the injected key lock returns the retry-only source record");
+                        }
+                    };
+                    let route = match retry_source.retry_into_post_exit_arena_route() {
+                        Ok(route) => route,
+                        Err(failure) => {
+                            core::mem::forget(failure);
+                            panic!("the retained source retries its pre-mutation key release");
+                        }
+                    };
+                    let source_is_torn_down = owner.state == DynamicAttachmentState::TornDown
+                        && owner.heap.is_none()
+                        && owner.binding.is_none()
+                        && owner.backing.is_none()
+                        && owner.tld.is_none()
+                        && owner.theap.is_none()
+                        && owner.arena_pages.is_none()
+                        && owner.terminal_os_release.is_none()
+                        && !owner.cached_root_bound
+                        && dynamic_backing_peek().is_none();
+                    (
+                        route,
+                        block.as_ptr().expose_provenance(),
+                        slice_index,
+                        slice_count,
+                        source_is_torn_down,
+                        arena_address,
+                        region,
+                        arena_registry,
+                    )
+                });
+                let (
+                    route,
+                    block_address,
+                    slice_index,
+                    slice_count,
+                    source_is_torn_down,
+                    arena_address,
+                    region,
+                    arena_registry,
+                ) = source.join().expect("the source exits before its client-free receiver runs");
+                assert!(
+                    source_is_torn_down,
+                    "the source returns no dynamic TLS, TLD, Theap, key, or Heap alias"
+                );
+                let block = NonNull::new(core::ptr::with_exposed_provenance_mut(block_address))
+                    .expect("the transferred client address remains non-null");
+                assert!(
+                    !unsafe { route.test_page_map_entry(block.as_ptr()) }.is_null(),
+                    "the detached route retains the one live singleton PageMap entry"
+                );
+                assert!(
+                    unsafe { route.test_dynamic_arena_page_is_set() },
+                    "the detached route retains the matching dynamic arena-image bit"
+                );
+                assert!(
+                    unsafe { route.test_arena_span() }.is_some(),
+                    "the detached route seals the singleton's full arena span"
+                );
+
+                // SAFETY: the source worker has joined, this fixture owns
+                // the entire PageMap (no unrelated lifecycle may touch it),
+                // `block` is the route's exact once-live singleton client,
+                // and the linear route is the sole remaining page/map/image
+                // owner.
+                if let Err(failure) = unsafe { route.remote_free_after_thread_exit(block) } {
+                    core::mem::forget(failure);
+                    panic!("the joined receiver releases the detached singleton");
+                }
+                (
+                    block_address,
+                    slice_index,
+                    slice_count,
+                    arena_address,
+                    region,
+                    arena_registry,
+                )
+            });
+
+            let block = NonNull::new(core::ptr::with_exposed_provenance_mut(block_address))
+                .expect("the transferred client address remains non-null");
+            // SAFETY: the scoped source borrow has ended and its consuming
+            // route completed before this plain PageMap observation.
+            assert!(unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null());
+            // SAFETY: no route or page metadata remains after the terminal
+            // free, so this observer has no non-atomic alias.
+            let arena = unsafe {
+                ArenaView::from_ptr(core::ptr::with_exposed_provenance_mut(
+                    arena_address,
+                ))
+            }
+            .expect("the parent retains the registered arena");
+            assert_eq!(
+                unsafe { arena.pages() }
+                    .expect("the parent can inspect the ordinary bitmap")
+                    .is_clear_range(slice_index, slice_count),
+                Some(true),
+                "the receiver releases the singleton's complete arena span"
+            );
+
+            // SAFETY: the scoped source and receiver consumed the only
+            // route, which removed every PageMap entry before this explicit
+            // source-plain map destruction.
+            unsafe { page_map.destroy() }
+                .expect("the cross-thread route leaves no PageMap entries");
+        })
+        .join()
+        .expect("the cross-thread dynamic route fixture remains isolated");
     }
 
     fn run_dynamic_full_singleton_homogeneous_aggregate_trace(emit_trace: bool) {
@@ -19494,6 +20144,7 @@ mod tests {
             assert!(matches!(allocator.finish(), Ok(())));
 
             let foreign = Heap::bootstrap_empty();
+            let heap = owner.heap_ref() as *const Heap;
             let arena_pages = owner
                 .arena_pages
                 .as_mut()
@@ -19502,7 +20153,9 @@ mod tests {
                 arena_pages.unpublish_and_free(&foreign),
                 Err(DynamicArenaPagesOwnerError::ForeignHeap)
             );
-            assert!(arena_pages.is_published_for(owner.heap.as_ref().get_ref()));
+            // SAFETY: the attachment retains this pinned Heap for the whole
+            // negative owner check; `arena_pages` has no mutation path to it.
+            assert!(arena_pages.is_published_for(unsafe { &*heap }));
             DynamicPageFixtureOutcome::TearDown
         });
     }
@@ -19561,7 +20214,7 @@ mod tests {
             assert!(allocator.allocate(37, false).is_none());
             assert!(matches!(allocator.finish(), Ok(())));
             assert!(owner.arena_pages.is_none());
-            assert!(owner.heap.as_ref().get_ref().dynamic_arena_pages_at(
+            assert!(owner.heap_ref().dynamic_arena_pages_at(
                 arena_index
             ).is_none());
             let retry_arena = unsafe { ArenaView::from_ptr(arena_pointer) }
@@ -19641,11 +20294,7 @@ mod tests {
     fn dynamic_arena_pages_slot_publish_failure_retains_typed_owner_terminally() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
             let arena_index = arena.arena().arena_index;
-            owner
-                .heap
-                .as_ref()
-                .get_ref()
-                .test_inject_busy_arena_pages_lock();
+            owner.heap_ref().test_inject_busy_arena_pages_lock();
             let session = owner.page_session().expect("non-abandoning page session");
             let mut allocator = DynamicTheapAllocator::activate_dynamic(
                 session,
@@ -19656,12 +20305,7 @@ mod tests {
             assert!(allocator.allocate(37, false).is_none());
             assert!(matches!(allocator.finish(), Ok(())));
             assert!(owner.arena_pages.is_some());
-            assert!(owner
-                .heap
-                .as_ref()
-                .get_ref()
-                .dynamic_arena_pages_at(arena_index)
-                .is_none());
+            assert!(owner.heap_ref().dynamic_arena_pages_at(arena_index).is_none());
             assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
             DynamicPageFixtureOutcome::RetainTerminal
         });
@@ -20027,7 +20671,7 @@ mod tests {
                 theap_pointer.cast(),
                 "a rejected key release cannot clear or stale the live slot"
             );
-            let heap = owner.heap.as_ref().get_ref();
+            let heap = owner.heap_ref();
             assert!(heap.has_exact_theap_member(theap_pointer));
             assert!(heap.matches_dynamic_binding(subprocess, key.raw() as usize));
             let heap_fields = heap.test_main_static_fields();
@@ -20066,7 +20710,7 @@ mod tests {
             assert_eq!(default_theap(), roots_before.default);
             assert_eq!(fast_slot_peek(), roots_before.fast);
             assert_eq!(cached_theap(), roots_before.cached);
-            assert!(owner.heap.as_ref().get_ref().test_main_static_fields().theaps_empty);
+            assert!(owner.heap_ref().test_main_static_fields().theaps_empty);
             assert_eq!(owner.teardown(), Err(DynamicTheapError::TornDown));
         })
         .join()
@@ -20099,7 +20743,7 @@ mod tests {
                 theap_pointer.cast(),
                 "the regular slot is untouched before the page-count rejection"
             );
-            assert!(owner.heap.as_ref().get_ref().has_exact_theap_member(theap_pointer));
+            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
             assert!(owner
                 .tld
                 .as_mut()
@@ -20201,7 +20845,7 @@ mod tests {
                 1,
                 "the paired cached reference was released before detach"
             );
-            assert!(owner.heap.as_ref().get_ref().has_exact_theap_member(theap_pointer));
+            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
             assert!(owner
                 .tld
                 .as_mut()
@@ -20476,7 +21120,7 @@ mod tests {
             assert_eq!(subprocess.live_thread_count(), 1);
             assert!(roots.still_matches());
             assert!(is_empty_dynamic_backing(dynamic_backing_peek().unwrap()));
-            assert!(owner.heap.as_ref().get_ref().has_exact_theap_member(theap_pointer));
+            assert!(owner.heap_ref().has_exact_theap_member(theap_pointer));
             assert!(owner
                 .tld
                 .as_mut()
@@ -20552,7 +21196,7 @@ mod tests {
             assert!(owner.tld.is_none());
             assert!(owner.theap.is_none());
             assert!(owner.binding.as_ref().is_some_and(|binding| !binding.slot_bound));
-            assert!(owner.heap.as_ref().get_ref().test_main_static_fields().theaps_empty);
+            assert!(owner.heap_ref().test_main_static_fields().theaps_empty);
             assert_eq!(subprocess.live_thread_count(), 0);
             assert!(dynamic_backing_peek().is_none());
             owner

@@ -1511,13 +1511,22 @@ The separate bounded lifecycle/concurrency judge is also native x86-only:
 ./compat/allocator/run-x86_64.sh allocator-lifecycle
 ```
 
-It records eight named private Rust lanes (12 selected tests, including five
+It records nine named private Rust lanes (13 selected tests, including five
 finite Loom head-protocol models) in
 `compat/reports/allocator/x86_64/lifecycle-concurrency.json`. It is evidence
 for only those listed compiler-TLS, private-key, and remote-head transitions;
 it is not general process/thread lifecycle, client routing,
 abandonment/adoption, pthread callback, general fault-injection or misuse
 parity, or whole-allocator stress evidence.
+
+One lane is a Rust-only bounded dynamic post-exit route: a source worker
+tears down dynamic TLS, cached-root, Theap/TLD, and key state before returning
+`DynamicThreadExitArenaSingletonPostExitRoute`; after join, its receiver
+consumes one exact arena-singleton free only after proving whole-PageMap
+quiescence, then verifies the PageMap, dynamic image bit, and full arena span
+release. It does not compare a C pthread callback or claim pthread/TLS
+lifecycle parity, general cross-thread routing, public x86 runtime support,
+allocator integration, or AArch64 evidence.
 
 The separate bounded fault-injection judge is also native x86-only:
 

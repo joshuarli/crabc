@@ -89,7 +89,7 @@
       "state": "available"
     },
     {
-      "claim": "On an attested native x86-64 host, runs eight named private Rust lifecycle/concurrency lanes with 12 selected tests, including five finite Loom head-protocol models. It is not general process/thread lifecycle, client routing, abandonment/adoption, pthread callback, general fault-injection or misuse parity, or whole-allocator stress evidence.",
+      "claim": "On an attested native x86-64 host, runs nine named private Rust lifecycle/concurrency lanes with 13 selected tests, including five finite Loom head-protocol models and one source-torn-down dynamic arena-singleton owner moved to a joined receiver. It is not general process/thread lifecycle, client routing, abandonment/adoption, pthread callback, general fault-injection or misuse parity, or whole-allocator stress evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-lifecycle",
       "id": "native-bounded-lifecycle-concurrency",
       "native_required": true,

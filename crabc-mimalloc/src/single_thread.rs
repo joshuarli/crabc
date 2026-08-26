@@ -131,7 +131,9 @@ use crate::bootstrap::{
     BootstrapError, ExclusiveTheapBootstrap, ExclusiveTheapSession, TheapPageSession,
 };
 use crate::dynamic_theap::{
-    DynamicTheapError, DynamicTheapPageDrainSession, DynamicTheapPageSession,
+    DynamicPostExitArenaOwner, DynamicPostExitArenaOwnerFinishFailure,
+    DynamicPostExitArenaOwnerTransitionState, DynamicTheapError,
+    DynamicTheapPageDrainSession, DynamicTheapPageSession,
 };
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadPageDrainSession,
@@ -356,6 +358,25 @@ fn arena_page_map_size(
     Some(map_size)
 }
 
+/// Compares the source-visible arena provenance fields without deriving
+/// equality for `MemoryId`'s tagged union. Post-exit routes use this only to
+/// prove that a page still names the exact arena span captured before source
+/// attachment teardown.
+#[inline]
+fn same_arena_memory(left: MemoryId, right: MemoryId) -> bool {
+    match (left.arena_memory(), right.arena_memory()) {
+        (Some(left_arena), Some(right_arena)) => {
+            left_arena.arena == right_arena.arena
+                && left_arena.slice_index == right_arena.slice_index
+                && left_arena.slice_count == right_arena.slice_count
+                && left.is_pinned() == right.is_pinned()
+                && left.initially_committed() == right.initially_committed()
+                && left.initially_zero() == right.initially_zero()
+        }
+        _ => false,
+    }
+}
+
 /// One invalid local free at the explicit exclusive-theap boundary.
 ///
 /// These are allocator-state failures, not a replacement for the C ABI's
@@ -571,6 +592,72 @@ pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map
     page: NonNull<Page>,
     backing: ThreadExitSingletonBacking,
     terminal: bool,
+}
+
+/// One full arena singleton whose source dynamic attachment has completely
+/// torn down, leaving only an inert Heap/image owner and the exact terminal
+/// client-free route.
+///
+/// This is deliberately narrower than `DynamicThreadExitSingletonHandoff`:
+/// it excludes the OS-list route, every regular/bitmap-mapped route, all
+/// allocation/reclaim/requeue authority, and concurrent client frees. The
+/// source worker has already removed its compiler-TLS backing, Theap, TLD,
+/// cached root, and key before this type exists. Its receiver may only free
+/// the one exact singleton client and finish the paired dynamic arena image.
+#[must_use = "a detached dynamic singleton route must consume its exact client free or remain terminally retained"]
+pub(crate) struct DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map> {
+    owner: Option<DynamicPostExitArenaOwner<'heap>>,
+    arena: ArenaView<'arena>,
+    page_map: &'map PageMap,
+    page: NonNull<Page>,
+    memory: MemoryId,
+    block_size: usize,
+    terminal: bool,
+    // A linear post-exit owner must never be shared. The explicit `Send`
+    // justification below authorizes one move only after the source worker
+    // has finished its thread-local teardown.
+    _not_sync: PhantomData<Cell<()>>,
+}
+
+// SAFETY: construction consumes a source-bound dynamic singleton handoff only
+// after `DynamicTheapAttachment` released its TLS/TLD/Theap/key state and
+// transferred its unique pinned Heap/image pair into `owner`. The route has no
+// attachment borrow or TLS access; its consuming free API performs one
+// serialized PageMap -> dynamic-bit -> metadata -> arena-slice tail only under
+// that API's separate whole-PageMap exclusion contract. Moving it to a
+// joined/scoped receiver therefore transfers one linear post-exit owner, not
+// shared allocator, requeue, or concurrent-free authority.
+unsafe impl Send for DynamicThreadExitArenaSingletonPostExitRoute<'_, '_, '_> {}
+
+/// A retry-only source record after the detached arena-singleton transition
+/// reached its documented pre-mutation key-release lock boundary.
+///
+/// The underlying dynamic attachment has already completed source TLS/TLD/
+/// Theap teardown, so it is no longer a valid general singleton handoff.
+/// Keeping that handoff private makes the one permitted continuation explicit:
+/// retry the source-current key release and detached-owner conversion.
+#[must_use = "a retained dynamic detached-singleton source must retry conversion or remain retained"]
+pub(crate) struct DynamicThreadExitArenaSingletonPostExitRouteSource<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+}
+
+/// A source-bound terminal record for a dynamic singleton whose source
+/// teardown changed state before it could produce a detached route. It owns
+/// the original handoff only to preserve every linked resource; it deliberately
+/// exposes no remote-free, allocation, or retry operation.
+#[must_use = "a terminal dynamic source teardown record must remain retained"]
+pub(crate) struct DynamicThreadExitArenaSingletonPostExitRouteTerminal<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
 }
 
 /// A bounded source-order aggregate of two-or-more full arena singleton pages
@@ -2948,6 +3035,79 @@ pub(crate) enum DynamicThreadExitSingletonRemoteFreeFailure<'attach, 'heap, 'are
     Terminal {
         handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
         error: DynamicThreadExitSingletonRemoteFreeError,
+    },
+}
+
+/// A refusal or retained source failure while a dynamic arena singleton moves
+/// from the source-current drain into the detached post-exit owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteBeginError {
+    Terminal,
+    NotArenaSingleton,
+    Lifecycle,
+    SourceTeardown(DynamicTheapError),
+}
+
+/// A failed source-to-detached singleton conversion retains the original
+/// source-bound handoff. `Rejected` is pre-transfer. `RetainedSource` is
+/// exclusively the documented pre-mutation key-lock retry and exposes only
+/// `retry_into_post_exit_arena_route` on the same source thread. Any source
+/// teardown that changed state returns the opaque `Terminal` record instead,
+/// so an invalid old handoff can never resume a drain operation.
+#[must_use = "a failed dynamic detached-singleton conversion retains its source handoff"]
+pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteBeginFailure<
+    'attach,
+    'heap,
+    'arena,
+    'map,
+> {
+    Rejected {
+        handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+        error: DynamicThreadExitArenaSingletonPostExitRouteBeginError,
+    },
+    RetainedSource {
+        source: DynamicThreadExitArenaSingletonPostExitRouteSource<
+            'attach,
+            'heap,
+            'arena,
+            'map,
+        >,
+        error: DynamicThreadExitArenaSingletonPostExitRouteBeginError,
+    },
+    Terminal {
+        terminal: DynamicThreadExitArenaSingletonPostExitRouteTerminal<
+            'attach,
+            'heap,
+            'arena,
+            'map,
+        >,
+        error: DynamicThreadExitArenaSingletonPostExitRouteBeginError,
+    },
+}
+
+/// A bounded post-exit singleton client-free observation. `Unmapped` and
+/// `InvalidBlock` occur before the atomic failed-reclaim tail; every other
+/// outcome retains a terminal route because source ownership may have changed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteFreeError {
+    Terminal,
+    Unmapped,
+    InvalidBlock,
+    UnexpectedFreeOutcome(abandoned::UnmappedAbandonedFreeResult),
+    Abandon(AbandonError),
+    Release,
+}
+
+/// A failed detached singleton client-free retains its one post-exit owner.
+#[must_use = "a failed dynamic detached-singleton free retains its route"]
+pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteFreeFailure<'heap, 'arena, 'map> {
+    Rejected {
+        route: DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map>,
+        error: DynamicThreadExitArenaSingletonPostExitRouteFreeError,
+    },
+    Terminal {
+        route: DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map>,
+        error: DynamicThreadExitArenaSingletonPostExitRouteFreeError,
     },
 }
 
@@ -27356,6 +27516,162 @@ impl<'attach, 'heap, 'arena, 'map>
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>
 {
+    /// Completes the source-current teardown for one full arena singleton and
+    /// transfers its one terminal free into a detached Rust owner.
+    ///
+    /// The existing dynamic handoff remains deliberately `!Send`: it owns a
+    /// draining attachment, TLS/TLD state, and may also own an OS-list member.
+    /// This conversion admits only the arena form after source abandonment has
+    /// removed the queue/page-count owner. It then consumes the attachment's
+    /// source root/list/TLD/key teardown and retains only the inert Heap-local
+    /// arena image plus PageMap/arena/page facts needed for the final free.
+    pub(crate) fn into_post_exit_arena_route(
+        self,
+    ) -> Result<
+        DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map>,
+        DynamicThreadExitArenaSingletonPostExitRouteBeginFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        let reject = |handoff, error| {
+            DynamicThreadExitArenaSingletonPostExitRouteBeginFailure::Rejected { handoff, error }
+        };
+        if self.terminal {
+            return Err(reject(
+                self,
+                DynamicThreadExitArenaSingletonPostExitRouteBeginError::Terminal,
+            ));
+        }
+        if self.backing != ThreadExitSingletonBacking::Arena {
+            return Err(reject(
+                self,
+                DynamicThreadExitArenaSingletonPostExitRouteBeginError::NotArenaSingleton,
+            ));
+        }
+        // SAFETY: the handoff retains the exact initialized, queue-detached
+        // page until this consuming transition succeeds or returns it.
+        let page_ref = unsafe { self.page.as_ref() };
+        let memory = page_ref.memid();
+        let full_arena_singleton = memory.kind() == MemoryKind::Arena
+            && size_class::page_kind_for_block_size(page_ref.block_size())
+                == Some(PageKind::Singleton)
+            && size_class::bin(page_ref.block_size()) == Some(BIN_HUGE)
+            && page_ref.capacity() == 1
+            && page_ref.reserved() == 1
+            && page_ref.used() == 1
+            && page_ref.is_queue_detached();
+        if !full_arena_singleton
+            || !matches!(
+                self.drain.engine.release_span(self.page.as_ptr()),
+                Some(ReleaseSpan::Arena { memory: span_memory, .. })
+                    if same_arena_memory(span_memory, memory)
+            )
+        {
+            return Err(reject(
+                self,
+                DynamicThreadExitArenaSingletonPostExitRouteBeginError::NotArenaSingleton,
+            ));
+        }
+        let block_size = page_ref.block_size();
+        let Self {
+            drain,
+            page,
+            backing: _,
+            terminal: _,
+        } = self;
+        let (session, state) = drain.engine.into_session_and_state();
+        if state.pending_os_release.is_some()
+            || state.collection_poison.is_some()
+            || state.page_commit_poison
+            || state.shutdown_complete
+        {
+            let engine = PageAllocatorEngine::<DynamicTheapPageDrainSession<'attach, 'heap>>::from_session_and_state(
+                session, state,
+            );
+            return Err(reject(
+                DynamicThreadExitSingletonHandoff {
+                    drain: DynamicThreadExitDrain { engine },
+                    page,
+                    backing: ThreadExitSingletonBacking::Arena,
+                    terminal: false,
+                },
+                DynamicThreadExitArenaSingletonPostExitRouteBeginError::Lifecycle,
+            ));
+        }
+        let owner = match session.into_post_exit_arena_owner(&state.arena, memory) {
+            Ok(owner) => owner,
+            Err((session, error)) => {
+                let transition = session.post_exit_arena_owner_transition_state(error);
+                let engine = PageAllocatorEngine::<
+                    DynamicTheapPageDrainSession<'attach, 'heap>,
+                >::from_session_and_state(session, state);
+                let handoff = DynamicThreadExitSingletonHandoff {
+                    drain: DynamicThreadExitDrain { engine },
+                    page,
+                    backing: ThreadExitSingletonBacking::Arena,
+                    terminal: false,
+                };
+                let error = DynamicThreadExitArenaSingletonPostExitRouteBeginError::SourceTeardown(
+                    error,
+                );
+                return Err(match transition {
+                    DynamicPostExitArenaOwnerTransitionState::Unchanged => {
+                        DynamicThreadExitArenaSingletonPostExitRouteBeginFailure::Rejected {
+                            handoff,
+                            error,
+                        }
+                    }
+                    DynamicPostExitArenaOwnerTransitionState::RetryKeyRelease => {
+                        DynamicThreadExitArenaSingletonPostExitRouteBeginFailure::RetainedSource {
+                            source: DynamicThreadExitArenaSingletonPostExitRouteSource {
+                                handoff,
+                            },
+                            error,
+                        }
+                    }
+                    DynamicPostExitArenaOwnerTransitionState::Terminal => {
+                        DynamicThreadExitArenaSingletonPostExitRouteBeginFailure::Terminal {
+                            terminal: DynamicThreadExitArenaSingletonPostExitRouteTerminal {
+                                handoff,
+                            },
+                            error,
+                        }
+                    }
+                });
+            }
+        };
+        let PageAllocatorEngineState {
+            arena,
+            requested_arena: _,
+            page_map,
+            thread_sequence: _,
+            pending_os_release,
+            collection_poison,
+            page_commit_poison,
+            #[cfg(test)]
+            page_free_collect_failure_once: _,
+            #[cfg(test)]
+            last_page_to_full: _,
+            #[cfg(test)]
+            page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
+            shutdown_complete,
+        } = state;
+        debug_assert!(pending_os_release.is_none());
+        debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
+        debug_assert!(!shutdown_complete);
+        Ok(DynamicThreadExitArenaSingletonPostExitRoute {
+            owner: Some(owner),
+            arena,
+            page_map,
+            page,
+            memory,
+            block_size,
+            terminal: false,
+            _not_sync: PhantomData,
+        })
+    }
+
     /// Frees the singleton's one client block after source owner exit made
     /// reclamation impossible by clearing the dynamic regular TLS slot.
     ///
@@ -27520,6 +27836,275 @@ impl<'attach, 'heap, 'arena, 'map>
         published: &PublishedOsAlignedPage,
     ) -> bool {
         self.drain.engine.test_os_page_map_entries_are_clear(published)
+    }
+}
+
+impl<'attach, 'heap, 'arena, 'map>
+    DynamicThreadExitArenaSingletonPostExitRouteSource<'attach, 'heap, 'arena, 'map>
+{
+    /// Retries only the documented pre-mutation regular-key release on its
+    /// original source thread. The wrapped handoff remains private because
+    /// `AwaitingKeyRelease` has already consumed its general drain state.
+    pub(crate) fn retry_into_post_exit_arena_route(
+        self,
+    ) -> Result<
+        DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map>,
+        DynamicThreadExitArenaSingletonPostExitRouteBeginFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        match self.handoff.into_post_exit_arena_route() {
+            Ok(route) => Ok(route),
+            Err(DynamicThreadExitArenaSingletonPostExitRouteBeginFailure::Rejected {
+                handoff,
+                error,
+            }) => Err(
+                DynamicThreadExitArenaSingletonPostExitRouteBeginFailure::Terminal {
+                    terminal: DynamicThreadExitArenaSingletonPostExitRouteTerminal { handoff },
+                    error,
+                },
+            ),
+            Err(failure) => Err(failure),
+        }
+    }
+}
+
+impl<'heap, 'arena, 'map>
+    DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map>
+{
+    /// Performs the route's one client free after the source thread has
+    /// completed its dynamic TLS/TLD/Theap/key teardown and the caller has
+    /// established exclusive access to the entire source-plain PageMap.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the exact once-live client allocation transferred by
+    /// [`DynamicThreadExitSingletonHandoff::into_post_exit_arena_route`]. No
+    /// client alias, producer, source attachment, or other route may use the
+    /// page concurrently. The caller must establish whole-PageMap exclusion:
+    /// every lifecycle owner, producer, and post-exit route that can touch
+    /// this `PageMap` must be stopped or joined for this call. Joining the
+    /// source worker alone is insufficient if another user shares the map.
+    /// This method then accesses the source-plain PageMap and page metadata.
+    pub(crate) unsafe fn remote_free_after_thread_exit(
+        mut self,
+        block: NonNull<u8>,
+    ) -> Result<
+        (),
+        DynamicThreadExitArenaSingletonPostExitRouteFreeFailure<'heap, 'arena, 'map>,
+    > {
+        let reject = |route, error| {
+            DynamicThreadExitArenaSingletonPostExitRouteFreeFailure::Rejected { route, error }
+        };
+        let terminal = |route, error| {
+            DynamicThreadExitArenaSingletonPostExitRouteFreeFailure::Terminal { route, error }
+        };
+        if self.terminal || self.owner.is_none() {
+            return Err(terminal(
+                self,
+                DynamicThreadExitArenaSingletonPostExitRouteFreeError::Terminal,
+            ));
+        }
+        // SAFETY: the linear route retains the only PageMap lifecycle and the
+        // caller's join/quiescence proof serializes this source-plain lookup.
+        if unsafe { self.page_map.checked_lookup(block.as_ptr()) } != self.page.as_ptr() {
+            return Err(reject(
+                self,
+                DynamicThreadExitArenaSingletonPostExitRouteFreeError::Unmapped,
+            ));
+        }
+        // SAFETY: the PageMap entry and route's exact page identity keep this
+        // initialized metadata live through the preflight and raw free tail.
+        let page_ref = unsafe { self.page.as_ref() };
+        let Some(canonical_block) = Self::canonical_block_start(page_ref, block) else {
+            return Err(reject(
+                self,
+                DynamicThreadExitArenaSingletonPostExitRouteFreeError::InvalidBlock,
+            ));
+        };
+        let preflight = match unsafe { LocalFreeList::from_page(&mut *self.page.as_ptr()) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
+            Err(error) => Err(error),
+        };
+        if preflight.is_err() || self.arena_span().is_none() {
+            return Err(reject(
+                self,
+                DynamicThreadExitArenaSingletonPostExitRouteFreeError::InvalidBlock,
+            ));
+        }
+
+        // Source abandonment cleared the associated owner before the dynamic
+        // attachment's TLS/TLD/key teardown. This is therefore only
+        // free.c's failed-reclaim all-free tail; regular reabandonment is
+        // intentionally impossible for a singleton.
+        match unsafe {
+            abandoned::free_unmappable_after_failed_reclaim(self.page, canonical_block)
+        } {
+            Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
+                if self.release_empty_arena_singleton() {
+                    Ok(())
+                } else {
+                    self.terminal = true;
+                    Err(terminal(
+                        self,
+                        DynamicThreadExitArenaSingletonPostExitRouteFreeError::Release,
+                    ))
+                }
+            }
+            Ok(outcome) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitArenaSingletonPostExitRouteFreeError::UnexpectedFreeOutcome(
+                        outcome,
+                    ),
+                ))
+            }
+            Err(error) => {
+                self.terminal = true;
+                Err(terminal(
+                    self,
+                    DynamicThreadExitArenaSingletonPostExitRouteFreeError::Abandon(error),
+                ))
+            }
+        }
+    }
+
+    fn canonical_block_start(page: &Page, block: NonNull<u8>) -> Option<NonNull<u8>> {
+        if !page.has_interior_pointers() {
+            return Some(block);
+        }
+        // SAFETY: the caller's exact route preflight proved this live
+        // singleton's source geometry before deriving the original block.
+        let page_start = unsafe { page.start() };
+        let base_address = aligned::recover_block_start(
+            block.as_ptr().addr(),
+            page_start.addr(),
+            page.block_size(),
+        )?;
+        let adjustment = block.as_ptr().addr().checked_sub(base_address)?;
+        NonNull::new(block.as_ptr().wrapping_sub(adjustment))
+    }
+
+    /// Validates the exact arena/span/PageMap image retained by this route.
+    /// The map range is intentionally the source page-area range, while
+    /// `size` remains the complete arena claim returned after metadata retire.
+    fn arena_span(&self) -> Option<(*mut u8, usize, usize)> {
+        // SAFETY: the route retains its exact initialized singleton metadata
+        // until terminal release or a terminal retained result.
+        let page_ref = unsafe { self.page.as_ref() };
+        if !same_arena_memory(page_ref.memid(), self.memory)
+            || page_ref.memid().kind() != MemoryKind::Arena
+            || page_ref.block_size() != self.block_size
+            || size_class::page_kind_for_block_size(self.block_size)
+                != Some(PageKind::Singleton)
+            || page_ref.capacity() != 1
+            || page_ref.reserved() != 1
+        {
+            return None;
+        }
+        let arena_memory = self.memory.arena_memory()?;
+        if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
+            return None;
+        }
+        let slice_index = arena_memory.slice_index as usize;
+        let slice_count = arena_memory.slice_count as usize;
+        let expected_slice_count = page::singleton_page_slice_count(self.block_size)?;
+        if slice_count != expected_slice_count {
+            return None;
+        }
+        let size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
+        let slice_start = self.arena.slice_start(slice_index)?;
+        let usable_offset = page::page_usable_start_offset(self.block_size)?;
+        let expected_start = slice_start.addr().checked_add(usable_offset)?;
+        if expected_start >= slice_start.addr().checked_add(size)?
+            || expected_start.checked_sub(self.page.as_ptr().addr())? != page_ref.page_offset()
+        {
+            return None;
+        }
+        let page_map_size = arena_page_map_size(self.page, slice_start, size)?;
+        for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
+            let address = slice_start.addr().checked_add(offset)? as *const u8;
+            // SAFETY: the caller's join/quiescence proof serializes the plain
+            // PageMap observations for this linear post-exit route.
+            if unsafe { self.page_map.checked_lookup(address) } != self.page.as_ptr() {
+                return None;
+            }
+        }
+        Some((slice_start, size, page_map_size))
+    }
+
+    /// Completes the exact terminal order after the raw failed-reclaim tail
+    /// made this detached singleton all-free: PageMap range, dynamic ordinary
+    /// bit, metadata, arena slices, dynamic image, then inert Heap binding.
+    fn release_empty_arena_singleton(&mut self) -> bool {
+        let Some((slice_start, _size, page_map_size)) = self.arena_span() else {
+            return false;
+        };
+        // SAFETY: the raw tail has retained the abandoned low-owner bit and
+        // this linear route is the only remaining page/map mutation owner.
+        let page_ref = unsafe { self.page.as_ref() };
+        if page_ref.used() != 0 || !page_ref.is_queue_detached() {
+            return false;
+        }
+        // SAFETY: `arena_span` verified every exact currently registered
+        // source page-map slice; no source queue or TLS owner remains.
+        if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
+            return false;
+        }
+        let Some(owner) = self.owner.as_ref() else {
+            return false;
+        };
+        if !owner.clear_arena_page(&self.arena, self.memory) {
+            return false;
+        }
+        // SAFETY: queue, PageMap, and dynamic ordinary-bit ownership are all
+        // gone. The raw all-free result proved no remote list survives.
+        let Some(retired) = (unsafe { self.page.as_mut().retire_exclusive() }) else {
+            return false;
+        };
+        if !same_arena_memory(retired, self.memory) {
+            return false;
+        }
+        // SAFETY: metadata retirement follows every publication removal and
+        // returns exactly this outstanding external-arena slice claim.
+        if !unsafe { release_arena_slices(retired) } {
+            return false;
+        }
+        let Some(owner) = self.owner.take() else {
+            return false;
+        };
+        match owner.finish() {
+            Ok(()) => true,
+            Err(DynamicPostExitArenaOwnerFinishFailure::Terminal { owner, .. }) => {
+                self.owner = Some(owner);
+                false
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_page_map_entry(&self, address: *mut u8) -> *mut Page {
+        // SAFETY: this test-only observer shares the route's caller-proved
+        // quiescent PageMap lifetime and never exposes mutation authority.
+        unsafe { self.page_map.checked_lookup(address) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_dynamic_arena_page_is_set(&self) -> bool {
+        // SAFETY: the caller proves the same source join/quiescence required
+        // by the route's terminal free before observing the dynamic image.
+        self.owner
+            .as_ref()
+            .is_some_and(|owner| unsafe { owner.test_arena_page_is_set(self.memory) })
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) unsafe fn test_arena_span(&self) -> Option<(*mut u8, usize)> {
+        // SAFETY: the route's arena-span proof reads the source-plain PageMap
+        // and therefore inherits its terminal-free quiescence requirement.
+        self.arena_span().map(|(slice_start, size, _)| (slice_start, size))
     }
 }
 

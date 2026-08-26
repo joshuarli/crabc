@@ -706,6 +706,18 @@ all-free release. The OS form additionally links/removes its exact dynamic
 `Heap::os_abandoned_pages` member around clipped PageMap -> alias -> primary
 metadata -> mapping release.
 
+For exactly one arena-backed full singleton, a separate Rust-only
+`DynamicThreadExitArenaSingletonPostExitRoute` now completes the source-side
+dynamic TLS, cached-root, Theap/TLD, and key teardown before it exists. The
+source worker transfers only an inert pinned Heap plus its one dynamic arena
+image; after the worker joins and the caller proves whole-PageMap quiescence,
+one receiver may consume the exact client free and release PageMap -> dynamic
+arena bit -> metadata -> arena span -> image -> Heap binding. The live
+`DynamicTheapAttachment` and its ordinary singleton handoff remain `!Send`;
+this is not a crabc pthread/TLS callback, C/Rust
+destructor differential, general client routing, concurrent collection, or
+public x86/runtime claim.
+
 `DynamicThreadExitDrain::abandon_full_singleton_pages` separately admits one
 bounded dynamic aggregate: two or more full `MemoryKind::Arena`
 `PageKind::Singleton` members in `BIN_FULL`, each with its own rounded block

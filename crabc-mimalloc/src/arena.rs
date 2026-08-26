@@ -527,6 +527,38 @@ impl DynamicArenaPagesOwner {
         self.state == DynamicArenaPagesOwnerState::Published && self.is_empty()
     }
 
+    /// Proves that this one dynamic Heap image retains exactly one ordinary
+    /// arena page and no mapped-abandoned publication. This is the source
+    /// precondition for the bounded post-exit singleton transfer: after its
+    /// Theap/TLD has gone, the detached owner may clear only this bit before
+    /// it unpublishes and frees the image.
+    pub(crate) fn has_exactly_one_page(&self, memory: MemoryId) -> bool {
+        let Some(index) = self.slice_index(memory) else {
+            return false;
+        };
+        if !self.page_is_set(memory) {
+            return false;
+        }
+        let page_bits_are_exact = self.with_pages(|pages| {
+            let before_is_clear = index == 0
+                || pages.is_clear_range(0, index) == Some(true);
+            let after_start = match index.checked_add(1) {
+                Some(start) => start,
+                None => return false,
+            };
+            let after_is_clear = after_start == self.layout.slice_count()
+                || pages.is_clear_range(after_start, self.layout.slice_count() - after_start)
+                    == Some(true);
+            before_is_clear && after_is_clear
+        }) == Some(true);
+        page_bits_are_exact
+            && (0..ARENA_BIN_COUNT).all(|bin| {
+                self.with_abandoned(bin, |pages| {
+                    pages.is_clear_range(0, self.layout.slice_count())
+                }) == Some(Some(true))
+            })
+    }
+
     /// Forms the sole production capability allowed to publish one dynamic
     /// `pages_abandoned[bin]` bit. Its constructor requires the exact source
     /// arena, an already page-map-published ordinary slice, and a mapped
