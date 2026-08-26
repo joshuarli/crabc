@@ -6086,7 +6086,9 @@ mod tests {
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
-    use crate::types::{BIN_BLOCK_SIZES, EMPTY_PAGE, THREAD_ID_ABANDONED_MAPPED};
+    use crate::types::{
+        BIN_BLOCK_SIZES, EMPTY_PAGE, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED,
+    };
     #[cfg(target_arch = "x86_64")]
     use crate::types::{MemoryKind, PageKind};
     use crabc_core::Errno;
@@ -6238,6 +6240,59 @@ mod tests {
     // remaining alias once, so this wrapper does not permit concurrent use.
     #[cfg(target_arch = "x86_64")]
     unsafe impl Send for FullDirectSmallExitConsumer<'_> {}
+
+    /// Stable source facts and per-page release geometry for the bounded
+    /// homogeneous full direct-small owner-exit trace. The source worker
+    /// creates this record before its Theap/TLD teardown; the receiving test
+    /// thread re-resolves every live page through the PageMap after `join`.
+    #[cfg(target_arch = "x86_64")]
+    struct FullDirectSmallPagesExitTrace {
+        arena_backed: bool,
+        small_page: bool,
+        direct_small: bool,
+        distinct_pages: bool,
+        same_bin: bool,
+        same_size: bool,
+        same_geometry: bool,
+        full_before_thread_done: bool,
+        ordinary_regular_bin_before_thread_done: bool,
+        ordinary_queue_count_before_thread_done: usize,
+        direct_cache_complete_image_before_thread_done: bool,
+        direct_cache_head_is_member_before_thread_done: bool,
+        no_remote_free_before_thread_done: bool,
+        source_thread_teardown_completed: bool,
+        request_size: usize,
+        block_size: usize,
+        capacity: usize,
+        reserved: usize,
+        slice_count: usize,
+        direct_cache_range_start: usize,
+        direct_cache_range_end: usize,
+        bin: usize,
+        first_slice: usize,
+        second_slice: usize,
+        first_page_identity: usize,
+        second_page_identity: usize,
+    }
+
+    /// The one linear aggregate route and exact client aliases that a scoped
+    /// worker returns only after source teardown. It is deliberately test-only
+    /// evidence for the pinned native x86-64 differential, not a general
+    /// cross-thread allocator interface.
+    #[cfg(target_arch = "x86_64")]
+    struct FullDirectSmallPagesExitConsumer<'main> {
+        route: MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main>,
+        first_blocks: std::vec::Vec<NonNull<u8>>,
+        second_blocks: std::vec::Vec<NonNull<u8>>,
+        trace: FullDirectSmallPagesExitTrace,
+    }
+
+    // SAFETY: the route explicitly permits this one post-exit client-free
+    // handoff. Both vectors contain exact once-live aliases, and the worker
+    // returns only after old-Theap/TLD teardown; joining it establishes the
+    // required quiescence before the receiver consumes the linear route.
+    #[cfg(target_arch = "x86_64")]
+    unsafe impl Send for FullDirectSmallPagesExitConsumer<'_> {}
 
     #[test]
     fn later_thread_page_engine_uses_the_static_main_heap_and_in_place_arena_bitmap() {
@@ -13863,6 +13918,829 @@ mod tests {
         })
         .join()
         .expect("full direct-small aggregate route fixture remains current-thread local");
+    }
+
+    /// Emits one address-independent native x86-64 record for the bounded
+    /// later-main homogeneous full direct-small aggregate route. A scoped
+    /// worker fills exactly two same-bin 1024-byte regular small pages, tears
+    /// down its old Theap/TLD, and transfers the linear client-free route only
+    /// after `join`. The receiver then proves free.c's retained partial head,
+    /// each member's independent unmapped-to-mapped transition, and the
+    /// one-slice terminal release order.
+    ///
+    /// This is private allocator-engine evidence only. It does not establish
+    /// public x86 runtime support, a general thread lifecycle, concurrent
+    /// frees, allocation-time reclaim/requeue, or another aggregate shape.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_later_thread_exit_full_direct_small_pages_trace_matches_pinned_c() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            let consumer = thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later source thread attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later source thread attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the direct-small aggregate trace fixture");
+                    let request_size = SMALL_SIZE_MAX;
+
+                    let first = allocator
+                        .allocate(request_size, false)
+                        .expect("the fixture creates its first direct-small page");
+                    let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first direct-small page remains PageMap-published");
+                    let (first_block_size, reserved) = unsafe {
+                        let first_ref = first_page.as_ref();
+                        (first_ref.block_size(), first_ref.reserved() as usize)
+                    };
+                    assert_eq!(
+                        request_size, 1024,
+                        "the pinned source fixture selects the upper direct-small request"
+                    );
+                    assert_eq!(
+                        first_block_size, 1024,
+                        "the upper direct-small request keeps its pinned source block size"
+                    );
+                    assert_eq!(
+                        reserved, 64,
+                        "the direct-small source page reserves sixty-four blocks before its committed capacity grows"
+                    );
+                    let mut first_blocks = std::vec::Vec::with_capacity(reserved);
+                    first_blocks.push(first);
+                    while first_blocks.len() < reserved {
+                        let block = allocator
+                            .allocate(request_size, false)
+                            .expect("the fixture fills only its first direct-small page");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(block) },
+                            first_page.as_ptr(),
+                            "the first source member fills before a second page is created"
+                        );
+                        first_blocks.push(block);
+                    }
+                    let first_ref = unsafe { first_page.as_ref() };
+                    let capacity = first_ref.capacity() as usize;
+                    assert_eq!(
+                        capacity, 64,
+                        "filling the first direct-small page grows its committed capacity to the full reservation"
+                    );
+                    assert_eq!(
+                        capacity, reserved,
+                        "the selected full direct-small source page has no capacity gap"
+                    );
+
+                    let second = allocator
+                        .allocate(request_size, false)
+                        .expect("the fixture creates its second direct-small page after the first fills");
+                    let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
+                        .expect("the second direct-small page remains PageMap-published");
+                    assert_ne!(
+                        first_page, second_page,
+                        "the aggregate contains exactly two distinct ordinary-bin source pages"
+                    );
+                    let second_reserved = unsafe { second_page.as_ref().reserved() as usize };
+                    assert_eq!(second_reserved, reserved);
+                    let mut second_blocks = std::vec::Vec::with_capacity(second_reserved);
+                    second_blocks.push(second);
+                    while second_blocks.len() < second_reserved {
+                        let block = allocator
+                            .allocate(request_size, false)
+                            .expect("the fixture fills only its second direct-small page");
+                        assert_eq!(
+                            unsafe { allocator.test_page_for_block(block) },
+                            second_page.as_ptr(),
+                            "the second source member fills without creating a third page"
+                        );
+                        second_blocks.push(block);
+                    }
+                    let second_ref = unsafe { second_page.as_ref() };
+                    let second_capacity = second_ref.capacity() as usize;
+                    assert_eq!(second_capacity, capacity);
+
+                    let block_size = first_ref.block_size();
+                    let bin = crate::size_class::bin(block_size)
+                        .expect("the direct-small source class has one regular bin");
+                    let second_bin = crate::size_class::bin(second_ref.block_size())
+                        .expect("the second direct-small source class has one regular bin");
+                    let first_memory = first_ref
+                        .memid()
+                        .arena_memory()
+                        .expect("the first direct-small source page belongs to the paired arena");
+                    let second_memory = second_ref
+                        .memid()
+                        .arena_memory()
+                        .expect("the second direct-small source page belongs to the paired arena");
+                    let slice_count = first_memory.slice_count as usize;
+                    let first_slice = first_memory.slice_index as usize;
+                    let second_slice = second_memory.slice_index as usize;
+                    let (direct_cache_range_start, direct_cache_range_end) =
+                        source_direct_cache_range(block_size);
+                    let direct_head = allocator
+                        .test_direct_page(direct_cache_range_start)
+                        .expect("the rounded direct cache range remains addressable");
+                    let direct_cache_head_is_member_before_thread_done = direct_head == first_page.as_ptr()
+                        || direct_head == second_page.as_ptr();
+                    let direct_cache_complete_image_before_thread_done =
+                        (0..PAGES_DIRECT).all(|index| {
+                            let expected = if index >= direct_cache_range_start
+                                && index <= direct_cache_range_end
+                            {
+                                direct_head
+                            } else {
+                                EMPTY_PAGE.as_ptr()
+                            };
+                            allocator.test_direct_page(index) == Some(expected)
+                        });
+                    let all_other_queues_empty_before_thread_done =
+                        (0..crate::config::BIN_COUNT).all(|queue| {
+                            queue == bin || allocator.test_queue_count(queue) == Some(0)
+                        });
+                    let arena_backed = first_ref.memid().kind() == MemoryKind::Arena
+                        && second_ref.memid().kind() == MemoryKind::Arena;
+                    let small_page = crate::size_class::page_kind_for_block_size(block_size)
+                        == Some(PageKind::Small)
+                        && crate::size_class::page_kind_for_block_size(second_ref.block_size())
+                            == Some(PageKind::Small);
+                    let direct_small = block_size <= SMALL_SIZE_MAX
+                        && second_ref.block_size() <= SMALL_SIZE_MAX;
+                    let distinct_pages = first_page != second_page;
+                    let same_bin = bin == second_bin;
+                    let same_size = second_ref.block_size() == block_size;
+                    let same_geometry = second_ref.block_size() == block_size
+                        && second_capacity == capacity
+                        && second_reserved == reserved
+                        && second_memory.slice_count as usize == slice_count;
+                    let full_before_thread_done = first_ref.used() == capacity
+                        && second_ref.used() == second_capacity;
+                    let ordinary_queue_count_before_thread_done =
+                        allocator.test_queue_count(bin).unwrap_or(usize::MAX);
+                    let ordinary_regular_bin_before_thread_done = ordinary_queue_count_before_thread_done == 2
+                        && allocator.test_queue_count(crate::config::BIN_FULL) == Some(0)
+                        && all_other_queues_empty_before_thread_done
+                        && !crate::types::page_queue::page_is_in_full(first_ref)
+                        && !crate::types::page_queue::page_is_in_full(second_ref);
+                    let no_remote_free_before_thread_done = first_ref.remote_free_test_head() & !1 == 0
+                        && second_ref.remote_free_test_head() & !1 == 0;
+                    assert!(
+                        arena_backed
+                            && small_page
+                            && direct_small
+                            && distinct_pages
+                            && same_bin
+                            && same_geometry
+                            && full_before_thread_done
+                            && ordinary_regular_bin_before_thread_done
+                            && direct_cache_head_is_member_before_thread_done
+                            && direct_cache_complete_image_before_thread_done
+                            && no_remote_free_before_thread_done,
+                        "the source worker starts from exactly two same-bin full direct-small arena pages with the complete rounded cache image"
+                    );
+                    assert_eq!(bin, 24, "the 1024-byte direct-small class has the pinned source bin");
+                    assert_eq!(
+                        direct_cache_range_start, 113,
+                        "the rounded source direct-cache range starts after the 896-byte predecessor"
+                    );
+                    assert_eq!(
+                        direct_cache_range_end, 128,
+                        "the upper direct-small request reaches the final source direct-cache slot"
+                    );
+                    assert_eq!(
+                        slice_count, 1,
+                        "each direct-small aggregate member retains exactly one paired-arena slice"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot drain: {error:?}");
+                    });
+                    let route = match unsafe {
+                        drain.abandon_full_direct_small_pages_to_process_route()
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "two same-bin full direct-small pages enter the bounded aggregate process route"
+                        ),
+                    };
+                    let source_thread_teardown_completed = owner.finish_after_page_drain()
+                        == Err(MainHeapThreadAttachmentError::TornDown);
+                    assert!(
+                        source_thread_teardown_completed,
+                        "the worker completes old-Theap/TLD teardown before returning the client-free route"
+                    );
+
+                    FullDirectSmallPagesExitConsumer {
+                        route,
+                        first_blocks,
+                        second_blocks,
+                        trace: FullDirectSmallPagesExitTrace {
+                            arena_backed,
+                            small_page,
+                            direct_small,
+                            distinct_pages,
+                            same_bin,
+                            same_size,
+                            same_geometry,
+                            full_before_thread_done,
+                            ordinary_regular_bin_before_thread_done,
+                            ordinary_queue_count_before_thread_done,
+                            direct_cache_complete_image_before_thread_done,
+                            direct_cache_head_is_member_before_thread_done,
+                            no_remote_free_before_thread_done,
+                            source_thread_teardown_completed,
+                            request_size,
+                            block_size,
+                            capacity,
+                            reserved,
+                            slice_count,
+                            direct_cache_range_start,
+                            direct_cache_range_end,
+                            bin,
+                            first_slice,
+                            second_slice,
+                            first_page_identity: first_page.as_ptr().expose_provenance(),
+                            second_page_identity: second_page.as_ptr().expose_provenance(),
+                        },
+                    }
+                });
+                worker
+                    .join()
+                    .expect("the direct-small aggregate route transfers only after its source worker joins")
+            });
+
+            let FullDirectSmallPagesExitConsumer {
+                route,
+                first_blocks,
+                second_blocks,
+                trace,
+            } = consumer;
+            let source_worker_joined_before_consumer_frees = true;
+            assert!(
+                source_worker_joined_before_consumer_frees,
+                "the receiver cannot receive this route before the scoped source worker joins"
+            );
+            let arena = process_arena
+                .arena()
+                .expect("the paired arena remains published through terminal release");
+            assert_eq!(first_blocks.len(), trace.capacity);
+            assert_eq!(second_blocks.len(), trace.capacity);
+
+            let lookup_page = |block: NonNull<u8>| unsafe {
+                page_map.page_map().unwrap().checked_lookup(block.as_ptr())
+            };
+            let first_page_after_thread_done = NonNull::new(lookup_page(first_blocks[0]))
+                .expect("the first direct-small page remains PageMap-published after worker teardown");
+            let second_page_after_thread_done = NonNull::new(lookup_page(second_blocks[0]))
+                .expect("the second direct-small page remains PageMap-published after worker teardown");
+            let first_page_map_registered_after_thread_done = first_page_after_thread_done
+                .as_ptr()
+                .expose_provenance()
+                == trace.first_page_identity;
+            let second_page_map_registered_after_thread_done = second_page_after_thread_done
+                .as_ptr()
+                .expose_provenance()
+                == trace.second_page_identity;
+            let first_page_map_all_slices_registered_after_thread_done =
+                trace.slice_count == 1 && first_page_map_registered_after_thread_done;
+            let second_page_map_all_slices_registered_after_thread_done =
+                trace.slice_count == 1 && second_page_map_registered_after_thread_done;
+            let first_arena_page_bitmap_set_after_thread_done = unsafe { arena.pages() }
+                .expect("the ordinary arena bitmap remains published")
+                .is_set_range(trace.first_slice, 1)
+                == Some(true);
+            let second_arena_page_bitmap_set_after_thread_done = unsafe { arena.pages() }
+                .expect("the ordinary arena bitmap remains published")
+                .is_set_range(trace.second_slice, 1)
+                == Some(true);
+            let abandoned_map = arena
+                .abandoned_pages(trace.bin)
+                .expect("the direct-small source bin has one static-main abandoned bitmap");
+            let first_abandoned_bitmap_clear_after_thread_done =
+                abandoned_map.bitmap_is_clear(trace.first_slice);
+            let second_abandoned_bitmap_clear_after_thread_done =
+                abandoned_map.bitmap_is_clear(trace.second_slice);
+            let first_unmapped_after_thread_done = unsafe {
+                first_page_after_thread_done.as_ref().abandoned_test_thread_id()
+                    == THREAD_ID_ABANDONED
+            } && first_abandoned_bitmap_clear_after_thread_done;
+            let second_unmapped_after_thread_done = unsafe {
+                second_page_after_thread_done.as_ref().abandoned_test_thread_id()
+                    == THREAD_ID_ABANDONED
+            } && second_abandoned_bitmap_clear_after_thread_done;
+            let first_abandoned_after_thread_done = unsafe {
+                matches!(
+                    first_page_after_thread_done.as_ref().abandoned_test_thread_id(),
+                    THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+                )
+            };
+            let second_abandoned_after_thread_done = unsafe {
+                matches!(
+                    second_page_after_thread_done.as_ref().abandoned_test_thread_id(),
+                    THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+                )
+            };
+            let first_queue_detached_after_thread_done = unsafe {
+                first_page_after_thread_done.as_ref().is_queue_detached()
+                    && first_page_after_thread_done.as_ref().remote_free_test_head() == 0
+            };
+            let second_queue_detached_after_thread_done = unsafe {
+                second_page_after_thread_done.as_ref().is_queue_detached()
+                    && second_page_after_thread_done.as_ref().remote_free_test_head() == 0
+            };
+            let first_used_after_thread_done = unsafe { first_page_after_thread_done.as_ref().used() };
+            let second_used_after_thread_done = unsafe { second_page_after_thread_done.as_ref().used() };
+            let abandoned_count_after_thread_done = route.test_abandoned_count().unwrap_or(usize::MAX);
+            assert!(
+                first_page_map_registered_after_thread_done
+                    && second_page_map_registered_after_thread_done
+                    && first_page_map_all_slices_registered_after_thread_done
+                    && second_page_map_all_slices_registered_after_thread_done
+                    && first_arena_page_bitmap_set_after_thread_done
+                    && second_arena_page_bitmap_set_after_thread_done
+                    && first_unmapped_after_thread_done
+                    && second_unmapped_after_thread_done
+                    && first_abandoned_after_thread_done
+                    && second_abandoned_after_thread_done
+                    && first_queue_detached_after_thread_done
+                    && second_queue_detached_after_thread_done
+                    && first_used_after_thread_done == trace.capacity
+                    && second_used_after_thread_done == trace.capacity
+                    && abandoned_count_after_thread_done == 0
+                    && route.test_remaining_pages() == 2,
+                "the joined receiver observes both queue-detached source members as distinct unmapped PageMap/arena pages"
+            );
+
+            // `_mi_page_free_collect_partly` leaves the just-pushed direct
+            // head visible. For a 64-block page, it remains unmapped through
+            // `reserved / 8 + 1 == 9` frees; the next free collects that head
+            // and crosses the source mostly-used boundary into the map.
+            let partial_head_lag_unmapped_free_count = trace.reserved / 8 + 1;
+            let partial_head_lag_mapped_transition_free_count =
+                partial_head_lag_unmapped_free_count + 1;
+            assert_eq!(partial_head_lag_unmapped_free_count, 9);
+            assert_eq!(partial_head_lag_mapped_transition_free_count, 10);
+
+            let mut route = route;
+            route = match unsafe { route.remote_free_after_thread_exit(first_blocks[0]) } {
+                Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                    route
+                }
+                Ok(_) => panic!("the first direct-small member remains live after its first consumer free"),
+                Err(_) => panic!("the first direct-small member remains source-unmapped after its first consumer free"),
+            };
+            let first_page_after_first_consumer_free = NonNull::new(lookup_page(first_blocks[1]))
+                .expect("the first member remains PageMap-published after its first consumer free");
+            let first_used_after_first_consumer_free = unsafe {
+                first_page_after_first_consumer_free.as_ref().used()
+            };
+            assert_eq!(
+                first_used_after_first_consumer_free,
+                trace.capacity,
+                "the first direct-small free retains its just-published partial head"
+            );
+            for block in first_blocks
+                .iter()
+                .copied()
+                .skip(1)
+                .take(partial_head_lag_unmapped_free_count - 1)
+            {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                        route
+                    }
+                    Ok(_) => panic!("the first direct-small member remains live through its partial-head prefix"),
+                    Err(_) => panic!("the first direct-small member remains source-unmapped through its partial-head prefix"),
+                };
+            }
+            let first_page_after_unmapped_prefix =
+                NonNull::new(lookup_page(first_blocks[partial_head_lag_unmapped_free_count]))
+                    .expect("the first member remains PageMap-published through the partial-head prefix");
+            let first_used_after_unmapped_prefix = unsafe {
+                first_page_after_unmapped_prefix.as_ref().used()
+            };
+            let first_unmapped_after_unmapped_prefix = unsafe {
+                first_page_after_unmapped_prefix.as_ref().abandoned_test_thread_id()
+                    == THREAD_ID_ABANDONED
+                    && first_page_after_unmapped_prefix.as_ref().remote_free_test_head()
+                        == first_blocks[partial_head_lag_unmapped_free_count - 1]
+                            .as_ptr()
+                            .addr()
+            } && abandoned_map.bitmap_is_clear(trace.first_slice)
+                && route.test_abandoned_count() == Some(0);
+            assert!(
+                first_unmapped_after_unmapped_prefix
+                    && first_used_after_unmapped_prefix == trace.capacity - 8,
+                "the first member retains its ninth direct head and stays unmapped through the lagged threshold"
+            );
+
+            route = match unsafe {
+                route.remote_free_after_thread_exit(first_blocks[partial_head_lag_unmapped_free_count])
+            } {
+                Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                    route
+                }
+                Ok(_) => panic!("the first direct-small mapping boundary retains live blocks"),
+                Err(_) => panic!("the first direct-small mapping boundary publishes its static-main pair"),
+            };
+            let first_page_after_mapped_boundary = NonNull::new(lookup_page(
+                first_blocks[partial_head_lag_mapped_transition_free_count],
+            ))
+            .expect("the first member remains PageMap-published after its mapping boundary");
+            let first_used_after_mapped_boundary = unsafe {
+                first_page_after_mapped_boundary.as_ref().used()
+            };
+            let first_abandoned_bitmap_set_after_reabandon_boundary =
+                !abandoned_map.bitmap_is_clear(trace.first_slice);
+            let first_mapped_after_mapped_boundary = unsafe {
+                first_page_after_mapped_boundary.as_ref().abandoned_test_thread_id()
+                    == THREAD_ID_ABANDONED_MAPPED
+                    && first_page_after_mapped_boundary.as_ref().remote_free_test_head() == 0
+            } && first_abandoned_bitmap_set_after_reabandon_boundary
+                && route.test_abandoned_count() == Some(1);
+            assert!(
+                first_mapped_after_mapped_boundary
+                    && first_used_after_mapped_boundary == trace.capacity - 10,
+                "the tenth first-member free collects the retained head and publishes the mapped direct-small member"
+            );
+
+            for block in first_blocks
+                .iter()
+                .copied()
+                .skip(partial_head_lag_mapped_transition_free_count)
+                .take(trace.capacity - partial_head_lag_unmapped_free_count - 2)
+            {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                        route
+                    }
+                    Ok(_) => panic!("a nonterminal mapped first-member free remains in the aggregate route"),
+                    Err(_) => panic!("a mapped first-member free remains in the aggregate route"),
+                };
+            }
+            route = match unsafe {
+                route.remote_free_after_thread_exit(
+                    *first_blocks.last().expect("the first direct-small member has one final client"),
+                )
+            } {
+                Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::ReleasedPage(route)) => {
+                    route
+                }
+                Ok(_) => panic!("the first terminal free releases exactly one direct-small aggregate member"),
+                Err(_) => panic!("the first terminal free releases its mapped direct-small member"),
+            };
+            let first_terminal_released_only = route.test_remaining_pages() == 1;
+            let first_page_map_unregistered_after_terminal_free = lookup_page(first_blocks[0]).is_null();
+            let first_arena_page_bitmap_clear_after_terminal_free = unsafe { arena.pages() }
+                .expect("the ordinary arena bitmap remains available")
+                .is_clear_range(trace.first_slice, 1)
+                == Some(true);
+            let first_arena_slice_released_after_terminal_free = unsafe { arena.slices_free() }
+                .expect("the arena free-slice bitmap remains available")
+                .is_set_range(trace.first_slice, trace.slice_count)
+                == Some(true);
+            let first_abandoned_bitmap_clear_after_terminal_free =
+                abandoned_map.bitmap_is_clear(trace.first_slice);
+            let second_page_after_first_terminal = NonNull::new(lookup_page(second_blocks[0]))
+                .expect("the second direct-small member remains published after the first terminal release");
+            let second_page_map_registered_after_first_terminal = second_page_after_first_terminal
+                .as_ptr()
+                .expose_provenance()
+                == trace.second_page_identity;
+            let second_arena_page_bitmap_set_after_first_terminal = unsafe { arena.pages() }
+                .expect("the ordinary arena bitmap remains available")
+                .is_set_range(trace.second_slice, 1)
+                == Some(true);
+            let second_unmapped_after_first_terminal = unsafe {
+                second_page_after_first_terminal.as_ref().abandoned_test_thread_id()
+                    == THREAD_ID_ABANDONED
+                    && second_page_after_first_terminal.as_ref().remote_free_test_head() == 0
+            } && abandoned_map.bitmap_is_clear(trace.second_slice)
+                && route.test_abandoned_count() == Some(0);
+            let second_used_after_first_terminal = unsafe { second_page_after_first_terminal.as_ref().used() };
+            let abandoned_count_after_first_terminal =
+                route.test_abandoned_count().unwrap_or(usize::MAX);
+            let second_page_retained_after_first_terminal =
+                second_page_map_registered_after_first_terminal
+                    && second_arena_page_bitmap_set_after_first_terminal
+                    && second_unmapped_after_first_terminal;
+            assert!(
+                first_terminal_released_only
+                    && first_page_map_unregistered_after_terminal_free
+                    && first_arena_page_bitmap_clear_after_terminal_free
+                    && first_arena_slice_released_after_terminal_free
+                    && first_abandoned_bitmap_clear_after_terminal_free
+                    && second_page_retained_after_first_terminal
+                    && second_used_after_first_terminal == trace.capacity,
+                "the first terminal release clears only its PageMap/bitmap/slice state and leaves the second member unmapped"
+            );
+
+            route = match unsafe { route.remote_free_after_thread_exit(second_blocks[0]) } {
+                Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                    route
+                }
+                Ok(_) => panic!("the second direct-small member remains live after its first consumer free"),
+                Err(_) => panic!("the second direct-small member remains source-unmapped after its first consumer free"),
+            };
+            let second_page_after_first_consumer_free = NonNull::new(lookup_page(second_blocks[1]))
+                .expect("the second member remains PageMap-published after its first consumer free");
+            let second_used_after_first_consumer_free = unsafe {
+                second_page_after_first_consumer_free.as_ref().used()
+            };
+            assert_eq!(
+                second_used_after_first_consumer_free,
+                trace.capacity,
+                "the second direct-small free retains its just-published partial head"
+            );
+            for block in second_blocks
+                .iter()
+                .copied()
+                .skip(1)
+                .take(partial_head_lag_unmapped_free_count - 1)
+            {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                        route
+                    }
+                    Ok(_) => panic!("the second direct-small member remains live through its partial-head prefix"),
+                    Err(_) => panic!("the second direct-small member remains source-unmapped through its partial-head prefix"),
+                };
+            }
+            let second_page_after_unmapped_prefix =
+                NonNull::new(lookup_page(second_blocks[partial_head_lag_unmapped_free_count]))
+                    .expect("the second member remains PageMap-published through the partial-head prefix");
+            let second_used_after_unmapped_prefix = unsafe {
+                second_page_after_unmapped_prefix.as_ref().used()
+            };
+            let second_unmapped_after_unmapped_prefix = unsafe {
+                second_page_after_unmapped_prefix.as_ref().abandoned_test_thread_id()
+                    == THREAD_ID_ABANDONED
+                    && second_page_after_unmapped_prefix.as_ref().remote_free_test_head()
+                        == second_blocks[partial_head_lag_unmapped_free_count - 1]
+                            .as_ptr()
+                            .addr()
+            } && abandoned_map.bitmap_is_clear(trace.second_slice)
+                && route.test_abandoned_count() == Some(0);
+            assert!(
+                second_unmapped_after_unmapped_prefix
+                    && second_used_after_unmapped_prefix == trace.capacity - 8,
+                "the second member independently retains its ninth direct head and stays unmapped"
+            );
+
+            route = match unsafe {
+                route.remote_free_after_thread_exit(second_blocks[partial_head_lag_unmapped_free_count])
+            } {
+                Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                    route
+                }
+                Ok(_) => panic!("the second direct-small mapping boundary retains live blocks"),
+                Err(_) => panic!("the second direct-small mapping boundary publishes its static-main pair"),
+            };
+            let second_page_after_mapped_boundary = NonNull::new(lookup_page(
+                second_blocks[partial_head_lag_mapped_transition_free_count],
+            ))
+            .expect("the second member remains PageMap-published after its mapping boundary");
+            let second_used_after_mapped_boundary = unsafe {
+                second_page_after_mapped_boundary.as_ref().used()
+            };
+            let second_abandoned_bitmap_set_after_reabandon_boundary =
+                !abandoned_map.bitmap_is_clear(trace.second_slice);
+            let second_mapped_after_mapped_boundary = unsafe {
+                second_page_after_mapped_boundary.as_ref().abandoned_test_thread_id()
+                    == THREAD_ID_ABANDONED_MAPPED
+                    && second_page_after_mapped_boundary.as_ref().remote_free_test_head() == 0
+            } && second_abandoned_bitmap_set_after_reabandon_boundary
+                && route.test_abandoned_count() == Some(1);
+            let abandoned_count_after_second_boundary =
+                route.test_abandoned_count().unwrap_or(usize::MAX);
+            assert!(
+                second_mapped_after_mapped_boundary
+                    && second_used_after_mapped_boundary == trace.capacity - 10,
+                "the tenth second-member free independently collects the retained head and maps that member"
+            );
+
+            for block in second_blocks
+                .iter()
+                .copied()
+                .skip(partial_head_lag_mapped_transition_free_count)
+                .take(trace.capacity - partial_head_lag_unmapped_free_count - 2)
+            {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route)) => {
+                        route
+                    }
+                    Ok(_) => panic!("a nonterminal mapped second-member free remains in the aggregate route"),
+                    Err(_) => panic!("a mapped second-member free remains in the aggregate route"),
+                };
+            }
+            let terminal_route_released_all = match unsafe {
+                route.remote_free_after_thread_exit(
+                    *second_blocks.last().expect("the second direct-small member has one final client"),
+                )
+            } {
+                Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::ReleasedAll) => true,
+                Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::StillLive(route))
+                | Ok(MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final direct-small free releases the complete aggregate route")
+                }
+                Err(_) => panic!("the final direct-small free releases its mapped aggregate member"),
+            };
+            let second_page_map_unregistered_after_terminal_free = lookup_page(second_blocks[0]).is_null();
+            let second_arena_page_bitmap_clear_after_terminal_free = unsafe { arena.pages() }
+                .expect("the ordinary arena bitmap remains available")
+                .is_clear_range(trace.second_slice, 1)
+                == Some(true);
+            let second_arena_slice_released_after_terminal_free = unsafe { arena.slices_free() }
+                .expect("the arena free-slice bitmap remains available")
+                .is_set_range(trace.second_slice, trace.slice_count)
+                == Some(true);
+            let second_abandoned_bitmap_clear_after_terminal_free =
+                abandoned_map.bitmap_is_clear(trace.second_slice);
+            let abandoned_count_after_final_terminal = if first_abandoned_bitmap_clear_after_terminal_free
+                && second_abandoned_bitmap_clear_after_terminal_free
+            {
+                0
+            } else {
+                usize::MAX
+            };
+            let page_map_reopened_after_terminal_free =
+                matches!(page_map.begin_page_lifecycle().and_then(|lease| lease.finish()), Ok(()));
+            let route_empty_after_final_terminal = terminal_route_released_all
+                && abandoned_count_after_final_terminal == 0
+                && page_map_reopened_after_terminal_free;
+            assert!(
+                terminal_route_released_all
+                    && second_page_map_unregistered_after_terminal_free
+                    && second_arena_page_bitmap_clear_after_terminal_free
+                    && second_arena_slice_released_after_terminal_free
+                    && second_abandoned_bitmap_clear_after_terminal_free
+                    && route_empty_after_final_terminal,
+                "the final direct-small free clears the final PageMap/bitmap/slice publication and terminal route"
+            );
+
+            let valid = trace.arena_backed
+                && trace.small_page
+                && trace.direct_small
+                && trace.distinct_pages
+                && trace.same_bin
+                && trace.same_size
+                && trace.same_geometry
+                && trace.full_before_thread_done
+                && trace.ordinary_regular_bin_before_thread_done
+                && trace.ordinary_queue_count_before_thread_done == 2
+                && trace.direct_cache_complete_image_before_thread_done
+                && trace.direct_cache_head_is_member_before_thread_done
+                && trace.no_remote_free_before_thread_done
+                && trace.source_thread_teardown_completed
+                && source_worker_joined_before_consumer_frees
+                && trace.request_size == 1024
+                && trace.block_size == 1024
+                && trace.capacity == 64
+                && trace.reserved == 64
+                && trace.slice_count == 1
+                && trace.direct_cache_range_start == 113
+                && trace.direct_cache_range_end == 128
+                && abandoned_count_after_thread_done == 0
+                && first_page_map_registered_after_thread_done
+                && first_page_map_all_slices_registered_after_thread_done
+                && first_arena_page_bitmap_set_after_thread_done
+                && first_unmapped_after_thread_done
+                && first_abandoned_after_thread_done
+                && first_queue_detached_after_thread_done
+                && first_abandoned_bitmap_clear_after_thread_done
+                && first_used_after_thread_done == 64
+                && first_used_after_first_consumer_free == 64
+                && partial_head_lag_unmapped_free_count == 9
+                && first_used_after_unmapped_prefix == 56
+                && first_unmapped_after_unmapped_prefix
+                && first_mapped_after_mapped_boundary
+                && first_abandoned_bitmap_set_after_reabandon_boundary
+                && first_used_after_mapped_boundary == 54
+                && first_page_map_unregistered_after_terminal_free
+                && first_arena_page_bitmap_clear_after_terminal_free
+                && first_arena_slice_released_after_terminal_free
+                && first_abandoned_bitmap_clear_after_terminal_free
+                && second_page_map_registered_after_thread_done
+                && second_page_map_all_slices_registered_after_thread_done
+                && second_arena_page_bitmap_set_after_thread_done
+                && second_unmapped_after_thread_done
+                && second_abandoned_after_thread_done
+                && second_queue_detached_after_thread_done
+                && second_abandoned_bitmap_clear_after_thread_done
+                && second_used_after_thread_done == 64
+                && second_used_after_first_consumer_free == 64
+                && second_used_after_unmapped_prefix == 56
+                && second_unmapped_after_unmapped_prefix
+                && second_mapped_after_mapped_boundary
+                && second_abandoned_bitmap_set_after_reabandon_boundary
+                && second_used_after_mapped_boundary == 54
+                && second_page_map_unregistered_after_terminal_free
+                && second_arena_page_bitmap_clear_after_terminal_free
+                && second_arena_slice_released_after_terminal_free
+                && second_abandoned_bitmap_clear_after_terminal_free
+                && first_terminal_released_only
+                && second_page_retained_after_first_terminal
+                && abandoned_count_after_first_terminal == 0
+                && abandoned_count_after_second_boundary == 1
+                && abandoned_count_after_final_terminal == 0
+                && route_empty_after_final_terminal;
+
+            std::println!("CRABC_MI_LATER_THREAD_EXIT_FULL_DIRECT_SMALL_PAGES_TRACE_BEGIN");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.arena_backed={}", trace.arena_backed as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.small_page={}", trace.small_page as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.direct_small={}", trace.direct_small as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page_count=2");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.same_size={}", trace.same_size as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.full_before_thread_done={}", trace.full_before_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.ordinary_regular_bin_before_thread_done={}", trace.ordinary_regular_bin_before_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.ordinary_queue_count_before_thread_done={}", trace.ordinary_queue_count_before_thread_done);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.direct_cache_range_matches_before_thread_done={}", (trace.direct_cache_complete_image_before_thread_done && trace.direct_cache_head_is_member_before_thread_done) as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.direct_cache_range_start={}", trace.direct_cache_range_start);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.direct_cache_range_end={}", trace.direct_cache_range_end);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.no_remote_free_before_thread_done={}", trace.no_remote_free_before_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.source_thread_teardown_completed={}", trace.source_thread_teardown_completed as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.source_thread_joined_before_client_frees={}", source_worker_joined_before_consumer_frees as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.request_size={}", trace.request_size);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.block_size={}", trace.block_size);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.capacity={}", trace.capacity);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.reserved={}", trace.reserved);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.slice_count={}", trace.slice_count);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.abandoned_count_after_thread_done={abandoned_count_after_thread_done}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.first_terminal_released_only={}", first_terminal_released_only as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.second_page_retained_after_first_terminal={}", second_page_retained_after_first_terminal as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.abandoned_count_after_first_terminal={abandoned_count_after_first_terminal}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.abandoned_count_after_second_boundary={abandoned_count_after_second_boundary}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.abandoned_count_after_final_terminal={abandoned_count_after_final_terminal}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.route_empty_after_final_terminal={}", route_empty_after_final_terminal as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.unmapped_after_thread_done={}", first_unmapped_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.abandoned_after_thread_done={}", first_abandoned_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.page_map_registered_after_thread_done={}", first_page_map_registered_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.page_map_slice_count_after_thread_done={}", trace.slice_count);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.page_map_all_slices_registered_after_thread_done={}", first_page_map_all_slices_registered_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.arena_page_bitmap_set_after_thread_done={}", first_arena_page_bitmap_set_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.ordinary_queue_detached_after_thread_done={}", first_queue_detached_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.abandoned_bitmap_clear_after_thread_done={}", first_abandoned_bitmap_clear_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.used_after_thread_done={first_used_after_thread_done}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.used_after_first_consumer_free={first_used_after_first_consumer_free}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.unmapped_prefix_free_count={partial_head_lag_unmapped_free_count}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.used_after_unmapped_prefix={first_used_after_unmapped_prefix}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.unmapped_after_unmapped_prefix={}", first_unmapped_after_unmapped_prefix as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.mapped_after_reabandon_boundary={}", first_mapped_after_mapped_boundary as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.abandoned_bitmap_set_after_reabandon_boundary={}", first_abandoned_bitmap_set_after_reabandon_boundary as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.used_after_reabandon_boundary={first_used_after_mapped_boundary}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.page_map_unregistered_after_terminal_free={}", first_page_map_unregistered_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.arena_page_bitmap_clear_after_terminal_free={}", first_arena_page_bitmap_clear_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.arena_slice_released_after_terminal_free={}", first_arena_slice_released_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page0.abandoned_bitmap_clear_after_terminal_free={}", first_abandoned_bitmap_clear_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.unmapped_after_thread_done={}", second_unmapped_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.abandoned_after_thread_done={}", second_abandoned_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.page_map_registered_after_thread_done={}", second_page_map_registered_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.page_map_slice_count_after_thread_done={}", trace.slice_count);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.page_map_all_slices_registered_after_thread_done={}", second_page_map_all_slices_registered_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.arena_page_bitmap_set_after_thread_done={}", second_arena_page_bitmap_set_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.ordinary_queue_detached_after_thread_done={}", second_queue_detached_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.abandoned_bitmap_clear_after_thread_done={}", second_abandoned_bitmap_clear_after_thread_done as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.used_after_thread_done={second_used_after_thread_done}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.used_after_first_consumer_free={second_used_after_first_consumer_free}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.unmapped_prefix_free_count={partial_head_lag_unmapped_free_count}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.used_after_unmapped_prefix={second_used_after_unmapped_prefix}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.unmapped_after_unmapped_prefix={}", second_unmapped_after_unmapped_prefix as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.mapped_after_reabandon_boundary={}", second_mapped_after_mapped_boundary as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.abandoned_bitmap_set_after_reabandon_boundary={}", second_abandoned_bitmap_set_after_reabandon_boundary as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.used_after_reabandon_boundary={second_used_after_mapped_boundary}");
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.page_map_unregistered_after_terminal_free={}", second_page_map_unregistered_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.arena_page_bitmap_clear_after_terminal_free={}", second_arena_page_bitmap_clear_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.arena_slice_released_after_terminal_free={}", second_arena_slice_released_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.page1.abandoned_bitmap_clear_after_terminal_free={}", second_abandoned_bitmap_clear_after_terminal_free as u8);
+            std::println!("trace.later_thread_exit_full_direct_small_pages.valid={}", valid as u8);
+            std::println!("CRABC_MI_LATER_THREAD_EXIT_FULL_DIRECT_SMALL_PAGES_TRACE_END");
+            assert!(valid, "full direct-small aggregate trace diverged from pinned C");
+
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("full direct-small aggregate trace fixture remains current-thread local");
     }
 
     #[test]

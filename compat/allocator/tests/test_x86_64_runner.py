@@ -61,6 +61,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-dynamic-full-medium-homogeneous-aggregate",
             "allocator-dynamic-full-singleton-homogeneous-aggregate",
             "allocator-dynamic-full-non-direct-small-homogeneous-aggregate",
+            "allocator-later-thread-exit-full-direct-small-pages",
             "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
             "allocator-dynamic-os-aligned-singleton",
             "allocator-dynamic-arena-singleton-post-exit",
@@ -370,6 +371,30 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn(
             "allocator-dynamic-full-non-direct-small-unmapped-reabandon takes no arguments",
+            result.stderr,
+        )
+
+    def test_later_thread_exit_full_direct_small_pages_command_is_closed_and_uses_its_private_offline_probe(
+        self,
+    ) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn(
+            "allocator-later-thread-exit-full-direct-small-pages)",
+            source,
+        )
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_later_thread_exit_full_direct_small_pages_evidence.py "
+            "--offline",
+            source,
+        )
+        result = self.run_launcher(
+            "allocator-later-thread-exit-full-direct-small-pages",
+            "unexpected",
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-later-thread-exit-full-direct-small-pages takes no arguments",
             result.stderr,
         )
 

@@ -1019,6 +1019,23 @@ native x86-64 engine evidence only and does not establish general lifecycle,
 routing, concurrency, abandonment/adoption, public x86 support, backend
 promotion, libc integration, or AArch64 evidence.
 
+The native x86-only track also has a separate 67-field later-main homogeneous
+full direct-small aggregate differential. Its real pinned-C pthread worker fills
+exactly two same-bin full ordinary regular-bin arena pages from request/block
+size 1024 (capacity/reserved 64, one arena slice each), verifies the complete
+direct-cache range `[113, 128]` with no remote free, runs `mi_thread_done()`,
+and the consumer joins before every sequential free. Both members begin
+unmapped-abandoned with PageMap and ordinary arena bitmap retained and ordinary
+queues detached. The C source dynamic and Rust typed later-main static-main
+abandoned bitmap/count are both clear through each nine-free partial-collector
+prefix at `used == 56`, then both publish the normalized common `abandoned_*`
+state at the mapped `used == 54` boundary. Page 0 releases independently before
+page 1 closes the route. Rust observes only a scoped test worker and join for
+common typed private facts, not crabc pthread/TLS callback parity. This private
+native x86-64 engine evidence does not establish general lifecycle, routing,
+concurrency, abandonment/adoption, allocation-time claim/reclaim/requeue,
+public x86 support, backend promotion, libc integration, or AArch64 evidence.
+
 The native x86-only track also has a separate 43-field dynamic nonfull
 regular-pages distinct-bin aggregate differential. Its pinned-C probe uses a
 real worker pthread to establish exactly two initially nonfull arena medium

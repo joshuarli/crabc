@@ -29,6 +29,10 @@ FULL_NON_DIRECT_SMALL_HOMOGENEOUS_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-full-non-direct-small-homogeneous-aggregate-evidence-v3.5.0.json"
 )
+LATER_THREAD_EXIT_FULL_DIRECT_SMALL_PAGES_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-later-thread-exit-full-direct-small-pages-evidence-v3.5.0.json"
+)
 DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json"
@@ -396,6 +400,90 @@ class X86_64SourceMapTests(unittest.TestCase):
             ],
             1,
         )
+
+    def test_later_thread_exit_full_direct_small_pages_lane_is_scoped_to_reviewed_units(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_later_thread_exit_full_direct_small_pages_evidence.py",
+            "compat/allocator/x86_64-later-thread-exit-full-direct-small-pages-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_later_thread_exit_full_direct_small_pages_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+        schema = json.loads(
+            LATER_THREAD_EXIT_FULL_DIRECT_SMALL_PAGES_SCHEMA.read_text(encoding="utf-8")
+        )
+        expected = schema["trace"]["expected_values"]
+        prefix = "trace.later_thread_exit_full_direct_small_pages"
+        self.assertEqual(len(expected), 67)
+        for leaf, value in (
+            ("page_count", 2),
+            ("request_size", 1024),
+            ("block_size", 1024),
+            ("capacity", 64),
+            ("reserved", 64),
+            ("slice_count", 1),
+            ("direct_cache_range_start", 113),
+            ("direct_cache_range_end", 128),
+            ("abandoned_count_after_thread_done", 0),
+            ("abandoned_count_after_first_terminal", 0),
+            ("abandoned_count_after_second_boundary", 1),
+            ("abandoned_count_after_final_terminal", 0),
+        ):
+            with self.subTest(field=leaf):
+                self.assertEqual(expected[f"{prefix}.{leaf}"], value)
+        for page in ("page0", "page1"):
+            with self.subTest(page=page):
+                self.assertEqual(
+                    expected[f"{prefix}.{page}.unmapped_prefix_free_count"], 9
+                )
+                self.assertEqual(
+                    expected[f"{prefix}.{page}.used_after_unmapped_prefix"], 56
+                )
+                self.assertEqual(
+                    expected[f"{prefix}.{page}.used_after_reabandon_boundary"], 54
+                )
+                self.assertEqual(
+                    expected[
+                        f"{prefix}.{page}.arena_slice_released_after_terminal_free"
+                    ],
+                    1,
+                )
+        self.assertTrue(schema["scope"]["c_oracle_real_pthread_thread_done_and_join_required"])
+        self.assertTrue(schema["scope"]["rust_later_main_typed_route_only"])
+        self.assertTrue(schema["scope"]["rust_scoped_test_worker_and_join_observed"])
+        self.assertFalse(
+            schema["scope"]["rust_crabc_pthread_or_tls_callback_parity_claimed"]
+        )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                self.assertEqual(units[unit_id]["status"], "partial")
 
     def test_dynamic_nonfull_regular_pages_distinct_bin_aggregate_lane_is_scoped_to_reviewed_units(
         self,

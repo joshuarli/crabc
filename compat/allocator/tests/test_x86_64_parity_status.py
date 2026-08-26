@@ -332,6 +332,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-dynamic-full-medium-homogeneous-aggregate-differential",
                 "native-dynamic-full-singleton-homogeneous-aggregate-differential",
                 "native-dynamic-full-non-direct-small-homogeneous-aggregate-differential",
+                "native-later-thread-exit-full-direct-small-pages-differential",
                 "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
                 "native-dynamic-arena-singleton-post-exit-differential",
@@ -694,6 +695,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-dynamic-full-non-direct-small-homogeneous-aggregate-differential"]["report"],
             "compat/reports/allocator/x86_64/dynamic-full-non-direct-small-homogeneous-aggregate.json",
+        )
+        self.assertEqual(
+            gates["native-later-thread-exit-full-direct-small-pages-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-later-thread-exit-full-direct-small-pages",
+        )
+        self.assertEqual(
+            gates["native-later-thread-exit-full-direct-small-pages-differential"]["report"],
+            "compat/reports/allocator/x86_64/later-thread-exit-full-direct-small-pages.json",
         )
         self.assertEqual(
             gates[
@@ -1445,6 +1454,38 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, dynamic_full_non_direct_small_aggregate)
+        later_thread_exit_full_direct_small_pages = gates[
+            "native-later-thread-exit-full-direct-small-pages-differential"
+        ]["claim"]
+        for fragment in (
+            "67 address-independent values",
+            "bounded later-main homogeneous full direct-small aggregate",
+            "real pinned-C worker pthread",
+            "exactly two same-bin full ordinary regular-bin arena pages",
+            "request/block size 1024",
+            "capacity/reserved 64",
+            "one arena slice each",
+            "complete direct-cache image `[113, 128]`",
+            "no remote free",
+            "real mi_thread_done()",
+            "pthread_join()s before any sequential free",
+            "unmapped-abandoned",
+            "ordinary queues detached",
+            "C source dynamic and Rust static-main abandoned bitmap/count are both clear",
+            "nine frees (used 56 while unmapped)",
+            "used 54",
+            "corresponding C source dynamic and Rust static-main abandoned bitmap/count",
+            "common `abandoned_*` facts",
+            "first terminal free releases only page 0",
+            "page 1 remains published",
+            "scoped test worker and join",
+            "crabc pthread/TLS callback parity",
+            "private native x86-64 engine evidence only",
+            "general lifecycle",
+            "allocation-time claim/reclaim/requeue",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, later_thread_exit_full_direct_small_pages)
         dynamic_nonfull_regular_pages_distinct_bin_aggregate = gates[
             "native-dynamic-nonfull-regular-pages-distinct-bin-aggregate-differential"
         ]["claim"]
