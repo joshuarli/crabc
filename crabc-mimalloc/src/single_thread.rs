@@ -2066,8 +2066,9 @@ pub(crate) struct ThreadExitFullDirectSmallPagesPostExitParts<'main, 'arena> {
 /// down.
 ///
 /// This is a distinct source boundary from the full-medium aggregate. It
-/// shares only sealed storage with that route; each member has the complete
-/// large 64-slice PageMap span and remains client-free-only.
+/// shares only sealed storage with that route; each member retains its
+/// complete large 64-slice arena span, with a source-shaped PageMap range,
+/// and remains client-free-only.
 #[must_use = "detached full large pages must become one process route or remain terminally retained"]
 pub(crate) struct ThreadExitFullLargePagesPostExitDetach<'attachment, 'main, 'arena> {
     session: MainHeapThreadPageDrainSession<'attachment, 'main>,
@@ -8303,18 +8304,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitFullNonDirectSmallPagesPostExitDetach {
             session,
@@ -8708,18 +8714,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitFullDirectSmallPagesPostExitDetach {
             session,
@@ -9804,18 +9815,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitFullMediumPagesPostExitDetach {
             session,
@@ -11051,18 +11067,23 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             collection_poison,
+            page_commit_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
             #[cfg(test)]
             last_page_to_full: _,
             #[cfg(test)]
             page_commit_on_demand: _,
+            #[cfg(test)]
+            page_area_commit_lease: _,
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(collection_poison.is_none());
+        debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         let _ = collection_poison;
+        let _ = page_commit_poison;
 
         Ok(ThreadExitFullLargePagesPostExitDetach {
             session,
@@ -14007,7 +14028,10 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
         {
             return false;
         }
-        for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+        let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
+            return false;
+        };
+        for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
             let Some(address) = slice_start.addr().checked_add(offset) else {
                 return false;
             };
@@ -14019,7 +14043,7 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
         // clear, metadata retirement, then arena-slice release. The mapped
         // tail already cleared its abandoned bitmap/count pair; an unmapped
         // member never had one.
-        if unsafe { page_map.unregister_range(slice_start, size) }.is_err() {
+        if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
         if unsafe { self.arena.pages() }

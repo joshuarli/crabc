@@ -14801,6 +14801,28 @@ mod tests {
                     let second_slice_start = arena
                         .slice_start(second_slice)
                         .expect("the second large span begins in the selected arena");
+                    let first_page_start_offset = unsafe { first_ref.start() }
+                        .addr()
+                        .checked_sub(first_slice_start.addr())
+                        .expect("the first large page area begins in its arena span");
+                    let second_page_start_offset = unsafe { second_ref.start() }
+                        .addr()
+                        .checked_sub(second_slice_start.addr())
+                        .expect("the second large page area begins in its arena span");
+                    let first_page_map_slices = crate::page::page_map_slice_count(
+                        first_ref.block_size(),
+                        first_ref.reserved(),
+                        first_page_start_offset,
+                    )
+                    .expect("the first full-large member has source PageMap geometry");
+                    let second_page_map_slices = crate::page::page_map_slice_count(
+                        second_ref.block_size(),
+                        second_ref.reserved(),
+                        second_page_start_offset,
+                    )
+                    .expect("the second full-large member has source PageMap geometry");
+                    assert_eq!(first_page_map_slices, expected_large_slices - 1);
+                    assert_eq!(second_page_map_slices, expected_large_slices - 1);
 
                     let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
                         let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
@@ -14822,18 +14844,27 @@ mod tests {
                     assert_eq!(route.test_remaining_pages(), 2);
                     assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
                     assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
-                    for (page, slice_start) in [
-                        (first_page, first_slice_start),
-                        (second_page, second_slice_start),
+                    for (page, slice_start, page_map_slices) in [
+                        (first_page, first_slice_start, first_page_map_slices),
+                        (second_page, second_slice_start, second_page_map_slices),
                     ] {
-                        for offset in 0..expected_large_slices {
+                        for offset in 0..page_map_slices {
                             let address = unsafe {
                                 slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                             };
                             assert_eq!(
                                 unsafe { page_map.page_map().unwrap().checked_lookup(address) },
                                 page.as_ptr(),
-                                "each full large member retains all PageMap entries while source-unmapped"
+                                "each full large member retains every source PageMap entry while source-unmapped"
+                            );
+                        }
+                        for offset in page_map_slices..expected_large_slices {
+                            let address = unsafe {
+                                slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
+                            };
+                            assert!(
+                                unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
+                                "the final source large arena slice is storage slack, not a PageMap entry"
                             );
                         }
                     }
@@ -14875,13 +14906,22 @@ mod tests {
                     assert_eq!(route.test_remaining_pages(), 1);
                     assert_eq!(route.test_abandoned_count_for_bin(first_bin), Some(0));
                     assert_eq!(route.test_abandoned_count_for_bin(second_bin), Some(0));
-                    for offset in 0..expected_large_slices {
+                    for offset in 0..first_page_map_slices {
                         let address = unsafe {
                             first_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                         };
                         assert!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
-                            "the first terminal free unregisters every one of its 64 PageMap slices"
+                            "the first terminal free unregisters every published large PageMap slice"
+                        );
+                    }
+                    for offset in first_page_map_slices..expected_large_slices {
+                        let address = unsafe {
+                            first_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
+                        };
+                        assert!(
+                            unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
+                            "the first terminal free leaves the source large arena slack unmapped"
                         );
                     }
                     assert_eq!(
@@ -14889,14 +14929,23 @@ mod tests {
                         Some(true),
                         "the first terminal free clears only its ordinary main-arena bit"
                     );
-                    for offset in 0..expected_large_slices {
+                    for offset in 0..second_page_map_slices {
                         let address = unsafe {
                             second_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                         };
                         assert_eq!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) },
                             second_page.as_ptr(),
-                            "the first release cannot disturb the second large PageMap span"
+                            "the first release cannot disturb the second published large PageMap span"
+                        );
+                    }
+                    for offset in second_page_map_slices..expected_large_slices {
+                        let address = unsafe {
+                            second_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
+                        };
+                        assert!(
+                            unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
+                            "the second large arena slack remains outside the PageMap while its member is live"
                         );
                     }
 
@@ -14936,13 +14985,22 @@ mod tests {
                         }
                         Err(_) => panic!("the second final free completes the aggregate release"),
                     }
-                    for offset in 0..expected_large_slices {
+                    for offset in 0..second_page_map_slices {
                         let address = unsafe {
                             second_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
                         };
                         assert!(
                             unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
-                            "the second terminal free unregisters every last large PageMap slice"
+                            "the second terminal free unregisters every final published large PageMap slice"
+                        );
+                    }
+                    for offset in second_page_map_slices..expected_large_slices {
+                        let address = unsafe {
+                            second_slice_start.add(offset * crate::config::ARENA_SLICE_SIZE)
+                        };
+                        assert!(
+                            unsafe { page_map.page_map().unwrap().checked_lookup(address) }.is_null(),
+                            "the second terminal free leaves the source large arena slack unmapped"
                         );
                     }
                     assert_eq!(
@@ -20665,6 +20723,10 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("the retired prepass live medium has no immediate local head")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("the live medium page still requires a process route")
@@ -20917,6 +20979,10 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("two live medium pages cannot become the sole immediate-medium handoff")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("two live medium pages cannot become an empty drain")
@@ -21391,6 +21457,10 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("two live medium pages cannot become the sole immediate-medium handoff")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("two live medium pages cannot become an empty drain")
@@ -22091,6 +22161,10 @@ mod tests {
                     });
                     let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
+                            core::mem::forget(route);
+                            panic!("two same-bin live medium pages cannot become the sole immediate-medium handoff")
+                        }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
                             panic!("two same-bin live medium pages cannot become an empty drain")
