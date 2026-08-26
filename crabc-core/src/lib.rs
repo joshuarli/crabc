@@ -90,7 +90,12 @@ pub mod net;
 /// its historical `_res` state at its own ABI boundary.
 pub mod resolver;
 
-/// Direct Linux virtual-memory operations.
+/// Direct Linux/AArch64 virtual-memory operations.
+#[cfg(target_arch = "aarch64")]
+pub mod mm;
+/// Deliberately bounded Linux/x86-64 virtual-memory operations.
+#[cfg(target_arch = "x86_64")]
+#[path = "mm_x86_64.rs"]
 pub mod mm;
 
 /// Direct Linux/AArch64 signal operations.

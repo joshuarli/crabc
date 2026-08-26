@@ -1,6 +1,16 @@
 #ifndef _CRABC_SYS_SYSCALL_H
 #define _CRABC_SYS_SYSCALL_H
 
+#if defined(__x86_64__)
+/*
+ * The staged Linux/x86-64 public syscall-number slice is source-only.
+ * Keep its distinct numeric namespace out of the AArch64 header body so an
+ * x86 compile cannot silently inherit AArch64 syscall numbers.
+ */
+#include <bits/syscall.h>
+
+#else
+
 #define __NR_io_setup 0
 #define __NR_io_destroy 1
 #define __NR_io_submit 2
@@ -654,5 +664,7 @@
 #define SYS_file_getattr	468
 #define SYS_file_setattr	469
 #define SYS_listns		470
+
+#endif /* __x86_64__ */
 
 #endif

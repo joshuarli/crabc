@@ -61,6 +61,9 @@ pub mod ipc;
 pub mod memory;
 #[cfg(target_arch = "aarch64")]
 pub mod mm;
+#[cfg(target_arch = "x86_64")]
+#[path = "mm_x86_64.rs"]
+pub mod mm;
 #[cfg(target_arch = "aarch64")]
 pub mod mount;
 #[cfg(target_arch = "aarch64")]

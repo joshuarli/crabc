@@ -37,12 +37,14 @@ typedef unsigned wint_t;
 #endif
 
 
-#if defined(__NEED_blksize_t) && !defined(__DEFINED_blksize_t)
+#if !defined(__x86_64__) && defined(__NEED_blksize_t) && \
+	!defined(__DEFINED_blksize_t)
 typedef int blksize_t;
 #define __DEFINED_blksize_t
 #endif
 
-#if defined(__NEED_nlink_t) && !defined(__DEFINED_nlink_t)
+#if !defined(__x86_64__) && defined(__NEED_nlink_t) && \
+	!defined(__DEFINED_nlink_t)
 typedef unsigned int nlink_t;
 #define __DEFINED_nlink_t
 #endif

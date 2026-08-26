@@ -23,6 +23,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
   header-abi-project  compile the staged crabc x86 fenv/float header slice
   sys-reg-header-abi  compile the staged crabc x86 ptrace-register header slice
+  types-header-abi  compile the staged crabc x86 C/C++ type-layout header slice
+  syscall-header-abi  compare the staged x86 syscall macro surface with musl
+  mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
   facade run the bounded native x86_64 crabc-rs direct-facade tests
   libc-syscall  run the isolated x86 C-ABI syscall register probe
@@ -38,6 +41,10 @@ subset; `musl-oracle` proves only C/POSIX oracle provenance, and
 `header-abi-project` compiles only the staged public fenv/float/fundamental
 type declarations and does not link an x86 libc artifact.
 `sys-reg-header-abi` compiles only the staged ptrace register-index header.
+`types-header-abi` compiles only staged C/C++ type declarations and opaque
+pthread object layouts. `syscall-header-abi` compares only staged syscall
+number macros. `mm-abi-reference` establishes only the pinned-musl constants
+used by the separately admitted Rust mapping facade.
 `libc-syscall` compiles only the unintegrated raw syscall module.
 `libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
 `libc-setjmp` compiles only the unintegrated control-transfer assembly leaf.
@@ -119,11 +126,15 @@ run_core_tests() {
         fi
 
         test_binary="${test_binaries[0]}"
+        disassembly="$target_dir/fenv-disassembly"
         command -v objdump >/dev/null || {
             printf "ERROR: x86 fenv codegen gate requires objdump\\n" >&2
             exit 1
         }
-        if objdump -d -- "$test_binary" | grep -Eqi "[[:space:]]fxrstor(64)?[[:space:]]"; then
+        # Save output before searching it: with pipefail, grep -q can close
+        # early and turn a harmless SIGPIPE from objdump into a flaky failure.
+        objdump -d -- "$test_binary" > "$disassembly"
+        if grep -Eqi "[[:space:]]fxrstor(64)?[[:space:]]" "$disassembly"; then
             printf "ERROR: x86 fenv codegen must not reload XMM state with fxrstor: %s\\n" \
                 "$test_binary" >&2
             exit 1
@@ -146,6 +157,18 @@ run_header_abi_project() {
 
 run_sys_reg_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_sys_reg_header_abi.sh
+}
+
+run_types_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_types_header_abi.sh
+}
+
+run_syscall_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_syscall_header.sh
+}
+
+run_mm_abi_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_mm_reference.sh
 }
 
 run_libc_syscall_probe() {
@@ -183,7 +206,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|syscall-header-abi|mm-abi-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation) ;;
     *)
         usage >&2
         exit 2
@@ -217,6 +240,21 @@ case "$command" in
         ensure_image
         run_sys_reg_header_abi
         ;;
+    types-header-abi)
+        [ "$#" -eq 0 ] || fail "types-header-abi takes no arguments"
+        ensure_image
+        run_types_header_abi
+        ;;
+    syscall-header-abi)
+        [ "$#" -eq 0 ] || fail "syscall-header-abi takes no arguments"
+        ensure_image
+        run_syscall_header_abi
+        ;;
+    mm-abi-reference)
+        [ "$#" -eq 0 ] || fail "mm-abi-reference takes no arguments"
+        ensure_image
+        run_mm_abi_reference
+        ;;
     core)
         [ "$#" -eq 0 ] || fail "core takes no arguments"
         ensure_image
@@ -227,7 +265,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_io --test x86_64_param --test x86_64_pipe \
+            --test x86_64_eventfd --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe \
             -- --test-threads=1
         ;;
     libc-syscall)

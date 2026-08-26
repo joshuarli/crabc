@@ -2,9 +2,9 @@
 #define _SYS_TYPES_H
 
 /*
- * This is the common public type vocabulary for the AArch64 ABI.  Keeping
- * these definitions here avoids subtly incompatible private copies in the
- * individual POSIX headers: consumers routinely include only sys/types.h.
+ * This is the common public type vocabulary for the staged Linux ABIs.
+ * Keeping these definitions here avoids subtly incompatible private copies in
+ * the individual POSIX headers: consumers routinely include only sys/types.h.
  */
 #include <features.h>
 
@@ -35,7 +35,7 @@ typedef unsigned int gid_t;
 #if defined(__aarch64__)
 typedef int blksize_t;
 #else
-typedef unsigned long blksize_t;
+typedef long blksize_t;
 #endif
 typedef long blkcnt_t;
 typedef unsigned long fsblkcnt_t;
@@ -52,7 +52,11 @@ typedef long ssize_t;
 
 #ifndef _PTHREAD_TYPES_DEFINED
 #define _PTHREAD_TYPES_DEFINED
+#if defined(__x86_64__) && !defined(__cplusplus)
+typedef struct __pthread *pthread_t;
+#else
 typedef unsigned long pthread_t;
+#endif
 typedef struct { unsigned __attr; } pthread_mutexattr_t;
 typedef struct { unsigned __attr; } pthread_condattr_t;
 typedef struct { unsigned __attr[2]; } pthread_rwlockattr_t;

@@ -98,12 +98,12 @@ id = "facade.direct"
 order = 20
 depends_on = ["core.architecture"]
 category = "rust-facade"
-description = "Record-independent direct crabc-rs operations plus scalar eventfd and the proved signal-action boundary."
+description = "Record-independent direct crabc-rs operations plus scalar eventfd, a closed mmap/mprotect/munmap slice, and the proved signal-action boundary."
 aarch64_gates = ["crabc-rs"]
-source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/param.rs"]
-x86_abi_prerequisites = ["x86 syscall register proof", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split"]
+source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/mm_x86_64.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/param.rs", "crabc-core/src/mm_x86_64.rs", "crabc-rs/tests/x86_64_mm.rs", "compat/x86_64/x86_mm_reference_probe.c"]
+x86_abi_prerequisites = ["x86 syscall register proof", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap r10/r8/r9 argument placement and full 64-bit offset"]
 x86_header_prerequisites = ["Not a public C-header surface; the admitted API is typed Rust only."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed direct-facade subset; it excludes every unproved record-owning family." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed direct-facade subset with only the admitted mmap/mprotect/munmap slice; it excludes every unproved record-owning and wider VM-policy family." }]
 oracle = [{ kind = "kernel-abi", source = "Linux 5.10 x86-64 syscall ABI", role = "Direct kernel behavior contract." }, { kind = "test-only-native-api", source = "Pinned Rustix", role = "Later behavior comparison only; never a production dependency." }]
 capabilities = [
   "error.termination.abort",
@@ -164,9 +164,9 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, polling, networking, process, thread, time, mapping, resolver, and runtime-owning families."
+description = "The remaining AArch64 crabc-rs filesystem, polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families."
 aarch64_gates = ["crabc-rs"]
-source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/src/event.rs", "crabc-rs/src/net.rs", "crabc-rs/src/process.rs", "crabc-rs/src/time.rs"]
+source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/src/event.rs", "crabc-rs/src/mm.rs", "crabc-rs/src/net.rs", "crabc-rs/src/process.rs", "crabc-rs/src/time.rs"]
 x86_abi_prerequisites = ["Per-record x86 layout and syscall proof before admission", "x86 signal, socket, time, stat, and poll record layouts"]
 x86_header_prerequisites = ["Published Rust types must correspond to x86 Linux ABI records without borrowing AArch64 constants or layouts."]
 native_evidence = [{ state = "required", command = "Define closed native x86 facade family runners", scope = "Each record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." }]
@@ -340,12 +340,14 @@ depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
 category = "c-abi"
 description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact."
 aarch64_gates = ["abi-probe", "build", "test"]
-source_owners = ["include", "include/bits/alltypes.h", "include/bits/reg.h", "include/bits/setjmp.h", "include/fenv.h", "include/float.h", "include/setjmp.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "compat/x86_64/sys_reg_header_abi_probe.c", "compat/x86_64/run_sys_reg_header_abi.sh", "compat/x86_64/libc_setjmp_probe.c", "compat/x86_64/libc_setjmp_probe.rs", "compat/x86_64/run_libc_setjmp.sh", "libc/src/c_abi/x86_64/setjmp.rs", "libc/src/c_abi.rs", "libc/src/lib.rs"]
+source_owners = ["include", "include/bits/alltypes.h", "include/bits/reg.h", "include/bits/setjmp.h", "include/bits/syscall.h", "include/fenv.h", "include/float.h", "include/setjmp.h", "include/sys/syscall.h", "include/sys/types.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "compat/x86_64/sys_reg_header_abi_probe.c", "compat/x86_64/run_sys_reg_header_abi.sh", "compat/x86_64/types_header_abi_probe.c", "compat/x86_64/types_header_abi_probe.cpp", "compat/x86_64/run_types_header_abi.sh", "compat/x86_64/x86_syscall_header_probe.c", "compat/x86_64/run_x86_syscall_header.sh", "compat/x86_64/libc_setjmp_probe.c", "compat/x86_64/libc_setjmp_probe.rs", "compat/x86_64/run_libc_setjmp.sh", "libc/src/c_abi/x86_64/setjmp.rs", "libc/src/c_abi.rs", "libc/src/lib.rs"]
 x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags", "setjmp's six callee-saved GPRs, post-return stack, instruction pointer, and kernel-sized signal mask"]
-x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; the staged sys/reg.h register indices and setjmp public machine/signal-mask record match musl; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
+x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; the staged sys/reg.h register indices, C/C++ alltypes/sys/types layouts, complete syscall number namespace, and setjmp public machine/signal-mask record match musl; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
 native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh sys-reg-header-abi", scope = "This compile-only ptrace register-index slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh types-header-abi", scope = "This compile-only C/C++ public type and opaque pthread-layout slice is partial evidence." },
+  { state = "required", command = "./scripts/dev-x86_64.sh syscall-header-abi", scope = "This compile-only complete x86 syscall-number macro slice is partial evidence." },
   { state = "required", command = "./scripts/dev-x86_64.sh libc-setjmp", scope = "This source-only x86 control-transfer and signal-mask slice is partial evidence; it does not select crabc-libc." },
 ]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 headers and ABI inventory", role = "C/POSIX layout and compatibility oracle." }]

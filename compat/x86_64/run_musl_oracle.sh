@@ -70,18 +70,22 @@ case "$compiler_target" in
     *) fail "oracle compiler is not an x86_64 musl GCC: ${compiler_target}" ;;
 esac
 
-version_output="$("$MUSL_LIBC" 2>&1 || true)"
-printf '%s\n' "$version_output" | grep -Fxq 'musl libc (x86_64)' || {
-    fail "pinned libc did not identify itself as musl x86_64"
-}
-printf '%s\n' "$version_output" | grep -Fxq "Version ${MUSL_VERSION}" || {
-    fail "pinned libc did not report musl ${MUSL_VERSION}"
-}
-
 work_dir="$(mktemp -d /tmp/crabc-x86-64-musl-oracle.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
 probe="${work_dir}/probe"
 canonical_libc="$(realpath "$MUSL_LIBC")"
+version_file="$work_dir/libc-version"
+file_header="$work_dir/file-header"
+program_headers="$work_dir/program-headers"
+dynamic_section="$work_dir/dynamic-section"
+
+"$MUSL_LIBC" >"$version_file" 2>&1 || true
+grep -Fxq 'musl libc (x86_64)' "$version_file" || {
+    fail "pinned libc did not identify itself as musl x86_64"
+}
+grep -Fxq "Version ${MUSL_VERSION}" "$version_file" || {
+    fail "pinned libc did not report musl ${MUSL_VERSION}"
+}
 
 env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \
     -u GCC_EXEC_PREFIX -u COMPILER_PATH \
@@ -90,18 +94,20 @@ env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \
     "${ROOT_DIR}/compat/x86_64/musl_oracle_probe.c" \
     -o "$probe"
 
-readelf --file-header --wide "$probe" | grep -Fq 'Advanced Micro Devices X86-64' || {
+readelf --file-header --wide "$probe" >"$file_header"
+grep -Fq 'Advanced Micro Devices X86-64' "$file_header" || {
     fail "oracle probe is not an x86-64 ELF executable"
 }
-interpreter="$(readelf --program-headers --wide "$probe" \
-    | sed -n 's/.*Requesting program interpreter: \(.*\)].*/\1/p')"
+readelf --program-headers --wide "$probe" >"$program_headers"
+interpreter="$(sed -n 's/.*Requesting program interpreter: \(.*\)].*/\1/p' "$program_headers")"
 [ "$interpreter" = "$MUSL_LOADER" ] || {
     fail "oracle probe interpreter is ${interpreter:-missing}, not ${MUSL_LOADER}"
 }
-readelf --dynamic --wide "$probe" | grep -Fq 'Shared library: [libc.so]' || {
+readelf --dynamic --wide "$probe" >"$dynamic_section"
+grep -Fq 'Shared library: [libc.so]' "$dynamic_section" || {
     fail "oracle probe does not need musl libc.so"
 }
-if readelf --dynamic --wide "$probe" | grep -Eq 'libc\.so\.6|ld-linux|libgcc_s|\((RPATH|RUNPATH)\)'; then
+if grep -Eq 'libc\.so\.6|ld-linux|libgcc_s|\((RPATH|RUNPATH)\)' "$dynamic_section"; then
     fail "oracle probe permits a glibc or search-path runtime dependency"
 fi
 

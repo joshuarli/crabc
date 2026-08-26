@@ -28,6 +28,7 @@ RISC_V_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"riscv64"')
 X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/fenv_x86_64.rs"),
     Path("crabc-core/src/lib.rs"),
+    Path("crabc-core/src/mm_x86_64.rs"),
     Path("crabc-core/src/signal_x86_64.rs"),
     Path("crabc-core/src/tests.rs"),
     Path("crabc-core/src/thread.rs"),
@@ -37,12 +38,14 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `lib.rs` exposes only target-record-independent families, `signal.rs` owns
 # the separately-proved x86 kernel signal records and restorer, the `eventfd`
 # pair isolates the scalar event-counter seam from every polling or
-# event-record layout, and `pipe.rs` owns the proved target-specific O_DIRECT
-# packet-mode constant. No other facade source inherits this exception.
+# event-record layout, `pipe.rs` owns the proved target-specific O_DIRECT
+# packet-mode constant, and `mm_x86_64.rs` owns the closed mmap/mprotect/
+# munmap set. No other facade source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/event_x86_64.rs"),
     Path("crabc-rs/src/eventfd.rs"),
     Path("crabc-rs/src/lib.rs"),
+    Path("crabc-rs/src/mm_x86_64.rs"),
     Path("crabc-rs/src/pipe.rs"),
     Path("crabc-rs/src/signal.rs"),
 }

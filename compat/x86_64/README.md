@@ -13,6 +13,9 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh header-abi-reference
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh sys-reg-header-abi
+./scripts/dev-x86_64.sh types-header-abi
+./scripts/dev-x86_64.sh syscall-header-abi
+./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
@@ -50,6 +53,20 @@ x86 C-header support.
 27 Linux/x86-64 ptrace register-index macros in `<sys/reg.h>`. It is another
 declaration-only header ratchet, not a ptrace runtime or `crabc-libc` claim.
 
+`types-header-abi` compiles the C and C++ project-header-first
+`<bits/alltypes.h>`/`<sys/types.h>` declarations and opaque pthread layouts,
+then compiles the same assertions against pinned musl. It covers only the
+named `nlink_t`, `blksize_t`, `pthread_t`, and layout declarations; it does
+not select a pthread implementation or `crabc-libc`.
+
+`syscall-header-abi` places project `<sys/syscall.h>` first and compares its
+complete 384-pair `__NR_*`/`SYS_*` macro surface with pinned musl 1.2.6. It is
+compile-only and provides no syscall behavior or C runtime artifact.
+
+`mm-abi-reference` compile-checks pinned-musl x86 `mmap`/`mprotect`/`munmap`
+numbers and the closed constants used by the native Rust mapping facade. It
+does not compile project C headers or select a C ABI artifact.
+
 [`parity.toml`](parity.toml) is the closed machine-readable x86 completion
 ledger. Its validator and focused tests account for the AArch64-equivalent
 capability/gate families separately from these foundation measurements.
@@ -82,7 +99,7 @@ selected `crabc-libc` artifact or general x86 C ABI claim.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_param`, and
-`x86_64_io`, and `x86_64_pipe` tests. The I/O regression proves vector segment
+`x86_64_io`, `x86_64_mm`, and `x86_64_pipe` tests. The I/O regression proves vector segment
 and short-read behavior, 64-bit positioned/vector offsets, `preadv2`/
 `pwritev2` flags and current-offset sentinel, plus descriptor duplication and
 `fcntl` flags. The eventfd regression proves `NONBLOCK`/`CLOEXEC`, counter
@@ -91,8 +108,12 @@ error through direct kernel seams. The parameter regression proves stable
 scalar aux-vector observations while retaining the x86 exclusion of the
 pointer-valued `AT_EXECFN` API. The pipe regression proves Linux/x86-64's
 distinct `O_DIRECT` packet-mode bit, packet-tail discard, and descriptor
-`CLOEXEC`. It verifies the explicitly admitted direct Rust subset only; it
-does not make polling, epoll, signalfd, other kernel-record-owning facade
+`CLOEXEC`. The mapping regression proves only closed anonymous/file mapping,
+protection, and unmapping calls, including a sparse 4 GiB file offset; it
+permits `PROT_NONE` and rejects `MAP_32BIT`, fixed-map, and wider
+map/protection flags before the raw seam. It verifies the
+explicitly admitted direct Rust subset only; it does not make polling, epoll,
+signalfd, remapping, mapping policy, other kernel-record-owning facade
 families, or a general x86-64 facade selectable or supported.
 
 `ldso-relocation` compiles and runs only the unintegrated

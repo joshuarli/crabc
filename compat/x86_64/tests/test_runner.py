@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|syscall-header-abi|mm-abi-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -42,6 +42,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_project_header_abi.sh', source)
         self.assertIn('run_sys_reg_header_abi()', source)
         self.assertIn('compat/x86_64/run_sys_reg_header_abi.sh', source)
+        self.assertIn('run_types_header_abi()', source)
+        self.assertIn('compat/x86_64/run_types_header_abi.sh', source)
+        self.assertIn('run_syscall_header_abi()', source)
+        self.assertIn('compat/x86_64/run_x86_syscall_header.sh', source)
+        self.assertIn('run_mm_abi_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_mm_reference.sh', source)
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -53,6 +59,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         self.assertIn('--test x86_64_eventfd', source)
         self.assertIn('--test x86_64_io', source)
+        self.assertIn('--test x86_64_mm', source)
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
         self.assertIn('run_libc_syscall_probe()', source)
@@ -84,6 +91,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         sys_reg = (ROOT / "compat" / "x86_64" / "run_sys_reg_header_abi.sh").read_text(
             encoding="utf-8"
         )
+        types = (ROOT / "compat" / "x86_64" / "run_types_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        syscall = (ROOT / "compat" / "x86_64" / "run_x86_syscall_header.sh").read_text(
+            encoding="utf-8"
+        )
+        mapping = (ROOT / "compat" / "x86_64" / "run_x86_mm_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        sys_types = (ROOT / "include" / "sys" / "types.h").read_text(encoding="utf-8")
 
         self.assertIn('ARG MUSL_VERSION=1.2.6', dockerfile)
         self.assertIn('ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a', dockerfile)
@@ -104,6 +121,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('sys_reg_header_abi_probe.c', sys_reg)
         self.assertIn('-fsyntax-only', sys_reg)
         self.assertNotIn('-p crabc-libc', sys_reg)
+        self.assertIn('types_header_abi_probe.c', types)
+        self.assertIn('types_header_abi_probe.cpp', types)
+        self.assertIn('-fsyntax-only', types)
+        self.assertNotIn('-p crabc-libc', types)
+        self.assertIn('x86_syscall_header_probe.c', syscall)
+        self.assertIn('384 __NR_* plus 384 SYS_*', syscall)
+        self.assertIn('-fsyntax-only', syscall)
+        self.assertNotIn('-p crabc-libc', syscall)
+        self.assertIn('x86_mm_reference_probe.c', mapping)
+        self.assertIn('-fsyntax-only', mapping)
+        self.assertNotIn('-p crabc-libc', mapping)
+        self.assertIn('#if defined(__x86_64__) && !defined(__cplusplus)', sys_types)
 
     def test_x86_parity_ledger_is_a_required_contract_check(self) -> None:
         validator = ROOT / "compat" / "x86_64" / "validate_parity_ledger.py"
@@ -371,6 +400,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_eventfd",
                     "--test",
                     "x86_64_io",
+                    "--test",
+                    "x86_64_mm",
                     "--test",
                     "x86_64_param",
                     "--test",

@@ -44,6 +44,13 @@ errno_object="$work_dir/errno.o"
 probe="$work_dir/errno-tls-probe"
 header_trace="$work_dir/header-trace"
 errno_disassembly="$work_dir/errno-disassembly"
+errno_symbols="$work_dir/errno-symbols"
+errno_relocations="$work_dir/errno-relocations"
+errno_object_disassembly="$work_dir/errno-object-disassembly"
+probe_program_headers="$work_dir/probe-program-headers"
+probe_symbols="$work_dir/probe-symbols"
+probe_dynamic_symbols="$work_dir/probe-dynamic-symbols"
+probe_disassembly="$work_dir/probe-disassembly"
 
 cd "$ROOT_DIR"
 cc -E -H -I"$ROOT_DIR/include" compat/x86_64/libc_errno_tls_probe.c \
@@ -63,19 +70,26 @@ rustup run nightly-2026-07-24 rustc --edition=2021 \
     compat/x86_64/libc_errno_tls_probe.rs \
     -o "$errno_object"
 
-readelf --symbols --wide "$errno_object" | grep -Eq '[[:space:]]TLS[[:space:]]+LOCAL[[:space:]]' || {
+# Save evidence before searching it. With `pipefail`, a `grep -q` reader can
+# close its pipe early and make readelf or objdump's harmless SIGPIPE look like
+# a nondeterministic failed assertion.
+readelf --symbols --wide "$errno_object" >"$errno_symbols"
+readelf --relocs --wide "$errno_object" >"$errno_relocations"
+objdump -dr "$errno_object" >"$errno_object_disassembly"
+
+grep -Eq '[[:space:]]TLS[[:space:]]+LOCAL[[:space:]]' "$errno_symbols" || {
     printf 'ERROR: x86 errno object lacks its local TLS datum\n' >&2
     exit 1
 }
-readelf --relocs --wide "$errno_object" | grep -Eq 'R_X86_64_TPOFF(32|64)' || {
+grep -Eq 'R_X86_64_TPOFF(32|64)' "$errno_relocations" || {
     printf 'ERROR: x86 errno object lacks a static TLS TPOFF relocation\n' >&2
     exit 1
 }
-if readelf --relocs --wide "$errno_object" | grep -Eq 'TLSGD|TLSDESC|GOTTPOFF'; then
+if grep -Eq 'TLSGD|TLSDESC|GOTTPOFF' "$errno_relocations"; then
     printf 'ERROR: x86 errno object selected dynamic TLS relocation\n' >&2
     exit 1
 fi
-if objdump -dr "$errno_object" | grep -Fq '__tls_get_addr'; then
+if grep -Fq '__tls_get_addr' "$errno_object_disassembly"; then
     printf 'ERROR: x86 errno object calls __tls_get_addr\n' >&2
     exit 1
 fi
@@ -88,20 +102,26 @@ cc -no-pie -pthread -I"$ROOT_DIR/include" \
     compat/x86_64/libc_errno_tls_probe.c "$errno_object" \
     -o "$probe"
 
-readelf --program-headers --wide "$probe" | grep -Eq '[[:space:]]TLS[[:space:]]' || {
+readelf --program-headers --wide "$probe" >"$probe_program_headers"
+readelf --symbols --wide "$probe" >"$probe_symbols"
+readelf --dyn-syms --wide "$probe" >"$probe_dynamic_symbols"
+objdump -d "$probe" >"$probe_disassembly"
+
+grep -Eq '[[:space:]]TLS[[:space:]]' "$probe_program_headers" || {
     printf 'ERROR: x86 errno probe lacks a TLS program header\n' >&2
     exit 1
 }
-readelf --symbols --wide "$probe" | grep -Eq \
-    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+__errno_location$' || {
+grep -Eq \
+    '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+__errno_location$' \
+    "$probe_symbols" || {
     printf 'ERROR: x86 errno probe does not define public __errno_location\n' >&2
     exit 1
 }
-if readelf --dyn-syms --wide "$probe" | grep -Fq '__tls_get_addr'; then
+if grep -Fq '__tls_get_addr' "$probe_dynamic_symbols"; then
     printf 'ERROR: x86 errno probe has dynamic __tls_get_addr\n' >&2
     exit 1
 fi
-if objdump -d "$probe" | grep -Fq '__tls_get_addr'; then
+if grep -Fq '__tls_get_addr' "$probe_disassembly"; then
     printf 'ERROR: static x86 errno probe calls __tls_get_addr\n' >&2
     exit 1
 fi

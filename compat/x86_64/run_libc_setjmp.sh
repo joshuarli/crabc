@@ -40,6 +40,10 @@ object="$work_dir/setjmp.o"
 reference="$work_dir/musl-setjmp-reference"
 candidate="$work_dir/crabc-setjmp-candidate"
 header_trace="$work_dir/header-trace"
+object_symbols="$work_dir/object-symbols"
+object_relocations="$work_dir/object-relocations"
+candidate_symbols="$work_dir/candidate-symbols"
+candidate_dynamic_symbols="$work_dir/candidate-dynamic-symbols"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -fno-builtin compat/x86_64/libc_setjmp_probe.c -o "$reference"
@@ -64,8 +68,14 @@ rustup run nightly-2026-07-24 rustc --edition=2021 \
 	compat/x86_64/libc_setjmp_probe.rs \
 	-o "$object"
 
+# Save ELF tables before searching them. With `pipefail`, a `grep -q` reader
+# can otherwise close a pipe early and turn readelf's harmless SIGPIPE into a
+# nondeterministic false negative.
+readelf --symbols --wide "$object" >"$object_symbols"
+readelf --relocs --wide "$object" >"$object_relocations"
+
 symbol_address() {
-	readelf --symbols --wide "$object" | awk -v symbol="$1" '$NF == symbol { print $2; exit }'
+	awk -v symbol="$1" '$NF == symbol { print $2; exit }' "$object_symbols"
 }
 
 for symbol in setjmp __setjmp _setjmp longjmp _longjmp sigsetjmp __sigsetjmp siglongjmp; do
@@ -84,18 +94,20 @@ done
 [ "$(symbol_address sigsetjmp)" = "$(symbol_address __sigsetjmp)" ] || {
 	fail "sigsetjmp and __sigsetjmp are not direct aliases"
 }
-if readelf --relocs --wide "$object" | grep -Eq '__tls_get_addr|crabc_libc'; then
+if grep -Eq '__tls_get_addr|crabc_libc' "$object_relocations"; then
 	fail "source-only setjmp object depends on a runtime artifact"
 fi
 
 cc -no-pie -fno-builtin -I"$ROOT_DIR/include" \
 	compat/x86_64/libc_setjmp_probe.c "$object" -o "$candidate"
+readelf --symbols --wide "$candidate" >"$candidate_symbols"
+readelf --dyn-syms --wide "$candidate" >"$candidate_dynamic_symbols"
 for symbol in setjmp __setjmp _setjmp longjmp _longjmp sigsetjmp __sigsetjmp siglongjmp; do
-	readelf --symbols --wide "$candidate" | grep -Eq \
-		"[[:space:]]${symbol}$" || fail "candidate does not define ${symbol}"
+	grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
+		|| fail "candidate does not define ${symbol}"
 done
-if readelf --dyn-syms --wide "$candidate" | grep -Eq \
-	'[[:space:]]UND[[:space:]].*(setjmp|longjmp)$'; then
+if grep -Eq '[[:space:]]UND[[:space:]].*(setjmp|longjmp)$' \
+	"$candidate_dynamic_symbols"; then
 	fail "candidate leaves a setjmp-family symbol to the ambient C runtime"
 fi
 "$candidate"
