@@ -80,6 +80,9 @@ pub mod pattern;
 pub mod pipe;
 #[cfg(target_arch = "aarch64")]
 pub mod process;
+#[cfg(target_arch = "x86_64")]
+#[path = "process_x86_64.rs"]
+pub mod process;
 #[cfg(target_arch = "aarch64")]
 pub mod pty;
 pub mod rand;

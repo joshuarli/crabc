@@ -17,12 +17,15 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh stat-header-abi
 ./scripts/dev-x86_64.sh time-header-abi
 ./scripts/dev-x86_64.sh poll-header-abi
+./scripts/dev-x86_64.sh fcntl-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
 ./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
+./scripts/dev-x86_64.sh poll-reference
+./scripts/dev-x86_64.sh process-identity-reference
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
@@ -82,6 +85,12 @@ declarations, including `nfds_t`, `pollfd`, and the x86 extension values. It
 is source-only header evidence; it does not provide polling behavior or select
 `crabc-libc`.
 
+`fcntl-header-abi` compiles project and pinned-musl C/C++ `<fcntl.h>`
+declarations, including x86 open/fcntl flags, `flock`, GNU owner/file-handle
+records, selected extensions, and large-file aliases including `lockf64`. It
+is source-only header evidence; it does not provide descriptor behavior or
+select `crabc-libc`.
+
 `syscall-header-abi` places project `<sys/syscall.h>` first and compares its
 complete 384-pair `__NR_*`/`SYS_*` macro surface with pinned musl 1.2.6. It is
 compile-only and provides no syscall behavior or C runtime artifact.
@@ -107,6 +116,14 @@ link or select a crabc artifact.
 and `clock_gettime`/`clock_getres` syscall values used by the bounded native
 Rust time facade. It does not compile a project C header or select a C ABI
 artifact.
+
+`poll-reference` executes a pinned-musl x86 pipe fixture through `poll(2)` to
+pin empty, readable, and hangup states used by the bounded typed Rust poll
+facade. It does not compile a project C header or select a C ABI artifact.
+
+`process-identity-reference` executes pinned-musl scalar and
+real/effective/saved UID/GID observations. It is an oracle for the bounded
+typed Rust read-only identity facade, not C process API support.
 
 [`parity.toml`](parity.toml) is the closed machine-readable x86 completion
 ledger. Its validator and focused tests account for the AArch64-equivalent
@@ -139,9 +156,9 @@ restore behavior. It remains a source-only control-transfer leaf, not a
 selected `crabc-libc` artifact or general x86 C ABI claim.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
-`fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_param`, and
-`x86_64_io`, `x86_64_mm`, `x86_64_pipe`, `x86_64_rand`, and `x86_64_time`
-tests. The I/O regression proves vector segment
+`fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_param`,
+`x86_64_io`, `x86_64_mm`, `x86_64_pipe`, `x86_64_poll`,
+`x86_64_process_identity`, `x86_64_rand`, and `x86_64_time` tests. The I/O regression proves vector segment
 and short-read behavior, 64-bit positioned/vector offsets, `preadv2`/
 `pwritev2` flags and current-offset sentinel, plus descriptor duplication and
 `fcntl` flags. The eventfd regression proves `NONBLOCK`/`CLOEXEC`, counter
@@ -153,10 +170,14 @@ distinct `O_DIRECT` packet-mode bit, packet-tail discard, and descriptor
 `CLOEXEC`. The mapping regression proves only closed anonymous/file mapping,
 protection, and unmapping calls, including a sparse 4 GiB file offset; it
 permits `PROT_NONE` and rejects `MAP_32BIT`, fixed-map, and wider
-map/protection flags before the raw seam. It verifies the
-explicitly admitted direct Rust subset only; it does not make polling, epoll,
-signalfd, remapping, mapping policy, other kernel-record-owning facade
-families, or a general x86-64 facade selectable or supported.
+map/protection flags before the raw seam. The poll regression proves typed
+borrowed-record empty/readable/hangup pipe behavior, requested-flag retention,
+and timeout-range rejection. The process-identity regression proves typed PID,
+parent PID, and scalar/real/effective/saved UID/GID observations against
+`/proc/self/status`. It verifies the explicitly admitted direct Rust subset
+only; it does not make ppoll, epoll, signalfd, remapping, mapping policy,
+other kernel-record-owning facade families, or a general x86-64 facade
+selectable or supported.
 
 The random regression proves raw Linux `getrandom` flag values and initialized
 prefix handling, musl's bounded 256-byte `getentropy` behavior, and owned

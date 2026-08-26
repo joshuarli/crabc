@@ -27,12 +27,15 @@ Native Linux/x86-64 staged-foundation evidence commands:
   stat-header-abi  compile the staged x86 C/C++ sys/stat header layouts
   time-header-abi  compile the staged x86 C/C++ time header layouts
   poll-header-abi  compile the staged x86 C/C++ poll header layouts
+  fcntl-header-abi compile the staged x86 C/C++ fcntl header layouts
   syscall-header-abi  compare the staged x86 syscall macro surface with musl
   signal-header-abi  compile the staged x86 GNU/POSIX signal-header layouts
   mman-header-abi  compile the staged x86 C/C++ mapping-header declarations
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   rand-reference  verify pinned-musl x86 getrandom ABI and behavior reference
   time-abi-reference  verify pinned-musl x86 timespec and clock ABI constants
+  poll-reference  verify pinned-musl x86 poll ABI and behavior reference
+  process-identity-reference  verify pinned-musl x86 process-identity behavior
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
   facade run the bounded native x86_64 crabc-rs direct-facade tests
   libc-syscall  run the isolated x86 C-ABI syscall register probe
@@ -50,14 +53,15 @@ subset; `musl-oracle` proves only C/POSIX oracle provenance, and
 type declarations and does not link an x86 libc artifact.
 `sys-reg-header-abi` compiles only the staged ptrace register-index header.
 `types-header-abi` compiles only staged C/C++ type declarations and opaque
-pthread object layouts. `stat-header-abi`, `time-header-abi`, and
-`poll-header-abi` compile only their named C/C++ layout/declaration slices.
+pthread object layouts. `stat-header-abi`, `time-header-abi`, `poll-header-abi`,
+and `fcntl-header-abi` compile only their named C/C++ layout/declaration slices.
 `syscall-header-abi` compares only staged syscall number macros.
 `signal-header-abi` and `mman-header-abi` compile only staged signal-frame and
 mapping declarations. `mm-abi-reference` establishes only the pinned-musl
 constants used by the separately admitted Rust mapping facade.
-`rand-reference` and `time-abi-reference` establish only the named pinned-musl
-kernel boundaries for their separately admitted Rust slices.
+`rand-reference`, `time-abi-reference`, `poll-reference`, and
+`process-identity-reference` establish only their named pinned-musl kernel
+boundaries for separately admitted Rust slices.
 `libc-syscall` compiles only the unintegrated raw syscall module.
 `libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
 `libc-setjmp` compiles only the unintegrated control-transfer assembly leaf.
@@ -189,6 +193,10 @@ run_poll_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_poll_header_abi.sh
 }
 
+run_fcntl_header_abi() {
+    run_in_container bash /workspace/compat/x86_64/run_fcntl_header_abi.sh
+}
+
 run_syscall_header_abi() {
     run_in_container bash /workspace/compat/x86_64/run_x86_syscall_header.sh
 }
@@ -211,6 +219,14 @@ run_rand_reference() {
 
 run_time_abi_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_time_reference.sh
+}
+
+run_poll_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_poll_reference.sh
+}
+
+run_process_identity_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_process_identity_reference.sh
 }
 
 run_libc_syscall_probe() {
@@ -252,7 +268,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|poll-reference|process-identity-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -306,6 +322,11 @@ case "$command" in
         ensure_image
         run_poll_header_abi
         ;;
+    fcntl-header-abi)
+        [ "$#" -eq 0 ] || fail "fcntl-header-abi takes no arguments"
+        ensure_image
+        run_fcntl_header_abi
+        ;;
     syscall-header-abi)
         [ "$#" -eq 0 ] || fail "syscall-header-abi takes no arguments"
         ensure_image
@@ -336,6 +357,16 @@ case "$command" in
         ensure_image
         run_time_abi_reference
         ;;
+    poll-reference)
+        [ "$#" -eq 0 ] || fail "poll-reference takes no arguments"
+        ensure_image
+        run_poll_reference
+        ;;
+    process-identity-reference)
+        [ "$#" -eq 0 ] || fail "process-identity-reference takes no arguments"
+        ensure_image
+        run_process_identity_reference
+        ;;
     core)
         [ "$#" -eq 0 ] || fail "core takes no arguments"
         ensure_image
@@ -346,7 +377,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_rand --test x86_64_time \
+            --test x86_64_eventfd --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_process_identity --test x86_64_rand --test x86_64_time \
             -- --test-threads=1
         ;;
     libc-syscall)

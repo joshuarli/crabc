@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|poll-reference|process-identity-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -50,6 +50,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_time_header_abi.sh', source)
         self.assertIn('run_poll_header_abi()', source)
         self.assertIn('compat/x86_64/run_poll_header_abi.sh', source)
+        self.assertIn('run_fcntl_header_abi()', source)
+        self.assertIn('compat/x86_64/run_fcntl_header_abi.sh', source)
         self.assertIn('run_syscall_header_abi()', source)
         self.assertIn('compat/x86_64/run_x86_syscall_header.sh', source)
         self.assertIn('run_signal_header_abi()', source)
@@ -62,6 +64,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
         self.assertIn('run_time_abi_reference()', source)
         self.assertIn('compat/x86_64/run_x86_time_reference.sh', source)
+        self.assertIn('run_poll_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_poll_reference.sh', source)
+        self.assertIn('run_process_identity_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_process_identity_reference.sh', source)
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -76,6 +82,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_mm', source)
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
+        self.assertIn('--test x86_64_poll', source)
+        self.assertIn('--test x86_64_process_identity', source)
         self.assertIn('--test x86_64_rand', source)
         self.assertIn('--test x86_64_time', source)
         self.assertIn('run_libc_syscall_probe()', source)
@@ -136,9 +144,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         poll_header = (ROOT / "compat" / "x86_64" / "run_poll_header_abi.sh").read_text(
             encoding="utf-8"
         )
+        fcntl_header = (ROOT / "compat" / "x86_64" / "run_fcntl_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
         time_reference = (ROOT / "compat" / "x86_64" / "run_x86_time_reference.sh").read_text(
             encoding="utf-8"
         )
+        poll_reference = (ROOT / "compat" / "x86_64" / "run_x86_poll_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        process_identity_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_process_identity_reference.sh"
+        ).read_text(encoding="utf-8")
         image = (ROOT / "ldso" / "run-x86_64-image.sh").read_text(encoding="utf-8")
         sys_types = (ROOT / "include" / "sys" / "types.h").read_text(encoding="utf-8")
 
@@ -201,9 +218,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('include/poll.h', poll_header)
         self.assertIn('-fsyntax-only', poll_header)
         self.assertNotIn('-p crabc-libc', poll_header)
+        self.assertIn('fcntl_header_abi_probe.c', fcntl_header)
+        self.assertIn('fcntl_header_abi_probe.cpp', fcntl_header)
+        self.assertIn('include/fcntl.h', fcntl_header)
+        self.assertIn('include/bits/fcntl.h', fcntl_header)
+        self.assertIn('-fsyntax-only', fcntl_header)
+        self.assertNotIn('-p crabc-libc', fcntl_header)
         self.assertIn('x86_time_reference_probe.c', time_reference)
         self.assertIn('timespec ABI reference', time_reference)
         self.assertNotIn('-p crabc-libc', time_reference)
+        self.assertIn('x86_poll_reference_probe.c', poll_reference)
+        self.assertIn('poll ABI/behavior reference', poll_reference)
+        self.assertNotIn('-p crabc-libc', poll_reference)
+        self.assertIn('x86_process_identity_reference_probe.c', process_identity_reference)
+        self.assertIn('process-identity reference', process_identity_reference)
+        self.assertNotIn('-p crabc-libc', process_identity_reference)
         self.assertIn('x86_64_image.rs', image)
         self.assertIn('--test', image)
         self.assertNotIn('-p crabc-ldso', image)
@@ -481,6 +510,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_param",
                     "--test",
                     "x86_64_pipe",
+                    "--test",
+                    "x86_64_poll",
+                    "--test",
+                    "x86_64_process_identity",
                     "--test",
                     "x86_64_rand",
                     "--test",

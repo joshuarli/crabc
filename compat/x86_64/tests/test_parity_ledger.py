@@ -46,6 +46,8 @@ class X86ParityLedgerTests(unittest.TestCase):
 
     def test_foundations_remain_narrow_and_source_or_artifact_scoped(self) -> None:
         data = self.data()
+        direct = self.family(data, "facade.direct")
+        remaining = self.family(data, "facade.record-owning")
         self.assertEqual(self.family(data, "libc.raw-syscall")["status"], "foundation-verified")
         self.assertEqual(self.family(data, "libc.errno-tls")["status"], "foundation-verified")
         self.assertEqual(self.family(data, "ldso.relative-relocation")["status"], "foundation-verified")
@@ -53,6 +55,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(self.family(data, "libc.headers-layouts")["status"], "planned")
         self.assertEqual(self.family(data, "ldso.dynamic-runtime")["status"], "planned")
         self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "planned")
+        for capability in (
+            "io.readiness-poll",
+            "process.pid-observation",
+            "process.identity-triples",
+            "process.identity",
+        ):
+            self.assertIn(capability, direct["capabilities"])
+            self.assertNotIn(capability, remaining["capabilities"])
 
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
         data = self.data()

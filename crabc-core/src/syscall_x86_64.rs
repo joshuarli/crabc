@@ -98,6 +98,7 @@ pub(crate) const SYS_TIMER_DELETE: usize = 226;
 pub(crate) const SYS_GETTIMEOFDAY: usize = 96;
 pub(crate) const SYS_NANOSLEEP: usize = 35;
 pub(crate) const SYS_GETRANDOM: usize = 318;
+pub(crate) const SYS_POLL: usize = 7;
 pub(crate) const SYS_EVENTFD2: usize = 290;
 pub(crate) const SYS_MQ_OPEN: usize = 240;
 pub(crate) const SYS_MQ_UNLINK: usize = 241;

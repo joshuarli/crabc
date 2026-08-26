@@ -82,6 +82,11 @@ pub mod time;
 pub mod time;
 
 /// Direct event-descriptor and polling operations.
+#[cfg(target_arch = "aarch64")]
+pub mod event;
+/// Deliberately bounded Linux/x86-64 event-descriptor and polling operations.
+#[cfg(target_arch = "x86_64")]
+#[path = "event_x86_64.rs"]
 pub mod event;
 
 /// Direct Linux socket operations.
