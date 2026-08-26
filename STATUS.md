@@ -97,10 +97,10 @@ before immediate mapped publication (the medium and large pages remain in
 `BIN_FULL`; the non-direct-small page remains in its ordinary bin with every
 direct slot empty; the direct-small page remains in its ordinary bin until its
 rounded direct-cache range is cleared during removal));
-and five separate later-main homogeneous aggregate post-exit routes: full singleton,
-full-medium, and full-large `BIN_FULL` arena members, plus full
-non-direct-small and direct-small members in one ordinary bin. The singleton
-route requires one rounded arena `PageKind::Singleton` size and
+and six separate later-main homogeneous aggregate post-exit routes: full arena
+singleton, full OS singleton, full-medium, and full-large `BIN_FULL` members,
+plus full non-direct-small and direct-small members in one ordinary bin. The
+arena singleton route requires one rounded `PageKind::Singleton` size and
 `reserved == used == 1`; the non-direct route requires
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and every direct slot empty;
 the direct route requires `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and
@@ -109,8 +109,10 @@ range before each page-count detach and uses free.c's partial collector; both
 retain one exact arena slice per member. Alongside them is one aggregate
 regular-pages post-exit registry that can route every qualifying surviving
 regular small, medium, or large page through sequential client frees. No full
-aggregate keeps a raw member list: each later free re-resolves its PageMap
-member. The singleton aggregate must take the raw empty failed-reclaim result
+aggregate keeps a separate raw member registry: each later free re-resolves
+its PageMap member. The OS aggregate's private Heap list deliberately reuses
+member links until that exact free removes them. The arena singleton aggregate
+must take the raw empty failed-reclaim result
 and has no static-main abandoned bitmap/count pair; every regular aggregate
 independently crosses the source unmapped-to-mapped threshold under its one
 preselected static-main bitmap/count pair, while the large route also proves
@@ -288,6 +290,22 @@ raw empty failed-reclaim outcome, and release one member in PageMap ->
 heterogeneous rounded singleton sizes, OS or other non-singleton members,
 allocation-time adoption/reclaim/requeue, scanning, and concurrent routing
 remain absent. Separately,
+`abandon_full_os_singleton_pages_to_process_route` accepts only two or more
+same-rounded-size `MemoryKind::Os` singleton members in `BIN_FULL` with
+`reserved == used == 1`, zero retirement countdowns, empty local free lists,
+valid clipped PageMap/alias release images, every direct slot and other queue
+empty, and an initially empty static-main `Heap::os_abandoned_pages` list.
+Source force -> false collection -> full-queue/page-count detach -> private
+OS-list insertion -> unmapped unown runs for every member before old-Theap/TLD
+teardown. Full-queue removal clears `PAGE_IN_FULL_QUEUE`, while the private
+list deliberately owns the page's raw intrusive links until an exact later
+client free removes that member. Each free re-resolves PageMap membership,
+takes only the raw empty failed-reclaim outcome, then releases that one member
+in private-list removal -> clipped PageMap -> aliases -> metadata -> mapping
+order. A sole page, a mixed rounded OS size/class, nonempty initial private
+list, list traversal, retry/reclaim/requeue, allocation-time, and concurrent
+routing remain absent; collection failure retains the drain and failed `munmap`
+retains its `OsAlignedPageOwner` terminally. Separately,
 `abandon_full_medium_pages_to_process_route` accepts only two or more full
 arena medium members in `BIN_FULL` with one rounded block size/bin, every
 direct slot and other queue empty, zero retirement countdowns, and exact paired
@@ -852,7 +870,7 @@ cache images, reclaim, adoption, requeue, scans, producers, and concurrent
 traversal remain open.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
-full-medium/full-large/full-non-direct-small/full-direct-small routes, five
+full-medium/full-large/full-non-direct-small/full-direct-small routes, six
 homogeneous full-page aggregates, sole small-or-medium route, and regular-pages
 aggregate, allocation-time
 claim/reclaim/requeue after later-thread exit beyond the exact mapped one- and

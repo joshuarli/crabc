@@ -405,6 +405,26 @@ last member closes the map route. Sole pages, heterogeneous rounded singleton
 sizes, non-singletons, OS-backed members, allocation-time adoption, reclaim,
 requeue, scanning, and concurrent routing reject or remain absent.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_os_singleton_pages_to_process_route`
+is a separate aggregate boundary for two or more same-rounded-size
+`MemoryKind::Os` singleton pages in `BIN_FULL`. Its complete preflight requires
+`reserved == used == 1`, a zero retirement countdown, an empty local free list,
+a valid clipped PageMap/alias release image, every direct entry and every other
+queue empty, and an initially empty static-main `Heap::os_abandoned_pages`
+list. It preserves source force -> false collection, full-queue/page-count
+detach, private OS-list insertion, and unmapped unown for every member before
+old-Theap/TLD teardown. Full-queue removal clears `PAGE_IN_FULL_QUEUE`, but the
+private list owns the page's intrusive links until the exact later client free
+removes that member. The route holds no separate raw member list: each free
+re-resolves one current PageMap member, recovers only its canonical singleton
+allocation, must take the raw failed-reclaim empty decision, then performs
+private-list removal -> clipped PageMap -> aliases -> metadata -> mapping
+release. The final member closes the map route. Sole or differently rounded
+OS members, non-OS members, nonempty initial list state, list traversal, retry
+after failed `munmap`, adoption, reclaim, requeue, scanning, allocation-time,
+and concurrent routing reject or remain absent; a failed mapping release
+retains the exact `OsAlignedPageOwner` terminally.
+
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_pages_to_process_route`
 is a separate aggregate boundary for two or more full medium arena pages in
 `BIN_FULL`. Its preflight requires every direct entry and every other queue to

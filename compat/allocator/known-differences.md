@@ -469,7 +469,23 @@ result may refine it only when it can prove retained ownership.
   that member in PageMap -> main bitmap first-bit -> metadata -> arena-slice
   order. Sole members, heterogeneous rounded singleton sizes, non-singletons,
   OS members, allocation-time adoption/reclaim/requeue, scanning, and
-  concurrent routing remain absent. A separate homogeneous full-medium aggregate route accepts two
+  concurrent routing remain absent. A separate homogeneous full-OS-singleton
+  aggregate route accepts two or more same-rounded-size `MemoryKind::Os`
+  singleton members in `BIN_FULL` only when `reserved == used == 1`, zero
+  retirement countdowns, empty local free lists, valid clipped PageMap/alias
+  release images, every direct slot and other queue is empty, and the
+  static-main `Heap::os_abandoned_pages` list starts empty. It force- then
+  false-collects, full-queue/page-count-detaches, inserts every member into
+  that private list, then unmapped-abandons it before old-Theap/TLD teardown.
+  Full-queue removal clears `PAGE_IN_FULL_QUEUE`, but the private list retains
+  the page's raw intrusive links until its exact canonical free removes that
+  member. That free re-resolves PageMap membership, takes only the raw empty
+  failed-reclaim outcome, then releases one member in private-list removal ->
+  clipped PageMap -> aliases -> metadata -> mapping order. Sole or mixed-size
+  OS members, non-OS members, nonempty initial lists, list traversal, retry
+  after failed `munmap`, adoption, reclaim/requeue, scanning, allocation-time,
+  and concurrent routing remain absent; failed mapping release retains the
+  exact `OsAlignedPageOwner` terminally. A separate homogeneous full-medium aggregate route accepts two
   or more arena `PageKind::Medium` members in `BIN_FULL` only when every direct
   slot and other queue is empty and every member has one rounded block
   size/static-main bin, `reserved > 1`, `used == reserved`, a zero retirement
@@ -483,7 +499,7 @@ result may refine it only when it can prove retained ownership.
   mutation. The separate homogeneous full-large aggregate accepts only the
   corresponding `PageKind::Large` members, with the same complete preflight
   plus every member's exact 64-slice arena/PageMap span; terminal release
-  proves and removes that complete span. A fourth homogeneous full
+  proves and removes that complete span. A fifth homogeneous full
   non-direct-small aggregate accepts only two or more same-bin ordinary
   `PageKind::Small` arena members with `SMALL_SIZE_MAX < block_size <=
   SMALL_MAX_OBJ_SIZE`, every direct slot empty, zero retirement countdowns,
@@ -491,7 +507,7 @@ result may refine it only when it can prove retained ownership.
   source force -> false collection -> ordinary-bin removal with the proven
   no-op direct-cache update -> page-count detach -> ordinary unmapped
   abandonment, then uses free.c's normal collector to re-resolve, reabandon,
-  and release each one-slice member independently. A fifth homogeneous full
+  and release each one-slice member independently. A sixth homogeneous full
   direct-small aggregate accepts two or more same-bin ordinary `PageKind::Small`
   arena members with `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, full
   state, zero retirement countdowns, empty local free lists, and one
@@ -502,7 +518,7 @@ result may refine it only when it can prove retained ownership.
   abandonment runs for every member. Each later free re-resolves PageMap
   membership, uses the partial collector, and preserves its just-pushed head
   through the source accounting lag before mapped reabandonment or terminal
-  release. All five aggregate routes reject heterogeneous full queues before
+  release. All six aggregate routes reject heterogeneous full queues before
   collection. Stale/mixed direct-cache images, remote-force nonfull state,
   allocation-time adoption/reclaim/requeue, and concurrent routing remain
   absent. Distinct source-specific predecessors accept one sole full
@@ -1268,8 +1284,8 @@ aggregate-registry adoption remain absent.
   owners are the post-TLS arena/OS singleton, homogeneous full-singleton,
   full-OS-singleton, full-medium, full-large, full-non-direct-small, and
   full-direct-small aggregates, sole full-medium, full-large, full-non-direct-small, and
-  full-direct-small handoffs above and the later-main full-medium,
-  full-large, and full-non-direct-small routes;
+  full-direct-small handoffs above and the later-main full-OS-singleton
+  aggregate, full-medium, full-large, and full-non-direct-small routes;
   none routes
   general policy through the dynamic handoff. Other regular/nonempty unmapped,
   other non-arena, foreign, and full/singleton/huge pages

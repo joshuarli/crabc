@@ -20,9 +20,9 @@ one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
 reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
 route with exact full-medium, full-large, full-non-direct-small, and full-direct-small
-one-joined-remote-free force-collection predecessors), five bounded later-main
-homogeneous full-page aggregate routes (arena singleton, medium, and large
-`BIN_FULL` members, plus non-direct-small and direct-small ordinary-bin
+one-joined-remote-free force-collection predecessors), six bounded later-main
+homogeneous full-page aggregate routes (arena singleton, OS singleton, medium,
+and large `BIN_FULL` members, plus non-direct-small and direct-small ordinary-bin
 members), and one aggregate regular
 small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
@@ -555,9 +555,9 @@ singleton, homogeneous full-singleton/full-OS-singleton/full-medium/full-large/f
 full-large, full-non-direct-small, and full-direct-small terminal releases,
 bounded ticket-zero and sequential later
 process-page engines, the shared-main no-page lifecycle, and the later-main
-all-free exit drain plus its full-singleton, mapped-medium-one-block, full
-medium/full-large/full-non-direct-small/full-direct-small, and sole mapped small-or-medium
-post-exit client-free handoffs and
+all-free exit drain plus its full-singleton and full-OS-singleton aggregates,
+mapped-medium-one-block, full medium/full-large/full-non-direct-small/full-direct-small,
+and sole mapped small-or-medium post-exit client-free handoffs and
 aggregate regular-pages
 post-exit registry, these pieces are
 not yet wired into general
@@ -589,6 +589,23 @@ raw empty failed-reclaim result, then releases that member in PageMap ->
 `pages_main` first-bit -> metadata -> arena-slice order. Sole members,
 heterogeneous singleton sizes, non-singletons, OS members, adoption,
 reclaim/requeue, scanning, and concurrent routing remain absent.
+A separate later-main full-OS-singleton aggregate route accepts two or more
+same-rounded-size `MemoryKind::Os` singleton members in `BIN_FULL` only when
+`reserved == used == 1`, zero retirement countdowns, empty local free lists,
+valid clipped PageMap/alias release images, every direct slot and other queue
+is empty, and the static-main `Heap::os_abandoned_pages` list is initially
+empty. It force- then false-collects, full-queue/page-count-detaches, links
+each still-associated member into that private list, then unmapped-abandons it
+before old-Theap/TLD teardown. Full-queue removal clears
+`PAGE_IN_FULL_QUEUE`, but the private list deliberately retains the page's raw
+intrusive links until an exact canonical client free removes that member. Each
+such free re-resolves PageMap membership, takes only the raw empty
+failed-reclaim outcome, then releases one member in private-list removal ->
+clipped PageMap -> aliases -> metadata -> mapping order. A sole or mixed-size
+OS member, non-OS member, nonempty initial list, list traversal, retry after
+failed `munmap`, adoption, reclaim/requeue, scanning, allocation-time, and
+concurrent routing remain absent; a failed mapping release retains its exact
+`OsAlignedPageOwner` terminally.
 A separate later-main full-medium aggregate route accepts two or more full
 arena members in `BIN_FULL` only when they share one rounded block size/static-main
 bin and every direct slot and other queue is empty. It force- then

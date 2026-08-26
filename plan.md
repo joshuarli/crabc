@@ -2,7 +2,7 @@ The crucial framing is: **do not design a new allocator**. Produce a provenance-
 
 ## Handoff — 2026-08-26
 
-### Current slice — private no-page process/pthread runtime lifecycle
+### Previous checkpoint — private no-page process/pthread runtime lifecycle
 
 This checkpoint is complete on top of the bounded owners below. The hidden
 Rust-only `crabc_mimalloc::__crabc_runtime` boundary retains the ticket-zero
@@ -35,6 +35,25 @@ The dynamic and static C pthread/TSD fixtures provide the installed-runtime
 boundary evidence. The next lifecycle frontier is page-bearing ownership or
 general fork repair for live/retained owners, never a broad callback or
 premature backend routing.
+
+### Current slice — later-main full OS-singleton aggregate post-exit route
+
+This checkpoint adds one separately typed, later-main aggregate over exactly
+two or more same-rounded-size `MemoryKind::Os` singleton pages in `BIN_FULL`.
+It requires `reserved == used == 1`, zero retirement, empty local free lists,
+an otherwise empty direct/queue image, valid clipped PageMap/alias release
+images, and an initially empty static-main `Heap::os_abandoned_pages` list.
+For every member it preserves source force -> false collection -> full-queue
+and page-count detach -> private OS-list insertion -> unmapped unown before
+old-Theap/TLD teardown. Full-queue removal clears the full-queue flag, but the
+private list deliberately reuses the page's intrusive links; raw link
+detachment therefore happens only when the later client free removes that
+exact list member. Each sequential free re-resolves current PageMap membership
+and takes only the raw empty failed-reclaim tail, then removes the list member
+before clipped PageMap -> aliases -> metadata -> mapping release. A failed
+`munmap` retains one terminal `OsAlignedPageOwner`; this slice supplies no
+list traversal, retry, reclamation, requeue, allocation-time, or concurrent
+routing policy.
 
 The current checkpoint completes the dependency/crypto boundary, dynamic
 Theap-to-page-engine binding, private dynamic arena-pages ownership, and two
@@ -448,6 +467,26 @@ heterogeneous rounded singleton sizes, non-singletons, OS-backed members,
 allocation-time adoption/reclaim/requeue, scanning, and concurrent routing
 remain absent; injected collection failure retains the complete drain after
 preflight rather than partially detaching a member.
+
+Separately,
+`MainHeapThreadProcessPageExitDrain::abandon_full_os_singleton_pages_to_process_route`
+is a bounded aggregate for two or more same-rounded-size `MemoryKind::Os`
+singleton members in `BIN_FULL`. Complete preflight requires `reserved == used
+== 1`, zero retirement countdowns, empty local free lists, valid clipped
+PageMap/alias release images, every direct slot and other queue empty, and an
+initially empty static-main `Heap::os_abandoned_pages` list. It preserves source
+force -> false collection -> full-queue/page-count detach -> private OS-list
+insertion -> unmapped unown for every member before old-Theap/TLD teardown.
+Full-queue removal clears `PAGE_IN_FULL_QUEUE`, but the private list
+intentionally reuses the page's raw intrusive links; an exact later free
+removes its list member before clipped PageMap -> aliases -> metadata ->
+mapping release. The route retains no separate raw member list: each canonical
+singleton free re-resolves PageMap membership and must take the raw empty
+failed-reclaim result. A sole page, different rounded OS size, non-OS member,
+nonempty initial private list, list traversal, retry after failed `munmap`,
+reclaim, requeue, allocation-time, and concurrent routing remain absent; an
+injected collection failure retains the complete drain, and a mapping-release
+failure retains the exact `OsAlignedPageOwner` terminally.
 
 Separately,
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_pages_to_process_route`

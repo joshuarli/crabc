@@ -109,6 +109,12 @@ use crate::single_thread::{
     ThreadExitFullSingletonPagesPostExitFreeOutcome,
     ThreadExitFullSingletonPagesPostExitParts,
     ThreadExitFullSingletonPagesPostExitTeardownTerminal,
+    ThreadExitFullOsSingletonPagesPostExitAbandonError,
+    ThreadExitFullOsSingletonPagesPostExitAbandonFailure,
+    ThreadExitFullOsSingletonPagesPostExitFreeError,
+    ThreadExitFullOsSingletonPagesPostExitFreeOutcome,
+    ThreadExitFullOsSingletonPagesPostExitParts,
+    ThreadExitFullOsSingletonPagesPostExitTeardownTerminal,
     ThreadExitFullNonDirectSmallPagesPostExitAbandonError,
     ThreadExitFullNonDirectSmallPagesPostExitAbandonFailure,
     ThreadExitFullNonDirectSmallPagesPostExitFreeError,
@@ -329,6 +335,28 @@ pub(crate) struct MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
 // decision at a time; sending moves that owner but never permits concurrent
 // frees, allocation-time use, OS-list routing, or requeue.
 unsafe impl Send for MainHeapThreadProcessPageExitFullSingletonPagesRoute<'_> {}
+
+/// One bounded homogeneous aggregate of two-or-more full OS-aligned singleton
+/// pages that begins post-exit life source-unmapped and linked in the static
+/// main Heap's private non-arena list.
+///
+/// Every member has one rounded OS singleton block size and `reserved == used
+/// == 1`. Each consuming final free re-resolves exactly one PageMap member,
+/// removes that member from the source list, and completes its clipped PageMap
+/// -> alias -> metadata -> mapping release. The route stores no raw member
+/// list and grants no list traversal, allocation-time claim/requeue, or
+/// concurrent-free authority.
+#[must_use = "a full OS singleton aggregate route must release every member or remain terminally retained"]
+pub(crate) struct MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main> {
+    parts: ThreadExitFullOsSingletonPagesPostExitParts<'main>,
+    page_map_access: ProcessPageMapPostExitAccess,
+}
+
+// SAFETY: the route retains only a process-stable main-Heap lease and
+// serialized short PageMap access. Its consuming API moves one source
+// failed-reclaim decision at a time; it neither shares the route nor grants
+// private-list traversal, allocation-time, or concurrent-free authority.
+unsafe impl Send for MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'_> {}
 
 /// One bounded homogeneous aggregate of two-or-more full medium pages that
 /// begins post-exit life source-unmapped.
@@ -889,6 +917,83 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeFailure<'main
     Terminal {
         route: MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main>,
         error: MainHeapThreadProcessPageExitFullSingletonPagesFreeError,
+    },
+    /// The final member physically released, but PageMap quiescence failed and
+    /// poisoned the root. No live aggregate route remains.
+    ReleasedAllPageMapPoisoned {
+        error: ProcessPageMapError,
+    },
+}
+
+/// A failure while crossing a later-main post-fast-slot drain from a complete
+/// homogeneous full OS-singleton `BIN_FULL` queue into its sequential process
+/// route.
+#[must_use = "a failed full OS singleton aggregate process-route transition retains its exact source state"]
+pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure<
+    'attachment,
+    'main,
+> {
+    /// The complete queue/direct/private-list preflight rejected before source
+    /// collection, queue detachment, or private-list insertion.
+    Rejected {
+        drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
+        error: ThreadExitFullOsSingletonPagesPostExitAbandonError,
+    },
+    /// Source force/false collection, queue mutation, or a later list
+    /// transition may have changed the drain, so it remains the only terminal
+    /// owner.
+    RetainedDrain {
+        drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
+        error: ThreadExitFullOsSingletonPagesPostExitAbandonError,
+    },
+    /// All members detached and linked, but old root/list/TLD teardown did
+    /// not finish. The long PageMap lifecycle stays coupled to the registry.
+    Teardown {
+        terminal: ThreadExitFullOsSingletonPagesPostExitTeardownTerminal<'attachment, 'main>,
+        page_map_lifecycle: ProcessPageMapMutationLease,
+    },
+    /// The old Theap/TLD is gone, but short PageMap access could not be
+    /// created. The map root is poisoned and the registry remains terminally
+    /// retained for evidence.
+    PageMap {
+        parts: ThreadExitFullOsSingletonPagesPostExitParts<'main>,
+        error: ProcessPageMapError,
+    },
+}
+
+/// The result of one client free through the homogeneous full OS-singleton
+/// aggregate route.
+#[must_use = "a nonterminal full OS singleton aggregate result retains the only route owner"]
+pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult<'main> {
+    ReleasedPage(MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main>),
+    ReleasedAll,
+}
+
+/// A process-map or source-route reason one homogeneous full OS-singleton
+/// aggregate client free could not complete normally.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError {
+    PageMap(ProcessPageMapError),
+    Route(ThreadExitFullOsSingletonPagesPostExitFreeError),
+}
+
+/// A retained homogeneous full OS-singleton aggregate route after one client
+/// free attempt.
+#[must_use = "a failed full OS singleton aggregate free must retain or terminally record its route"]
+pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure<'main> {
+    /// The supplied block was absent from the current PageMap, or did not name
+    /// the selected member's canonical singleton allocation, so no source
+    /// owner bit changed and the route can still receive an actual member.
+    Rejected {
+        route: MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main>,
+        error: MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError,
+    },
+    /// The source tail may have acquired a low owner bit, unlinked a private
+    /// list member, or consumed the only mapping-release token. Retain this
+    /// route only as a terminal owner.
+    Terminal {
+        route: MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main>,
+        error: MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError,
     },
     /// The final member physically released, but PageMap quiescence failed and
     /// poisoned the root. No live aggregate route remains.
@@ -2494,6 +2599,98 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
+    /// Transfers a bounded homogeneous aggregate of full OS-aligned singleton
+    /// pages from the source full queue into one sequential post-exit process
+    /// route.
+    ///
+    /// Every admitted member has the same rounded OS singleton size, one
+    /// reserved and live block, and source `BIN_FULL` placement before it is
+    /// linked to the static main Heap's private non-arena list. Source owner
+    /// exit makes every member unmappable; its one later client free removes
+    /// that exact list member before clipped PageMap -> alias -> metadata ->
+    /// mapping release. The aggregate neither traverses that list nor adopts,
+    /// requeues, or grants allocation-time authority.
+    ///
+    /// # Safety
+    ///
+    /// At least two current full OS-aligned singleton pages of one rounded
+    /// source size must occupy the complete post-fast-slot drain, and the
+    /// source static Heap's private OS list must start empty. No producer may
+    /// survive, and every client alias must be consumed exactly once through
+    /// the returned linear route or retained terminally.
+    pub(crate) unsafe fn abandon_full_os_singleton_pages_to_process_route(
+        self,
+    ) -> Result<
+        MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main>,
+        MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure<'attachment, 'main>,
+    > {
+        let Self {
+            engine,
+            page_map_lifecycle,
+        } = self;
+        // SAFETY: this drain owns the fixed-fast-slot source transition and
+        // unique process PageMap/arena lifecycle through the complete source
+        // full-queue/list traversal.
+        let detach = match unsafe { engine.abandon_full_os_singleton_pages_to_process_route() } {
+            Ok(detach) => detach,
+            Err(ThreadExitFullOsSingletonPagesPostExitAbandonFailure::Rejected {
+                engine,
+                error,
+            }) => {
+                return Err(
+                    MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::Rejected {
+                        drain: Self {
+                            engine,
+                            page_map_lifecycle,
+                        },
+                        error,
+                    },
+                );
+            }
+            Err(ThreadExitFullOsSingletonPagesPostExitAbandonFailure::RetainedEngine {
+                engine,
+                error,
+            }) => {
+                return Err(
+                    MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::RetainedDrain {
+                        drain: Self {
+                            engine,
+                            page_map_lifecycle,
+                        },
+                        error,
+                    },
+                );
+            }
+        };
+
+        let parts = match detach.finish_thread_owner() {
+            Ok(parts) => parts,
+            Err(terminal) => {
+                return Err(
+                    MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::Teardown {
+                        terminal,
+                        page_map_lifecycle,
+                    },
+                );
+            }
+        };
+        // SAFETY: `parts` is now the only source-shaped registry for every
+        // detached OS singleton. Each later free obtains short plain-entry
+        // access only for its complete failed-reclaim/list-release decision.
+        match unsafe { page_map_lifecycle.into_post_exit_access() } {
+            Ok(page_map_access) => Ok(MainHeapThreadProcessPageExitFullOsSingletonPagesRoute {
+                parts,
+                page_map_access,
+            }),
+            Err(error) => Err(
+                MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::PageMap {
+                    parts,
+                    error,
+                },
+            ),
+        }
+    }
+
     /// Transfers a bounded homogeneous aggregate of full medium pages from
     /// the source full queue into one sequential post-exit process route.
     ///
@@ -3620,6 +3817,118 @@ impl<'main> MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
     #[inline]
     pub(crate) const fn test_remaining_pages(&self) -> usize {
         self.parts.test_remaining_pages()
+    }
+}
+
+impl<'main> MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main> {
+    /// Routes one exact client free through the bounded homogeneous full
+    /// OS-aligned singleton aggregate after the originating later Theap/TLD
+    /// has torn down.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be an exact once-live canonical allocation in one member
+    /// transferred by
+    /// [`MainHeapThreadProcessPageExitDrain::abandon_full_os_singleton_pages_to_process_route`].
+    /// It must not be freed, transferred, or concurrently used through another
+    /// route. This consuming API serializes one source failed-reclaim/list
+    /// decision at a time; it does not make the aggregate allocation-time,
+    /// reclaim/requeue, list-traversal, or concurrent-free capable.
+    pub(crate) unsafe fn remote_free_after_thread_exit(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult<'main>,
+        MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure<'main>,
+    > {
+        let Self {
+            mut parts,
+            page_map_access,
+        } = self;
+        let free = page_map_access.with_page_map(|page_map| {
+            // SAFETY: this boundary carries the caller's exact client-block
+            // proof through lookup, low-owner claim, source list removal, and
+            // the complete clipped terminal release.
+            unsafe { parts.remote_free_after_thread_exit(page_map, block) }
+        });
+        match free {
+            Ok(Ok(ThreadExitFullOsSingletonPagesPostExitFreeOutcome::ReleasedPage)) => Ok(
+                MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult::ReleasedPage(Self {
+                    parts,
+                    page_map_access,
+                }),
+            ),
+            Ok(Ok(ThreadExitFullOsSingletonPagesPostExitFreeOutcome::ReleasedAll)) => {
+                // The source terminal release removed the final member's
+                // private-list link, PageMap span, aliases, metadata, and
+                // backing mapping. Drop the empty registry before reopening
+                // the process map.
+                drop(parts);
+                // SAFETY: `ReleasedAll` occurs only after the sealed registry
+                // count reaches zero following the final physical release.
+                match unsafe { page_map_access.finish_after_all_pages_released() } {
+                    Ok(()) => Ok(
+                        MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult::ReleasedAll,
+                    ),
+                    Err(error) => Err(
+                        MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::ReleasedAllPageMapPoisoned {
+                            error,
+                        },
+                    ),
+                }
+            }
+            Ok(Err(route_error)) => {
+                let route = Self {
+                    parts,
+                    page_map_access,
+                };
+                let error = MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError::Route(
+                    route_error,
+                );
+                if matches!(
+                    error,
+                    MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError::Route(
+                        ThreadExitFullOsSingletonPagesPostExitFreeError::Unmapped
+                            | ThreadExitFullOsSingletonPagesPostExitFreeError::InvalidBlock
+                    )
+                ) {
+                    Err(
+                        MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::Rejected {
+                            route,
+                            error,
+                        },
+                    )
+                } else {
+                    Err(
+                        MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::Terminal {
+                            route,
+                            error,
+                        },
+                    )
+                }
+            }
+            Err(error) => Err(
+                MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::Terminal {
+                    route: Self {
+                        parts,
+                        page_map_access,
+                    },
+                    error: MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError::PageMap(error),
+                },
+            ),
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_remaining_pages(&self) -> usize {
+        self.parts.test_remaining_pages()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_has_pending_os_release(&self) -> bool {
+        self.parts.test_has_pending_os_release()
     }
 }
 
@@ -6225,6 +6534,671 @@ mod tests {
         })
         .join()
         .expect("later OS-singleton handoff fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_full_os_singleton_pages_route_releases_each_clipped_map() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later OS-aggregate source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later OS-aggregate source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the OS-singleton aggregate fixture");
+                    let first = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the fixture creates its first OS-aligned singleton");
+                    let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first OS singleton remains PageMap-published");
+                    let first_published = unsafe { PublishedOsAlignedPage::from_page(config, first_page) }
+                        .expect("the first OS singleton has its clipped release token");
+                    let second = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the fixture creates its second OS-aligned singleton");
+                    let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
+                        .expect("the second OS singleton remains PageMap-published");
+                    let second_published = unsafe { PublishedOsAlignedPage::from_page(config, second_page) }
+                        .expect("the second OS singleton has its clipped release token");
+                    let first_ref = unsafe { first_page.as_ref() };
+                    let second_ref = unsafe { second_page.as_ref() };
+                    assert!(first_ref.memid().is_os() && second_ref.memid().is_os());
+                    assert_eq!(first_ref.block_size(), second_ref.block_size());
+                    assert_eq!(first_ref.reserved(), 1);
+                    assert_eq!(first_ref.used(), 1);
+                    assert_eq!(second_ref.reserved(), 1);
+                    assert_eq!(second_ref.used(), 1);
+                    assert!(
+                        crate::types::page_queue::page_is_in_full(first_ref)
+                            && crate::types::page_queue::page_is_in_full(second_ref),
+                        "both non-arena singleton members remain in source BIN_FULL"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot OS aggregate drain: {error:?}");
+                    });
+                    let route = match unsafe {
+                        drain.abandon_full_os_singleton_pages_to_process_route()
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "two same-size full OS singletons enter the bounded post-exit process route"
+                        ),
+                    };
+
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the aggregate route tears down the former Theap/TLD before client frees"
+                    );
+                    assert_eq!(route.test_remaining_pages(), 2);
+                    let expected_heap = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable after aggregate teardown");
+                        let expected = core::ptr::from_mut(heap.heap_mut());
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after aggregate identity observation");
+                        expected
+                    };
+                    let first_after_detach = unsafe { first_page.as_ref() };
+                    let second_after_detach = unsafe { second_page.as_ref() };
+                    assert_eq!(first_after_detach.heap(), expected_heap);
+                    assert_eq!(second_after_detach.heap(), expected_heap);
+                    assert!(!crate::types::page_queue::page_is_in_full(first_after_detach));
+                    assert!(!crate::types::page_queue::page_is_in_full(second_after_detach));
+                    assert!(
+                        !first_after_detach.is_queue_detached()
+                            && !second_after_detach.is_queue_detached(),
+                        "source private OS-list membership reuses the former queue links until each exact final free"
+                    );
+                    assert!(
+                        unsafe { PublishedOsAlignedPage::from_page(config, first_page) }.is_some(),
+                        "the first detached member still reconstructs its exact OS release token"
+                    );
+                    assert!(
+                        unsafe { PublishedOsAlignedPage::from_page(config, second_page) }.is_some(),
+                        "the second detached member still reconstructs its exact OS release token"
+                    );
+                    assert!(unsafe {
+                        first_published.page_map_entries_match(
+                            page_map.page_map().expect("the process PageMap remains published"),
+                        )
+                    });
+                    assert!(unsafe {
+                        second_published.page_map_entries_match(
+                            page_map.page_map().expect("the process PageMap remains published"),
+                        )
+                    });
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable through OS aggregation");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after aggregate OS-list observation");
+                        head
+                    };
+                    assert_eq!(
+                        abandoned_head,
+                        second_page.as_ptr(),
+                        "source queue order pushes the later detached OS member to the private-list head"
+                    );
+
+                    let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                        Ok(MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult::ReleasedPage(
+                            route,
+                        )) => route,
+                        Ok(_) => panic!("the first OS final free releases only one aggregate member"),
+                        Err(_) => panic!("the first OS final free completes its clipped source release"),
+                    };
+                    assert_eq!(route.test_remaining_pages(), 1);
+                    assert!(
+                        !unsafe {
+                            first_published.page_map_entries_match(
+                                page_map.page_map().expect("the process PageMap remains published"),
+                            )
+                        },
+                        "the first clipped PageMap span is gone after its final free"
+                    );
+                    assert!(unsafe {
+                        second_published.page_map_entries_match(
+                            page_map.page_map().expect("the process PageMap remains published"),
+                        )
+                    });
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable after one OS release");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after one aggregate OS-list removal");
+                        head
+                    };
+                    assert_eq!(
+                        abandoned_head,
+                        second_page.as_ptr(),
+                        "releasing the older member leaves the later member on the source private list"
+                    );
+
+                    match unsafe { route.remote_free_after_thread_exit(second) } {
+                        Ok(MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult::ReleasedAll) => {}
+                        Ok(MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult::ReleasedPage(
+                            route,
+                        )) => {
+                            core::mem::forget(route);
+                            panic!("the second OS final free releases the final aggregate member")
+                        }
+                        Err(_) => panic!("the second OS final free completes its clipped source release"),
+                    }
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable after the final OS release");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after final aggregate OS-list removal");
+                        head
+                    };
+                    assert!(abandoned_head.is_null());
+                    assert!(
+                        page_map.begin_page_lifecycle().unwrap().finish().is_ok(),
+                        "the final aggregate release reopens the empty process map"
+                    );
+                });
+                worker
+                    .join()
+                    .expect("the full OS-singleton aggregate route remains local to its later owner fixture");
+            });
+
+            main.teardown()
+                .expect("the static main owner retires after the OS-singleton aggregate route");
+        })
+        .join()
+        .expect("full OS-singleton aggregate route fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_full_os_singleton_pages_route_rejects_a_sole_page_before_mutation() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later OS-aggregate source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later OS-aggregate source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the sole OS-singleton refusal fixture");
+                    let block = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the fixture creates one full OS-aligned singleton");
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                        .expect("the sole OS singleton remains PageMap-published");
+                    assert!(
+                        crate::types::page_queue::page_is_in_full(unsafe { page.as_ref() }),
+                        "the sole OS singleton begins in source BIN_FULL"
+                    );
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot OS aggregate drain: {error:?}");
+                    });
+                    let drain = match unsafe {
+                        drain.abandon_full_os_singleton_pages_to_process_route()
+                    } {
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::Rejected {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            assert_eq!(
+                                error,
+                                ThreadExitFullOsSingletonPagesPostExitAbandonError::NotMultiplePages,
+                                "the two-or-more boundary refuses a sole full OS singleton before collection"
+                            );
+                            drain
+                        }
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::RetainedDrain {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            core::mem::forget(drain);
+                            panic!("the sole-page proof is pre-collection: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::Teardown {
+                            terminal,
+                            ..
+                        }) => {
+                            core::mem::forget(terminal);
+                            panic!("the sole-page proof is pre-detach");
+                        }
+                        Err(MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::PageMap {
+                            parts,
+                            error,
+                        }) => {
+                            core::mem::forget(parts);
+                            panic!("the sole-page proof is pre-map-transfer: {error:?}");
+                        }
+                        Ok(route) => {
+                            core::mem::forget(route);
+                            panic!("one full OS singleton cannot enter the aggregate route");
+                        }
+                    };
+                    assert_eq!(
+                        drain.test_queue_count(crate::config::BIN_FULL),
+                        Some(1),
+                        "the sole full queue remains intact after the preflight refusal"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) },
+                        page.as_ptr(),
+                        "the sole OS singleton remains registered after the pre-detach refusal"
+                    );
+                    assert_eq!(unsafe { page.as_ref().used() }, 1);
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable after OS refusal");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after OS-list refusal observation");
+                        head
+                    };
+                    assert!(
+                        abandoned_head.is_null(),
+                        "preflight refusal cannot insert the sole member into the private OS list"
+                    );
+
+                    // This rejected post-fast-slot source state has no broader
+                    // traversal/cleanup policy in the bounded aggregate route.
+                    core::mem::forget(drain);
+                    core::mem::forget(owner);
+                });
+                worker
+                    .join()
+                    .expect("sole OS aggregate refusal remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("full OS-singleton aggregate sole-page refusal fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_full_os_singleton_pages_route_retains_a_collection_failure() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later OS-aggregate source attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later OS-aggregate source attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the OS aggregate collection-failure fixture");
+                    let first = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the fixture creates its first full OS singleton");
+                    let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first OS singleton remains PageMap-published");
+                    let second = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the fixture creates its second full OS singleton");
+                    let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
+                        .expect("the second OS singleton remains PageMap-published");
+                    assert!(
+                        crate::types::page_queue::page_is_in_full(unsafe { first_page.as_ref() })
+                            && crate::types::page_queue::page_is_in_full(unsafe { second_page.as_ref() }),
+                        "the injected failure starts from the full OS-singleton aggregate source shape"
+                    );
+
+                    let mut drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot OS aggregate drain: {error:?}");
+                    });
+                    drain.engine.inject_page_free_collect_failure_once();
+                    let drain = match unsafe {
+                        drain.abandon_full_os_singleton_pages_to_process_route()
+                    } {
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::RetainedDrain {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            assert_eq!(
+                                error,
+                                ThreadExitFullOsSingletonPagesPostExitAbandonError::Collection,
+                                "a failed force collection retains the only OS aggregate source owner"
+                            );
+                            drain
+                        }
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::Rejected {
+                                drain,
+                                error,
+                            },
+                        ) => {
+                            core::mem::forget(drain);
+                            panic!("the injected collector fails after complete OS aggregate preflight: {error:?}");
+                        }
+                        Err(MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::Teardown {
+                            terminal,
+                            ..
+                        }) => {
+                            core::mem::forget(terminal);
+                            panic!("the injected collector fails before Theap/TLD teardown");
+                        }
+                        Err(MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure::PageMap {
+                            parts,
+                            error,
+                        }) => {
+                            core::mem::forget(parts);
+                            panic!("the injected collector fails before PageMap-route transfer: {error:?}");
+                        }
+                        Ok(route) => {
+                            core::mem::forget(route);
+                            panic!("the injected collection failure cannot create an OS aggregate route");
+                        }
+                    };
+                    assert!(
+                        drain.engine.test_has_collection_poison(),
+                        "the failed collection remains terminally recorded in the source drain"
+                    );
+                    assert_eq!(unsafe { first_page.as_ref().used() }, 1);
+                    assert_eq!(unsafe { second_page.as_ref().used() }, 1);
+                    assert_eq!(
+                        drain.test_queue_count(crate::config::BIN_FULL),
+                        Some(2),
+                        "the injected collection failure leaves both full OS singleton members linked"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(first.as_ptr()) },
+                        first_page.as_ptr(),
+                        "the injected failure leaves the first OS singleton PageMap member published"
+                    );
+                    assert_eq!(
+                        unsafe { page_map.page_map().unwrap().checked_lookup(second.as_ptr()) },
+                        second_page.as_ptr(),
+                        "the injected failure leaves the second OS singleton PageMap member published"
+                    );
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable after collection failure");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after failed-collection list observation");
+                        head
+                    };
+                    assert!(
+                        abandoned_head.is_null(),
+                        "force-collection failure occurs before private OS-list insertion"
+                    );
+
+                    drop(drain);
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::Poisoned),
+                        "dropping the retained collection failure cannot imitate process-route teardown"
+                    );
+                    core::mem::forget(owner);
+                });
+                worker
+                    .join()
+                    .expect("OS aggregate collection-failure fixture remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("full OS-singleton aggregate collection-failure fixture remains current-thread local");
+    }
+
+    #[test]
+    fn later_thread_exit_full_os_singleton_pages_route_retains_failed_unmap_terminally() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let (page_map, process_arena) = paired_process_owner(config, subprocess);
+            let pair = ProcessPageArenaLease::join(page_map, process_arena)
+                .expect("the selected process owners match");
+            let main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches the source-static main images");
+            let main_heap = main.shared_main_heap_lease().unwrap();
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let fault = fault::install(fault::Plan::disabled());
+                    let mut owner = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(main_heap, metadata, config)
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("later failed-unmap OS aggregate attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("later failed-unmap OS aggregate attachment retained: {error:?}")
+                        }
+                    };
+                    let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
+                        .expect("the matched process pair admits the failed-unmap OS aggregate fixture");
+                    let first = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the fixture creates its first full OS singleton");
+                    let first_page = NonNull::new(unsafe { allocator.test_page_for_block(first) })
+                        .expect("the first OS singleton remains PageMap-published");
+                    let first_published = unsafe { PublishedOsAlignedPage::from_page(config, first_page) }
+                        .expect("the first OS singleton retains its clipped terminal-release token");
+                    let second = allocator
+                        .engine
+                        .allocate_aligned(7, 128 * 1024)
+                        .expect("the fixture creates its second full OS singleton");
+                    let second_page = NonNull::new(unsafe { allocator.test_page_for_block(second) })
+                        .expect("the second OS singleton remains PageMap-published");
+                    let second_published = unsafe { PublishedOsAlignedPage::from_page(config, second_page) }
+                        .expect("the second OS singleton retains its clipped terminal-release token");
+
+                    let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
+                        let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
+                        core::mem::forget(allocator);
+                        panic!("thread exit enters its post-fast-slot failed-unmap OS aggregate drain: {error:?}");
+                    });
+                    let route = match unsafe {
+                        drain.abandon_full_os_singleton_pages_to_process_route()
+                    } {
+                        Ok(route) => route,
+                        Err(_) => panic!(
+                            "two same-size full OS singletons enter the failed-unmap aggregate route"
+                        ),
+                    };
+                    assert_eq!(
+                        owner.finish_after_page_drain(),
+                        Err(MainHeapThreadAttachmentError::TornDown),
+                        "the process route tears down the old Theap/TLD before the injected release"
+                    );
+
+                    fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+                    // SAFETY: `first` is one exact once-live aggregate member.
+                    // The source fast-root transition still makes failed
+                    // reclaim select the raw empty terminal release tail.
+                    let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::Terminal {
+                                route,
+                                error:
+                                    MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError::Route(
+                                        ThreadExitFullOsSingletonPagesPostExitFreeError::Release,
+                                    ),
+                            },
+                        ) => route,
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::Terminal {
+                                route,
+                                error,
+                            },
+                        ) => {
+                            core::mem::forget(route);
+                            panic!("failed OS aggregate unmap retains the exact release terminal: {error:?}");
+                        }
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::Rejected {
+                                route,
+                                error,
+                            },
+                        ) => {
+                            core::mem::forget(route);
+                            panic!("the exact aggregate OS client block is not rejected: {error:?}");
+                        }
+                        Err(
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure::ReleasedAllPageMapPoisoned {
+                                error,
+                            },
+                        ) => panic!(
+                            "failed unmap cannot release the aggregate's final PageMap route: {error:?}"
+                        ),
+                        Ok(result) => match result {
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult::ReleasedPage(route) => {
+                                core::mem::forget(route);
+                                panic!("the configured OS unmap failure cannot report a released aggregate member");
+                            }
+                            MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult::ReleasedAll => {
+                                panic!("the configured OS unmap failure cannot release every aggregate member");
+                            }
+                        },
+                    };
+                    assert_eq!(
+                        fault.observed(),
+                        1,
+                        "the failed aggregate release attempts exactly one source unmap"
+                    );
+                    fault.set(fault::Plan::disabled());
+                    assert!(
+                        route.test_has_pending_os_release(),
+                        "failed unmap retains the exact published mapping owner in the aggregate route"
+                    );
+                    let abandoned_head = {
+                        let mut heap = main_heap
+                            .lock_heap()
+                            .expect("the static main Heap remains projectable through failed aggregate release");
+                        let head = heap.heap_mut().test_os_abandoned_page_head();
+                        heap.unlock()
+                            .expect("the static main Heap unlocks after failed aggregate list observation");
+                        head
+                    };
+                    assert_eq!(
+                        abandoned_head,
+                        second_page.as_ptr(),
+                        "source list removal precedes the failed first terminal unmap and retains the second member"
+                    );
+                    for offset in (0..first_published.layout().page_map_size())
+                        .step_by(crate::config::ARENA_SLICE_SIZE)
+                    {
+                        assert!(unsafe {
+                            page_map
+                                .page_map()
+                                .expect("the process PageMap remains published")
+                                .checked_lookup(first_published.slice_start().as_ptr().wrapping_add(offset))
+                        }
+                        .is_null());
+                    }
+                    assert!(unsafe {
+                        second_published.page_map_entries_match(
+                            page_map.page_map().expect("the second aggregate PageMap member remains published"),
+                        )
+                    });
+
+                    // The route now owns one failed raw mapping release and a
+                    // second registered list member. This bounded slice has no
+                    // retry or traversal policy, so retain the isolated source
+                    // fixture rather than dropping its terminal ownership.
+                    core::mem::forget(route);
+                    core::mem::forget(owner);
+                });
+                worker
+                    .join()
+                    .expect("failed OS aggregate release fixture remains current-thread local");
+            });
+            core::mem::forget(main);
+        })
+        .join()
+        .expect("full OS-singleton aggregate failed-unmap fixture remains current-thread local");
     }
 
     #[test]
