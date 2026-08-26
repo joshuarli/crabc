@@ -907,6 +907,23 @@ remains private native x86-64 engine evidence only: it does not establish
 general lifecycle/routing/concurrent collection, public x86 support, backend
 promotion, or AArch64 evidence.
 
+The native x86-only track also has a separate 32-field dynamic full direct-small
+one-remote force-collect-to-mapped differential. A pinned-C worker fills one
+sole full direct-small ordinary regular-bin arena page (request/block size 1024,
+capacity/reserved 64, one slice) and preflights its exact rounded direct-cache
+range `[113, 128]`. The consumer/main thread publishes exactly one joined
+remote `mi_free`; the worker later runs real `mi_thread_done()`, and the
+consumer joins before sequential frees; Rust uses only the corresponding
+private typed drain. Force collection records
+`used == 63`, mapped dynamic abandonment, and dynamic bitmap/count state.
+Pinned source anchors plus the Rust handoff establish direct-cache
+clear-before-page-count-detach; only the source partial collector serves the
+mapped tail through terminal PageMap, ordinary arena bitmap, dynamic
+bitmap/count, and one-slice release. This remains private native x86-64 engine
+evidence only: it does not establish general lifecycle/routing/concurrent
+collection, abandonment/adoption, public x86 support, backend promotion, or
+AArch64 evidence.
+
 `DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth, separate
 dynamic full-page endpoint. It admits one sole full `MemoryKind::Arena` small
 page only in its ordinary regular bin, with

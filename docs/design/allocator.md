@@ -357,6 +357,23 @@ slice is slack but remains terminally released. This is private native x86-64
 engine evidence only and does not establish general lifecycle/routing, public
 x86 support, backend promotion, or AArch64 evidence.
 
+The native x86-only track separately records a 32-field dynamic full
+direct-small one-remote force-collect-to-mapped differential. The pinned-C
+worker fills one sole full direct-small ordinary regular-bin arena page (request
+and block size 1024, capacity/reserved 64, one slice) and preflights its exact
+rounded direct-cache range `[113, 128]`. The consumer/main thread publishes
+exactly one joined remote `mi_free`; the worker later runs real
+`mi_thread_done()`, then the consumer joins before sequential frees; Rust uses
+only the corresponding private typed drain. Force collection records
+`used == 63`, mapped dynamic abandonment, and bitmap/count state.
+Pinned source anchors plus the typed Rust handoff establish direct-cache
+clear-before-page-count-detach; only the source partial collector serves the
+mapped consumer tail through terminal PageMap, ordinary arena bitmap, dynamic
+bitmap/count, and one-slice release. This is private native x86-64 engine
+evidence only and does not establish general lifecycle/routing, concurrent
+collection, abandonment/adoption, public API/runtime, public x86 support,
+backend promotion, or AArch64 evidence.
+
 Those operations are
 live in the private lifecycle,
 including OS-aligned singleton ownership for power-of-two alignments above

@@ -795,6 +795,19 @@ broaden normal unmapped full non-direct-small abandonment to multiple frees,
 direct-small or other page classes, reclaim, adoption, requeue, scanning, or a
 general dynamic owner-exit traversal.
 
+`DynamicThreadExitDrain::abandon_full_direct_small_after_force_collect_to_mapped`
+captures the separate dynamic full direct-small branch with exactly one joined
+remote free. Force collection changes the still-linked sole ordinary-bin member
+to `used == reserved - 1`; false collection preserves it; regular-bin removal
+clears the complete rounded direct-cache range before page-count detach; then
+mapped abandonment immediately publishes the exact heap-local bitmap/count
+pair. The returned `DynamicThreadExitFullDirectSmallHandoff` starts mapped and
+accepts only sequential failed-reclaim client frees through the source partial
+collector, clearing the pair before the ordinary one-slice arena release. This
+does not broaden normal unmapped full direct-small abandonment to multiple
+frees, non-direct-small or other page classes, reclaim, adoption, requeue,
+scanning, or a general dynamic owner-exit traversal.
+
 The raw owner-local free-list substrate now also ports that source force-only
 append: it validates the deferred local chain, appends the old immediate head,
 and rejects a malformed cycle before relinking. Ordinary regular/full callers
