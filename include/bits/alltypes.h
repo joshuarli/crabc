@@ -2,17 +2,31 @@
 #define _Int64 long
 #define _Reg long
 
+#if defined(__x86_64__)
+/* Linux/x86-64 is the staged little-endian LP64 public-header target. */
+#if !defined(__LP64__) || !defined(__BYTE_ORDER__) || \
+	!defined(__ORDER_LITTLE_ENDIAN__) || \
+	__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "crabc x86-64 alltypes requires little-endian LP64"
+#endif
+#define __BYTE_ORDER 1234
+#else
 #if __AARCH64EB__
 #define __BYTE_ORDER 4321
 #else
 #define __BYTE_ORDER 1234
+#endif
 #endif
 
 #define __LONG_MAX 0x7fffffffffffffffL
 
 #ifndef __cplusplus
 #if defined(__NEED_wchar_t) && !defined(__DEFINED_wchar_t)
+#if defined(__x86_64__)
+typedef int wchar_t;
+#else
 typedef unsigned wchar_t;
+#endif
 #define __DEFINED_wchar_t
 #endif
 
@@ -34,6 +48,19 @@ typedef unsigned int nlink_t;
 #endif
 
 
+#if defined(__x86_64__) && defined(__FLT_EVAL_METHOD__) && \
+	__FLT_EVAL_METHOD__ == 2
+#if defined(__NEED_float_t) && !defined(__DEFINED_float_t)
+typedef long double float_t;
+#define __DEFINED_float_t
+#endif
+
+#if defined(__NEED_double_t) && !defined(__DEFINED_double_t)
+typedef long double double_t;
+#define __DEFINED_double_t
+#endif
+
+#else
 #if defined(__NEED_float_t) && !defined(__DEFINED_float_t)
 typedef float float_t;
 #define __DEFINED_float_t
@@ -42,6 +69,7 @@ typedef float float_t;
 #if defined(__NEED_double_t) && !defined(__DEFINED_double_t)
 typedef double double_t;
 #define __DEFINED_double_t
+#endif
 #endif
 
 

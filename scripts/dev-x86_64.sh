@@ -19,6 +19,9 @@ Usage: ./scripts/dev-x86_64.sh <command>
 
 Native Linux/x86-64 staged-foundation evidence commands:
   image  build the pinned Linux/amd64 core-evidence image
+  musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
+  header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
+  header-abi-project  compile the staged crabc x86 fenv/float header slice
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
   facade run the bounded native x86_64 crabc-rs direct-facade tests
   libc-syscall  run the isolated x86 C-ABI syscall register probe
@@ -28,10 +31,13 @@ Native Linux/x86-64 staged-foundation evidence commands:
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
-subset; `libc-syscall` compiles only the unintegrated raw syscall module.
-`libc-errno-tls` compiles only the unintegrated errno source and its static C
-fixture. `ldso-relocation` compiles only the unintegrated checked relocation
-source.
+subset; `musl-oracle` proves only C/POSIX oracle provenance, and
+`header-abi-reference` proves only its pinned reference baseline.
+`header-abi-project` compiles only the staged public fenv/float/fundamental
+type declarations and does not link an x86 libc artifact.
+`libc-syscall` compiles only the unintegrated raw syscall module.
+`libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
+`ldso-relocation` compiles only the unintegrated checked relocation source.
 None is a crabc-libc or crabc-ldso build, general facade admission, or C ABI
 support claim.
 EOF
@@ -122,6 +128,18 @@ run_core_tests() {
     '
 }
 
+run_musl_oracle() {
+    run_in_container bash /workspace/compat/x86_64/run_musl_oracle.sh
+}
+
+run_header_abi_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_header_abi_reference.sh
+}
+
+run_header_abi_project() {
+    run_in_container bash /workspace/compat/x86_64/run_project_header_abi.sh
+}
+
 run_libc_syscall_probe() {
     run_in_container bash -ceu '
         probe=/tmp/crabc-x86-libc-syscall-probe
@@ -153,7 +171,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|core|facade|libc-syscall|libc-errno-tls|ldso-relocation) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|core|facade|libc-syscall|libc-errno-tls|ldso-relocation) ;;
     *)
         usage >&2
         exit 2
@@ -166,6 +184,21 @@ case "$command" in
     image)
         [ "$#" -eq 0 ] || fail "image takes no arguments"
         build_image
+        ;;
+    musl-oracle)
+        [ "$#" -eq 0 ] || fail "musl-oracle takes no arguments"
+        ensure_image
+        run_musl_oracle
+        ;;
+    header-abi-reference)
+        [ "$#" -eq 0 ] || fail "header-abi-reference takes no arguments"
+        ensure_image
+        run_header_abi_reference
+        ;;
+    header-abi-project)
+        [ "$#" -eq 0 ] || fail "header-abi-project takes no arguments"
+        ensure_image
+        run_header_abi_project
         ;;
     core)
         [ "$#" -eq 0 ] || fail "core takes no arguments"

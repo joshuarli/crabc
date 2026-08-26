@@ -1,0 +1,674 @@
+# This ledger is deliberately capability and gate based.  It does not count
+# symbols and it does not make the bounded foundation lane a supported target.
+schema = "crabc.x86_64-runtime-parity/v1"
+target = "x86_64-unknown-linux-musl"
+platform = "Linux/x86-64 little-endian"
+kernel_msrv = "5.10"
+baseline_platform = "Linux/AArch64 little-endian"
+baseline_capability_ledger = "compat/crabc-rs/coverage.toml"
+baseline_gate_dispatch = "scripts/dev.sh"
+
+[policy]
+native_execution_only = true
+public_support = false
+no_emulation = true
+no_portability_framework = true
+no_symbol_count_claim = true
+
+[status_meaning]
+foundation_verified = "A bounded native source or artifact slice has the named evidence. It does not select the full artifact or discharge later family obligations."
+planned = "The AArch64-equivalent family remains a promotion obligation; its native evidence is required, not present."
+
+# This list is the closed promotion surface.  The validator rejects an omitted,
+# duplicated, or extra family and verifies dependency order.  Adding an AArch64
+# family therefore requires a deliberate x86 ledger decision rather than an
+# accidental change in a broad test command.
+[promotion]
+required_families = [
+  "oracle.musl-toolchain",
+  "core.architecture",
+  "facade.direct",
+  "facade.record-owning",
+  "libc.raw-syscall",
+  "libc.errno-tls",
+  "libc.headers-layouts",
+  "libc.posix-runtime",
+  "libc.pthread-tls",
+  "libc.text-math-locale-stdio",
+  "libc.resolver",
+  "libc.c-abi-compat",
+  "ldso.relative-relocation",
+  "ldso.dynamic-runtime",
+  "crt.static-pie",
+  "crt.dynamic-startup",
+  "sysroot.static-tls",
+  "sysroot.owned-artifact",
+  "compat.abi-differential",
+  "compat.posix-process",
+  "compat.resolver-network",
+  "compat.loader-corpus",
+  "consumer.rust-std-lto",
+  "consumer.source-build",
+  "capability.accounting",
+  "performance.release",
+]
+
+# Native mimalloc remains private, fixed-allocator evidence.  Keeping this
+# explicit prevents it from being mistaken for an x86 runtime-parity family.
+[[excluded_surface]]
+id = "allocator.mimalloc-private"
+reason = "Private fixed-allocator evidence is neither crabc-libc integration nor x86 runtime/platform support."
+evidence = ["compat/allocator/README.md", "native-mimalloc.md"]
+
+# This is a native oracle-toolchain gate, not a crabc runtime artifact.  It
+# must remain first: every C/POSIX family below that uses musl as its oracle
+# explicitly depends on this source-and-runtime identity proof.
+[[family]]
+id = "oracle.musl-toolchain"
+order = 5
+depends_on = []
+category = "architecture-foundation"
+description = "Pinned musl 1.2.6 x86-64 compiler, headers, loader, and libc identity proof for all native C/POSIX oracle lanes."
+aarch64_gates = ["symbols"]
+source_owners = ["compat/upstreams.toml", "compat/x86_64/musl_oracle_probe.c", "compat/x86_64/run_musl_oracle.sh", "docker/Dockerfile.x86_64", "docker/x86_64-musl-oracle-gcc"]
+x86_abi_prerequisites = ["Native Linux/x86-64 execution", "pinned musl x86-64 interpreter and libc", "compiler specs that select only the pinned musl sysroot"]
+x86_header_prerequisites = ["Pinned musl 1.2.6 headers selected through the oracle compiler, never Alpine bootstrap or ambient host headers."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh musl-oracle", scope = "Native x86-only source, compiler-specs, ELF-interpreter, and mapped-libc identity proof; it does not select crabc-libc or claim public support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 source build", role = "Native C/POSIX oracle-toolchain identity contract." }]
+capabilities = []
+status = "foundation-verified"
+
+[[family]]
+id = "core.architecture"
+order = 10
+depends_on = []
+category = "architecture-foundation"
+description = "Typed kernel, vDSO, TLS-thread-pointer, fenv, atomic/futex, and signal-restorer primitives."
+aarch64_gates = ["crabc-rs"]
+source_owners = ["crabc-core", "crabc-core/src/syscall_x86_64.rs", "crabc-core/src/signal_x86_64.rs", "crabc-core/src/fenv_x86_64.rs"]
+x86_abi_prerequisites = ["x86-64 Linux syscall register convention", "%fs thread-pointer model", "x87/MXCSR floating-point state", "rt_sigaction/SA_RESTORER signal frame"]
+x86_header_prerequisites = ["Not a public C-header surface; target records stay behind typed crabc-core APIs."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh core", scope = "Closed native crabc-core suite plus no-fxrstor emitted-code gate." }]
+oracle = [{ kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Direct architecture boundary contract." }]
+capabilities = ["runtime.compiler-abi"]
+status = "foundation-verified"
+
+[[family]]
+id = "facade.direct"
+order = 20
+depends_on = ["core.architecture"]
+category = "rust-facade"
+description = "Record-independent direct crabc-rs operations plus scalar eventfd and the proved signal-action boundary."
+aarch64_gates = ["crabc-rs"]
+source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/param.rs"]
+x86_abi_prerequisites = ["x86 syscall register proof", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split"]
+x86_header_prerequisites = ["Not a public C-header surface; the admitted API is typed Rust only."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed direct-facade subset; it excludes every unproved record-owning family." }]
+oracle = [{ kind = "kernel-abi", source = "Linux 5.10 x86-64 syscall ABI", role = "Direct kernel behavior contract." }, { kind = "test-only-native-api", source = "Pinned Rustix", role = "Later behavior comparison only; never a production dependency." }]
+capabilities = [
+  "error.termination.abort",
+  "memory.bytes-basic",
+  "memory.bytes-special",
+  "text.byte-strings-basic",
+  "text.byte-strings-stateful",
+  "numeric.scalar-basic",
+  "numeric.scalar-legacy-callback",
+  "numeric.parse-integer",
+  "random.state",
+  "random.getentropy",
+  "math.elementary",
+  "math.fenv",
+  "text.ctype",
+  "text.encoding-basic",
+  "pattern.fnmatch",
+  "pattern.glob",
+  "stdio.memory-stream",
+  "stdio.format-output",
+  "stdio.format-bounded",
+  "io.positioned",
+  "io.descriptor",
+  "io.status-flags",
+  "filesystem.global-sync",
+  "io.range-sync",
+  "filesystem.readahead",
+  "filesystem.descriptor-transfer",
+  "io.positioned-vectored-flags",
+  "io.syncfs",
+  "io.vectored",
+  "io.positioned-vectored",
+  "io.basic-descriptor",
+  "io.file-position",
+  "io.advisory-flock",
+  "io.typed-ioctl",
+  "pipe.basic",
+  "pipe.tee",
+  "pipe.capacity-observation",
+  "io.readiness-eventfd",
+  "io.readiness-eventfd-counter",
+  "event.pause",
+  "thread.futex-basic",
+  "network.byte-order",
+  "network.ipv6-constants",
+  "network.ethernet-database",
+  "network.ethernet-codec",
+  "network.ipv4-classful",
+  "network.ipv4-legacy-codec",
+  "network.ip-address-types",
+  "network.ip-codec",
+  "system.auxv",
+]
+status = "foundation-verified"
+
+[[family]]
+id = "facade.record-owning"
+order = 30
+depends_on = ["facade.direct"]
+category = "rust-facade"
+description = "The remaining AArch64 crabc-rs filesystem, polling, networking, process, thread, time, mapping, resolver, and runtime-owning families."
+aarch64_gates = ["crabc-rs"]
+source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/fs.rs", "crabc-rs/src/event.rs", "crabc-rs/src/net.rs", "crabc-rs/src/process.rs", "crabc-rs/src/time.rs"]
+x86_abi_prerequisites = ["Per-record x86 layout and syscall proof before admission", "x86 signal, socket, time, stat, and poll record layouts"]
+x86_header_prerequisites = ["Published Rust types must correspond to x86 Linux ABI records without borrowing AArch64 constants or layouts."]
+native_evidence = [{ state = "required", command = "Define closed native x86 facade family runners", scope = "Each record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." }]
+oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]
+capabilities = [
+  "filesystem.capacity-metadata",
+  "filesystem.path-metadata",
+  "filesystem.canonicalize",
+  "filesystem.effective-access",
+  "filesystem.remove-dispatch",
+  "process.root-change",
+  "filesystem.extended-metadata",
+  "filesystem.symlink-timestamps",
+  "filesystem.fd-timestamps",
+  "filesystem.directory-relative-timestamps",
+  "filesystem.cwd-timestamps",
+  "filesystem.second-resolution-timestamps",
+  "filesystem.create-file",
+  "filesystem.special-nodes",
+  "filesystem.ownership",
+  "filesystem.access-check",
+  "filesystem.directory-relative-access-check",
+  "filesystem.pathname-truncate",
+  "filesystem.descriptor-range-copy",
+  "filesystem.cwd",
+  "filesystem.cwd-mutation",
+  "filesystem.path-core",
+  "filesystem.directory-stream",
+  "filesystem.directory-position",
+  "filesystem.raw-directory",
+  "filesystem.named-temporary-file",
+  "filesystem.anonymous-temporary-file",
+  "filesystem.posix-allocate-range",
+  "filesystem.temporary-directory",
+  "filesystem.allocate-range",
+  "filesystem.access-advice",
+  "filesystem.memory-file",
+  "filesystem.seal-observation",
+  "filesystem.seal-mutation",
+  "filesystem.xattr",
+  "io.readiness",
+  "io.readiness-ppoll",
+  "io.readiness-poll",
+  "io.readiness-epoll",
+  "memory.vm",
+  "memory.mapping-remap",
+  "memory.mapping-locking",
+  "memory.residency",
+  "memory.mapping-sync",
+  "memory.advice",
+  "memory.mapping",
+  "time.timezone-rules",
+  "time.local-calendar",
+  "time.realtime-millis",
+  "time.timespec-get",
+  "time.clock-process-id",
+  "time.clock-set",
+  "time.calendar-utc",
+  "time.process-cpu-observation",
+  "time.interval-timer-query",
+  "time.process-accounting",
+  "time.clock-sleep",
+  "time.wall-clock",
+  "time.clock-query",
+  "time.process-interval-control",
+  "time.posix-timers",
+  "time.relative-sleep",
+  "time.timerfd",
+  "network.multimessage",
+  "network.socket-at-mark",
+  "network.vectored-message",
+  "network.socket-option-reuseaddr",
+  "network.socket-option-type",
+  "network.socket-option-protocol",
+  "network.socket-option-cookie",
+  "network.socket-option-domain",
+  "network.socket-option-acceptconn",
+  "network.socket-option-oobinline",
+  "network.socket-option-broadcast",
+  "network.datagram-addressed",
+  "network.socket-listen-accept",
+  "network.socket-connect",
+  "network.socket-peer-address",
+  "network.socket-bind-local-address",
+  "network.socket-create-shutdown",
+  "network.connected-socket",
+  "network.interface-addresses",
+  "network.interface-index",
+  "network.interface-name",
+  "network.interface-enumeration",
+  "network.resolver-transport",
+  "network.resolver",
+  "network.netdb",
+  "process.child-ownership",
+  "process.pidfd-open",
+  "process.fcntl-lock-observation",
+  "process.pid-observation",
+  "process.session-observation",
+  "thread.credentials-res",
+  "process.fs-credentials",
+  "process.resource-limit-mutation",
+  "process.umask",
+  "thread.identity",
+  "thread.cpu-observation",
+  "thread.cpu-affinity-observation",
+  "thread.cpu-affinity-mutation",
+  "thread.scheduler-rr-interval",
+  "process.scheduling-priority",
+  "process.scheduling-priority-mutation",
+  "process.supplementary-groups",
+  "process.resource-usage",
+  "process.identity-triples",
+  "process.resource-limits",
+  "process.identity",
+  "process.thread-kill",
+  "ipc",
+  "ipc.posix-shm",
+  "terminal.pty-session",
+  "terminal.termios-control",
+  "terminal.termios-queue",
+  "terminal.exclusive-mode",
+  "terminal.special-codes",
+  "terminal.tty-path",
+  "terminal.tty-basic",
+  "terminal.pty-basic",
+  "users.databases",
+  "system.inotify",
+  "process.scheduler-priority-bounds",
+  "process.resource-limits-targeted",
+  "system.load-average",
+  "system.name-observation",
+  "system.identity-info",
+  "mount.basic",
+]
+status = "planned"
+
+[[family]]
+id = "libc.raw-syscall"
+order = 40
+depends_on = ["core.architecture"]
+category = "c-abi"
+description = "Unintegrated raw x86 syscall assembly boundary, including all six argument registers."
+aarch64_gates = ["build", "test"]
+source_owners = ["libc/src/c_abi/x86_64/syscall.rs", "compat/x86_64/libc_syscall_probe.rs"]
+x86_abi_prerequisites = ["rax syscall number; rdi/rsi/rdx/r10/r8/r9 arguments; rcx/r11 clobbers"]
+x86_header_prerequisites = ["No installed public-header claim until crabc-libc selects this source."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-syscall", scope = "Source-only raw openat, setsockopt, and mmap register probes." }]
+oracle = [{ kind = "kernel-abi", source = "Linux 5.10 x86-64 syscall ABI", role = "Direct register contract." }]
+capabilities = []
+status = "foundation-verified"
+
+[[family]]
+id = "libc.errno-tls"
+order = 50
+depends_on = ["libc.raw-syscall"]
+category = "c-abi"
+description = "C errno addressability and initial TLS isolation before libc integration."
+aarch64_gates = ["pthread-stress", "static-pthread-tls"]
+source_owners = ["libc/src/c_abi/x86_64/errno.rs", "compat/x86_64/libc_errno_tls_probe.c", "compat/x86_64/run_libc_errno_tls.sh"]
+x86_abi_prerequisites = ["Initial TLS R_X86_64_TPOFF relocation", "no dynamic __tls_get_addr resolver path", "per-thread TLS addressing"]
+x86_header_prerequisites = ["include/errno.h declaration and macro contract"]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-errno-tls", scope = "Source-only C fixture proves zero initialization and main/pthread slot isolation." }]
+oracle = [{ kind = "kernel-abi", source = "ELF x86-64 TLS ABI", role = "Direct relocation and thread-local contract; not yet a musl differential." }]
+capabilities = []
+status = "foundation-verified"
+
+[[family]]
+id = "libc.headers-layouts"
+order = 60
+depends_on = ["oracle.musl-toolchain", "libc.errno-tls"]
+category = "c-abi"
+description = "Selected installed C/POSIX headers, typedefs, constants, and data-layout contracts for a selected crabc-libc artifact."
+aarch64_gates = ["abi-probe", "build", "test"]
+source_owners = ["include", "include/bits/alltypes.h", "include/fenv.h", "include/float.h", "compat/x86_64/project_header_abi_probe.c", "compat/x86_64/run_project_header_abi.sh", "libc/src/c_abi.rs", "libc/src/lib.rs"]
+x86_abi_prerequisites = ["LP64 scalar widths", "SysV x86-64 aggregate alignment", "ELF/TLS data layout", "architecture-specific syscall numbers and flags"]
+x86_header_prerequisites = ["The staged fenv/float/fundamental-type declarations compile in both SSE and x87 evaluation modes; every remaining selected installed header needs a native compile-time and layout probe against the x86 artifact."]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh header-abi-project", scope = "This compile-only fenv/float/fundamental-type slice is partial evidence. Do not select crabc-libc until all headers, layouts, static links, and errno translation are jointly evidenced." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 headers and ABI inventory", role = "C/POSIX layout and compatibility oracle." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "libc.posix-runtime"
+order = 70
+depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.raw-syscall"]
+category = "c-abi"
+description = "Selected C/POSIX descriptor, filesystem, process, signal, mapping, and time behavior in crabc-libc."
+aarch64_gates = ["differential", "os-test", "signal-process", "libc-test"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/filesystem_paths_exports.rs", "libc/src/filesystem_stats_exports.rs", "libc/src/program_utils_exports.rs"]
+x86_abi_prerequisites = ["x86 syscall numbers and error conventions", "stat, sigset, timespec, mmap, and process record layouts", "x86 signal frame behavior"]
+x86_header_prerequisites = ["Selected fcntl, sys/stat, signal, time, unistd, sys/mman, and process header contracts."]
+native_evidence = [{ state = "required", command = "Define native x86 differential, POSIX, and focused signal/process gates", scope = "One native vertical slice per selected C/POSIX family." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Behavioral C/POSIX oracle." }, { kind = "standard", source = "POSIX where the selected behavior is specified", role = "Normative behavior cross-check." }]
+capabilities = [
+  "filesystem.lchmod-unsupported",
+  "filesystem.stat-compat",
+  "filesystem.directory",
+  "filesystem.extensions",
+  "process.control",
+  "process.credentials",
+  "process.environment-mutation",
+  "process.signal",
+  "system.kernel-admin",
+]
+status = "planned"
+
+[[family]]
+id = "libc.pthread-tls"
+order = 80
+depends_on = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts", "libc.posix-runtime"]
+category = "c-abi"
+description = "Pthread, thread-specific data, static/dynamic TLS, cancellation, and fork interactions in the selected C runtime."
+aarch64_gates = ["pthread-stress", "static-pthread-tls", "signal-process", "libc-test"]
+source_owners = ["libc/src/c_abi.rs", "ldso/src/loader.rs", "compat/pthread-stress", "compat/static-pthread-tls"]
+x86_abi_prerequisites = ["ELF x86-64 initial and dynamic TLS", "%fs thread-pointer convention", "pthread ABI object layouts", "x86 clone and signal/TLS interaction"]
+x86_header_prerequisites = ["pthread.h, threads.h, errno.h, and TLS-related installed ABI declarations."]
+native_evidence = [{ state = "required", command = "Define native x86 pthread/TLS differential and static-TLS gates", scope = "The current errno leaf is insufficient for pthread or TLS parity." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Pthread/TLS behavioral oracle." }]
+capabilities = ["process.atfork-exit-hooks", "thread.pthread-c11", "time.posix-timer-thread-notify"]
+status = "planned"
+
+[[family]]
+id = "libc.text-math-locale-stdio"
+order = 90
+depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.pthread-tls"]
+category = "c-abi"
+description = "Selected C text/encoding, locale, stdio, math/fenv, random, and compatibility helpers."
+aarch64_gates = ["libc-test", "differential", "os-test"]
+source_owners = ["libc/src/c_abi.rs", "libc/src/random_exports.rs", "crabc-core/src/fenv.rs", "include"]
+x86_abi_prerequisites = ["x86 fenv_t and long-double ABI", "x87/MXCSR ownership", "varargs and FILE/locale object ABI where selected"]
+x86_header_prerequisites = ["fenv.h, math.h, stdio.h, locale.h, wchar.h, string.h, and stdlib.h selected contracts."]
+native_evidence = [{ state = "required", command = "Define native x86 C fenv, text, locale, math, stdio, and random gates", scope = "Rust facade fenv evidence does not establish the C fenv_t or C library ABI." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX and musl-compatible behavior oracle." }]
+capabilities = [
+  "numeric.parse-float-locale",
+  "math.elementary-long-double",
+  "math.elementary-fenv-sensitive",
+  "math.special",
+  "math.complex",
+  "locale.core",
+  "text.wide-multibyte",
+  "text.iconv",
+  "pattern.regex",
+  "pattern.wordexp",
+  "stdio.path-stream",
+  "stdio.fopen64-alias",
+  "stdio.stream-io",
+  "stdio.position-buffering",
+  "stdio.format-scan",
+  "time.clock-calendar",
+  "time.sleep-aliases",
+]
+status = "planned"
+
+[[family]]
+id = "libc.resolver"
+order = 100
+depends_on = ["oracle.musl-toolchain", "libc.headers-layouts", "libc.posix-runtime", "libc.text-math-locale-stdio"]
+category = "c-abi"
+description = "Bounded /etc hosts/resolv.conf resolver profile with A/AAAA/CNAME UDP/TCP retry and failover behavior."
+aarch64_gates = ["resolver-network", "libc-test"]
+source_owners = ["libc/src/c_abi.rs", "compat/resolver-network"]
+x86_abi_prerequisites = ["socket and DNS wire I/O syscall boundary", "x86 socket/address record layouts"]
+x86_header_prerequisites = ["netdb.h, arpa/inet.h, sys/socket.h, and netinet/in.h selected contracts."]
+native_evidence = [{ state = "required", command = "Define a native x86 isolated resolver-network differential gate", scope = "Use the same local-only DNS environment; do not add NSS, DoH, DoT, or mDNS." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Resolver behavior oracle within the documented bounded profile." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "libc.c-abi-compat"
+order = 110
+depends_on = ["oracle.musl-toolchain", "libc.posix-runtime", "libc.pthread-tls", "libc.text-math-locale-stdio", "libc.resolver"]
+category = "c-abi"
+description = "Selected C ABI compatibility closure, including libc-test and differential accounting rather than a raw export count."
+aarch64_gates = ["libc-test", "differential", "compat"]
+source_owners = ["libc/src/lib.rs", "libc/src/c_abi.rs", "libc-test-harness", "compat/differential"]
+x86_abi_prerequisites = ["x86 ELF symbol/linkage rules", "all selected C object and TLS layouts", "static and dynamic link behavior"]
+x86_header_prerequisites = ["Installed selected header surface must match the selected ABI ledger, not an accidental host sysroot."]
+native_evidence = [{ state = "required", command = "Define native x86 libc-test and musl differential artifact gates", scope = "Require a selected crabc-libc binary; source-only leaves cannot satisfy this family." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX compatibility oracle." }]
+capabilities = [
+  "process.globals",
+  "error.reporting-termination",
+  "memory.allocator-basic",
+  "memory.allocator-observability",
+  "numeric.qsort-helper",
+  "crypto.crypt",
+  "crypto.crypt-helpers",
+  "catalog.gettext",
+  "search.hash-table",
+  "search.tree-intrusive",
+  "legacy.misc",
+]
+status = "planned"
+
+[[family]]
+id = "ldso.relative-relocation"
+order = 120
+depends_on = ["core.architecture"]
+category = "runtime-artifact"
+description = "Checked symbol-free R_X86_64_RELATIVE RELA and ELF64 RELR relocation foundation."
+aarch64_gates = ["ldso"]
+source_owners = ["ldso/src/x86_64_relocation.rs", "compat/x86_64/tests/test_runner.py"]
+x86_abi_prerequisites = ["ELF64 little-endian parsing", "R_X86_64_RELATIVE RELA", "ELF64 RELR", "checked table and target ranges"]
+x86_header_prerequisites = ["No installed C header; this is private loader ELF machinery."]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh ldso-relocation", scope = "Source-only relocation tests; no interpreter, lookup, or selected crabc-ldso artifact." }]
+oracle = [{ kind = "elf-abi", source = "System V AMD64 psABI and Linux ELF ABI", role = "Relocation encoding contract." }]
+capabilities = []
+status = "foundation-verified"
+
+[[family]]
+id = "ldso.dynamic-runtime"
+order = 130
+depends_on = ["oracle.musl-toolchain", "ldso.relative-relocation", "libc.headers-layouts", "libc.pthread-tls"]
+category = "runtime-artifact"
+description = "x86 dynamic interpreter startup/finalization, symbol scope, loader TLS, RuntimeV1 bridge, and loader handoff."
+aarch64_gates = ["ldso", "loader-inventory", "rust-std", "lto"]
+source_owners = ["ldso/src/lib.rs", "ldso/src/loader.rs", "crabc-core/src/runtime.rs"]
+x86_abi_prerequisites = ["PT_INTERP and x86 ELF startup stack", "x86 relocation and symbol rules", "loader TLS and __tls_get_addr", "RuntimeV1 ownership"]
+x86_header_prerequisites = ["dlfcn.h and loader-visible C ABI declarations where selected; private RuntimeV1 remains uninstalled."]
+native_evidence = [{ state = "required", command = "Define native x86 loader inventory and synthetic ldso differential gates", scope = "Relative relocation alone is not dynamic-loader support." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 loader", role = "Dynamic loader behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "ELF and relocation contract." }]
+capabilities = ["runtime.loader", "runtime.private-facades", "loader.dlfcn-basic", "loader.dlfcn-introspection"]
+status = "planned"
+
+[[family]]
+id = "crt.static-pie"
+order = 140
+depends_on = ["core.architecture", "ldso.relative-relocation"]
+category = "runtime-artifact"
+description = "Bounded static-PIE rcrt1/crti/crtn startup, checked relative relocation, and GNU RELRO foundation."
+aarch64_gates = ["sysroot", "lto"]
+source_owners = ["crt/build_x86_64.py", "crt/src/x86_64_rcrt1.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/run-x86_64.sh"]
+x86_abi_prerequisites = ["x86 static PIE entry stack", "R_X86_64_RELATIVE/RELR", "GNU RELRO", ".init/.fini array boundaries"]
+x86_header_prerequisites = ["No public application header claim until startup objects are installed through an owned x86 sysroot."]
+native_evidence = [{ state = "verified", command = "./crt/run-x86_64.sh static-pie", scope = "Bounded rcrt1/crti/crtn static-PIE proof only." }]
+oracle = [{ kind = "elf-abi", source = "System V AMD64 psABI", role = "Startup and relocation ABI contract." }]
+capabilities = []
+status = "foundation-verified"
+
+[[family]]
+id = "crt.dynamic-startup"
+order = 150
+depends_on = ["oracle.musl-toolchain", "crt.static-pie", "ldso.dynamic-runtime", "libc.c-abi-compat"]
+category = "runtime-artifact"
+description = "Dynamic crt1/Scrt1 entries, lifecycle arrays, static-link helpers, and dynamic loader handoff."
+aarch64_gates = ["sysroot", "lto", "rust-std"]
+source_owners = ["crt", "builtins", "scripts/build_owned_sysroot.py"]
+x86_abi_prerequisites = ["x86 process-entry ABI", "dynamic PIE linkage", "constructor/destructor order", "static TLS and compiler-helper linkage"]
+x86_header_prerequisites = ["Installed crt and compiler-helper link specification must resolve only through the owned x86 sysroot."]
+native_evidence = [{ state = "required", command = "Define native x86 dynamic CRT entry, static-link, and helper archive gates", scope = "Do not promote the static-PIE leaf as a full CRT or sysroot." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 toolchain/runtime", role = "Application startup behavior oracle." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "Entry and linkage contract." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "sysroot.static-tls"
+order = 160
+depends_on = ["oracle.musl-toolchain", "crt.dynamic-startup", "libc.pthread-tls"]
+category = "runtime-artifact"
+description = "Installed static pthread/TLS program behavior through the sealed x86 application sysroot."
+aarch64_gates = ["static-pthread-tls", "sysroot"]
+source_owners = ["compat/static-pthread-tls", "scripts/build_owned_sysroot.py", "crt", "libc", "builtins"]
+x86_abi_prerequisites = ["x86 static TLS model", "%fs TLS base", "pthread TLS destructor and startup ordering"]
+x86_header_prerequisites = ["Owned pthread and TLS header declarations must compile and link without ambient target runtime inputs."]
+native_evidence = [{ state = "required", command = "Define native x86 sealed static-pthread-TLS gate", scope = "Must execute a program through the installed x86 sysroot, not a source-only TLS probe." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Static pthread/TLS behavior oracle." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "sysroot.owned-artifact"
+order = 170
+depends_on = ["crt.dynamic-startup", "sysroot.static-tls", "ldso.dynamic-runtime"]
+category = "runtime-artifact"
+description = "Reproducible installed x86 CRT, libc, loader, headers, compiler helpers, link modes, and distribution smoke artifact."
+aarch64_gates = ["sysroot", "sysroot-dist", "sysroot-smoke"]
+source_owners = ["scripts/build_owned_sysroot.py", "scripts/sysroot_dist.py", "compat/sysroot", "compat/sysroot-smoke"]
+x86_abi_prerequisites = ["EM_X86_64 ELF artifacts", "owned PT_INTERP", "static and dynamic link modes", "no ambient target CRT/compiler runtime"]
+x86_header_prerequisites = ["Installed x86 include tree and linker driver must be self-contained and provenance-audited."]
+native_evidence = [{ state = "required", command = "Define native x86 owned-sysroot build, distribution, and extracted-smoke gates", scope = "The proof must reject ambient musl CRT, GCC, compiler-rt, and host sysroot substitutions." }]
+oracle = [{ kind = "artifact-provenance", source = "Owned sysroot contract", role = "Purity, reproducibility, and linkage oracle." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "compat.abi-differential"
+order = 180
+depends_on = ["oracle.musl-toolchain", "libc.c-abi-compat", "sysroot.owned-artifact"]
+category = "compatibility-gate"
+description = "Pinned musl ABI inventory, symbol ratchet, and controlled C differential against selected x86 runtime artifacts."
+aarch64_gates = ["abi-probe", "symbols", "compat", "differential"]
+source_owners = ["compat/abi", "compat/differential", "scripts/check_compat_ratchet.py"]
+x86_abi_prerequisites = ["x86 ELF dynamic symbols and ABI inventory", "same-object musl/candidate link and execution lanes"]
+x86_header_prerequisites = ["Pinned musl headers compile the shared differential workload; candidate links through the owned x86 headers and runtime only."]
+native_evidence = [{ state = "required", command = "Define native x86 ABI inventory, ratchet, and same-object musl differential gates", scope = "Measurements must be separately labeled and never become a symbol-count definition of parity." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX ABI and behavioral oracle." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "compat.posix-process"
+order = 190
+depends_on = ["oracle.musl-toolchain", "compat.abi-differential", "libc.pthread-tls"]
+category = "compatibility-gate"
+description = "Pinned OS-test, libc-test, signal/process, and pthread stress evidence for selected x86 C/POSIX behavior."
+aarch64_gates = ["os-test", "libc-test", "pthread-stress", "signal-process"]
+source_owners = ["compat/os-test", "libc-test-harness", "compat/pthread-stress", "compat/signal-process"]
+x86_abi_prerequisites = ["x86 process, signal, TLS, pthread, and selected POSIX record behavior", "fresh process-group execution"]
+x86_header_prerequisites = ["Shared source compiles once with pinned musl headers and links once per native runtime candidate."]
+native_evidence = [{ state = "required", command = "Define native x86 OS-test, libc-test, pthread-stress, and signal-process gates", scope = "Preserve raw exit/stdout/stderr comparisons and isolated execution." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Selected POSIX/process behavior oracle." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "compat.resolver-network"
+order = 200
+depends_on = ["oracle.musl-toolchain", "libc.resolver", "compat.abi-differential"]
+category = "compatibility-gate"
+description = "Isolated local-only resolver and socket behavior differential for the bounded project profile."
+aarch64_gates = ["resolver-network"]
+source_owners = ["compat/resolver-network", "libc/src/c_abi.rs"]
+x86_abi_prerequisites = ["x86 socket/address records", "network syscall ABI", "resolver transport state"]
+x86_header_prerequisites = ["Pinned musl and candidate netdb/socket headers compile the same controlled workload."]
+native_evidence = [{ state = "required", command = "Define native x86 resolver-network container and differential gate", scope = "Only local deterministic DNS fixtures; no public-network fallback." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "Resolver/network behavior oracle." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "compat.loader-corpus"
+order = 210
+depends_on = ["oracle.musl-toolchain", "ldso.dynamic-runtime", "compat.abi-differential", "sysroot.owned-artifact"]
+category = "compatibility-gate"
+description = "Synthetic loader differential and real software corpus evidence through the selected x86 loader/libc pair."
+aarch64_gates = ["ldso", "loader-inventory", "corpus"]
+source_owners = ["compat/ldso", "compat/loader", "compat/corpus", "ldso/src/loader.rs"]
+x86_abi_prerequisites = ["x86 dynamic linking, relocations, TLS, symbol scope, DT_RELR, and interpreter execution"]
+x86_header_prerequisites = ["Candidate applications and corpus binaries must resolve against the owned x86 sysroot/runtime, never an ambient loader or libc."]
+native_evidence = [{ state = "required", command = "Define native x86 synthetic ldso, loader-inventory, and corpus gates", scope = "A source-only relative-relocation unit suite is insufficient." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 loader and libc", role = "Loader/runtime behavior oracle." }, { kind = "external-corpus", source = "Pinned Alpine corpus manifest", role = "End-to-end application evidence." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "consumer.rust-std-lto"
+order = 220
+depends_on = ["oracle.musl-toolchain", "sysroot.owned-artifact", "compat.loader-corpus", "facade.record-owning"]
+category = "consumer-gate"
+description = "Stock Rust std, dependent fixture, build-std, and LTO/native-facade behavior through the x86 runtime and owned sysroot."
+aarch64_gates = ["rust-std", "rust-std-dependent", "lto", "lto-native-facade"]
+source_owners = ["compat/rust-std", "compat/lto", "compat/lto/native-facade-lto-fixture", "crabc-rs"]
+x86_abi_prerequisites = ["Rust target ABI", "x86 CRT/loader handoff", "static and dynamic link/LTO resolution", "no_std facade boundary"]
+x86_header_prerequisites = ["Owned x86 sysroot driver and headers must satisfy Rust/C build inputs without host-target leakage."]
+native_evidence = [{ state = "required", command = "Define native x86 Rust-std, dependent, LTO, and native-facade-LTO gates", scope = "Build through the owned x86 CRT, loader, libc, and helper artifacts." }]
+oracle = [{ kind = "consumer-build", source = "Pinned Rust toolchain and stock Rust sources", role = "Consumer compatibility contract." }, { kind = "c-posix", source = "Pinned musl 1.2.6", role = "Separately labeled runtime comparison oracle." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "consumer.source-build"
+order = 230
+depends_on = ["oracle.musl-toolchain", "sysroot.owned-artifact", "consumer.rust-std-lto"]
+category = "consumer-gate"
+description = "Pinned application source-build gate through the owned x86 sysroot, beginning with the completed AArch64 Lua contract."
+aarch64_gates = ["lua"]
+source_owners = ["compat/lua", "scripts/build_owned_sysroot.py", "docs/design/source-build.md"]
+x86_abi_prerequisites = ["x86 compiler-driver, dynamic loader, libc, CRT, and helper archive closure"]
+x86_header_prerequisites = ["Application headers and link flags resolve only from the installed x86 sysroot and explicit application inputs."]
+native_evidence = [{ state = "required", command = "Define native x86 pinned source-build gate", scope = "Retain source/dependency/link/artifact purity accounting; do not use host compiler runtime fallbacks." }]
+oracle = [{ kind = "source-build", source = "Pinned upstream application source and musl execution comparison", role = "Application build and runtime evidence." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "capability.accounting"
+order = 240
+depends_on = ["facade.record-owning", "libc.c-abi-compat", "compat.loader-corpus", "consumer.source-build"]
+category = "promotion-gate"
+description = "Complete semantic accounting of the selected AArch64-equivalent surface without a symbol-count definition of parity."
+aarch64_gates = ["crabc-rs", "compat", "dashboard"]
+source_owners = ["compat/crabc-rs/coverage.toml", "compat/x86_64/parity.toml", "scripts/generate_compatibility_dashboard.py"]
+x86_abi_prerequisites = ["Every selected family has an x86 implementation, record/layout proof where applicable, and native evidence."]
+x86_header_prerequisites = ["Every selected C header and ABI capability is classified, evidenced, or explicitly outside the retained profile."]
+native_evidence = [{ state = "required", command = "Validate the x86 parity ledger and native capability records after every selected family is evidenced", scope = "No unaccounted selected surface; this ledger does not consume AArch64 measurements as x86 proof." }]
+oracle = [{ kind = "project-contract", source = "SCOPE.md, COMPATIBILITY-PROFILE.md, STATUS.md, and x86-64.md", role = "Selected-surface and promotion contract." }]
+capabilities = []
+status = "planned"
+
+[[family]]
+id = "performance.release"
+order = 250
+depends_on = ["oracle.musl-toolchain", "capability.accounting", "consumer.rust-std-lto", "consumer.source-build"]
+category = "promotion-gate"
+description = "Qualified x86 native performance evidence wherever the retained AArch64 completion contract requires it."
+aarch64_gates = ["perf", "perf-native"]
+source_owners = ["compat/perf", "compat/perf/native", "docs/design/performance.md"]
+x86_abi_prerequisites = ["Native x86 execution on controlled hardware", "same-source/same-input candidate and oracle lanes", "artifact hash provenance"]
+x86_header_prerequisites = ["Performance fixtures link through the selected owned x86 runtime rather than ambient host headers or CRT objects."]
+native_evidence = [{ state = "required", command = "Define qualified native x86 performance gates after correctness closure", scope = "Performance evidence cannot substitute for correctness or promotion gates." }]
+oracle = [{ kind = "performance", source = "Pinned musl 1.2.6 comparison lane and project performance contract", role = "Controlled comparison and decision evidence." }]
+capabilities = []
+status = "planned"

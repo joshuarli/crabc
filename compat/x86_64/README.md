@@ -9,6 +9,9 @@ Run it only on a native Linux x86_64 host:
 
 ```sh
 ./scripts/dev-x86_64.sh image
+./scripts/dev-x86_64.sh musl-oracle
+./scripts/dev-x86_64.sh header-abi-reference
+./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
@@ -23,6 +26,27 @@ identity. Its exact evidence command is:
 ```sh
 cargo test --locked --target x86_64-unknown-linux-musl -p crabc-core --lib --no-default-features -- --test-threads=1
 ```
+
+`musl-oracle` source-builds the SHA-verified upstream musl 1.2.6 release under
+`/opt/musl-1.2.6` in the x86 image (with the immutable release-commit fallback)
+and proves that its compiler, interpreter, and running `libc.so` are exactly
+that tree. It is C/POSIX oracle provenance only: it neither builds a crabc
+artifact nor constitutes a musl differential result.
+
+`header-abi-reference` compiles a C reference fixture only with that pinned
+toolchain. It locks down the x86 SysV LP64 and x87 `long double`/`fenv` baseline
+which the future target-split crabc headers must meet. It deliberately does
+not compile crabc headers and is not public x86 C-header support.
+
+`header-abi-project` places the project headers first and compile-checks only
+the staged x86 `fenv`, `float`, and fundamental-type declarations, in both SSE
+and x87 evaluation modes. It deliberately has no link step: the declarations
+are a source-only ABI slice, not a selected `crabc-libc` artifact or general
+x86 C-header support.
+
+[`parity.toml`](parity.toml) is the closed machine-readable x86 completion
+ledger. Its validator and focused tests account for the AArch64-equivalent
+capability/gate families separately from these foundation measurements.
 
 After the suite passes, `core` finds the single freshly built `crabc-core`
 test executable in its ephemeral native target directory and disassembles it.

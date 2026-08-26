@@ -1,0 +1,8 @@
+#!/bin/sh
+# x86-64 C/POSIX oracle compiler. This wrapper selects the hash-verified musl
+# source build installed by docker/Dockerfile.x86_64, never Alpine's bootstrap
+# musl headers, libc, or loader. The image's documented GCC support archive is
+# copied beneath that pinned tree solely for GCC specs compatibility.
+set -eu
+
+exec /usr/bin/gcc -specs /opt/musl-1.2.6/lib/musl-gcc.specs "$@"

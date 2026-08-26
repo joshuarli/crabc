@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,7 +30,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
-        self.assertIn('image|core|facade|libc-syscall|libc-errno-tls|ldso-relocation)', source)
+        self.assertIn(
+            'image|musl-oracle|header-abi-reference|header-abi-project|core|facade|libc-syscall|libc-errno-tls|ldso-relocation)',
+            source,
+        )
+        self.assertIn('run_musl_oracle()', source)
+        self.assertIn('compat/x86_64/run_musl_oracle.sh', source)
+        self.assertIn('run_header_abi_reference()', source)
+        self.assertIn('compat/x86_64/run_header_abi_reference.sh', source)
+        self.assertIn('run_header_abi_project()', source)
+        self.assertIn('compat/x86_64/run_project_header_abi.sh', source)
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -54,6 +64,48 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn('-p crabc-libc', source)
         self.assertNotIn('-p crabc-ldso', source)
+
+    def test_pinned_musl_oracle_and_reference_header_baseline_stay_closed(self) -> None:
+        dockerfile = (ROOT / "docker" / "Dockerfile.x86_64").read_text(encoding="utf-8")
+        wrapper = (ROOT / "docker" / "x86_64-musl-oracle-gcc").read_text(encoding="utf-8")
+        oracle = (ROOT / "compat" / "x86_64" / "run_musl_oracle.sh").read_text(
+            encoding="utf-8"
+        )
+        reference = (ROOT / "compat" / "x86_64" / "run_header_abi_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        project = (ROOT / "compat" / "x86_64" / "run_project_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('ARG MUSL_VERSION=1.2.6', dockerfile)
+        self.assertIn('ARG MUSL_SHA256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a', dockerfile)
+        self.assertIn('ld-musl-x86_64.so.1', dockerfile)
+        self.assertIn('/opt/musl-1.2.6/lib/musl-gcc.specs', wrapper)
+        self.assertIn('CRABC_MUSL_ORACLE_LIBC_PATH', oracle)
+        self.assertIn('libc\\.so\\.6', oracle)
+        self.assertIn('run_musl_oracle.sh', reference)
+        self.assertIn('header_abi_probe.c', reference)
+        self.assertIn('fldt|fstpt', reference)
+        self.assertNotIn('-p crabc-libc', reference)
+        self.assertIn('run_musl_oracle.sh', project)
+        self.assertIn('project_header_abi_probe.c', project)
+        self.assertIn('-mfpmath=387', project)
+        self.assertIn('-fsyntax-only', project)
+        self.assertNotIn('-p crabc-libc', project)
+
+    def test_x86_parity_ledger_is_a_required_contract_check(self) -> None:
+        validator = ROOT / "compat" / "x86_64" / "validate_parity_ledger.py"
+        completed = subprocess.run(
+            [sys.executable, str(validator), "--check"],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("x86 parity ledger: PASS", completed.stdout)
 
     def test_libc_syscall_probe_stays_outside_the_libc_artifact_boundary(self) -> None:
         source = (ROOT / "compat" / "x86_64" / "libc_syscall_probe.rs").read_text(
