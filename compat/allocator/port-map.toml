@@ -654,6 +654,21 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/theap.c"
+name = "dynamic-post-tls-homogeneous-full-singleton-aggregate-route"
+source_region = "dynamic regular-slot clear from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; MI_ABANDON full-queue traversal from src/theap.c:97-115,123-152; force/false collection and _mi_page_abandon from src/page.c:214-243,291-303; full-queue mutation from src/page-queue.c:252-274; unmappable abandonment and terminal arena release from src/arena.c:1304-1380; and failed-reclaim empty-result selection from src/free.c:372-418,479-515"
+rust_module = "crabc_mimalloc::dynamic_theap, crabc_mimalloc::single_thread, crabc_mimalloc::abandoned, crabc_mimalloc::arena, and crabc_mimalloc::types"
+rust_item = "DynamicThreadExitDrain::abandon_full_singleton_pages; DynamicThreadExitFullSingletonPagesRoute::remote_free_after_thread_exit; abandoned::{abandon_unmappable_after_collect,free_unmappable_after_failed_reclaim}; and PageAllocatorEngine::release_queue_detached_abandoned_arena_page"
+intentional_difference = "This is one bounded sequential post-TLS dynamic aggregate only: two or more full `MemoryKind::Arena` `PageKind::Singleton` members in `BIN_FULL`, with one rounded block size, `reserved == used == 1`, zero retirement countdown, empty local free lists, exact arena spans, and every other queue/direct entry empty. It preserves source force -> false collection -> full-queue removal -> page-count decrement -> unmapped abandonment for every member. The route retains `DynamicThreadExitDrain`, not a raw member list or a dynamic bitmap/count pair. Each exact canonical client free re-resolves PageMap, must take the raw empty failed-reclaim result, and releases only that PageMap -> dynamic ordinary bit -> metadata -> arena-slice span; the final release returns the empty drain for existing teardown. Sole, heterogeneous, non-singleton, OS-backed, allocation-time, reclaim/adoption/requeue, scanning, concurrent-free, producer, and general owner-exit traversal cases remain absent. Complete preflight rejects before mutation; a force/false collection failure retains the drain rather than exposing a partial route."
+tests = ["crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/types.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/theap.c"
 name = "dynamic-thread-exit-full-medium-unmapped-to-mapped-handoff"
 source_region = "dynamic post-TLS regular-slot clear from src/threadlocal.c:205-214 and src/init.c:377-421,448-481; source force/false collection and full-page abandonment from src/theap.c:89-152 and src/page.c:291-303; full-queue detach from src/page-queue.c:252-274; dynamic Heap arena bitmap/count publication from src/arena.c:1304-1424; and the unmapped then mapped failed-reclaim tails from src/free.c:372-418,479-515"
 rust_module = "crabc_mimalloc::dynamic_theap, crabc_mimalloc::single_thread, crabc_mimalloc::arena, and crabc_mimalloc::abandoned"

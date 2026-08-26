@@ -227,6 +227,21 @@ no-producer proof excludes invoking the source force-only local-list append;
 the separately recorded later-main all-free exit drain uses without broadening
 this dynamic traversal.
 
+`DynamicThreadExitDrain::abandon_full_singleton_pages` is a separate bounded
+dynamic aggregate, not a general full-queue traversal. It admits only two or
+more full `MemoryKind::Arena` `PageKind::Singleton` members in `BIN_FULL`, with
+one rounded block size, `reserved == used == 1`, zero retirement countdown,
+empty local free lists, exact arena spans, and every direct slot and other
+queue empty. Source force -> false collection -> full-queue/page-count detach
+-> unmapped abandonment runs for every member. The route retains the dynamic
+drain rather than a raw member list or a dynamic bitmap/count pair; each
+sequential canonical client free re-resolves its PageMap member, must take the
+raw empty failed-reclaim result, and releases only PageMap -> dynamic ordinary
+bit -> metadata -> arena slices. The last release returns the empty drain for
+its existing teardown. Sole, heterogeneous, non-singleton, OS-backed,
+allocation-time, reclaim/adoption/requeue, scan, and concurrent cases remain
+outside this route; a collection failure retains the drain.
+
 `DynamicThreadExitDrain::abandon_full_medium` is a fourth, source-unmapped
 dynamic endpoint. It admits only the sole full `MemoryKind::Arena` medium page
 in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct-cache

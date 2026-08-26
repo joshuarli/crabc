@@ -473,6 +473,21 @@ all-free release. The OS form additionally links/removes its exact dynamic
 `Heap::os_abandoned_pages` member around clipped PageMap -> alias -> primary
 metadata -> mapping release.
 
+`DynamicThreadExitDrain::abandon_full_singleton_pages` separately admits one
+bounded homogeneous dynamic aggregate: two or more full `MemoryKind::Arena`
+`PageKind::Singleton` members in `BIN_FULL`, with one rounded block size,
+`reserved == used == 1`, zero retirement countdown, empty local free lists,
+exact arena spans, and no other queue/direct state. It follows source force ->
+false collection -> full-queue/page-count detach -> unmapped abandonment for
+every member. `DynamicThreadExitFullSingletonPagesRoute` retains the existing
+dynamic drain instead of a raw member list or dynamic bitmap/count pair; each
+sequential canonical free re-resolves the PageMap entry, takes only the raw
+empty failed-reclaim result, and releases that member through PageMap ->
+dynamic ordinary bit -> metadata -> arena slices. The final free returns the
+empty drain for existing teardown. Sole, mixed-size, non-singleton, OS-backed,
+allocation-time, reclaim/adoption/requeue, scan, and concurrent cases reject
+before detach; a collection failure retains the drain.
+
 `DynamicThreadExitDrain::abandon_full_medium` separately admits one sole full
 `MemoryKind::Arena` medium page in `BIN_FULL`, with `reserved > 1` and
 `used == reserved`. It preserves source force -> false collection ->

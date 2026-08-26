@@ -723,8 +723,8 @@ concurrency, abandonment, pthread hooks, or process shutdown.
 After that same attachment clears its regular backing, a distinct
 `DynamicTheapPageDrainSession` retains the cached root, both list memberships,
 the dynamic arena image, and the PageMap until its pages are resolved. The
-current drain is intentionally one source-reachable owner-exit case rather than
-a traversal: its finishing boundary force-collects an already-retired all-free
+current drain is intentionally a set of source-reachable owner-exit cases,
+not a general traversal: its finishing boundary force-collects an already-retired all-free
 regular page, and its singleton live-page transition accepts a full one-block arena
 or OS-aligned singleton. Both forms retain `reserved == used == 1` and the
 no-producer proof that makes the outer source force collector's local-list
@@ -741,6 +741,24 @@ attachment. The returned handoff cannot scan, reclaim, requeue, or otherwise
 generalize that OS list. Because the regular backing is already clear, source
 reclaim cannot find the Theap. A drained attachment alone can then resume
 cached-root/list/key teardown.
+
+`DynamicThreadExitDrain::abandon_full_singleton_pages` is the distinct
+post-TLS dynamic aggregate boundary. It admits exactly two or more full
+`MemoryKind::Arena` `PageKind::Singleton` members in `BIN_FULL`, with one
+rounded block size, `reserved == used == 1`, zero retirement countdown, empty
+local free lists, exact arena spans, and every other queue/direct entry empty.
+It preserves the source `MI_ABANDON` order for every member: force collection,
+false collection, full-queue removal, page-count decrement, then unmapped
+abandonment. The returned `DynamicThreadExitFullSingletonPagesRoute` stores no
+raw former-Theap member pointer and publishes no dynamic bitmap/count pair; it
+retains the `DynamicThreadExitDrain` until each sequential canonical free
+re-resolves its PageMap entry and reaches only the raw empty failed-reclaim
+tail. That free releases exactly its PageMap span -> dynamic ordinary bit ->
+metadata -> arena slices. The final member returns the empty drain for the
+existing root/list/key teardown. A sole, heterogeneous, non-singleton,
+OS-backed, preexisting queue/direct state, allocation-time, reclaim/adoption/
+requeue, scan, or concurrent case is not this route, and collection ambiguity
+retains the drain.
 
 `DynamicThreadExitDrain::abandon_full_medium` is a separate source-unmapped
 dynamic handoff. It accepts only the drain's sole full `MemoryKind::Arena`

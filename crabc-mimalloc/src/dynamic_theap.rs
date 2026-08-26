@@ -1714,6 +1714,10 @@ mod tests {
         DynamicThreadExitFullMediumAbandonFailure,
         DynamicThreadExitFullMediumFreeResult,
         DynamicThreadExitFullMediumRemoteFreeFailure,
+        DynamicThreadExitFullSingletonPagesAbandonError,
+        DynamicThreadExitFullSingletonPagesAbandonFailure,
+        DynamicThreadExitFullSingletonPagesFreeResult,
+        DynamicThreadExitFullSingletonPagesRemoteFreeFailure,
         DynamicThreadExitFullLargeAbandonError,
         DynamicThreadExitFullLargeAbandonFailure,
         DynamicThreadExitFullLargeFreeResult,
@@ -2258,6 +2262,320 @@ mod tests {
             assert!(drain.test_dynamic_arena_page_is_clear(memory));
             assert!(drain.finish());
             DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_singleton_pages_route_releases_each_same_size_page() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = LARGE_MAX_OBJ_SIZE + 1;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its first dynamic arena singleton");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first singleton remains PageMap-published before thread exit");
+            let second = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its second dynamic arena singleton");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second singleton remains PageMap-published before thread exit");
+            assert_ne!(
+                first_page,
+                second_page,
+                "each oversized dynamic allocation has its own singleton metadata page"
+            );
+            assert_eq!(unsafe { first_page.as_ref().reserved() }, 1);
+            assert_eq!(unsafe { first_page.as_ref().used() }, 1);
+            assert_eq!(unsafe { second_page.as_ref().reserved() }, 1);
+            assert_eq!(unsafe { second_page.as_ref().used() }, 1);
+            assert_eq!(
+                unsafe { first_page.as_ref().block_size() },
+                unsafe { second_page.as_ref().block_size() },
+                "the bounded aggregate seals one rounded singleton size"
+            );
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(2));
+            let first_memory = unsafe { first_page.as_ref().memid() };
+            let second_memory = unsafe { second_page.as_ref().memid() };
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            assert!(drain.test_dynamic_regular_slot_is_clear());
+            // SAFETY: the dynamic drain owns the complete two-member source
+            // full queue, the PageMap, dynamic arena image, and both current
+            // client blocks through the returned linear aggregate route.
+            let route = match unsafe { drain.abandon_full_singleton_pages() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("same-size full singletons enter the dynamic aggregate route: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_page_count(), 0);
+            assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
+
+            // SAFETY: `first` is the route's exact once-live canonical block.
+            let route = match unsafe { route.remote_free_after_thread_exit(first) } {
+                Ok(DynamicThreadExitFullSingletonPagesFreeResult::ReleasedPage(route)) => route,
+                Ok(_) => panic!("the first singleton free leaves one aggregate member"),
+                Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the first singleton free releases its exact dynamic member: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 1);
+            assert!(unsafe { route.test_page_for_block(first) }.is_null());
+            assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
+            assert!(route.test_dynamic_arena_page_is_clear(first_memory));
+
+            // SAFETY: `second` is the final route-owned client block.
+            let drain = match unsafe { route.remote_free_after_thread_exit(second) } {
+                Ok(DynamicThreadExitFullSingletonPagesFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullSingletonPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the second singleton free releases the final aggregate member");
+                }
+                Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the second singleton free releases the final dynamic member: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(second) }.is_null());
+            assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
+            assert_eq!(drain.test_page_count(), 0);
+            assert!(drain.finish());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_singleton_pages_route_rejects_a_sole_singleton_before_mutation() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let block = allocator
+                .allocate(LARGE_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates one full dynamic arena singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the singleton remains PageMap-published before thread exit");
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the one current allocation is deliberately supplied to
+            // exercise aggregate admission only; the sole singleton handoff
+            // remains a separate source boundary.
+            let drain = match unsafe { drain.abandon_full_singleton_pages() } {
+                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullSingletonPagesAbandonError::NotMultiplePages,
+                }) => drain,
+                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("the sole-page proof rejects before source collection: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("one singleton cannot enter the dynamic aggregate route");
+                }
+            };
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+            assert_eq!(unsafe { drain.test_page_for_block(block) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() }, 1);
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_singleton_pages_route_rejects_mixed_sizes_before_mutation() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let first = allocator
+                .allocate(LARGE_MAX_OBJ_SIZE + 1, false)
+                .expect("the fixture creates its first dynamic arena singleton");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first singleton remains PageMap-published before thread exit");
+            let second = allocator
+                .allocate(LARGE_MAX_OBJ_SIZE + 64 * 1024 + 1, false)
+                .expect("the fixture creates its second distinct dynamic arena singleton");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second singleton remains PageMap-published before thread exit");
+            assert_ne!(
+                unsafe { first_page.as_ref().block_size() },
+                unsafe { second_page.as_ref().block_size() },
+                "the source full queue deliberately contains heterogeneous singleton sizes"
+            );
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(2));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: both current allocations remain live solely to prove
+            // this heterogeneous full queue rejects before collection.
+            let drain = match unsafe { drain.abandon_full_singleton_pages() } {
+                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullSingletonPagesAbandonError::NotFullSingleton,
+                }) => drain,
+                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("mixed-size singleton proof is pre-collection: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("mixed singleton sizes cannot enter the dynamic aggregate route");
+                }
+            };
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(2));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_singleton_pages_route_retains_a_collection_failure() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = LARGE_MAX_OBJ_SIZE + 1;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its first dynamic arena singleton");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first singleton remains PageMap-published before thread exit");
+            let second = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its second dynamic arena singleton");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second singleton remains PageMap-published before thread exit");
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: the injected force collector fails only after complete
+            // aggregate preflight and before any queue detachment.
+            let drain = match unsafe { drain.abandon_full_singleton_pages() } {
+                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error: DynamicThreadExitFullSingletonPagesAbandonError::Collection,
+                }) => drain,
+                Err(DynamicThreadExitFullSingletonPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(DynamicThreadExitFullSingletonPagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("injected singleton collection failure retains the dynamic drain: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("the injected collection failure cannot create a dynamic aggregate route");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(2));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
+            assert_eq!(unsafe { first_page.as_ref().used() }, 1);
+            assert_eq!(unsafe { second_page.as_ref().used() }, 1);
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
         });
     }
 
