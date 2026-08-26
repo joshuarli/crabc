@@ -594,8 +594,9 @@ one-block arena singleton (`BIN_FULL`), false-collects, queue-detaches, and
 unmapped-abandons it while retaining its PageMap lifecycle lease and
 registration. Its exact final client free takes the raw failed-reclaim empty
 result, then performs PageMap -> `pages_main` -> metadata -> slice release.
-The same handoff also accepts one sole OS-aligned singleton in `BIN_FULL`,
-regardless of the ordinary size class of its one object. It validates the
+The separate `MainHeapThreadProcessPageExitDrain::abandon_huge_os_aligned_singleton`
+accepts one sole OS-aligned singleton that is semantically full but remains in
+`BIN_HUGE`, regardless of the ordinary size class of its one object. It validates the
 complete clipped PageMap/alias release witness, links the still-owned page in
 the source `Heap::os_abandoned_pages` list before unowning it, then removes
 that exact member before PageMap unregister -> alias clear -> primary retire
@@ -1089,8 +1090,8 @@ no-producer proof that makes the outer source force collector's local-list
 append unreachable; `_mi_page_abandon` false collection still precedes queue
 detach. The arena form follows the existing PageMap-span unregister,
 heap-local ordinary-bit clear, metadata retirement, and arena-slice release.
-The OS form is exactly one `MemoryKind::Os` page in `BIN_FULL`; its ordinary
-block size may be small. After queue/page-count detach it links the still-owned
+The OS form is exactly one semantically full `MemoryKind::Os` page in `BIN_HUGE`,
+not `BIN_FULL`; its ordinary block size may be small. After queue/page-count detach it links the still-owned
 page into the dynamic Heap's `os_abandoned_pages` list before common unown.
 Its exact client free removes that member before clipped PageMap unregister,
 secondary alias clear, primary metadata retirement, and mapping reclaim. A

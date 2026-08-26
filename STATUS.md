@@ -366,8 +366,8 @@ one-block arena singleton false-collects, detaches, and unmapped-abandons while
 retaining its PageMap lifecycle and registration through its exact final client
 free; that failed-reclaim empty result performs PageMap removal -> `pages_main`
 clear -> metadata retirement -> slice release. The OS-aligned singleton
-exception permits the source `BIN_FULL` route even for a
-small ordinary block size: it links its one `MemoryKind::Os` page in
+exception permits the source `BIN_HUGE` route while remaining semantically full,
+even for a small ordinary block size: it links its one `MemoryKind::Os` page in
 `Heap::os_abandoned_pages` before unown, removes it before clipped PageMap ->
 alias -> metadata -> mapping release, and retains an injected failed-unmap
 owner terminally. It provides no OS-list search, reuse, or general routing.

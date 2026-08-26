@@ -1499,7 +1499,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
     ///
     /// The page-drain session retains the unique pinned Heap borrow and the
     /// source Theap/TLD/page-map owner. Its caller has already proved that
-    /// `page` is this Heap's live full singleton, so this narrow boundary
+    /// `page` is this Heap's live huge OS singleton, so this narrow boundary
     /// delegates only the private intrusive-list mutation and its lock to
     /// [`Heap::push_os_abandoned_page`].
     ///
@@ -1803,8 +1803,9 @@ mod tests {
         ArenaId, ArenaPagesLayout, ArenaRegistry, ArenaView, manage_external_in_place,
     };
     use crate::config::{
-        ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE, BIN_FULL, LARGE_MAX_OBJ_SIZE,
-        MEDIUM_MAX_OBJ_SIZE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
+        ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE, BIN_FULL, BIN_HUGE,
+        LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
+        SMALL_SIZE_MAX, WORD_SIZE,
     };
     use crate::compiler_tls::{
         dynamic_backing_peek, is_empty_dynamic_backing, set_cached_theap,
@@ -5976,7 +5977,9 @@ mod tests {
             assert_eq!(page_ref.reserved(), 1);
             assert_eq!(page_ref.used(), 1);
             assert!(page_ref.memid().is_os());
-            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+            assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            assert!(!crate::types::page_queue::page_is_in_full(page_ref));
             let published = unsafe { PublishedOsAlignedPage::from_page(memory_config(), page) }
                 .expect("the OS singleton retains its complete terminal-release token");
             assert!(allocator.test_os_page_map_entries_match(&published));
@@ -5996,9 +5999,9 @@ mod tests {
             assert!(drain.test_cached_root_still_names_the_draining_theap());
 
             // SAFETY: `block` is the sole current allocation in the exact
-            // full OS-aligned singleton retained by this post-TLS dynamic
+            // huge OS-aligned singleton retained by this post-TLS dynamic
             // page-drain lifecycle.
-            let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+            let handoff = match unsafe { drain.abandon_huge_os_aligned_singleton(block) } {
                 Ok(handoff) => handoff,
                 Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
                 | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
@@ -6048,6 +6051,166 @@ mod tests {
         });
     }
 
+    /// Emits the selected private x86 owner-exit state for one OS singleton.
+    ///
+    /// The comparison is limited to the recorded state transitions, not
+    /// pthread/TLS-destructor ordering or a claim of general thread-exit
+    /// equivalence.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_dynamic_os_aligned_singleton_owner_exit_trace_matches_pinned_c() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request_size = 7;
+            let alignment = 128 * crate::config::KIB;
+            let block = allocator
+                .allocate_aligned(request_size, alignment)
+                .expect("the dynamic fixture allocates one OS-aligned singleton");
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) })
+                .expect("the OS singleton remains PageMap-published before thread exit");
+            let page_ref = unsafe { page.as_ref() };
+            let memory = page_ref.memid();
+            let reserved = page_ref.reserved();
+            let used = page_ref.used();
+            let os_memory_kind = memory.kind() == MemoryKind::Os;
+            let singleton = reserved == 1;
+            let aligned = block.as_ptr().addr() & (alignment - 1) == 0;
+            let full_singleton_before_owner_exit = singleton
+                && used == 1
+                && reserved == 1;
+            let huge_singleton_before_owner_exit = singleton
+                && memory
+                    .os_memory()
+                    .is_some_and(|os| os.base.addr() < page.as_ptr().addr());
+            let full_transition_eligible_before_owner_exit =
+                page_ref.block_size() > SMALL_MAX_OBJ_SIZE;
+            let huge_queue_singleton_before_owner_exit = allocator.queue_count(BIN_HUGE) == Some(1)
+                && !crate::types::page_queue::page_is_in_full(page_ref);
+            let full_queue_empty_before_owner_exit = allocator.queue_count(BIN_FULL) == Some(0)
+                && !crate::types::page_queue::page_is_in_full(page_ref);
+            // This is an observation only: unlike `PublishedOsAlignedPage`,
+            // it does not reconstruct a second terminal-release capability.
+            let page_map_published_before_owner_exit =
+                unsafe { allocator.page_for_block(block) } == page.as_ptr();
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // The native C half observes completion of real `mi_thread_done`.
+            // This bounded Rust owner does not claim a pthread/TLS callback;
+            // clearing its typed dynamic regular slot is the corresponding
+            // observable owner-exit transition.
+            let owner_exit_transition_completed = drain.test_dynamic_regular_slot_is_clear();
+            let cached_root_retains_owner = drain.test_cached_root_still_names_the_draining_theap();
+            assert!(
+                cached_root_retains_owner,
+                "the dynamic cached root keeps the draining Theap until the handoff is terminal"
+            );
+            let handoff = match unsafe { drain.abandon_huge_os_aligned_singleton(block) } {
+                Ok(handoff) => handoff,
+                Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
+                    core::mem::forget(drain);
+                    panic!("the OS-aligned singleton enters the owner-exit handoff: {error:?}");
+                }
+                Err(DynamicThreadExitSingletonAbandonFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("OS-singleton abandonment does not retain a terminal owner: {error:?}");
+                }
+            };
+            let os_abandoned_list_member_after_owner_exit =
+                handoff.test_os_abandoned_page_head() == page.as_ptr();
+            // `_mi_page_abandon` deliberately retains the old `theap` pointer
+            // for its limited reclaim-on-free path. The source ownership
+            // transition is encoded in the atomic xthread id instead.
+            let source_owner_unowned_after_owner_exit = unsafe {
+                (*page.as_ptr()).abandoned_test_thread_id() == THREAD_ID_ABANDONED
+            };
+            let page_map_published_after_owner_exit = handoff.test_page_for_block(block) == page.as_ptr();
+
+            // SAFETY: this is the handoff's exact once-live client block; the
+            // cleared regular slot proves the source failed-reclaim branch.
+            let drain = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitSingletonRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicThreadExitSingletonRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the OS-singleton final free releases its sole page: {error:?}");
+                }
+            };
+            let terminal_free_after_owner_exit = unsafe { drain.test_page_for_block(block) }.is_null()
+                && drain.test_page_count() == 0;
+            let os_abandoned_list_clear_after_final_free =
+                drain.test_os_abandoned_page_head().is_null();
+            let page_map_clear_after_final_free = unsafe { drain.test_page_for_block(block) }.is_null();
+            let mapping_cleanup = drain.finish();
+            // `finish` is the consuming proof that the source terminal path
+            // cleared secondary aliases and primary metadata before reclaim;
+            // the page-map observation is kept separate as the direct map
+            // witness.
+            let map_alias_metadata_mapping_cleanup =
+                page_map_clear_after_final_free && mapping_cleanup;
+            let valid = os_memory_kind
+                && singleton
+                && full_singleton_before_owner_exit
+                && huge_singleton_before_owner_exit
+                && !full_transition_eligible_before_owner_exit
+                && huge_queue_singleton_before_owner_exit
+                && full_queue_empty_before_owner_exit
+                && aligned
+                && page_map_published_before_owner_exit
+                && owner_exit_transition_completed
+                && os_abandoned_list_member_after_owner_exit
+                && source_owner_unowned_after_owner_exit
+                && page_map_published_after_owner_exit
+                && terminal_free_after_owner_exit
+                && os_abandoned_list_clear_after_final_free
+                && page_map_clear_after_final_free
+                && map_alias_metadata_mapping_cleanup;
+
+            std::println!("CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_BEGIN");
+            std::println!("trace.dynamic_os_aligned_singleton.request_size={request_size}");
+            std::println!("trace.dynamic_os_aligned_singleton.alignment={alignment}");
+            std::println!("trace.dynamic_os_aligned_singleton.os_memory_kind={}", os_memory_kind as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.singleton={}", singleton as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.reserved={reserved}");
+            std::println!("trace.dynamic_os_aligned_singleton.used={used}");
+            std::println!("trace.dynamic_os_aligned_singleton.full_singleton_before_owner_exit={}", full_singleton_before_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.huge_singleton_before_owner_exit={}", huge_singleton_before_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.full_transition_eligible_before_owner_exit={}", full_transition_eligible_before_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.huge_queue_singleton_before_owner_exit={}", huge_queue_singleton_before_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.full_queue_empty_before_owner_exit={}", full_queue_empty_before_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.aligned={}", aligned as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.page_map_published_before_owner_exit={}", page_map_published_before_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.owner_exit_transition_completed={}", owner_exit_transition_completed as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.os_abandoned_list_member_after_owner_exit={}", os_abandoned_list_member_after_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.source_owner_unowned_after_owner_exit={}", source_owner_unowned_after_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.page_map_published_after_owner_exit={}", page_map_published_after_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.terminal_free_after_owner_exit={}", terminal_free_after_owner_exit as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.os_abandoned_list_clear_after_final_free={}", os_abandoned_list_clear_after_final_free as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.page_map_clear_after_final_free={}", page_map_clear_after_final_free as u8);
+            std::println!("trace.dynamic_os_aligned_singleton.valid={}", valid as u8);
+            std::println!("CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_END");
+            assert!(
+                valid,
+                "dynamic OS-aligned singleton selected-state trace diverged from the pinned-C contract"
+            );
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
     #[test]
     fn dynamic_thread_exit_os_aligned_singleton_handoff_rejects_unmapped_pointer_before_detach() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
@@ -6076,7 +6239,7 @@ mod tests {
             // SAFETY: this deliberately unmapped non-null pointer is only a
             // pre-detach error witness; the drain must preserve the actual
             // OS singleton and return its complete source owner unchanged.
-            let drain = match unsafe { drain.abandon_full_singleton(NonNull::dangling()) } {
+            let drain = match unsafe { drain.abandon_huge_os_aligned_singleton(NonNull::dangling()) } {
                 Err(DynamicThreadExitSingletonAbandonFailure::Rejected {
                     drain,
                     error: DynamicThreadExitSingletonAbandonError::Unmapped,
@@ -6097,14 +6260,15 @@ mod tests {
             };
             assert_eq!(unsafe { drain.test_page_for_block(block) }, page.as_ptr());
             assert_eq!(drain.test_page_count(), 1);
-            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+            assert_eq!(drain.test_queue_count(BIN_HUGE), Some(1));
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(0));
             let page_ref = unsafe { page.as_ref() };
             assert_eq!(page_ref.reserved(), 1);
             assert_eq!(page_ref.used(), 1);
 
             // SAFETY: the actual client allocation remains live and exactly
             // once-owned after the rejected pre-detach observation.
-            let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+            let handoff = match unsafe { drain.abandon_huge_os_aligned_singleton(block) } {
                 Ok(handoff) => handoff,
                 Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
                 | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {
@@ -6158,7 +6322,7 @@ mod tests {
                     panic!("thread exit clears the regular TLS slot before failed OS release: {error:?}");
                 }
             };
-            let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+            let handoff = match unsafe { drain.abandon_huge_os_aligned_singleton(block) } {
                 Ok(handoff) => handoff,
                 Err(DynamicThreadExitSingletonAbandonFailure::Rejected { drain, error })
                 | Err(DynamicThreadExitSingletonAbandonFailure::RetainedDrain { drain, error }) => {

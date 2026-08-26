@@ -153,6 +153,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-same-bin-two-page-aggregate-still-live-differential",
                 "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-large-one-remote-force-collect-to-mapped-differential",
+                "native-dynamic-os-aligned-singleton-owner-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
                 "native-staged-public-header-mode-linkability",
@@ -356,6 +357,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             ],
             "compat/reports/allocator/x86_64/"
             "dynamic-full-large-one-remote-force-collect-to-mapped.json",
+        )
+        self.assertEqual(
+            gates["native-dynamic-os-aligned-singleton-owner-exit-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-dynamic-os-aligned-singleton",
+        )
+        self.assertEqual(
+            gates["native-dynamic-os-aligned-singleton-owner-exit-differential"]["report"],
+            "compat/reports/allocator/x86_64/dynamic-os-aligned-singleton.json",
         )
         self.assertEqual(
             gates["native-bounded-fault-injection"]["report"],
@@ -687,6 +696,25 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, dynamic_full_large)
+        dynamic_os_aligned_singleton = gates[
+            "native-dynamic-os-aligned-singleton-owner-exit-differential"
+        ]["claim"]
+        for fragment in (
+            "21 address-independent values",
+            "7 bytes with 128 KiB alignment",
+            "real mi_thread_done()",
+            "pthread_join()s before freeing",
+            "4096-byte OS singleton",
+            "semantically full",
+            "MI_BIN_HUGE member, not a MI_BIN_FULL member",
+            "empty full queue",
+            "OS-abandoned-list membership",
+            "typed private owner-exit handoff",
+            "general lifecycle",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, dynamic_os_aligned_singleton)
         self.assertIn("five named crate-private fault-injection", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("Map, Commit, Unmap, and Decommit", gates["native-bounded-fault-injection"]["claim"])
         self.assertIn("does not establish general fault-injection or misuse parity", gates["native-bounded-fault-injection"]["claim"])

@@ -233,6 +233,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 21 address-independent values for one real pinned-C worker request of 7 bytes with 128 KiB alignment. The C worker runs real mi_thread_done() and the consumer pthread_join()s before freeing the sole block. The selected 4096-byte OS singleton is semantically full (`reserved == used == 1`) but is a MI_BIN_HUGE member, not a MI_BIN_FULL member; the trace proves its huge classification, empty full queue, owner-exit OS-abandoned-list membership, PageMap preservation, and terminal mapping cleanup. Rust exercises only the corresponding typed private owner-exit handoff, not a pthread/TLS callback. This is private native x86 engine evidence only; it does not establish general lifecycle, abandonment/adoption, remote-free routing, concurrent collection, public mi_* behavior or runtime, public x86 support, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-dynamic-os-aligned-singleton",
+      "id": "native-dynamic-os-aligned-singleton-owner-exit-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/dynamic-os-aligned-singleton.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, runs five named crate-private fault-injection state-preservation regressions covering selected Map, Commit, Unmap, and Decommit points. It does not establish general fault-injection or misuse parity, syscall interposition, lifecycle/stress coverage, C-oracle differential behavior, public mi_* behavior, libc integration, or a backend.",
       "command": "./compat/allocator/run-x86_64.sh allocator-fault",
       "id": "native-bounded-fault-injection",

@@ -2065,11 +2065,10 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
     ///
     /// # Safety
     ///
-    /// `block` must be the sole current allocation in one full arena or
-    /// OS-aligned singleton owned by this exact post-fast-slot drain. No
-    /// scoped producer may remain, and all client aliases must remain live
-    /// only until the handoff's exact final-free operation or terminal
-    /// retention.
+    /// `block` must be the sole current allocation in one full arena singleton
+    /// owned by this exact post-fast-slot drain. No scoped producer may remain,
+    /// and all client aliases must remain live only until the handoff's exact
+    /// final-free operation or terminal retention.
     pub(crate) unsafe fn abandon_full_singleton(
         self,
         block: NonNull<u8>,
@@ -2085,6 +2084,65 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         // the source root transition, its exact TLD/Theap/Heap relation, and
         // the matching process map/arena lifetime through this result.
         match unsafe { engine.abandon_full_singleton_after_thread_exit(block) } {
+            Ok(handoff) => Ok(MainHeapThreadProcessPageExitSingletonHandoff {
+                handoff,
+                page_map_lifecycle,
+            }),
+            Err(ThreadExitSingletonAbandonFailure::Rejected { engine, error }) => {
+                Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Rejected {
+                    drain: Self {
+                        engine,
+                        page_map_lifecycle,
+                    },
+                    error,
+                })
+            }
+            Err(ThreadExitSingletonAbandonFailure::RetainedEngine { engine, error }) => {
+                Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::RetainedDrain {
+                    drain: Self {
+                        engine,
+                        page_map_lifecycle,
+                    },
+                    error,
+                })
+            }
+            Err(ThreadExitSingletonAbandonFailure::Terminal { handoff, error }) => {
+                Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Terminal {
+                    handoff: MainHeapThreadProcessPageExitSingletonHandoff {
+                        handoff,
+                        page_map_lifecycle,
+                    },
+                    error,
+                })
+            }
+        }
+    }
+
+    /// Detaches the selected small OS-aligned singleton after the fixed main
+    /// fast slot is clear. It is semantically full but remains an unflagged
+    /// `BIN_HUGE` member until this owner-exit transition.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the sole current allocation in this exact OS-aligned
+    /// singleton owned by the post-fast-slot drain. No scoped producer may
+    /// remain, and all client aliases must remain live only until the handoff's
+    /// exact final-free operation or terminal retention.
+    pub(crate) unsafe fn abandon_huge_os_aligned_singleton(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main>,
+        MainHeapThreadProcessPageExitSingletonAbandonFailure<'attachment, 'main>,
+    > {
+        let Self {
+            engine,
+            page_map_lifecycle,
+        } = self;
+        // SAFETY: the post-fast-slot `MainHeapThreadPageDrainSession` retains
+        // the source root transition, its exact TLD/Theap/Heap relation, and
+        // the matching process map/arena lifetime through this result.
+        match unsafe { engine.abandon_huge_os_aligned_singleton_after_thread_exit(block) } {
             Ok(handoff) => Ok(MainHeapThreadProcessPageExitSingletonHandoff {
                 handoff,
                 page_map_lifecycle,
@@ -4026,10 +4084,9 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitSingletonHandoff<'attachme
     ///
     /// # Safety
     ///
-    /// `block` must be the exact once-live allocation transferred by
-    /// [`MainHeapThreadProcessPageExitDrain::abandon_full_singleton`]. It must
-    /// not have been freed, republished, or accessed through any alias after
-    /// this call.
+    /// `block` must be the exact once-live allocation transferred by a typed
+    /// later-main singleton-abandon operation. It must not have been freed,
+    /// republished, or accessed through any alias after this call.
     pub(crate) unsafe fn remote_free_after_failed_reclaim(
         self,
         block: NonNull<u8>,
@@ -7501,9 +7558,9 @@ mod tests {
                     );
 
                     // SAFETY: `block` is the sole current allocation in the
-                    // exact full OS-aligned singleton retained by this
+                    // exact huge OS-aligned singleton retained by this
                     // post-fast-slot process-map lifecycle.
-                    let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                    let handoff = match unsafe { drain.abandon_huge_os_aligned_singleton(block) } {
                         Ok(handoff) => handoff,
                         Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Rejected {
                             drain,
@@ -8321,7 +8378,7 @@ mod tests {
                             panic!("thread exit clears the main fast slot before failed OS release: {error:?}");
                         }
                     };
-                    let handoff = match unsafe { drain.abandon_full_singleton(block) } {
+                    let handoff = match unsafe { drain.abandon_huge_os_aligned_singleton(block) } {
                         Ok(handoff) => handoff,
                         Err(MainHeapThreadProcessPageExitSingletonAbandonFailure::Rejected {
                             drain,
@@ -11008,6 +11065,8 @@ mod tests {
             DirectSmallOnDemandExtension::PrefixCovered,
             false,
         );
+    }
+
     #[test]
     fn ordinary_reserved_medium_on_demand_commit_before_reuse() {
         thread::spawn(|| {

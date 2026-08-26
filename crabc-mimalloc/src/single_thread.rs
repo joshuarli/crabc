@@ -169,6 +169,38 @@ const RETIRE_CYCLES: u8 = 16;
 const RETIRE_MAX_PAGES: usize = 3;
 const PAGE_MAX_CANDIDATES: isize = 4;
 
+/// Ports `mi_page_is_huge` for the page shapes this engine can keep live.
+///
+/// A singleton may be huge because of its object size, or because an OS
+/// mapping begins before its metadata. The latter is the deliberately small
+/// `alloc-aligned.c` route: its one 4 KiB object remains in `BIN_HUGE` even
+/// though `reserved == used == 1` and its ordinary size class is small.
+#[inline]
+fn page_is_huge(page: &Page) -> bool {
+    page.capacity() == 1
+        && (page.block_size() > LARGE_MAX_OBJ_SIZE
+            || page
+                .memid()
+                .os_memory()
+                .is_some_and(|memory| memory.base.addr() < (page as *const Page).addr()))
+}
+
+/// Returns the source queue that currently owns `page`.
+///
+/// `mi_page_queue_of` chooses `BIN_FULL` before its huge-page exception. A
+/// full arena singleton therefore remains a full-queue member, while the
+/// selected small OS-aligned singleton is an unflagged huge-queue member.
+#[inline]
+fn page_queue_bin(page: &Page) -> Option<usize> {
+    if page_is_in_full(page) {
+        Some(BIN_FULL)
+    } else if page_is_huge(page) {
+        Some(BIN_HUGE)
+    } else {
+        size_class::bin(page.block_size())
+    }
+}
+
 /// One failed source owner-side page collection boundary.
 ///
 /// These are private invalid-owner/lifecycle observations. The collector
@@ -979,6 +1011,17 @@ enum ThreadExitSingletonBacking {
     Os,
 }
 
+/// The two source-distinct one-block owner-exit singleton routes.
+///
+/// Both pages are semantically full (`reserved == used == 1`), but only the
+/// arena form carries the full-queue flag. The aligned OS form remains in the
+/// huge queue because its small block does not satisfy `mi_page_to_full`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ThreadExitSingletonRoute {
+    FullArena,
+    HugeOsAligned,
+}
+
 /// One queue-detached arena or OS-aligned singleton whose source thread-exit
 /// transition has made the original Theap unavailable for reclamation.
 ///
@@ -1306,10 +1349,12 @@ pub(crate) enum ThreadExitSingletonAbandonError {
     ForeignPage,
     UnsupportedMemory(MemoryKind),
     NotFullSingleton,
+    NotHugeOsAlignedSingleton,
     /// The current drain owns additional queue/direct/page state, so it
     /// cannot skip source traversal order by detaching one singleton early.
     NotOnlyPage,
     NotActiveFull,
+    NotActiveHuge,
     InvalidBlock,
     Queue,
     MainHeap(MainStaticHeapLeaseError),
@@ -2824,7 +2869,9 @@ pub(crate) enum DynamicThreadExitSingletonAbandonError {
     ForeignPage,
     UnsupportedMemory(MemoryKind),
     NotFullSingleton,
+    NotHugeOsAlignedSingleton,
     NotActiveFull,
+    NotActiveHuge,
     InvalidBlock,
     Queue,
     OsAbandonedList(HeapOsAbandonedPageListError),
@@ -5355,7 +5402,38 @@ impl<'attachment, 'main, 'arena, 'map>
         // SAFETY: this specialization's post-fast-slot session supplies the
         // source owner-exit/reclaim-failure proof required by the shared
         // queue-detach and failed-reclaim handoff.
-        unsafe { abandon_full_singleton_after_thread_exit(self, block) }
+        unsafe {
+            abandon_singleton_after_thread_exit(self, block, ThreadExitSingletonRoute::FullArena)
+        }
+    }
+
+    /// Detaches the selected small OS-aligned singleton after the fixed main
+    /// fast slot has been cleared. Its page is semantically full but remains
+    /// an unflagged `BIN_HUGE` member until source owner exit.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the sole current allocation in the exact OS-aligned
+    /// singleton owned by this draining later-main engine. No scoped producer
+    /// may survive, and every client alias must remain live only until the
+    /// returned handoff consumes this exact block once or is retained.
+    pub(crate) unsafe fn abandon_huge_os_aligned_singleton_after_thread_exit(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        ThreadExitSingletonHandoff<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+        ThreadExitSingletonAbandonFailure<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
+    > {
+        // SAFETY: this specialization's post-fast-slot session supplies the
+        // source owner-exit/reclaim-failure proof required by the selected
+        // huge-OS queue-detach and failed-reclaim handoff.
+        unsafe {
+            abandon_singleton_after_thread_exit(
+                self,
+                block,
+                ThreadExitSingletonRoute::HugeOsAligned,
+            )
+        }
     }
 
     /// Detaches the one source mapped-abandoned regular-page owner-exit case:
@@ -11546,8 +11624,8 @@ impl<'attachment, 'main, 'arena, 'map>
     }
 }
 
-/// Performs the source queue-detach/unmapped-abandon part for the bounded
-/// post-owner-exit full-singleton slice.
+/// Performs the source queue-detach/unmapped-abandon part for one bounded
+/// post-owner-exit singleton route.
 ///
 /// This is private implementation structure rather than a general session
 /// operation. Each caller must prove that its source TLS/fast-root transition
@@ -11556,19 +11634,21 @@ impl<'attachment, 'main, 'arena, 'map>
 ///
 /// # Safety
 ///
-/// `block` must be the sole current allocation in one active full arena or
-/// OS-aligned singleton of `engine`. No scoped producer may survive. The
-/// caller must use this only after its concrete source thread-exit root
+/// `block` must be the sole current allocation in the route-specific active
+/// singleton of `engine`. `FullArena` is a `BIN_FULL` member; the selected
+/// small `HugeOsAligned` route remains in `BIN_HUGE`. No scoped producer may
+/// survive. Callers must use this only after the concrete source thread-exit root
 /// transition, so the later
 /// [`ThreadExitSingletonHandoff::remote_free_after_failed_reclaim`] cannot
 /// reclaim the departed owner.
-unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, 'map>(
+unsafe fn abandon_singleton_after_thread_exit<'attachment, 'main, 'arena, 'map>(
     mut engine: PageAllocatorEngine<
         'arena,
         'map,
         MainHeapThreadPageDrainSession<'attachment, 'main>,
     >,
     block: NonNull<u8>,
+    route: ThreadExitSingletonRoute,
 ) -> Result<
     ThreadExitSingletonHandoff<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
     ThreadExitSingletonAbandonFailure<'arena, 'map, MainHeapThreadPageDrainSession<'attachment, 'main>>,
@@ -11594,36 +11674,50 @@ unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, '
     if !engine.owns_page(page_ref) || page_ref.heap() != engine.session.theap().heap() {
         return Err(reject(engine, ThreadExitSingletonAbandonError::ForeignPage));
     }
-    let backing_kind = match page_ref.memid().kind() {
-        MemoryKind::Arena => ThreadExitSingletonBacking::Arena,
-        MemoryKind::Os => ThreadExitSingletonBacking::Os,
-        memory => {
-            return Err(reject(
-                engine,
-                ThreadExitSingletonAbandonError::UnsupportedMemory(memory),
-            ));
+    let (backing, source_bin) = match route {
+        ThreadExitSingletonRoute::FullArena => {
+            if page_ref.memid().kind() != MemoryKind::Arena {
+                return Err(reject(
+                    engine,
+                    ThreadExitSingletonAbandonError::UnsupportedMemory(page_ref.memid().kind()),
+                ));
+            }
+            if size_class::page_kind_for_block_size(page_ref.block_size())
+                != Some(PageKind::Singleton)
+                || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+                || !page_is_in_full(page_ref)
+            {
+                return Err(reject(engine, ThreadExitSingletonAbandonError::NotFullSingleton));
+            }
+            (ThreadExitSingletonBacking::Arena, BIN_FULL)
+        }
+        ThreadExitSingletonRoute::HugeOsAligned => {
+            if page_ref.memid().kind() != MemoryKind::Os {
+                return Err(reject(
+                    engine,
+                    ThreadExitSingletonAbandonError::UnsupportedMemory(page_ref.memid().kind()),
+                ));
+            }
+            if !page_is_huge(page_ref) || page_is_in_full(page_ref) {
+                return Err(reject(
+                    engine,
+                    ThreadExitSingletonAbandonError::NotHugeOsAlignedSingleton,
+                ));
+            }
+            (ThreadExitSingletonBacking::Os, BIN_HUGE)
         }
     };
-    let singleton_class_matches = match backing_kind {
-        // An arena singleton is selected by its object-size class and uses
-        // the source huge queue.
-        ThreadExitSingletonBacking::Arena => {
-            size_class::page_kind_for_block_size(page_ref.block_size()) == Some(PageKind::Singleton)
-                && size_class::bin(page_ref.block_size()) == Some(BIN_HUGE)
+    let shape_error = match route {
+        ThreadExitSingletonRoute::FullArena => ThreadExitSingletonAbandonError::NotFullSingleton,
+        ThreadExitSingletonRoute::HugeOsAligned => {
+            ThreadExitSingletonAbandonError::NotHugeOsAlignedSingleton
         }
-        // `alloc-aligned.c` deliberately routes an OS-aligned singleton
-        // through `BIN_FULL` even when its one object has a small or regular
-        // block size. Its non-arena MemoryId plus one-reserved geometry is the
-        // source class; reclassifying it by normal arena page size would
-        // reject the actual OS singleton route.
-        ThreadExitSingletonBacking::Os => true,
     };
-    if !singleton_class_matches
+    if page_ref.capacity() != 1
         || page_ref.reserved() != 1
         || page_ref.used() != 1
-        || !page_is_in_full(page_ref)
     {
-        return Err(reject(engine, ThreadExitSingletonAbandonError::NotFullSingleton));
+        return Err(reject(engine, shape_error));
     }
 
     // This vertical slice never skips over another live or all-free page.
@@ -11633,7 +11727,7 @@ unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, '
     // traversal or ordering policy.
     let mut sole_page = engine.session.theap().page_count() == 1;
     for bin in 0..BIN_COUNT {
-        let expected = if bin == BIN_FULL { 1 } else { 0 };
+        let expected = if bin == source_bin { 1 } else { 0 };
         if !engine
             .session
             .queue(bin)
@@ -11655,18 +11749,22 @@ unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, '
         return Err(reject(engine, ThreadExitSingletonAbandonError::NotOnlyPage));
     }
 
-    // `release_span` proves every map entry and the full singleton backing
+    // `release_span` proves every map entry and route-specific backing
     // geometry before source collection and queue detachment. A leading-slice
     // lookup cannot stand in for the later all-free unregister obligation.
-    let backing = match (backing_kind, engine.release_span(page.as_ptr())) {
+    let backing = match (backing, engine.release_span(page.as_ptr())) {
         (ThreadExitSingletonBacking::Arena, Some(ReleaseSpan::Arena { .. }))
-        | (ThreadExitSingletonBacking::Os, Some(ReleaseSpan::Os(_))) => backing_kind,
+        | (ThreadExitSingletonBacking::Os, Some(ReleaseSpan::Os(_))) => backing,
         (ThreadExitSingletonBacking::Arena | ThreadExitSingletonBacking::Os, _) => {
             return Err(reject(engine, ThreadExitSingletonAbandonError::Unmapped));
         }
     };
-    if !engine.page_is_active_queue_member(BIN_FULL, page) {
-        return Err(reject(engine, ThreadExitSingletonAbandonError::NotActiveFull));
+    if !engine.page_is_active_queue_member(source_bin, page) {
+        let error = match route {
+            ThreadExitSingletonRoute::FullArena => ThreadExitSingletonAbandonError::NotActiveFull,
+            ThreadExitSingletonRoute::HugeOsAligned => ThreadExitSingletonAbandonError::NotActiveHuge,
+        };
+        return Err(reject(engine, error));
     }
     let Some(canonical_block) = engine.canonical_block_start(page_ref, block) else {
         return Err(reject(engine, ThreadExitSingletonAbandonError::InvalidBlock));
@@ -11681,10 +11779,10 @@ unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, '
         return Err(reject(engine, ThreadExitSingletonAbandonError::InvalidBlock));
     }
 
-    // `_mi_theap_collect_abandon` reaches this full singleton after its force
+    // `_mi_theap_collect_abandon` reaches this singleton after its force
     // collector; the only-block/live/no-producer proof makes that force-only
     // local append unreachable. `_mi_page_abandon` then performs this exact
-    // false collection before it detaches the full-queue member.
+    // false collection before it detaches the route's queue member.
     if let Err(error) = engine.page_free_collect_false(page) {
         engine.retain_page_collect_poison(page, error, None);
         return Err(retained(engine, ThreadExitSingletonAbandonError::Collection));
@@ -11693,18 +11791,15 @@ unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, '
     // remains queue-linked. A different result is terminal rather than a
     // license to choose another source release/reclassification path.
     if unsafe { page.as_ref().used() } != 1 {
-        return Err(retained(
-            engine,
-            ThreadExitSingletonAbandonError::NotFullSingleton,
-        ));
+        return Err(retained(engine, shape_error));
     }
 
-    let queue = match engine.session.queue_mut(BIN_FULL) {
+    let queue = match engine.session.queue_mut(source_bin) {
         Some(queue) => queue as *mut _,
         None => return Err(retained(engine, ThreadExitSingletonAbandonError::Queue)),
     };
     // SAFETY: preflight proved this exact initialized singleton is the sole
-    // linked full-queue member and the drain owns every queue mutation.
+    // linked source-queue member and the drain owns every queue mutation.
     unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
     if !engine.session.note_page_removed() {
         return Err(ThreadExitSingletonAbandonFailure::Terminal {
@@ -11718,7 +11813,7 @@ unsafe fn abandon_full_singleton_after_thread_exit<'attachment, 'main, 'arena, '
         });
     }
 
-    // A full singleton's high source bin is not eligible for `pages_abandoned`.
+    // Neither singleton route is eligible for `pages_abandoned`.
     // For an OS-aligned singleton, source `_mi_arenas_page_abandon` first
     // links the still-owned page into `heap->os_abandoned_pages`, then the
     // common unown transition consumes the associated identity. Keep that
@@ -15198,7 +15293,7 @@ impl<'attach, 'heap, 'arena, 'map>
         &mut self,
         page: NonNull<Page>,
     ) -> Result<(), DynamicThreadExitSingletonAbandonError> {
-        // SAFETY: the caller preflighted this exact live full OS singleton,
+        // SAFETY: the caller preflighted this exact live huge OS singleton,
         // retained its dynamic Heap through the drain, and has not yet made
         // the common abandonment transition consume its source identity.
         self.push_os_abandoned_page(page)
@@ -18527,27 +18622,68 @@ impl<'attach, 'heap, 'arena, 'map>
         })
     }
 
-    /// Abandons one exact full arena or OS-aligned singleton after the dynamic
-    /// regular TLS slot has been cleared for thread exit.
+    /// Abandons one exact full arena singleton after the dynamic regular TLS
+    /// slot has been cleared for thread exit.
     ///
     /// This is the one owner-exit branch for which the current bounded
     /// lifecycle has both sides of the source handoff: a full singleton cannot
     /// enter `pages_abandoned`, and its later sole remote free must therefore
     /// take `free.c:mi_free_try_collect_mt`'s failed-reclaim all-free tail.
-    /// An OS singleton follows the source Heap list insertion/removal around
-    /// that common path. No general page traversal, nonempty owner-exit page,
-    /// OS-list reclaim, or producer route is exposed by this drain capability.
+    /// This entry is intentionally limited to the arena `BIN_FULL` shape;
+    /// the source-distinct OS-aligned `BIN_HUGE` shape has its own method.
     ///
     /// # Safety
     ///
-    /// `block` must be the one current canonical allocation in a full
+    /// `block` must be the one current canonical allocation in a full arena
     /// singleton owned by this exact draining engine. No producer may retain
     /// the block or its page, and all client aliases must stay valid only until
     /// the returned handoff consumes this exact block once or is retained
     /// terminally.
     pub(crate) unsafe fn abandon_full_singleton(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitSingletonAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        // SAFETY: the public entry's full-arena contract is the exact route
+        // checked by the shared transition below.
+        unsafe { self.abandon_singleton(block, ThreadExitSingletonRoute::FullArena) }
+    }
+
+    /// Abandons the selected small OS-aligned singleton after the dynamic
+    /// regular TLS slot has been cleared for thread exit.
+    ///
+    /// The page is semantically full but remains an unflagged `BIN_HUGE`
+    /// member because its one small object cannot take `mi_page_to_full`.
+    /// It follows the same bounded OS-list and failed-reclaim terminal tail as
+    /// the arena singleton without claiming a general OS abandonment route.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be the one current canonical allocation in this exact
+    /// OS-aligned singleton owned by the draining engine. No producer may
+    /// retain the block or its page, and all client aliases must stay valid
+    /// only until the returned handoff consumes this exact block once or is
+    /// retained terminally.
+    pub(crate) unsafe fn abandon_huge_os_aligned_singleton(
+        self,
+        block: NonNull<u8>,
+    ) -> Result<
+        DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
+        DynamicThreadExitSingletonAbandonFailure<'attach, 'heap, 'arena, 'map>,
+    > {
+        // SAFETY: the public entry's huge-OS contract is the exact route
+        // checked by the shared transition below.
+        unsafe { self.abandon_singleton(block, ThreadExitSingletonRoute::HugeOsAligned) }
+    }
+
+    /// Performs the common queue-detach and unmapped-abandon transition after
+    /// one public route has fixed the source queue and backing class.
+    unsafe fn abandon_singleton(
         mut self,
         block: NonNull<u8>,
+        route: ThreadExitSingletonRoute,
     ) -> Result<
         DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
         DynamicThreadExitSingletonAbandonFailure<'attach, 'heap, 'arena, 'map>,
@@ -18579,34 +18715,59 @@ impl<'attach, 'heap, 'arena, 'map>
         {
             return Err(reject(self, DynamicThreadExitSingletonAbandonError::ForeignPage));
         }
-        let backing = match page_ref.memid().kind() {
-            MemoryKind::Arena => ThreadExitSingletonBacking::Arena,
-            MemoryKind::Os => ThreadExitSingletonBacking::Os,
-            memory => {
-                return Err(reject(
-                    self,
-                    DynamicThreadExitSingletonAbandonError::UnsupportedMemory(memory),
-                ));
+        let (backing, source_bin) = match route {
+            ThreadExitSingletonRoute::FullArena => {
+                if page_ref.memid().kind() != MemoryKind::Arena {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitSingletonAbandonError::UnsupportedMemory(
+                            page_ref.memid().kind(),
+                        ),
+                    ));
+                }
+                if size_class::page_kind_for_block_size(page_ref.block_size())
+                    != Some(PageKind::Singleton)
+                    || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+                    || !page_is_in_full(page_ref)
+                {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitSingletonAbandonError::NotFullSingleton,
+                    ));
+                }
+                (ThreadExitSingletonBacking::Arena, BIN_FULL)
+            }
+            ThreadExitSingletonRoute::HugeOsAligned => {
+                if page_ref.memid().kind() != MemoryKind::Os {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitSingletonAbandonError::UnsupportedMemory(
+                            page_ref.memid().kind(),
+                        ),
+                    ));
+                }
+                if !page_is_huge(page_ref) || page_is_in_full(page_ref) {
+                    return Err(reject(
+                        self,
+                        DynamicThreadExitSingletonAbandonError::NotHugeOsAlignedSingleton,
+                    ));
+                }
+                (ThreadExitSingletonBacking::Os, BIN_HUGE)
             }
         };
-        // An arena singleton is source-classified by its high singleton bin.
-        // An OS-aligned singleton instead reaches BIN_FULL after its one
-        // allocation fills it, and its ordinary block size can be small or
-        // regular; never force it through the arena PageKind/BIN_HUGE shape.
-        let singleton_shape_matches_backing = match backing {
-            ThreadExitSingletonBacking::Arena => {
-                size_class::page_kind_for_block_size(page_ref.block_size())
-                    == Some(PageKind::Singleton)
-                    && size_class::bin(page_ref.block_size()) == Some(BIN_HUGE)
+        let shape_error = match route {
+            ThreadExitSingletonRoute::FullArena => {
+                DynamicThreadExitSingletonAbandonError::NotFullSingleton
             }
-            ThreadExitSingletonBacking::Os => true,
+            ThreadExitSingletonRoute::HugeOsAligned => {
+                DynamicThreadExitSingletonAbandonError::NotHugeOsAlignedSingleton
+            }
         };
-        if !singleton_shape_matches_backing
+        if page_ref.capacity() != 1
             || page_ref.reserved() != 1
             || page_ref.used() != 1
-            || !page_is_in_full(page_ref)
         {
-            return Err(reject(self, DynamicThreadExitSingletonAbandonError::NotFullSingleton));
+            return Err(reject(self, shape_error));
         }
         // `release_span` proves every map entry and source-specific release
         // geometry before collection and queue detach. A leading-slice lookup
@@ -18620,8 +18781,16 @@ impl<'attach, 'heap, 'arena, 'map>
         if !span_matches_backing {
             return Err(reject(self, DynamicThreadExitSingletonAbandonError::Unmapped));
         }
-        if !self.engine.page_is_active_queue_member(BIN_FULL, page) {
-            return Err(reject(self, DynamicThreadExitSingletonAbandonError::NotActiveFull));
+        if !self.engine.page_is_active_queue_member(source_bin, page) {
+            let error = match route {
+                ThreadExitSingletonRoute::FullArena => {
+                    DynamicThreadExitSingletonAbandonError::NotActiveFull
+                }
+                ThreadExitSingletonRoute::HugeOsAligned => {
+                    DynamicThreadExitSingletonAbandonError::NotActiveHuge
+                }
+            };
+            return Err(reject(self, error));
         }
         let Some(canonical_block) = self.engine.canonical_block_start(page_ref, block) else {
             return Err(reject(self, DynamicThreadExitSingletonAbandonError::InvalidBlock));
@@ -18658,13 +18827,10 @@ impl<'attach, 'heap, 'arena, 'map>
         // pre-detach contract, so keep the drain rather than guessing whether
         // it can be released or reclassified.
         if unsafe { page.as_ref().used() } != 1 {
-            return Err(retained(
-                self,
-                DynamicThreadExitSingletonAbandonError::NotFullSingleton,
-            ));
+            return Err(retained(self, shape_error));
         }
 
-        let queue = match self.engine.session.queue_mut(BIN_FULL) {
+        let queue = match self.engine.session.queue_mut(source_bin) {
             Some(queue) => queue as *mut _,
             None => {
                 return Err(retained(
@@ -18674,7 +18840,7 @@ impl<'attach, 'heap, 'arena, 'map>
             }
         };
         // SAFETY: preflight proved this exact initialized singleton is linked
-        // in the complete full queue; the drain exclusively owns its links.
+        // in its complete source queue; the drain exclusively owns its links.
         unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
         if !self.engine.session.note_page_removed() {
             return Err(DynamicThreadExitSingletonAbandonFailure::Terminal {
@@ -25929,9 +26095,9 @@ impl<'attach, 'heap, 'arena, 'map>
     ///
     /// # Safety
     ///
-    /// `block` must be the exact once-live client allocation transferred by
-    /// [`DynamicThreadExitDrain::abandon_full_singleton`]. It must not have
-    /// been freed, republished, or accessed through any alias after this call.
+    /// `block` must be the exact once-live client allocation transferred by a
+    /// typed dynamic singleton-abandon operation. It must not have been freed,
+    /// republished, or accessed through any alias after this call.
     pub(crate) unsafe fn remote_free_after_failed_reclaim(
         mut self,
         block: NonNull<u8>,
@@ -26036,6 +26202,15 @@ impl<'attach, 'heap, 'arena, 'map>
     #[inline]
     pub(crate) fn test_page_count(&self) -> usize {
         self.drain.engine.session.theap().page_count()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_for_block(&self, block: NonNull<u8>) -> *mut Page {
+        // SAFETY: this linear handoff retains the only PageMap lifecycle
+        // capability; the test witness reads one exact registered entry and
+        // cannot expose a page lifetime beyond the handoff.
+        unsafe { self.drain.engine.page_for_block(block) }
     }
 
     #[cfg(test)]
@@ -29536,25 +29711,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         }
         let page = self.allocate_fresh_os_aligned_page(block_size, alignment)?;
         match self.pop_or_extend(page, zero) {
-            Ok(Some(block)) => {
-                match self.move_regular_to_full(BIN_HUGE, page.as_ptr(), Some(block)) {
-                    Ok(()) => Some(block),
-                    Err(PageToFullError::Lifecycle) => {
-                        // SAFETY: this failure occurs before full-queue
-                        // enqueue, so the just-popped sole allocation can
-                        // still restore its fresh OS mapping normally.
-                        let _ = unsafe { self.free(block) };
-                        None
-                    }
-                    Err(PageToFullError::Collection(_)) => {
-                        // The page is already full-queue-owned and source
-                        // false-force collection may have detached a corrupt
-                        // remote list. Retain that terminal state rather than
-                        // rolling back or presenting it as a fresh/OOM miss.
-                        None
-                    }
-                }
-            }
+            // `page.c` creates this selected aligned route directly in
+            // `BIN_HUGE`. Its one 4 KiB object is semantically full but does
+            // not satisfy the later `mi_page_to_full` small-size predicate,
+            // so no full-queue transition occurs here.
+            Ok(Some(block)) => Some(block),
             Ok(None) | Err(_) => {
                 // The fresh helper extended exactly one block before queue
                 // publication, so this branch is an invariant failure. Its
@@ -29936,7 +30097,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             .canonical_block_start(page, block)
             .ok_or(FreeError::InvalidBlock(FreeListError::InvalidBlock))?;
 
-        let (used, in_full, bin) = {
+        let (used, in_full, queue_bin, regular_bin) = {
             // SAFETY: this lifecycle owns the page, its blocks, and all local
             // free-list metadata. It never exposes a remote or concurrent path.
             let mut free_list = unsafe { LocalFreeList::from_page(page) }
@@ -29947,9 +30108,14 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // and initialized-capacity membership before writing a link.
             unsafe { free_list.push_local(base) }
                 .map_err(FreeError::InvalidBlock)?;
-            (free_list.used(), page_is_in_full(page), size_class::bin(page.block_size()))
+            (
+                free_list.used(),
+                page_is_in_full(page),
+                page_queue_bin(page),
+                size_class::bin(page.block_size()),
+            )
         };
-        let bin = bin.ok_or(FreeError::Lifecycle)?;
+        let queue_bin = queue_bin.ok_or(FreeError::Lifecycle)?;
 
         if used == 0 {
             // `mi_page_retire` clears the page-wide interior marker only once
@@ -29957,22 +30123,19 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // individual aligned free would make another live interior
             // pointer unfreeable and give it the wrong usable size.
             page.set_has_interior_pointers(false);
-            if in_full {
-                // A full page with its final local block returned is not a
-                // regular retired page in the source; release it directly.
-                if self.release_page(BIN_FULL, page as *mut Page) {
-                    return Ok(());
-                }
-                return Err(FreeError::Lifecycle);
-            }
-            if self.retire_or_release(bin, page as *mut Page) {
+            // A full page and a huge singleton both bypass retirement. The
+            // source route is selected from the page's actual queue, not its
+            // ordinary object-size bin: a small OS-aligned singleton belongs
+            // to `BIN_HUGE`, never its small ordinary bin.
+            if self.retire_or_release(queue_bin, page as *mut Page) {
                 return Ok(());
             }
             return Err(FreeError::Lifecycle);
         }
 
         if in_full {
-            if self.move_full_to_regular(bin, page as *mut Page) {
+            let regular_bin = regular_bin.ok_or(FreeError::Lifecycle)?;
+            if self.move_full_to_regular(regular_bin, page as *mut Page) {
                 return Ok(());
             }
             return Err(FreeError::Lifecycle);
@@ -30980,7 +31143,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         // `mi_page_queue_remove` updates a direct queue's cached head before
         // decrementing `theap->page_count`. Preserve that source order for
         // normal all-free/retired releases as well as aggregate detachment.
-        if bin != BIN_FULL {
+        if bin != BIN_FULL && bin != BIN_HUGE {
             self.update_direct_cache(bin);
         }
         if !self.session.note_page_removed() {
@@ -31403,10 +31566,16 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         let Some(queue) = self.session.queue(bin) else {
             return false;
         };
-        if bin != BIN_FULL {
+        // SAFETY: this same exclusive pre-publication validation keeps
+        // target's initialized immutable geometry stable.
+        let target_ref = unsafe { target.as_ref() };
+        if bin == BIN_HUGE && !page_is_huge(target_ref) {
+            return false;
+        }
+        if bin != BIN_FULL && bin != BIN_HUGE {
             // SAFETY: this same exclusive pre-publication validation keeps
             // target's initialized immutable geometry stable.
-            if queue.block_size() != unsafe { target.as_ref().block_size() } {
+            if queue.block_size() != target_ref.block_size() {
                 return false;
             }
         }
@@ -31439,7 +31608,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         if page_is_in_full(page_ref) {
             return self.page_is_active_queue_member(BIN_FULL, page);
         }
-        let Some(bin) = size_class::bin(page_ref.block_size()) else {
+        let Some(bin) = page_queue_bin(page_ref) else {
             return false;
         };
         bin < BIN_HUGE && self.page_is_active_queue_member(bin, page)
@@ -33899,6 +34068,9 @@ mod tests {
                 assert!(page.memid().is_os());
                 assert_eq!(page.aligned_alias_owner(), primary.as_ptr());
                 assert_eq!(unsafe { page.start() }, block.as_ptr());
+                assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
+                assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+                assert!(!page_is_in_full(page));
 
                 // SAFETY: the primary is live, exclusive, and still has every
                 // published map/metadata predecessor required by this exact
@@ -33940,11 +34112,13 @@ mod tests {
                     assert_eq!(alias.aligned_alias_owner(), primary.as_ptr());
                 }
 
-                // SAFETY: a singleton is full after its sole allocation, so
-                // this free executes the immediate full-page terminal order:
-                // clipped unregister, aliases clear, primary retire, exact
-                // published-mapping reclaim.
+                // SAFETY: this semantically full singleton remains in the
+                // special huge queue after its sole allocation, so this free
+                // executes its immediate terminal order: clipped unregister,
+                // aliases clear, primary retire, exact published-mapping
+                // reclaim.
                 unsafe { allocator.free(block).unwrap() };
+                assert_eq!(allocator.queue_count(BIN_HUGE), Some(0));
                 for offset in (0..layout.page_map_size()).step_by(ARENA_SLICE_SIZE) {
                     // SAFETY: lookup is integer-indexed and the source-clipped
                     // entry was cleared before the mapping was unmapped.

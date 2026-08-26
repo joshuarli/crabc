@@ -520,8 +520,8 @@ already-retired all-free regular page. Its singleton live-page transition accept
 full one-block arena or OS-aligned singleton. The arena form keeps the existing
 heap-local ordinary-bit, metadata, and arena-slice release tail.
 `DynamicThreadExitSingletonHandoff` handles the OS form as one
-`MemoryKind::Os`, `reserved == used == 1`, `BIN_FULL` singleton whose ordinary
-block size may be small: after full-queue/page-count detach it links the exact
+`MemoryKind::Os`, `reserved == used == 1`, semantically-full `BIN_HUGE` singleton whose ordinary
+block size may be small: after huge-queue/page-count detach it links the exact
 page into the dynamic Heap's `os_abandoned_pages` list, then unmapped-abandons
 it. Its exact final client free removes that list member before clipped PageMap
 unregister, secondary-alias clear, primary-metadata retirement, and mapping
@@ -870,7 +870,7 @@ target queue member and every other queue/direct slot empty. The full one-block
 arena singleton false-collects, queue-detaches, and unmapped-abandons while its
 exact final client free takes the existing failed-reclaim empty tail and
 performs PageMap -> `pages_main` -> metadata -> slice release. The second
-handoff accepts one sole OS-aligned singleton in `BIN_FULL`, even when its
+handoff accepts one sole semantically-full OS-aligned singleton in `BIN_HUGE`, not `BIN_FULL`, even when its
 single object's ordinary size class is small. It validates the exact clipped
 PageMap/alias provenance, queue-detaches, links the still-owned page into the
 source `Heap::os_abandoned_pages` list, then unmapped-abandons it. Its final
