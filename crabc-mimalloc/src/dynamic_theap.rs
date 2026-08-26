@@ -1937,11 +1937,7 @@ impl<'attach, 'heap> DynamicTheapPageDrainSession<'attach, 'heap> {
     pub(crate) fn os_abandoned_pages_are_empty(
         &self,
     ) -> Result<bool, HeapOsAbandonedPageListError> {
-        self.attachment
-            .heap
-            .as_ref()
-            .get_ref()
-            .os_abandoned_pages_are_empty()
+        self.attachment.heap_ref().os_abandoned_pages_are_empty()
     }
 
     /// Removes one exact all-free OS-aligned singleton from this dynamic
