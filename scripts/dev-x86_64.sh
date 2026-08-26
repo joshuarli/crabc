@@ -36,9 +36,12 @@ Native Linux/x86-64 staged-foundation evidence commands:
   mm-abi-reference  verify pinned-musl x86 mapping syscall and flag constants
   rand-reference  verify pinned-musl x86 getrandom ABI and behavior reference
   time-abi-reference  verify pinned-musl x86 timespec and clock ABI constants
+  time-observation-reference  verify pinned-musl x86 realtime observation behavior
   poll-reference  verify pinned-musl x86 poll ABI and behavior reference
+  ppoll-reference  verify pinned-musl x86 ppoll/pause signal-mask behavior
   process-identity-reference  verify pinned-musl x86 process-identity behavior
   process-session-reference  verify pinned-musl x86 process group/session behavior
+  pidfd-open-reference  verify pinned-musl x86 pidfd_open behavior
   fstat-reference  verify pinned-musl x86 fstat ABI and behavior reference
   system-reference  verify pinned-musl x86 uname/sysinfo ABI and behavior reference
   thread-reference  verify pinned-musl x86 thread observation/yield behavior
@@ -66,8 +69,9 @@ their named C/C++ layout/declaration slices.
 `signal-header-abi` and `mman-header-abi` compile only staged signal-frame and
 mapping declarations. `mm-abi-reference` establishes only the pinned-musl
 constants used by the separately admitted Rust mapping facade.
-`rand-reference`, `time-abi-reference`, `poll-reference`,
-`process-identity-reference`, `process-session-reference`, `fstat-reference`,
+`rand-reference`, `time-abi-reference`, `time-observation-reference`,
+`poll-reference`, `ppoll-reference`, `process-identity-reference`,
+`process-session-reference`, `pidfd-open-reference`, `fstat-reference`,
 `system-reference`, and `thread-reference` establish only their named
 pinned-musl kernel boundaries for separately admitted Rust slices.
 `libc-syscall` compiles only the unintegrated raw syscall module.
@@ -237,8 +241,16 @@ run_time_abi_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_time_reference.sh
 }
 
+run_time_observation_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_time_observation_reference.sh
+}
+
 run_poll_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_poll_reference.sh
+}
+
+run_ppoll_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_ppoll_reference.sh
 }
 
 run_process_identity_reference() {
@@ -247,6 +259,10 @@ run_process_identity_reference() {
 
 run_process_session_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_process_session_reference.sh
+}
+
+run_pidfd_open_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_pidfd_open_reference.sh
 }
 
 run_fstat_reference() {
@@ -300,7 +316,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|poll-reference|process-identity-reference|process-session-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|time-observation-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -399,10 +415,20 @@ case "$command" in
         ensure_image
         run_time_abi_reference
         ;;
+    time-observation-reference)
+        [ "$#" -eq 0 ] || fail "time-observation-reference takes no arguments"
+        ensure_image
+        run_time_observation_reference
+        ;;
     poll-reference)
         [ "$#" -eq 0 ] || fail "poll-reference takes no arguments"
         ensure_image
         run_poll_reference
+        ;;
+    ppoll-reference)
+        [ "$#" -eq 0 ] || fail "ppoll-reference takes no arguments"
+        ensure_image
+        run_ppoll_reference
         ;;
     process-identity-reference)
         [ "$#" -eq 0 ] || fail "process-identity-reference takes no arguments"
@@ -413,6 +439,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "process-session-reference takes no arguments"
         ensure_image
         run_process_session_reference
+        ;;
+    pidfd-open-reference)
+        [ "$#" -eq 0 ] || fail "pidfd-open-reference takes no arguments"
+        ensure_image
+        run_pidfd_open_reference
         ;;
     fstat-reference)
         [ "$#" -eq 0 ] || fail "fstat-reference takes no arguments"
@@ -439,7 +470,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_fs --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_process_identity --test x86_64_process_session --test x86_64_rand --test x86_64_system --test x86_64_thread --test x86_64_time \
+            --test x86_64_eventfd --test x86_64_fs --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_system --test x86_64_thread --test x86_64_time \
             -- --test-threads=1
         ;;
     libc-syscall)

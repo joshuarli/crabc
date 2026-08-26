@@ -345,6 +345,63 @@ impl SignalSet {
     }
 }
 
+/// A set of Linux signal numbers represented in the kernel's 64-bit signal
+/// mask form.
+///
+/// Safe constructors exclude signals 32, 33, and 34, which musl reserves for
+/// its internal runtime. The raw kernel bit pattern is intentionally not
+/// exposed for construction, so ordinary Rust code cannot accidentally
+/// perturb them.
+#[cfg(target_arch = "x86_64")]
+#[repr(transparent)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
+pub struct SignalSet(u64);
+
+#[cfg(target_arch = "x86_64")]
+impl SignalSet {
+    /// The empty signal set.
+    pub const EMPTY: Self = Self(0);
+
+    /// Returns a set containing every signal safe for application use.
+    #[inline]
+    #[must_use]
+    pub const fn full() -> Self {
+        // musl keeps 32, 33, and 34 outside application-visible sets.
+        Self(u64::MAX & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33))
+    }
+
+    /// Adds `signal` to this set.
+    #[inline]
+    pub fn insert(&mut self, signal: Signal) {
+        self.0 |= signal_bit(signal);
+    }
+
+    /// Removes `signal` from this set.
+    #[inline]
+    pub fn remove(&mut self, signal: Signal) {
+        self.0 &= !signal_bit(signal);
+    }
+
+    /// Returns whether `signal` is a member of this set.
+    #[inline]
+    #[must_use]
+    pub fn contains(self, signal: Signal) -> bool {
+        self.0 & signal_bit(signal) != 0
+    }
+
+    /// Returns whether no signal is in this set.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    #[inline]
+    pub(crate) const fn kernel_bits(&self) -> &u64 {
+        &self.0
+    }
+}
+
 #[cfg(target_arch = "aarch64")]
 bitflags! {
     /// Flags accepted by Linux `signalfd4`.
@@ -449,6 +506,13 @@ impl fmt::Debug for SignalFdInfo {
 }
 
 #[cfg(target_arch = "aarch64")]
+impl fmt::Debug for SignalSet {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_tuple("SignalSet").field(&self.0).finish()
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
 impl fmt::Debug for SignalSet {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_tuple("SignalSet").field(&self.0).finish()
@@ -1136,7 +1200,7 @@ pub unsafe fn sigaltstack(stack: Option<&Stack>) -> Result<Stack> {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 const fn signal_bit(signal: Signal) -> u64 {
     1_u64 << (signal.as_raw() - 1)

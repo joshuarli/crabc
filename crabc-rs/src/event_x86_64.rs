@@ -1,14 +1,16 @@
 //! The deliberately narrow Linux/x86-64 event facade.
 //!
-//! This target admits the scalar `eventfd2` counter seam and a closed typed
-//! `poll(2)` readiness seam. `ppoll`, `pselect`, epoll, signalfd, and their
-//! signal-mask or event-record contracts remain absent until each has
+//! This target admits the scalar `eventfd2` counter seam and typed `poll(2)`,
+//! `ppoll(2)`, and signal-only `pause` readiness operations. `pselect`, epoll,
+//! signalfd, and their event-record contracts remain absent until each has
 //! independent x86-64 evidence.
 
 use core::convert::TryFrom;
+use core::ptr;
 
 use bitflags::bitflags;
 
+use crate::signal::SignalSet;
 pub use crate::time::Timespec;
 use crate::{AsFd, BorrowedFd, Result};
 
@@ -122,6 +124,57 @@ pub fn poll(fds: &mut [PollFd<'_>], timeout: Option<&Timespec>) -> Result<usize>
     // SAFETY: `PollFd` has the exact x86-64 `pollfd` layout, and each record's
     // descriptor borrow remains valid while the mutable slice is borrowed.
     unsafe { crabc_core::event::poll_raw(fds.as_mut_ptr().cast(), fds.len(), timeout_ms) }
+}
+
+/// Waits for descriptor readiness while temporarily installing a signal mask.
+///
+/// `None` waits indefinitely. The supplied timeout is copied before crossing
+/// the kernel boundary because Linux may mutate the `ppoll` timespec. When
+/// `mask` is `Some`, Linux atomically installs that borrowed [`SignalSet`]
+/// during the wait and restores the calling thread's previous mask before
+/// returning. The mask remains borrowed for the complete direct syscall and
+/// is passed with Linux/x86-64's exact eight-byte kernel signal-set size.
+#[inline]
+pub fn ppoll(
+    fds: &mut [PollFd<'_>],
+    timeout: Option<&Timespec>,
+    mask: Option<&SignalSet>,
+) -> Result<usize> {
+    let timeout = timeout.copied();
+    let timeout = timeout
+        .as_ref()
+        .map_or(ptr::null(), |value| (value as *const Timespec).cast());
+    let sigmask: *const u8 = mask.map_or(ptr::null(), |mask| {
+        (mask.kernel_bits() as *const u64).cast()
+    });
+    // SAFETY: `PollFd` is exactly the Linux/x86-64 `pollfd` layout. Its
+    // descriptor borrows keep every descriptor open for the call;
+    // `SignalSet` supplies one live Linux/x86-64 kernel signal-set word, and
+    // the timeout copy remains live for the call.
+    unsafe {
+        crabc_core::event::ppoll_raw(
+            fds.as_mut_ptr().cast(),
+            fds.len(),
+            timeout,
+            sigmask,
+            crabc_core::signal::KERNEL_SIGSET_SIZE,
+        )
+    }
+}
+
+/// Sleeps until a signal interrupts the calling thread.
+///
+/// Linux/x86-64 has a dedicated `pause(2)` syscall, but the direct facade
+/// keeps this operation on the existing `ppoll` seam so its signal-mask and
+/// interruption behavior share one kernel boundary. The null mask and zero
+/// size leave the calling thread's signal mask unchanged.
+#[inline]
+pub fn pause() {
+    // SAFETY: Null pointers and zero descriptor count are the intentional
+    // kernel ABI for an indefinite signal-only ppoll wait.
+    let result =
+        unsafe { crabc_core::event::ppoll_raw(ptr::null_mut(), 0, ptr::null(), ptr::null(), 0) };
+    debug_assert_eq!(result, Err(crate::Errno::INTR));
 }
 
 fn timeout_millis(timeout: &Timespec) -> Result<i32> {

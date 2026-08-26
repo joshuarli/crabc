@@ -33,16 +33,17 @@ pub mod buffer;
 pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
-// (eventfd counters plus bounded poll), descriptor `fs::fstat`, `fd`, `fenv`,
-// `ffi`, `io`, `ioctl`, `memory`, `numeric`, `param`, `pipe`, read-only
-// `process` identity/session observations, `rand`, `signal`, `stdio`, bounded
+// (eventfd counters plus bounded poll/ppoll/pause), descriptor `fs::fstat`,
+// `fd`, `fenv`, `ffi`, `io`, `ioctl`, bounded `mm` mapping/remapping,
+// `memory`, `numeric`, `param`, `pipe`, bounded `process` identity/session
+// observations plus pidfd creation, `rand`, `signal`, `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
-// `thread::{gettid, sched_getcpu, sched_yield}`, and a bounded `time`
-// clock-query slice, plus the root descriptor/error types. These are the
-// target-record-independent families or have an explicit x86 ABI proof. Every
-// other public module owns an AArch64 kernel-record contract and stays absent
-// until its record family has its own x86 proof; admission must not silently
-// make an AArch64 layout usable on x86-64.
+// `thread::{gettid, sched_getcpu, sched_yield}`, and bounded `time`
+// clock-query/observation APIs, plus the root descriptor/error types. These
+// are the target-record-independent families or have an explicit x86 ABI
+// proof. Every other public module owns an AArch64 kernel-record contract and
+// stays absent until its record family has its own x86 proof; admission must
+// not silently make an AArch64 layout usable on x86-64.
 mod eventfd;
 #[cfg(target_arch = "aarch64")]
 pub mod event;

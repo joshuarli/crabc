@@ -26,9 +26,12 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
+./scripts/dev-x86_64.sh time-observation-reference
 ./scripts/dev-x86_64.sh poll-reference
+./scripts/dev-x86_64.sh ppoll-reference
 ./scripts/dev-x86_64.sh process-identity-reference
 ./scripts/dev-x86_64.sh process-session-reference
+./scripts/dev-x86_64.sh pidfd-open-reference
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
@@ -120,22 +123,32 @@ select C signal behavior or `crabc-libc`.
 and selected Linux/x86 mapping values, including `MAP_32BIT`, against pinned
 musl. It is source-only and does not select mapping behavior or `crabc-libc`.
 
-`mm-abi-reference` compile-checks pinned-musl x86 `mmap`/`mprotect`/`munmap`
-numbers and the closed constants used by the native Rust mapping facade. It
-does not compile project C headers or select a C ABI artifact.
+`mm-abi-reference` compile-checks pinned-musl x86 `mmap`/`mremap`/`mprotect`/
+`munmap` numbers and the closed mapping/remapping constants used by the native
+Rust facade. It does not compile project C headers or select a C ABI artifact.
 
 `rand-reference` runs a pinned-musl native x86 reference executable for
 `getrandom` syscall/flag values and initialized-length behavior. It does not
 link or select a crabc artifact.
 
-`time-abi-reference` pins the musl x86 `timespec` shape, admitted clock IDs,
-and `clock_gettime`/`clock_getres` syscall values used by the bounded native
-Rust time facade. It does not compile a project C header or select a C ABI
-artifact.
+`time-abi-reference` pins the musl x86 `timespec` shape,
+realtime/monotonic/monotonic-raw/process-CPU clock IDs, and
+`clock_gettime`/`clock_getres` syscall values used by the bounded native Rust
+time facade. It does not compile a project C header or select a C ABI artifact.
+
+`time-observation-reference` executes pinned-musl x86 realtime and
+process-CPU observations used by typed `timespec_get`, `realtime_millis`, and
+`process_cpu_time` helpers. It does not compile a project C header or select a
+C ABI artifact.
 
 `poll-reference` executes a pinned-musl x86 pipe fixture through `poll(2)` to
 pin empty, readable, and hangup states used by the bounded typed Rust poll
 facade. It does not compile a project C header or select a C ABI artifact.
+
+`ppoll-reference` executes a pinned-musl x86 pipe and signal fixture through
+`ppoll(2)` and `pause(2)`, pinning readiness, temporary signal-mask
+restoration, and `EINTR` completion. It is evidence for only the typed Rust
+readiness slice, not C polling support or `crabc-libc` selection.
 
 `process-identity-reference` executes pinned-musl scalar and
 real/effective/saved UID/GID observations. It is an oracle for the bounded
@@ -144,6 +157,11 @@ typed Rust read-only identity facade, not C process API support.
 `process-session-reference` executes pinned-musl `getpgid`, `getpgrp`, and
 `getsid` observations. It is an oracle for the typed read-only process
 group/session slice, not process control support.
+
+`pidfd-open-reference` executes pinned-musl `pidfd_open(2)` calls, pinning
+descriptor ownership, `PIDFD_NONBLOCK`, and direct kernel error behavior. It
+is evidence for only the typed Rust pidfd-creation slice, not process control
+or C process support.
 
 `fstat-reference` records the pinned-musl x86 144-byte `fstat` record and
 regular-file behavior for the bounded descriptor `fs::fstat` slice. It does
@@ -190,29 +208,31 @@ selected `crabc-libc` artifact or general x86 C ABI claim.
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_fs`,
 `x86_64_io`, `x86_64_mm`, `x86_64_param`, `x86_64_pipe`, `x86_64_poll`,
-`x86_64_process_identity`, `x86_64_process_session`, `x86_64_rand`,
-`x86_64_system`, `x86_64_thread`, and `x86_64_time` tests. The I/O regression
-proves vector segment and short-read behavior, 64-bit positioned/vector
-offsets, `preadv2`/`pwritev2` flags and current-offset sentinel, plus
-descriptor duplication and `fcntl` flags. The eventfd regression proves
-`NONBLOCK`/`CLOEXEC`, counter accumulation and reset, semaphore reads, and
-Linux's reserved all-ones counter error through direct kernel seams. The
+`x86_64_process_identity`, `x86_64_process_session`, `x86_64_pidfd_open`,
+`x86_64_rand`, `x86_64_system`, `x86_64_thread`, and `x86_64_time` tests. The
+I/O regression proves vector segment and short-read behavior, 64-bit
+positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
+sentinel, plus descriptor duplication and `fcntl` flags. The eventfd regression
+proves `NONBLOCK`/`CLOEXEC`, counter accumulation and reset, semaphore reads,
+and Linux's reserved all-ones counter error through direct kernel seams. The
 parameter regression proves stable scalar aux-vector observations while
 retaining the x86 exclusion of the pointer-valued `AT_EXECFN` API. The pipe
 regression proves Linux/x86-64's distinct `O_DIRECT` packet-mode bit,
 packet-tail discard, and descriptor `CLOEXEC`. The mapping regression proves
-only closed anonymous/file mapping, protection, and unmapping calls, including
-a sparse 4 GiB file offset; it permits `PROT_NONE` and rejects `MAP_32BIT`,
-fixed-map, and wider map/protection flags before the raw seam. The poll
-regression proves typed borrowed-record empty/readable/hangup pipe behavior,
-requested-flag retention, and timeout-range rejection. The filesystem
-regression proves only a typed descriptor `fstat` record. The process
-regressions prove typed PID/identity/session observations, and the system and
-thread regressions prove the named bounded kernel observations. It verifies the
-explicitly admitted Rust subset only; it does not make ppoll, epoll, signalfd,
-broader filesystem path-core behavior, remapping, mapping policy, other
-kernel-record-owning facade families, or a general x86-64 facade selectable or
-supported.
+closed anonymous/file mapping, bounded remap growth/shrink/fixed replacement,
+protection, and unmapping calls, including a sparse 4 GiB file offset; it
+permits `PROT_NONE`, rejects `MAP_32BIT` and wider map/protection policy, and
+leaves `MREMAP_DONTUNMAP` deferred. The readiness regression proves typed
+borrowed-record empty/readable/hangup pipe behavior, temporary `ppoll`
+signal-mask restoration, signal-only `pause` completion, requested-flag
+retention, and timeout-range rejection. The filesystem regression proves only a
+typed descriptor `fstat` record. The process regressions prove typed
+PID/identity/session observations plus owned nonblocking pidfds, and the system
+and thread regressions prove the named bounded kernel observations. It verifies
+the explicitly admitted Rust subset only; it does not make pselect, epoll,
+signalfd, broader filesystem path-core behavior, mapping locking or policy,
+other kernel-record-owning facade families, or a general x86-64 facade
+selectable or supported.
 
 The random regression proves raw Linux `getrandom` flag values and initialized
 prefix handling, musl's bounded 256-byte `getentropy` behavior, and owned
@@ -220,8 +240,9 @@ deterministic state without C random globals. It does not broaden the facade
 or make the C random API selectable.
 
 The time regression proves only x86 `timespec` shape, admitted realtime,
-monotonic, and monotonic-raw clock IDs, normalized results, and monotonic
-ordering through the validated vDSO/direct-syscall seam. Calendar, timer,
+monotonic, monotonic-raw, and process-CPU clock IDs, normalized results,
+truncated realtime-millisecond observations, and nondecreasing CPU-time
+observations through the validated vDSO/direct-syscall seam. Calendar, timer,
 timezone, sleep, and clock-mutation APIs remain outside this direct slice.
 
 `ldso-relocation` compiles and runs only the unintegrated

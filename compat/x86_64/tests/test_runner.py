@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|poll-reference|process-identity-reference|process-session-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|time-observation-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -68,12 +68,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
         self.assertIn('run_time_abi_reference()', source)
         self.assertIn('compat/x86_64/run_x86_time_reference.sh', source)
+        self.assertIn('run_time_observation_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_time_observation_reference.sh', source)
         self.assertIn('run_poll_reference()', source)
         self.assertIn('compat/x86_64/run_x86_poll_reference.sh', source)
+        self.assertIn('run_ppoll_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_ppoll_reference.sh', source)
         self.assertIn('run_process_identity_reference()', source)
         self.assertIn('compat/x86_64/run_x86_process_identity_reference.sh', source)
         self.assertIn('run_process_session_reference()', source)
         self.assertIn('compat/x86_64/run_x86_process_session_reference.sh', source)
+        self.assertIn('run_pidfd_open_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_pidfd_open_reference.sh', source)
         self.assertIn('run_fstat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_fstat_reference.sh', source)
         self.assertIn('run_system_reference()', source)
@@ -98,6 +104,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_poll', source)
         self.assertIn('--test x86_64_process_identity', source)
         self.assertIn('--test x86_64_process_session', source)
+        self.assertIn('--test x86_64_pidfd_open', source)
         self.assertIn('--test x86_64_rand', source)
         self.assertIn('--test x86_64_system', source)
         self.assertIn('--test x86_64_thread', source)
@@ -172,7 +179,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         time_reference = (ROOT / "compat" / "x86_64" / "run_x86_time_reference.sh").read_text(
             encoding="utf-8"
         )
+        time_observation_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_time_observation_reference.sh"
+        ).read_text(encoding="utf-8")
         poll_reference = (ROOT / "compat" / "x86_64" / "run_x86_poll_reference.sh").read_text(
+            encoding="utf-8"
+        )
+        ppoll_reference = (ROOT / "compat" / "x86_64" / "run_x86_ppoll_reference.sh").read_text(
             encoding="utf-8"
         )
         process_identity_reference = (
@@ -180,6 +193,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         process_session_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_process_session_reference.sh"
+        ).read_text(encoding="utf-8")
+        pidfd_open_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_pidfd_open_reference.sh"
         ).read_text(encoding="utf-8")
         fstat_reference = (ROOT / "compat" / "x86_64" / "run_x86_fstat_reference.sh").read_text(
             encoding="utf-8"
@@ -272,15 +288,24 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_time_reference_probe.c', time_reference)
         self.assertIn('timespec ABI reference', time_reference)
         self.assertNotIn('-p crabc-libc', time_reference)
+        self.assertIn('x86_time_observation_reference_probe.c', time_observation_reference)
+        self.assertIn('realtime observation reference', time_observation_reference)
+        self.assertNotIn('-p crabc-libc', time_observation_reference)
         self.assertIn('x86_poll_reference_probe.c', poll_reference)
         self.assertIn('poll ABI/behavior reference', poll_reference)
         self.assertNotIn('-p crabc-libc', poll_reference)
+        self.assertIn('x86_ppoll_reference_probe.c', ppoll_reference)
+        self.assertIn('ppoll/pause signal-mask reference', ppoll_reference)
+        self.assertNotIn('-p crabc-libc', ppoll_reference)
         self.assertIn('x86_process_identity_reference_probe.c', process_identity_reference)
         self.assertIn('process-identity reference', process_identity_reference)
         self.assertNotIn('-p crabc-libc', process_identity_reference)
         self.assertIn('x86_process_session_reference_probe.c', process_session_reference)
         self.assertIn('process-session reference', process_session_reference)
         self.assertNotIn('-p crabc-libc', process_session_reference)
+        self.assertIn('x86_pidfd_open_reference_probe.c', pidfd_open_reference)
+        self.assertIn('pidfd_open reference', pidfd_open_reference)
+        self.assertNotIn('-p crabc-libc', pidfd_open_reference)
         self.assertIn('x86_fstat_reference_probe.c', fstat_reference)
         self.assertIn('fstat reference', fstat_reference)
         self.assertNotIn('-p crabc-libc', fstat_reference)
@@ -577,6 +602,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_process_identity",
                     "--test",
                     "x86_64_process_session",
+                    "--test",
+                    "x86_64_pidfd_open",
                     "--test",
                     "x86_64_rand",
                     "--test",

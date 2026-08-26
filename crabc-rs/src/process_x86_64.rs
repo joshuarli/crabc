@@ -1,9 +1,14 @@
 //! Bounded Linux/x86-64 process-identity observations.
 //!
-//! This module intentionally admits only scalar identity queries and the
-//! kernel's three-word real/effective/saved credential observations.  The
-//! larger process facade remains AArch64-only until each of its target-sized
-//! records and state transitions has an independent x86-64 contract.
+//! This module intentionally admits only scalar identity queries, the
+//! kernel's three-word real/effective/saved credential observations, and
+//! pidfd creation. The larger process facade remains AArch64-only until each
+//! of its target-sized records and state transitions has an independent
+//! x86-64 contract.
+
+use bitflags::bitflags;
+
+use crate::{OwnedFd, Result};
 
 /// A raw Linux/x86-64 `pid_t` representation.
 pub type RawPid = i32;
@@ -16,6 +21,18 @@ pub type RawGid = u32;
 
 /// A non-zero Linux process or thread identifier.
 pub use crate::signal::Pid;
+
+bitflags! {
+    /// Flags accepted by Linux `pidfd_open`.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct PidfdFlags: u32 {
+        /// Make operations on the returned pidfd nonblocking.
+        const NONBLOCK = 0x0000_0800;
+        /// Preserve future Linux-defined bits for kernel validation.
+        const _ = !0;
+    }
+}
 
 /// An opaque Linux user identifier.
 #[repr(transparent)]
@@ -109,6 +126,20 @@ pub fn getpid() -> Pid {
 #[must_use]
 pub fn getppid() -> Option<Pid> {
     Pid::from_raw(crabc_core::process::getppid())
+}
+
+/// Opens a stable Linux process descriptor for `pid`.
+///
+/// The returned [`OwnedFd`] remains valid across PID reuse and closes through
+/// the native descriptor owner. Linux's target-lifetime, permission, and
+/// unsupported-flag errors are returned directly; this operation does not
+/// call libc or inspect thread-local `errno`.
+#[inline]
+pub fn pidfd_open(pid: Pid, flags: PidfdFlags) -> Result<OwnedFd> {
+    let fd = crabc_core::process::pidfd_open_raw(pid.as_raw_pid(), flags.bits())?;
+    // SAFETY: successful Linux pidfd_open returns one fresh, non-negative
+    // descriptor whose ownership transfers to this value.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
 /// Returns the caller's real Linux user ID.

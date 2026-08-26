@@ -136,6 +136,7 @@ pub(crate) const SYS_ACCEPT4: usize = 288;
 pub(crate) const SYS_MUNMAP: usize = 11;
 pub(crate) const SYS_MMAP: usize = 9;
 pub(crate) const SYS_MPROTECT: usize = 10;
+pub(crate) const SYS_MREMAP: usize = 25;
 pub(crate) const SYS_KILL: usize = 62;
 pub(crate) const SYS_TGKILL: usize = 234;
 pub(crate) const SYS_SIGALTSTACK: usize = 131;

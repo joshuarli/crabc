@@ -57,18 +57,36 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(self.family(data, "sysroot.owned-artifact")["status"], "planned")
         for capability in (
             "io.readiness-poll",
+            "io.readiness-ppoll",
+            "event.pause",
             "process.pid-observation",
             "process.identity-triples",
             "process.identity",
             "process.session-observation",
+            "process.pidfd-open",
             "thread.identity",
             "thread.cpu-observation",
             "system.load-average",
             "system.name-observation",
             "system.identity-info",
+            "memory.mapping-remap",
+            "time.realtime-millis",
+            "time.timespec-get",
+            "time.process-cpu-observation",
         ):
             self.assertIn(capability, direct["capabilities"])
             self.assertNotIn(capability, remaining["capabilities"])
+        for capability in (
+            "io.readiness",
+            "io.readiness-epoll",
+            "memory.mapping-locking",
+            "memory.residency",
+            "memory.mapping-sync",
+            "memory.advice",
+            "time.clock-query",
+        ):
+            self.assertNotIn(capability, direct["capabilities"])
+            self.assertIn(capability, remaining["capabilities"])
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
 

@@ -1,10 +1,10 @@
 //! Deliberately bounded Linux/x86-64 event-descriptor operations.
 //!
-//! This target-specific module owns the `poll(2)` syscall seam. The x86-64
-//! `pollfd` record is kept separate from the AArch64 event module so that a
-//! caller cannot accidentally pass an AArch64-owned event record to an x86
-//! syscall. The only admitted Rust-facade operation is `poll`; a crate-private
-//! raw `ppoll` seam remains solely for the existing resolver timeout loop.
+//! This target-specific module owns the `poll(2)` and `ppoll(2)` syscall seams.
+//! The x86-64 `pollfd` record is kept separate from the AArch64 event module so
+//! that a caller cannot accidentally pass an AArch64-owned event record to an
+//! x86 syscall. The typed facade admits bounded `poll`, `ppoll`, and signal-only
+//! `pause`; pselect, epoll, signalfd, and wider event records remain deferred.
 
 use crate::syscall::{
     decode, syscall2, syscall3, syscall5, SYS_EVENTFD2, SYS_POLL, SYS_PPOLL, SYS_READ,
@@ -102,10 +102,6 @@ pub unsafe fn poll_raw(
 
 /// Waits for readiness through the Linux/x86-64 `ppoll` syscall.
 ///
-/// This raw seam is retained for the core resolver's private timeout loop;
-/// the public x86 Rust facade does not expose `ppoll` until its signal-set
-/// contract is independently admitted.
-///
 /// # Safety
 ///
 /// `fds` must be null when `nfds` is zero or point to writable x86-64
@@ -113,7 +109,7 @@ pub unsafe fn poll_raw(
 /// `timespec` (`i64` seconds followed by `i64` nanoseconds). `sigmask` must
 /// be null or point to `sigsetsize` bytes accepted by Linux.
 #[inline]
-pub(crate) unsafe fn ppoll_raw(
+pub unsafe fn ppoll_raw(
     fds: *mut u8,
     nfds: usize,
     timeout: *const u8,

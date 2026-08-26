@@ -29,13 +29,24 @@ impl Mapping {
             length: PAGE_SIZE,
         }
     }
+
+    fn resize(&mut self, new_length: usize, flags: mm::MremapFlags) {
+        let successor = unsafe { mm::mremap(self.pointer, self.length, new_length, flags) }
+            .expect("resize x86-64 mapping");
+        // Linux consumes the old mapping on success, even when the numeric
+        // address is unchanged. Publish only the returned successor.
+        self.pointer = successor;
+        self.length = new_length;
+    }
 }
 
 impl Drop for Mapping {
     fn drop(&mut self) {
-        // SAFETY: This owner consumes the one mapping created above, after
-        // the test has stopped using pointers into it.
-        let _ = unsafe { mm::munmap(self.pointer, self.length) };
+        if !self.pointer.is_null() {
+            // SAFETY: This owner consumes the one mapping created above,
+            // after the test has stopped using pointers into it.
+            let _ = unsafe { mm::munmap(self.pointer, self.length) };
+        }
     }
 }
 
@@ -60,6 +71,92 @@ fn x86_64_mapping_flags_match_the_linux_abi() {
     assert_eq!(mm::MprotectFlags::empty().bits(), 0x0);
     assert_eq!(mm::MapFlags::SHARED.bits(), 0x1);
     assert_eq!(mm::MapFlags::PRIVATE.bits(), 0x2);
+    assert_eq!(mm::MremapFlags::empty().bits(), 0x0);
+    assert_eq!(mm::MremapFlags::MAYMOVE.bits(), 0x1);
+}
+
+#[test]
+fn x86_64_mremap_maymove_preserves_contents_and_expands_the_owned_range() {
+    let mut mapping = Mapping::anonymous();
+    // SAFETY: The mapping owns one writable page until the successful remap.
+    unsafe { mapping.pointer.cast::<u8>().write(0x5a) };
+
+    mapping.resize(PAGE_SIZE * 2, mm::MremapFlags::MAYMOVE);
+
+    // SAFETY: The returned mapping owns the expanded writable range.
+    assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x5a);
+    // SAFETY: The second page is part of the newly expanded mapping.
+    unsafe { mapping.pointer.cast::<u8>().add(PAGE_SIZE).write(0xa5) };
+    // SAFETY: The second page remains mapped and writable.
+    assert_eq!(unsafe { mapping.pointer.cast::<u8>().add(PAGE_SIZE).read() }, 0xa5);
+}
+
+#[test]
+fn x86_64_mremap_without_maymove_can_shrink_in_place() {
+    let mut mapping = Mapping::anonymous();
+    mapping.resize(PAGE_SIZE * 2, mm::MremapFlags::MAYMOVE);
+    let original = mapping.pointer;
+    // SAFETY: The mapping owns two writable pages before the shrink.
+    unsafe {
+        mapping.pointer.cast::<u8>().write(0x11);
+        mapping.pointer.cast::<u8>().add(PAGE_SIZE).write(0x22);
+    }
+
+    mapping.resize(PAGE_SIZE, mm::MremapFlags::empty());
+
+    assert_eq!(mapping.pointer, original, "a shrink without MAYMOVE stays in place");
+    // SAFETY: The first page remains mapped and writable after the shrink.
+    assert_eq!(unsafe { mapping.pointer.cast::<u8>().read() }, 0x11);
+}
+
+#[test]
+fn x86_64_mremap_fixed_replaces_destination_and_invalidates_both_inputs() {
+    let mut source = Mapping::anonymous();
+    let mut destination = Mapping::anonymous();
+    // SAFETY: Each owner holds one writable page until the fixed remap.
+    unsafe {
+        source.pointer.cast::<u8>().write(0x5a);
+        destination.pointer.cast::<u8>().write(0xa5);
+    }
+    let source_pointer = source.pointer;
+    let destination_pointer = destination.pointer;
+
+    let successor = unsafe {
+        mm::mremap_fixed(
+            source_pointer,
+            source.length,
+            PAGE_SIZE,
+            mm::MremapFlags::MAYMOVE,
+            destination_pointer,
+        )
+    }
+    .expect("move x86-64 mapping to a fixed destination");
+
+    // Both input mappings are consumed by successful fixed mremap. Keep only
+    // the returned destination armed for Drop, avoiding a second unmap.
+    source.pointer = core::ptr::null_mut();
+    destination.pointer = successor;
+    destination.length = PAGE_SIZE;
+
+    assert_eq!(successor, destination_pointer);
+    // SAFETY: The returned destination owns the source's former contents.
+    assert_eq!(unsafe { successor.cast::<u8>().read() }, 0x5a);
+}
+
+#[test]
+fn x86_64_mremap_rejects_flags_outside_the_closed_facade_contract() {
+    let mapping = Mapping::anonymous();
+    let error = unsafe {
+        mm::mremap(
+            mapping.pointer,
+            mapping.length,
+            mapping.length,
+            mm::MremapFlags::from_bits_retain(0x2),
+        )
+    }
+    .expect_err("ordinary mremap must reject MREMAP_FIXED as a facade flag");
+
+    assert_eq!(error, crabc_rs::Errno::INVAL);
 }
 
 #[test]

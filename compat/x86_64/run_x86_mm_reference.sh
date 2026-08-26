@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Pinned-musl Linux/x86-64 mapping ABI reference check.
 #
-# This compile-only reference establishes the constants admitted by the narrow
-# Rust mapping facade. It does not compile project headers, link code, or
-# select crabc-libc.
+# This compile-only reference establishes the mapping and bounded-remapping
+# constants admitted by the narrow Rust facade. It does not compile project
+# headers, link code, or select crabc-libc.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

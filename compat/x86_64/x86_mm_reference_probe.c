@@ -9,6 +9,8 @@
 #error "this probe requires native Linux/x86-64 LP64"
 #endif
 
+#define _GNU_SOURCE
+
 #include <sys/mman.h>
 #include <sys/syscall.h>
 
@@ -23,6 +25,11 @@ _Static_assert(MAP_32BIT == 0x40, "x86 MAP_32BIT is intentionally deferred");
 _Static_assert(MAP_FIXED == 0x10, "x86 MAP_FIXED is intentionally deferred");
 _Static_assert(MAP_FIXED_NOREPLACE == 0x00100000,
     "x86 MAP_FIXED_NOREPLACE is intentionally deferred");
+_Static_assert(MREMAP_MAYMOVE == 0x1, "x86 MREMAP_MAYMOVE");
+_Static_assert(MREMAP_FIXED == 0x2, "x86 MREMAP_FIXED is facade-internal");
+_Static_assert(MREMAP_DONTUNMAP == 0x4,
+    "x86 MREMAP_DONTUNMAP is intentionally deferred");
 _Static_assert(SYS_mmap == 9, "x86 mmap syscall number");
 _Static_assert(SYS_mprotect == 10, "x86 mprotect syscall number");
 _Static_assert(SYS_munmap == 11, "x86 munmap syscall number");
+_Static_assert(SYS_mremap == 25, "x86 mremap syscall number");

@@ -1,4 +1,7 @@
-//! Stateless Linux/AArch64 process operations.
+//! Stateless Linux process operations.
+//!
+//! The full source surface is used by Linux/AArch64; staged Linux/x86-64
+//! facades admit only individually evidenced operations from this module.
 
 use core::{ffi::CStr, mem::MaybeUninit};
 
@@ -74,7 +77,7 @@ pub unsafe fn brk_raw(address: *mut u8) -> *mut u8 {
 /// and target lifetime; those errors remain ordinary [`Errno`] values.
 #[inline]
 pub fn pidfd_open_raw(pid: i32, flags: u32) -> Result<RawFd> {
-    // SAFETY: Both arguments are immediate Linux/AArch64 syscall values.
+    // SAFETY: Both arguments are immediate Linux syscall values.
     // A successful pidfd_open result is a newly allocated descriptor.
     decode_i32(unsafe { syscall2(SYS_PIDFD_OPEN, pid as usize, flags as usize) })
 }
