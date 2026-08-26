@@ -924,6 +924,24 @@ evidence only: it does not establish general lifecycle/routing/concurrent
 collection, abandonment/adoption, public x86 support, backend promotion, or
 AArch64 evidence.
 
+The native x86-only track also has a separate 38-field dynamic full direct-small
+unmapped-reabandon differential. A pinned-C worker fills one sole full
+direct-small ordinary regular-bin arena page (request/block size 1024,
+capacity/reserved 64, one slice) and preflights its exact rounded direct-cache
+range `[113, 128]`. No remote `mi_free` is published; the worker runs real
+`mi_thread_done()`, and the consumer joins before sequential frees. Force then
+false collection clears that range before page-count detach and leaves the page
+unmapped-abandoned with PageMap and ordinary arena bitmap retained, ordinary
+queue detached, dynamic bitmap/count clear, and `used == 64`. The first
+partial-collector consumer free retains `used == 64`; nine partial-collector
+frees retain that route at `used == 56`; the tenth partial collector takes
+`used` to 55, then generic unown consumes the retained current head and maps
+it at `used == 54` with dynamic bitmap/count one. The mapped tail clears
+PageMap, ordinary arena bitmap, dynamic bitmap/count, and the one slice. This
+remains private native x86-64 engine evidence only: it does not establish
+general lifecycle/routing/concurrent collection, abandonment/adoption, public
+x86 support, backend promotion, or AArch64 evidence.
+
 The native x86-only track also has a separate 30-field dynamic full
 non-direct-small one-remote force-collect-to-mapped differential. A pinned-C
 worker fills one sole full non-direct-small ordinary regular-bin arena page

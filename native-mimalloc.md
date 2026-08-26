@@ -831,6 +831,21 @@ does not broaden normal unmapped full direct-small abandonment to multiple
 frees, non-direct-small or other page classes, reclaim, adoption, requeue,
 scanning, or a general dynamic owner-exit traversal.
 
+The matching private native x86-64 differential fixes this no-remote,
+source-unmapped direct-small route at 38 address-independent values: one sole
+full ordinary-bin page with a 1024-byte request/block size, capacity/reserved
+64, one slice, and exact rounded direct-cache range `[113, 128]`. The worker
+runs real `mi_thread_done()` without a remote free, and the consumer joins
+before its frees. Force then false collection clears that range before
+page-count detach and records unmapped abandonment with PageMap/ordinary bit
+retained, dynamic bitmap/count clear, and `used == 64`. The first
+partial-collector consumer free also retains `used == 64`; nine such frees
+leave `used == 56`, then the tenth partial collector takes `used` to 55 before
+generic unown consumes the retained current head and maps it at `used == 54`
+with bitmap/count publication before terminal one-slice release. It is private x86 evidence
+only, not a broader lifecycle, routing, concurrent collection, public runtime,
+or AArch64 claim.
+
 The raw owner-local free-list substrate now also ports that source force-only
 append: it validates the deferred local chain, appends the old immediate head,
 and rejects a malformed cycle before relinking. Ordinary regular/full callers

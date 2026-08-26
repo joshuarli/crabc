@@ -720,6 +720,76 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("one-slice release", unit["difference"])
                 self.assertIn("not general lifecycle", unit["difference"])
 
+    def test_dynamic_full_direct_small_unmapped_reabandon_lane_is_scoped_to_reviewed_units(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_dynamic_full_direct_small_unmapped_reabandon_evidence.py",
+            "compat/allocator/x86_64-dynamic-full-direct-small-unmapped-reabandon-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_dynamic_full_direct_small_unmapped_reabandon_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                unit = units[unit_id]
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn("38-field native C/Rust differential", unit["difference"])
+                self.assertIn(
+                    "dynamic full direct-small unmapped-reabandon route",
+                    unit["difference"],
+                )
+                self.assertIn("1024-byte direct-small", unit["difference"])
+                self.assertIn("capacity/reserved 64", unit["difference"])
+                self.assertIn("one slice", unit["difference"])
+                self.assertIn(
+                    "exact rounded direct-cache range [113, 128]",
+                    unit["difference"],
+                )
+                self.assertIn("no remote mi_free", unit["difference"])
+                self.assertIn(
+                    "direct-cache clear-before-page-count-detach",
+                    unit["difference"],
+                )
+                self.assertIn("used == 64", unit["difference"])
+                self.assertIn(
+                    "first partial-collector consumer free keeps used == 64",
+                    unit["difference"],
+                )
+                self.assertIn("Nine partial-collector frees", unit["difference"])
+                self.assertIn("used == 56", unit["difference"])
+                self.assertIn("tenth partial collector", unit["difference"])
+                self.assertIn("generic unown consumes the retained current head", unit["difference"])
+                self.assertIn("used == 54", unit["difference"])
+                self.assertIn("dynamic bitmap/count 1", unit["difference"])
+                self.assertIn("one-slice release", unit["difference"])
+                self.assertIn("not general lifecycle", unit["difference"])
+
     def test_dynamic_full_non_direct_small_one_remote_lane_is_scoped_to_reviewed_units(
         self,
     ) -> None:
@@ -904,9 +974,9 @@ class X86_64SourceMapTests(unittest.TestCase):
             units["arena-lifecycle"]["source_anchor"],
             {
                 "member": "src/arena.c",
-                "start_line": 655,
+                "start_line": 631,
                 "end_line": 1409,
-                "sha256": "fdefc099be5c4b86c28fe000c94d3751046a652f94557fac3868a1be9baaab70",
+                "sha256": "27e3cbe3f8b7e6f8ed2a2986776c2b403d9cfcaf9585092aaea5afd7fabdcaf8",
             },
         )
         self.assertEqual(
