@@ -226,6 +226,13 @@ selectable.
 real/effective/saved UID/GID observations. It is an oracle for the bounded
 typed Rust read-only identity facade, not C process API support.
 
+`getgroups-reference` executes a pinned-musl x86 supplementary-group
+query/fill lifecycle. It pins unsigned 32-bit, align-4 `gid_t`,
+`getgroups=115`, null zero-count queries, musl/direct fill equivalence, and
+the conditional undersized-buffer `EINVAL` result. It is private evidence for
+one read-only record-owning slice only; it does not select C `getgroups`
+support or a general x86 facade.
+
 `process-session-reference` executes pinned-musl `getpgid`, `getpgrp`, and
 `getsid` observations. It is an oracle for the typed read-only process
 group/session slice, not process control support.
@@ -328,7 +335,7 @@ establish pthread, TLS, or C ABI parity.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_epoll`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
-`x86_64_fs`, `x86_64_fs_advice`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
+`x86_64_fs`, `x86_64_fs_advice`, `x86_64_getgroups`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
 `x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
 `x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
@@ -364,11 +371,12 @@ regression proves x86 descriptor-bit-vector helpers, empty/readable pipe
 readiness, timeout copying, temporary mask restoration, and malformed-input
 rejection. It remains a privately evidenced record-owning slice. The filesystem regression proves only a
 typed descriptor `fstat` record plus `fadvise64`/`readahead` behavior. The
-process regressions prove typed PID/identity/session observations, owned
-nonblocking pidfds, read-only `getpriority`, private read-only resource-limit
-queries, private read-only resource-usage and process-accounting observations,
-conflicting-lock `F_GETLK` records, and scheduler-priority bounds; the system
-and thread regressions prove the named bounded kernel observations. It verifies the
+process regressions prove typed PID/identity/session observations, read-only
+supplementary-group query/fill, owned nonblocking pidfds, read-only
+`getpriority`, private read-only resource-limit queries, private read-only
+resource-usage and process-accounting observations, conflicting-lock `F_GETLK`
+records, and scheduler-priority bounds; the system and thread regressions prove
+the named bounded kernel observations. It verifies the
 explicitly admitted Rust subset only; it does not make broader pselect/select
 semantics, epoll signal-mask
 variants or the broader epoll family, timerfd clock/policy variants beyond the named descriptor slice,

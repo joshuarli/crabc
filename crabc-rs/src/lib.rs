@@ -36,7 +36,8 @@ pub mod collections;
 // (eventfd counters plus bounded poll/ppoll/pause), descriptor `fs::fstat`,
 // `fd`, `fenv`, `ffi`, `io`, `ioctl`, bounded `mm` mapping/remapping,
 // `memory`, `numeric`, `param`, `pipe`, bounded `process` identity/session
-// observations plus pidfd creation, `rand`, `signal`, `stdio`, bounded
+// and supplementary-group observations plus pidfd creation, `rand`, `signal`,
+// `stdio`, bounded
 // `system::{uname, sysinfo, load_average}`, `text`, bounded
 // `thread::{gettid, sched_getcpu, sched_yield}`, and bounded `time`
 // clock-query/observation APIs, plus the root descriptor/error types. These

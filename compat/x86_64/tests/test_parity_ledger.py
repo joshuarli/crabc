@@ -118,6 +118,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "crabc-rs/tests/x86_64_times.rs", remaining["source_owners"]
         )
         self.assertIn(
+            "crabc-rs/tests/x86_64_getgroups.rs", remaining["source_owners"]
+        )
+        self.assertIn(
             "crabc-rs/src/process_x86_64.rs", remaining["source_owners"]
         )
         self.assertIn(
@@ -136,10 +139,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/run_x86_times_reference.sh", remaining["source_owners"]
         )
         self.assertIn(
+            "compat/x86_64/run_x86_getgroups_reference.sh", remaining["source_owners"]
+        )
+        self.assertIn(
             "compat/x86_64/x86_rusage_reference_probe.c", remaining["source_owners"]
         )
         self.assertIn(
             "compat/x86_64/x86_times_reference_probe.c", remaining["source_owners"]
+        )
+        self.assertIn(
+            "compat/x86_64/x86_getgroups_reference_probe.c", remaining["source_owners"]
         )
         self.assertEqual(
             remaining["native_evidence"][0]["command"],
@@ -171,6 +180,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh times-reference",
         )
         self.assertEqual(remaining["native_evidence"][5]["state"], "required")
+        self.assertEqual(
+            remaining["native_evidence"][6]["command"],
+            "./scripts/dev-x86_64.sh getgroups-reference",
+        )
+        self.assertEqual(remaining["native_evidence"][6]["state"], "required")
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
         self.assertNotIn("filesystem.access-advice", remaining["capabilities"])
@@ -182,6 +196,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("process.resource-usage", remaining["capabilities"])
         self.assertNotIn("time.process-accounting", direct["capabilities"])
         self.assertIn("time.process-accounting", remaining["capabilities"])
+        self.assertNotIn("process.supplementary-groups", direct["capabilities"])
+        self.assertIn("process.supplementary-groups", remaining["capabilities"])
         pthread_tls = self.family(data, "libc.pthread-tls")
         self.assertEqual(pthread_tls["status"], "planned")
         self.assertIn("libc/src/c_abi/x86_64/atomic.rs", pthread_tls["source_owners"])

@@ -294,7 +294,7 @@ id = "facade.record-owning"
 order = 30
 depends_on = ["facade.direct"]
 category = "rust-facade"
-description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, timerfd, pselect, and read-only resource-limit/resource-usage/process-accounting vertical slices are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
+description = "The remaining AArch64 crabc-rs filesystem, wider polling, networking, process, thread, time, wider mapping-policy, resolver, and runtime-owning families. Native packed epoll, timerfd, pselect, and read-only resource-limit/resource-usage/process-accounting/supplementary-group vertical slices are privately evidenced here, but the family remains planned and non-selectable until its complete promotion contract exists."
 aarch64_gates = ["crabc-rs"]
 source_owners = [
   "crabc-rs/src/lib.rs",
@@ -315,21 +315,24 @@ source_owners = [
   "crabc-rs/tests/x86_64_rlimit.rs",
   "crabc-rs/tests/x86_64_rusage.rs",
   "crabc-rs/tests/x86_64_times.rs",
+  "crabc-rs/tests/x86_64_getgroups.rs",
   "crabc-rs/tests/x86_64_timerfd.rs",
   "compat/x86_64/run_x86_epoll_reference.sh",
   "compat/x86_64/run_x86_pselect_reference.sh",
   "compat/x86_64/run_x86_rlimit_reference.sh",
   "compat/x86_64/run_x86_rusage_reference.sh",
   "compat/x86_64/run_x86_times_reference.sh",
+  "compat/x86_64/run_x86_getgroups_reference.sh",
   "compat/x86_64/run_x86_timerfd_reference.sh",
   "compat/x86_64/x86_epoll_reference_probe.c",
   "compat/x86_64/x86_pselect_reference_probe.c",
   "compat/x86_64/x86_rlimit_reference_probe.c",
   "compat/x86_64/x86_rusage_reference_probe.c",
   "compat/x86_64/x86_times_reference_probe.c",
+  "compat/x86_64/x86_getgroups_reference_probe.c",
   "compat/x86_64/x86_timerfd_reference_probe.c",
 ]
-x86_abi_prerequisites = ["Per-record x86 layout and syscall proof before admission", "x86 signal, socket, time, stat, and poll record layouts", "Private epoll slice: packed 12-byte, align-1 epoll_event with events/data offsets 0/4, epoll_create1=291, epoll_ctl=233, epoll_pwait=281, and Linux epoll flag values", "Private timerfd slice: 32-byte, align-8 itimerspec with interval/value offsets 0/16, timerfd_create=283, timerfd_settime=286, timerfd_gettime=287, and TFD flag values", "Private pselect slice: 1024-bit, 128-byte fd_set representation with eight-byte words, pselect6=270, x86 six-register placement, and the private mask-pointer/size argument-six record", "Private resource-limit slice: 16-byte, align-8 rlimit64 with current/maximum offsets 0/8, prlimit64=302, RLIM_INFINITY=UINT64_MAX, and selectors 0 through 15", "Private resource-usage slice: 16-byte, align-8 timeval and 144-byte, align-8 initialized rusage prefix with offsets 0/16/32/136; pinned-musl's 272-byte public rusage record has a reserved tail at 144; getrusage=98 and RUSAGE_SELF/CHILDREN/THREAD=0/-1/1", "Private process-accounting slice: signed 64-bit clock_t, 32-byte, align-8 tms with offsets 0/8/16/24, times=100, nonnegative process fields, and a separately preserved signed elapsed-tick return that may wrap"]
+x86_abi_prerequisites = ["Per-record x86 layout and syscall proof before admission", "x86 signal, socket, time, stat, and poll record layouts", "Private epoll slice: packed 12-byte, align-1 epoll_event with events/data offsets 0/4, epoll_create1=291, epoll_ctl=233, epoll_pwait=281, and Linux epoll flag values", "Private timerfd slice: 32-byte, align-8 itimerspec with interval/value offsets 0/16, timerfd_create=283, timerfd_settime=286, timerfd_gettime=287, and TFD flag values", "Private pselect slice: 1024-bit, 128-byte fd_set representation with eight-byte words, pselect6=270, x86 six-register placement, and the private mask-pointer/size argument-six record", "Private resource-limit slice: 16-byte, align-8 rlimit64 with current/maximum offsets 0/8, prlimit64=302, RLIM_INFINITY=UINT64_MAX, and selectors 0 through 15", "Private resource-usage slice: 16-byte, align-8 timeval and 144-byte, align-8 initialized rusage prefix with offsets 0/16/32/136; pinned-musl's 272-byte public rusage record has a reserved tail at 144; getrusage=98 and RUSAGE_SELF/CHILDREN/THREAD=0/-1/1", "Private process-accounting slice: signed 64-bit clock_t, 32-byte, align-8 tms with offsets 0/8/16/24, times=100, nonnegative process fields, and a separately preserved signed elapsed-tick return that may wrap", "Private supplementary-group slice: unsigned 32-bit, align-4 gid_t, getgroups=115, zero-count query, count/fill equivalence, and undersized-buffer EINVAL"]
 x86_header_prerequisites = ["Published Rust types must correspond to x86 Linux ABI records without borrowing AArch64 constants or layouts."]
 native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh epoll-reference", scope = "Private pinned-musl x86 packed epoll ABI and lifecycle evidence only; it does not make io.readiness-epoll or the record-owning family selectable." },
@@ -338,6 +341,7 @@ native_evidence = [
   { state = "required", command = "./scripts/dev-x86_64.sh rlimit-reference", scope = "Private pinned-musl x86 rlimit64 ABI and read-only getrlimit/prlimit lifecycle evidence only; it does not make process.resource-limits, process.resource-limits-targeted, or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh rusage-reference", scope = "Private pinned-musl x86 initialized-rusage-prefix ABI, all-selector direct observations, and stable children-prefix equivalence for read-only getrusage only; it does not make process.resource-usage or the record-owning family selectable." },
   { state = "required", command = "./scripts/dev-x86_64.sh times-reference", scope = "Private pinned-musl x86 tms ABI and read-only times process-accounting observations only; it does not make time.process-accounting or the record-owning family selectable." },
+  { state = "required", command = "./scripts/dev-x86_64.sh getgroups-reference", scope = "Private pinned-musl x86 gid_t query/fill ABI and read-only supplementary-group observations only; it does not make process.supplementary-groups or the record-owning family selectable." },
   { state = "required", command = "Define closed native x86 facade family runners", scope = "Each remaining record-owning family needs focused direct behavior and ABI evidence before it becomes selectable." },
 ]
 oracle = [{ kind = "test-only-native-api", source = "Pinned Rustix", role = "Native behavior oracle for focused tests." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Record-layout contract." }]

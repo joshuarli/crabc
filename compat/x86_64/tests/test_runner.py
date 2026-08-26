@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|rlimit-reference|rusage-reference|times-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -94,6 +94,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_epoll_reference.sh', source)
         self.assertIn('run_process_identity_reference()', source)
         self.assertIn('compat/x86_64/run_x86_process_identity_reference.sh', source)
+        self.assertIn('run_getgroups_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_getgroups_reference.sh', source)
         self.assertIn('run_process_session_reference()', source)
         self.assertIn('compat/x86_64/run_x86_process_session_reference.sh', source)
         self.assertIn('run_pidfd_open_reference()', source)
@@ -130,6 +132,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_fcntl_getlk', source)
         self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_fs_advice', source)
+        self.assertIn('--test x86_64_getgroups', source)
         self.assertIn('--test x86_64_io', source)
         self.assertIn('--test x86_64_mm', source)
         self.assertIn('--test x86_64_param', source)
@@ -260,6 +263,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         process_identity_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_process_identity_reference.sh"
+        ).read_text(encoding="utf-8")
+        getgroups_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_getgroups_reference.sh"
         ).read_text(encoding="utf-8")
         process_session_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_process_session_reference.sh"
@@ -418,6 +424,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_process_identity_reference_probe.c', process_identity_reference)
         self.assertIn('process-identity reference', process_identity_reference)
         self.assertNotIn('-p crabc-libc', process_identity_reference)
+        self.assertIn('x86_getgroups_reference_probe.c', getgroups_reference)
+        self.assertIn('getgroups ABI and supplementary-group behavior reference', getgroups_reference)
+        self.assertIn('run_musl_oracle.sh', getgroups_reference)
+        self.assertNotIn('-p crabc-libc', getgroups_reference)
         self.assertIn('x86_process_session_reference_probe.c', process_session_reference)
         self.assertIn('process-session reference', process_session_reference)
         self.assertNotIn('-p crabc-libc', process_session_reference)
@@ -756,6 +766,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_fs",
                     "--test",
                     "x86_64_fs_advice",
+                    "--test",
+                    "x86_64_getgroups",
                     "--test",
                     "x86_64_io",
                     "--test",

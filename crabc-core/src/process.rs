@@ -554,7 +554,7 @@ pub fn getresgid_raw() -> Result<KernelGidTriple> {
     let mut effective = MaybeUninit::<u32>::uninit();
     let mut saved = MaybeUninit::<u32>::uninit();
     // SAFETY: Each pointer addresses live, writable storage for one
-    // Linux/AArch64 gid_t, and Linux initializes all three words on
+    // Linux 64-bit gid_t, and Linux initializes all three words on
     // success. The syscall has no process-mutating arguments.
     decode(unsafe {
         syscall3(
@@ -604,14 +604,21 @@ pub fn setfsgid_raw(gid: u32) -> Result<u32> {
     decode(unsafe { syscall1(SYS_SETFSGID, gid as usize) }).map(|previous| previous as u32)
 }
 
+#[inline]
+const fn getgroups_length_fits_kernel_abi(length: usize) -> bool {
+    length <= i32::MAX as usize
+}
+
 /// Queries or fills the calling process's supplementary group IDs through
 /// Linux's native `getgroups` syscall.
 ///
 /// `groups` must be null when `length` is zero, which performs the Linux
 /// count query. Otherwise it must point to writable storage for `length`
-/// Linux/AArch64 `gid_t` values. Linux returns `EINVAL` when the storage
-/// is too small; the caller may query again and retry because credentials
-/// can change between the two syscalls.
+/// Linux 64-bit `gid_t` values. `length` must not exceed [`i32::MAX`],
+/// because Linux's `gidsetsize` syscall argument is a signed C `int` even
+/// on a 64-bit target. Linux returns `EINVAL` when the storage is too small;
+/// the caller may query again and retry because credentials can change
+/// between the two syscalls.
 ///
 /// # Safety
 ///
@@ -621,6 +628,13 @@ pub fn setfsgid_raw(gid: u32) -> Result<u32> {
 /// for the number of groups returned by a successful fill.
 #[inline]
 pub unsafe fn getgroups_raw(groups: *mut u32, length: usize) -> Result<usize> {
+    // Linux receives gidsetsize as a signed `int`. Reject a Rust-sized buffer
+    // that would truncate in the syscall register: truncation to zero could
+    // otherwise turn a fill request into a count query and falsely expose an
+    // uninitialized Buffer prefix as initialized.
+    if !getgroups_length_fits_kernel_abi(length) {
+        return Err(crate::Errno::INVAL);
+    }
     // SAFETY: The caller supplies the output-storage contract; Linux
     // validates the requested count and supplementary-group snapshot.
     decode(unsafe { syscall2(SYS_GETGROUPS, length, groups as usize) })
@@ -632,6 +646,17 @@ pub fn getgroups_count_raw() -> Result<usize> {
     // SAFETY: A zero-size Linux getgroups query requires a null list and
     // writes no caller memory.
     unsafe { getgroups_raw(core::ptr::null_mut(), 0) }
+}
+
+#[cfg(test)]
+mod getgroups_tests {
+    use super::getgroups_length_fits_kernel_abi;
+
+    #[test]
+    fn getgroups_length_uses_the_signed_kernel_count_boundary() {
+        assert!(getgroups_length_fits_kernel_abi(i32::MAX as usize));
+        assert!(!getgroups_length_fits_kernel_abi(i32::MAX as usize + 1));
+    }
 }
 
 /// Copies the calling process's current working directory through Linux's

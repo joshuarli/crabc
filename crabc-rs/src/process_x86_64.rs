@@ -1,15 +1,17 @@
 //! Bounded Linux/x86-64 process and record-lock observations.
 //!
 //! This module intentionally admits only scalar identity queries, the
-//! kernel's three-word real/effective/saved credential observations, pidfd
-//! creation, read-only resource-limit, resource-usage, and process-accounting
-//! observations, read-only scheduling-priority observations and bounds, and
-//! the read-only typed `fcntl(F_GETLK)` record-lock query. The larger process
-//! facade remains AArch64-only until each of its target-sized records and
-//! state transitions has an independent x86-64 contract.
+//! kernel's three-word real/effective/saved credential observations,
+//! supplementary-group query/fill protocol, pidfd creation, read-only
+//! resource-limit, resource-usage, and process-accounting observations,
+//! read-only scheduling-priority observations and bounds, and the read-only
+//! typed `fcntl(F_GETLK)` record-lock query. The larger process facade remains
+//! AArch64-only until each of its target-sized records and state transitions
+//! has an independent x86-64 contract.
 
 use bitflags::bitflags;
 
+use crate::buffer::Buffer;
 use crate::{AsFd, OwnedFd, Result};
 
 /// A raw Linux/x86-64 `pid_t` representation.
@@ -716,6 +718,46 @@ pub fn getrusage(target: ResourceUsageTarget) -> Result<ResourceUsage> {
 #[inline]
 pub fn times() -> Result<ProcessTimes> {
     crabc_core::process::times_raw().map(ProcessTimes::from)
+}
+
+/// Queries the number of supplementary groups currently attached to the
+/// calling process.
+///
+/// This is the first half of Linux's `getgroups` query/fill protocol. The
+/// credential snapshot may change before [`getgroups`] fills a caller buffer,
+/// so a successful count is only a sizing observation and not a reservation.
+/// The operation is read-only and does not mutate process credentials.
+#[inline]
+pub fn getgroups_count() -> Result<usize> {
+    crabc_core::process::getgroups_count_raw()
+}
+
+/// Fills caller-owned storage with supplementary Linux group IDs.
+///
+/// The initialized-buffer form (`&mut [Gid]`, and its alloc-backed `Vec`
+/// equivalent) returns the number of IDs written. The `MaybeUninit` form
+/// returns the initialized prefix and untouched suffix through the shared
+/// [`Buffer`] contract. Linux returns [`crate::Errno::INVAL`] when the buffer
+/// is smaller than the current group list; callers performing a count query
+/// first must retry the count/fill pair when that race occurs.
+///
+/// Linux's supplementary list is distinct from the effective group ID: this
+/// function returns exactly the IDs reported by `getgroups`, without adding or
+/// deduplicating [`getgid`].
+#[inline]
+#[allow(private_interfaces)]
+pub fn getgroups<Buf: Buffer<Gid>>(mut buffer: Buf) -> Result<Buf::Output> {
+    let (pointer, length) = buffer.parts_mut();
+    let pointer = if length == 0 {
+        core::ptr::null_mut()
+    } else {
+        pointer.cast::<u32>()
+    };
+    // SAFETY: `Buffer<Gid>` supplies writable storage for `length` values.
+    // `Gid` is repr(transparent) over Linux x86-64's u32 gid_t representation.
+    let initialized = unsafe { crabc_core::process::getgroups_raw(pointer, length)? };
+    // SAFETY: Linux initialized exactly the successful return prefix.
+    unsafe { Ok(buffer.assume_init(initialized)) }
 }
 
 /// Returns the caller's parent process ID, if one is visible in this PID
