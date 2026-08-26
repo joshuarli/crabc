@@ -387,6 +387,26 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_dynamic_full_large_unmapped_reabandon_command_is_closed_and_uses_its_private_offline_probe(
+        self,
+    ) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-dynamic-full-large-unmapped-reabandon)", source)
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_dynamic_full_large_unmapped_reabandon_evidence.py "
+            "--offline",
+            source,
+        )
+        result = self.run_launcher(
+            "allocator-dynamic-full-large-unmapped-reabandon", "unexpected"
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-dynamic-full-large-unmapped-reabandon takes no arguments",
+            result.stderr,
+        )
+
     def test_dynamic_os_aligned_singleton_command_is_closed_and_uses_its_private_offline_probe(
         self,
     ) -> None:

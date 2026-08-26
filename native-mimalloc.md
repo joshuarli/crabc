@@ -721,8 +721,8 @@ owner-exit authority.
 `DynamicThreadExitDrain::abandon_full_medium` is a separate disjoint dynamic
 owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena` medium
 page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct
-cache entry. Source force then false collection precedes full-queue/page-count
-detach and ordinary unmapped abandonment. Its
+cache entry. Its typed Rust model uses source-mapped force then false collection
+before full-queue/page-count detach and ordinary unmapped abandonment. Its
 `DynamicThreadExitFullMediumHandoff` carries sequential client frees through
 the failed-reclaim tail: they remain unmapped while the source mostly-used
 predicate holds, then the first free beyond `reserved / 8` publishes the exact
@@ -741,6 +741,21 @@ frees leave `used == 37`, and the sixth crosses `reserved / 8 == 5` to map at
 PageMap, ordinary-arena-bit, dynamic bitmap/count, and complete eight-slice
 release only. It remains private x86 evidence, not general lifecycle/routing,
 public runtime, public x86 support, backend promotion, or AArch64 evidence.
+
+The matching private native x86-64 differential now fixes the selected
+no-remote dynamic full-large route at 34 address-independent values. Request
+86706 yields 98304-byte blocks with capacity/reserved 42 and a 64-slice arena
+span; only 63 source page-area slices are PageMap-registered, while the final
+PageMap-null slice is slack but remains part of terminal release. In the pinned
+C oracle, real `mi_thread_done()` and join precede five normal-collector frees
+that leave the page unmapped at `used == 37` with dynamic bitmap/count zero, then a sixth free
+maps it at `used == 36` with dynamic bitmap/count one. The mapped tail clears
+PageMap, the ordinary arena bit, and dynamic bitmap/count before complete
+64-slice release. Rust independently exercises the typed owner-exit route on
+its owning test thread and does not claim a literal worker-thread/join
+counterpart. This remains private x86 evidence only, not general
+lifecycle/routing/concurrency, public runtime, public x86 support, backend
+promotion, or AArch64 evidence.
 
 `DynamicThreadExitDrain::abandon_full_large` is a separate disjoint dynamic
 owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena` large

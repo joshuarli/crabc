@@ -13,6 +13,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "compat/allocator/x86_64-source-map-v3.5.0.json"
+FULL_LARGE_UNMAPPED_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-full-large-unmapped-reabandon-evidence-v3.5.0.json"
+)
 SCRIPT_PATH = ROOT / "compat/allocator/x86_64_source_map.py"
 SPEC = importlib.util.spec_from_file_location("crabc_x86_64_source_map", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -734,6 +738,65 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("dynamic full-large one-remote force-collect-to-mapped route", unit["difference"])
                 self.assertIn("63 PageMap-registered source page-area slices", unit["difference"])
                 self.assertIn("final PageMap-null arena slice is slack", unit["difference"])
+
+    def test_dynamic_full_large_unmapped_reabandon_lane_is_scoped_to_reviewed_units(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_dynamic_full_large_unmapped_reabandon_evidence.py",
+            "compat/allocator/x86_64-dynamic-full-large-unmapped-reabandon-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_dynamic_full_large_unmapped_reabandon_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        schema = json.loads(FULL_LARGE_UNMAPPED_SCHEMA.read_text(encoding="utf-8"))
+        expected = schema["trace"]["expected_values"]
+        self.assertEqual(expected["trace.dynamic_full_large_unmapped_exit.request_size"], 86706)
+        self.assertEqual(expected["trace.dynamic_full_large_unmapped_exit.block_size"], 98304)
+        self.assertEqual(expected["trace.dynamic_full_large_unmapped_exit.reserved"], 42)
+        self.assertEqual(expected["trace.dynamic_full_large_unmapped_exit.slice_count"], 64)
+        self.assertEqual(
+            expected["trace.dynamic_full_large_unmapped_exit.page_map_slice_count_after_thread_done"],
+            63,
+        )
+        self.assertEqual(
+            expected["trace.dynamic_full_large_unmapped_exit.unmapped_prefix_free_count"],
+            5,
+        )
+        self.assertEqual(
+            expected["trace.dynamic_full_large_unmapped_exit.used_after_unmapped_prefix"],
+            37,
+        )
+        self.assertEqual(
+            expected["trace.dynamic_full_large_unmapped_exit.used_after_reabandon_boundary"],
+            36,
+        )
+        self.assertEqual(
+            expected["trace.dynamic_full_large_unmapped_exit.dynamic_abandoned_count_after_thread_done"],
+            0,
+        )
+        self.assertEqual(
+            expected["trace.dynamic_full_large_unmapped_exit.dynamic_abandoned_count_after_reabandon_boundary"],
+            1,
+        )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                self.assertEqual(units[unit_id]["status"], "partial")
 
     def test_dynamic_full_direct_small_one_remote_lane_is_scoped_to_reviewed_units(
         self,

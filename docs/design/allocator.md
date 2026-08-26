@@ -374,6 +374,23 @@ slice is slack but remains terminally released. This is private native x86-64
 engine evidence only and does not establish general lifecycle/routing, public
 x86 support, backend promotion, or AArch64 evidence.
 
+The native x86-only track also records a separate 34-field dynamic full-large
+unmapped-reabandon differential. The pinned-C oracle's worker fills one sole full
+`BIN_FULL` large arena page from request 86706 (98304-byte blocks,
+capacity/reserved 42, 64 arena slices); only 63 source page-area slices are
+PageMap-registered, with the final PageMap-null arena slice retained as slack
+for terminal release. In the C oracle, no remote `mi_free` is published: real
+`mi_thread_done()` and `pthread_join()` precede the consumer frees. Rust
+independently runs the typed owner-exit route on its owning test thread and
+does not claim a literal worker-thread/join counterpart. Five
+normal-collector frees retain unmapped abandonment at `used == 37` with
+dynamic bitmap/count zero; the sixth maps the page at `used == 36` and
+publishes dynamic bitmap/count one. The mapped tail clears PageMap, the
+ordinary arena bitmap, and dynamic bitmap/count before releasing all 64 arena
+slices. This is private native x86-64 engine evidence only and does not establish general
+lifecycle/routing, public x86 support, backend promotion, libc integration, or
+AArch64 evidence.
+
 The native x86-only track separately records a 32-field dynamic full
 direct-small one-remote force-collect-to-mapped differential. The pinned-C
 worker fills one sole full direct-small ordinary regular-bin arena page (request

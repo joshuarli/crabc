@@ -907,6 +907,24 @@ remains private native x86-64 engine evidence only: it does not establish
 general lifecycle/routing/concurrent collection, public x86 support, backend
 promotion, or AArch64 evidence.
 
+The native x86-only track also has a separate 34-field dynamic full-large
+unmapped-reabandon differential. The pinned-C oracle's worker fills one sole full
+`BIN_FULL` large arena page from request 86706 (98304-byte blocks,
+capacity/reserved 42, 64 arena slices); only 63 source page-area slices are
+PageMap-registered, and the final PageMap-null arena slice is slack but remains
+part of terminal release. In the C oracle, no remote `mi_free` is published;
+real `mi_thread_done()` and `pthread_join()` precede sequential consumer frees.
+Rust independently executes the bounded typed owner-exit route on its owning
+test thread and does not claim a literal worker-thread/join counterpart.
+Five normal-collector frees retain unmapped abandonment at `used == 37` with
+dynamic bitmap/count zero, then the sixth maps it at `used == 36` with dynamic
+bitmap/count one. The mapped tail clears PageMap, the ordinary arena bitmap,
+and dynamic bitmap/count before releasing the complete 64-slice span. This is
+private native x86-64 engine evidence only: it does not establish general
+lifecycle/routing/concurrent collection, abandonment/adoption, public API or
+runtime, public x86 support, libc integration, backend promotion, or AArch64
+evidence.
+
 The native x86-only track also has a separate 32-field dynamic full direct-small
 one-remote force-collect-to-mapped differential. A pinned-C worker fills one
 sole full direct-small ordinary regular-bin arena page (request/block size 1024,

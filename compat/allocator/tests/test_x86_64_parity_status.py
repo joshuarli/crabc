@@ -22,6 +22,10 @@ DIRECT_SMALL_FULL_RETIRE_SCHEMA = (
 DIRECT_SMALL_ALLOCATION_ADOPTION_SCHEMA = (
     ROOT / "compat/allocator/x86_64-direct-small-allocation-adoption-evidence-v3.5.0.json"
 )
+FULL_LARGE_UNMAPPED_REABANDON_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-dynamic-full-large-unmapped-reabandon-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -145,6 +149,15 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-direct-small-allocation-time-adoption",
         )
 
+    def test_full_large_unmapped_reabandon_schema_profile_is_exact(self) -> None:
+        schema = json.loads(
+            FULL_LARGE_UNMAPPED_REABANDON_SCHEMA.read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-dynamic-full-large-unmapped-reabandon",
+        )
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -183,6 +196,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-medium-unmapped-reabandon-differential",
                 "native-dynamic-full-large-one-remote-force-collect-to-mapped-differential",
+                "native-dynamic-full-large-unmapped-reabandon-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
                 "native-release-api-mode-object-symbol-assessment",
@@ -486,6 +500,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
             ],
             "compat/reports/allocator/x86_64/"
             "dynamic-full-large-one-remote-force-collect-to-mapped.json",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-large-unmapped-reabandon-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-dynamic-full-large-unmapped-reabandon",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-large-unmapped-reabandon-differential"]["report"],
+            "compat/reports/allocator/x86_64/dynamic-full-large-unmapped-reabandon.json",
         )
         self.assertEqual(
             gates["native-dynamic-os-aligned-singleton-owner-exit-differential"]["command"],
@@ -1056,6 +1078,37 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, dynamic_full_large)
+        dynamic_full_large_unmapped = gates[
+            "native-dynamic-full-large-unmapped-reabandon-differential"
+        ]["claim"]
+        for fragment in (
+            "34 address-independent post-owner-exit state values",
+            "sole full BIN_FULL large arena page",
+            "C oracle uses a real pinned-C worker pthread",
+            "no remote mi_free is published",
+            "real mi_thread_done",
+            "joins before sequential frees",
+            "request 86706",
+            "98304-byte blocks",
+            "capacity/reserved 42",
+            "64 arena slices",
+            "63 PageMap-registered source page-area slices",
+            "final PageMap-null arena slice retained as slack",
+            "unmapped-abandoned",
+            "dynamic abandoned bitmap/count clear at used 42",
+            "Five normal-collector frees",
+            "used 37",
+            "dynamic bitmap/count 0",
+            "sixth maps it at used 36",
+            "dynamic bitmap/count 1",
+            "complete 64-slice arena span",
+            "typed owner-exit route",
+            "does not claim a literal worker-thread/join counterpart",
+            "private native x86-64 engine evidence only",
+            "general lifecycle",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, dynamic_full_large_unmapped)
         dynamic_os_aligned_singleton = gates[
             "native-dynamic-os-aligned-singleton-owner-exit-differential"
         ]["claim"]
