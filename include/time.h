@@ -6,15 +6,43 @@
 extern "C" {
 #endif
 
+#if defined(__x86_64__)
+/*
+ * Keep the x86-64 time vocabulary sourced from the same generated alltypes
+ * declarations as musl.  In particular, this makes the time_t/timespec and
+ * clock-id requests explicit instead of relying on the umbrella sys/types.h
+ * spelling.  The AArch64 branch below is retained unchanged for the active
+ * libc target.
+ */
+#define __NEED_size_t
+#define __NEED_time_t
+#define __NEED_clock_t
+#define __NEED_struct_timespec
+#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
+ || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define __NEED_clockid_t
+#define __NEED_timer_t
+#define __NEED_pid_t
+#define __NEED_locale_t
+#endif
+#include <bits/alltypes.h>
+#else
 #include <sys/types.h>
 #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) \
  || defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 #define __NEED_locale_t
 #include <bits/alltypes.h>
 #endif
+#endif
 
 #ifndef NULL
-#ifndef NULL
+#if defined(__x86_64__) && defined(__cplusplus)
+#if __cplusplus >= 201103L
+#define NULL nullptr
+#else
+#define NULL 0L
+#endif
+#else
 #define NULL ((void*)0)
 #endif
 #endif
@@ -31,6 +59,9 @@ extern "C" {
 #define CLOCK_BOOTTIME           7
 #define CLOCK_REALTIME_ALARM     8
 #define CLOCK_BOOTTIME_ALARM     9
+#if defined(__x86_64__)
+#define CLOCK_SGI_CYCLE          10
+#endif
 #define CLOCK_TAI               11
 
 #define TIMER_ABSTIME 1
@@ -55,6 +86,14 @@ struct itimerspec {
 struct sigevent;
 #endif
 
+#if defined(__x86_64__) && (defined(_BSD_SOURCE) || defined(_GNU_SOURCE))
+#define __tm_gmtoff tm_gmtoff
+#define __tm_zone tm_zone
+#elif defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
+#define tm_gmtoff __tm_gmtoff
+#define tm_zone __tm_zone
+#endif
+
 struct tm {
     int tm_sec;
     int tm_min;
@@ -68,11 +107,6 @@ struct tm {
     long __tm_gmtoff;
     const char *__tm_zone;
 };
-
-#if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)
-#define tm_gmtoff __tm_gmtoff
-#define tm_zone __tm_zone
-#endif
 
 clock_t clock(void);
 time_t time(time_t *);

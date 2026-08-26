@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -44,6 +44,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_sys_reg_header_abi.sh', source)
         self.assertIn('run_types_header_abi()', source)
         self.assertIn('compat/x86_64/run_types_header_abi.sh', source)
+        self.assertIn('run_stat_header_abi()', source)
+        self.assertIn('compat/x86_64/run_stat_header_abi.sh', source)
+        self.assertIn('run_time_header_abi()', source)
+        self.assertIn('compat/x86_64/run_time_header_abi.sh', source)
+        self.assertIn('run_poll_header_abi()', source)
+        self.assertIn('compat/x86_64/run_poll_header_abi.sh', source)
         self.assertIn('run_syscall_header_abi()', source)
         self.assertIn('compat/x86_64/run_x86_syscall_header.sh', source)
         self.assertIn('run_signal_header_abi()', source)
@@ -54,6 +60,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_mm_reference.sh', source)
         self.assertIn('run_rand_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
+        self.assertIn('run_time_abi_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_time_reference.sh', source)
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -69,6 +77,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
         self.assertIn('--test x86_64_rand', source)
+        self.assertIn('--test x86_64_time', source)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertIn('run_libc_errno_tls_probe()', source)
@@ -118,6 +127,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         random = (ROOT / "compat" / "x86_64" / "run_x86_rand_reference.sh").read_text(
             encoding="utf-8"
         )
+        stat_header = (ROOT / "compat" / "x86_64" / "run_stat_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        time_header = (ROOT / "compat" / "x86_64" / "run_time_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        poll_header = (ROOT / "compat" / "x86_64" / "run_poll_header_abi.sh").read_text(
+            encoding="utf-8"
+        )
+        time_reference = (ROOT / "compat" / "x86_64" / "run_x86_time_reference.sh").read_text(
+            encoding="utf-8"
+        )
         image = (ROOT / "ldso" / "run-x86_64-image.sh").read_text(encoding="utf-8")
         sys_types = (ROOT / "include" / "sys" / "types.h").read_text(encoding="utf-8")
 
@@ -164,6 +185,25 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_rand_reference_probe.c', random)
         self.assertIn('getrandom ABI/behavior reference', random)
         self.assertNotIn('-p crabc-libc', random)
+        self.assertIn('stat_header_abi_probe.c', stat_header)
+        self.assertIn('stat_header_abi_probe.cpp', stat_header)
+        self.assertIn('include/sys/stat.h', stat_header)
+        self.assertIn('include/bits/stat.h', stat_header)
+        self.assertIn('-fsyntax-only', stat_header)
+        self.assertNotIn('-p crabc-libc', stat_header)
+        self.assertIn('time_header_abi_probe.c', time_header)
+        self.assertIn('time_header_abi_probe.cpp', time_header)
+        self.assertIn('include/time.h', time_header)
+        self.assertIn('-fsyntax-only', time_header)
+        self.assertNotIn('-p crabc-libc', time_header)
+        self.assertIn('poll_header_abi_probe.c', poll_header)
+        self.assertIn('poll_header_abi_probe.cpp', poll_header)
+        self.assertIn('include/poll.h', poll_header)
+        self.assertIn('-fsyntax-only', poll_header)
+        self.assertNotIn('-p crabc-libc', poll_header)
+        self.assertIn('x86_time_reference_probe.c', time_reference)
+        self.assertIn('timespec ABI reference', time_reference)
+        self.assertNotIn('-p crabc-libc', time_reference)
         self.assertIn('x86_64_image.rs', image)
         self.assertIn('--test', image)
         self.assertNotIn('-p crabc-ldso', image)
@@ -443,6 +483,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_pipe",
                     "--test",
                     "x86_64_rand",
+                    "--test",
+                    "x86_64_time",
                     "--",
                     "--test-threads=1",
                 ],

@@ -74,6 +74,11 @@ pub mod pipe;
 pub mod rand;
 
 /// Direct stateless clock queries.
+#[cfg(target_arch = "aarch64")]
+pub mod time;
+/// Deliberately bounded Linux/x86-64 clock queries.
+#[cfg(target_arch = "x86_64")]
+#[path = "time_x86_64.rs"]
 pub mod time;
 
 /// Direct event-descriptor and polling operations.

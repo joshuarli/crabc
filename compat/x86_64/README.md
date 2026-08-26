@@ -14,11 +14,15 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh header-abi-project
 ./scripts/dev-x86_64.sh sys-reg-header-abi
 ./scripts/dev-x86_64.sh types-header-abi
+./scripts/dev-x86_64.sh stat-header-abi
+./scripts/dev-x86_64.sh time-header-abi
+./scripts/dev-x86_64.sh poll-header-abi
 ./scripts/dev-x86_64.sh syscall-header-abi
 ./scripts/dev-x86_64.sh signal-header-abi
 ./scripts/dev-x86_64.sh mman-header-abi
 ./scripts/dev-x86_64.sh mm-abi-reference
 ./scripts/dev-x86_64.sh rand-reference
+./scripts/dev-x86_64.sh time-abi-reference
 ./scripts/dev-x86_64.sh core
 ./scripts/dev-x86_64.sh facade
 ./scripts/dev-x86_64.sh libc-syscall
@@ -63,6 +67,21 @@ then compiles the same assertions against pinned musl. It covers only the
 named `nlink_t`, `blksize_t`, `pthread_t`, and layout declarations; it does
 not select a pthread implementation or `crabc-libc`.
 
+`stat-header-abi` compiles project and pinned-musl C/C++ `<sys/stat.h>`
+declarations, including the x86-64 144-byte `struct stat` layout and selected
+mode/timestamp contracts. It is source-only header evidence; it does not
+provide filesystem behavior or select `crabc-libc`.
+
+`time-header-abi` compiles project and pinned-musl C/C++ `<time.h>`
+declarations, including LP64 time types, `timespec`, `itimerspec`, `tm`, GNU
+aliases, clock values, and selected timer declarations. It is source-only
+header evidence; it does not provide C time behavior or select `crabc-libc`.
+
+`poll-header-abi` compiles project and pinned-musl C/C++ `<poll.h>`
+declarations, including `nfds_t`, `pollfd`, and the x86 extension values. It
+is source-only header evidence; it does not provide polling behavior or select
+`crabc-libc`.
+
 `syscall-header-abi` places project `<sys/syscall.h>` first and compares its
 complete 384-pair `__NR_*`/`SYS_*` macro surface with pinned musl 1.2.6. It is
 compile-only and provides no syscall behavior or C runtime artifact.
@@ -83,6 +102,11 @@ does not compile project C headers or select a C ABI artifact.
 `rand-reference` runs a pinned-musl native x86 reference executable for
 `getrandom` syscall/flag values and initialized-length behavior. It does not
 link or select a crabc artifact.
+
+`time-abi-reference` pins the musl x86 `timespec` shape, admitted clock IDs,
+and `clock_gettime`/`clock_getres` syscall values used by the bounded native
+Rust time facade. It does not compile a project C header or select a C ABI
+artifact.
 
 [`parity.toml`](parity.toml) is the closed machine-readable x86 completion
 ledger. Its validator and focused tests account for the AArch64-equivalent
@@ -116,7 +140,8 @@ selected `crabc-libc` artifact or general x86 C ABI claim.
 
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_param`, and
-`x86_64_io`, `x86_64_mm`, `x86_64_pipe`, and `x86_64_rand` tests. The I/O regression proves vector segment
+`x86_64_io`, `x86_64_mm`, `x86_64_pipe`, `x86_64_rand`, and `x86_64_time`
+tests. The I/O regression proves vector segment
 and short-read behavior, 64-bit positioned/vector offsets, `preadv2`/
 `pwritev2` flags and current-offset sentinel, plus descriptor duplication and
 `fcntl` flags. The eventfd regression proves `NONBLOCK`/`CLOEXEC`, counter
@@ -137,6 +162,11 @@ The random regression proves raw Linux `getrandom` flag values and initialized
 prefix handling, musl's bounded 256-byte `getentropy` behavior, and owned
 deterministic state without C random globals. It does not broaden the facade
 or make the C random API selectable.
+
+The time regression proves only x86 `timespec` shape, admitted realtime,
+monotonic, and monotonic-raw clock IDs, normalized results, and monotonic
+ordering through the validated vDSO/direct-syscall seam. Calendar, timer,
+timezone, sleep, and clock-mutation APIs remain outside this direct slice.
 
 `ldso-relocation` compiles and runs only the unintegrated
 `ldso/src/x86_64_relocation.rs` source tests under the pinned native image. It

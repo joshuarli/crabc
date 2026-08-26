@@ -22,6 +22,10 @@ struct pollfd {
 #define POLLERR 0x0008
 #define POLLHUP 0x0010
 #define POLLNVAL 0x0020
+#if defined(__x86_64__) && !defined(POLLMSG)
+#define POLLMSG 0x0400
+#define POLLRDHUP 0x2000
+#endif
 
 int poll(struct pollfd [], nfds_t, int);
 

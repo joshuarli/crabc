@@ -34,8 +34,9 @@ pub mod cfile;
 pub mod collections;
 // The staged x86-64 facade exposes only `buffer`, `collections`, `event`
 // (eventfd counters only), `fd`, `fenv`, `ffi`, `io`, `ioctl`, `memory`,
-// `numeric`, `param`, `pipe`, `rand`, `signal`, `stdio`, and `text`, plus the
-// root descriptor/error types. These are the target-record-independent
+// `numeric`, `param`, `pipe`, `rand`, `signal`, `stdio`, `text`, and a bounded
+// `time` clock-query slice, plus the root descriptor/error types. These are
+// the target-record-independent
 // families or have an explicit x86 ABI proof. Every other public module owns
 // an AArch64 kernel-record contract and stays absent until its record family
 // has its own x86 proof; admission must not silently make an AArch64 layout
@@ -102,6 +103,9 @@ pub mod text;
 #[cfg(target_arch = "aarch64")]
 pub mod thread;
 #[cfg(target_arch = "aarch64")]
+pub mod time;
+#[cfg(target_arch = "x86_64")]
+#[path = "time_x86_64.rs"]
 pub mod time;
 #[cfg(all(feature = "alloc", target_arch = "aarch64"))]
 pub mod timezone;

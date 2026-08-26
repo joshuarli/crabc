@@ -5,10 +5,15 @@
 #include <sys/types.h>
 #include <time.h>
 
+#if defined(__x86_64__)
+#include <bits/stat.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#if !defined(__x86_64__)
 struct stat {
     dev_t st_dev;
     ino_t st_ino;
@@ -27,6 +32,7 @@ struct stat {
     struct timespec st_ctim;
     unsigned int __unused[2];
 };
+#endif
 
 #define st_atime st_atim.tv_sec
 #define st_mtime st_mtim.tv_sec
@@ -82,20 +88,20 @@ int fstat(int, struct stat *);
 int lstat(const char *, struct stat *);
 int fstatat(int, const char *, struct stat *, int);
 mode_t umask(mode_t);
-int fchmod(int, unsigned int);
+int fchmod(int, mode_t);
 int fchmodat(int, const char *, mode_t, int);
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int lchmod(const char *, mode_t);
 #endif
-int mkdir(const char *, unsigned int);
+int mkdir(const char *, mode_t);
 int mkdirat(int, const char *, mode_t);
-int mkfifo(const char *, unsigned int);
+int mkfifo(const char *, mode_t);
 int mkfifoat(int, const char *, mode_t);
 #if defined(_XOPEN_SOURCE) || defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
 int mknod(const char *, mode_t, dev_t);
 int mknodat(int, const char *, mode_t, dev_t);
 #endif
-int chmod(const char *, unsigned int);
+int chmod(const char *, mode_t);
 int utimensat(int, const char *, const struct timespec[2], int);
 int futimens(int, const struct timespec[2]);
 

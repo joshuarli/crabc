@@ -31,6 +31,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
     Path("crabc-core/src/mm_x86_64.rs"),
     Path("crabc-core/src/signal_x86_64.rs"),
     Path("crabc-core/src/tests.rs"),
+    Path("crabc-core/src/time_x86_64.rs"),
     Path("crabc-core/src/thread.rs"),
     Path("crabc-core/src/vdso.rs"),
 }
@@ -39,8 +40,9 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # the separately-proved x86 kernel signal records and restorer, the `eventfd`
 # pair isolates the scalar event-counter seam from every polling or
 # event-record layout, `pipe.rs` owns the proved target-specific O_DIRECT
-# packet-mode constant, and `mm_x86_64.rs` owns the closed mmap/mprotect/
-# munmap set. No other facade source inherits this exception.
+# packet-mode constant, `mm_x86_64.rs` owns the closed mmap/mprotect/munmap
+# set, and `time_x86_64.rs` owns the separately proved clock-query records.
+# No other facade source inherits this exception.
 X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/event_x86_64.rs"),
     Path("crabc-rs/src/eventfd.rs"),
@@ -48,6 +50,7 @@ X86_RUNTIME_FOUNDATION_FACADE_SOURCES = {
     Path("crabc-rs/src/mm_x86_64.rs"),
     Path("crabc-rs/src/pipe.rs"),
     Path("crabc-rs/src/signal.rs"),
+    Path("crabc-rs/src/time_x86_64.rs"),
 }
 # This source-only loader foundation has no `crabc-ldso` integration or public
 # interpreter boundary. The image parser validates file-facing metadata before
