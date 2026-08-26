@@ -297,6 +297,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 34 address-independent values from a real pinned-C worker pthread that fills one sole full BIN_FULL medium arena page. No remote mi_free is published; the worker runs real mi_thread_done, and the consumer joins before sequential frees. Force then false collection leaves the full queue detached and the page unmapped-abandoned while retaining its PageMap and ordinary arena-page bitmap, with dynamic abandoned bitmap/count clear and used 42. The trace records request 10248, 12288-byte blocks, capacity/reserved 42, and eight slices. Five normal-collector frees preserve the unmapped route at used 37; the sixth free crosses reserved / 8 == 5, maps the page at used 36, and publishes dynamic abandoned bitmap/count 1. The mapped tail unregisters the PageMap, clears the ordinary arena-page and dynamic abandoned bitmap/count state, and releases the complete eight-slice arena span. Rust exercises only the bounded dynamic full-medium unmapped-reabandon route. This is private native x86 engine evidence only; it does not establish general lifecycle, routing, concurrent collection, abandonment/adoption, public mi_* behavior or runtime, public x86 support, libc integration, backend promotion, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-dynamic-full-medium-unmapped-reabandon",
+      "id": "native-dynamic-full-medium-unmapped-reabandon-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/dynamic-full-medium-unmapped-reabandon.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 21 address-independent values for one real pinned-C worker request of 7 bytes with 128 KiB alignment. The C worker runs real mi_thread_done() and the consumer pthread_join()s before freeing the sole block. The selected 4096-byte OS singleton is semantically full (`reserved == used == 1`) but is a MI_BIN_HUGE member, not a MI_BIN_FULL member; the trace proves its huge classification, empty full queue, owner-exit OS-abandoned-list membership, PageMap preservation, and terminal mapping cleanup. Rust exercises only the corresponding typed private owner-exit handoff, not a pthread/TLS callback. This is private native x86 engine evidence only; it does not establish general lifecycle, abandonment/adoption, remote-free routing, concurrent collection, public mi_* behavior or runtime, public x86 support, libc integration, backend promotion, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-dynamic-os-aligned-singleton",
       "id": "native-dynamic-os-aligned-singleton-owner-exit-differential",

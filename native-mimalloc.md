@@ -732,6 +732,16 @@ metadata -> arena-slice release. It cannot reclaim, adopt, requeue, scan, or
 cover full large/non-direct-small/direct-small, multi-page, or general dynamic
 thread-exit state.
 
+The private native x86-64 differential for this endpoint records one exact
+no-remote medium route: request 10248, 12288-byte blocks, capacity/reserved
+42, and eight slices. Real `mi_thread_done()` plus join leaves the full page
+unmapped at `used == 42` with dynamic bitmap/count clear; five normal-collector
+frees leave `used == 37`, and the sixth crosses `reserved / 8 == 5` to map at
+`used == 36` with bitmap/count one. The mapped tail proves the selected
+PageMap, ordinary-arena-bit, dynamic bitmap/count, and complete eight-slice
+release only. It remains private x86 evidence, not general lifecycle/routing,
+public runtime, public x86 support, backend promotion, or AArch64 evidence.
+
 `DynamicThreadExitDrain::abandon_full_large` is a separate disjoint dynamic
 owner-exit endpoint. It accepts only a sole full `MemoryKind::Arena` large
 page in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct

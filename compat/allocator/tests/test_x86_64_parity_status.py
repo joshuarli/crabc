@@ -181,6 +181,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-full-non-direct-small-unmapped-reabandon-differential",
                 "native-dynamic-full-medium-one-remote-force-collect-to-mapped-differential",
+                "native-dynamic-full-medium-unmapped-reabandon-differential",
                 "native-dynamic-full-large-one-remote-force-collect-to-mapped-differential",
                 "native-dynamic-os-aligned-singleton-owner-exit-differential",
                 "native-pinned-c-release-mode-object-symbols",
@@ -457,6 +458,20 @@ class X86_64ParityStatusTests(unittest.TestCase):
             ],
             "compat/reports/allocator/x86_64/"
             "dynamic-full-medium-one-remote-force-collect-to-mapped.json",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-medium-unmapped-reabandon-differential"][
+                "command"
+            ],
+            "./compat/allocator/run-x86_64.sh "
+            "allocator-dynamic-full-medium-unmapped-reabandon",
+        )
+        self.assertEqual(
+            gates["native-dynamic-full-medium-unmapped-reabandon-differential"][
+                "report"
+            ],
+            "compat/reports/allocator/x86_64/"
+            "dynamic-full-medium-unmapped-reabandon.json",
         )
         self.assertEqual(
             gates["native-dynamic-full-large-one-remote-force-collect-to-mapped-differential"][
@@ -988,6 +1003,37 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, dynamic_full_medium)
+        dynamic_full_medium_unmapped = gates[
+            "native-dynamic-full-medium-unmapped-reabandon-differential"
+        ]["claim"]
+        for fragment in (
+            "34 address-independent values",
+            "sole full BIN_FULL medium arena page",
+            "No remote mi_free is published",
+            "real mi_thread_done",
+            "consumer joins before sequential frees",
+            "full queue detached",
+            "unmapped-abandoned",
+            "PageMap",
+            "ordinary arena-page bitmap",
+            "dynamic abandoned bitmap/count clear",
+            "10248",
+            "12288-byte blocks",
+            "capacity/reserved 42",
+            "eight slices",
+            "used 42",
+            "Five normal-collector frees",
+            "used 37",
+            "reserved / 8 == 5",
+            "sixth free",
+            "used 36",
+            "dynamic abandoned bitmap/count 1",
+            "complete eight-slice arena span",
+            "private native x86 engine evidence only",
+            "general lifecycle",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, dynamic_full_medium_unmapped)
         dynamic_full_large = gates[
             "native-dynamic-full-large-one-remote-force-collect-to-mapped-differential"
         ]["claim"]

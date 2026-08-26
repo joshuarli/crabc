@@ -344,6 +344,23 @@ private native x86-64 engine evidence only, not general lifecycle/routing or
 concurrent collection, abandonment/adoption, public API/runtime, public x86
 support, backend promotion, libc integration, or AArch64 evidence.
 
+The same native x86-only track also has a 34-field dynamic full-medium
+unmapped-reabandon differential. A pinned-C worker fills one sole full
+`BIN_FULL` medium arena page (request 10248, 12288-byte blocks,
+capacity/reserved 42, eight slices), publishes no remote `mi_free`, runs real
+`mi_thread_done()`, and returns; the consumer joins before sequential frees.
+Force then false collection detaches the full queue but leaves the page
+unmapped-abandoned with PageMap and ordinary arena bitmap retained, dynamic
+bitmap/count clear, and `used == 42`. Five normal-collector frees retain that
+state at `used == 37`; the sixth crosses `reserved / 8 == 5`, maps it at
+`used == 36`, and sets dynamic bitmap/count one. The mapped tail clears the
+recorded PageMap, ordinary arena bitmap, and dynamic bitmap/count state before
+the complete eight-slice release. Rust uses only the corresponding bounded
+private typed drain. This remains private native x86-64 engine evidence only:
+it does not establish general lifecycle/routing/concurrent collection,
+abandonment/adoption, public API/runtime, public x86 support, backend
+promotion, libc integration, or AArch64 evidence.
+
 The native x86-only track separately records a 31-field dynamic full-large
 one-remote force-collect-to-mapped differential. The pinned-C worker fills a
 sole full `BIN_FULL` large arena page (86706-byte request, 98304-byte blocks,
