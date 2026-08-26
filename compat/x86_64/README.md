@@ -46,6 +46,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh rlimit-reference
 ./scripts/dev-x86_64.sh rusage-reference
+./scripts/dev-x86_64.sh times-reference
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
@@ -269,6 +270,15 @@ behavior. It is private evidence for one
 record-owning x86 vertical slice only; it does not select C `struct rusage`
 support or a general x86 facade.
 
+`times-reference` executes a pinned-musl x86 read-only process-accounting
+lifecycle. It pins signed 64-bit `clock_t`, the 32-byte, align-8 `tms` record
+(field offsets zero, eight, 16, and 24), `times=100`, nonnegative process
+ticks, a normal nondecreasing observation sequence, and direct syscall
+observations. The independent elapsed tick return remains signed because it
+may wrap. It is private evidence for one record-owning x86 vertical slice
+only; it does not select C `times`/`struct tms` support or a general x86
+facade.
+
 `fstat-reference` records the pinned-musl x86 144-byte `fstat` record and
 regular-file behavior for the bounded descriptor `fs::fstat` slice. It does
 not complete the broader filesystem path-core capability.
@@ -324,7 +334,7 @@ establish pthread, TLS, or C ABI parity.
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_rlimit`,
 `x86_64_rusage`, `x86_64_scheduler_priority_bounds`,
 `x86_64_sleep`, `x86_64_system`, `x86_64_thread`, `x86_64_time`,
-`x86_64_timerfd`, and `x86_64_pselect` tests. The
+`x86_64_timerfd`, `x86_64_times`, and `x86_64_pselect` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit
 positioned/vector offsets, `preadv2`/`pwritev2` flags and current-offset
 sentinel, plus descriptor duplication and `fcntl` flags. The eventfd regression
@@ -356,13 +366,13 @@ rejection. It remains a privately evidenced record-owning slice. The filesystem 
 typed descriptor `fstat` record plus `fadvise64`/`readahead` behavior. The
 process regressions prove typed PID/identity/session observations, owned
 nonblocking pidfds, read-only `getpriority`, private read-only resource-limit
-queries, private read-only resource-usage observations, conflicting-lock
-`F_GETLK` records, and scheduler-priority bounds; the system and thread
-regressions prove the named bounded kernel observations. It verifies the
+queries, private read-only resource-usage and process-accounting observations,
+conflicting-lock `F_GETLK` records, and scheduler-priority bounds; the system
+and thread regressions prove the named bounded kernel observations. It verifies the
 explicitly admitted Rust subset only; it does not make broader pselect/select
 semantics, epoll signal-mask
 variants or the broader epoll family, timerfd clock/policy variants beyond the named descriptor slice,
-signalfd, resource-limit mutation, C `struct rusage` support, broader
+signalfd, resource-limit mutation, C `struct rusage` or `struct tms` support, broader
 filesystem path-core behavior, global locking policy, wider mapping policy, other
 kernel-record-owning facade families, or a general x86-64 facade selectable or
 supported.

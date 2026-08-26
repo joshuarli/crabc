@@ -2,11 +2,11 @@
 //!
 //! This module intentionally admits only scalar identity queries, the
 //! kernel's three-word real/effective/saved credential observations, pidfd
-//! creation, read-only resource-limit and resource-usage observations,
-//! read-only scheduling-priority observations and bounds, and the read-only
-//! typed `fcntl(F_GETLK)` record-lock query. The larger process facade remains
-//! AArch64-only until each of its target-sized records and state transitions
-//! has an independent x86-64 contract.
+//! creation, read-only resource-limit, resource-usage, and process-accounting
+//! observations, read-only scheduling-priority observations and bounds, and
+//! the read-only typed `fcntl(F_GETLK)` record-lock query. The larger process
+//! facade remains AArch64-only until each of its target-sized records and
+//! state transitions has an independent x86-64 contract.
 
 use bitflags::bitflags;
 
@@ -197,6 +197,95 @@ pub struct ResourceUsage {
     pub voluntary_context_switches: i64,
     /// Involuntary context switches.
     pub involuntary_context_switches: i64,
+}
+
+/// One raw Linux clock-tick count.
+///
+/// `times(2)` reports process CPU accounting and its independent elapsed
+/// result in kernel clock ticks. This type intentionally carries no clock
+/// frequency and therefore cannot be converted to seconds without a separate
+/// process-configuration observation. Its raw signed representation preserves
+/// Linux x86-64's `clock_t` convention; process-accounting fields are
+/// validated non-negative by the kernel seam before construction.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ClockTicks(i64);
+
+impl ClockTicks {
+    /// Returns the exact Linux x86-64 `clock_t` word, still in clock ticks.
+    #[must_use]
+    #[inline]
+    pub const fn as_raw(self) -> i64 {
+        self.0
+    }
+
+    #[inline]
+    fn from_process_ticks(value: i64) -> Self {
+        debug_assert!(value >= 0);
+        Self(value)
+    }
+
+    #[inline]
+    fn from_elapsed_ticks(value: i64) -> Self {
+        Self(value)
+    }
+}
+
+/// Read-only process CPU-accounting observations from Linux `times(2)`.
+///
+/// The four process fields are the calling process and its waited-for
+/// terminated children. `elapsed_ticks` is the syscall's independent count
+/// since a kernel-defined arbitrary point; it is not a fifth CPU-time field.
+/// All values remain in opaque clock ticks: this API does not assume or invent
+/// a clock rate such as `CLK_TCK`.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ProcessTimes {
+    user_time: ClockTicks,
+    system_time: ClockTicks,
+    children_user_time: ClockTicks,
+    children_system_time: ClockTicks,
+    elapsed_ticks: ClockTicks,
+}
+
+impl ProcessTimes {
+    /// User CPU time consumed by the calling process, in clock ticks.
+    #[must_use]
+    #[inline]
+    pub const fn user_time(self) -> ClockTicks {
+        self.user_time
+    }
+
+    /// System CPU time consumed on behalf of the calling process, in ticks.
+    #[must_use]
+    #[inline]
+    pub const fn system_time(self) -> ClockTicks {
+        self.system_time
+    }
+
+    /// User CPU time of waited-for terminated children, in clock ticks.
+    #[must_use]
+    #[inline]
+    pub const fn children_user_time(self) -> ClockTicks {
+        self.children_user_time
+    }
+
+    /// System CPU time of waited-for terminated children, in clock ticks.
+    #[must_use]
+    #[inline]
+    pub const fn children_system_time(self) -> ClockTicks {
+        self.children_system_time
+    }
+
+    /// Independent elapsed clock-tick return from Linux `times(2)`.
+    ///
+    /// Linux defines the origin arbitrarily and permits the `clock_t` result
+    /// to overflow, so this value is useful for same-process observations and
+    /// remains distinct from process CPU time. No seconds conversion is made.
+    #[must_use]
+    #[inline]
+    pub const fn elapsed_ticks(self) -> ClockTicks {
+        self.elapsed_ticks
+    }
 }
 
 bitflags! {
@@ -617,6 +706,18 @@ pub fn getrusage(target: ResourceUsageTarget) -> Result<ResourceUsage> {
     crabc_core::process::getrusage_raw(target.as_raw()).map(ResourceUsage::from)
 }
 
+/// Reads the calling process's CPU-accounting observation through Linux's
+/// native `times(2)` syscall.
+///
+/// The operation is read-only and returns typed Rust values. It does not call
+/// the public C ABI, use an allocator, inspect TLS `errno`, or assume a clock
+/// rate. The private 32-byte x86-64 kernel record is validated before any tick
+/// value crosses this facade boundary.
+#[inline]
+pub fn times() -> Result<ProcessTimes> {
+    crabc_core::process::times_raw().map(ProcessTimes::from)
+}
+
 /// Returns the caller's parent process ID, if one is visible in this PID
 /// namespace.
 #[inline]
@@ -805,6 +906,27 @@ const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, r
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_stime) == 16);
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_maxrss) == 32);
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_nivcsw) == 136);
+const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelProcessTimes>() == 32);
+const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelProcessTimes>() == 8);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, user_ticks) == 0);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, system_ticks) == 8);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, children_user_ticks) == 16);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelProcessTimes, children_system_ticks) == 24);
+
+impl From<crabc_core::process::KernelProcessTimesObservation> for ProcessTimes {
+    #[inline]
+    fn from(value: crabc_core::process::KernelProcessTimesObservation) -> Self {
+        Self {
+            user_time: ClockTicks::from_process_ticks(value.process.user_ticks),
+            system_time: ClockTicks::from_process_ticks(value.process.system_ticks),
+            children_user_time: ClockTicks::from_process_ticks(value.process.children_user_ticks),
+            children_system_time: ClockTicks::from_process_ticks(
+                value.process.children_system_ticks,
+            ),
+            elapsed_ticks: ClockTicks::from_elapsed_ticks(value.elapsed_ticks),
+        }
+    }
+}
 
 impl From<crabc_core::process::KernelRusage> for ResourceUsage {
     #[inline]
@@ -833,8 +955,8 @@ impl From<crabc_core::process::KernelRusage> for ResourceUsage {
 #[cfg(test)]
 mod tests {
     use super::{
-        Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority, Resource, ResourceUsage,
-        ResourceUsageTarget, Rlimit,
+        ClockTicks, Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority,
+        ProcessTimes, Resource, ResourceUsage, ResourceUsageTarget, Rlimit,
     };
 
     #[test]
@@ -934,5 +1056,30 @@ mod tests {
         assert_eq!(ResourceUsageTarget::SelfProcess.as_raw(), 0);
         assert_eq!(ResourceUsageTarget::Children.as_raw(), -1);
         assert_eq!(ResourceUsageTarget::Thread.as_raw(), 1);
+    }
+
+    #[test]
+    fn x86_64_times_maps_the_initialized_kernel_record() {
+        let value = crabc_core::process::KernelProcessTimesObservation {
+            process: crabc_core::process::KernelProcessTimes {
+                user_ticks: 1,
+                system_ticks: 2,
+                children_user_ticks: 3,
+                children_system_ticks: 4,
+            },
+            // Linux permits the independent elapsed clock_t return to wrap;
+            // unlike the four process-accounting fields, it stays signed.
+            elapsed_ticks: -1,
+        };
+        let times = ProcessTimes::from(value);
+
+        assert_eq!(times.user_time(), ClockTicks::from_process_ticks(1));
+        assert_eq!(times.system_time(), ClockTicks::from_process_ticks(2));
+        assert_eq!(times.children_user_time(), ClockTicks::from_process_ticks(3));
+        assert_eq!(
+            times.children_system_time(),
+            ClockTicks::from_process_ticks(4)
+        );
+        assert_eq!(times.elapsed_ticks(), ClockTicks::from_elapsed_ticks(-1));
     }
 }

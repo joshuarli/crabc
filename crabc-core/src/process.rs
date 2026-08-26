@@ -6,7 +6,7 @@
 use core::{ffi::CStr, mem::MaybeUninit};
 
 use crate::{RawFd, Result};
-use crate::syscall::{decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, SYS_BRK, SYS_CHDIR, SYS_CHROOT, SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_FCHDIR, SYS_GETCWD, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETPRIORITY, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRUSAGE, SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_PIDFD_OPEN, SYS_PRCTL, SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN, SYS_SETFSGID, SYS_SETFSUID, SYS_SETPGID, SYS_SETPRIORITY, SYS_SETSID, SYS_TGKILL, SYS_TIMES, SYS_UMASK, SYS_WAIT4, SYS_WAITID};
+use crate::syscall::{decode, decode_i32, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, SYS_BRK, SYS_CHDIR, SYS_CHROOT, SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_FCHDIR, SYS_GETCWD, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETPRIORITY, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRUSAGE, SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_PIDFD_OPEN, SYS_PRCTL, SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN, SYS_SETFSGID, SYS_SETFSUID, SYS_SETPGID, SYS_SETPRIORITY, SYS_SETSID, SYS_TGKILL, SYS_TIMES, SYS_UMASK, SYS_WAIT4, SYS_WAITID};
 
 /// Linux's process-associated `struct flock` record used by
 /// `fcntl(F_GETLK)`.
@@ -297,12 +297,12 @@ pub fn getrusage_raw(who: i32) -> Result<KernelRusage> {
     Ok(unsafe { result.assume_init() })
 }
 
-/// The four initialized Linux/AArch64 words written by `times(2)`.
+/// The four initialized Linux 64-bit words written by `times(2)`.
 ///
 /// Linux's native `struct tms` uses four signed 64-bit `clock_t` words on
-/// AArch64. This is an internal kernel record rather than a public C ABI
-/// type; the native facade validates the non-negative process-accounting
-/// values before exposing them as Rust tick values.
+/// the admitted 64-bit targets. This is an internal kernel record rather than
+/// a public C ABI type; the native facade validates the non-negative
+/// process-accounting values before exposing them as Rust tick values.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct KernelProcessTimes {
@@ -315,6 +315,13 @@ pub struct KernelProcessTimes {
     /// System CPU time of waited-for terminated children, in clock ticks.
     pub children_system_ticks: i64,
 }
+
+const _: () = assert!(core::mem::size_of::<KernelProcessTimes>() == 32);
+const _: () = assert!(core::mem::align_of::<KernelProcessTimes>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelProcessTimes, user_ticks) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelProcessTimes, system_ticks) == 8);
+const _: () = assert!(core::mem::offset_of!(KernelProcessTimes, children_user_ticks) == 16);
+const _: () = assert!(core::mem::offset_of!(KernelProcessTimes, children_system_ticks) == 24);
 
 /// The process-accounting record and independent elapsed-tick result of
 /// one Linux `times(2)` query.
@@ -334,20 +341,32 @@ pub struct KernelProcessTimesObservation {
 /// Reads Linux process accounting through the native `times` syscall.
 ///
 /// A caller-owned pointer is deliberately not exposed here: this seam
-/// provides private initialized storage for the exact AArch64 record and
-/// returns it by value. The kernel's signed `clock_t` return is decoded as
-/// an ordinary syscall result; the four process-accounting words are
-/// checked for their documented non-negative range. No C ABI, allocator,
+/// provides private initialized storage for the exact Linux 64-bit record and
+/// returns it by value. The kernel's signed `clock_t` return is preserved as
+/// an ordinary signed `clock_t` result; the four process-accounting words are
+/// checked for their documented non-negative range. The private initialized
+/// output pointer makes Linux's only documented `EFAULT` route unavailable, so
+/// this seam deliberately preserves the full signed return rather than using
+/// the ordinary `-errno` decoder: a valid wrapped elapsed tick count can have
+/// the same bit pattern as that decoder's error range. No C ABI, allocator,
 /// vDSO, or TLS `errno` is involved.
 #[inline]
 pub fn times_raw() -> Result<KernelProcessTimesObservation> {
     let mut process = MaybeUninit::<KernelProcessTimes>::uninit();
-    // SAFETY: `process` is writable storage for Linux/AArch64's exact
+    // SAFETY: `process` is writable storage for Linux 64-bit's exact
     // four-word `struct tms`; the kernel initializes all words on success.
-    let elapsed_ticks =
-        decode_i64(unsafe { syscall1(SYS_TIMES, process.as_mut_ptr() as usize) })?;
+    let raw_elapsed_ticks = unsafe { syscall1(SYS_TIMES, process.as_mut_ptr() as usize) };
     // SAFETY: A successful times syscall initializes all four words.
     let process = unsafe { process.assume_init() };
+    times_observation_from_raw(process, raw_elapsed_ticks)
+}
+
+#[inline]
+fn times_observation_from_raw(
+    process: KernelProcessTimes,
+    raw_elapsed_ticks: isize,
+) -> Result<KernelProcessTimesObservation> {
+    let elapsed_ticks = raw_elapsed_ticks as i64;
     if process.user_ticks < 0
         || process.system_ticks < 0
         || process.children_user_ticks < 0
@@ -361,6 +380,44 @@ pub fn times_raw() -> Result<KernelProcessTimesObservation> {
         process,
         elapsed_ticks,
     })
+}
+
+#[cfg(test)]
+mod times_tests {
+    use super::{times_observation_from_raw, KernelProcessTimes};
+    use crate::Errno;
+
+    #[test]
+    fn times_keeps_a_signed_wrapped_elapsed_tick_result() {
+        let observation = times_observation_from_raw(
+            KernelProcessTimes {
+                user_ticks: 0,
+                system_ticks: 1,
+                children_user_ticks: 2,
+                children_system_ticks: 3,
+            },
+            -1_isize,
+        )
+        .expect("valid accounting fields");
+
+        assert_eq!(observation.elapsed_ticks, -1);
+    }
+
+    #[test]
+    fn times_rejects_a_negative_process_accounting_field() {
+        let error = times_observation_from_raw(
+            KernelProcessTimes {
+                user_ticks: -1,
+                system_ticks: 0,
+                children_user_ticks: 0,
+                children_system_ticks: 0,
+            },
+            0_isize,
+        )
+        .expect_err("negative accounting fields are not Linux process ticks");
+
+        assert_eq!(error, Errno::RANGE);
+    }
 }
 
 /// Reads one Linux scheduling-priority observation through the native
