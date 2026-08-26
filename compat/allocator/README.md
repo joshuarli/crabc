@@ -20,8 +20,10 @@ one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
 reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
 route with exact full-medium, full-large, full-non-direct-small, and full-direct-small
-one-joined-remote-free force-collection predecessors) plus
-one aggregate regular small/medium/large post-exit registry, ordinary
+one-joined-remote-free force-collection predecessors), three bounded
+homogeneous full-page aggregate routes (medium and large `BIN_FULL` members,
+plus non-direct-small ordinary-bin members), and one aggregate regular
+small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
 kernels, the allocation-free recursive once protocol, pure page geometry, and
@@ -460,6 +462,20 @@ raw list, independently cross the source unmapped-to-mapped threshold, and
 release one complete large span at a time. Sole pages and mixed medium/large
 full queues reject before mutation; the route has no adoption, reclaim,
 requeue, scanning, or concurrent routing.
+A third, separately typed full non-direct-small aggregate route accepts two or
+more arena `PageKind::Small` members only in one ordinary source bin with the
+same rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, static-main
+bin, full state, zero-retirement countdown, empty local free list, and exact
+one-slice paired-arena span. Every direct slot and every other queue must be
+empty. It force- then false-collects, removes each regular-bin member with the
+proven no-op direct-cache update, decrements the page count, and
+ordinary-unmapped-abandons every member before old-Theap/TLD teardown. Its
+sequential normal-collector client frees re-resolve PageMap membership rather
+than retaining a raw list, independently cross each member's mostly-used
+boundary, and release one one-slice member at a time. Sole pages, direct-small
+geometry/cache images, mixed bins/classes, allocation-time adoption, reclaim,
+requeue, scanning, and concurrent routing remain absent; a homogeneous
+direct-small aggregate is not yet supported.
 A fresh later-main owner may explicitly consume a sole mapped medium page that
 entered source owner exit already nonfull, or a sole direct-small page whose
 source collection left an immediate local free block, the exhausted fully

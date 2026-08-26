@@ -97,11 +97,14 @@ before immediate mapped publication (the medium and large pages remain in
 `BIN_FULL`; the non-direct-small page remains in its ordinary bin with every
 direct slot empty; the direct-small page remains in its ordinary bin until its
 rounded direct-cache range is cleared during removal));
-and two separate homogeneous full-medium and full-large aggregate post-exit
-routes for two or more same-bin `BIN_FULL` arena members, plus one aggregate
+and three separate homogeneous aggregate post-exit routes: full-medium and
+full-large `BIN_FULL` arena members, plus full non-direct-small members in one
+ordinary bin above `SMALL_SIZE_MAX` with every direct slot empty. The latter
+uses free.c's normal collector and retains one exact arena slice per member;
+direct-small aggregates remain absent. Alongside them is one aggregate
 regular-pages post-exit registry that can route every qualifying surviving
-regular small, medium, or large page through sequential client frees. Neither
-full aggregate keeps a raw member list: each later free re-resolves its PageMap
+regular small, medium, or large page through sequential client frees. No full
+aggregate keeps a raw member list: each later free re-resolves its PageMap
 member and independently crosses the source unmapped-to-mapped threshold under
 the one preselected static-main bitmap/count pair; the large route also proves
 each terminal member's complete 64-slice span. When the completed nonfull
@@ -264,10 +267,23 @@ shape only for `PageKind::Large`: every member has one exact 64-slice
 arena/PageMap span, and terminal release proves that complete span before the
 same PageMap -> `pages_main` -> metadata -> slice order. Both routes reject a
 mixed full queue before collection and expose no adoption, reclaim, requeue,
-allocation-time, or concurrent route. The corresponding full non-direct-
-small and direct-small one-joined-remote predecessors remain linked in their
-ordinary bins while force collection makes them nonfull; the former keeps its
-empty direct image, while the latter clears its rounded direct range before
+allocation-time, or concurrent route. Separately,
+`abandon_full_non_direct_small_pages_to_process_route` accepts two or more full
+arena `PageKind::Small` members only in one ordinary bin, with
+`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, every direct slot and
+every other queue empty, the same rounded block size/static-main bin, zero
+retirement countdowns, empty local free lists, and one exact paired-arena
+slice per member. It preserves force -> false collection, ordinary-bin removal
+with the proven no-op direct-cache update, page-count detach, and ordinary
+unmapped abandonment. Its normal-collector client-free tail re-resolves each
+PageMap member and independently publishes/retires only that member's paired
+bit/count and one-slice release. A sole page, direct-small geometry/cache
+image, mixed bin/class, or collection failure refuses or retains the route;
+it grants no direct-small partial-head, adoption, reclaim, requeue, scanning,
+or concurrent authority. The corresponding full non-direct-small and
+direct-small one-joined-remote predecessors remain linked in their ordinary
+bins while force collection makes them nonfull; the former keeps its empty
+direct image, while the latter clears its rounded direct range before
 page-count detach. Both immediately publish their mapped bit/count pairs and
 remain client-free-only through terminal release. The sole nonfull small-or-medium
 process route preserves the same
@@ -338,9 +354,9 @@ serialize independent PageMap operations between client frees, but no current
 path can adopt, reclaim, or requeue an aggregate registry member, including a
 registry later reduced to one member by a client free. The nonfull regular
 registry continues to reject full/singleton/unmapped/huge/foreign pages and
-malformed direct-cache images; the separate homogeneous full-medium and
-full-large aggregates do not admit heterogeneous full queues, full small
-members, or remote-force nonfull state. Concurrent client routes, deferred callbacks, arena
+malformed direct-cache images; the separate homogeneous full-medium,
+full-large, and non-direct-small aggregates do not admit heterogeneous full
+queues, direct-small members, or remote-force nonfull state. Concurrent client routes, deferred callbacks, arena
 collection, and retry/reuse
 as a normal allocator remain outside this owner. Only an empty drain permits
 `finish_after_page_drain` to reset default/cached, detach its shared heap list

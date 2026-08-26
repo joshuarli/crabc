@@ -279,6 +279,29 @@ map route. A sole page or a mixed medium/large full queue rejects before
 mutation. Allocation-time adoption/reclaim/requeue, scanning, remote-force
 nonfull state, and concurrent free routing remain absent.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_pages_to_process_route`
+is a third, separately typed bounded aggregate full-page route. It accepts two
+or more full arena `PageKind::Small` members only in one ordinary source bin,
+with the same rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and
+static-main bin, every direct slot and every other queue empty, `reserved > 1`,
+`used == reserved`, `!page_is_in_full`, a zero retirement countdown, an empty
+local free list, and one exact paired-arena slice per member. It preserves
+source force -> false collection, ordinary-bin removal with the proven no-op
+direct-cache update, page-count detach, and ordinary unmapped abandonment for
+every member before old-Theap/TLD teardown. Its
+`MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute` stores no raw page
+list: each later sequential client free re-resolves one PageMap member, claims
+the low owner bit, and uses the sealed non-direct-small class plus resulting
+abandoned identity to choose free.c's normal unmapped or mapped tail. The first
+below-mostly-used free may independently publish that member's exact preselected
+static-main bitmap/count pair; terminal PageMap -> `pages_main` -> metadata ->
+slice release removes only that one-slice member, and the last member closes
+the map route. A sole page, direct-small geometry/cache image, mixed bin/class,
+or collection failure rejects or retains before a route can form.
+Allocation-time adoption/reclaim/requeue, scanning, direct-small partial-head
+semantics, remote-force nonfull state, and concurrent free routing remain
+absent.
+
 The sixth handoff,
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_to_process_route`,
 accepts one sole full small arena page only when its rounded `block_size`
@@ -455,7 +478,7 @@ General producer routing, concurrent/general shared/later-thread page-bearing
 ownership, remaining heterogeneous full/singleton/unmapped/huge owner-exit
 pages and behavior beyond the bounded sole
 full-medium/full-large/full-non-direct-small/full-direct-small routes, the
-homogeneous full-medium/full-large aggregate routes, sole small-or-medium route (apart
+homogeneous full-medium/full-large/full-non-direct-small aggregate routes, sole small-or-medium route (apart
 from its exact mapped-medium consuming handoff), and aggregate regular-pages
 registry, terminal reuse, automatic and multiple
 dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
@@ -478,10 +501,10 @@ pairing or unmapped abandonment to `src/arena.c:1304-1424`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit
-client-free transfer has eight narrow forms: the sole full-medium route,
+client-free transfer has nine narrow forms: the sole full-medium route,
 full-large route, full non-direct-small route, full direct-small route,
-homogeneous full-medium and full-large aggregate routes, sole small-or-medium
-route, and aggregate regular-pages registry. Each converts the
+homogeneous full-medium, full-large, and full-non-direct-small aggregate
+routes, sole small-or-medium route, and aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
 span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
 pairing through actual teardown and sequential later frees. The sole mapped
@@ -503,8 +526,9 @@ covers source direct page-area commitment and failed-commit reabandonment
 before a same-candidate retry; it is not a generic allocation policy. The
 nonfull aggregate registry intentionally stops at nonfull regular small,
 medium, and large pages and has no adoption capability; the separate full
-aggregates intentionally stop at their homogeneous medium or large `BIN_FULL`
-classes. Only the
+aggregates intentionally stop at their homogeneous medium and large `BIN_FULL`
+classes plus the full non-direct-small ordinary-bin class; homogeneous
+direct-small aggregate traversal remains absent. Only the
 completed nonfull traversal's separately typed sole
 initial-medium/immediate-head outcome becomes the existing one-page route
 before registry construction. Do not extend either boundary to another page
@@ -559,6 +583,10 @@ thresholds, one-member-at-a-time terminal release, and sole-full-page
 preflight refusal; the homogeneous full-large aggregate's independent
 per-member unmapped-to-mapped thresholds, one-member-at-a-time complete
 64-slice terminal release, sole/mixed-full preflight refusal, and terminal
+collection-failure retention; the homogeneous full-non-direct-small aggregate's
+independent ordinary-bin normal-collector unmapped-to-mapped thresholds,
+one-member-at-a-time one-slice terminal release, sole-full-page preflight
+refusal, direct-small helper rejection after owner claim, and terminal
 collection-failure retention; the
 full-medium one-joined-remote force-collection predecessor's immediate mapped
 publication, client-free-only allocation-adoption refusal, eight-slice
@@ -602,26 +630,29 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 485 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 490 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 106 items and 110
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 107 items and 111
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
 The frozen-profile direct-small no-immediate source family is now exhaustive:
 after force/false collection, every valid nonfull page has either a fully
 committed scalar extension, a prefix-covered extension, or a positive
 page-area-commit extension. The defensive unsupported classifier is only for
-malformed or out-of-profile metadata. The next local frontier is therefore
-a different separately proven aggregate-registry policy or another source-shaped
-owner-exit class, then complete process and real pthread/TLS lifecycle integration—not a
+malformed or out-of-profile metadata. A homogeneous full direct-small aggregate
+remains a distinct source class because it requires the exact rounded
+direct-cache image and free.c's partial collector. The next local frontier is
+therefore a fresh source/lifecycle review of that class, a different separately
+proven aggregate-registry policy, or another source-shaped owner-exit class,
+then complete process and real pthread/TLS lifecycle integration—not a
 generic allocation-time scan routed through a bounded singleton,
 mapped-one-block handoff, no-page finish, or these sequential ticket-zero/later
 page-owner slices.

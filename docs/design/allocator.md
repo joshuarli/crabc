@@ -397,6 +397,25 @@ route. Sole pages and heterogeneous medium/large full queues reject before
 mutation. It exposes no allocation-time adoption, reclaim, requeue, scanning,
 or concurrent free routing.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_pages_to_process_route`
+is a third, separately typed aggregate boundary for two or more full arena
+`PageKind::Small` members in one ordinary source bin. Every member has the
+same rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, matching
+static-main bin, `reserved > 1`, `used == reserved`, zero retirement countdown,
+empty local free list, and one exact paired-arena slice; every direct entry and
+every other queue must be empty. It preserves source force -> false collection,
+ordinary-bin removal with the proven no-op direct-cache update, page-count
+detach, and ordinary unmapped abandonment for every member before old-Theap/TLD
+teardown. Its linear route stores no raw member list: each sequential free
+re-resolves its PageMap member, uses the sealed non-direct-small witness and
+claimed abandoned identity to choose the normal-collector unmapped or mapped
+tail, and independently publishes only the preselected static-main bitmap/count
+pair after its mostly-used boundary. A terminal free releases only that member
+through PageMap -> `pages_main` -> metadata -> one arena slice; the last member
+closes the map route. Sole pages, direct-small geometry/cache images, mixed
+bins/classes, remote-force nonfull state, allocation-time adoption, reclaim,
+requeue, scanning, and concurrent routing remain absent.
+
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_after_force_collect_to_mapped_process_route`,
 `MainHeapThreadProcessPageExitDrain::abandon_full_large_after_force_collect_to_mapped_process_route`,
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped_process_route`,
@@ -587,10 +606,10 @@ allocation-time claim, reclaim, or requeue for a post-exit route.
 
 The nonfull regular aggregate continues to reject full, singleton, huge,
 unmapped, foreign, malformed, or non-source-derived direct-cache state before
-detach. The separate homogeneous full-medium and full-large aggregates are
-the only full aggregate exceptions; heterogeneous full queues, full small
-pages, remote-force nonfull state, and every other owner-exit class remain
-separate work.
+detach. The separate homogeneous full-medium, full-large, and non-direct-small
+aggregates are the only full aggregate exceptions; heterogeneous full queues,
+direct-small aggregate members, remote-force nonfull state, and every other
+owner-exit class remain separate work.
 An empty drain may call `MainHeapThreadAttachment::finish_after_page_drain`;
 the detached routes instead use their narrowly typed finish once the old Theap
 image is empty. Any force/release failure is retained terminally; the drain
