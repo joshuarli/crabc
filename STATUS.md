@@ -97,9 +97,11 @@ before immediate mapped publication (the medium and large pages remain in
 `BIN_FULL`; the non-direct-small page remains in its ordinary bin with every
 direct slot empty; the direct-small page remains in its ordinary bin until its
 rounded direct-cache range is cleared during removal));
-and four separate homogeneous aggregate post-exit routes: full-medium and
-full-large `BIN_FULL` arena members, plus full non-direct-small and direct-small
-members in one ordinary bin. The non-direct route requires
+and five separate homogeneous aggregate post-exit routes: full singleton,
+full-medium, and full-large `BIN_FULL` arena members, plus full
+non-direct-small and direct-small members in one ordinary bin. The singleton
+route requires one rounded arena `PageKind::Singleton` size and
+`reserved == used == 1`; the non-direct route requires
 `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and every direct slot empty;
 the direct route requires `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and
 its exact rounded range naming the queue head. The direct route advances that
@@ -108,8 +110,10 @@ retain one exact arena slice per member. Alongside them is one aggregate
 regular-pages post-exit registry that can route every qualifying surviving
 regular small, medium, or large page through sequential client frees. No full
 aggregate keeps a raw member list: each later free re-resolves its PageMap
-member and independently crosses the source unmapped-to-mapped threshold under
-the one preselected static-main bitmap/count pair; the large route also proves
+member. The singleton aggregate must take the raw empty failed-reclaim result
+and has no static-main abandoned bitmap/count pair; every regular aggregate
+independently crosses the source unmapped-to-mapped threshold under its one
+preselected static-main bitmap/count pair, while the large route also proves
 each terminal member's complete 64-slice span. When the completed nonfull
 aggregate traversal itself
 releases every other member and leaves exactly one initial nonfull medium with
@@ -256,6 +260,18 @@ below-mostly-used free publishes the exact static-main `pages_abandoned[bin]`
 bit plus paired `Heap::abandoned_count[bin]`, and the mapped tail preserves
 that pairing until the same terminal release. The full-large route validates
 its complete 64-slice span before release. Separately,
+`abandon_full_singleton_pages_to_process_route` accepts only two or more full
+arena `PageKind::Singleton` members in `BIN_FULL` with one rounded block size,
+`reserved == used == 1`, zero retirement countdowns, empty local free lists,
+exact paired-arena spans, and every direct slot and other queue empty. Source
+force -> false collection then detaches and unmapped-abandons every member
+before old-Theap/TLD teardown. Later canonical client frees re-resolve PageMap
+membership without a raw list or static-main bitmap/count pair, take only the
+raw empty failed-reclaim outcome, and release one member in PageMap ->
+`pages_main` first-bit -> metadata -> arena-slice order. Sole pages,
+heterogeneous rounded singleton sizes, OS or other non-singleton members,
+allocation-time adoption/reclaim/requeue, scanning, and concurrent routing
+remain absent. Separately,
 `abandon_full_medium_pages_to_process_route` accepts only two or more full
 arena medium members in `BIN_FULL` with one rounded block size/bin, every
 direct slot and other queue empty, zero retirement countdowns, and exact paired
@@ -372,8 +388,8 @@ serialize independent PageMap operations between client frees, but no current
 path can adopt, reclaim, or requeue an aggregate registry member, including a
 registry later reduced to one member by a client free. The nonfull regular
 registry continues to reject full/singleton/unmapped/huge/foreign pages and
-malformed direct-cache images; the separate homogeneous full-medium,
-full-large, non-direct-small, and direct-small aggregates do not admit
+malformed direct-cache images; the separate homogeneous full-singleton,
+full-medium, full-large, non-direct-small, and direct-small aggregates do not admit
 heterogeneous full queues, stale direct-cache images, or remote-force nonfull
 state. Concurrent client routes, deferred callbacks, arena
 collection, and retry/reuse
@@ -648,7 +664,7 @@ terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,
 and reusable abandoned-page lifetime remain absent.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
-full-medium/full-large/full-non-direct-small/full-direct-small routes, four
+full-medium/full-large/full-non-direct-small/full-direct-small routes, five
 homogeneous full-page aggregates, sole small-or-medium route, and regular-pages
 aggregate, allocation-time
 claim/reclaim/requeue after later-thread exit beyond the exact sole mapped

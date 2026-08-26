@@ -1311,6 +1311,53 @@ pub(crate) type ThreadExitFullDirectSmallPostExitFreeOutcome =
 pub(crate) type ThreadExitFullDirectSmallPostExitFreeError =
     ThreadExitFullRegularPostExitFreeError;
 
+/// Every source-full arena singleton detached by one bounded later-main
+/// `_mi_theap_collect_abandon` traversal before the former Theap/TLD tears
+/// down.
+///
+/// The source full queue may contain heterogeneous huge and singleton shapes,
+/// so this boundary seals one rounded singleton block size before it mutates a
+/// queue member. Each member remains source-unmappable: its one later client
+/// free must make it empty and release its complete PageMap/arena span. The
+/// registry deliberately stores no raw page list; every free re-resolves one
+/// currently registered member under the short process PageMap access.
+#[must_use = "detached full singleton pages must become one process route or remain terminally retained"]
+pub(crate) struct ThreadExitFullSingletonPagesPostExitDetach<'attachment, 'main, 'arena> {
+    session: MainHeapThreadPageDrainSession<'attachment, 'main>,
+    parts: ThreadExitFullSingletonPagesPostExitParts<'arena>,
+}
+
+/// The process-lifetime facts for one homogeneous full arena-singleton
+/// aggregate. `remaining_pages` counts only PageMap registrations whose
+/// source terminal release has not completed. There is no static-main
+/// abandoned bitmap/count pair: source `BIN_HUGE` singleton geometry is never
+/// eligible for that regular-page publication.
+#[must_use = "full singleton aggregate facts must remain coupled to PageMap access until every span releases"]
+pub(crate) struct ThreadExitFullSingletonPagesPostExitParts<'arena> {
+    arena: ArenaView<'arena>,
+    block_size: usize,
+    remaining_pages: usize,
+    // The route is movable but intentionally not shareable. Its consuming
+    // free API plus the post-exit PageMap guard serialize each source low-bit
+    // transition without suggesting concurrent routing authority.
+    _not_sync: PhantomData<Cell<()>>,
+}
+
+/// A post-detach failure while tearing down the old later Theap/TLD after a
+/// full singleton aggregate source traversal. The long PageMap lifecycle has
+/// not crossed into a short route, so the complete registry remains terminally
+/// coupled to the attachment.
+#[must_use = "a failed full singleton aggregate teardown retains every detached page state"]
+pub(crate) struct ThreadExitFullSingletonPagesPostExitTeardownTerminal<
+    'attachment,
+    'main,
+    'arena,
+> {
+    parts: ThreadExitFullSingletonPagesPostExitParts<'arena>,
+    attachment: &'attachment mut MainHeapThreadAttachment<'main>,
+    error: MainHeapThreadAttachmentError,
+}
+
 /// Every source-full medium page detached by one bounded later-main
 /// `_mi_theap_collect_abandon` traversal before the former Theap/TLD tears
 /// down.
@@ -1510,6 +1557,75 @@ impl FullRegularPostExitClass {
             Self::NonDirectSmall | Self::DirectSmall => PageKind::Small,
         }
     }
+}
+
+/// A source-boundary refusal while a later-main post-fast-slot drain prepares
+/// its homogeneous full arena-singleton aggregate traversal. `Rejected` means
+/// the complete queue/direct/image preflight left source state untouched; once
+/// force collection begins, the drain remains the only terminal owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadExitFullSingletonPagesPostExitAbandonError {
+    Collection,
+    ForeignPage,
+    NonArena,
+    NotFullSingleton,
+    NotMultiplePages,
+    Queue,
+    RouteCountOverflow,
+    PostDetachState,
+    UnexpectedAbandonOutcome(AbandonResult),
+    Abandon(AbandonError),
+}
+
+/// The retained source owner after one full arena-singleton aggregate
+/// owner-exit traversal attempt.
+#[must_use = "a failed full singleton aggregate transition retains its draining engine"]
+pub(crate) enum ThreadExitFullSingletonPagesPostExitAbandonFailure<
+    'attachment,
+    'main,
+    'arena,
+    'map,
+> {
+    Rejected {
+        engine: PageAllocatorEngine<
+            'arena,
+            'map,
+            MainHeapThreadPageDrainSession<'attachment, 'main>,
+        >,
+        error: ThreadExitFullSingletonPagesPostExitAbandonError,
+    },
+    RetainedEngine {
+        engine: PageAllocatorEngine<
+            'arena,
+            'map,
+            MainHeapThreadPageDrainSession<'attachment, 'main>,
+        >,
+        error: ThreadExitFullSingletonPagesPostExitAbandonError,
+    },
+}
+
+/// One result while the homogeneous full arena-singleton aggregate route
+/// handles its one-block source failed-reclaim free.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadExitFullSingletonPagesPostExitFreeOutcome {
+    /// One selected singleton released while another registered member remains.
+    ReleasedPage,
+    /// The selected singleton was the registry's final PageMap member.
+    ReleasedAll,
+}
+
+/// A terminal or rejecting condition while the homogeneous full
+/// arena-singleton aggregate route handles one client free. `Unmapped` and
+/// `InvalidBlock` are pre-mutation observations; every other outcome may have
+/// acquired a source low owner bit or completed part of terminal release.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ThreadExitFullSingletonPagesPostExitFreeError {
+    Unmapped,
+    InvalidBlock,
+    ConcurrentOwner,
+    UnexpectedFreeOutcome(abandoned::UnmappedAbandonedFreeResult),
+    Abandon(AbandonError),
+    Release,
 }
 
 /// A source-boundary refusal while a later-main post-fast-slot drain prepares
@@ -6190,6 +6306,378 @@ impl<'attachment, 'main, 'arena, 'map>
         })
     }
 
+    /// Traverses a bounded homogeneous full arena-singleton source queue into
+    /// one process-owned post-exit registry.
+    ///
+    /// `mi_theap_collect_ex(MI_ABANDON)` visits the heterogeneous `BIN_FULL`
+    /// queue head-to-tail and calls `_mi_page_abandon` for every still-live
+    /// page. This first singleton aggregate preserves that order only when the
+    /// whole source image contains two or more same-size arena singletons. Each
+    /// member remains source-unmappable: the later one-block free may only
+    /// complete its PageMap -> `pages_main` -> metadata -> arena-slice release.
+    /// It neither creates a raw member list nor adds OS-list, allocation-time,
+    /// reclaim/requeue, mixed-class, or concurrent ownership policy.
+    ///
+    /// # Safety
+    ///
+    /// No scoped producer may survive. Every current page must be a full
+    /// arena-backed singleton member of the same rounded source size, and every
+    /// client alias must be consumed exactly once through the returned linear
+    /// route or retained terminally. This is valid only after the concrete
+    /// later-main fast-slot-clear transition.
+    pub(crate) unsafe fn abandon_full_singleton_pages_to_process_route(
+        mut self,
+    ) -> Result<
+        ThreadExitFullSingletonPagesPostExitDetach<'attachment, 'main, 'arena>,
+        ThreadExitFullSingletonPagesPostExitAbandonFailure<'attachment, 'main, 'arena, 'map>,
+    > {
+        let reject = |engine, error| {
+            ThreadExitFullSingletonPagesPostExitAbandonFailure::Rejected { engine, error }
+        };
+        let retained = |engine, error| {
+            ThreadExitFullSingletonPagesPostExitAbandonFailure::RetainedEngine { engine, error }
+        };
+        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+            return Err(reject(
+                self,
+                ThreadExitFullSingletonPagesPostExitAbandonError::Collection,
+            ));
+        }
+
+        // `mi_theap_collect_ex(MI_ABANDON)` runs the retired-page pass before
+        // it reaches `BIN_FULL`. Zero retirement countdown and full one-block
+        // geometry make that source pass a no-op here; do not invoke a broader
+        // collector that would claim unrelated arena-purge behavior.
+        let expected_page_count = self.session.theap().page_count();
+        if expected_page_count < 2 {
+            return Err(reject(
+                self,
+                ThreadExitFullSingletonPagesPostExitAbandonError::NotMultiplePages,
+            ));
+        }
+        for index in 0..PAGES_DIRECT {
+            if self.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                return Err(reject(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                ));
+            }
+        }
+
+        // Prove the complete queue image before force collection or queue
+        // mutation. `BIN_FULL` deliberately mixes source classes, so one
+        // rounded singleton block size is part of this bounded route's entry
+        // contract rather than an inferred later-free policy.
+        let mut observed_page_count = 0usize;
+        let mut expected_block_size = None;
+        for queue_bin in 0..BIN_COUNT {
+            let Some(queue) = self.session.queue(queue_bin) else {
+                return Err(reject(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                ));
+            };
+            if queue_bin != BIN_FULL {
+                if queue.count() != 0 || !queue.is_empty() {
+                    return Err(reject(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                    ));
+                }
+                continue;
+            }
+            if queue.count() < 2 {
+                return Err(reject(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::NotMultiplePages,
+                ));
+            }
+            let mut remaining = queue.count();
+            let mut page = queue.first();
+            let mut previous = core::ptr::null_mut();
+            while remaining != 0 {
+                let Some(page_nonnull) = NonNull::new(page) else {
+                    return Err(reject(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                    ));
+                };
+                // SAFETY: the consuming drain exclusively owns the source
+                // queue image through this non-mutating preflight.
+                let page_ref = unsafe { page_nonnull.as_ref() };
+                if page_ref.prev() != previous {
+                    return Err(reject(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                    ));
+                }
+                if !self.owns_page(page_ref) || page_ref.heap() != self.session.theap().heap() {
+                    return Err(reject(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::ForeignPage,
+                    ));
+                }
+                if page_ref.memid().kind() != MemoryKind::Arena {
+                    return Err(reject(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::NonArena,
+                    ));
+                }
+                if size_class::page_kind_for_block_size(page_ref.block_size())
+                    != Some(PageKind::Singleton)
+                    || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+                    || page_ref.reserved() != 1
+                    || page_ref.used() != 1
+                    || !page_is_in_full(page_ref)
+                    || page_ref.retire_expire() != 0
+                    || !page_ref.free_list_head().is_null()
+                {
+                    return Err(reject(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::NotFullSingleton,
+                    ));
+                }
+                if !matches!(
+                    self.release_span(page_nonnull.as_ptr()),
+                    Some(ReleaseSpan::Arena {
+                        memory,
+                        slice_start,
+                        ..
+                    }) if memory.arena_memory().is_some_and(|arena_memory| {
+                        arena_memory.arena
+                            == core::ptr::from_ref(self.arena.arena()).cast_mut()
+                            && self.arena.slice_start(arena_memory.slice_index as usize)
+                                == Some(slice_start)
+                    })
+                ) {
+                    return Err(reject(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::NotFullSingleton,
+                    ));
+                }
+                match expected_block_size {
+                    None => expected_block_size = Some(page_ref.block_size()),
+                    Some(expected_size) if expected_size == page_ref.block_size() => {}
+                    _ => {
+                        return Err(reject(
+                            self,
+                            ThreadExitFullSingletonPagesPostExitAbandonError::NotFullSingleton,
+                        ));
+                    }
+                }
+                observed_page_count = match observed_page_count.checked_add(1) {
+                    Some(count) => count,
+                    None => {
+                        return Err(reject(
+                            self,
+                            ThreadExitFullSingletonPagesPostExitAbandonError::RouteCountOverflow,
+                        ));
+                    }
+                };
+                // SAFETY: structural preflight bounds this walk by the queue
+                // count and validates the final tail below.
+                page = unsafe { page_nonnull.as_ref().next() };
+                previous = page_nonnull.as_ptr();
+                remaining -= 1;
+            }
+            if !page.is_null() || queue.last() != previous {
+                return Err(reject(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                ));
+            }
+        }
+        if observed_page_count != expected_page_count {
+            return Err(reject(
+                self,
+                ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+            ));
+        }
+        let Some(block_size) = expected_block_size else {
+            return Err(reject(
+                self,
+                ThreadExitFullSingletonPagesPostExitAbandonError::NotMultiplePages,
+            ));
+        };
+
+        let mut detached_pages = 0usize;
+        let mut page = match self.session.queue(BIN_FULL) {
+            Some(queue) => queue.first(),
+            None => {
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                ));
+            }
+        };
+        while !page.is_null() {
+            let Some(page_nonnull) = NonNull::new(page) else {
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                ));
+            };
+            // Preserve the source successor before any later source failure
+            // retains the drain with an already-detached predecessor.
+            let next = unsafe { page_nonnull.as_ref().next() };
+
+            if let Err(error) = self.page_free_collect_force(page_nonnull) {
+                self.retain_page_collect_poison(page_nonnull, error, None);
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Collection,
+                ));
+            }
+            let after_force = unsafe { page_nonnull.as_ref() };
+            if after_force.block_size() != block_size
+                || size_class::page_kind_for_block_size(after_force.block_size())
+                    != Some(PageKind::Singleton)
+                || size_class::bin(after_force.block_size()) != Some(BIN_HUGE)
+                || after_force.reserved() != 1
+                || after_force.used() != 1
+                || !page_is_in_full(after_force)
+            {
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::NotFullSingleton,
+                ));
+            }
+            if let Err(error) = self.page_free_collect_false(page_nonnull) {
+                self.retain_page_collect_poison(page_nonnull, error, None);
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Collection,
+                ));
+            }
+            let after_collect = unsafe { page_nonnull.as_ref() };
+            if after_collect.block_size() != block_size
+                || size_class::page_kind_for_block_size(after_collect.block_size())
+                    != Some(PageKind::Singleton)
+                || size_class::bin(after_collect.block_size()) != Some(BIN_HUGE)
+                || after_collect.reserved() != 1
+                || after_collect.used() != 1
+                || !page_is_in_full(after_collect)
+            {
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::NotFullSingleton,
+                ));
+            }
+
+            let queue = match self.session.queue_mut(BIN_FULL) {
+                Some(queue) => queue as *mut _,
+                None => {
+                    return Err(retained(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                    ));
+                }
+            };
+            // SAFETY: the complete preflight proved this member's intrusive
+            // links, and the consuming drain is its sole queue mutator.
+            unsafe { page_queue_remove_metadata(&mut *queue, page_nonnull.as_ptr()) };
+            if !self.session.note_page_removed() {
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::Queue,
+                ));
+            }
+            // Full singleton source geometry has no regular
+            // `pages_abandoned[bin]` publication. A later one-block free owns
+            // the only failed-reclaim tail and terminal release.
+            match unsafe { abandoned::abandon_unmappable_after_collect(page_nonnull) } {
+                Ok(AbandonResult::UnownedUnmapped) => {}
+                Ok(outcome) => {
+                    return Err(retained(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::UnexpectedAbandonOutcome(
+                            outcome,
+                        ),
+                    ));
+                }
+                Err(error) => {
+                    return Err(retained(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::Abandon(error),
+                    ));
+                }
+            }
+            detached_pages = match detached_pages.checked_add(1) {
+                Some(count) => count,
+                None => {
+                    return Err(retained(
+                        self,
+                        ThreadExitFullSingletonPagesPostExitAbandonError::RouteCountOverflow,
+                    ));
+                }
+            };
+            page = next;
+        }
+
+        if detached_pages < 2
+            || detached_pages != expected_page_count
+            || self.is_collection_poisoned()
+            || self.pending_os_release.is_some()
+            || self.session.theap().page_count() != 0
+        {
+            return Err(retained(
+                self,
+                ThreadExitFullSingletonPagesPostExitAbandonError::PostDetachState,
+            ));
+        }
+        for queue_bin in 0..BIN_COUNT {
+            if !self
+                .session
+                .queue(queue_bin)
+                .is_some_and(|queue| queue.is_empty())
+            {
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::PostDetachState,
+                ));
+            }
+        }
+        for index in 0..PAGES_DIRECT {
+            if self.session.direct_page(index) != Some(EMPTY_PAGE.as_ptr()) {
+                return Err(retained(
+                    self,
+                    ThreadExitFullSingletonPagesPostExitAbandonError::PostDetachState,
+                ));
+            }
+        }
+
+        let (session, state) = self.into_session_and_state();
+        let PageAllocatorEngineState {
+            arena,
+            requested_arena: _,
+            page_map: _,
+            thread_sequence: _,
+            pending_os_release,
+            collection_poison,
+            #[cfg(test)]
+            page_free_collect_failure_once: _,
+            #[cfg(test)]
+            last_page_to_full: _,
+            #[cfg(test)]
+            page_commit_on_demand: _,
+            shutdown_complete: _,
+        } = state;
+        debug_assert!(pending_os_release.is_none());
+        debug_assert!(collection_poison.is_none());
+        drop(pending_os_release);
+        let _ = collection_poison;
+
+        Ok(ThreadExitFullSingletonPagesPostExitDetach {
+            session,
+            parts: ThreadExitFullSingletonPagesPostExitParts {
+                arena,
+                block_size,
+                remaining_pages: detached_pages,
+                _not_sync: PhantomData,
+            },
+        })
+    }
+
     /// Traverses a bounded homogeneous full-medium source queue into one
     /// process-owned post-exit registry.
     ///
@@ -8432,6 +8920,36 @@ impl<'attachment, 'main, 'arena>
 }
 
 impl<'attachment, 'main, 'arena>
+    ThreadExitFullSingletonPagesPostExitDetach<'attachment, 'main, 'arena>
+{
+    /// Tears down the old later Theap/TLD only after every source full arena
+    /// singleton has lost full-queue/page-count ownership and the typed
+    /// registry retains the remaining PageMap/arena facts.
+    pub(crate) fn finish_thread_owner(
+        self,
+    ) -> Result<
+        ThreadExitFullSingletonPagesPostExitParts<'arena>,
+        ThreadExitFullSingletonPagesPostExitTeardownTerminal<'attachment, 'main, 'arena>,
+    > {
+        let Self { session, parts } = self;
+        // SAFETY: the aggregate traversal emptied the old full queue and page
+        // count before this transition; `parts` is now the only owner of the
+        // detached source pages' post-exit lifecycle facts.
+        let attachment = unsafe { session.into_attachment_after_process_page_route() };
+        // SAFETY: retain `parts` through either result so no free can reach
+        // the old Theap/TLD while teardown remains unfinished.
+        match unsafe { attachment.finish_after_detached_process_page_route() } {
+            Ok(()) => Ok(parts),
+            Err(error) => Err(ThreadExitFullSingletonPagesPostExitTeardownTerminal {
+                parts,
+                attachment,
+                error,
+            }),
+        }
+    }
+}
+
+impl<'attachment, 'main, 'arena>
     ThreadExitFullMediumPagesPostExitDetach<'attachment, 'main, 'arena>
 {
     /// Tears down the old later Theap/TLD only after every source full-medium
@@ -8793,6 +9311,253 @@ enum ThreadExitFullRegularPagesPostExitFreeOutcome {
     StillLive,
     ReleasedPage,
     ReleasedAll,
+}
+
+impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
+    /// Handles one source failed-reclaim client free through one complete short
+    /// PageMap operation for the exact sealed singleton size captured at
+    /// source owner exit.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be one exact once-live canonical allocation of a member in
+    /// this homogeneous full arena-singleton aggregate. The caller retains the
+    /// route linearly until every member has released or an explicit terminal
+    /// owner is retained. This never grants allocation-time reclaim, requeue,
+    /// OS-list, or concurrent-free authority.
+    pub(crate) unsafe fn remote_free_after_thread_exit(
+        &mut self,
+        page_map: &PageMap,
+        block: NonNull<u8>,
+    ) -> Result<
+        ThreadExitFullSingletonPagesPostExitFreeOutcome,
+        ThreadExitFullSingletonPagesPostExitFreeError,
+    > {
+        if self.remaining_pages == 0 {
+            return Err(ThreadExitFullSingletonPagesPostExitFreeError::Release);
+        }
+        // SAFETY: the enclosing short map access keeps the source plain entry
+        // stable through lookup, low-owner claim, and terminal release. The
+        // registry deliberately keeps no raw former-Theap member list.
+        let page = NonNull::new(unsafe { page_map.checked_lookup(block.as_ptr()) })
+            .ok_or(ThreadExitFullSingletonPagesPostExitFreeError::Unmapped)?;
+        // SAFETY: the short PageMap operation and linear route retain the
+        // selected metadata page for this pre-mutation shape validation.
+        let page_ref = unsafe { page.as_ref() };
+        if page_ref.memid().kind() != MemoryKind::Arena
+            || !page_ref.memid().arena_memory().is_some_and(|memory| {
+                memory.arena == core::ptr::from_ref(self.arena.arena()).cast_mut()
+            })
+            || page_ref.block_size() != self.block_size
+            || size_class::page_kind_for_block_size(page_ref.block_size())
+                != Some(PageKind::Singleton)
+            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+            || page_ref.reserved() != 1
+            || page_ref.used() != 1
+            || !page_ref.is_queue_detached()
+        {
+            return Err(ThreadExitFullSingletonPagesPostExitFreeError::InvalidBlock);
+        }
+        let Some(canonical_block) = self.canonical_block_start(page_ref, block) else {
+            return Err(ThreadExitFullSingletonPagesPostExitFreeError::InvalidBlock);
+        };
+        // SAFETY: the source shape proof above establishes the singleton's
+        // live local geometry. This validation ends before the atomic
+        // failed-reclaim tail mutates it.
+        let preflight = match unsafe { LocalFreeList::from_page(&mut *page.as_ptr()) } {
+            Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
+            Err(error) => Err(error),
+        };
+        if preflight.is_err() || !self.member_span_matches(page_map, page, 1) {
+            return Err(ThreadExitFullSingletonPagesPostExitFreeError::InvalidBlock);
+        }
+
+        // Source `BIN_HUGE` singleton geometry cannot publish to a regular
+        // abandoned bitmap. Its only valid client-free result is all-free;
+        // any competing owner or unexpected state becomes terminal rather
+        // than a license to choose an arena/OS alternative.
+        match unsafe { abandoned::free_unmappable_after_failed_reclaim(page, canonical_block) } {
+            Ok(abandoned::UnmappedAbandonedFreeResult::Empty) => {
+                // SAFETY: the raw helper retained the selected page's low owner
+                // bit through its exact empty result and this method still
+                // holds short PageMap exclusion for the terminal span release.
+                unsafe { self.finish_member_release(page_map, page) }
+            }
+            Ok(abandoned::UnmappedAbandonedFreeResult::PublishedToExistingOwner) => {
+                Err(ThreadExitFullSingletonPagesPostExitFreeError::ConcurrentOwner)
+            }
+            Ok(outcome) => {
+                Err(ThreadExitFullSingletonPagesPostExitFreeError::UnexpectedFreeOutcome(
+                    outcome,
+                ))
+            }
+            Err(error) => Err(ThreadExitFullSingletonPagesPostExitFreeError::Abandon(error)),
+        }
+    }
+
+    /// Updates the sealed registry count only after the exact member's source
+    /// terminal release physically completed.
+    unsafe fn finish_member_release(
+        &mut self,
+        page_map: &PageMap,
+        page: NonNull<Page>,
+    ) -> Result<
+        ThreadExitFullSingletonPagesPostExitFreeOutcome,
+        ThreadExitFullSingletonPagesPostExitFreeError,
+    > {
+        if !unsafe { self.release_empty_page(page_map, page) } {
+            Err(ThreadExitFullSingletonPagesPostExitFreeError::Release)
+        } else if self.remaining_pages == 1 {
+            self.remaining_pages = 0;
+            Ok(ThreadExitFullSingletonPagesPostExitFreeOutcome::ReleasedAll)
+        } else {
+            self.remaining_pages -= 1;
+            Ok(ThreadExitFullSingletonPagesPostExitFreeOutcome::ReleasedPage)
+        }
+    }
+
+    /// Re-derives one singleton's complete arena span under short map
+    /// exclusion. The aggregate stores only sealed class facts; it never
+    /// trusts a pointer/range captured before old-Theap/TLD teardown.
+    fn member_span_matches(&self, page_map: &PageMap, page: NonNull<Page>, used: usize) -> bool {
+        // SAFETY: callers retain the selected registered page through their
+        // current short PageMap operation and inspect no data beyond its live
+        // metadata lifetime.
+        let page_ref = unsafe { page.as_ref() };
+        let memory = page_ref.memid();
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
+            return false;
+        }
+        let slice_index = arena_memory.slice_index as usize;
+        let slice_count = arena_memory.slice_count as usize;
+        let Some(expected_slice_count) = page::singleton_page_slice_count(self.block_size) else {
+            return false;
+        };
+        let Some(size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else {
+            return false;
+        };
+        let Some(slice_start) = self.arena.slice_start(slice_index) else {
+            return false;
+        };
+        let Some(usable_offset) = page::page_usable_start_offset(self.block_size) else {
+            return false;
+        };
+        let Some(span_end) = slice_start.addr().checked_add(size) else {
+            return false;
+        };
+        let Some(expected_start) = slice_start.addr().checked_add(usable_offset) else {
+            return false;
+        };
+        if slice_count != expected_slice_count
+            || page_ref.memid().kind() != MemoryKind::Arena
+            || page_ref.block_size() != self.block_size
+            || size_class::page_kind_for_block_size(page_ref.block_size())
+                != Some(PageKind::Singleton)
+            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
+            || page_ref.reserved() != 1
+            || page_ref.used() != used
+            || !page_ref.is_queue_detached()
+            || expected_start >= span_end
+            || expected_start.checked_sub(page.as_ptr().addr()) != Some(page_ref.page_offset())
+        {
+            return false;
+        }
+        for offset in (0..size).step_by(ARENA_SLICE_SIZE) {
+            let Some(address) = slice_start.addr().checked_add(offset) else {
+                return false;
+            };
+            // SAFETY: the complete short PageMap operation excludes ordinary
+            // map writers; every span slice must still name this exact page.
+            if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Completes the singleton's terminal source release after the raw
+    /// failed-reclaim helper left its low owner bit held.
+    unsafe fn release_empty_page(&self, page_map: &PageMap, mut page: NonNull<Page>) -> bool {
+        // SAFETY: the raw helper returned `Empty`, retaining owner-bit
+        // authority for ordinary page-state validation and release.
+        if !self.member_span_matches(page_map, page, 0) {
+            return false;
+        }
+        // SAFETY: `member_span_matches` proved these arena facts and every
+        // PageMap entry; re-read them only to derive the exact source terminal
+        // release range while the low owner bit stays held.
+        let page_ref = unsafe { page.as_ref() };
+        let memory = page_ref.memid();
+        let Some(arena_memory) = memory.arena_memory() else {
+            return false;
+        };
+        let slice_index = arena_memory.slice_index as usize;
+        let slice_count = arena_memory.slice_count as usize;
+        let Some(size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else {
+            return false;
+        };
+        let Some(slice_start) = self.arena.slice_start(slice_index) else {
+            return false;
+        };
+        // Source order is PageMap unregister, ordinary static-main ownership
+        // bit clear, metadata retirement, then arena-slice release. The
+        // ordinary bitmap has one bit at the singleton's first slice even when
+        // that source singleton spans several arena slices.
+        if unsafe { page_map.unregister_range(slice_start, size) }.is_err() {
+            return false;
+        }
+        if unsafe { self.arena.pages() }
+            .and_then(|pages| pages.clear_range(slice_index, 1))
+            != Some(true)
+        {
+            return false;
+        }
+        // SAFETY: queue/page-count ownership ended before old-Theap teardown,
+        // and all remaining map/ordinary-bit publications are gone before this
+        // exact metadata retirement.
+        let Some(retired) = (unsafe { page.as_mut().retire_exclusive() }) else {
+            return false;
+        };
+        let Some(retired_memory) = retired.arena_memory() else {
+            return false;
+        };
+        if retired_memory.arena != arena_memory.arena
+            || retired_memory.slice_index != arena_memory.slice_index
+            || retired_memory.slice_count != arena_memory.slice_count
+        {
+            return false;
+        }
+        // SAFETY: the retired metadata carries the exact already-unregistered
+        // external-arena span.
+        unsafe { release_arena_slices(retired) }
+    }
+
+    /// Finds the canonical source block for a singleton allocation. Aligned
+    /// singleton pages preserve the same interior-pointer base recovery as the
+    /// established sole-singleton handoff.
+    fn canonical_block_start(&self, page: &Page, block: NonNull<u8>) -> Option<NonNull<u8>> {
+        if !page.has_interior_pointers() {
+            return Some(block);
+        }
+        // SAFETY: caller validation already proved the full source singleton
+        // geometry before this derives the allocation's original block base.
+        let page_start = unsafe { page.start() };
+        let base_address = aligned::recover_block_start(
+            block.as_ptr().addr(),
+            page_start.addr(),
+            page.block_size(),
+        )?;
+        let adjustment = block.as_ptr().addr().checked_sub(base_address)?;
+        NonNull::new(block.as_ptr().wrapping_sub(adjustment))
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn test_remaining_pages(&self) -> usize {
+        self.remaining_pages
+    }
 }
 
 impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {

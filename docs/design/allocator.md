@@ -366,6 +366,23 @@ the final PageMap -> `pages_main` -> metadata -> slice release. The large
 route validates the complete 64-slice PageMap span before terminal release.
 They expose no allocation-time claim, reclaim, requeue, or concurrent route.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_singleton_pages_to_process_route`
+is a separately typed aggregate boundary for two or more full arena
+`PageKind::Singleton` members in `BIN_FULL`. Its complete preflight requires
+every direct entry and every other queue to be empty, one rounded singleton
+block size, `reserved == used == 1`, a zero retirement countdown, an empty
+local free list, and an exact selected-arena span for every member. It then
+preserves source force -> false collection, full-queue/page-count detach, and
+ordinary unmapped abandonment for every member before old-Theap/TLD teardown.
+The linear route keeps no raw page list or static-main abandoned bitmap/count
+pair: each later free re-resolves one PageMap member, recovers only its
+canonical singleton allocation, and must take the raw failed-reclaim empty
+decision. Its terminal order is that member's complete PageMap span -> the
+ordinary `pages_main` bit at its first slice -> metadata -> arena slices; the
+last member closes the map route. Sole pages, heterogeneous rounded singleton
+sizes, non-singletons, OS-backed members, allocation-time adoption, reclaim,
+requeue, scanning, and concurrent routing reject or remain absent.
+
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_pages_to_process_route`
 is a separate aggregate boundary for two or more full medium arena pages in
 `BIN_FULL`. Its preflight requires every direct entry and every other queue to
@@ -401,7 +418,7 @@ mutation. It exposes no allocation-time adoption, reclaim, requeue, scanning,
 or concurrent free routing.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_pages_to_process_route`
-is a third, separately typed aggregate boundary for two or more full arena
+is a fourth, separately typed aggregate boundary for two or more full arena
 `PageKind::Small` members in one ordinary source bin. Every member has the
 same rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, matching
 static-main bin, `reserved > 1`, `used == reserved`, zero retirement countdown,
@@ -420,7 +437,7 @@ bins/classes, remote-force nonfull state, allocation-time adoption, reclaim,
 requeue, scanning, and concurrent routing remain absent.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_pages_to_process_route`
-is a fourth, separately typed aggregate boundary for two or more full arena
+is a fifth, separately typed aggregate boundary for two or more full arena
 `PageKind::Small` members in one ordinary source bin. Every member has the
 same rounded `block_size <= SMALL_SIZE_MAX`, matching static-main bin,
 `reserved >= 16`, `used == reserved`, zero retirement countdown, empty local
@@ -630,8 +647,9 @@ allocation-time claim, reclaim, or requeue for a post-exit route.
 
 The nonfull regular aggregate continues to reject full, singleton, huge,
 unmapped, foreign, malformed, or non-source-derived direct-cache state before
-detach. The separate homogeneous full-medium, full-large, non-direct-small,
-and direct-small aggregates are the only full aggregate exceptions. The direct
+detach. The separate homogeneous full-singleton, full-medium, full-large,
+non-direct-small, and direct-small aggregates are the only full aggregate
+exceptions. The direct
 aggregate requires two or more same-bin full arena small pages, its exact
 rounded direct-cache range to name the current queue head, every other direct
 slot and queue empty, and `reserved >= 16`; each removal advances the range

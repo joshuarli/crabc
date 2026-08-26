@@ -241,6 +241,23 @@ before that terminal release. They provide no reclaim, requeue, allocation-time
 adoption, concurrent client-free routing, or another full-regular owner-exit
 shape.
 
+`MainHeapThreadProcessPageExitDrain::abandon_full_singleton_pages_to_process_route`
+is a separately typed bounded aggregate route for two or more full arena
+`PageKind::Singleton` members in `BIN_FULL`. Complete preflight requires every
+direct entry and every other queue empty, one rounded singleton block size,
+`reserved == used == 1`, zero retirement countdown, empty local free lists,
+and exact selected-arena spans. It preserves source force -> false collection
+-> full-queue/page-count detach -> unmappable abandonment for every member
+before old-Theap/TLD teardown. The linear route retains only sealed
+arena/size/count facts: every canonical client free re-resolves PageMap
+membership and must take the raw empty failed-reclaim tail. Its terminal order
+is complete PageMap span -> ordinary `pages_main` first-slice bit -> metadata
+-> arena slices, and the final member closes the map route. Sole pages,
+heterogeneous rounded singleton sizes, non-singletons, OS-backed members,
+allocation-time adoption/reclaim/requeue, scanning, and concurrent routing
+remain absent; injected collection failure retains the complete drain after
+preflight rather than partially detaching a member.
+
 Separately,
 `MainHeapThreadProcessPageExitDrain::abandon_full_medium_pages_to_process_route`
 is one bounded aggregate full-page route. It accepts two or more full arena
@@ -280,7 +297,7 @@ mutation. Allocation-time adoption/reclaim/requeue, scanning, remote-force
 nonfull state, and concurrent free routing remain absent.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_non_direct_small_pages_to_process_route`
-is a third, separately typed bounded aggregate full-page route. It accepts two
+is a fourth, separately typed bounded aggregate full-page route. It accepts two
 or more full arena `PageKind::Small` members only in one ordinary source bin,
 with the same rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and
 static-main bin, every direct slot and every other queue empty, `reserved > 1`,
@@ -303,7 +320,7 @@ semantics outside its own route, remote-force nonfull state, and concurrent
 free routing remain absent.
 
 `MainHeapThreadProcessPageExitDrain::abandon_full_direct_small_pages_to_process_route`
-is a fourth, separately typed bounded aggregate full-page route. It accepts two
+is a fifth, separately typed bounded aggregate full-page route. It accepts two
 or more full arena `PageKind::Small` members only in one ordinary source bin,
 with the same rounded `block_size <= SMALL_SIZE_MAX` and static-main bin,
 `reserved >= 16`, `used == reserved`, `!page_is_in_full`, a zero retirement
@@ -502,7 +519,7 @@ General producer routing, concurrent/general shared/later-thread page-bearing
 ownership, remaining heterogeneous full/singleton/unmapped/huge owner-exit
 pages and behavior beyond the bounded sole
 full-medium/full-large/full-non-direct-small/full-direct-small routes, the
-homogeneous full-medium/full-large/full-non-direct-small/full-direct-small aggregate routes, sole small-or-medium route (apart
+homogeneous full-singleton/full-medium/full-large/full-non-direct-small/full-direct-small aggregate routes, sole small-or-medium route (apart
 from its exact mapped-medium consuming handoff), and aggregate regular-pages
 registry, terminal reuse, automatic and multiple
 dynamic arenas, complete process options/TLS/shutdown, pthread/TLS teardown
@@ -525,10 +542,11 @@ pairing or unmapped abandonment to `src/arena.c:1304-1424`. The current
 `PageAllocatorEngine::finish_after_all_free_thread_exit` can release the
 process-map mutation lease only after its page count, queues, and direct roots
 are empty; an unfinished lease poisons that map owner. The post-exit
-client-free transfer has ten narrow forms: the sole full-medium route,
+client-free transfer has eleven narrow forms: the sole full-medium route,
 full-large route, full non-direct-small route, full direct-small route,
-homogeneous full-medium, full-large, full-non-direct-small, and full-direct-small aggregate
-routes, sole small-or-medium route, and aggregate regular-pages registry. Each converts the
+homogeneous full-singleton, full-medium, full-large, full-non-direct-small,
+and full-direct-small aggregate routes, sole small-or-medium route, and
+aggregate regular-pages registry. Each converts the
 long mutation lease into a short locked free owner, retains stable
 span/arena/Heap facts rather than the old Theap/TLD, and proves bitmap/count
 pairing through actual teardown and sequential later frees. The sole mapped
@@ -603,7 +621,10 @@ final-free/reject-before-detach regressions, the sole-medium
 mapped-bit/count/final-free/reject-before-detach regressions, the post-exit
 full-medium and full-large routes' unmapped mostly-used thresholds and later
 mapped tails (including the full-large route's 64-slice terminal release), the
-homogeneous full-medium aggregate's independent per-member unmapped-to-mapped
+homogeneous full-singleton aggregate's same-size arena-only preflight,
+one-member-at-a-time terminal release, sole and mixed-size full-page refusal,
+and collection-failure retention; the homogeneous full-medium aggregate's
+independent per-member unmapped-to-mapped
 thresholds, one-member-at-a-time terminal release, and sole-full-page
 preflight refusal; the homogeneous full-large aggregate's independent
 per-member unmapped-to-mapped thresholds, one-member-at-a-time complete
@@ -659,17 +680,17 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current `./scripts/dev.sh test -p
-crabc-mimalloc` package run passes all 496 tests. `./scripts/dev.sh test -p crabc-mimalloc
+crabc-mimalloc` package run passes all 500 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 108 items and 112
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 109 items and 113
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
+full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
 The frozen-profile direct-small no-immediate source family is now exhaustive:

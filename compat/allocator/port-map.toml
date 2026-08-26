@@ -1014,6 +1014,21 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/theap.c"
+name = "later-main-homogeneous-full-singleton-aggregate-post-exit-route"
+source_region = "MI_ABANDON full-queue traversal from src/theap.c:97-115,123-152; force/false collection, _mi_page_abandon, and full-queue detach from src/page.c:214-243,291-303,414-518; full-queue mutation from src/page-queue.c:252-274; unmappable singleton abandonment and terminal arena release from src/arena.c:1304-1380; failed-reclaim empty-result selection in src/free.c:372-418,479-515; and _mi_thread_done root order from src/init.c:377-421,448-481"
+rust_module = "crabc_mimalloc::main_heap_page, crabc_mimalloc::single_thread, crabc_mimalloc::abandoned, crabc_mimalloc::arena, crabc_mimalloc::process_page_map, and crabc_mimalloc::types"
+rust_item = "MainHeapThreadProcessPageExitDrain::abandon_full_singleton_pages_to_process_route, MainHeapThreadProcessPageExitFullSingletonPagesRoute::remote_free_after_thread_exit, ThreadExitFullSingletonPagesPostExitDetach/ThreadExitFullSingletonPagesPostExitParts, PageAllocatorEngine::abandon_full_singleton_pages_to_process_route, abandoned::{abandon_unmappable_after_collect,free_unmappable_after_failed_reclaim}, and ProcessPageMapPostExitAccess"
+intentional_difference = "This is one bounded homogeneous aggregate route for two or more full arena `PageKind::Singleton` members in `BIN_FULL`, not a general full-queue traversal or singleton registry. Complete preflight requires every direct slot and every other queue empty; every member must have one rounded block size, `reserved == used == 1`, zero retirement countdown, an empty local free list, and one exact paired-arena span. It preserves source force then false collection, full-queue removal, page-count decrement, and unmappable abandonment before old-Theap/TLD teardown. The route retains no raw page list or static-main abandoned bitmap/count pair: each sequential canonical client free re-resolves one PageMap member and must take the raw empty failed-reclaim result. A terminal free releases only that member in PageMap -> ordinary `pages_main` first-slice bit -> metadata -> arena slices, and the final member closes the short map route. A sole page, a heterogeneous rounded singleton size, a non-singleton or OS-backed page, allocation-time claim/adoption/reclaim/requeue, scanning, and concurrent free routing remain absent. An injected collection failure retains the source drain after complete preflight rather than partially detaching a member."
+tests = ["crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/process_page_map.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/theap.c"
 name = "later-main-homogeneous-full-medium-aggregate-post-exit-route"
 source_region = "MI_ABANDON full-queue traversal from src/theap.c:89-152; force/false collection, _mi_page_abandon, and full-queue detach from src/page.c:214-302,414-518; full-page unmapped abandonment and later mostly-used reabandon-to-mapped in src/arena.c:1304-1409; failed-reclaim collection/unown selection in src/free.c:372-514; full-queue mutation from src/page-queue.c:204-304; and _mi_thread_done root order from src/init.c:377-421,448-481"
 rust_module = "crabc_mimalloc::main_heap_page, crabc_mimalloc::single_thread, crabc_mimalloc::abandoned, crabc_mimalloc::arena, crabc_mimalloc::process_page_map, and crabc_mimalloc::types"

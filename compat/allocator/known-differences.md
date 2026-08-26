@@ -457,7 +457,19 @@ result may refine it only when it can prove retained ownership.
   `pages_abandoned[bin]` bit/count pair, and later frees use the mapped tail
   until the same terminal PageMap -> main bitmap -> metadata -> slice release.
   The full-large route additionally proves its complete 64-slice span before
-  that release. A separate homogeneous full-medium aggregate route accepts two
+  that release. A separate homogeneous full-singleton aggregate route accepts
+  two or more full arena `PageKind::Singleton` members in `BIN_FULL` only when
+  every direct slot and other queue is empty and every member has one rounded
+  block size, `reserved == used == 1`, a zero retirement countdown, an empty
+  local free list, and an exact paired-arena span. It force- then
+  false-collects, detaches, and ordinary-unmapped-abandons every member before
+  old-Theap/TLD teardown. Its route keeps no raw list or static-main
+  bitmap/count pair: each canonical one-block free re-resolves PageMap
+  membership, must take the raw empty failed-reclaim outcome, then releases
+  that member in PageMap -> main bitmap first-bit -> metadata -> arena-slice
+  order. Sole members, heterogeneous rounded singleton sizes, non-singletons,
+  OS members, allocation-time adoption/reclaim/requeue, scanning, and
+  concurrent routing remain absent. A separate homogeneous full-medium aggregate route accepts two
   or more arena `PageKind::Medium` members in `BIN_FULL` only when every direct
   slot and other queue is empty and every member has one rounded block
   size/static-main bin, `reserved > 1`, `used == reserved`, a zero retirement
@@ -471,7 +483,7 @@ result may refine it only when it can prove retained ownership.
   mutation. The separate homogeneous full-large aggregate accepts only the
   corresponding `PageKind::Large` members, with the same complete preflight
   plus every member's exact 64-slice arena/PageMap span; terminal release
-  proves and removes that complete span. A third homogeneous full
+  proves and removes that complete span. A fourth homogeneous full
   non-direct-small aggregate accepts only two or more same-bin ordinary
   `PageKind::Small` arena members with `SMALL_SIZE_MAX < block_size <=
   SMALL_MAX_OBJ_SIZE`, every direct slot empty, zero retirement countdowns,
@@ -479,7 +491,7 @@ result may refine it only when it can prove retained ownership.
   source force -> false collection -> ordinary-bin removal with the proven
   no-op direct-cache update -> page-count detach -> ordinary unmapped
   abandonment, then uses free.c's normal collector to re-resolve, reabandon,
-  and release each one-slice member independently. A fourth homogeneous full
+  and release each one-slice member independently. A fifth homogeneous full
   direct-small aggregate accepts two or more same-bin ordinary `PageKind::Small`
   arena members with `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, full
   state, zero retirement countdowns, empty local free lists, and one
@@ -490,7 +502,7 @@ result may refine it only when it can prove retained ownership.
   abandonment runs for every member. Each later free re-resolves PageMap
   membership, uses the partial collector, and preserves its just-pushed head
   through the source accounting lag before mapped reabandonment or terminal
-  release. All four aggregate routes reject heterogeneous full queues before
+  release. All five aggregate routes reject heterogeneous full queues before
   collection. Stale/mixed direct-cache images, remote-force nonfull state,
   allocation-time adoption/reclaim/requeue, and concurrent routing remain
   absent. Distinct source-specific predecessors accept one sole full
@@ -641,6 +653,17 @@ aggregate-registry adoption remain absent.
   subsequent root/list/TLD
   teardown; `later_thread_exit_mapped_one_block_handoff_rejects_before_detach_when_another_page_is_live`
   proves the medium handoff does not skip another live page;
+  `later_thread_exit_full_singleton_pages_route_releases_each_same_size_page`
+  proves two full same-size arena singleton members detach before old-Theap/TLD
+  teardown, remain PageMap-routable without a static-main abandoned bitmap,
+  and release independently in complete PageMap -> first ordinary bitmap bit ->
+  metadata -> arena-slice order; its siblings
+  `later_thread_exit_full_singleton_pages_route_rejects_a_sole_singleton_before_mutation`,
+  `later_thread_exit_full_singleton_pages_route_rejects_mixed_sizes_before_mutation`,
+  and `later_thread_exit_full_singleton_pages_route_retains_a_collection_failure`
+  prove sole and heterogeneous rounded singleton input reject before mutation
+  and an injected force-collector failure retains the complete source drain;
+  and
   `later_thread_exit_full_medium_route_reabandons_after_mostly_used_frees`
   proves old-Theap/TLD teardown precedes client frees, the full medium page
   stays PageMap-routable but unmapped through its exact mostly-used threshold,

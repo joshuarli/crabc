@@ -20,9 +20,10 @@ one-block page, full medium and full large `BIN_FULL` pages plus full
 non-direct-small and direct-small regular-bin pages that begin unmapped and
 reabandon after the source mostly-used boundary, and a nonfull mapped small-or-medium post-exit
 route with exact full-medium, full-large, full-non-direct-small, and full-direct-small
-one-joined-remote-free force-collection predecessors), four bounded
-homogeneous full-page aggregate routes (medium and large `BIN_FULL` members,
-plus non-direct-small and direct-small ordinary-bin members), and one aggregate regular
+one-joined-remote-free force-collection predecessors), five bounded
+homogeneous full-page aggregate routes (arena singleton, medium, and large
+`BIN_FULL` members, plus non-direct-small and direct-small ordinary-bin
+members), and one aggregate regular
 small/medium/large post-exit registry, ordinary
 and binned caller-owned bitmap views, an in-place external-arena substrate,
 the private futex-lock boundary, bounded nonallocating support
@@ -443,6 +444,18 @@ stay linked in `BIN_FULL`; the non-direct-small page stays in its ordinary bin
 with an empty direct-cache image; and the direct-small page clears its exact
 rounded direct-cache range before page-count detach. The large mapped route
 retains its complete 64-slice terminal-release proof.
+A separate later-main full-singleton aggregate route accepts two or more full
+arena `PageKind::Singleton` members in `BIN_FULL` only when every direct slot
+and other queue is empty, all members have one rounded singleton block size,
+`reserved == used == 1`, zero retirement countdown, an empty local free list,
+and an exact paired-arena span. It force- then false-collects, detaches, and
+ordinary-unmapped-abandons every member before old-Theap/TLD teardown. Its
+linear client-free route keeps no raw list or static-main abandoned bitmap:
+each final canonical singleton free re-resolves its PageMap member, takes the
+raw empty failed-reclaim result, then releases that member in PageMap ->
+`pages_main` first-bit -> metadata -> arena-slice order. Sole members,
+heterogeneous singleton sizes, non-singletons, OS members, adoption,
+reclaim/requeue, scanning, and concurrent routing remain absent.
 A separate later-main full-medium aggregate route accepts two or more full
 arena members in `BIN_FULL` only when they share one rounded block size/static-main
 bin and every direct slot and other queue is empty. It force- then
@@ -462,7 +475,7 @@ raw list, independently cross the source unmapped-to-mapped threshold, and
 release one complete large span at a time. Sole pages and mixed medium/large
 full queues reject before mutation; the route has no adoption, reclaim,
 requeue, scanning, or concurrent routing.
-A third, separately typed full non-direct-small aggregate route accepts two or
+A fourth, separately typed full non-direct-small aggregate route accepts two or
 more arena `PageKind::Small` members only in one ordinary source bin with the
 same rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, static-main
 bin, full state, zero-retirement countdown, empty local free list, and exact
@@ -475,7 +488,7 @@ than retaining a raw list, independently cross each member's mostly-used
 boundary, and release one one-slice member at a time. Sole pages, direct-small
 geometry/cache images, mixed bins/classes, allocation-time adoption, reclaim,
 requeue, scanning, and concurrent routing remain absent.
-A fourth, separately typed full direct-small aggregate route accepts two or
+A fifth, separately typed full direct-small aggregate route accepts two or
 more arena `PageKind::Small` members only in one ordinary source bin with the
 same rounded `block_size <= SMALL_SIZE_MAX`, static-main bin, full state,
 `reserved >= 16`, zero-retirement countdown, empty local free list, and exact
