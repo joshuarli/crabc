@@ -843,19 +843,25 @@ which proves the mapped endpoint cannot reclaim or requeue a still-live page,
 the source-order process-main coordinator regressions in `process_init::tests`,
 and the static-Heap/ticket-zero selector regressions in `main_theap::tests` and
 `subproc::tests` all pass. The current pinned Linux/AArch64 container
-`cargo test -p crabc-mimalloc --lib` run passes all 530 tests. `./scripts/dev.sh test -p crabc-mimalloc
+`cargo test -p crabc-mimalloc --lib` run passes all 536 tests. `./scripts/dev.sh test -p crabc-mimalloc
 --lib --features loom
 remote_free::loom_tests -- --test-threads=1` passes the five Loom remote-head
 schedules; `./scripts/dev.sh structure`, the 39 allocator-runner unit tests,
 and `./scripts/dev.sh allocator --quick` also pass (report:
 `compat/reports/allocator/latest.json`). The current explicit
 `compat/allocator/run.py --check` passes after a reviewed
-`compat/allocator/ratchet-v3.5.0.json` snapshot with 116 items and 120
+`compat/allocator/ratchet-v3.5.0.json` snapshot with 117 items and 121
 implemented/unit-verified statuses. Resume with a fresh source/lifecycle review
 before broadening the newly proven post-TLS arena/OS-singleton or
-dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small or mapped-two-block-medium cases, the later-main
+dynamic-full-singleton-homogeneous-aggregate/dynamic-full-os-singleton-homogeneous-aggregate/dynamic-full-medium-homogeneous-aggregate/dynamic-full-large-homogeneous-aggregate/dynamic-full-non-direct-small-homogeneous-aggregate/dynamic-full-direct-small-homogeneous-aggregate/full-singleton/full-singleton-homogeneous-aggregate/full-medium/full-medium-homogeneous-aggregate/full-large/full-large-homogeneous-aggregate/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-homogeneous-aggregate/full-direct-small/full-direct-small-homogeneous-aggregate/full-medium-one-remote-mapped/full-large/full-large-one-remote-mapped/full-non-direct-small/full-non-direct-small-one-remote-mapped/full-direct-small-one-remote-mapped or mapped-one-block-medium/large/non-direct-small/direct-small or mapped-two-block-medium/non-direct-small cases, the later-main
 all-free scan/eight sole-page handoffs/two aggregate registries, or
 either bounded process page owner.
+The two-block dynamic normal classes are deliberately separate: medium and
+one-slice non-direct-small pages each prove force -> false collection ->
+ordinary detach -> mapped identity/bit/count/unown, then exactly one
+`UnownedMapped` first free and one `Empty` final free. Neither class admits
+direct-small's cache-range collector, a third client free, a second source
+member, or general post-TLS traversal.
 The frozen-profile direct-small no-immediate source family is now exhaustive:
 after force/false collection, every valid nonfull page has either a fully
 committed scalar extension, a prefix-covered extension, or a positive

@@ -799,13 +799,20 @@ protocol remains
 otherwise unintegrated: regular/nonempty pages, general producer routing,
 terminal reuse, actual process/thread lifecycle hooks, full teardown traversal,
 and reusable abandoned-page lifetime remain absent.
+The bounded two-block dynamic owner-exit evidence is likewise split by source
+class: medium and one-slice non-direct-small each admit only a sole nonfull
+arena page with `reserved > 2`, `used == 2`, an empty direct image, and exactly
+two sequential canonical frees. The first retains the dynamic mapped
+bit/count through `UnownedMapped`; the final `Empty` free alone releases the
+page. Direct-small's cache-range collector, extra live blocks/pages, reclaim,
+adoption, requeue, scans, producers, and concurrent traversal remain open.
 Process state, general allocator TLS lifecycle, full/singleton/unmapped/huge
 later-thread owner exit beyond the bounded sole
 full-medium/full-large/full-non-direct-small/full-direct-small routes, five
 homogeneous full-page aggregates, sole small-or-medium route, and regular-pages
 aggregate, allocation-time
-claim/reclaim/requeue after later-thread exit beyond the exact sole mapped
-medium handoff, general dynamic heap/Theap
+claim/reclaim/requeue after later-thread exit beyond the exact mapped one- and
+two-block handoffs, general dynamic heap/Theap
 attachment and remote-free routing, complete concurrency modeling and stress,
 libc integration, the remaining upstream suites, and performance promotion
 gates remain open.

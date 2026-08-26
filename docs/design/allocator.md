@@ -1028,6 +1028,22 @@ slices. It cannot reclaim, adopt, requeue, scan, retain a general multi-free
 route, or cover another page, source class, producer, concurrent free, or
 owner-exit traversal.
 
+`DynamicThreadExitDrain::abandon_mapped_two_block_non_direct_small` is a
+separate post-TLS dynamic handoff, not a widening of the medium token. It
+admits only one sole nonfull one-slice `MemoryKind::Arena` `PageKind::Small`
+page with `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 2`,
+`used == 2`, zero retirement countdown, one regular queue member, and an empty
+direct-cache image. It preserves source force -> false collection -> ordinary
+queue removal -> page-count decrement -> non-direct no-op cache update ->
+dynamic identity/bit/count/unown. Its private first/final-free state requires
+the first exact canonical free to return `UnownedMapped` while retaining the
+dynamic bit/count and the final free alone to return `Empty`, clear that pair,
+and release the PageMap -> dynamic ordinary bit -> metadata -> one arena slice.
+Direct-small's rounded cache-range collector, medium/large geometry, one or
+three live blocks, another source member, reclaim/adoption/requeue/scans,
+producers, concurrent routing, and general owner-exit traversal remain out of
+scope.
+
 On the first fresh dynamic arena page, that same session lazily creates one
 private `DynamicArenaPagesOwner`. Before allocating it proves that the
 registry-published arena has a non-null `Arena::subprocess` equal to the
