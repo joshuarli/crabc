@@ -23863,6 +23863,27 @@ impl<'attach, 'heap, 'arena, 'map>
         unsafe { self.engine.page_for_block(block) }
     }
 
+    /// Test-only PageMap witness for an exact former arena span. The drain
+    /// still owns the map lifecycle, so probing these address keys does not
+    /// dereference released page metadata.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_map_range_is_clear(&self, slice_start: *mut u8, size: usize) -> bool {
+        if slice_start.is_null() || size == 0 || size % ARENA_SLICE_SIZE != 0 {
+            return false;
+        }
+        (0..size / ARENA_SLICE_SIZE).all(|index| {
+            // SAFETY: this test-only drain remains the sole PageMap lifecycle
+            // owner. The former span's addresses are lookup keys only.
+            unsafe {
+                self.engine
+                    .page_map
+                    .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+            }
+            .is_null()
+        })
+    }
+
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_page_map_entry(&self, address: *mut u8) -> *mut Page {
@@ -24737,6 +24758,50 @@ impl<'attach, 'heap, 'arena, 'map>
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullLargePagesRoute<'attach, 'heap, 'arena, 'map>
 {
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_map_span(
+        &self,
+        block: NonNull<u8>,
+    ) -> Option<(usize, bool, bool)> {
+        let page = NonNull::new(unsafe { self.test_page_for_block(block) })?;
+        let ReleaseSpan::Arena {
+            slice_start, size, ..
+        } = self.drain.engine.release_span(page.as_ptr())?
+        else {
+            return None;
+        };
+        let total_slices = size / ARENA_SLICE_SIZE;
+        let map_size = arena_page_map_size(page, slice_start, size)?;
+        let mapped_slices = map_size / ARENA_SLICE_SIZE;
+        let registered = (0..mapped_slices).all(|index| unsafe {
+            self.drain
+                .engine
+                .page_map
+                .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+        } == page.as_ptr());
+        let tail_unregistered = (mapped_slices..total_slices).all(|index| unsafe {
+            self.drain
+                .engine
+                .page_map
+                .checked_lookup(slice_start.wrapping_add(index * ARENA_SLICE_SIZE))
+        }
+        .is_null());
+        Some((mapped_slices, registered, tail_unregistered))
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_arena_span(&self, block: NonNull<u8>) -> Option<(*mut u8, usize)> {
+        let page = NonNull::new(unsafe { self.test_page_for_block(block) })?;
+        match self.drain.engine.release_span(page.as_ptr()) {
+            Some(ReleaseSpan::Arena {
+                slice_start, size, ..
+            }) => Some((slice_start, size)),
+            Some(ReleaseSpan::Os(_)) | None => None,
+        }
+    }
+
     /// Routes one exact client free through the bounded post-TLS dynamic full
     /// large aggregate.
     ///
@@ -24951,6 +25016,12 @@ impl<'attach, 'heap, 'arena, 'map>
         // SAFETY: the route retains the same exclusive dynamic PageMap owner
         // as its client-free path; this witness only reads one map entry.
         unsafe { self.drain.test_page_for_block(block) }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_page_map_range_is_clear(&self, slice_start: *mut u8, size: usize) -> bool {
+        self.drain.test_page_map_range_is_clear(slice_start, size)
     }
 
     #[cfg(test)]

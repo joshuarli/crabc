@@ -1,3 +1,4 @@
+    #[test]
 // Copyright (c) 2018-2026, Microsoft Research, Daan Leijen
 // This is free software; you can redistribute it and/or modify it under the
 // terms of the MIT license. A copy of the license can be found in the file
@@ -4688,6 +4689,485 @@ mod tests {
             }
             DynamicPageFixtureOutcome::TearDown
         });
+    }
+
+    #[test]
+    fn x86_64_dynamic_full_large_homogeneous_aggregate_trace_matches_pinned_c() {
+        std::println!("CRABC_MI_DYNAMIC_FULL_LARGE_HOMOGENEOUS_AGGREGATE_TRACE_BEGIN");
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = MEDIUM_MAX_OBJ_SIZE + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its first dynamic large page");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first large page remains PageMap-published");
+            let capacity = unsafe { first_page.as_ref().reserved() as usize };
+            let mut first_blocks = Vec::with_capacity(capacity);
+            first_blocks.push(first);
+            while first_blocks.len() < capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills the first dynamic large page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
+                first_blocks.push(block);
+            }
+            let second = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its second dynamic large page");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second large page remains PageMap-published");
+            let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
+            let mut second_blocks = Vec::with_capacity(second_capacity);
+            second_blocks.push(second);
+            while second_blocks.len() < second_capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills the second dynamic large page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
+                second_blocks.push(block);
+            }
+            let first_ref = unsafe { first_page.as_ref() };
+            let second_ref = unsafe { second_page.as_ref() };
+            let first_memory = first_ref.memid();
+            let second_memory = second_ref.memid();
+            let bin = crate::size_class::bin(first_ref.block_size())
+                .expect("the homogeneous large pages retain one source bin");
+            let arena_backed = first_memory.kind() == MemoryKind::Arena
+                && second_memory.kind() == MemoryKind::Arena;
+            let large_page = crate::size_class::page_kind_for_block_size(first_ref.block_size())
+                == Some(crate::types::PageKind::Large)
+                && crate::size_class::page_kind_for_block_size(second_ref.block_size())
+                    == Some(crate::types::PageKind::Large);
+            let same_size = first_ref.block_size() == second_ref.block_size();
+            let full_before_thread_done = unsafe {
+                first_page.as_ref().used() as usize == capacity
+                    && second_page.as_ref().used() as usize == second_capacity
+            };
+            let full_queue_count_before_thread_done = allocator
+                .queue_count(BIN_FULL)
+                .unwrap_or(usize::MAX);
+            let full_queue_before_thread_done = full_queue_count_before_thread_done == 2
+                && unsafe {
+                    crate::types::page_queue::page_is_in_full(first_page.as_ref())
+                        && crate::types::page_queue::page_is_in_full(second_page.as_ref())
+                };
+            // SAFETY: `allocator` retains the current dynamic Theap while the
+            // two full queue members remain live, so this observes the source
+            // total separately from the full-queue traversal above.
+            let page_count = unsafe { (&*allocator.theap_identity()).page_count() };
+            let direct_cache_empty_before_thread_done = (0..PAGES_DIRECT).all(|index| {
+                allocator.direct_page(index) == Some(crate::types::EMPTY_PAGE.as_ptr())
+            });
+            let no_remote_free_before_thread_done = unsafe {
+                first_page.as_ref().remote_free_test_head() & !1 == 0
+                    && second_page.as_ref().remote_free_test_head() & !1 == 0
+            };
+            let request_size = request;
+            let block_size = first_ref.block_size() as usize;
+            let reserved = first_ref.reserved() as usize;
+            let slice_count = first_memory
+                .arena_memory()
+                .map(|memory| memory.slice_count as usize)
+                .unwrap_or(usize::MAX);
+            assert!(arena_backed && large_page && same_size);
+            assert!(full_before_thread_done && full_queue_before_thread_done);
+            assert!(direct_cache_empty_before_thread_done && no_remote_free_before_thread_done);
+            assert_eq!(request_size, 86_706);
+            assert_eq!(block_size, 98_304);
+            assert_eq!(capacity, 42);
+            assert_eq!(reserved, capacity);
+            assert_eq!(second_capacity, 42);
+            assert_eq!(slice_count, 64);
+            assert_eq!(second_memory.arena_memory().map(|memory| memory.slice_count as usize), Some(slice_count));
+            assert_eq!(allocator.queue_count(bin), Some(0));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            let mut route = match unsafe { drain.abandon_full_large_pages() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitFullLargePagesAbandonFailure::Rejected { drain, error })
+                | Err(DynamicThreadExitFullLargePagesAbandonFailure::RetainedDrain {
+                    drain,
+                    error,
+                }) => {
+                    core::mem::forget(drain);
+                    panic!("homogeneous full-large pages enter the typed aggregate route: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_page_count(), 0);
+            let (first_span_start, first_span_size) = route
+                .test_arena_span(first)
+                .expect("the traced first large member retains its arena release span");
+            let (second_span_start, second_span_size) = route
+                .test_arena_span(second)
+                .expect("the traced second large member retains its arena release span");
+            assert_eq!(first_span_size, 64 * ARENA_SLICE_SIZE);
+            assert_eq!(second_span_size, 64 * ARENA_SLICE_SIZE);
+            let dynamic_abandoned_count_after_thread_done =
+                route.test_dynamic_abandoned_count(bin).unwrap_or(usize::MAX);
+            assert_eq!(dynamic_abandoned_count_after_thread_done, 0);
+            let unmapped_frees = capacity / 8;
+            let mut initial_pages_valid = true;
+            for (index, block, page, memory) in [
+                (0usize, first, first_page, first_memory),
+                (1usize, second, second_page, second_memory),
+            ] {
+                let page_ref = unsafe { page.as_ref() };
+                let (page_map_slice_count, page_map_registered, page_map_tail_unregistered) =
+                    route
+                        .test_page_map_span(block)
+                        .expect("the large route retains its exact PageMap span");
+                let dynamic_abandoned_count_after_thread_done =
+                    route.test_dynamic_abandoned_count(bin).unwrap_or(usize::MAX);
+                let dynamic_abandoned_bitmap_clear_after_thread_done =
+                    route.test_dynamic_abandoned_page_is_clear(bin, memory);
+                let abandoned_identity_after_thread_done = page_ref.abandoned_test_thread_id();
+                let unmapped_after_thread_done =
+                    abandoned_identity_after_thread_done == THREAD_ID_ABANDONED
+                    && dynamic_abandoned_bitmap_clear_after_thread_done
+                    && dynamic_abandoned_count_after_thread_done == 0
+                    && page_map_registered
+                    && page_map_tail_unregistered;
+                let abandoned_after_thread_done = matches!(
+                    abandoned_identity_after_thread_done,
+                    THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+                );
+                let arena_page_bitmap_set_after_thread_done =
+                    !route.test_dynamic_arena_page_is_clear(memory);
+                let full_queue_detached_after_thread_done =
+                    !crate::types::page_queue::page_is_in_full(page_ref)
+                        && page_ref.is_queue_detached()
+                        && page_ref.remote_free_test_head() & 1 == 0
+                        && page_ref.remote_free_test_head() & !1 == 0
+                        && abandoned_after_thread_done;
+                initial_pages_valid &= unmapped_after_thread_done
+                    && abandoned_after_thread_done
+                    && page_map_registered
+                    && page_map_slice_count == 63
+                    && page_map_tail_unregistered
+                    && arena_page_bitmap_set_after_thread_done
+                    && full_queue_detached_after_thread_done
+                    && page_ref.used() as usize == capacity
+                    && unmapped_frees == 5;
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.unmapped_after_thread_done={}", unmapped_after_thread_done as u8);
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.abandoned_after_thread_done={}", abandoned_after_thread_done as u8);
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.page_map_registered_after_thread_done={}", page_map_registered as u8);
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.page_map_slice_count_after_thread_done={page_map_slice_count}");
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.page_map_tail_unregistered_after_thread_done={}", page_map_tail_unregistered as u8);
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.slice_count_after_thread_done={slice_count}");
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.arena_page_bitmap_set_after_thread_done={}", arena_page_bitmap_set_after_thread_done as u8);
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.full_queue_detached_after_thread_done={}", full_queue_detached_after_thread_done as u8);
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.used_after_thread_done={}", page_ref.used());
+                std::println!("trace.dynamic_full_large_homogeneous_aggregate.page{index}.unmapped_prefix_free_count={unmapped_frees}");
+            }
+
+            assert_eq!(unmapped_frees, 5);
+            for block in first_blocks.iter().copied().take(unmapped_frees) {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("the first page remains live through its unmapped prefix"),
+                    Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    }) => {
+                        core::mem::forget(route);
+                        panic!("the first unmapped-prefix free is rejected: {error:?}");
+                    }
+                };
+            }
+            let first_used_after_unmapped_prefix = unsafe { first_page.as_ref().used() as usize };
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.used_after_unmapped_prefix={first_used_after_unmapped_prefix}");
+            let first_unmapped_after_unmapped_prefix =
+                (unsafe { route.test_page_for_block(first) } == first_page.as_ptr())
+                    && route.test_dynamic_abandoned_page_is_clear(bin, first_memory)
+                    && route.test_dynamic_abandoned_count(bin) == Some(0)
+                    && unsafe { first_page.as_ref().remote_free_test_head() == 0 };
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.unmapped_after_unmapped_prefix={}", first_unmapped_after_unmapped_prefix as u8);
+
+            route = match unsafe { route.remote_free_after_thread_exit(first_blocks[unmapped_frees]) } {
+                Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
+                Ok(_) => panic!("the first reabandon boundary leaves live blocks"),
+                Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal {
+                    route,
+                    error,
+                }) => {
+                    core::mem::forget(route);
+                    panic!("the first large reabandon boundary fails: {error:?}");
+                }
+            };
+            let first_mapped_after_reabandon_boundary =
+                route.test_dynamic_abandoned_page_is_set(bin, first_memory)
+                    && route.test_dynamic_abandoned_count(bin) == Some(1)
+                    && unsafe { first_page.as_ref().remote_free_test_head() == 0 };
+            let first_dynamic_abandoned_bitmap_set_after_reabandon_boundary =
+                route.test_dynamic_abandoned_page_is_set(bin, first_memory);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.mapped_after_reabandon_boundary={}", first_mapped_after_reabandon_boundary as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.dynamic_abandoned_bitmap_set_after_reabandon_boundary={}", first_dynamic_abandoned_bitmap_set_after_reabandon_boundary as u8);
+            let first_used_after_reabandon_boundary = unsafe { first_page.as_ref().used() as usize };
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.used_after_reabandon_boundary={first_used_after_reabandon_boundary}");
+            for block in first_blocks.iter().copied().skip(unmapped_frees + 1).take(capacity - unmapped_frees - 2) {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("a nonfinal first-page free releases too early"),
+                    Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected { route, error })
+                    | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal { route, error }) => {
+                        core::mem::forget(route);
+                        panic!("a mapped first-page free fails: {error:?}");
+                    }
+                };
+            }
+            let first_last = *first_blocks.last().unwrap();
+            let first_terminal_released_only;
+            route = match unsafe { route.remote_free_after_thread_exit(first_last) } {
+                Ok(DynamicThreadExitFullLargePagesFreeResult::ReleasedPage(route)) => {
+                    first_terminal_released_only = true;
+                    route
+                }
+                Ok(_) => panic!("the first terminal free releases exactly one member"),
+                Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected { route, error })
+                | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal { route, error }) => {
+                    core::mem::forget(route);
+                    panic!("the first terminal free fails: {error:?}");
+                }
+            };
+            let first_arena_slice_released_after_terminal_free = first_memory
+                .arena_memory()
+                .and_then(|arena_memory| unsafe { ArenaView::from_ptr(arena_memory.arena) })
+                .and_then(|arena| unsafe { arena.slices_free() })
+                .and_then(|slices| {
+                    slices.is_set_range(
+                        first_memory.arena_memory()?.slice_index as usize,
+                        slice_count,
+                    )
+                }) == Some(true);
+            let second_page_retained_after_first_terminal =
+                unsafe { route.test_page_for_block(second) } == second_page.as_ptr();
+            let dynamic_abandoned_count_after_first_terminal =
+                route.test_dynamic_abandoned_count(bin).unwrap_or(usize::MAX);
+            let first_page_map_unregistered_after_terminal_free =
+                route.test_page_map_range_is_clear(first_span_start, first_span_size);
+            let first_arena_page_bitmap_clear_after_terminal_free =
+                route.test_dynamic_arena_page_is_clear(first_memory);
+            let first_dynamic_abandoned_bitmap_clear_after_terminal_free =
+                route.test_dynamic_abandoned_page_is_clear(bin, first_memory);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.first_terminal_released_only={}", first_terminal_released_only as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.second_page_retained_after_first_terminal={}", second_page_retained_after_first_terminal as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.dynamic_abandoned_count_after_first_terminal={dynamic_abandoned_count_after_first_terminal}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.page_map_unregistered_after_terminal_free={}", first_page_map_unregistered_after_terminal_free as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.arena_page_bitmap_clear_after_terminal_free={}", first_arena_page_bitmap_clear_after_terminal_free as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.arena_slice_released_after_terminal_free={}", first_arena_slice_released_after_terminal_free as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page0.dynamic_abandoned_bitmap_clear_after_terminal_free={}", first_dynamic_abandoned_bitmap_clear_after_terminal_free as u8);
+
+            let page1_map_span_after_first_terminal = route
+                .test_page_map_span(second)
+                .expect("the retained second member keeps its PageMap span after first release");
+            let page1_arena_page_bitmap_set_after_first_terminal =
+                !route.test_dynamic_arena_page_is_clear(second_memory);
+            let page1_abandoned_identity_after_first_terminal =
+                unsafe { second_page.as_ref().abandoned_test_thread_id() };
+            let page1_unmapped_after_first_terminal =
+                page1_abandoned_identity_after_first_terminal == THREAD_ID_ABANDONED
+                    && route.test_dynamic_abandoned_page_is_clear(bin, second_memory)
+                    && dynamic_abandoned_count_after_first_terminal == 0
+                    && unsafe { second_page.as_ref().remote_free_test_head() == 0 }
+                    && page1_map_span_after_first_terminal.1
+                    && page1_map_span_after_first_terminal.2;
+            let page1_abandoned_after_first_terminal = matches!(
+                page1_abandoned_identity_after_first_terminal,
+                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+            );
+            let page1_dynamic_abandoned_bitmap_clear_after_first_terminal =
+                route.test_dynamic_abandoned_page_is_clear(bin, second_memory);
+            let page1_used_after_first_terminal = unsafe { second_page.as_ref().used() as usize };
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.page_map_registered_after_first_terminal={}", page1_map_span_after_first_terminal.1 as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.page_map_slice_count_after_first_terminal={}", page1_map_span_after_first_terminal.0);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.page_map_tail_unregistered_after_first_terminal={}", page1_map_span_after_first_terminal.2 as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.arena_page_bitmap_set_after_first_terminal={}", page1_arena_page_bitmap_set_after_first_terminal as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.unmapped_after_first_terminal={}", page1_unmapped_after_first_terminal as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.abandoned_after_first_terminal={}", page1_abandoned_after_first_terminal as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.dynamic_abandoned_bitmap_clear_after_first_terminal={}", page1_dynamic_abandoned_bitmap_clear_after_first_terminal as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.used_after_first_terminal={page1_used_after_first_terminal}");
+
+            for block in second_blocks.iter().copied().take(unmapped_frees) {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("the second page remains live through its unmapped prefix"),
+                    Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected { route, error })
+                    | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal { route, error }) => {
+                        core::mem::forget(route);
+                        panic!("the second unmapped-prefix free is rejected: {error:?}");
+                    }
+                };
+            }
+            let second_used_after_unmapped_prefix = unsafe { second_page.as_ref().used() as usize };
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.used_after_unmapped_prefix={second_used_after_unmapped_prefix}");
+            let second_unmapped_after_unmapped_prefix =
+                (unsafe { route.test_page_for_block(second) } == second_page.as_ptr())
+                    && route.test_dynamic_abandoned_page_is_clear(bin, second_memory)
+                    && route.test_dynamic_abandoned_count(bin) == Some(0)
+                    && unsafe { second_page.as_ref().remote_free_test_head() == 0 };
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.unmapped_after_unmapped_prefix={}", second_unmapped_after_unmapped_prefix as u8);
+            route = match unsafe { route.remote_free_after_thread_exit(second_blocks[unmapped_frees]) } {
+                Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
+                Ok(_) => panic!("the second reabandon boundary leaves live blocks"),
+                Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected { route, error })
+                | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal { route, error }) => {
+                    core::mem::forget(route);
+                    panic!("the second large reabandon boundary fails: {error:?}");
+                }
+            };
+            let second_mapped_after_reabandon_boundary =
+                route.test_dynamic_abandoned_page_is_set(bin, second_memory)
+                    && route.test_dynamic_abandoned_count(bin) == Some(1)
+                    && unsafe { second_page.as_ref().remote_free_test_head() == 0 };
+            let dynamic_abandoned_count_after_second_boundary =
+                route.test_dynamic_abandoned_count(bin).unwrap_or(usize::MAX);
+            let second_dynamic_abandoned_bitmap_set_after_reabandon_boundary =
+                route.test_dynamic_abandoned_page_is_set(bin, second_memory);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.mapped_after_reabandon_boundary={}", second_mapped_after_reabandon_boundary as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.dynamic_abandoned_bitmap_set_after_reabandon_boundary={}", second_dynamic_abandoned_bitmap_set_after_reabandon_boundary as u8);
+            let second_used_after_reabandon_boundary = unsafe { second_page.as_ref().used() as usize };
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.used_after_reabandon_boundary={second_used_after_reabandon_boundary}");
+            for block in second_blocks.iter().copied().skip(unmapped_frees + 1).take(second_capacity - unmapped_frees - 2) {
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("a nonfinal second-page free releases too early"),
+                    Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected { route, error })
+                    | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal { route, error }) => {
+                        core::mem::forget(route);
+                        panic!("a mapped second-page free fails: {error:?}");
+                    }
+                };
+            }
+            let second_last = *second_blocks.last().unwrap();
+            let drain = match unsafe { route.remote_free_after_thread_exit(second_last) } {
+                Ok(DynamicThreadExitFullLargePagesFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullLargePagesFreeResult::StillLive(route))
+                | Ok(DynamicThreadExitFullLargePagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final large free releases the complete aggregate route");
+                }
+                Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Rejected { route, error })
+                | Err(DynamicThreadExitFullLargePagesRemoteFreeFailure::Terminal { route, error }) => {
+                    core::mem::forget(route);
+                    panic!("the final large free fails: {error:?}");
+                }
+            };
+            let second_arena_slice_released_after_terminal_free = second_memory
+                .arena_memory()
+                .and_then(|arena_memory| unsafe { ArenaView::from_ptr(arena_memory.arena) })
+                .and_then(|arena| unsafe { arena.slices_free() })
+                .and_then(|slices| {
+                    slices.is_set_range(
+                        second_memory.arena_memory()?.slice_index as usize,
+                        slice_count,
+                    )
+                }) == Some(true);
+            let dynamic_abandoned_count_after_final_terminal =
+                drain.test_dynamic_abandoned_count(bin).unwrap_or(usize::MAX);
+            let second_page_map_unregistered_after_terminal_free =
+                drain.test_page_map_range_is_clear(second_span_start, second_span_size);
+            let second_arena_page_bitmap_clear_after_terminal_free =
+                drain.test_dynamic_arena_page_is_clear(second_memory);
+            let second_dynamic_abandoned_bitmap_clear_after_terminal_free =
+                drain.test_dynamic_abandoned_page_is_clear(bin, second_memory);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.dynamic_abandoned_count_after_second_boundary={dynamic_abandoned_count_after_second_boundary}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.dynamic_abandoned_count_after_final_terminal={dynamic_abandoned_count_after_final_terminal}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.page_map_unregistered_after_terminal_free={}", second_page_map_unregistered_after_terminal_free as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.arena_page_bitmap_clear_after_terminal_free={}", second_arena_page_bitmap_clear_after_terminal_free as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.arena_slice_released_after_terminal_free={}", second_arena_slice_released_after_terminal_free as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page1.dynamic_abandoned_bitmap_clear_after_terminal_free={}", second_dynamic_abandoned_bitmap_clear_after_terminal_free as u8);
+            let route_empty = drain.test_page_count() == 0 && drain.finish();
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.route_empty_after_final_terminal={}", route_empty as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.arena_backed={}", arena_backed as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.large_page={}", large_page as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.page_count={page_count}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.same_size={}", same_size as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.full_before_thread_done={}", full_before_thread_done as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.full_queue_count_before_thread_done={full_queue_count_before_thread_done}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.direct_cache_empty_before_thread_done={}", direct_cache_empty_before_thread_done as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.no_remote_free_before_thread_done={}", no_remote_free_before_thread_done as u8);
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.request_size={request_size}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.block_size={block_size}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.capacity={capacity}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.reserved={reserved}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.slice_count={slice_count}");
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.dynamic_abandoned_count_after_thread_done={dynamic_abandoned_count_after_thread_done}");
+            let valid = arena_backed
+                && large_page
+                && page_count == 2
+                && same_size
+                && full_before_thread_done
+                && full_queue_count_before_thread_done == 2
+                && direct_cache_empty_before_thread_done
+                && no_remote_free_before_thread_done
+                && request_size == 86_706
+                && block_size == 98_304
+                && capacity == 42
+                && reserved == 42
+                && slice_count == 64
+                && dynamic_abandoned_count_after_thread_done == 0
+                && initial_pages_valid
+                && first_used_after_unmapped_prefix == 37
+                && first_unmapped_after_unmapped_prefix
+                && first_mapped_after_reabandon_boundary
+                && first_dynamic_abandoned_bitmap_set_after_reabandon_boundary
+                && first_used_after_reabandon_boundary == 36
+                && first_terminal_released_only
+                && second_page_retained_after_first_terminal
+                && dynamic_abandoned_count_after_first_terminal == 0
+                && first_page_map_unregistered_after_terminal_free
+                && first_arena_page_bitmap_clear_after_terminal_free
+                && first_arena_slice_released_after_terminal_free
+                && first_dynamic_abandoned_bitmap_clear_after_terminal_free
+                && page1_map_span_after_first_terminal.0 == 63
+                && page1_map_span_after_first_terminal.1
+                && page1_map_span_after_first_terminal.2
+                && page1_arena_page_bitmap_set_after_first_terminal
+                && page1_unmapped_after_first_terminal
+                && page1_abandoned_after_first_terminal
+                && page1_dynamic_abandoned_bitmap_clear_after_first_terminal
+                && page1_used_after_first_terminal == 42
+                && second_used_after_unmapped_prefix == 37
+                && second_unmapped_after_unmapped_prefix
+                && second_mapped_after_reabandon_boundary
+                && second_dynamic_abandoned_bitmap_set_after_reabandon_boundary
+                && second_used_after_reabandon_boundary == 36
+                && dynamic_abandoned_count_after_second_boundary == 1
+                && dynamic_abandoned_count_after_final_terminal == 0
+                && second_page_map_unregistered_after_terminal_free
+                && second_arena_page_bitmap_clear_after_terminal_free
+                && second_arena_slice_released_after_terminal_free
+                && second_dynamic_abandoned_bitmap_clear_after_terminal_free
+                && route_empty;
+            std::println!("trace.dynamic_full_large_homogeneous_aggregate.valid={}", valid as u8);
+            assert!(valid, "the native full-large aggregate trace remains source-shaped");
+            DynamicPageFixtureOutcome::TearDown
+        });
+        std::println!("CRABC_MI_DYNAMIC_FULL_LARGE_HOMOGENEOUS_AGGREGATE_TRACE_END");
     }
 
     #[test]
