@@ -1,18 +1,20 @@
 # Project status
 
-The general Linux/AArch64 little-endian runtime profile is closed. One active,
-narrowly scoped compatibility program is open on two explicit profiles: the
-Linux/AArch64 production-oriented track and the native Linux/x86-64
-little-endian parity/evidence track. The x86-64 track does not reopen public
-`crabc` platform support, x86 libc/loader/`crabc-rs` support, public allocator
-integration, or default-backend promotion. Both tracks are the
-provenance-preserving Rust semantic port of fixed mimalloc v3.5.0 defined by
-[`docs/design/allocator.md`](docs/design/allocator.md) and measured through
-[`compat/allocator/README.md`](compat/allocator/README.md). It does not reopen
-allocator invention, emulation, or a generic portability layer.
-[`COMPATIBILITY.md`](COMPATIBILITY.md)
-remains the generated record of current compatibility evidence and
-measurements; it is not edited by hand.
+The current implementation program is staged native Linux/x86-64 little-endian
+runtime parity, defined by [`x86-64.md`](x86-64.md). It covers `crabc-core`,
+`crabc-libc`, `crabc-ldso`, CRT/sysroot artifacts, and `crabc-rs`, beginning
+with explicit target-specific foundations and native evidence. Public support
+remains Linux/AArch64 little-endian until every x86 promotion gate passes.
+
+Fixed Rust mimalloc work is paused. Its AArch64 and private native x86-64
+evidence remains preserved in [`native-mimalloc.md`](native-mimalloc.md),
+[`docs/design/allocator.md`](docs/design/allocator.md), and
+[`compat/allocator/README.md`](compat/allocator/README.md); the detailed
+allocator checkpoint record below is retained context, not an active backlog.
+The pause does not reopen allocator invention, emulation, or a generic
+portability layer. [`COMPATIBILITY.md`](COMPATIBILITY.md) remains the generated
+record of current compatibility evidence and measurements; it is not edited by
+hand.
 
 The Rust-owned Linux/AArch64 application CRT/sysroot is also complete current
 evidence. `./scripts/dev.sh sysroot` produces two clean reproducible installed

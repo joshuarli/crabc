@@ -9,18 +9,18 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-// Linux/AArch64 is the sole crabc production target. The explicitly named
-// feature admits Linux/x86-64 only while the private allocator differential is
-// being built natively; no public x86 runtime artifact selects this crate.
+#[cfg(test)]
+extern crate std;
+
+// Linux/AArch64 is the current public crabc target. Linux/x86-64 core support
+// is a staged native foundation for the separately documented runtime program;
+// it does not by itself select libc, loader, CRT, or facade artifacts.
 #[cfg(not(all(
     target_os = "linux",
     target_endian = "little",
-    any(
-        target_arch = "aarch64",
-        all(target_arch = "x86_64", feature = "allocator-x86-evidence")
-    )
+    any(target_arch = "aarch64", target_arch = "x86_64")
 )))]
-compile_error!("crabc-core supports Linux/AArch64; Linux/x86-64 requires the private allocator-x86-evidence feature");
+compile_error!("crabc-core supports little-endian Linux/AArch64 and Linux/x86-64 only");
 
 mod error;
 
@@ -28,6 +28,11 @@ pub use error::{Errno, RawFd, Result, AT_FDCWD};
 
 /// Direct, typed access to the calling thread's AArch64 floating-point state.
 #[cfg(target_arch = "aarch64")]
+pub mod fenv;
+/// Direct, typed access to the calling thread's x87 and SSE floating-point
+/// state.
+#[cfg(target_arch = "x86_64")]
+#[path = "fenv_x86_64.rs"]
 pub mod fenv;
 /// Allocation-free character-set conversion shared by the native and C facades.
 pub mod iconv;
@@ -37,7 +42,7 @@ pub mod param;
 pub mod pattern;
 /// Pure byte-string algorithms shared by native text operations.
 pub mod text;
-/// Linux/AArch64 vDSO discovery and typed time dispatch.
+/// Linux vDSO discovery and typed time dispatch for the supported targets.
 mod vdso;
 
 /// Private, versioned wire contracts for process-singleton crabc runtimes.
@@ -52,7 +57,7 @@ pub mod runtime;
 #[cfg(target_arch = "aarch64")]
 #[path = "syscall.rs"]
 mod syscall;
-#[cfg(all(target_arch = "x86_64", feature = "allocator-x86-evidence"))]
+#[cfg(target_arch = "x86_64")]
 #[path = "syscall_x86_64.rs"]
 mod syscall;
 

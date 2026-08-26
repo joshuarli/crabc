@@ -33,16 +33,21 @@ not maximal historical compatibility at any cost.
 
 ## 1. Platform scope is intentionally narrow
 
-For `crabc` itself, target:
+The current public `crabc` support profile targets:
 
 ```text
 Linux AArch64 only
 ```
 
+The user has opened a staged native Linux/x86-64 little-endian runtime program
+defined by [`x86-64.md`](x86-64.md). It authorizes concrete, target-specific
+implementation and native evidence toward parity with the AArch64 profile. It
+does not make x86-64 publicly supported until that document's promotion gates
+pass, and it does not authorize an architecture framework or another target.
+
 Do not work on:
 
 ```text
-x86_64
 RISC-V
 32-bit architectures
 big-endian targets
@@ -59,12 +64,11 @@ Implement the cleanest correct AArch64 design first.
 
 Keep these concepts distinct.
 
-The user has explicitly reopened one allocator-only exception: `crabc-mimalloc`
-may be built and parity-tested on native Linux/x86-64 little-endian against
-the pinned mimalloc C oracle. This is an evidence and compatibility profile for
-the fixed allocator port, not a supported x86 `crabc` platform. It does not
-authorize x86 libc, loader, or `crabc-rs` promotion, x86 public allocator
-integration, AArch64 emulation, or a generic portability layer.
+The existing `crabc-mimalloc` native Linux/x86-64 evidence remains a private
+fixed-allocator profile against the pinned C oracle. It is useful preserved
+evidence but does not itself establish x86 libc, loader, CRT, Rust-facade, or
+public-platform support; those are owned by the staged runtime program above.
+It never authorizes AArch64 emulation or a generic portability layer.
 
 ---
 

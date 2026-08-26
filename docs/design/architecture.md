@@ -3,10 +3,11 @@
 `crabc` has seven runtime-development/evidence layers with deliberately narrow ownership
 boundaries.
 
-1. `crabc-core` owns stateless typed Linux/AArch64 kernel and vDSO operations.
-   Its only native x86-64 primitives are an internal, feature-gated boundary
-   for fixed-mimalloc parity evidence; they do not enable a public x86 runtime,
-   libc, loader, or Rust facade. It has no process-global runtime owner.
+1. `crabc-core` owns stateless typed Linux kernel and vDSO operations. Linux/
+   AArch64 is the current public target; the staged native x86-64 program has
+   a separately evidenced syscall, thread-pointer, and vDSO foundation here.
+   That foundation does not by itself enable x86 libc, loader, CRT, Rust
+   facade, or public-platform support. It has no process-global runtime owner.
 2. `libc` owns the public C ABI: `errno`, `FILE`, pthread and locale state,
    C layouts, compatibility translation, and other libc process state.
 3. `ldso` is the one production dynamic linker. It owns ELF loading,

@@ -128,8 +128,7 @@ pub fn thread_pointer_identity() -> usize {
     thread_pointer
 }
 
-/// Reads the calling thread's Linux/x86-64 `%fs:0` value as an opaque identity
-/// for private allocator differential evidence.
+/// Reads the calling thread's Linux/x86-64 `%fs:0` value as an opaque identity.
 ///
 /// The Linux/musl x86-64 TLS ABI places the thread-control-block self pointer
 /// at this address. It is intentionally distinct from the kernel task ID
@@ -138,7 +137,7 @@ pub fn thread_pointer_identity() -> usize {
 /// assume it is a stable process-wide identifier across thread exit or TLS
 /// runtime transitions. A zero value remains representable during the earliest
 /// runtime setup before a thread pointer is installed.
-#[cfg(all(target_arch = "x86_64", feature = "allocator-x86-evidence"))]
+#[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn thread_pointer_identity() -> usize {
     let thread_pointer: usize;

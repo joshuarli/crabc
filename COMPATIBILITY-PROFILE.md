@@ -7,8 +7,11 @@ Generated measurements live in [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## Platform baseline
 
-- **Operating system and architecture:** Linux on AArch64 little-endian only.
-  No x86_64, RISC-V, 32-bit, big-endian, or non-Linux `crabc` target is active.
+- **Operating system and architecture:** Public `crabc` support remains Linux
+  on AArch64 little-endian only. A staged native Linux/x86-64 little-endian
+  implementation program is active under [`x86-64.md`](x86-64.md), but is not
+  a supported target until its promotion gates pass. RISC-V, 32-bit,
+  big-endian, and non-Linux targets remain inactive.
 - **Kernel MSRV:** Linux **5.10**. Kernel-facing code may use facilities
   available there and must not add pre-5.10 fallbacks. An interface requiring a
   newer kernel documents that fact; only a deliberate central decision raises

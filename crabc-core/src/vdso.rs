@@ -1,4 +1,4 @@
-//! Bounded Linux/AArch64 vDSO discovery for hot clock reads.
+//! Bounded Linux vDSO discovery for hot clock reads on supported 64-bit targets.
 //!
 //! The kernel owns the `AT_SYSINFO_EHDR` mapping for the lifetime of a
 //! process. This module reads that immutable ELF image once, validates the
@@ -25,7 +25,12 @@ const MAX_IMAGE_BYTES: usize = 1 << 20;
 const ELFCLASS64: u8 = 2;
 const ELFDATA2LSB: u8 = 1;
 const ELF_ET_DYN: u16 = 3;
+const ELF_EM_X86_64: u16 = 62;
 const ELF_EM_AARCH64: u16 = 183;
+#[cfg(target_arch = "aarch64")]
+const SUPPORTED_ELF_MACHINE: u16 = ELF_EM_AARCH64;
+#[cfg(target_arch = "x86_64")]
+const SUPPORTED_ELF_MACHINE: u16 = ELF_EM_X86_64;
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const STT_FUNC: u8 = 2;
@@ -57,19 +62,19 @@ struct ProgramHeaderTable {
 /// The returned value is the Linux kernel convention: zero on success or a
 /// negative errno. Absent or malformed metadata is cached as the typed direct
 /// syscall function, so the hot path has one pointer load and one indirect
-/// call. Linux 5.10's AArch64 `__kernel_clock_gettime` performs the exact
-/// kernel syscall for IDs it cannot serve from the vDSO data page, so this
-/// route may call it for every public Linux clock ID without a duplicate
-/// user-space eligibility screen.
+/// call. The target vDSO owns any direct-syscall fallback for a clock ID it
+/// cannot serve from its data page, so this route may invoke the validated
+/// target entry for every public Linux clock ID without a duplicate user-space
+/// eligibility screen.
 ///
 /// # Safety
 ///
-/// `timespec` must be writable for one Linux/AArch64 `struct timespec`.
+/// `timespec` must be writable for one target Linux `struct timespec`.
 #[inline(always)]
 pub(crate) unsafe fn clock_gettime_status(clock_id: i32, timespec: *mut u8) -> i32 {
     // The cache is a single immutable function address. It protects no
-    // associated mutable data, so a relaxed AArch64 load is sufficient and
-    // avoids putting an acquire barrier in every clock read.
+    // associated mutable data, so a relaxed load is sufficient and avoids
+    // putting an acquire barrier in every clock read.
     let cached = CLOCK_GETTIME.load(Ordering::Relaxed);
     if cached == UNRESOLVED {
         // SAFETY: The cold path publishes a validated kernel-vDSO function or
@@ -84,14 +89,14 @@ pub(crate) unsafe fn clock_gettime_status(clock_id: i32, timespec: *mut u8) -> i
     unsafe { dispatch_clock_gettime(function, clock_id, timespec) }
 }
 
-/// Calls the Linux/AArch64 `__kernel_gettimeofday` vDSO entry when its bounded
-/// ELF metadata validates, otherwise uses the direct syscall. The vDSO ABI is
-/// the kernel's two-pointer `timeval`/timezone form and returns zero or a
-/// negative errno.
+/// Calls the target Linux `__vdso_gettimeofday` or `__kernel_gettimeofday`
+/// vDSO entry when its bounded ELF metadata validates, otherwise uses the
+/// direct syscall. The vDSO ABI is the kernel's two-pointer
+/// `timeval`/timezone form and returns zero or a negative errno.
 ///
 /// # Safety
 ///
-/// `timeval` must be null or writable for one Linux/AArch64 `struct timeval`;
+/// `timeval` must be null or writable for one target Linux `struct timeval`;
 /// `timezone` is passed through under the kernel ABI.
 #[inline(always)]
 pub(crate) unsafe fn gettimeofday_status(timeval: *mut u8, timezone: *mut u8) -> i32 {
@@ -159,7 +164,7 @@ unsafe fn validated_clock_gettime_function(address: usize) -> Option<ClockGettim
         return None;
     }
     // SAFETY: This conversion is used only for a function address validated
-    // from the kernel's AArch64 vDSO symbol table.
+    // from the target kernel vDSO symbol table.
     Some(unsafe { mem::transmute::<usize, ClockGettime>(address) })
 }
 
@@ -169,7 +174,7 @@ unsafe fn validated_gettimeofday_function(address: usize) -> Option<Gettimeofday
         return None;
     }
     // SAFETY: This conversion is used only for a function address validated
-    // from the kernel's AArch64 vDSO symbol table.
+    // from the target kernel vDSO symbol table.
     Some(unsafe { mem::transmute::<usize, Gettimeofday>(address) })
 }
 
@@ -274,7 +279,10 @@ fn clock_gettime_symbol_offset(image: &[u8]) -> Option<usize> {
 }
 
 fn gettimeofday_symbol_offset(image: &[u8]) -> Option<usize> {
-    vdso_symbol_offset(image, &[b"__kernel_gettimeofday"])
+    vdso_symbol_offset(
+        image,
+        &[b"__vdso_gettimeofday", b"__kernel_gettimeofday"],
+    )
 }
 
 /// Resolve one of `names` from the bounded kernel vDSO image.
@@ -345,7 +353,7 @@ fn program_header_table(image: &[u8]) -> Option<ProgramHeaderTable> {
         || image[5] != ELFDATA2LSB
         || image[6] != 1
         || read_u16(image, 16)? != ELF_ET_DYN
-        || read_u16(image, 18)? != ELF_EM_AARCH64
+        || read_u16(image, 18)? != SUPPORTED_ELF_MACHINE
         || read_u32(image, 20)? != 1
         || read_u16(image, 52)? as usize != ELF_HEADER_BYTES
         || read_u16(image, 54)? as usize != ELF_PROGRAM_HEADER_BYTES
@@ -600,9 +608,25 @@ mod tests {
         let image = synthetic_vdso_for_symbol(b"__kernel_gettimeofday");
         assert_eq!(gettimeofday_symbol_offset(&image), Some(448));
 
+        let image = synthetic_vdso_for_symbol(b"__vdso_gettimeofday");
+        assert_eq!(gettimeofday_symbol_offset(&image), Some(448));
+
         let mut image = synthetic_vdso_for_symbol(b"__kernel_gettimeofday");
         put_u64(&mut image, 384 + 24 + 8, 512);
         assert_eq!(gettimeofday_symbol_offset(&image), None);
+    }
+
+    #[test]
+    fn rejects_a_foreign_elf_machine() {
+        let mut image = synthetic_vdso();
+        let foreign_machine = if super::SUPPORTED_ELF_MACHINE == super::ELF_EM_AARCH64 {
+            super::ELF_EM_X86_64
+        } else {
+            super::ELF_EM_AARCH64
+        };
+        put_u16(&mut image, 18, foreign_machine);
+
+        assert_eq!(clock_gettime_symbol_offset(&image), None);
     }
 
     #[test]
@@ -743,7 +767,7 @@ mod tests {
         image[5] = 1;
         image[6] = 1;
         put_u16(&mut image, 16, 3);
-        put_u16(&mut image, 18, 183);
+        put_u16(&mut image, 18, super::SUPPORTED_ELF_MACHINE);
         put_u32(&mut image, 20, 1);
         put_u64(&mut image, 32, 64);
         put_u16(&mut image, 52, 64);

@@ -21,10 +21,21 @@ PRODUCTION_SOURCE = (
 HISTORICAL_OR_TASK_SOURCES = {Path("cleanup.md")}
 X86_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"x86_64"')
 RISC_V_ARCH_BRANCH = re.compile(r'target_arch\s*=\s*"riscv64"')
-# The user-authorized native x86-64 lane is deliberately confined to the
-# internal fixed-mimalloc evidence engine and the two exact core cfg-boundary
-# files it needs. Keep this list specific: a new production x86 branch must
-# be reviewed rather than inheriting the exception from a directory-wide rule.
+# The staged native x86-64 runtime program begins with a small, explicit core
+# foundation. Keep this list specific, including its directly-owned native
+# behavior test module: later x86 libc, loader, CRT, or facade work must add
+# its own reviewed source boundary instead of inheriting a directory-wide
+# exception.
+X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
+    Path("crabc-core/src/fenv_x86_64.rs"),
+    Path("crabc-core/src/lib.rs"),
+    Path("crabc-core/src/tests.rs"),
+    Path("crabc-core/src/thread.rs"),
+    Path("crabc-core/src/vdso.rs"),
+}
+# The fixed-mimalloc evidence lane remains a separate, private program. Its
+# historical feature is retained for compatibility but no longer governs the
+# explicitly admitted shared-core foundation above.
 X86_ALLOCATOR_EVIDENCE_CORE_SOURCES = {
     Path("crabc-core/src/lib.rs"),
     Path("crabc-core/src/thread.rs"),
@@ -157,16 +168,17 @@ def check_root_c_link_boundaries(errors: list[str]) -> None:
             errors.append(f"tests/{name}: naked loader probe must name the canonical crabc interpreter")
 
 
-def is_authorized_x86_allocator_evidence_branch(relative: Path, line: str) -> bool:
-    """Return whether one exact production x86 cfg belongs to the private lane.
+def is_authorized_x86_branch(relative: Path, line: str) -> bool:
+    """Return whether one exact production x86 cfg has a reviewed boundary.
 
-    `crabc-core` remains an internal crate, but its public Rust modules are
-    consumed by the public facade.  Its two x86 cfgs must therefore name the
-    private feature on the same cfg line.  The fixed-mimalloc port has a small,
-    explicit source-file allowlist because it is the only user-authorized x86
-    implementation boundary.
+    The staged core foundation is intentionally target-specific and does not
+    make any public runtime artifact selectable. The separate allocator lane
+    retains its narrow source-file allowlist. A new x86 cfg elsewhere must be
+    added deliberately with the owning vertical slice.
     """
 
+    if relative in X86_RUNTIME_FOUNDATION_CORE_SOURCES:
+        return True
     if relative in X86_ALLOCATOR_EVIDENCE_CORE_SOURCES:
         return 'feature = "allocator-x86-evidence"' in line
     return relative in X86_ALLOCATOR_EVIDENCE_MIMALLOC_SOURCES
@@ -316,7 +328,7 @@ def main() -> int:
             for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
                 if RISC_V_ARCH_BRANCH.search(line):
                     errors.append(f"{relative}:{line_number}: inactive RISC-V architecture branch")
-                if X86_ARCH_BRANCH.search(line) and not is_authorized_x86_allocator_evidence_branch(
+                if X86_ARCH_BRANCH.search(line) and not is_authorized_x86_branch(
                     relative, line
                 ):
                     errors.append(

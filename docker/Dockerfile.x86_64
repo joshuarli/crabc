@@ -1,0 +1,33 @@
+# Native Linux/x86-64 core-foundation evidence image.
+#
+# Build this only through scripts/dev-x86_64.sh. The launcher requires a
+# native Linux/x86-64 host and always requests linux/amd64, so this image must
+# never become an emulated substitute for the AArch64 development image.
+FROM alpine:3.24.1@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f
+
+ARG RUST_TOOLCHAIN=nightly-2026-07-24
+ARG RUST_TARGET=x86_64-unknown-linux-musl
+
+ENV RUSTUP_HOME=/opt/rustup \
+    CARGO_HOME=/opt/cargo \
+    PATH=/opt/cargo/bin:${PATH}
+
+# Keep the image limited to compiling and executing the target-specific
+# crabc-core lib tests. A pinned musl oracle, crabc runtime/sysroot tools, and
+# allocator evidence all own separate boundaries.
+RUN test "$(uname -m)" = "x86_64" \
+    && apk add --no-cache \
+        bash \
+        build-base \
+        ca-certificates \
+        curl \
+        rustup \
+    # Alpine packages the bootstrap binary as rustup-init rather than rustup.
+    && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
+    && rustup target add "${RUST_TARGET}" \
+    # Match rust-toolchain.toml so Cargo never mutates an ephemeral test
+    # container while resolving the workspace toolchain declaration.
+    && rustup component add rust-src llvm-tools
+
+WORKDIR /workspace
+CMD ["bash"]
