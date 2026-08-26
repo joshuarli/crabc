@@ -44,7 +44,7 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # and privately evidenced packed `epoll_event` and pselect descriptor-bit-vector
 # seams which remain under the planned record-owning family, `fs_x86_64.rs` owns descriptor `fstat` plus file-access advice
 # and readahead, `process_x86_64.rs` owns read-only identity/session and privately
-# evidenced resource-limit, getpriority/scheduler-priority, and record-lock observations,
+# evidenced resource-limit/resource-usage, getpriority/scheduler-priority, and record-lock observations,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
 # `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
 # mapping-synchronization, advice, and residency set,

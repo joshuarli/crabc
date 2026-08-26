@@ -2,11 +2,11 @@
 //!
 //! This module intentionally admits only scalar identity queries, the
 //! kernel's three-word real/effective/saved credential observations, pidfd
-//! creation, read-only resource-limit observations, read-only scheduling-
-//! priority observations and bounds, and the read-only typed `fcntl(F_GETLK)`
-//! record-lock query. The larger process facade remains AArch64-only until
-//! each of its target-sized records and state transitions has an independent
-//! x86-64 contract.
+//! creation, read-only resource-limit and resource-usage observations,
+//! read-only scheduling-priority observations and bounds, and the read-only
+//! typed `fcntl(F_GETLK)` record-lock query. The larger process facade remains
+//! AArch64-only until each of its target-sized records and state transitions
+//! has an independent x86-64 contract.
 
 use bitflags::bitflags;
 
@@ -95,6 +95,108 @@ impl Rlimit {
             maximum: (limit.rlim_max != u64::MAX).then_some(limit.rlim_max),
         }
     }
+}
+
+/// Which calling-task resource usage Linux should observe.
+///
+/// `SelfProcess` is the calling process, `Children` is terminated and waited
+/// children of that process, and `Thread` is the calling thread. These are
+/// the three selectors exposed by the pinned musl x86-64 `sys/resource.h`;
+/// arbitrary future kernel selector values cannot cross this native boundary.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[repr(i32)]
+pub enum ResourceUsageTarget {
+    /// `RUSAGE_SELF`, the calling process.
+    SelfProcess = 0,
+    /// `RUSAGE_CHILDREN`, terminated and waited children.
+    Children = -1,
+    /// `RUSAGE_THREAD`, the calling thread.
+    Thread = 1,
+}
+
+impl ResourceUsageTarget {
+    /// Returns the Linux `RUSAGE_*` selector.
+    #[inline]
+    pub const fn as_raw(self) -> i32 {
+        self as i32
+    }
+}
+
+/// One CPU-time value returned by Linux `getrusage`.
+///
+/// The x86-64 Linux ABI is LP64, so the kernel's timeval record contains two
+/// signed 64-bit words. The fields retain that signed representation rather
+/// than converting through a C `timeval` or a potentially lossy `Duration`.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ResourceUsageTime {
+    seconds: i64,
+    microseconds: i64,
+}
+
+impl ResourceUsageTime {
+    #[inline]
+    fn from_kernel(value: crabc_core::process::KernelRusageTimeval) -> Self {
+        Self {
+            seconds: value.tv_sec,
+            microseconds: value.tv_usec,
+        }
+    }
+
+    /// Whole seconds of CPU time.
+    #[inline]
+    pub const fn seconds(self) -> i64 {
+        self.seconds
+    }
+
+    /// Microseconds within the CPU-time second.
+    #[inline]
+    pub const fn microseconds(self) -> i64 {
+        self.microseconds
+    }
+}
+
+/// Read-only Linux resource-usage observations.
+///
+/// The fourteen counters are copied exactly from Linux's signed 64-bit
+/// `long` fields. `maximum_resident_set_size` is measured in KiB on Linux;
+/// the historical integral-memory, swap, IPC, and signal fields are retained
+/// as kernel observations even though contemporary Linux normally reports
+/// zero for them. No reserved words from musl's larger public C struct are
+/// exposed: the kernel leaves that compatibility tail uninitialized.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ResourceUsage {
+    /// User CPU time consumed by the selected target.
+    pub user_time: ResourceUsageTime,
+    /// System CPU time consumed by the selected target.
+    pub system_time: ResourceUsageTime,
+    /// Maximum resident-set size, in KiB on Linux.
+    pub maximum_resident_set_size: i64,
+    /// Integral shared-memory size (historical Linux field).
+    pub integral_shared_memory_size: i64,
+    /// Integral unshared-data size (historical Linux field).
+    pub integral_unshared_data_size: i64,
+    /// Integral unshared-stack size (historical Linux field).
+    pub integral_unshared_stack_size: i64,
+    /// Number of minor page faults.
+    pub minor_page_faults: i64,
+    /// Number of major page faults.
+    pub major_page_faults: i64,
+    /// Number of swaps (historical Linux field).
+    pub swaps: i64,
+    /// Block input operations.
+    pub block_input_operations: i64,
+    /// Block output operations.
+    pub block_output_operations: i64,
+    /// IPC messages sent (historical Linux field).
+    pub ipc_messages_sent: i64,
+    /// IPC messages received (historical Linux field).
+    pub ipc_messages_received: i64,
+    /// Signals received (historical Linux field).
+    pub signals_received: i64,
+    /// Voluntary context switches.
+    pub voluntary_context_switches: i64,
+    /// Involuntary context switches.
+    pub involuntary_context_switches: i64,
 }
 
 bitflags! {
@@ -502,6 +604,19 @@ pub fn getrlimit_for(pid: Option<Pid>, resource: Resource) -> Result<Rlimit> {
     crabc_core::process::getrlimit_for_raw(pid, resource.as_raw()).map(Rlimit::from_kernel)
 }
 
+/// Reads a calling-task resource-usage record through Linux's native
+/// `getrusage` syscall.
+///
+/// This is a read-only direct-kernel query. It does not call the public C ABI,
+/// inspect TLS `errno`, or expose musl's caller-provided `struct rusage`
+/// storage. Linux's initialized 144-byte x86-64 record is copied into the
+/// typed [`ResourceUsage`] value; musl's uninitialized reserved tail is
+/// omitted.
+#[inline]
+pub fn getrusage(target: ResourceUsageTarget) -> Result<ResourceUsage> {
+    crabc_core::process::getrusage_raw(target.as_raw()).map(ResourceUsage::from)
+}
+
 /// Returns the caller's parent process ID, if one is visible in this PID
 /// namespace.
 #[inline]
@@ -682,10 +797,45 @@ const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelRlimit64>(
 const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelRlimit64>() == 8);
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRlimit64, rlim_cur) == 0);
 const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRlimit64, rlim_max) == 8);
+const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelRusageTimeval>() == 16);
+const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelRusageTimeval>() == 8);
+const _: () = assert!(core::mem::size_of::<crabc_core::process::KernelRusage>() == 144);
+const _: () = assert!(core::mem::align_of::<crabc_core::process::KernelRusage>() == 8);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_utime) == 0);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_stime) == 16);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_maxrss) == 32);
+const _: () = assert!(core::mem::offset_of!(crabc_core::process::KernelRusage, ru_nivcsw) == 136);
+
+impl From<crabc_core::process::KernelRusage> for ResourceUsage {
+    #[inline]
+    fn from(value: crabc_core::process::KernelRusage) -> Self {
+        Self {
+            user_time: ResourceUsageTime::from_kernel(value.ru_utime),
+            system_time: ResourceUsageTime::from_kernel(value.ru_stime),
+            maximum_resident_set_size: value.ru_maxrss,
+            integral_shared_memory_size: value.ru_ixrss,
+            integral_unshared_data_size: value.ru_idrss,
+            integral_unshared_stack_size: value.ru_isrss,
+            minor_page_faults: value.ru_minflt,
+            major_page_faults: value.ru_majflt,
+            swaps: value.ru_nswap,
+            block_input_operations: value.ru_inblock,
+            block_output_operations: value.ru_oublock,
+            ipc_messages_sent: value.ru_msgsnd,
+            ipc_messages_received: value.ru_msgrcv,
+            signals_received: value.ru_nsignals,
+            voluntary_context_switches: value.ru_nvcsw,
+            involuntary_context_switches: value.ru_nivcsw,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use super::{Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority, Resource, Rlimit};
+    use super::{
+        Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority, Resource, ResourceUsage,
+        ResourceUsageTarget, Rlimit,
+    };
 
     #[test]
     fn x86_64_flock_conversion_preserves_a_conflicting_lock_record() {
@@ -739,5 +889,50 @@ mod tests {
 
         assert_eq!(Resource::Nofile.as_raw(), 7);
         assert_eq!(Resource::Rttime.as_raw(), 15);
+    }
+
+    #[test]
+    fn x86_64_rusage_maps_the_initialized_kernel_record() {
+        let value = crabc_core::process::KernelRusage {
+            ru_utime: crabc_core::process::KernelRusageTimeval { tv_sec: 1, tv_usec: 2 },
+            ru_stime: crabc_core::process::KernelRusageTimeval { tv_sec: 3, tv_usec: 4 },
+            ru_maxrss: 5,
+            ru_ixrss: 6,
+            ru_idrss: 7,
+            ru_isrss: 8,
+            ru_minflt: 9,
+            ru_majflt: 10,
+            ru_nswap: 11,
+            ru_inblock: 12,
+            ru_oublock: 13,
+            ru_msgsnd: 14,
+            ru_msgrcv: 15,
+            ru_nsignals: 16,
+            ru_nvcsw: 17,
+            ru_nivcsw: 18,
+        };
+        let usage = ResourceUsage::from(value);
+
+        assert_eq!(usage.user_time.seconds(), 1);
+        assert_eq!(usage.user_time.microseconds(), 2);
+        assert_eq!(usage.system_time.seconds(), 3);
+        assert_eq!(usage.system_time.microseconds(), 4);
+        assert_eq!(usage.maximum_resident_set_size, 5);
+        assert_eq!(usage.integral_shared_memory_size, 6);
+        assert_eq!(usage.integral_unshared_data_size, 7);
+        assert_eq!(usage.integral_unshared_stack_size, 8);
+        assert_eq!(usage.minor_page_faults, 9);
+        assert_eq!(usage.major_page_faults, 10);
+        assert_eq!(usage.swaps, 11);
+        assert_eq!(usage.block_input_operations, 12);
+        assert_eq!(usage.block_output_operations, 13);
+        assert_eq!(usage.ipc_messages_sent, 14);
+        assert_eq!(usage.ipc_messages_received, 15);
+        assert_eq!(usage.signals_received, 16);
+        assert_eq!(usage.voluntary_context_switches, 17);
+        assert_eq!(usage.involuntary_context_switches, 18);
+        assert_eq!(ResourceUsageTarget::SelfProcess.as_raw(), 0);
+        assert_eq!(ResourceUsageTarget::Children.as_raw(), -1);
+        assert_eq!(ResourceUsageTarget::Thread.as_raw(), 1);
     }
 }

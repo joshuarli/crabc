@@ -206,7 +206,7 @@ pub fn umask_raw(mask: u32) -> u32 {
     unsafe { syscall1(SYS_UMASK, mask as usize) as u32 }
 }
 
-/// One Linux/AArch64 `struct timeval` as embedded in `struct rusage`.
+/// One Linux 64-bit `struct timeval` as embedded in `struct rusage`.
 ///
 /// The pinned musl target uses 64-bit `time_t` and `suseconds_t`, and the
 /// Linux kernel ABI uses the same two signed 64-bit words for its old
@@ -221,10 +221,11 @@ pub struct KernelRusageTimeval {
     pub tv_usec: i64,
 }
 
-/// The initialized Linux/AArch64 portion of `struct rusage`.
+/// The initialized Linux 64-bit kernel prefix of `struct rusage`.
 ///
-/// Linux's `getrusage` syscall writes these 144 bytes: two old timeval
-/// records followed by fourteen signed `long` counters. Musl's public
+/// Linux's `getrusage` syscall writes these 144 bytes on the admitted 64-bit
+/// targets: two old timeval records followed by fourteen signed `long`
+/// counters. Musl's public
 /// `struct rusage` appends sixteen reserved `long` words for source
 /// compatibility; the kernel does not initialize that tail, so this
 /// direct seam deliberately omits it. The native facade exposes only the
@@ -266,6 +267,17 @@ pub struct KernelRusage {
     pub ru_nivcsw: i64,
 }
 
+const _: () = assert!(core::mem::size_of::<KernelRusageTimeval>() == 16);
+const _: () = assert!(core::mem::align_of::<KernelRusageTimeval>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelRusageTimeval, tv_sec) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelRusageTimeval, tv_usec) == 8);
+const _: () = assert!(core::mem::size_of::<KernelRusage>() == 144);
+const _: () = assert!(core::mem::align_of::<KernelRusage>() == 8);
+const _: () = assert!(core::mem::offset_of!(KernelRusage, ru_utime) == 0);
+const _: () = assert!(core::mem::offset_of!(KernelRusage, ru_stime) == 16);
+const _: () = assert!(core::mem::offset_of!(KernelRusage, ru_maxrss) == 32);
+const _: () = assert!(core::mem::offset_of!(KernelRusage, ru_nivcsw) == 136);
+
 /// Reads one Linux resource-usage record through `getrusage`.
 ///
 /// `who` is the raw Linux `RUSAGE_*` selector. The typed facade supplies
@@ -277,7 +289,7 @@ pub struct KernelRusage {
 pub fn getrusage_raw(who: i32) -> Result<KernelRusage> {
     let mut result = MaybeUninit::<KernelRusage>::uninit();
     // SAFETY: `result` is writable storage for exactly the initialized
-    // Linux/AArch64 getrusage record, and Linux writes all fields on a
+    // Linux 64-bit getrusage record, and Linux writes all fields on a
     // successful call. `who` is an immediate selector value.
     decode(unsafe { syscall2(SYS_GETRUSAGE, who as usize, result.as_mut_ptr() as usize) })?;
     // SAFETY: Successful getrusage initialized every field in the
