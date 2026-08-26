@@ -679,6 +679,71 @@ class X86_64SourceMapTests(unittest.TestCase):
             units["thread-local-heap-lifecycle"]["source_anchor"]["start_line"], 24
         )
 
+    def test_mapped_allocation_adoption_lane_is_scoped_to_its_four_source_boundaries(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "arena-lifecycle",
+            "page-lifecycle",
+            "page-queue-kernels",
+            "tls-interface-and-thread-identity",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_mapped_adoption_evidence.py",
+            "compat/allocator/x86_64-mapped-adoption-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_mapped_adoption_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                unit = units[unit_id]
+                self.assertEqual(unit["status"], "partial")
+                self.assertIn("18-value native C/Rust differential", unit["difference"])
+                for evidence in lane_evidence:
+                    self.assertIn(evidence, unit["evidence"])
+        self.assertEqual(
+            units["arena-lifecycle"]["source_anchor"],
+            {
+                "member": "src/arena.c",
+                "start_line": 655,
+                "end_line": 1409,
+                "sha256": "fdefc099be5c4b86c28fe000c94d3751046a652f94557fac3868a1be9baaab70",
+            },
+        )
+        self.assertEqual(
+            units["tls-interface-and-thread-identity"]["source_anchor"],
+            {
+                "member": "include/mimalloc/prim-tls.h",
+                "start_line": 14,
+                "end_line": 421,
+                "sha256": "6ba6061a15d04e62bc3b621fe4c9d8f665a7c817384bf3369c246a58e1d75e43",
+            },
+        )
+        self.assertIn(
+            "crabc_mimalloc::dynamic_theap",
+            units["tls-interface-and-thread-identity"]["rust_modules"],
+        )
+        self.assertIn(
+            "Pinned C reaches the exact bitmap claim through its next same-heap allocation",
+            units["tls-interface-and-thread-identity"]["difference"],
+        )
+        self.assertIn(
+            "Rust explicitly invokes its test-only `adopt()` adapter",
+            units["tls-interface-and-thread-identity"]["difference"],
+        )
+        self.assertIn(
+            "does not make generic allocation scan abandoned pages",
+            units["tls-interface-and-thread-identity"]["difference"],
+        )
+
     def test_implemented_bit_scope_anchors_every_claimed_scalar_helper(self) -> None:
         unit = next(
             unit

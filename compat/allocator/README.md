@@ -1083,6 +1083,27 @@ test and writes `compat/reports/allocator/x86_64/mapped-reclaim.json`. It does
 not prove general abandonment/adoption, cross-thread reclaim, public `mi_*`
 behavior, libc integration, a backend, or AArch64 evidence.
 
+One allocation-time mapped-arena adoption transition has a separate native
+private differential:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-mapped-adoption
+```
+
+Its pinned-C fixture abandons one nonfull arena-backed medium page with two
+live blocks, then requires the next same-heap allocation to claim, reassociate,
+and requeue that exact page. Rust explicitly invokes its test-only linear
+mapped-page handoff's `adopt()` transition immediately before allocating the
+third block; generic Rust allocation does not scan abandoned pages. The 18
+address-independent values record PageMap and ordinary-arena-bitmap
+preservation, the abandoned bitmap/count clear, original-Theap restoration,
+queue-tail/page-count restoration, empty remote state, and same-page third
+allocation in `compat/reports/allocator/x86_64/mapped-adoption.json`. This
+proves only one same-origin, one-thread allocation-time adoption transition;
+it does not prove general or cross-thread abandonment/adoption, public `mi_*`
+behavior, libc integration, a backend, public x86 support, or AArch64
+evidence.
+
 One initially-unmapped full-medium reabandon tail has a distinct native
 private differential:
 
@@ -1494,6 +1515,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. It is dispatched by `allocator-remote-free` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. It is dispatched by `allocator-mapped-reclaim` and does not claim general abandonment/adoption, public API, or AArch64 evidence. |
+| `x86_64_mapped_adoption_evidence.py` and `x86_64-mapped-adoption-evidence-v3.5.0.json` | Native x86-64-only private 18-value pinned-C/Rust differential for one arena-backed, same-origin, one-thread nonfull medium page: the C next same-heap allocation claims, reassociates, and queue-tail requeues that exact PageMap/ordinary-arena-bitmap-preserved page, while Rust explicitly consumes its test-only `adopt()` adapter before its matching third allocation. It is dispatched by `allocator-mapped-adoption`; it does not claim general or cross-thread abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
 | `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon. It is dispatched by `allocator-unmapped-reabandon`; Rust exercises one bounded real post-Theap-teardown full-medium route and it does not claim general routing, lifecycle, public API, or AArch64 evidence. |
 | `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 23-field pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. It is dispatched by `allocator-on-demand`; only C sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its deliberate Rust failed-commit same-page retry is not C fault-injection parity or a production option/API/policy, fresh-fallback, public-runtime, backend, or AArch64 claim. |
 | `x86_64_direct_on_demand_evidence.py` and `x86_64-direct-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 44-field pinned-C/Rust differential for one reserved 1024-byte small direct-cache page: direct exhaustion at eight objects, generic zero-commit extension at allocation nine, and direct prefix growth before the allocation-seventeen extension. It is dispatched by `allocator-direct-on-demand`; C alone sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its source-anchored poststate trace does not claim C fault-injection parity, a production option/API/policy, fresh fallback, public runtime, backend, or AArch64 evidence. |

@@ -240,7 +240,16 @@ same-page live blocks, applies the source queue-detach abandonment transition,
 and frees one block through the same-origin reclaim path while the survivor
 keeps the page nonempty. It proves only mapped abandonment clearing,
 re-association, and requeue for that one route—not general abandonment/adoption
-or cross-thread reclaim. A further native x86-only 18-field C/Rust differential
+or cross-thread reclaim. A separate native x86-only 18-value C/Rust
+differential abandons one arena-backed, same-origin, one-thread nonfull medium
+page with two live blocks. Its C side requires the next same-heap allocation to
+claim that exact PageMap/ordinary-arena-bitmap-preserved page, clear mapped
+bitmap/count state, restore original-Theap association, queue-tail requeue it,
+and allocate the third block there. Rust explicitly consumes its test-only
+handoff `adopt()` transition immediately before its matching third allocation;
+the generic Rust allocator does not scan abandoned pages. It is not general or cross-thread
+abandonment/adoption, public API/runtime behavior, backend promotion, public
+x86 support, or AArch64 evidence. A further native x86-only 18-field C/Rust differential
 uses a worker `pthread` that runs real `mi_thread_done()` and returns; the
 consumer calls `pthread_join()` before it performs two public `mi_free` calls. It records the
 selected mapped failed-reclaim/unown transition and terminal checks for
@@ -1523,7 +1532,16 @@ page count, installs abandoned identity, Release-publishes its one heap-local
 abandoned bit, increments `Heap::abandoned_count[bin]`, and unowns it. The
 same token can either claim that exact bit for adoption or consume one still
 live client block through `free.c:mi_free_try_collect_mt`'s
-`allow_collect=true` same-origin branch. The latter preserves the small-page
+`allow_collect=true` same-origin branch. The allocation-time branch maps the
+pinned C `mi_arenas_page_try_find_abandoned` -> `mi_page_fresh_alloc` ->
+`_mi_theap_page_reclaim` sequence, followed by queue-tail reassociation, to
+the handoff's consuming `adopt` transition. It retains the exact PageMap and
+heap-local arena image until the bitmap claim, original-Theap restoration,
+second live-owner collection, and queue insertion have all succeeded; only
+then can the caller allocate the third block. It does not broaden the handoff
+to general scanning, cross-thread adoption, or a public allocator route. The
+test invokes this adapter explicitly before its third allocation; generic
+`PageAllocatorEngine::allocate` does not scan an abandoned-page map. The latter preserves the small-page
 partial collector's head, clears the bit/count before live reassociation,
 collects again, and appends the page back to the same Theap queue. Its all-free
 dynamic-arena result retains the distinct queue-detached release capability and

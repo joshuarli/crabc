@@ -2526,6 +2526,203 @@ mod tests {
         });
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_mapped_allocation_adoption_trace_matches_pinned_c_protocol() {
+        with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session()
+                .expect("non-abandoning dynamic attachment admits its page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            // Keep the C fixture and Rust trace on the same ordinary medium
+            // route: two live blocks leave this page nonfull before handoff.
+            let request = SMALL_SIZE_MAX + 1024;
+            let first = allocator
+                .allocate(request, false)
+                .expect("first native mapped-adoption medium allocation");
+            let survivor = allocator
+                .allocate(request, false)
+                .expect("survivor keeps the mapped-adoption page nonempty");
+            let page = unsafe { allocator.page_for_block(first) };
+            assert!(!page.is_null());
+            assert_eq!(unsafe { allocator.page_for_block(survivor) }, page);
+            let page = NonNull::new(page).expect("first allocation names one live page");
+            let memory = unsafe { page.as_ref().memid() };
+            let bin = crate::size_class::bin(unsafe { page.as_ref().block_size() })
+                .expect("the medium allocation has a regular size-class bin");
+            let original_theap = unsafe { page.as_ref().theap() };
+
+            assert_eq!(memory.kind(), MemoryKind::Arena);
+            // SAFETY: both client blocks are live allocations on this exact
+            // active page, and no producer exists while this consuming
+            // handoff changes the page's ownership state.
+            let handoff = match unsafe { allocator.abandon_mapped_regular(first) } {
+                Ok(handoff) => handoff,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the native mapped medium page enters the adoption handoff");
+                }
+            };
+            let arena_backed = memory.kind() == MemoryKind::Arena;
+            let medium_page = unsafe { page.as_ref().block_size() } > SMALL_SIZE_MAX
+                && unsafe { page.as_ref().block_size() } <= MEDIUM_MAX_OBJ_SIZE
+                && unsafe { page.as_ref().used() } < usize::from(unsafe { page.as_ref().reserved() });
+            let two_blocks_same_page = unsafe {
+                handoff.test_page_for_block(first) == page.as_ptr()
+                    && handoff.test_page_for_block(survivor) == page.as_ptr()
+            };
+            let abandoned_bitmap_before_allocation = handoff.test_dynamic_abandoned_page_is_set()
+                && unsafe { page.as_ref().abandoned_test_thread_id() }
+                    == THREAD_ID_ABANDONED_MAPPED;
+            let abandoned_count_before_allocation = handoff.test_abandoned_count() == Some(1);
+            let queue_empty_before_allocation = handoff.test_dynamic_regular_queue_is_empty();
+            let page_count_zero_before_allocation = handoff.test_page_count() == 0;
+            let page_map_and_arena_bitmap_preserved = two_blocks_same_page
+                && handoff.test_dynamic_arena_page_is_set();
+            let remote_list_empty_before_allocation =
+                unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+
+            assert!(
+                arena_backed
+                    && medium_page
+                    && two_blocks_same_page
+                    && abandoned_bitmap_before_allocation
+                    && abandoned_count_before_allocation
+                    && queue_empty_before_allocation
+                    && page_count_zero_before_allocation
+                    && page_map_and_arena_bitmap_preserved
+                    && remote_list_empty_before_allocation,
+                "the native mapped-adoption precondition must retain one nonempty mapped page"
+            );
+
+            let mut allocator = match handoff.adopt() {
+                Ok(allocator) => allocator,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the exact mapped page is claimed through allocation-time adoption");
+                }
+            };
+            let adopted = allocator
+                .allocate(request, false)
+                .expect("adoption restores the page before the next allocation");
+            let allocation_is_same_page = unsafe { allocator.page_for_block(adopted) } == page.as_ptr();
+            let abandoned_bitmap_cleared = allocator.test_dynamic_abandoned_page_is_clear(bin, memory);
+            let heap = unsafe { &*allocator.theap_identity().cast::<Theap>() }.heap();
+            let abandoned_count_cleared = unsafe { heap.as_ref() }
+                .and_then(|heap| heap.abandoned_count(bin))
+                == Some(0);
+            let original_theap_restored = unsafe { page.as_ref().theap() } == original_theap
+                && unsafe { page.as_ref().theap() } == allocator.theap_identity()
+                // SAFETY: allocation-time adapter adoption reassociated this
+                // current page with the returned allocator's live session.
+                && unsafe {
+                    allocator.test_dynamic_associated_theap_is_current(page, original_theap)
+                }
+                && !matches!(
+                    unsafe { page.as_ref().abandoned_test_thread_id() },
+                    THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED
+                );
+            let queue_tail_reassociated = allocator.test_dynamic_regular_queue_contains_only(bin, page)
+                // SAFETY: the adopted page is current, uniquely owned local
+                // metadata in this one-page fixture; compare the same raw
+                // singleton links asserted by the pinned C probe.
+                && unsafe { page.as_ref().next().is_null() && page.as_ref().prev().is_null() };
+            let page_count_restored = unsafe { (&*allocator.theap_identity()).page_count() } == 1;
+            let remote_list_empty = unsafe { page.as_ref().remote_free_test_head() & !1 == 0 };
+            let used_after_allocation = unsafe { page.as_ref().used() };
+            let valid = allocation_is_same_page
+                && abandoned_bitmap_cleared
+                && abandoned_count_cleared
+                && original_theap_restored
+                && queue_tail_reassociated
+                && page_count_restored
+                && remote_list_empty
+                && used_after_allocation == 3
+                && unsafe { allocator.page_for_block(first) } == page.as_ptr()
+                && unsafe { allocator.page_for_block(survivor) } == page.as_ptr();
+
+            std::println!("CRABC_MI_MAPPED_ADOPTION_TRACE_BEGIN");
+            std::println!("trace.mapped_adoption.arena_backed={}", arena_backed as u8);
+            std::println!("trace.mapped_adoption.medium_page={}", medium_page as u8);
+            std::println!(
+                "trace.mapped_adoption.two_blocks_same_page={}",
+                two_blocks_same_page as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.abandoned_bitmap_before_allocation={}",
+                abandoned_bitmap_before_allocation as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.abandoned_count_before_allocation={}",
+                abandoned_count_before_allocation as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.queue_empty_before_allocation={}",
+                queue_empty_before_allocation as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.page_count_zero_before_allocation={}",
+                page_count_zero_before_allocation as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.page_map_and_arena_bitmap_preserved={}",
+                page_map_and_arena_bitmap_preserved as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.remote_list_empty_before_allocation={}",
+                remote_list_empty_before_allocation as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.allocation_is_same_page={}",
+                allocation_is_same_page as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.abandoned_bitmap_cleared={}",
+                abandoned_bitmap_cleared as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.abandoned_count_cleared={}",
+                abandoned_count_cleared as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.original_theap_restored={}",
+                original_theap_restored as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.queue_tail_reassociated={}",
+                queue_tail_reassociated as u8
+            );
+            std::println!(
+                "trace.mapped_adoption.page_count_restored={}",
+                page_count_restored as u8
+            );
+            std::println!("trace.mapped_adoption.remote_list_empty={}", remote_list_empty as u8);
+            std::println!(
+                "trace.mapped_adoption.used_after_allocation={}",
+                used_after_allocation
+            );
+            std::println!("trace.mapped_adoption.valid={}", valid as u8);
+            std::println!("CRABC_MI_MAPPED_ADOPTION_TRACE_END");
+            assert!(valid, "native mapped-adoption trace diverged from pinned C");
+
+            // SAFETY: allocation-time adoption restored all three live
+            // client blocks to the ordinary local-free lifecycle.
+            unsafe { allocator.free(adopted) }
+                .expect("the adopted allocation frees through the restored page");
+            unsafe { allocator.free(first) }
+                .expect("the first pre-abandon allocation frees after adoption");
+            unsafe { allocator.free(survivor) }
+                .expect("the survivor allocation frees after adoption");
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
     #[test]
     fn dynamic_mapped_regular_remote_free_empty_releases_the_queue_detached_arena_page() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {

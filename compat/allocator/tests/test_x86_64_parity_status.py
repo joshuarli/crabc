@@ -138,6 +138,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-live-owner-remote-free-differential",
                 "native-small-direct-remote-free-differential",
                 "native-mapped-arena-same-origin-reclaim-differential",
+                "native-mapped-arena-allocation-time-adoption-differential",
                 "native-unmapped-full-medium-reabandon-differential",
                 "native-ordinary-reserved-medium-on-demand-differential",
                 "native-reserved-small-direct-on-demand-differential",
@@ -214,6 +215,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-mapped-arena-same-origin-reclaim-differential"]["report"],
             "compat/reports/allocator/x86_64/mapped-reclaim.json",
+        )
+        self.assertEqual(
+            gates["native-mapped-arena-allocation-time-adoption-differential"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-mapped-adoption",
+        )
+        self.assertEqual(
+            gates["native-mapped-arena-allocation-time-adoption-differential"]["report"],
+            "compat/reports/allocator/x86_64/mapped-adoption.json",
         )
         self.assertEqual(
             gates["native-unmapped-full-medium-reabandon-differential"]["command"],
@@ -558,6 +567,25 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("eight address-independent values", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
         self.assertIn("same-origin mi_free reclaim", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
         self.assertIn("not general abandonment/adoption", gates["native-mapped-arena-same-origin-reclaim-differential"]["claim"])
+        mapped_adoption = gates["native-mapped-arena-allocation-time-adoption-differential"]["claim"]
+        for fragment in (
+            "18 address-independent values",
+            "same-origin, one-thread nonfull medium page",
+            "_mi_page_abandon",
+            "PageMap and ordinary arena-bitmap registration",
+            "pinned C next same-heap allocation claims the exact mapped-abandoned page",
+            "clears its bitmap/count",
+            "restores original Theap association",
+            "regular tail",
+            "third live block",
+            "test-only `adopt()` handoff adapter",
+            "generic Rust allocation scan abandoned pages",
+            "allocation-time same-origin adapter mapping",
+            "not general or cross-thread abandonment/adoption",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, mapped_adoption)
         self.assertIn("13 address-independent values", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
         self.assertIn("initially-unmapped abandonment", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
         self.assertIn("bounded real full-medium post-Theap-teardown route", gates["native-unmapped-full-medium-reabandon-differential"]["claim"])
@@ -782,6 +810,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertIn("28-field real small direct-page", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("40-field same-Theap ordinary regular-small", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("13-field unmapped full-medium reabandon", lanes["general-thread-lifecycle-and-stress"]["reason"])
+        self.assertIn("18-value same-origin allocation-time mapped-adoption", lanes["general-thread-lifecycle-and-stress"]["reason"])
         self.assertIn("fault/misuse coverage", lanes["general-thread-lifecycle-and-stress"]["reason"])
 
         boundary = self.contract["ledger_boundary"]

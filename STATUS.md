@@ -52,7 +52,16 @@ selected normal-release source API assessment also records per-item native
 object/dynamic-symbol presence for 194 distinct C functions and marks 183
 non-object source forms explicitly. A separate eight-field C/Rust differential
 now covers one arena-backed mapped page's queue-detach abandonment and
-same-origin nonempty `mi_free` reclaim/requeue transition. A separate
+same-origin nonempty `mi_free` reclaim/requeue transition. A separate 18-value
+C/Rust differential covers one arena-backed, same-origin, one-thread nonfull
+medium page. The pinned-C next same-heap allocation claims its exact
+mapped-abandoned PageMap/ordinary-arena-bitmap-preserved page, clears
+bitmap/count state, restores original-Theap association, and requeues it at
+the regular tail; Rust models that claim/reassociation with its test-only
+consuming handoff immediately before its matching third allocation. This is
+private native x86 evidence only, not general or cross-thread
+abandonment/adoption, public API/runtime behavior, backend promotion, public
+x86 support, or AArch64 evidence. A separate
 six-mode staged public-header gate compile-links selected C/C++ forms against
 the pinned C release shared object, including one C11 compile/link-only probe
 that instantiates the five base-header `*_csize` static-inline dispatch helpers,

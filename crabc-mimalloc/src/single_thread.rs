@@ -4866,6 +4866,30 @@ impl<'attach, 'heap, 'arena, 'map>
             && self.page_is_active_queue_member(bin, page)
     }
 
+    /// Test-only counterpart of the C associated-Theap peek after adoption.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be a current allocation owned by this exact dynamic
+    /// session. The observation reads only that page's Heap identity and the
+    /// session's regular dynamic-TLS slot; it does not expose or mutate page
+    /// metadata.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_dynamic_associated_theap_is_current(
+        &mut self,
+        page: NonNull<Page>,
+        expected: *mut Theap,
+    ) -> bool {
+        // SAFETY: forwarded from this method's contract; the caller retains
+        // the current allocation and this engine retains its dynamic session.
+        let page_uses_session_heap = unsafe { page.as_ref().heap() }
+            == self.session.theap().heap();
+        page_uses_session_heap
+            && self
+                .session
+                .test_dynamic_regular_slot_names_theap(expected)
+    }
+
     /// Begins the bounded dynamic thread-exit page-drain transition.
     ///
     /// This consumes the ordinary dynamic page engine before it clears the
@@ -28869,6 +28893,44 @@ impl<'attach, 'heap, 'arena, 'map>
             .session
             .mapped_abandoned_page(&self.engine.arena, self.bin, self.memory)
             .is_some_and(|map| !crate::abandoned::MappedAbandonedPages::is_clear(&map, slice))
+    }
+
+    /// Test-only exact pre-adoption queue witness. The consuming handoff has
+    /// detached its only page, so the pinned C fixture requires the original
+    /// regular queue's links and count to be completely empty.
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_regular_queue_is_empty(&self) -> bool {
+        self.engine
+            .session
+            .queue(self.bin)
+            .is_some_and(|queue| queue.is_empty())
+    }
+
+    /// Test-only PageMap witness for one current client block.
+    ///
+    /// # Safety
+    ///
+    /// `block` must remain a current allocation of this handoff's exact page.
+    /// The handoff retains the only PageMap lifecycle capability, and this
+    /// observation neither exposes nor mutates page metadata.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_page_for_block(
+        &self,
+        block: NonNull<u8>,
+    ) -> *mut Page {
+        unsafe { self.engine.page_for_block(block) }
+    }
+
+    /// Test-only ordinary dynamic arena-pages bitmap witness. This is the
+    /// same heap-local image that carries the pinned C fixture's
+    /// `arena_pages->pages` bit, not the registry arena's `pages_main` image.
+    #[cfg(test)]
+    pub(crate) fn test_dynamic_arena_page_is_set(&self) -> bool {
+        self
+            .engine
+            .session
+            .test_arena_pages_image(self.memory)
+            .is_some_and(|(_, _, _, page_is_set)| page_is_set)
     }
 
     #[cfg(test)]
