@@ -44,6 +44,18 @@ it is not general remote-free routing or concurrent collection, abandonment,
 thread teardown, public `mi_*` API, libc integration, backend, or AArch64
 evidence.
 
+A separate 43-field native C/Rust differential now covers one live owner with
+a non-abandoning full-medium arena page (10248-byte request, 12288-byte blocks,
+capacity/reserved 42, eight slices) and one regular successor. A real pinned-C
+`pthread` publishes exactly one remote `mi_free` and joins before owner
+observation; false collection requeues the full page behind the successor,
+then ordinary allocation exhausts the successor's remaining capacity and
+reuses the exact remotely freed block. Rust uses only a joined scoped producer
+for common typed private facts. This remains private native x86-64 engine
+evidence only: it does not claim pthread/TLS ABI parity, generic remote
+routing/collection, teardown, abandonment, public `mi_*` behavior or runtime,
+libc integration, backend promotion, public x86 support, or AArch64 evidence.
+
 A separate 35-field native C/Rust differential now covers one live owner with
 a non-abandoning full-medium arena page (10248-byte request, 12288-byte blocks,
 capacity/reserved 42, eight slices) and one regular successor. A real pinned-C

@@ -37,6 +37,10 @@ LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json"
 )
+LIVE_OWNER_FULL_MEDIUM_ONE_REMOTE_UNFULL_REUSE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-live-owner-full-medium-one-remote-unfull-reuse-evidence-v3.5.0.json"
+)
 DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-dynamic-nonfull-regular-pages-distinct-bin-aggregate-evidence-v3.5.0.json"
@@ -1055,6 +1059,96 @@ class X86_64SourceMapTests(unittest.TestCase):
             self.assertTrue(scope[field])
         self.assertFalse(scope["general_remote_free_routing_claimed"])
         self.assertFalse(scope["public_crabc_support"])
+        for unit_id in reviewed_unit_ids:
+            with self.subTest(unit=unit_id):
+                self.assertEqual(units[unit_id]["status"], "partial")
+
+    def test_live_owner_full_medium_one_remote_unfull_reuse_lane_is_scoped_to_reviewed_units(
+        self,
+    ) -> None:
+        reviewed_unit_ids = {
+            "ordinary-allocation-paths",
+            "local-and-remote-free",
+            "arena-lifecycle",
+            "page-map-lifecycle",
+            "page-queue-kernels",
+            "page-lifecycle",
+            "thread-local-heap-lifecycle",
+        }
+        lane_evidence = {
+            "compat/allocator/tests/test_x86_64_live_owner_full_medium_one_remote_unfull_reuse_evidence.py",
+            "compat/allocator/x86_64-live-owner-full-medium-one-remote-unfull-reuse-evidence-v3.5.0.json",
+            "compat/allocator/x86_64_live_owner_full_medium_one_remote_unfull_reuse_evidence.py",
+        }
+        units = {unit["id"]: unit for unit in self.contract["units"]}
+        self.assertEqual(
+            {
+                unit_id
+                for unit_id, unit in units.items()
+                if lane_evidence <= set(unit["evidence"])
+            },
+            reviewed_unit_ids,
+        )
+        for evidence in lane_evidence:
+            with self.subTest(evidence=evidence):
+                self.assertEqual(
+                    {
+                        unit_id
+                        for unit_id, unit in units.items()
+                        if evidence in unit["evidence"]
+                    },
+                    reviewed_unit_ids,
+                )
+
+        schema = json.loads(
+            LIVE_OWNER_FULL_MEDIUM_ONE_REMOTE_UNFULL_REUSE_SCHEMA.read_text(
+                encoding="utf-8"
+            )
+        )
+        expected = schema["trace"]["expected_values"]
+        prefix = "trace.live_owner_full_medium_one_remote_unfull_reuse."
+        self.assertEqual(len(expected), 43)
+        for key, value in {
+            "request": 10248,
+            "block_size": 12288,
+            "capacity": 42,
+            "reserved": 42,
+            "slice_count": 8,
+            "joined_remote_free_count": 1,
+            "worker_joined_before_owner_collect": 1,
+            "full_queue_empty_after_collect": 1,
+            "regular_queue_count_after_collect": 2,
+            "page_count_after_collect": 2,
+            "first_used_after_collect": 41,
+            "predecessor_exhausted_before_reuse": 1,
+            "reused_exact_remote_block": 1,
+            "successor_full_after_predecessor_exhaustion": 1,
+        }.items():
+            self.assertEqual(expected[prefix + key], value)
+        scope = schema["scope"]
+        for field in (
+            "c_oracle_one_full_page_remote_free_required",
+            "c_oracle_join_before_non_atomic_owner_observation_required",
+            "c_oracle_live_owner_only",
+            "c_oracle_no_thread_teardown",
+            "c_oracle_non_abandoning_full_queue_only",
+            "c_oracle_real_pthread_required",
+            "c_oracle_successor_capacity_precedes_reuse",
+            "c_oracle_both_live_page_metadata_preserved",
+            "c_rust_common_trace_facts_only",
+            "rust_scoped_joined_remote_producers_only",
+        ):
+            self.assertTrue(scope[field])
+        for field in (
+            "aarch64_status_reused",
+            "general_allocation_routing_claimed",
+            "general_lifecycle_claimed",
+            "general_remote_free_routing_claimed",
+            "public_crabc_support",
+            "public_mi_api_claimed",
+            "public_x86_libc_or_ldso_support",
+        ):
+            self.assertFalse(scope[field])
         for unit_id in reviewed_unit_ids:
             with self.subTest(unit=unit_id):
                 self.assertEqual(units[unit_id]["status"], "partial")

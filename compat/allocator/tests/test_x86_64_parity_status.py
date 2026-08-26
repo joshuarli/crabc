@@ -50,6 +50,10 @@ LIVE_OWNER_FULL_MEDIUM_REMOTE_RELEASE_SCHEMA = (
     ROOT
     / "compat/allocator/x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json"
 )
+LIVE_OWNER_FULL_MEDIUM_ONE_REMOTE_UNFULL_REUSE_SCHEMA = (
+    ROOT
+    / "compat/allocator/x86_64-live-owner-full-medium-one-remote-unfull-reuse-evidence-v3.5.0.json"
+)
 AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA = (
     ROOT / "compat/allocator/x86_64-automatic-pthread-destructor-evidence-v3.5.0.json"
 )
@@ -252,6 +256,19 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-live-owner-full-medium-remote-release",
         )
 
+    def test_live_owner_full_medium_one_remote_unfull_reuse_schema_profile_is_exact(
+        self,
+    ) -> None:
+        schema = json.loads(
+            LIVE_OWNER_FULL_MEDIUM_ONE_REMOTE_UNFULL_REUSE_SCHEMA.read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-live-owner-full-medium-one-remote-unfull-reuse",
+        )
+
     def test_automatic_pthread_destructor_schema_profile_is_exact(self) -> None:
         schema = json.loads(AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA.read_text(encoding="utf-8"))
         self.assertEqual(
@@ -316,6 +333,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-bounded-lifecycle-concurrency",
                 "native-live-owner-remote-free-differential",
                 "native-live-owner-full-medium-remote-release-differential",
+                "native-live-owner-full-medium-one-remote-unfull-reuse-differential",
                 "native-small-direct-remote-free-differential",
                 "native-mapped-arena-same-origin-reclaim-differential",
                 "native-mapped-arena-allocation-time-adoption-differential",
@@ -1027,6 +1045,31 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, live_owner_full_medium_remote_release)
+        live_owner_full_medium_one_remote_unfull_reuse = gates[
+            "native-live-owner-full-medium-one-remote-unfull-reuse-differential"
+        ]["claim"]
+        for fragment in (
+            "43 address-independent values",
+            "non-abandoning full-medium arena page",
+            "request 10248",
+            "12288-byte blocks",
+            "capacity/reserved 42",
+            "eight slices",
+            "real pinned-C pthread publishes exactly one remote mi_free",
+            "joins before the owner observes its non-atomic remote list",
+            "false-collects the full page into the regular queue behind the successor",
+            "exhausts the successor's remaining capacity",
+            "reuses the exact remotely freed block",
+            "joined scoped producer",
+            "does not claim pthread/TLS ABI parity",
+            "generic remote routing/collection",
+            "teardown",
+            "abandonment",
+            "public mi_* behavior",
+            "public x86 support",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, live_owner_full_medium_one_remote_unfull_reuse)
         self.assertIn("28 address-independent values", gates["native-small-direct-remote-free-differential"]["claim"])
         self.assertIn("small direct-cache page", gates["native-small-direct-remote-free-differential"]["claim"])
         self.assertIn("not general allocation/free routing", gates["native-small-direct-remote-free-differential"]["claim"])

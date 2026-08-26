@@ -359,6 +359,19 @@ private native x86-64 engine evidence only, not general lifecycle/routing or
 concurrent collection, abandonment/adoption, public API/runtime, public x86
 support, backend promotion, libc integration, or AArch64 evidence.
 
+The same native x86-only track also records a 43-field live-owner
+full-medium one-remote unfull/reuse differential. One non-abandoning owner
+page (10248-byte request, 12288-byte blocks, capacity/reserved 42, eight
+slices) is paired with a regular successor. A real pinned-C `pthread`
+publishes exactly one remote `mi_free` and joins before owner observation;
+false collection requeues the full page behind the successor, then ordinary
+allocation exhausts the successor's remaining capacity and reuses the exact
+remote block. Rust uses only a joined scoped producer for common typed facts.
+This remains private native x86-64 engine evidence only: it does not establish
+pthread/TLS ABI parity, generic remote routing/collection, teardown,
+abandonment, public API/runtime, public x86 support, backend promotion, libc
+integration, or AArch64 evidence.
+
 The same native x86-only track also has a 34-field dynamic full-medium
 unmapped-reabandon differential. A pinned-C worker fills one sole full
 `BIN_FULL` medium arena page (request 10248, 12288-byte blocks,

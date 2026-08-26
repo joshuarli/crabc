@@ -113,6 +113,14 @@
       "state": "available"
     },
     {
+      "claim": "On an attested native x86-64 host, differentially compares 43 address-independent values for one live owner with a non-abandoning full-medium arena page (request 10248, 12288-byte blocks, capacity/reserved 42, eight slices) and one regular successor. A real pinned-C pthread publishes exactly one remote mi_free, joins before the owner observes its non-atomic remote list, and the owner false-collects the full page into the regular queue behind the successor without teardown or abandonment; the owner then exhausts the successor's remaining capacity and reuses the exact remotely freed block through ordinary allocation. Rust uses only a joined scoped producer for common typed private facts. It does not claim pthread/TLS ABI parity, generic remote routing/collection, teardown, abandonment, public mi_* behavior or runtime, libc integration, backend promotion, public x86 support, or AArch64 evidence.",
+      "command": "./compat/allocator/run-x86_64.sh allocator-live-owner-full-medium-one-remote-unfull-reuse",
+      "id": "native-live-owner-full-medium-one-remote-unfull-reuse-differential",
+      "native_required": true,
+      "report": "compat/reports/allocator/x86_64/live-owner-full-medium-one-remote-unfull-reuse.json",
+      "state": "available"
+    },
+    {
       "claim": "On an attested native x86-64 host, differentially compares 28 address-independent values for one real small direct-cache page filled to its current capacity, one joined/quiescent pthread mi_free publication, and the owner direct-cache miss falling through the regular queue search to collect and reuse that exact block. It proves only this private small direct-page route; it is not general allocation/free routing or concurrent collection, abandonment, thread teardown, public mi_* API, libc integration, backend promotion, or AArch64 evidence.",
       "command": "./compat/allocator/run-x86_64.sh allocator-direct-remote",
       "id": "native-small-direct-remote-free-differential",

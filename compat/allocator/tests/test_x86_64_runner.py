@@ -77,6 +77,19 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertNotIn('cargo "$@"', source)
         self.assertNotIn("crabc-libc", source)
 
+    def test_every_native_dispatch_uses_a_fresh_python_bytecode_environment(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        container_function = source.split("run_in_container() {", 1)[1].split(
+            "\n}\n", 1
+        )[0]
+        self.assertIn("--env PYTHONDONTWRITEBYTECODE=1", container_function)
+        dispatch = source.split('case "$command" in', 2)[-1]
+        self.assertGreater(dispatch.count("run_in_container "), 0)
+        self.assertEqual(
+            dispatch.count("run_in_container "),
+            source.count("run_in_container "),
+        )
+
     def test_cmake_modes_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn("allocator-cmake-modes)", source)
@@ -105,6 +118,26 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn(
             "allocator-live-owner-full-medium-remote-release takes no arguments",
+            result.stderr,
+        )
+
+    def test_live_owner_full_medium_one_remote_unfull_reuse_command_is_closed_and_uses_its_private_offline_probe(
+        self,
+    ) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-live-owner-full-medium-one-remote-unfull-reuse)", source)
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_live_owner_full_medium_one_remote_unfull_reuse_evidence.py "
+            "--offline",
+            source,
+        )
+        result = self.run_launcher(
+            "allocator-live-owner-full-medium-one-remote-unfull-reuse", "unexpected"
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-live-owner-full-medium-one-remote-unfull-reuse takes no arguments",
             result.stderr,
         )
 

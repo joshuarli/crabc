@@ -35739,6 +35739,402 @@ mod tests {
         .expect("the live-owner fixture remains on one current thread");
     }
 
+    /// Emits the bounded non-abandoning live-owner route in which one joined
+    /// scoped producer makes a full arena-backed medium page nonfull.  The
+    /// owner then observes the source requeue order and reaches the returned
+    /// block through ordinary allocation after exhausting its predecessor.
+    /// This is private allocator-engine evidence only: it does not establish
+    /// C pthread/TLS ABI parity, teardown or abandonment behavior, broad
+    /// routing/concurrency, or public x86/runtime support.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_live_owner_full_medium_one_remote_unfull_reuse_trace_matches_pinned_c() {
+        thread::spawn(|| {
+            let config = MemoryConfig::from_observations(
+                PageSize::new(4096).expect("the pinned native page size is valid"),
+                1024 * 1024,
+                false,
+                false,
+            );
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let key_registry = OwnedThreadLocalKeyRegistry::test_static_owner();
+            let mut ticket_zero = unsafe {
+                ThreadLocalDataOwner::begin_with_test_metadata(subprocess, metadata, config)
+            }
+            .expect("the isolated fixture creates its ticket-zero predecessor");
+            ticket_zero
+                .teardown()
+                .expect("the ticket-zero predecessor retires before the live attachment");
+            let heap: &'static mut Heap =
+                std::boxed::Box::leak(std::boxed::Box::new(Heap::bootstrap_empty()));
+            // SAFETY: this test leaks one pristine Heap, retaining its address
+            // for the complete dynamic owner-session lifecycle.
+            let heap = unsafe { core::pin::Pin::new_unchecked(heap) };
+            let mut owner = match unsafe {
+                DynamicTheapAttachment::begin_non_abandoning_with_components(
+                    config,
+                    heap,
+                    subprocess,
+                    metadata,
+                    key_registry,
+                )
+            } {
+                Ok(owner) => owner,
+                Err(DynamicTheapBeginError::Rejected(error)) => {
+                    panic!("the isolated non-abandoning attachment begins: {error:?}")
+                }
+                Err(DynamicTheapBeginError::Retained { error, attachment }) => {
+                    core::mem::forget(attachment);
+                    panic!("the isolated non-abandoning attachment is not terminal: {error:?}")
+                }
+            };
+            let mut region = AlignedRegion::zeroed();
+            let arena_registry = ArenaRegistry::new(null_mut());
+            // SAFETY: this unique test registry is bound before its external
+            // arena is published to the isolated owner.
+            assert!(unsafe {
+                arena_registry.bind_subprocess_before_publication(subprocess.as_ptr())
+            });
+            let managed = unsafe {
+                manage_external_in_place(
+                    &arena_registry,
+                    region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).expect("the pinned native page size is valid"),
+                    true,
+                    true,
+                    true,
+                    -1,
+                    false,
+                    None,
+                )
+            }
+            .expect("the isolated fixture registers its external arena");
+            let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+                .expect("the registered external arena has a view");
+            let mut page_map = PageMap::initialize(config, 0, true)
+                .expect("the isolated fixture initializes its page map");
+            let session = owner
+                .page_session()
+                .expect("the live attachment admits its non-abandoning page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                &mut page_map,
+            );
+            let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+            let bin = size_class::bin(request).expect("the medium request has one regular bin");
+            let non_abandoning_theap = !allocator.session.theap().allows_page_abandon()
+                && allocator.session.theap().page_full_retain() == -1;
+            assert!(non_abandoning_theap);
+
+            let first = allocator.allocate(request, false).expect("the first medium page exists");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first page is map-published");
+            let (block_size, reserved, first_memory, arena_backed, ordinary_medium) = unsafe {
+                let page = first_page.as_ref();
+                (
+                    page.block_size(),
+                    page.reserved() as usize,
+                    page.memid().arena_memory().expect("the page is arena-backed"),
+                    page.memid().kind() == MemoryKind::Arena,
+                    size_class::page_kind_for_block_size(page.block_size()) == Some(PageKind::Medium)
+                        && page.block_size() > SMALL_MAX_OBJ_SIZE
+                        && size_class::bin(page.block_size()) == Some(bin)
+                        && bin < BIN_FULL,
+                )
+            };
+            assert_eq!(request, 10_248);
+            assert_eq!(block_size, 12_288);
+            assert_eq!(reserved, 42);
+            assert!(arena_backed && ordinary_medium);
+            let first_memory_id = unsafe { first_page.as_ref().memid() };
+            let first_slice_index = first_memory.slice_index as usize;
+            let slice_count = first_memory.slice_count as usize;
+            let first_slice_start = allocator.arena.slice_start(first_slice_index).unwrap();
+            let first_span_size = slice_count * ARENA_SLICE_SIZE;
+
+            let mut first_blocks = Vec::with_capacity(reserved);
+            first_blocks.push(first);
+            while first_blocks.len() < reserved {
+                let block = allocator.allocate(request, false).expect("the first page fills");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
+                first_blocks.push(block);
+            }
+            let capacity = unsafe { first_page.as_ref().capacity() as usize };
+            assert_eq!(capacity, reserved);
+            let successor = allocator.allocate(request, false).expect("the successor exists");
+            let successor_page = NonNull::new(unsafe { allocator.page_for_block(successor) })
+                .expect("the successor is map-published");
+            assert_ne!(first_page, successor_page);
+            let successor_memory = unsafe { successor_page.as_ref().memid().arena_memory().unwrap() };
+            assert_eq!(successor_memory.slice_count as usize, slice_count);
+            let successor_slice_index = successor_memory.slice_index as usize;
+            let successor_slice_start = allocator.arena.slice_start(successor_slice_index).unwrap();
+            let successor_span_size = slice_count * ARENA_SLICE_SIZE;
+
+            let queue_singleton = |queue: Option<&crate::types::PageQueue>, member: NonNull<Page>| {
+                queue.is_some_and(|queue| {
+                    queue.count() == 1
+                        && queue.first() == member.as_ptr()
+                        && queue.last() == member.as_ptr()
+                }) && unsafe { member.as_ref().prev().is_null() && member.as_ref().next().is_null() }
+            };
+            let full_queue_count_before_remote = allocator.queue_count(BIN_FULL).unwrap_or(usize::MAX);
+            let regular_queue_count_before_remote = allocator.queue_count(bin).unwrap_or(usize::MAX);
+            let page_count_before_remote = allocator.session.theap().page_count();
+            let first_full_member_before_remote = unsafe { page_is_in_full(first_page.as_ref()) }
+                && queue_singleton(allocator.session.queue(BIN_FULL), first_page);
+            let successor_regular_member_before_remote = unsafe { !page_is_in_full(successor_page.as_ref()) }
+                && queue_singleton(allocator.session.queue(bin), successor_page);
+            let first_page_map_all_slices_before_remote =
+                (0..first_span_size).step_by(ARENA_SLICE_SIZE).all(|offset| unsafe {
+                    allocator.page_map.checked_lookup(first_slice_start.wrapping_add(offset))
+                        == first_page.as_ptr()
+                });
+            let successor_page_map_all_slices_before_remote =
+                (0..successor_span_size).step_by(ARENA_SLICE_SIZE).all(|offset| unsafe {
+                    allocator.page_map.checked_lookup(successor_slice_start.wrapping_add(offset))
+                        == successor_page.as_ptr()
+                });
+            let first_arena_page_bitmap_set_before_remote = allocator
+                .test_dynamic_arena_pages_image(first_memory_id)
+                .is_some_and(|(_, _, _, is_set)| is_set);
+            let first_slices_unreleased_before_remote = unsafe { allocator.arena.slices_free() }
+                .unwrap().is_clear_range(first_slice_index, slice_count) == Some(true);
+            let initial_used = unsafe { first_page.as_ref().used() };
+            let initial_head = unsafe { first_page.as_ref().remote_free_test_head() };
+            let initial_remote_head_owned = initial_head & 1 == 1;
+            let initial_remote_empty = initial_head & !1 == 0;
+            assert!(first_full_member_before_remote && successor_regular_member_before_remote);
+            assert_eq!(full_queue_count_before_remote, 1);
+            assert_eq!(regular_queue_count_before_remote, 1);
+            assert_eq!(page_count_before_remote, 2);
+
+            // Exactly one scoped producer is staged and joined before any
+            // owner-side inspection or collection.
+            let producer = unsafe { allocator.begin_remote_free(first) }
+                .expect("the full live medium page admits one remote producer");
+            let joined_remote_free_count = thread::scope(|scope| {
+                let joined = scope.spawn(move || producer.publish());
+                match joined.join().expect("the scoped producer must not panic") {
+                    Ok(()) => 1usize,
+                    Err((producer, error)) => {
+                        let block = producer.cancel();
+                        panic!("the full page rejected remote block {block:?}: {error:?}");
+                    }
+                }
+            });
+            let worker_joined_before_owner_collect = joined_remote_free_count == 1;
+            let published_used_unchanged = unsafe { first_page.as_ref().used() } == initial_used;
+            let published_head = unsafe { first_page.as_ref().remote_free_test_head() };
+            let published_remote_head_owned = published_head & 1 == 1;
+            let mut published_next = published_head & !1;
+            let mut published_remote_count = 0usize;
+            while published_next != 0 && published_remote_count < capacity {
+                published_remote_count += 1;
+                published_next = unsafe {
+                    core::ptr::read(core::ptr::with_exposed_provenance::<u8>(published_next).cast::<*mut u8>())
+                        .addr()
+                };
+            }
+            let published_list_acyclic = published_next == 0 && published_remote_count == 1;
+            let owner_false_collect_called = allocator.collect_retired(false);
+            let full_queue_count_after_collect = allocator.queue_count(BIN_FULL).unwrap_or(usize::MAX);
+            let regular_queue_count_after_collect = allocator.queue_count(bin).unwrap_or(usize::MAX);
+            let page_count_after_collect = allocator.session.theap().page_count();
+            let first_used_after_collect = unsafe { first_page.as_ref().used() };
+            let first_regular_member_after_collect = unsafe { !page_is_in_full(first_page.as_ref()) }
+                && allocator.session.queue(bin).is_some_and(|queue| {
+                    queue.first() == successor_page.as_ptr() || queue.last() == first_page.as_ptr()
+                });
+            let successor_regular_member_after_collect = unsafe { !page_is_in_full(successor_page.as_ref()) }
+                && allocator.session.queue(bin).is_some_and(|queue| {
+                    queue.first() == successor_page.as_ptr()
+                });
+            let regular_queue_first_is_successor_after_collect = allocator.session.queue(bin)
+                .is_some_and(|queue| queue.first() == successor_page.as_ptr());
+            let regular_queue_last_is_first_after_collect = allocator.session.queue(bin)
+                .is_some_and(|queue| queue.last() == first_page.as_ptr());
+            let successor_next_is_first_after_collect = unsafe {
+                successor_page.as_ref().next() == first_page.as_ptr()
+            };
+            let first_prev_is_successor_after_collect = unsafe {
+                first_page.as_ref().prev() == successor_page.as_ptr()
+            };
+            let successor_prev_is_null_after_collect = unsafe {
+                successor_page.as_ref().prev().is_null()
+            };
+            let first_in_full_after_collect = unsafe { page_is_in_full(first_page.as_ref()) };
+            let first_reusable_after_collect = unsafe {
+                !first_page.as_ref().remote_free_test_free().is_null()
+                    || !first_page.as_ref().remote_free_test_local_free().is_null()
+            };
+            let first_remote_empty_after_collect = unsafe { first_page.as_ref().remote_free_test_head() & !1 == 0 };
+            let full_queue_empty_after_collect = full_queue_count_after_collect == 0
+                && allocator.session.queue(BIN_FULL).is_some_and(|queue| {
+                    queue.first().is_null() && queue.last().is_null()
+                });
+            let first_page_map_all_slices_after_collect =
+                (0..first_span_size).step_by(ARENA_SLICE_SIZE).all(|offset| unsafe {
+                    allocator.page_map.checked_lookup(first_slice_start.wrapping_add(offset)) == first_page.as_ptr()
+                });
+            let successor_page_map_all_slices_after_collect =
+                (0..successor_span_size).step_by(ARENA_SLICE_SIZE).all(|offset| unsafe {
+                    allocator.page_map.checked_lookup(successor_slice_start.wrapping_add(offset)) == successor_page.as_ptr()
+                });
+            let first_arena_page_bitmap_set_after_collect = allocator
+                .test_dynamic_arena_pages_image(first_memory_id)
+                .is_some_and(|(_, _, _, is_set)| is_set);
+            let successor_arena_page_bitmap_set_after_collect = allocator
+                .test_dynamic_arena_pages_image(unsafe { successor_page.as_ref().memid() })
+                .is_some_and(|(_, _, _, is_set)| is_set);
+            let first_slices_unreleased_after_collect = unsafe { allocator.arena.slices_free() }
+                .unwrap().is_clear_range(first_slice_index, slice_count) == Some(true);
+            let successor_slices_unreleased_after_collect = unsafe { allocator.arena.slices_free() }
+                .unwrap().is_clear_range(successor_slice_index, slice_count) == Some(true);
+            assert!(owner_false_collect_called && first_regular_member_after_collect);
+            assert_eq!(first_used_after_collect, capacity - 1);
+            assert_eq!(regular_queue_count_after_collect, 2);
+            assert_eq!(page_count_after_collect, 2);
+
+            let mut filler = Vec::with_capacity(capacity - 1);
+            while filler.len() < capacity - 1 {
+                let block = allocator.allocate(request, false).expect("successor capacity is consumable");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, successor_page.as_ptr());
+                filler.push(block);
+            }
+            let successor_capacity_consumed_before_reuse = filler.len();
+            let predecessor_exhausted_before_reuse = successor_capacity_consumed_before_reuse == capacity - 1;
+            let regular_queue_count_before_exact_reuse = allocator.queue_count(bin).unwrap_or(usize::MAX);
+            let full_queue_count_before_exact_reuse = allocator.queue_count(BIN_FULL).unwrap_or(usize::MAX);
+            let reused = allocator.allocate(request, false).expect("ordinary reuse succeeds");
+            let reused_exact_remote_block = reused == first;
+            let successor_full_after_predecessor_exhaustion = unsafe { page_is_in_full(successor_page.as_ref()) };
+            let first_used_after_reuse = unsafe { first_page.as_ref().used() };
+            let full_queue_count_after_reuse = allocator.queue_count(BIN_FULL).unwrap_or(usize::MAX);
+            let regular_queue_count_after_reuse = allocator.queue_count(bin).unwrap_or(usize::MAX);
+            let first_full_member_after_reuse = unsafe { page_is_in_full(first_page.as_ref()) };
+            let successor_full_member_after_reuse = unsafe { page_is_in_full(successor_page.as_ref()) };
+            let first_page_map_all_slices_after_reuse =
+                (0..first_span_size).step_by(ARENA_SLICE_SIZE).all(|offset| unsafe {
+                    allocator.page_map.checked_lookup(first_slice_start.wrapping_add(offset)) == first_page.as_ptr()
+                });
+            let successor_page_map_all_slices_after_reuse =
+                (0..successor_span_size).step_by(ARENA_SLICE_SIZE).all(|offset| unsafe {
+                    allocator.page_map.checked_lookup(successor_slice_start.wrapping_add(offset)) == successor_page.as_ptr()
+                });
+            let first_arena_page_bitmap_set_after_reuse = allocator
+                .test_dynamic_arena_pages_image(first_memory_id)
+                .is_some_and(|(_, _, _, is_set)| is_set);
+            let successor_arena_page_bitmap_set_after_reuse = allocator
+                .test_dynamic_arena_pages_image(unsafe { successor_page.as_ref().memid() })
+                .is_some_and(|(_, _, _, is_set)| is_set);
+            let first_slices_unreleased_after_reuse = unsafe { allocator.arena.slices_free() }
+                .unwrap().is_clear_range(first_slice_index, slice_count) == Some(true);
+            let successor_slices_unreleased_after_reuse = unsafe { allocator.arena.slices_free() }
+                .unwrap().is_clear_range(successor_slice_index, slice_count) == Some(true);
+            let valid = request == 10_248 && block_size == 12_288 && capacity == 42 && reserved == 42
+                && slice_count == 8 && arena_backed && ordinary_medium && non_abandoning_theap
+                && first_full_member_before_remote && successor_regular_member_before_remote
+                && full_queue_count_before_remote == 1 && regular_queue_count_before_remote == 1
+                && page_count_before_remote == 2 && first_page_map_all_slices_before_remote
+                && successor_page_map_all_slices_before_remote && first_arena_page_bitmap_set_before_remote
+                && first_slices_unreleased_before_remote && initial_used == capacity
+                && initial_remote_head_owned && initial_remote_empty && joined_remote_free_count == 1
+                && worker_joined_before_owner_collect && published_used_unchanged
+                && published_remote_head_owned && published_remote_count == 1 && published_list_acyclic
+                && owner_false_collect_called && full_queue_empty_after_collect
+                && full_queue_count_after_collect == 0 && first_used_after_collect == capacity - 1
+                && first_regular_member_after_collect && successor_regular_member_after_collect
+                && regular_queue_first_is_successor_after_collect
+                && regular_queue_last_is_first_after_collect && successor_next_is_first_after_collect
+                && first_prev_is_successor_after_collect && successor_prev_is_null_after_collect
+                && !first_in_full_after_collect && first_reusable_after_collect
+                && first_remote_empty_after_collect && regular_queue_count_after_collect == 2
+                && page_count_after_collect == 2 && first_page_map_all_slices_after_collect
+                && successor_page_map_all_slices_after_collect && first_arena_page_bitmap_set_after_collect
+                && successor_arena_page_bitmap_set_after_collect
+                && first_slices_unreleased_after_collect && successor_slices_unreleased_after_collect
+                && predecessor_exhausted_before_reuse
+                && successor_capacity_consumed_before_reuse == 41
+                && reused_exact_remote_block && successor_full_after_predecessor_exhaustion
+                && first_used_after_reuse == 42 && first_full_member_after_reuse
+                && successor_full_member_after_reuse && full_queue_count_after_reuse == 2
+                && regular_queue_count_after_reuse == 0 && first_page_map_all_slices_after_reuse
+                && successor_page_map_all_slices_after_reuse && first_arena_page_bitmap_set_after_reuse
+                && successor_arena_page_bitmap_set_after_reuse && first_slices_unreleased_after_reuse
+                && successor_slices_unreleased_after_reuse;
+
+            unsafe {
+                allocator.free(reused).expect("the reused remote block remains current");
+                for block in first_blocks.into_iter().skip(1) {
+                    allocator.free(block).expect("the first-page blocks remain current");
+                }
+                allocator.free(successor).expect("the successor remains current");
+                for block in filler {
+                    allocator.free(block).expect("the predecessor fillers remain current");
+                }
+            }
+            assert!(valid, "live-owner one-remote unfull trace diverged from pinned C");
+            std::println!("CRABC_MI_LIVE_OWNER_FULL_MEDIUM_ONE_REMOTE_UNFULL_REUSE_TRACE_BEGIN");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.request={request}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.block_size={block_size}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.capacity={capacity}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.reserved={reserved}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.slice_count={slice_count}");
+            for (name, value) in [
+                ("arena_backed", arena_backed), ("ordinary_medium", ordinary_medium),
+                ("non_abandoning_theap", non_abandoning_theap),
+                ("first_full_member_before_remote", first_full_member_before_remote),
+                ("successor_regular_member_before_remote", successor_regular_member_before_remote),
+                ("first_page_map_all_slices_before_remote", first_page_map_all_slices_before_remote),
+                ("successor_page_map_all_slices_before_remote", successor_page_map_all_slices_before_remote),
+                ("first_arena_page_bitmap_set_before_remote", first_arena_page_bitmap_set_before_remote),
+                ("first_slices_unreleased_before_remote", first_slices_unreleased_before_remote),
+                ("initial_remote_head_owned", initial_remote_head_owned), ("initial_remote_empty", initial_remote_empty),
+                ("worker_joined_before_owner_collect", worker_joined_before_owner_collect),
+                ("published_used_unchanged", published_used_unchanged), ("published_remote_head_owned", published_remote_head_owned),
+                ("published_list_acyclic", published_list_acyclic), ("owner_false_collect_called", owner_false_collect_called),
+                ("full_queue_empty_after_collect", full_queue_empty_after_collect),
+                ("first_regular_after_collect", first_regular_member_after_collect),
+                ("first_reusable_after_collect", first_reusable_after_collect),
+                ("successor_regular_member_after_collect", successor_regular_member_after_collect),
+                ("first_remote_empty_after_collect", first_remote_empty_after_collect),
+                ("regular_queue_order_after_collect", regular_queue_first_is_successor_after_collect
+                    && regular_queue_last_is_first_after_collect && successor_next_is_first_after_collect
+                    && first_prev_is_successor_after_collect && successor_prev_is_null_after_collect),
+                ("first_page_map_all_slices_after_collect", first_page_map_all_slices_after_collect),
+                ("successor_page_map_all_slices_after_collect", successor_page_map_all_slices_after_collect),
+                ("first_arena_page_bitmap_set_after_collect", first_arena_page_bitmap_set_after_collect),
+                ("first_slices_unreleased_after_collect", first_slices_unreleased_after_collect),
+                ("predecessor_exhausted_before_reuse", predecessor_exhausted_before_reuse),
+                ("reused_exact_remote_block", reused_exact_remote_block),
+                ("successor_full_after_predecessor_exhaustion", successor_full_after_predecessor_exhaustion),
+            ] { std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.{name}={}", value as u8); }
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.initial_used={initial_used}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.joined_remote_free_count={joined_remote_free_count}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.published_remote_count={published_remote_count}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.regular_queue_count_after_collect={regular_queue_count_after_collect}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.page_count_after_collect={page_count_after_collect}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.first_used_after_collect={first_used_after_collect}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.regular_queue_count_before_exact_reuse={regular_queue_count_before_exact_reuse}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.full_queue_count_before_exact_reuse={full_queue_count_before_exact_reuse}");
+            std::println!("trace.live_owner_full_medium_one_remote_unfull_reuse.valid={}", valid as u8);
+            std::println!("CRABC_MI_LIVE_OWNER_FULL_MEDIUM_ONE_REMOTE_UNFULL_REUSE_TRACE_END");
+            match allocator.finish() {
+                Ok(()) => {}
+                Err(engine) => { core::mem::forget(engine); panic!("the live session finishes") }
+            }
+            owner.teardown().expect("the isolated attachment tears down");
+            unsafe { page_map.destroy() }.expect("the finished session leaves no map entries");
+        })
+        .join()
+        .expect("the live-owner fixture remains on one current thread");
+    }
+
     #[test]
     fn full_page_remote_producer_is_send() {
         fn assert_send<T: Send>() {}
