@@ -29,12 +29,25 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
-        self.assertIn('image|core)', source)
+        self.assertIn('image|core|libc-syscall)', source)
         self.assertIn('cargo test --locked --target x86_64-unknown-linux-musl', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
+        self.assertIn('run_libc_syscall_probe()', source)
+        self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
         self.assertNotIn('"$ROOT_DIR/compat/allocator/run-x86_64.sh"', source)
         self.assertNotIn('cargo "$@"', source)
-        self.assertNotIn('crabc-libc', source)
+        self.assertNotIn('-p crabc-libc', source)
+
+    def test_libc_syscall_probe_stays_outside_the_libc_artifact_boundary(self) -> None:
+        source = (ROOT / "compat" / "x86_64" / "libc_syscall_probe.rs").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('libc/src/c_abi/x86_64/syscall.rs', source)
+        self.assertIn('syscall::syscall4(', source)
+        self.assertIn('syscall::syscall5(', source)
+        self.assertIn('syscall::syscall6(', source)
+        self.assertNotIn('crabc_libc', source)
 
     def test_core_refuses_a_non_native_host_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

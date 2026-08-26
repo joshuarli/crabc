@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 crabc-core evidence entry point.
+# Native Linux/x86-64 staged foundation evidence entry point.
 #
 # This is a deliberately closed foundation lane. It proves only crabc-core
 # under the native musl target; it does not select libc, ldso, CRT, sysroot,
@@ -17,12 +17,15 @@ usage() {
     cat <<'EOF'
 Usage: ./scripts/dev-x86_64.sh <command>
 
-Native Linux/x86-64 core-foundation evidence commands:
+Native Linux/x86-64 staged-foundation evidence commands:
   image  build the pinned Linux/amd64 core-evidence image
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
+  libc-syscall  run the isolated x86 C-ABI syscall register probe
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
-libc, ldso, CRT, sysroot, crabc-rs, allocator, generic Cargo, or shell commands.
+an x86 libc artifact, ldso, CRT, sysroot, crabc-rs, allocator, generic Cargo,
+or shell command. `libc-syscall` compiles only the unintegrated raw syscall
+module; it is not a crabc-libc build or C ABI support claim.
 EOF
 }
 
@@ -81,6 +84,15 @@ run_in_container() {
         "$IMAGE" "$@"
 }
 
+run_libc_syscall_probe() {
+    run_in_container bash -ceu '
+        probe=/tmp/crabc-x86-libc-syscall-probe
+        rustc --edition=2021 --target x86_64-unknown-linux-musl \
+            /workspace/compat/x86_64/libc_syscall_probe.rs -o "$probe"
+        "$probe"
+    '
+}
+
 if [ "$#" -eq 0 ]; then
     usage >&2
     exit 2
@@ -90,7 +102,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|core) ;;
+    image|core|libc-syscall) ;;
     *)
         usage >&2
         exit 2
@@ -109,5 +121,10 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-core --lib --no-default-features -- --test-threads=1
+        ;;
+    libc-syscall)
+        [ "$#" -eq 0 ] || fail "libc-syscall takes no arguments"
+        ensure_image
+        run_libc_syscall_probe
         ;;
 esac

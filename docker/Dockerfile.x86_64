@@ -12,9 +12,9 @@ ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
     PATH=/opt/cargo/bin:${PATH}
 
-# Keep the image limited to compiling and executing the target-specific
-# crabc-core lib tests. A pinned musl oracle, crabc runtime/sysroot tools, and
-# allocator evidence all own separate boundaries.
+# Keep the image limited to the target-specific `crabc-core` lib suite and one
+# isolated raw C-ABI syscall probe. A pinned musl oracle, crabc libc artifact,
+# runtime/sysroot tools, and allocator evidence all own separate boundaries.
 RUN test "$(uname -m)" = "x86_64" \
     && apk add --no-cache \
         bash \
