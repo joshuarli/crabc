@@ -22,13 +22,16 @@ Native Linux/x86-64 staged-foundation evidence commands:
   core   run the native x86_64-unknown-linux-musl crabc-core lib tests
   facade run the bounded native x86_64 crabc-rs direct-facade tests
   libc-syscall  run the isolated x86 C-ABI syscall register probe
+  libc-errno-tls  run the source-only x86 C errno/initial-TLS probe
   ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
 
 This closed runner rejects non-native Linux/x86-64 hosts and does not provide
 an x86 libc artifact, ldso, CRT, sysroot, allocator, generic Cargo, or shell
 command. `facade` covers only the separately admitted direct `crabc-rs`
 subset; `libc-syscall` compiles only the unintegrated raw syscall module.
-`ldso-relocation` compiles only the unintegrated checked relocation source.
+`libc-errno-tls` compiles only the unintegrated errno source and its static C
+fixture. `ldso-relocation` compiles only the unintegrated checked relocation
+source.
 None is a crabc-libc or crabc-ldso build, general facade admission, or C ABI
 support claim.
 EOF
@@ -128,6 +131,10 @@ run_libc_syscall_probe() {
     '
 }
 
+run_libc_errno_tls_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_errno_tls.sh
+}
+
 run_ldso_relocation_tests() {
     run_in_container bash -ceu '
         test_binary=/tmp/crabc-x86-64-ldso-relocation
@@ -146,7 +153,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|core|facade|libc-syscall|ldso-relocation) ;;
+    image|core|facade|libc-syscall|libc-errno-tls|ldso-relocation) ;;
     *)
         usage >&2
         exit 2
@@ -170,13 +177,18 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_param --test x86_64_pipe \
+            --test x86_64_eventfd --test x86_64_io --test x86_64_param --test x86_64_pipe \
             -- --test-threads=1
         ;;
     libc-syscall)
         [ "$#" -eq 0 ] || fail "libc-syscall takes no arguments"
         ensure_image
         run_libc_syscall_probe
+        ;;
+    libc-errno-tls)
+        [ "$#" -eq 0 ] || fail "libc-errno-tls takes no arguments"
+        ensure_image
+        run_libc_errno_tls_probe
         ;;
     ldso-relocation)
         [ "$#" -eq 0 ] || fail "ldso-relocation takes no arguments"

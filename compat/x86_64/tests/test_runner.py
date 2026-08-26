@@ -29,7 +29,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
-        self.assertIn('image|core|facade|libc-syscall|ldso-relocation)', source)
+        self.assertIn('image|core|facade|libc-syscall|libc-errno-tls|ldso-relocation)', source)
         self.assertIn('run_core_tests()', source)
         self.assertIn('CARGO_TARGET_DIR="$target_dir" cargo test --locked', source)
         self.assertIn('-p crabc-core --lib --no-default-features -- --test-threads=1', source)
@@ -40,10 +40,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             source,
         )
         self.assertIn('--test x86_64_eventfd', source)
+        self.assertIn('--test x86_64_io', source)
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
         self.assertIn('run_libc_syscall_probe()', source)
         self.assertIn('compat/x86_64/libc_syscall_probe.rs', source)
+        self.assertIn('run_libc_errno_tls_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_errno_tls.sh', source)
         self.assertIn('run_ldso_relocation_tests()', source)
         self.assertIn('ldso/src/x86_64_relocation.rs', source)
         self.assertIn('rustup run nightly-2026-07-24 rustc --edition=2021 --test', source)
@@ -62,6 +65,31 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('syscall::syscall5(', source)
         self.assertIn('syscall::syscall6(', source)
         self.assertNotIn('crabc_libc', source)
+
+    def test_libc_errno_tls_probe_is_a_fixed_source_only_static_tls_boundary(self) -> None:
+        rust_probe = (ROOT / "compat" / "x86_64" / "libc_errno_tls_probe.rs").read_text(
+            encoding="utf-8"
+        )
+        errno_source = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "errno.rs").read_text(
+            encoding="utf-8"
+        )
+        c_probe = (ROOT / "compat" / "x86_64" / "libc_errno_tls_probe.c").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "compat" / "x86_64" / "run_libc_errno_tls.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('libc/src/c_abi/x86_64/errno.rs', rust_probe)
+        self.assertIn('#[thread_local]', errno_source)
+        self.assertIn('__errno_location', errno_source)
+        self.assertIn('#include <errno.h>', c_probe)
+        self.assertIn('pthread_create', c_probe)
+        self.assertIn('R_X86_64_TPOFF', script)
+        self.assertIn('__tls_get_addr', script)
+        self.assertIn('-no-pie -pthread', script)
+        self.assertNotIn('--allow-multiple-definition', script)
+        self.assertNotIn('crabc_libc', rust_probe)
 
     def test_core_refuses_a_non_native_host_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -253,6 +281,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_foundation",
                     "--test",
                     "x86_64_eventfd",
+                    "--test",
+                    "x86_64_io",
                     "--test",
                     "x86_64_param",
                     "--test",
