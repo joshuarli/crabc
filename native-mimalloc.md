@@ -1,3 +1,10 @@
+> **Status: paused.** This document preserves the fixed Rust mimalloc
+> implementation handoff, source-shaped boundaries, and native evidence. It is
+> not an active backlog while the native Linux/x86-64 runtime program in
+> [`x86-64.md`](x86-64.md) is prioritized. Resume allocator implementation,
+> evidence expansion, backend integration, or performance work only after an
+> explicit reprioritization.
+
 The crucial framing is: **do not design a new allocator**. Produce a provenance-preserving, semantically faithful Rust port of a fixed upstream mimalloc v3 release, then optimize only where measurement shows the Rust translation diverges. The objective is to remove the C allocator from the production dependency graph while retaining mimalloc’s design, behavior, and performance—not to create “mimalloc-inspired” machinery.
 
 ## Handoff — 2026-08-27
