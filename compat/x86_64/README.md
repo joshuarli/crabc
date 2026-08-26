@@ -28,6 +28,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh msync-reference
 ./scripts/dev-x86_64.sh madvise-reference
 ./scripts/dev-x86_64.sh mincore-reference
+./scripts/dev-x86_64.sh fs-advice-reference
 ./scripts/dev-x86_64.sh rand-reference
 ./scripts/dev-x86_64.sh time-abi-reference
 ./scripts/dev-x86_64.sh time-observation-reference
@@ -39,6 +40,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh pidfd-open-reference
 ./scripts/dev-x86_64.sh fcntl-getlk-reference
 ./scripts/dev-x86_64.sh scheduler-priority-bounds-reference
+./scripts/dev-x86_64.sh priority-reference
 ./scripts/dev-x86_64.sh fstat-reference
 ./scripts/dev-x86_64.sh system-reference
 ./scripts/dev-x86_64.sh thread-reference
@@ -47,6 +49,7 @@ Run it only on a native Linux x86_64 host:
 ./scripts/dev-x86_64.sh libc-syscall
 ./scripts/dev-x86_64.sh libc-errno-tls
 ./scripts/dev-x86_64.sh libc-setjmp
+./scripts/dev-x86_64.sh libc-atomic
 ./scripts/dev-x86_64.sh ldso-relocation
 ./scripts/dev-x86_64.sh ldso-image
 ```
@@ -155,6 +158,12 @@ mapping support or wider VM policy.
 establishes only the typed Rust residency boundary, not C mapping support or a
 general VM facade.
 
+`fs-advice-reference` executes a pinned-musl x86 probe for `fadvise64` and
+`readahead`, their syscall values, all six `POSIX_FADV_*` policies,
+descriptor-position preservation, and direct invalid range/descriptor behavior.
+It establishes only the typed Rust `fs::{fadvise, readahead}` boundary, not C
+filesystem support or broader path-based behavior.
+
 `rand-reference` runs a pinned-musl native x86 reference executable for
 `getrandom` syscall/flag values and initialized-length behavior. It does not
 link or select a crabc artifact.
@@ -207,6 +216,12 @@ values, and invalid-policy behavior. It establishes only the typed Rust
 read-only scheduler-priority bounds query, not scheduling mutation or C process
 support.
 
+`priority-reference` executes a pinned-musl x86 probe for
+`PRIO_PROCESS`/`PRIO_PGRP`/`PRIO_USER`, `getpriority` syscall 140, the
+non-negative `[1, 40]` raw success encoding, and missing-process `ESRCH`.
+It establishes only the typed Rust read-only `getpriority` boundary, not
+priority mutation or C process support.
+
 `fstat-reference` records the pinned-musl x86 144-byte `fstat` record and
 regular-file behavior for the bounded descriptor `fs::fstat` slice. It does
 not complete the broader filesystem path-core capability.
@@ -249,10 +264,16 @@ stack restoration, zero-to-one return conversion, and `sigsetjmp` mask
 restore behavior. It remains a source-only control-transfer leaf, not a
 selected `crabc-libc` artifact or general x86 C ABI claim.
 
+`libc-atomic` compiles only `libc/src/c_abi/x86_64/atomic.rs` and executes a
+native behavior/disassembly probe for locked i32 `cmpxchg`, `xchg`, and `xadd`
+helpers. It is a source-only prerequisite: it does not select `crabc-libc` or
+establish pthread, TLS, or C ABI parity.
+
 `facade` runs exactly the no-default-feature `crabc-rs` lib tests plus the
 `fenv`, `x86_64_foundation`, `x86_64_eventfd`, `x86_64_fcntl_getlk`,
-`x86_64_fs`, `x86_64_io`, `x86_64_mm`, `x86_64_param`, `x86_64_pipe`,
-`x86_64_poll`, `x86_64_process_identity`, `x86_64_process_session`,
+`x86_64_fs`, `x86_64_fs_advice`, `x86_64_io`, `x86_64_mm`, `x86_64_param`,
+`x86_64_pipe`, `x86_64_poll`, `x86_64_priority`, `x86_64_process_identity`,
+`x86_64_process_session`,
 `x86_64_pidfd_open`, `x86_64_rand`, `x86_64_scheduler_priority_bounds`,
 `x86_64_sleep`, `x86_64_system`, `x86_64_thread`, and `x86_64_time` tests. The
 I/O regression proves vector segment and short-read behavior, 64-bit
@@ -273,14 +294,15 @@ page-residency output/rounding, including a sparse 4 GiB file offset; it permits
 borrowed-record empty/readable/hangup pipe behavior, temporary `ppoll`
 signal-mask restoration, signal-only `pause` completion, requested-flag
 retention, and timeout-range rejection. The filesystem regression proves only a
-typed descriptor `fstat` record. The process regressions prove typed
-PID/identity/session observations, owned nonblocking pidfds, read-only
-conflicting-lock `F_GETLK` records, and scheduler-priority bounds; the system
-and thread regressions prove the named bounded kernel observations. It verifies
-the explicitly admitted Rust subset only; it does not make pselect, epoll,
-signalfd, broader filesystem path-core behavior, global locking policy, wider
-mapping policy, other kernel-record-owning facade families, or a general x86-64
-facade selectable or supported.
+typed descriptor `fstat` record plus `fadvise64`/`readahead` behavior. The
+process regressions prove typed PID/identity/session observations, owned
+nonblocking pidfds, read-only `getpriority`, conflicting-lock `F_GETLK` records,
+and scheduler-priority bounds; the system and thread regressions prove the named
+bounded kernel observations. It verifies the explicitly admitted Rust subset
+only; it does not make pselect, epoll, signalfd, broader filesystem path-core
+behavior, global locking policy, wider mapping policy, other
+kernel-record-owning facade families, or a general x86-64 facade selectable or
+supported.
 
 The random regression proves raw Linux `getrandom` flag values and initialized
 prefix handling, musl's bounded 256-byte `getentropy` behavior, and owned

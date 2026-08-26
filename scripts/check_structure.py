@@ -41,9 +41,9 @@ X86_RUNTIME_FOUNDATION_CORE_SOURCES = {
 # `lib.rs` exposes only target-record-independent families, `signal.rs` owns
 # the separately-proved x86 kernel signal records and restorer,
 # `event_x86_64.rs` owns the scalar event-counter plus the exact `pollfd`
-# record seam, `fs_x86_64.rs` owns only descriptor `fstat`,
-# `process_x86_64.rs` owns read-only identity/session, scheduler-priority, and
-# record-lock observations,
+# record seam, `fs_x86_64.rs` owns descriptor `fstat` plus file-access advice
+# and readahead, `process_x86_64.rs` owns read-only identity/session,
+# getpriority/scheduler-priority, and record-lock observations,
 # `pipe.rs` owns the proved target-specific O_DIRECT packet-mode constant,
 # `mm_x86_64.rs` owns the closed mmap/mprotect/munmap/memory-locking,
 # mapping-synchronization, advice, and residency set,
@@ -72,11 +72,12 @@ X86_RUNTIME_FOUNDATION_LDSO_SOURCES = {
     Path("ldso/src/x86_64_image.rs"),
     Path("ldso/src/x86_64_relocation.rs"),
 }
-# This control-transfer leaf is compiled only by its dedicated native probe.
-# It does not select crabc-libc or make the AArch64 C-ABI composition root an
-# x86 target; keeping a one-file boundary makes any later libc admission a
+# These source-only leaves are compiled only by their dedicated native probes.
+# They do not select crabc-libc or make the AArch64 C-ABI composition root an
+# x86 target; keeping exact file boundaries makes any later libc admission a
 # deliberate review decision.
 X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
+    Path("libc/src/c_abi/x86_64/atomic.rs"),
     Path("libc/src/c_abi/x86_64/setjmp.rs"),
 }
 # The fixed-mimalloc evidence lane remains a separate, private program. Its

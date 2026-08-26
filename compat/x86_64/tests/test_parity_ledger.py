@@ -74,7 +74,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "memory.mapping-sync",
             "memory.advice",
             "memory.residency",
+            "filesystem.access-advice",
+            "filesystem.readahead",
             "process.fcntl-lock-observation",
+            "process.scheduling-priority",
             "process.scheduler-priority-bounds",
             "time.realtime-millis",
             "time.timespec-get",
@@ -95,6 +98,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(capability, remaining["capabilities"])
         self.assertNotIn("filesystem.path-core", direct["capabilities"])
         self.assertIn("filesystem.path-core", remaining["capabilities"])
+        self.assertNotIn("filesystem.access-advice", remaining["capabilities"])
+        self.assertNotIn("process.scheduling-priority", remaining["capabilities"])
+        pthread_tls = self.family(data, "libc.pthread-tls")
+        self.assertEqual(pthread_tls["status"], "planned")
+        self.assertIn("libc/src/c_abi/x86_64/atomic.rs", pthread_tls["source_owners"])
+        self.assertEqual(
+            pthread_tls["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh libc-atomic",
+        )
 
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
         data = self.data()

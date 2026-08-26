@@ -38,6 +38,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   msync-reference  verify pinned-musl x86 mapping-synchronization ABI and behavior
   madvise-reference  verify pinned-musl x86 mapping-advice ABI and behavior
   mincore-reference  verify pinned-musl x86 mapping-residency ABI and behavior
+  fs-advice-reference  verify pinned-musl x86 fadvise64/readahead ABI and behavior
   rand-reference  verify pinned-musl x86 getrandom ABI and behavior reference
   time-abi-reference  verify pinned-musl x86 timespec and clock ABI constants
   time-observation-reference  verify pinned-musl x86 realtime observation behavior
@@ -49,6 +50,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   pidfd-open-reference  verify pinned-musl x86 pidfd_open behavior
   fcntl-getlk-reference  verify pinned-musl x86 fcntl lock-query behavior
   scheduler-priority-bounds-reference  verify pinned-musl x86 scheduler-priority bounds
+  priority-reference  verify pinned-musl x86 getpriority ABI and behavior
   fstat-reference  verify pinned-musl x86 fstat ABI and behavior reference
   system-reference  verify pinned-musl x86 uname/sysinfo ABI and behavior reference
   thread-reference  verify pinned-musl x86 thread observation/yield behavior
@@ -57,6 +59,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-syscall  run the isolated x86 C-ABI syscall register probe
   libc-errno-tls  run the source-only x86 C errno/initial-TLS probe
   libc-setjmp  run the source-only x86 C setjmp/signal-mask ABI probe
+  libc-atomic  run the source-only x86 atomic-helper probe
   ldso-relocation  run the source-only checked x86 RELA/RELR foundation tests
   ldso-image  run the source-only checked x86 ELF image parser tests
 
@@ -81,6 +84,8 @@ boundary used by that facade.
 `msync-reference`, `madvise-reference`, and `mincore-reference` establish only
 their named mapping-synchronization, Linux/POSIX advisory, and page-residency
 boundaries used by the typed Rust facade.
+`fs-advice-reference` establishes only the typed Rust file-access advice and
+readahead boundary; it does not select a C filesystem API.
 `rand-reference`, `time-abi-reference`, `time-observation-reference`,
 `relative-sleep-reference`, `poll-reference`, `ppoll-reference`,
 `process-identity-reference`, `process-session-reference`,
@@ -88,9 +93,12 @@ boundaries used by the typed Rust facade.
 `scheduler-priority-bounds-reference`, `fstat-reference`,
 `system-reference`, and `thread-reference` establish only their named
 pinned-musl kernel boundaries for separately admitted Rust slices.
+`priority-reference` establishes only the typed Rust read-only getpriority
+boundary; it does not select scheduling mutation or a C process API.
 `libc-syscall` compiles only the unintegrated raw syscall module.
 `libc-errno-tls` compiles only the unintegrated errno source and its C fixture.
 `libc-setjmp` compiles only the unintegrated control-transfer assembly leaf.
+`libc-atomic` compiles only the unintegrated x86 atomic-helper leaf.
 `ldso-relocation` compiles only the unintegrated checked relocation source.
 `ldso-image` compiles only the unintegrated checked ELF image parser.
 None is a crabc-libc or crabc-ldso build, general facade admission, or C ABI
@@ -263,6 +271,10 @@ run_mincore_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_mincore_reference.sh
 }
 
+run_fs_advice_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_fs_advice_reference.sh
+}
+
 run_rand_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_rand_reference.sh
 }
@@ -307,6 +319,10 @@ run_scheduler_priority_bounds_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_scheduler_priority_bounds_reference.sh
 }
 
+run_priority_reference() {
+    run_in_container bash /workspace/compat/x86_64/run_x86_priority_reference.sh
+}
+
 run_fstat_reference() {
     run_in_container bash /workspace/compat/x86_64/run_x86_fstat_reference.sh
 }
@@ -336,6 +352,10 @@ run_libc_setjmp_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_setjmp.sh
 }
 
+run_libc_atomic_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_atomic.sh
+}
+
 run_ldso_relocation_tests() {
     run_in_container bash -ceu '
         test_binary=/tmp/crabc-x86-64-ldso-relocation
@@ -358,7 +378,7 @@ command="$1"
 shift
 
 case "$command" in
-    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image) ;;
+    image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image) ;;
     *)
         usage >&2
         exit 2
@@ -467,6 +487,11 @@ case "$command" in
         ensure_image
         run_mincore_reference
         ;;
+    fs-advice-reference)
+        [ "$#" -eq 0 ] || fail "fs-advice-reference takes no arguments"
+        ensure_image
+        run_fs_advice_reference
+        ;;
     rand-reference)
         [ "$#" -eq 0 ] || fail "rand-reference takes no arguments"
         ensure_image
@@ -522,6 +547,11 @@ case "$command" in
         ensure_image
         run_scheduler_priority_bounds_reference
         ;;
+    priority-reference)
+        [ "$#" -eq 0 ] || fail "priority-reference takes no arguments"
+        ensure_image
+        run_priority_reference
+        ;;
     fstat-reference)
         [ "$#" -eq 0 ] || fail "fstat-reference takes no arguments"
         ensure_image
@@ -547,7 +577,7 @@ case "$command" in
         ensure_image
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test x86_64_foundation \
-            --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time \
+            --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fs --test x86_64_fs_advice --test x86_64_io --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_priority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_system --test x86_64_thread --test x86_64_time \
             -- --test-threads=1
         ;;
     libc-syscall)
@@ -564,6 +594,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-setjmp takes no arguments"
         ensure_image
         run_libc_setjmp_probe
+        ;;
+    libc-atomic)
+        [ "$#" -eq 0 ] || fail "libc-atomic takes no arguments"
+        ensure_image
+        run_libc_atomic_probe
         ;;
     ldso-relocation)
         [ "$#" -eq 0 ] || fail "ldso-relocation takes no arguments"

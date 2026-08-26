@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|msync-reference|madvise-reference|mincore-reference|fs-advice-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|scheduler-priority-bounds-reference|priority-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|libc-atomic|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -72,6 +72,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_madvise_reference.sh', source)
         self.assertIn('run_mincore_reference()', source)
         self.assertIn('compat/x86_64/run_x86_mincore_reference.sh', source)
+        self.assertIn('run_fs_advice_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_fs_advice_reference.sh', source)
         self.assertIn('run_rand_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
         self.assertIn('run_time_abi_reference()', source)
@@ -94,6 +96,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_fcntl_getlk_reference.sh', source)
         self.assertIn('run_scheduler_priority_bounds_reference()', source)
         self.assertIn('compat/x86_64/run_x86_scheduler_priority_bounds_reference.sh', source)
+        self.assertIn('run_priority_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_priority_reference.sh', source)
         self.assertIn('run_fstat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_fstat_reference.sh', source)
         self.assertIn('run_system_reference()', source)
@@ -112,11 +116,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_eventfd', source)
         self.assertIn('--test x86_64_fcntl_getlk', source)
         self.assertIn('--test x86_64_fs', source)
+        self.assertIn('--test x86_64_fs_advice', source)
         self.assertIn('--test x86_64_io', source)
         self.assertIn('--test x86_64_mm', source)
         self.assertIn('--test x86_64_param', source)
         self.assertIn('--test x86_64_pipe', source)
         self.assertIn('--test x86_64_poll', source)
+        self.assertIn('--test x86_64_priority', source)
         self.assertIn('--test x86_64_process_identity', source)
         self.assertIn('--test x86_64_process_session', source)
         self.assertIn('--test x86_64_pidfd_open', source)
@@ -132,6 +138,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('/workspace/compat/x86_64/run_libc_errno_tls.sh', source)
         self.assertIn('run_libc_setjmp_probe()', source)
         self.assertIn('/workspace/compat/x86_64/run_libc_setjmp.sh', source)
+        self.assertIn('run_libc_atomic_probe()', source)
+        self.assertIn('/workspace/compat/x86_64/run_libc_atomic.sh', source)
         self.assertIn('run_ldso_relocation_tests()', source)
         self.assertIn('ldso/src/x86_64_relocation.rs', source)
         self.assertIn('rustup run nightly-2026-07-24 rustc --edition=2021 --test', source)
@@ -178,6 +186,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         mincore = (ROOT / "compat" / "x86_64" / "run_x86_mincore_reference.sh").read_text(
             encoding="utf-8"
         )
+        fs_advice = (
+            ROOT / "compat" / "x86_64" / "run_x86_fs_advice_reference.sh"
+        ).read_text(encoding="utf-8")
         signal = (ROOT / "compat" / "x86_64" / "run_signal_header_abi.sh").read_text(
             encoding="utf-8"
         )
@@ -235,6 +246,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         scheduler_priority_bounds_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_scheduler_priority_bounds_reference.sh"
         ).read_text(encoding="utf-8")
+        priority_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_priority_reference.sh"
+        ).read_text(encoding="utf-8")
         fstat_reference = (ROOT / "compat" / "x86_64" / "run_x86_fstat_reference.sh").read_text(
             encoding="utf-8"
         )
@@ -290,6 +304,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_mincore_reference_probe.c', mincore)
         self.assertIn('mincore ABI/behavior reference', mincore)
         self.assertNotIn('-p crabc-libc', mincore)
+        self.assertIn('x86_fs_advice_reference_probe.c', fs_advice)
+        self.assertIn('filesystem-advice ABI/behavior reference', fs_advice)
+        self.assertNotIn('-p crabc-libc', fs_advice)
         self.assertIn('signal_header_abi_probe.c', signal)
         self.assertIn('signal_header_posix_abi_probe.c', signal)
         self.assertIn('-fsyntax-only', signal)
@@ -365,6 +382,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_scheduler_priority_bounds_reference_probe.c', scheduler_priority_bounds_reference)
         self.assertIn('scheduler-priority bounds reference', scheduler_priority_bounds_reference)
         self.assertNotIn('-p crabc-libc', scheduler_priority_bounds_reference)
+        self.assertIn('x86_priority_reference_probe.c', priority_reference)
+        self.assertIn('getpriority reference', priority_reference)
+        self.assertNotIn('-p crabc-libc', priority_reference)
         self.assertIn('x86_fstat_reference_probe.c', fstat_reference)
         self.assertIn('fstat reference', fstat_reference)
         self.assertNotIn('-p crabc-libc', fstat_reference)
@@ -454,6 +474,29 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('-fno-builtin', script)
         self.assertNotIn('-p crabc-libc', script)
         self.assertNotIn('crabc_libc', rust_probe)
+
+    def test_libc_atomic_probe_is_a_fixed_source_only_atomic_boundary(self) -> None:
+        probe = (ROOT / "compat" / "x86_64" / "libc_atomic_probe.rs").read_text(
+            encoding="utf-8"
+        )
+        atomic = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "atomic.rs").read_text(
+            encoding="utf-8"
+        )
+        script = (ROOT / "compat" / "x86_64" / "run_libc_atomic.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('libc/src/c_abi/x86_64/atomic.rs', probe)
+        self.assertIn('x86_64_compare_exchange_acqrel_i32', atomic)
+        self.assertIn('lock cmpxchg', atomic)
+        self.assertIn('lock xadd', atomic)
+        self.assertIn('x86_64_swap_acqrel_i32', atomic)
+        self.assertIn('x86_64-unknown-linux-musl', script)
+        self.assertIn('crabc_x86_atomic_probe_compare_exchange', script)
+        self.assertIn('crabc_x86_atomic_probe_fetch_add', script)
+        self.assertIn('crabc_x86_atomic_probe_fetch_sub', script)
+        self.assertNotIn('-p crabc-libc', script)
+        self.assertNotIn('crabc_libc', probe)
 
     def test_core_refuses_a_non_native_host_before_docker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -650,6 +693,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--test",
                     "x86_64_fs",
                     "--test",
+                    "x86_64_fs_advice",
+                    "--test",
                     "x86_64_io",
                     "--test",
                     "x86_64_mm",
@@ -659,6 +704,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_pipe",
                     "--test",
                     "x86_64_poll",
+                    "--test",
+                    "x86_64_priority",
                     "--test",
                     "x86_64_process_identity",
                     "--test",

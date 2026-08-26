@@ -1,4 +1,4 @@
-//! Stateless Linux/AArch64 filesystem operations.
+//! Stateless Linux filesystem operations.
 
 use core::ffi::CStr;
 
@@ -113,16 +113,16 @@ pub fn sync() {
     let _ = unsafe { syscall0(SYS_SYNC) };
 }
 
-/// Gives Linux a POSIX filesystem access-pattern advisory through the
-/// AArch64 `fadvise64` ABI without using libc or TLS `errno`.
+/// Gives Linux a POSIX filesystem access-pattern advisory through the direct
+/// `fadvise64` ABI without using libc or TLS `errno`.
 ///
-/// `offset` and `length` are the signed Linux/AArch64 `loff_t` values. The
-/// native facade validates its unsigned API before converting to these
-/// arguments.
+/// `offset` and `length` are the signed Linux `loff_t` values. The native
+/// facade validates its unsigned API before converting to these arguments.
 #[inline]
 pub fn fadvise64(fd: RawFd, offset: i64, length: i64, advice: u32) -> Result<()> {
-    // SAFETY: The kernel validates the descriptor, signed offsets, length,
-    // and POSIX_FADV policy value.
+    // SAFETY: The kernel validates the descriptor, signed length, and
+    // POSIX_FADV policy value. The raw seam intentionally preserves Linux's
+    // direct offset behavior for its signed wire value.
     decode(unsafe {
         syscall4(
             SYS_FADVISE64,
@@ -135,16 +135,16 @@ pub fn fadvise64(fd: RawFd, offset: i64, length: i64, advice: u32) -> Result<()>
     .map(|_| ())
 }
 
-/// Initiates Linux file readahead through the AArch64 syscall ABI without
-/// using libc or TLS `errno`.
+/// Initiates Linux file readahead through the direct syscall ABI without using
+/// libc or TLS `errno`.
 ///
-/// `offset` is the signed Linux `loff_t` byte offset. `count` is the
-/// AArch64 `size_t` byte count; the native facade validates the unsigned
-/// caller range and its end before converting `offset` here.
+/// `offset` is the signed Linux `loff_t` byte offset. `count` is the Linux
+/// `size_t` byte count; the native facade validates the unsigned caller range
+/// and its end before converting `offset` here.
 #[inline]
 pub fn readahead(fd: RawFd, offset: i64, count: usize) -> Result<()> {
     // SAFETY: The kernel validates the descriptor and file type. The
-    // scalar arguments are the Linux/AArch64 readahead ABI.
+    // scalar arguments are the Linux readahead ABI.
     decode(unsafe { syscall3(SYS_READAHEAD, fd as usize, offset as usize, count) }).map(|_| ())
 }
 

@@ -1,6 +1,7 @@
 //! Deliberately narrow Linux/x86-64 filesystem metadata operations.
 //!
-//! This module currently admits only descriptor-based `fstat(2)`.  The
+//! This module admits descriptor-based `fstat(2)`, file-access advice, and
+//! file readahead.  The
 //! x86-64 kernel record is not interchangeable with the AArch64 record:
 //! `st_nlink` and the timestamp nanoseconds are 64-bit here, and the record
 //! has a distinct 144-byte layout.  Path metadata, `statx`, filesystem
@@ -8,8 +9,32 @@
 //! target boundary until they have their own x86-64 evidence.
 
 use core::mem::MaybeUninit;
+use core::num::NonZeroU64;
 
 use crate::{AsFd, Result};
+
+/// The six POSIX filesystem access-pattern policies accepted by Linux
+/// `fadvise64`.
+///
+/// This filesystem advice type is intentionally distinct from the virtual
+/// memory advice types in [`crate::mm`]. The values are the Linux/POSIX ABI
+/// constants and are passed directly to the x86-64 `fadvise64` syscall.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u32)]
+pub enum Advice {
+    /// `POSIX_FADV_NORMAL`.
+    Normal = 0,
+    /// `POSIX_FADV_SEQUENTIAL`.
+    Sequential = 2,
+    /// `POSIX_FADV_RANDOM`.
+    Random = 1,
+    /// `POSIX_FADV_NOREUSE`.
+    NoReuse = 5,
+    /// `POSIX_FADV_WILLNEED`.
+    WillNeed = 3,
+    /// `POSIX_FADV_DONTNEED`.
+    DontNeed = 4,
+}
 
 /// Linux/x86-64 `struct stat` returned by `fstat(2)`.
 ///
@@ -89,4 +114,49 @@ pub fn fstat<Fd: AsFd>(fd: Fd) -> Result<Stat> {
     unsafe { crabc_core::fs::fstat_raw(fd.as_raw_fd(), stat.as_mut_ptr().cast())? };
     // SAFETY: A successful `fstat` initialized the complete output record.
     Ok(unsafe { stat.assume_init() })
+}
+
+/// Gives Linux a POSIX filesystem access-pattern advisory through the native
+/// x86-64 `fadvise64` syscall.
+///
+/// `offset` and the optional `length` are non-negative Rust quantities. Each
+/// must fit Linux's signed `loff_t` argument; values above `i64::MAX` return
+/// [`crate::Errno::INVAL`] before the descriptor is borrowed or a syscall is
+/// issued. `None` is the Linux zero-length-to-end-of-file convention. The
+/// descriptor is borrowed and its current file position is unchanged.
+#[inline]
+#[doc(alias = "posix_fadvise")]
+pub fn fadvise<Fd: AsFd>(
+    fd: Fd,
+    offset: u64,
+    len: Option<NonZeroU64>,
+    advice: Advice,
+) -> Result<()> {
+    let offset = i64::try_from(offset).map_err(|_| crate::Errno::INVAL)?;
+    let length = len.map_or(Ok(0), |length| {
+        i64::try_from(length.get()).map_err(|_| crate::Errno::INVAL)
+    })?;
+    crabc_core::fs::fadvise64(fd.as_fd().as_raw_fd(), offset, length, advice as u32)
+}
+
+/// Initiates Linux file readahead for a byte range of an open file.
+///
+/// `offset` and `length` are unsigned byte quantities at this safe boundary.
+/// The x86-64 syscall carries the offset as signed Linux `loff_t`, so values
+/// above that range—or whose checked half-open end exceeds it—return
+/// [`crate::Errno::INVAL`] before the direct syscall. A zero length is
+/// forwarded unchanged. Successful readahead leaves the descriptor's current
+/// file position unchanged.
+#[inline]
+pub fn readahead<Fd: AsFd>(fd: Fd, offset: u64, length: u64) -> Result<()> {
+    if offset > i64::MAX as u64
+        || length > i64::MAX as u64
+        || offset
+            .checked_add(length)
+            .map_or(true, |end| end > i64::MAX as u64)
+    {
+        return Err(crate::Errno::INVAL);
+    }
+
+    crabc_core::fs::readahead(fd.as_fd().as_raw_fd(), offset as i64, length as usize)
 }

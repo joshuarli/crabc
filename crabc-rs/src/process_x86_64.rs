@@ -2,8 +2,9 @@
 //!
 //! This module intentionally admits only scalar identity queries, the
 //! kernel's three-word real/effective/saved credential observations, pidfd
-//! creation, scheduler-priority bounds, and the read-only typed `fcntl(F_GETLK)`
-//! record-lock query. The larger process facade remains AArch64-only until
+//! creation, read-only scheduling-priority observations and bounds, and the
+//! read-only typed `fcntl(F_GETLK)` record-lock query. The larger process
+//! facade remains AArch64-only until
 //! each of its target-sized records and state transitions has an independent
 //! x86-64 contract.
 
@@ -111,6 +112,127 @@ pub struct GidTriple {
     pub effective: Gid,
     /// The saved-set group ID.
     pub saved: Gid,
+}
+
+/// A Linux nice value returned by the native `getpriority` facade.
+///
+/// Linux's scheduler accepts values from `-20` through `19`, inclusive. The
+/// wrapper keeps that range closed so an arbitrary integer cannot cross this
+/// API boundary. This is the normal nice-value representation; it is not the
+/// kernel's non-negative `getpriority` wire encoding.
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Priority(i32);
+
+impl Priority {
+    /// The most favorable Linux nice value.
+    pub const MIN: Self = Self(-20);
+    /// The least favorable Linux nice value.
+    pub const MAX: Self = Self(19);
+    /// Linux's default nice value.
+    pub const DEFAULT: Self = Self(0);
+
+    /// Converts a Linux nice value into the bounded priority type.
+    #[inline]
+    pub const fn from_raw(raw: i32) -> Option<Self> {
+        if raw >= Self::MIN.0 && raw <= Self::MAX.0 {
+            Some(Self(raw))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the Linux nice value.
+    #[inline]
+    pub const fn as_raw(self) -> i32 {
+        self.0
+    }
+
+    /// Converts Linux's non-negative `getpriority` syscall result.
+    ///
+    /// This is intentionally separate from [`from_raw`]: the syscall result
+    /// is encoded as `20 - nice` to avoid a negative success return, whereas
+    /// this facade exposes the ordinary nice value.
+    #[inline]
+    fn from_kernel_encoded(raw: i32) -> Option<Self> {
+        if raw >= 1 && raw <= 40 {
+            Self::from_raw(20 - raw)
+        } else {
+            None
+        }
+    }
+}
+
+/// Which Linux process set `getpriority` should observe.
+///
+/// `Process(None)` and `ProcessGroup(None)` select the caller's process and
+/// process group respectively. `User` transmits Linux's raw user selector:
+/// its zero word selects the calling process's effective user, so it does not
+/// let a non-root caller name UID zero explicitly. The closed enum prevents
+/// unsupported `which` values from crossing the native API boundary.
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+pub enum PriorityTarget {
+    /// `PRIO_PROCESS`, with `None` meaning the calling process.
+    Process(Option<Pid>),
+    /// `PRIO_PGRP`, with `None` meaning the calling process group.
+    ProcessGroup(Option<Pid>),
+    /// `PRIO_USER`, selecting all processes for this user. A zero user word
+    /// has Linux's current-effective-user shorthand semantics.
+    User(Uid),
+}
+
+impl PriorityTarget {
+    /// `PRIO_PROCESS`.
+    pub const PRIO_PROCESS: i32 = 0;
+    /// `PRIO_PGRP`.
+    pub const PRIO_PGRP: i32 = 1;
+    /// `PRIO_USER`.
+    pub const PRIO_USER: i32 = 2;
+
+    /// Constructs a process target, where `None` denotes the caller.
+    #[inline]
+    pub const fn process(pid: Option<Pid>) -> Self {
+        Self::Process(pid)
+    }
+
+    /// Constructs a process-group target, where `None` denotes the caller's
+    /// process group.
+    #[inline]
+    pub const fn process_group(pgid: Option<Pid>) -> Self {
+        Self::ProcessGroup(pgid)
+    }
+
+    /// Constructs a raw Linux user target.
+    ///
+    /// `Uid::ROOT` transmits the zero selector, which Linux interprets as the
+    /// calling process's effective user rather than as an explicit root-user
+    /// request.
+    #[inline]
+    pub const fn user(uid: Uid) -> Self {
+        Self::User(uid)
+    }
+
+    /// Returns the exact `(which, who)` words passed to Linux.
+    #[inline]
+    pub const fn as_raw(self) -> (i32, u32) {
+        match self {
+            Self::Process(pid) => (
+                Self::PRIO_PROCESS,
+                match pid {
+                    Some(pid) => pid.as_raw_pid() as u32,
+                    None => 0,
+                },
+            ),
+            Self::ProcessGroup(pgid) => (
+                Self::PRIO_PGRP,
+                match pgid {
+                    Some(pgid) => pgid.as_raw_pid() as u32,
+                    None => 0,
+                },
+            ),
+            Self::User(uid) => (Self::PRIO_USER, uid.as_raw()),
+        }
+    }
 }
 
 /// A Linux scheduler policy with a stable priority-range query.
@@ -320,6 +442,45 @@ pub fn scheduler_priority_bounds(policy: SchedulerPolicy) -> Result<SchedulerPri
     Ok(SchedulerPriorityBounds { minimum, maximum })
 }
 
+/// Reads the bounded Linux nice value for a process, process group, or user.
+///
+/// This is a read-only direct-kernel query. Linux's raw syscall returns the
+/// inverted non-negative encoding `20 - nice` (the range `[1, 40]`) so that a
+/// successful result cannot be confused with a negative errno. This facade
+/// performs the kernel conversion and returns the ordinary nice value in
+/// [`Priority`]. No C ABI, thread-local `errno`, or C `-1` sentinel is
+/// involved.
+#[inline]
+pub fn getpriority(target: PriorityTarget) -> Result<Priority> {
+    let (which, who) = target.as_raw();
+    let encoded = crabc_core::process::getpriority_raw(which, who)?;
+    // Linux documents successful getpriority results as [1, 40]. Treat a
+    // violation as an impossible kernel contract rather than inventing an
+    // errno or silently applying libc's sentinel convention.
+    Priority::from_kernel_encoded(encoded).ok_or(crate::Errno::RANGE)
+}
+
+/// Reads `PRIO_PROCESS` for an optional process identifier.
+#[inline]
+pub fn getpriority_process(pid: Option<Pid>) -> Result<Priority> {
+    getpriority(PriorityTarget::Process(pid))
+}
+
+/// Reads `PRIO_PGRP` for an optional process-group identifier.
+#[inline]
+pub fn getpriority_process_group(pgid: Option<Pid>) -> Result<Priority> {
+    getpriority(PriorityTarget::ProcessGroup(pgid))
+}
+
+/// Reads `PRIO_USER` for a raw Linux user selector.
+///
+/// Passing [`Uid::ROOT`] transmits zero and therefore observes the calling
+/// process's effective user under Linux's `PRIO_USER` shorthand semantics.
+#[inline]
+pub fn getpriority_user(uid: Uid) -> Result<Priority> {
+    getpriority(PriorityTarget::User(uid))
+}
+
 /// Returns the caller's real Linux user ID.
 #[inline]
 #[must_use]
@@ -423,7 +584,7 @@ const _: () = assert!(core::mem::align_of::<Pid>() == 4);
 
 #[cfg(test)]
 mod tests {
-    use super::{Flock, FlockOffsetType, FlockType, KernelFlock, Pid};
+    use super::{Flock, FlockOffsetType, FlockType, KernelFlock, Pid, Priority};
 
     #[test]
     fn x86_64_flock_conversion_preserves_a_conflicting_lock_record() {
@@ -448,5 +609,14 @@ mod tests {
             Flock::from_kernel(KernelFlock { l_type: FlockType::Unlocked as i16, ..raw }),
             Ok(None),
         );
+    }
+
+    #[test]
+    fn x86_64_priority_decodes_only_the_kernel_success_range() {
+        assert_eq!(Priority::from_kernel_encoded(1).map(Priority::as_raw), Some(19));
+        assert_eq!(Priority::from_kernel_encoded(20).map(Priority::as_raw), Some(0));
+        assert_eq!(Priority::from_kernel_encoded(40).map(Priority::as_raw), Some(-20));
+        assert_eq!(Priority::from_kernel_encoded(0), None);
+        assert_eq!(Priority::from_kernel_encoded(41), None);
     }
 }
