@@ -1,12 +1,13 @@
-//! Bounded Linux/x86-64 clock operations.
+//! Bounded Linux/x86-64 clock and relative-sleep operations.
 //!
-//! This module owns only the x86-64 `clock_gettime` and `clock_getres` wire
-//! records and their direct kernel/vDSO boundary. Timers, clock mutation, and
-//! process-owned time state remain outside this staged slice.
+//! This module owns only the x86-64 `timespec` wire record, clock query
+//! boundaries, and the direct relative `nanosleep` syscall. Timers, clock
+//! mutation, process-owned time state, and the C ABI remain outside this
+//! staged slice.
 
 use core::mem::MaybeUninit;
 
-use crate::syscall::{decode, syscall2, SYS_CLOCK_GETRES};
+use crate::syscall::{decode, syscall2, SYS_CLOCK_GETRES, SYS_NANOSLEEP};
 use crate::Result;
 
 /// Linux/x86-64 `struct timespec` as written by the kernel.
@@ -21,6 +22,23 @@ pub struct KernelTimespec {
 
 const _: () = assert!(core::mem::size_of::<KernelTimespec>() == 16);
 const _: () = assert!(core::mem::align_of::<KernelTimespec>() == 8);
+
+/// Sleeps for a relative Linux/x86-64 timespec without using libc or TLS
+/// `errno`.
+///
+/// Linux initializes `remaining` only when the sleep is interrupted with
+/// `EINTR`; callers must not read it for any other result.
+///
+/// # Safety
+///
+/// `request` must point to a readable Linux/x86-64 `struct timespec`.
+/// `remaining` must point to writable storage for one such value.
+#[inline]
+pub unsafe fn nanosleep_raw(request: *const u8, remaining: *mut u8) -> Result<()> {
+    // SAFETY: The caller owns both timespec pointer contracts; Linux
+    // validates the requested range and writes `remaining` only on EINTR.
+    decode(unsafe { syscall2(SYS_NANOSLEEP, request as usize, remaining as usize) }).map(|_| ())
+}
 
 /// Reads one x86-64 Linux clock through the validated vDSO, with a direct
 /// syscall fallback when the process vDSO is unavailable or malformed.

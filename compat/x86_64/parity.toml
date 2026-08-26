@@ -98,22 +98,25 @@ id = "facade.direct"
 order = 20
 depends_on = ["oracle.musl-toolchain", "core.architecture"]
 category = "rust-facade"
-description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open, gettid/getcpu/sched_yield, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice whose broader filesystem.path-core capability remains planned, closed mmap/mremap/mprotect/munmap and clock_gettime/clock_getres slices, and the proved signal-action boundary."
+description = "Bounded direct crabc-rs operations plus scalar eventfd, typed poll/ppoll/pause, read-only process identity/session plus pidfd_open and fcntl(F_GETLK) lock observation, gettid/getcpu/sched_yield, uname/sysinfo/load observations, random-source, a descriptor fstat ABI slice whose broader filesystem.path-core capability remains planned, closed mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, clock_gettime/clock_getres plus typed nanosleep/EINTR-remainder slices, and the proved signal-action boundary."
 aarch64_gates = ["crabc-rs"]
-source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/fs_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/mm_x86_64.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/param.rs", "crabc-rs/src/process_x86_64.rs", "crabc-rs/src/rand.rs", "crabc-rs/src/signal.rs", "crabc-rs/src/system_x86_64.rs", "crabc-rs/src/thread_x86_64.rs", "crabc-rs/src/time_x86_64.rs", "crabc-core/src/event_x86_64.rs", "crabc-core/src/mm_x86_64.rs", "crabc-core/src/process.rs", "crabc-core/src/rand.rs", "crabc-core/src/signal_x86_64.rs", "crabc-core/src/syscall_x86_64.rs", "crabc-core/src/system_x86_64.rs", "crabc-core/src/time_x86_64.rs", "crabc-rs/tests/x86_64_fs.rs", "crabc-rs/tests/x86_64_mm.rs", "crabc-rs/tests/x86_64_pidfd_open.rs", "crabc-rs/tests/x86_64_poll.rs", "crabc-rs/tests/x86_64_process_identity.rs", "crabc-rs/tests/x86_64_process_session.rs", "crabc-rs/tests/x86_64_rand.rs", "crabc-rs/tests/x86_64_system.rs", "crabc-rs/tests/x86_64_thread.rs", "crabc-rs/tests/x86_64_time.rs", "compat/x86_64/run_x86_fstat_reference.sh", "compat/x86_64/run_x86_mm_reference.sh", "compat/x86_64/run_x86_pidfd_open_reference.sh", "compat/x86_64/run_x86_poll_reference.sh", "compat/x86_64/run_x86_ppoll_reference.sh", "compat/x86_64/run_x86_process_identity_reference.sh", "compat/x86_64/run_x86_process_session_reference.sh", "compat/x86_64/run_x86_rand_reference.sh", "compat/x86_64/run_x86_system_reference.sh", "compat/x86_64/run_x86_thread_reference.sh", "compat/x86_64/run_x86_time_reference.sh", "compat/x86_64/run_x86_time_observation_reference.sh", "compat/x86_64/x86_fstat_reference_probe.c", "compat/x86_64/x86_mm_reference_probe.c", "compat/x86_64/x86_pidfd_open_reference_probe.c", "compat/x86_64/x86_poll_reference_probe.c", "compat/x86_64/x86_ppoll_reference_probe.c", "compat/x86_64/x86_process_identity_reference_probe.c", "compat/x86_64/x86_process_session_reference_probe.c", "compat/x86_64/x86_rand_reference_probe.c", "compat/x86_64/x86_system_reference_probe.c", "compat/x86_64/x86_thread_reference_probe.c", "compat/x86_64/x86_time_reference_probe.c", "compat/x86_64/x86_time_observation_reference_probe.c"]
-x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 144-byte fstat record", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values"]
+source_owners = ["crabc-rs/src/lib.rs", "crabc-rs/src/eventfd.rs", "crabc-rs/src/event_x86_64.rs", "crabc-rs/src/fs_x86_64.rs", "crabc-rs/src/io.rs", "crabc-rs/src/mm_x86_64.rs", "crabc-rs/src/pipe.rs", "crabc-rs/src/param.rs", "crabc-rs/src/process_x86_64.rs", "crabc-rs/src/rand.rs", "crabc-rs/src/signal.rs", "crabc-rs/src/system_x86_64.rs", "crabc-rs/src/thread_x86_64.rs", "crabc-rs/src/time_x86_64.rs", "crabc-core/src/event_x86_64.rs", "crabc-core/src/mm_x86_64.rs", "crabc-core/src/process.rs", "crabc-core/src/rand.rs", "crabc-core/src/signal_x86_64.rs", "crabc-core/src/syscall_x86_64.rs", "crabc-core/src/system_x86_64.rs", "crabc-core/src/time_x86_64.rs", "crabc-rs/tests/x86_64_fcntl_getlk.rs", "crabc-rs/tests/x86_64_fs.rs", "crabc-rs/tests/x86_64_mm.rs", "crabc-rs/tests/x86_64_pidfd_open.rs", "crabc-rs/tests/x86_64_poll.rs", "crabc-rs/tests/x86_64_process_identity.rs", "crabc-rs/tests/x86_64_process_session.rs", "crabc-rs/tests/x86_64_rand.rs", "crabc-rs/tests/x86_64_sleep.rs", "crabc-rs/tests/x86_64_system.rs", "crabc-rs/tests/x86_64_thread.rs", "crabc-rs/tests/x86_64_time.rs", "compat/x86_64/run_x86_fcntl_getlk_reference.sh", "compat/x86_64/run_x86_fstat_reference.sh", "compat/x86_64/run_x86_mlock_reference.sh", "compat/x86_64/run_x86_mm_reference.sh", "compat/x86_64/run_x86_pidfd_open_reference.sh", "compat/x86_64/run_x86_poll_reference.sh", "compat/x86_64/run_x86_ppoll_reference.sh", "compat/x86_64/run_x86_process_identity_reference.sh", "compat/x86_64/run_x86_process_session_reference.sh", "compat/x86_64/run_x86_rand_reference.sh", "compat/x86_64/run_x86_relative_sleep_reference.sh", "compat/x86_64/run_x86_system_reference.sh", "compat/x86_64/run_x86_thread_reference.sh", "compat/x86_64/run_x86_time_reference.sh", "compat/x86_64/run_x86_time_observation_reference.sh", "compat/x86_64/x86_fcntl_getlk_reference_probe.c", "compat/x86_64/x86_fstat_reference_probe.c", "compat/x86_64/x86_mlock_reference_probe.c", "compat/x86_64/x86_mm_reference_probe.c", "compat/x86_64/x86_pidfd_open_reference_probe.c", "compat/x86_64/x86_poll_reference_probe.c", "compat/x86_64/x86_ppoll_reference_probe.c", "compat/x86_64/x86_process_identity_reference_probe.c", "compat/x86_64/x86_process_session_reference_probe.c", "compat/x86_64/x86_rand_reference_probe.c", "compat/x86_64/x86_relative_sleep_reference_probe.c", "compat/x86_64/x86_system_reference_probe.c", "compat/x86_64/x86_thread_reference_probe.c", "compat/x86_64/x86_time_reference_probe.c", "compat/x86_64/x86_time_observation_reference_probe.c"]
+x86_abi_prerequisites = ["x86 syscall register proof", "x86 pollfd layout plus poll/ppoll syscall numbers and eight-byte kernel signal-set ABI", "x86 getpid/getppid/get*id/getpgid/getsid/pidfd_open syscall numbers and typed identity records", "x86 F_GETLK=5, SYS_fcntl=72, and 32-byte struct flock layout", "x86 gettid/getcpu/sched_yield syscall numbers", "x86 144-byte fstat record", "x86 new_utsname and 112-byte kernel sysinfo-prefix records", "x86 O_DIRECT value", "x86 fenv and signal-restorer proof", "64-bit positioned-I/O offset split", "x86 mmap/mremap r10/r8/r9 argument placement and full 64-bit offset", "x86 mlock/munlock/mlock2 syscall values and MLOCK_ONFAULT flag", "x86 getrandom syscall number and flags", "x86 LP64 timespec layout plus realtime/process-CPU clock_gettime and clock_getres syscall values", "x86 nanosleep syscall value and EINTR-initialized remaining timespec"]
 x86_header_prerequisites = ["Not a public C-header surface; the admitted API is typed Rust only."]
 native_evidence = [
-  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat, read-only process identity/session plus pidfd_open, gettid/getcpu/sched_yield, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis observations; the broader filesystem.path-core and every other unproved record-owning/wider-VM family remain excluded." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh facade", scope = "Closed bounded typed-Rust facade subset with scalar eventfd, poll/ppoll/pause, descriptor fstat, read-only process identity/session plus pidfd_open and F_GETLK observation, gettid/getcpu/sched_yield, uname/sysinfo/load observations, getrandom/getentropy, mmap/mremap/mprotect/munmap plus per-range mlock/mlock2/munlock, and realtime/monotonic/monotonic-raw/process-CPU clock queries plus timespec_get/realtime-millis and nanosleep/EINTR-remainder observations; the broader filesystem.path-core, C ABI, and every other unproved record-owning/wider-VM family remain excluded." },
   { state = "verified", command = "./scripts/dev-x86_64.sh mm-abi-reference", scope = "Pinned-musl x86 mmap/mremap/mprotect/munmap syscall values and the closed mapping/remapping flags admitted by the Rust facade." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh mlock-reference", scope = "Pinned-musl x86 mlock/munlock/mlock2 syscall values, MLOCK_ONFAULT, constrained-memlock outcomes, and invalid-range/flag behavior for only the typed per-range Rust locking slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh rand-reference", scope = "Pinned-musl x86 getrandom constants and initialized-length behavior for the admitted Rust random-source boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh time-abi-reference", scope = "Pinned-musl x86 timespec layout, admitted realtime/monotonic/monotonic-raw/process-CPU clock values, and clock_gettime/clock_getres syscall constants for the bounded Rust clock boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh time-observation-reference", scope = "Pinned-musl x86 normalized realtime and nondecreasing process-CPU clock behavior for the typed timespec-get/realtime-millis/process-CPU observations." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh relative-sleep-reference", scope = "Pinned-musl x86 nanosleep zero-duration, invalid-request, and EINTR-positive-remainder behavior for only the typed Rust relative-sleep slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh poll-reference", scope = "Pinned-musl x86 poll readiness and hangup behavior for the typed Rust poll boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh ppoll-reference", scope = "Pinned-musl x86 ppoll readiness, temporary signal-mask restoration, and pause EINTR behavior for the typed Rust readiness boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh process-identity-reference", scope = "Pinned-musl x86 scalar and real/effective/saved process identity behavior for the typed Rust observation boundary." },
   { state = "verified", command = "./scripts/dev-x86_64.sh process-session-reference", scope = "Pinned-musl x86 process-group/session behavior for typed optional-Pid observations." },
   { state = "verified", command = "./scripts/dev-x86_64.sh pidfd-open-reference", scope = "Pinned-musl x86 pidfd_open descriptor ownership, nonblocking flag, and direct kernel error behavior." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh fcntl-getlk-reference", scope = "Pinned-musl x86 F_GETLK command/layout, unlocked query, and forked conflicting-lock observation for only the typed read-only Rust lock-query slice." },
   { state = "verified", command = "./scripts/dev-x86_64.sh fstat-reference", scope = "Pinned-musl x86 144-byte fstat record and regular-file behavior for the bounded descriptor slice; it does not complete filesystem.path-core." },
   { state = "verified", command = "./scripts/dev-x86_64.sh system-reference", scope = "Pinned-musl x86 uname and kernel sysinfo-prefix behavior for the bounded typed system observations." },
   { state = "verified", command = "./scripts/dev-x86_64.sh thread-reference", scope = "Pinned-musl x86 gettid, getcpu, and scheduler-yield behavior for the bounded typed thread slice." },
@@ -183,9 +186,13 @@ capabilities = [
   "system.name-observation",
   "system.identity-info",
   "memory.mapping-remap",
+  "memory.mapping-locking",
+  "process.fcntl-lock-observation",
   "time.realtime-millis",
   "time.timespec-get",
   "time.process-cpu-observation",
+  "time.relative-sleep",
+  "time.sleep-aliases",
 ]
 status = "foundation-verified"
 
@@ -240,7 +247,6 @@ capabilities = [
   "io.readiness",
   "io.readiness-epoll",
   "memory.vm",
-  "memory.mapping-locking",
   "memory.residency",
   "memory.mapping-sync",
   "memory.advice",
@@ -257,7 +263,6 @@ capabilities = [
   "time.clock-query",
   "time.process-interval-control",
   "time.posix-timers",
-  "time.relative-sleep",
   "time.timerfd",
   "network.multimessage",
   "network.socket-at-mark",
@@ -285,7 +290,6 @@ capabilities = [
   "network.resolver",
   "network.netdb",
   "process.child-ownership",
-  "process.fcntl-lock-observation",
   "thread.credentials-res",
   "process.fs-credentials",
   "process.resource-limit-mutation",
@@ -445,7 +449,6 @@ capabilities = [
   "stdio.position-buffering",
   "stdio.format-scan",
   "time.clock-calendar",
-  "time.sleep-aliases",
 ]
 status = "planned"
 

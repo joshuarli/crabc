@@ -1,9 +1,9 @@
 //! The deliberately bounded Linux/x86-64 mapping facade.
 //!
 //! This admission owns ordinary anonymous/file mappings, bounded remapping,
-//! protection changes, and unmapping. It deliberately excludes residency,
-//! memory-locking, advice, synchronization, and process-wide VM policy until
-//! each has its own x86-64 contract and native evidence.
+//! protection changes, unmapping, and per-range memory-locking. It deliberately
+//! excludes residency, advice, synchronization, and process-wide VM policy
+//! until each has its own x86-64 contract and native evidence.
 
 use bitflags::bitflags;
 
@@ -74,6 +74,18 @@ bitflags! {
     pub struct MremapFlags: u32 {
         /// `MREMAP_MAYMOVE`: permit Linux to relocate the mapping.
         const MAYMOVE = 0x1;
+    }
+}
+
+bitflags! {
+    /// Linux/x86-64 `MLOCK_*` flags for [`mlock_with`].
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct MlockFlags: u32 {
+        /// `MLOCK_ONFAULT`: defer locking each page until its first fault.
+        const ONFAULT = 0x1;
+        /// Preserve future Linux-defined bits; the kernel validates them.
+        const _ = !0;
     }
 }
 
@@ -274,4 +286,70 @@ pub unsafe fn mprotect(ptr: *mut c_void, len: usize, flags: MprotectFlags) -> Re
     let flags = checked_protection_bits(flags.bits())?;
     // SAFETY: The caller owns the mapped-range and provenance contracts.
     unsafe { crabc_core::mm::mprotect_raw(ptr.cast(), len, flags) }
+}
+
+/// Locks a mapped range into memory with Linux `mlock`.
+///
+/// This native Rust operation returns the direct kernel [`Result`] and never
+/// writes C thread-local `errno` or uses a C ABI sentinel return value. Linux
+/// rounds an unaligned range down/up to page boundaries, so the caller must
+/// account for the complete rounded range when establishing its mapping and
+/// memlock budget.
+///
+/// # Safety
+///
+/// The range beginning at `ptr`, rounded down to the applicable page boundary
+/// and extending for `len` bytes rounded up to a page boundary, must remain
+/// mapped and readable for the duration of the call. The rounded address range
+/// must not overflow. The caller must preserve pointer provenance and Rust
+/// reference invariants for the mapped range. Linux may return
+/// [`crate::Errno::PERM`] when the caller lacks permission to lock memory, or
+/// [`crate::Errno::AGAIN`] or [`crate::Errno::NOMEM`] when the process's
+/// memlock limit cannot accommodate the range.
+#[inline]
+pub unsafe fn mlock(ptr: *mut c_void, len: usize) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and provenance contract.
+    unsafe { crabc_core::mm::mlock_raw(ptr.cast(), len) }
+}
+
+/// Locks a mapped range into memory with Linux `mlock2` flags.
+///
+/// `MlockFlags::ONFAULT` requests Linux's deferred page-locking policy. This
+/// native Rust operation returns the direct kernel [`Result`] and never writes
+/// C thread-local `errno` or uses a C ABI sentinel return value.
+///
+/// # Safety
+///
+/// The range beginning at `ptr`, rounded down to the applicable page boundary
+/// and extending for `len` bytes rounded up to a page boundary, must remain
+/// mapped and readable for the duration of the call. The rounded address range
+/// must not overflow. The caller must preserve pointer provenance and Rust
+/// reference invariants for the mapped range. Linux may return
+/// [`crate::Errno::PERM`] when the caller lacks permission to lock memory, or
+/// [`crate::Errno::AGAIN`] or [`crate::Errno::NOMEM`] when the process's
+/// memlock limit cannot accommodate the range. Unsupported flags are returned
+/// as [`crate::Errno::INVAL`] by Linux.
+#[inline]
+pub unsafe fn mlock_with(ptr: *mut c_void, len: usize, flags: MlockFlags) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and provenance contract.
+    unsafe { crabc_core::mm::mlock2_raw(ptr.cast(), len, flags.bits()) }
+}
+
+/// Unlocks a previously locked mapped range with Linux `munlock`.
+///
+/// This native Rust operation returns the direct kernel [`Result`] and never
+/// writes C thread-local `errno` or uses a C ABI sentinel return value. Linux
+/// rounds an unaligned range down/up to page boundaries.
+///
+/// # Safety
+///
+/// The range beginning at `ptr`, rounded down to the applicable page boundary
+/// and extending for `len` bytes rounded up to a page boundary, must remain
+/// mapped for the duration of the call. The rounded address range must not
+/// overflow. The caller must preserve pointer provenance and Rust reference
+/// invariants for the mapped range.
+#[inline]
+pub unsafe fn munlock(ptr: *mut c_void, len: usize) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range and provenance contract.
+    unsafe { crabc_core::mm::munlock_raw(ptr.cast(), len) }
 }

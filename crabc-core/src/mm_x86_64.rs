@@ -1,13 +1,13 @@
 //! Deliberately bounded Linux/x86-64 virtual-memory syscall seams.
 //!
 //! This module exposes only the raw mapping, bounded remapping, protection,
-//! and unmapping calls used by the staged Rust facade. It intentionally does
-//! not expose the broader AArch64 VM policy surface before each x86-specific
-//! contract is admitted and proven.
+//! unmapping, and per-range memory-locking calls used by the staged Rust
+//! facade. It intentionally does not expose the broader AArch64 VM policy
+//! surface before each x86-specific contract is admitted and proven.
 
 use crate::syscall::{
-    decode, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MMAP, SYS_MPROTECT,
-    SYS_MREMAP, SYS_MUNMAP,
+    decode, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MLOCK, SYS_MLOCK2,
+    SYS_MMAP, SYS_MPROTECT, SYS_MREMAP, SYS_MUNLOCK, SYS_MUNMAP,
 };
 use crate::{RawFd, Result};
 
@@ -153,4 +153,64 @@ pub unsafe fn mprotect_raw(address: *mut u8, length: usize, flags: u32) -> Resul
     // SAFETY: The caller owns the mapped-range and provenance contracts.
     decode(unsafe { syscall3(SYS_MPROTECT, address as usize, length, flags as usize) })
         .map(|_| ())
+}
+
+/// Locks a mapped range into memory with Linux/x86-64's `mlock` syscall.
+///
+/// Linux rounds the range down/up to page boundaries. This direct syscall
+/// seam does not use libc or thread-local `errno`; the facade owns the
+/// caller-visible memlock and mapped-range contract.
+///
+/// # Safety
+///
+/// The range beginning at `address`, rounded down to the applicable page
+/// boundary and extending for `length` bytes rounded up to a page boundary,
+/// must remain mapped and readable for the duration of the call. The rounded
+/// address range must not overflow, and the caller must preserve pointer
+/// provenance and Rust reference invariants for the mapped range.
+#[inline]
+pub unsafe fn mlock_raw(address: *mut u8, length: usize) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range contract; Linux validates the
+    // address, range, and process memlock limit.
+    decode(unsafe { syscall2(SYS_MLOCK, address as usize, length) }).map(|_| ())
+}
+
+/// Locks a mapped range into memory with Linux/x86-64's `mlock2` syscall.
+///
+/// `flags` is the Linux `MLOCK_*` bit set. The supported `MLOCK_ONFAULT` bit
+/// requests deferred page locking. Unsupported bits are passed to Linux for
+/// validation, preserving its direct error behavior.
+///
+/// # Safety
+///
+/// The range beginning at `address`, rounded down to the applicable page
+/// boundary and extending for `length` bytes rounded up to a page boundary,
+/// must remain mapped and readable for the duration of the call. The rounded
+/// address range must not overflow, and the caller must preserve pointer
+/// provenance and Rust reference invariants for the mapped range.
+#[inline]
+pub unsafe fn mlock2_raw(address: *mut u8, length: usize, flags: u32) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range contract; Linux validates the
+    // address, range, flags, and process memlock limit.
+    decode(unsafe { syscall3(SYS_MLOCK2, address as usize, length, flags as usize) })
+        .map(|_| ())
+}
+
+/// Unlocks a previously locked mapped range with Linux/x86-64's `munlock`.
+///
+/// Linux rounds the range down/up to page boundaries. This direct syscall
+/// seam does not use libc or thread-local `errno`.
+///
+/// # Safety
+///
+/// The range beginning at `address`, rounded down to the applicable page
+/// boundary and extending for `length` bytes rounded up to a page boundary,
+/// must remain mapped for the duration of the call. The rounded address range
+/// must not overflow, and the caller must preserve pointer provenance and
+/// Rust reference invariants for the mapped range.
+#[inline]
+pub unsafe fn munlock_raw(address: *mut u8, length: usize) -> Result<()> {
+    // SAFETY: The caller owns the mapped-range contract; Linux validates the
+    // address and range.
+    decode(unsafe { syscall2(SYS_MUNLOCK, address as usize, length) }).map(|_| ())
 }

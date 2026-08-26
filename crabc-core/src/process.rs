@@ -8,6 +8,48 @@ use core::{ffi::CStr, mem::MaybeUninit};
 use crate::{RawFd, Result};
 use crate::syscall::{decode, decode_i32, decode_i64, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, SYS_BRK, SYS_CHDIR, SYS_CHROOT, SYS_CLONE, SYS_EXECVE, SYS_EXIT_GROUP, SYS_FCHDIR, SYS_GETCWD, SYS_GETEGID, SYS_GETEUID, SYS_GETGID, SYS_GETGROUPS, SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETPRIORITY, SYS_GETRESGID, SYS_GETRESUID, SYS_GETRUSAGE, SYS_GETSID, SYS_GETUID, SYS_KILL, SYS_PIDFD_OPEN, SYS_PRCTL, SYS_PRLIMIT64, SYS_SCHED_GET_PRIORITY_MAX, SYS_SCHED_GET_PRIORITY_MIN, SYS_SETFSGID, SYS_SETFSUID, SYS_SETPGID, SYS_SETPRIORITY, SYS_SETSID, SYS_TGKILL, SYS_TIMES, SYS_UMASK, SYS_WAIT4, SYS_WAITID};
 
+/// Linux's process-associated `struct flock` record used by
+/// `fcntl(F_GETLK)`.
+///
+/// This is the fixed Linux record on both admitted 64-bit little-endian
+/// targets. It remains a raw core record: the native facade validates its
+/// fields before exposing them as typed Rust values.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct KernelFlock {
+    /// Requested or observed lock kind (`F_RDLCK`, `F_WRLCK`, or `F_UNLCK`).
+    pub l_type: i16,
+    /// Byte-offset origin (`SEEK_SET`, `SEEK_CUR`, or `SEEK_END`).
+    pub l_whence: i16,
+    /// Starting byte offset.
+    pub l_start: i64,
+    /// Number of bytes, with zero extending through end of file.
+    pub l_len: i64,
+    /// Process holding an observed conflicting lock.
+    pub l_pid: i32,
+}
+
+const _: [(); 32] = [(); core::mem::size_of::<KernelFlock>()];
+const _: [(); 8] = [(); core::mem::align_of::<KernelFlock>()];
+
+/// Queries the first process-associated record lock that would block the
+/// supplied lock through Linux's direct `fcntl(F_GETLK)` seam.
+///
+/// The record is initialized by the caller and overwritten by Linux on
+/// success. The raw lock kind, offset origin, range, and PID remain
+/// unvalidated so the native facade can enforce its typed vocabulary.
+#[inline]
+pub fn fcntl_getlk_raw(fd: RawFd, lock: &mut KernelFlock) -> Result<()> {
+    const F_GETLK: i32 = 5;
+
+    // SAFETY: `lock` is live writable storage for the complete Linux
+    // `struct flock` record for the duration of this direct query.
+    unsafe {
+        crate::io::fcntl_raw(fd, F_GETLK, (lock as *mut KernelFlock).cast())
+    }
+    .map(|_| ())
+}
+
 /// Invokes Linux's five-word `prctl` syscall ABI directly.
 ///
 /// Linux receives `option` followed by its four option-specific `unsigned

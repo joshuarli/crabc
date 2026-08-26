@@ -1,12 +1,15 @@
-//! Bounded native Linux/x86-64 clock queries.
+//! Bounded native Linux/x86-64 clock queries and relative sleep.
 //!
 //! This staged facade admits only validated realtime, monotonic,
-//! monotonic-raw, and process-CPU observations, including typed realtime
-//! milliseconds. It intentionally does not expose AArch64 calendar, timer,
-//! timezone, or clock-mutation APIs until their x86-64 records and behavior
-//! have independent evidence.
+//! monotonic-raw, and process-CPU observations, typed realtime milliseconds,
+//! and a typed relative `nanosleep` outcome. Interrupted sleeps preserve the
+//! kernel's remainder instead of retrying or hiding `EINTR`. It intentionally
+//! does not expose AArch64 calendar, timer, timezone, or clock-mutation APIs,
+//! nor a C sleep ABI, until their x86-64 records and behavior have independent
+//! evidence.
 
 use core::convert::TryFrom;
+use core::mem::MaybeUninit;
 use core::time::Duration;
 use crabc_core::time::KernelTimespec;
 use crate::{Errno, Result};
@@ -60,6 +63,51 @@ pub struct Timespec {
 const _: () = assert!(core::mem::size_of::<Timespec>() == 16);
 const _: () = assert!(core::mem::align_of::<Timespec>() == 8);
 
+/// The result of a relative native sleep request.
+///
+/// An interrupted sleep is not retried or converted into a hidden success:
+/// the kernel-provided remaining duration is returned explicitly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SleepOutcome {
+    /// The requested duration elapsed without interruption.
+    Completed,
+    /// A signal interrupted the sleep before completion.
+    Interrupted {
+        /// Duration the kernel reports as still remaining.
+        remaining: Duration,
+    },
+}
+
+/// Errors produced while converting or issuing a native sleep request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SleepError {
+    /// The request exceeded Linux/x86-64's signed `timespec.tv_sec` range.
+    DurationOutOfRange,
+    /// A mode-specific timespec request had a non-canonical `tv_nsec` field.
+    ///
+    /// Relative `nanosleep` constructs its timespec from [`Duration`] and
+    /// therefore cannot produce this variant; it remains part of the shared
+    /// sleep error vocabulary for exact facade parity.
+    InvalidRequest,
+    /// The kernel returned an invalid remaining `timespec` after `EINTR`.
+    InvalidRemaining,
+    /// A Linux syscall failure, kept as a typed value.
+    ///
+    /// Relative `EINTR` is represented by [`SleepOutcome::Interrupted`].
+    Kernel(Errno),
+}
+
+impl SleepError {
+    /// Returns the underlying kernel error for syscall failures.
+    #[must_use]
+    pub const fn kernel_errno(self) -> Option<Errno> {
+        match self {
+            Self::Kernel(error) => Some(error),
+            Self::DurationOutOfRange | Self::InvalidRequest | Self::InvalidRemaining => None,
+        }
+    }
+}
+
 impl Timespec {
     fn from_kernel(value: KernelTimespec) -> Result<Self> {
         if !(0..i64::from(NANOS_PER_SECOND)).contains(&value.tv_nsec) {
@@ -67,6 +115,59 @@ impl Timespec {
         }
         Ok(Self { tv_sec: value.tv_sec, tv_nsec: value.tv_nsec })
     }
+}
+
+/// Sleeps for a relative duration through Linux `nanosleep`.
+///
+/// `Duration` is converted explicitly to the Linux/x86-64 timespec contract:
+/// seconds must fit in `i64`, and nanoseconds are already guaranteed by Rust
+/// to be below one billion. `EINTR` is represented by
+/// [`SleepOutcome::Interrupted`] with the kernel's remaining duration; other
+/// kernel failures are returned as [`SleepError::Kernel`]. No retry, C sleep
+/// ABI, TLS `errno`, or allocation is involved.
+#[inline]
+pub fn nanosleep(duration: Duration) -> core::result::Result<SleepOutcome, SleepError> {
+    let request = duration_to_timespec(duration)?;
+    let mut remaining = MaybeUninit::<Timespec>::uninit();
+    // SAFETY: `request` is an initialized Linux/x86-64 timespec and
+    // `remaining` is writable storage for the kernel's interrupted result.
+    match unsafe {
+        crabc_core::time::nanosleep_raw(
+            (&request as *const Timespec).cast(),
+            remaining.as_mut_ptr().cast(),
+        )
+    } {
+        Ok(()) => Ok(SleepOutcome::Completed),
+        Err(Errno::INTR) => {
+            // SAFETY: Linux initializes the remaining timespec whenever this
+            // syscall returns EINTR.
+            let remaining = unsafe { remaining.assume_init() };
+            Ok(SleepOutcome::Interrupted {
+                remaining: duration_from_timespec(remaining)?,
+            })
+        }
+        Err(error) => Err(SleepError::Kernel(error)),
+    }
+}
+
+#[inline]
+fn duration_to_timespec(duration: Duration) -> core::result::Result<Timespec, SleepError> {
+    let seconds = i64::try_from(duration.as_secs()).map_err(|_| SleepError::DurationOutOfRange)?;
+    Ok(Timespec {
+        tv_sec: seconds,
+        tv_nsec: duration.subsec_nanos() as i64,
+    })
+}
+
+#[inline]
+fn duration_from_timespec(timespec: Timespec) -> core::result::Result<Duration, SleepError> {
+    if timespec.tv_sec < 0 || !(0..i64::from(NANOS_PER_SECOND)).contains(&timespec.tv_nsec) {
+        return Err(SleepError::InvalidRemaining);
+    }
+    Ok(Duration::new(
+        timespec.tv_sec as u64,
+        timespec.tv_nsec as u32,
+    ))
 }
 
 /// A UTC realtime observation reduced to whole milliseconds.

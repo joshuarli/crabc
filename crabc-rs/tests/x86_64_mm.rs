@@ -12,6 +12,18 @@ struct Mapping {
     length: usize,
 }
 
+fn mlock_was_admitted(result: crabc_rs::Result<()>, operation: &str) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(error)
+            if matches!(
+                error,
+                crabc_rs::Errno::PERM | crabc_rs::Errno::AGAIN | crabc_rs::Errno::NOMEM
+            ) => false,
+        Err(error) => panic!("{operation} returned unexpected error: {error:?}"),
+    }
+}
+
 impl Mapping {
     fn anonymous() -> Self {
         let pointer = unsafe {
@@ -73,6 +85,83 @@ fn x86_64_mapping_flags_match_the_linux_abi() {
     assert_eq!(mm::MapFlags::PRIVATE.bits(), 0x2);
     assert_eq!(mm::MremapFlags::empty().bits(), 0x0);
     assert_eq!(mm::MremapFlags::MAYMOVE.bits(), 0x1);
+    assert_eq!(mm::MlockFlags::empty().bits(), 0x0);
+    assert_eq!(mm::MlockFlags::ONFAULT.bits(), 0x1);
+}
+
+#[test]
+fn x86_64_mlock_and_munlock_balance_a_mapped_page() {
+    let mapping = Mapping::anonymous();
+    let byte = mapping.pointer.cast::<u8>();
+
+    // SAFETY: The mapping owns one writable page until its Drop unmap.
+    unsafe { byte.write(0x5a) };
+    // SAFETY: The mapping remains valid and readable for the lock call.
+    let admitted = mlock_was_admitted(
+        unsafe { mm::mlock(mapping.pointer, mapping.length) },
+        "mlock",
+    );
+    if !admitted {
+        return;
+    }
+    // SAFETY: Locking does not change mapping permissions or contents.
+    assert_eq!(unsafe { byte.read() }, 0x5a);
+    // SAFETY: The mapping remains valid for the unlock call.
+    unsafe { mm::munlock(mapping.pointer, mapping.length) }
+        .expect("unlock x86-64 mapped page through direct munlock");
+}
+
+#[test]
+fn x86_64_mlock2_onfault_and_munlock_balance_a_mapped_page() {
+    let mapping = Mapping::anonymous();
+    let byte = mapping.pointer.cast::<u8>();
+
+    // SAFETY: The mapping remains valid and readable for the lock call.
+    let admitted = mlock_was_admitted(
+        unsafe { mm::mlock_with(mapping.pointer, mapping.length, mm::MlockFlags::ONFAULT) },
+        "mlock2",
+    );
+    if !admitted {
+        return;
+    }
+    // SAFETY: The on-fault lock leaves the mapping writable.
+    unsafe { byte.write(0xa5) };
+    assert_eq!(unsafe { byte.read() }, 0xa5);
+    // SAFETY: The mapping remains valid for the unlock call.
+    unsafe { mm::munlock(mapping.pointer, mapping.length) }
+        .expect("unlock x86-64 on-fault page");
+}
+
+#[test]
+fn x86_64_mlock2_rejects_unknown_flags() {
+    let mapping = Mapping::anonymous();
+
+    // SAFETY: The mapping remains valid for the direct syscall. The retained
+    // unknown bit is deliberately passed through for Linux validation.
+    let error = unsafe {
+        mm::mlock_with(
+            mapping.pointer,
+            mapping.length,
+            mm::MlockFlags::from_bits_retain(2),
+        )
+    }
+    .expect_err("Linux must reject unsupported x86-64 mlock2 flags");
+
+    assert_eq!(error, crabc_rs::Errno::INVAL);
+}
+
+#[test]
+fn x86_64_mlock_and_munlock_report_overflow_without_errno_translation() {
+    // Linux rejects a range whose address plus length wraps with EINVAL. The
+    // pointer is used only as an invalid raw syscall fixture here.
+    let overflowing = (usize::MAX - PAGE_SIZE + 1) as *mut c_void;
+
+    let error = unsafe { mm::mlock(overflowing, PAGE_SIZE) }
+        .expect_err("mlock must preserve Linux's overflow validation");
+    assert_eq!(error, crabc_rs::Errno::INVAL);
+    let error = unsafe { mm::munlock(overflowing, PAGE_SIZE) }
+        .expect_err("munlock must preserve Linux's overflow validation");
+    assert_eq!(error, crabc_rs::Errno::INVAL);
 }
 
 #[test]

@@ -31,7 +31,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn('readonly PLATFORM="linux/amd64"', source)
         self.assertIn(
-            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|rand-reference|time-abi-reference|time-observation-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
+            'image|musl-oracle|header-abi-reference|header-abi-project|sys-reg-header-abi|types-header-abi|stat-header-abi|time-header-abi|poll-header-abi|fcntl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|mman-header-abi|mm-abi-reference|mlock-reference|rand-reference|time-abi-reference|time-observation-reference|relative-sleep-reference|poll-reference|ppoll-reference|process-identity-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fstat-reference|system-reference|thread-reference|core|facade|libc-syscall|libc-errno-tls|libc-setjmp|ldso-relocation|ldso-image)',
             source,
         )
         self.assertIn('run_musl_oracle()', source)
@@ -64,12 +64,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_mman_header_abi.sh', source)
         self.assertIn('run_mm_abi_reference()', source)
         self.assertIn('compat/x86_64/run_x86_mm_reference.sh', source)
+        self.assertIn('run_mlock_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_mlock_reference.sh', source)
         self.assertIn('run_rand_reference()', source)
         self.assertIn('compat/x86_64/run_x86_rand_reference.sh', source)
         self.assertIn('run_time_abi_reference()', source)
         self.assertIn('compat/x86_64/run_x86_time_reference.sh', source)
         self.assertIn('run_time_observation_reference()', source)
         self.assertIn('compat/x86_64/run_x86_time_observation_reference.sh', source)
+        self.assertIn('run_relative_sleep_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_relative_sleep_reference.sh', source)
         self.assertIn('run_poll_reference()', source)
         self.assertIn('compat/x86_64/run_x86_poll_reference.sh', source)
         self.assertIn('run_ppoll_reference()', source)
@@ -80,6 +84,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('compat/x86_64/run_x86_process_session_reference.sh', source)
         self.assertIn('run_pidfd_open_reference()', source)
         self.assertIn('compat/x86_64/run_x86_pidfd_open_reference.sh', source)
+        self.assertIn('run_fcntl_getlk_reference()', source)
+        self.assertIn('compat/x86_64/run_x86_fcntl_getlk_reference.sh', source)
         self.assertIn('run_fstat_reference()', source)
         self.assertIn('compat/x86_64/run_x86_fstat_reference.sh', source)
         self.assertIn('run_system_reference()', source)
@@ -96,6 +102,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             source,
         )
         self.assertIn('--test x86_64_eventfd', source)
+        self.assertIn('--test x86_64_fcntl_getlk', source)
         self.assertIn('--test x86_64_fs', source)
         self.assertIn('--test x86_64_io', source)
         self.assertIn('--test x86_64_mm', source)
@@ -106,6 +113,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('--test x86_64_process_session', source)
         self.assertIn('--test x86_64_pidfd_open', source)
         self.assertIn('--test x86_64_rand', source)
+        self.assertIn('--test x86_64_sleep', source)
         self.assertIn('--test x86_64_system', source)
         self.assertIn('--test x86_64_thread', source)
         self.assertIn('--test x86_64_time', source)
@@ -149,6 +157,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         mapping = (ROOT / "compat" / "x86_64" / "run_x86_mm_reference.sh").read_text(
             encoding="utf-8"
         )
+        mlock = (ROOT / "compat" / "x86_64" / "run_x86_mlock_reference.sh").read_text(
+            encoding="utf-8"
+        )
         signal = (ROOT / "compat" / "x86_64" / "run_signal_header_abi.sh").read_text(
             encoding="utf-8"
         )
@@ -182,6 +193,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         time_observation_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_time_observation_reference.sh"
         ).read_text(encoding="utf-8")
+        relative_sleep_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_relative_sleep_reference.sh"
+        ).read_text(encoding="utf-8")
         poll_reference = (ROOT / "compat" / "x86_64" / "run_x86_poll_reference.sh").read_text(
             encoding="utf-8"
         )
@@ -196,6 +210,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         pidfd_open_reference = (
             ROOT / "compat" / "x86_64" / "run_x86_pidfd_open_reference.sh"
+        ).read_text(encoding="utf-8")
+        fcntl_getlk_reference = (
+            ROOT / "compat" / "x86_64" / "run_x86_fcntl_getlk_reference.sh"
         ).read_text(encoding="utf-8")
         fstat_reference = (ROOT / "compat" / "x86_64" / "run_x86_fstat_reference.sh").read_text(
             encoding="utf-8"
@@ -240,6 +257,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_mm_reference_probe.c', mapping)
         self.assertIn('-fsyntax-only', mapping)
         self.assertNotIn('-p crabc-libc', mapping)
+        self.assertIn('x86_mlock_reference_probe.c', mlock)
+        self.assertIn('memory-locking ABI/behavior reference', mlock)
+        self.assertNotIn('-p crabc-libc', mlock)
         self.assertIn('signal_header_abi_probe.c', signal)
         self.assertIn('signal_header_posix_abi_probe.c', signal)
         self.assertIn('-fsyntax-only', signal)
@@ -291,6 +311,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_time_observation_reference_probe.c', time_observation_reference)
         self.assertIn('realtime observation reference', time_observation_reference)
         self.assertNotIn('-p crabc-libc', time_observation_reference)
+        self.assertIn('x86_relative_sleep_reference_probe.c', relative_sleep_reference)
+        self.assertIn('relative-sleep reference', relative_sleep_reference)
+        self.assertNotIn('-p crabc-libc', relative_sleep_reference)
         self.assertIn('x86_poll_reference_probe.c', poll_reference)
         self.assertIn('poll ABI/behavior reference', poll_reference)
         self.assertNotIn('-p crabc-libc', poll_reference)
@@ -306,6 +329,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn('x86_pidfd_open_reference_probe.c', pidfd_open_reference)
         self.assertIn('pidfd_open reference', pidfd_open_reference)
         self.assertNotIn('-p crabc-libc', pidfd_open_reference)
+        self.assertIn('x86_fcntl_getlk_reference_probe.c', fcntl_getlk_reference)
+        self.assertIn('fcntl_getlk reference', fcntl_getlk_reference)
+        self.assertNotIn('-p crabc-libc', fcntl_getlk_reference)
         self.assertIn('x86_fstat_reference_probe.c', fstat_reference)
         self.assertIn('fstat reference', fstat_reference)
         self.assertNotIn('-p crabc-libc', fstat_reference)
@@ -587,6 +613,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "--test",
                     "x86_64_eventfd",
                     "--test",
+                    "x86_64_fcntl_getlk",
+                    "--test",
                     "x86_64_fs",
                     "--test",
                     "x86_64_io",
@@ -606,6 +634,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                     "x86_64_pidfd_open",
                     "--test",
                     "x86_64_rand",
+                    "--test",
+                    "x86_64_sleep",
                     "--test",
                     "x86_64_system",
                     "--test",

@@ -70,20 +70,25 @@ class X86ParityLedgerTests(unittest.TestCase):
             "system.name-observation",
             "system.identity-info",
             "memory.mapping-remap",
+            "memory.mapping-locking",
+            "process.fcntl-lock-observation",
             "time.realtime-millis",
             "time.timespec-get",
             "time.process-cpu-observation",
+            "time.relative-sleep",
+            "time.sleep-aliases",
         ):
             self.assertIn(capability, direct["capabilities"])
             self.assertNotIn(capability, remaining["capabilities"])
         for capability in (
             "io.readiness",
             "io.readiness-epoll",
-            "memory.mapping-locking",
+            "memory.vm",
             "memory.residency",
             "memory.mapping-sync",
             "memory.advice",
             "time.clock-query",
+            "time.clock-sleep",
         ):
             self.assertNotIn(capability, direct["capabilities"])
             self.assertIn(capability, remaining["capabilities"])
