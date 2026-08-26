@@ -456,6 +456,11 @@ stores `false`/`-1` before Release heap publication; its sealed borrowed
 an unfinished engine Drop terminally latches the attachment rather than
 allowing teardown to claim quiescence.
 
+The exact ordinary `true`/`2` queue image is also admitted through a
+`cfg(test)`-only fixture for a source-shaped `MI_ABANDON` aggregate proof. That
+fixture leaves `DynamicTheapAttachment::page_session` unchanged: production
+ordinary dynamic attachments still cannot create a general page engine.
+
 Its post-TLS `DrainingPages` state is now also a bounded source owner-exit
 state, not an alternate allocator. It clears the regular dynamic backing before
 page abandonment while retaining the cached root, TLD/Heap list membership,
@@ -523,6 +528,27 @@ existing teardown. Sole, mixed-size/class, non-large, OS-backed,
 malformed-span, allocation-time, reclaim/adoption/requeue, scan, producer,
 and concurrent cases reject before detach; a collection failure retains the
 drain.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` separately admits
+a fourth bounded homogeneous dynamic aggregate, proved only through that exact
+ordinary source fixture: two or more full `MemoryKind::Arena` `PageKind::Small`
+members in one ordinary bin, with one rounded
+`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
+`used == reserved`, zero retirement countdowns, empty local free lists, exact
+one-slice arena/PageMap spans, matching dynamic bitmap/count capabilities, no
+direct-cache entries, and no other queue state. It preserves source force ->
+false collection -> ordinary-bin removal with the proven no-op direct-cache
+update -> page-count detach -> unmapped abandonment for every member.
+`DynamicThreadExitFullNonDirectSmallPagesRoute` retains the dynamic drain, not
+a raw member list or per-member mapped state. Each sequential canonical free
+re-resolves PageMap, uses its claimed abandoned identity to select the normal
+unmapped or mapped failed-reclaim tail, and releases only that member through
+PageMap -> dynamic ordinary bit -> metadata -> one arena slice; the final free
+returns the empty drain for existing teardown. Sole, mixed-bin/class,
+direct-small, `BIN_FULL`, OS-backed, allocation-time, reclaim/adoption/requeue,
+scan, producer, and concurrent cases reject before detach; a collection failure
+retains the drain. This does not expose ordinary dynamic allocation or a
+general owner-exit traversal.
 
 `DynamicThreadExitDrain::abandon_full_medium` separately admits one sole full
 `MemoryKind::Arena` medium page in `BIN_FULL`, with `reserved > 1` and

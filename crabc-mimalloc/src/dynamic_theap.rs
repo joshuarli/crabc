@@ -40,14 +40,17 @@
 //! Each accepts sequential failed-reclaim frees only, publishing its exact
 //! dynamic bitmap/count pair only after the source mostly-used boundary. The
 //! direct-small partial collector retains its just-published head, so its
-//! transition occurs one free later than the normal classes. Three bounded
+//! transition occurs one free later than the normal classes. Four bounded
 //! homogeneous full aggregates also preserve `MI_ABANDON` traversal only for
 //! two-or-more source members with one sealed class/size/bin image: singleton
-//! members take only raw empty failed-reclaim release, while medium members
+//! members take only raw empty failed-reclaim release; medium members
 //! re-resolve their own dynamic bitmap/count capability after their later
-//! low-owner claim, and large members preserve their exact 64-slice arena span
-//! through those same per-member decisions and terminal release. None keeps a
-//! raw page list or adds a general full-queue policy. Separately, one
+//! low-owner claim; large members preserve their exact 64-slice arena span;
+//! and non-direct-small members retain the source ordinary `true`/`2` option
+//! image, one ordinary bin, and no direct-cache state. The latter is exercised
+//! only through a test fixture: production ordinary dynamic attachments still
+//! seal the generic page-session boundary. None keeps a raw page list or adds
+//! a general full-queue policy. Separately, one
 //! full medium or large `BIN_FULL` page, or a full non-direct-small ordinary-
 //! bin page with every direct slot empty, with exactly one joined remote free
 //! becomes nonfull during source force collection and publishes its matching
@@ -130,7 +133,7 @@ pub(crate) enum DynamicTheapError {
 }
 
 /// A non-mutating refusal to borrow a dynamic attachment as the shared
-/// non-abandoning page engine's Theap session.
+/// production non-abandoning page engine's Theap session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DynamicTheapPageSessionError {
     Attachment(DynamicTheapError),
@@ -516,6 +519,19 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         &mut self,
     ) -> Result<DynamicTheapPageSession<'_, 'heap>, DynamicTheapPageSessionError> {
         DynamicTheapPageSession::begin(self)
+    }
+
+    /// Creates the source-default dynamic page owner only for a focused
+    /// thread-exit fixture. Production ordinary dynamic attachments continue
+    /// to reject [`Self::page_session`]: this test-only seam proves the
+    /// `allow_page_abandon=true` / `page_full_retain=2` queue image that
+    /// `mi_thread_theaps_done` receives, without exposing a general ordinary
+    /// dynamic allocation API.
+    #[cfg(test)]
+    pub(crate) fn page_session_for_ordinary_thread_exit_fixture(
+        &mut self,
+    ) -> Result<DynamicTheapPageSession<'_, 'heap>, DynamicTheapPageSessionError> {
+        DynamicTheapPageSession::begin_ordinary_thread_exit_fixture(self)
     }
 
     /// Lazily forms the one non-main source `mi_arena_pages_t` image selected
@@ -1206,8 +1222,11 @@ impl<'heap> DynamicTheapAttachment<'heap> {
 /// One borrowed page-owner view of a private dynamic Theap attachment.
 ///
 /// This is deliberately not a general heap API. Its constructor validates the
-/// full attached/root/slot/list/refcount state and accepts only the typed mode
-/// that disabled abandonment before `_mi_theap_init` published `heap`.
+/// full attached/root/slot/list/refcount state and, through its production
+/// constructor, accepts only the typed mode that disabled abandonment before
+/// `_mi_theap_init` published `heap`. A separately documented `cfg(test)`
+/// constructor admits the frozen ordinary source image only for thread-exit
+/// fixture setup; it does not widen that production boundary.
 pub(crate) struct DynamicTheapPageSession<'attach, 'heap> {
     attachment: &'attach mut DynamicTheapAttachment<'heap>,
 }
@@ -1229,6 +1248,35 @@ impl<'attach, 'heap> DynamicTheapPageSession<'attach, 'heap> {
         if attachment.page_mode != DynamicTheapPageMode::NonAbandoningPageSession
             || theap.allows_page_abandon()
             || theap.page_full_retain() != -1
+        {
+            return Err(DynamicTheapPageSessionError::AbandoningMode);
+        }
+        Ok(Self { attachment })
+    }
+
+    /// Admits only the frozen ordinary dynamic option image for focused
+    /// `MI_ABANDON` fixture setup. Unlike [`Self::begin`], this is test-only:
+    /// the public crate-private dynamic page session remains restricted to
+    /// the non-abandoning `false`/`-1` image, while this exact source-default
+    /// `true`/`2` image is necessary to retain full ordinary small pages for
+    /// a later thread-exit traversal proof.
+    #[cfg(test)]
+    fn begin_ordinary_thread_exit_fixture(
+        attachment: &'attach mut DynamicTheapAttachment<'heap>,
+    ) -> Result<Self, DynamicTheapPageSessionError> {
+        attachment
+            .prevalidate_attached_page_drain(true)
+            .map_err(DynamicTheapPageSessionError::Attachment)?;
+        let theap = attachment
+            .theap
+            .as_ref()
+            .and_then(MetaAllocation::dynamic_theap)
+            .ok_or(DynamicTheapPageSessionError::Attachment(
+                DynamicTheapError::TheapProjection,
+            ))?;
+        if attachment.page_mode != DynamicTheapPageMode::OrdinaryAbandoning
+            || !theap.allows_page_abandon()
+            || theap.page_full_retain() != 2
         {
             return Err(DynamicTheapPageSessionError::AbandoningMode);
         }
@@ -1737,6 +1785,10 @@ mod tests {
         DynamicThreadExitFullLargePagesAbandonFailure,
         DynamicThreadExitFullLargePagesFreeResult,
         DynamicThreadExitFullLargePagesRemoteFreeFailure,
+        DynamicThreadExitFullNonDirectSmallPagesAbandonError,
+        DynamicThreadExitFullNonDirectSmallPagesAbandonFailure,
+        DynamicThreadExitFullNonDirectSmallPagesFreeResult,
+        DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure,
         DynamicThreadExitFullDirectSmallAbandonError,
         DynamicThreadExitFullDirectSmallAbandonFailure,
         DynamicThreadExitFullDirectSmallFreeResult,
@@ -1945,6 +1997,84 @@ mod tests {
         })
         .join()
         .expect("the dynamic page fixture remains on one current thread");
+    }
+
+    /// Runs the exact source-default ordinary dynamic option image through a
+    /// private fixture-only page session. This does not widen the production
+    /// page-session boundary: ordinary dynamic attachments still reject
+    /// [`DynamicTheapAttachment::page_session`]. It exists solely to form the
+    /// `allow_page_abandon=true` / `page_full_retain=2` regular-bin image
+    /// consumed by `mi_thread_theaps_done`.
+    fn with_ordinary_dynamic_page_fixture(
+        test: impl FnOnce(
+                &mut DynamicTheapAttachment<'static>,
+                ArenaView<'_>,
+                &mut PageMap,
+            ) -> DynamicPageFixtureOutcome
+            + Send
+            + 'static,
+    ) {
+        thread::spawn(move || {
+            let (subprocess, metadata, registry) = fixture();
+            consume_static_ticket(subprocess, metadata);
+            let mut owner = attach(subprocess, metadata, registry, pinned_empty_heap());
+            let fields = owner
+                .theap
+                .as_mut()
+                .and_then(MetaAllocation::dynamic_theap_mut)
+                .expect("the ordinary dynamic fixture retains its typed Theap")
+                .test_main_static_fields();
+            assert!(fields.allows_page_abandon);
+            assert_eq!(fields.page_full_retain, 2);
+
+            let mut region = DynamicArenaRegion::zeroed();
+            let registry = ArenaRegistry::new(null_mut());
+            assert!(unsafe { registry.bind_subprocess_before_publication(subprocess.as_ptr()) });
+            let managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).expect("pinned page size"),
+                    true,
+                    true,
+                    true,
+                    -1,
+                    false,
+                    None,
+                )
+            }
+            .expect("the ordinary dynamic fixture registers its external arena");
+            let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+                .expect("registered arena has a view");
+            let mut page_map = PageMap::initialize(memory_config(), 0, true)
+                .expect("the ordinary dynamic fixture initializes one page map");
+
+            if matches!(
+                test(&mut owner, arena, &mut page_map),
+                DynamicPageFixtureOutcome::TearDown
+            ) {
+                owner
+                    .teardown()
+                    .expect("an explicitly finished ordinary dynamic page engine leaves a tear-downable attachment");
+                // SAFETY: successful `finish` has collected/released every
+                // page before this explicit source-plain page-map destruction
+                // point.
+                unsafe { page_map.destroy() }
+                    .expect("the ordinary dynamic fixture has no remaining page-map entries");
+            } else {
+                // A terminal dynamic poison intentionally retains the page
+                // engine's attachment plus its live map/arena/resource state. This
+                // isolated fixture models that production state by leaking
+                // all mutually linked storage after its assertions.
+                core::mem::forget(owner);
+                core::mem::forget(page_map);
+                core::mem::forget(region);
+                core::mem::forget(registry);
+            }
+        })
+        .join()
+        .expect("the ordinary dynamic page fixture remains on one current thread");
     }
 
     #[test]
@@ -3654,6 +3784,644 @@ mod tests {
             assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
             assert_eq!(unsafe { first_page.as_ref().used() as usize }, capacity);
             assert_eq!(unsafe { second_page.as_ref().used() as usize }, second_capacity);
+
+            drop(drain);
+            assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_non_direct_small_pages_route_reabandons_each_same_bin_page_then_releases() {
+        with_ordinary_dynamic_page_fixture(|_owner, arena, page_map| {
+            let session = _owner
+                .page_session_for_ordinary_thread_exit_fixture()
+                .expect("the ordinary dynamic fixture admits its exact source page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_SIZE_MAX + WORD_SIZE;
+
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its first dynamic non-direct-small page");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first non-direct-small page remains PageMap-published");
+            let capacity = unsafe { first_page.as_ref().reserved() as usize };
+            assert!(
+                capacity > 8,
+                "the selected non-direct-small geometry exposes the source mostly-used prefix"
+            );
+            let mut first_blocks = Vec::with_capacity(capacity);
+            first_blocks.push(first);
+            while first_blocks.len() < capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its first dynamic non-direct-small page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
+                first_blocks.push(block);
+            }
+
+            let second = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its second dynamic non-direct-small page");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second non-direct-small page remains PageMap-published");
+            let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
+            assert_eq!(second_capacity, capacity);
+            let mut second_blocks = Vec::with_capacity(second_capacity);
+            second_blocks.push(second);
+            while second_blocks.len() < second_capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its second dynamic non-direct-small page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
+                second_blocks.push(block);
+            }
+
+            let first_ref = unsafe { first_page.as_ref() };
+            let second_ref = unsafe { second_page.as_ref() };
+            assert_ne!(
+                first_page, second_page,
+                "the bounded aggregate keeps distinct ordinary-bin source pages"
+            );
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(first_ref.block_size()),
+                Some(crate::types::PageKind::Small)
+            );
+            assert!(
+                first_ref.block_size() > SMALL_SIZE_MAX
+                    && first_ref.block_size() <= SMALL_MAX_OBJ_SIZE
+                    && !crate::types::page_queue::page_is_in_full(first_ref),
+                "the first member has the ordinary non-direct-small source shape"
+            );
+            assert_eq!(first_ref.block_size(), second_ref.block_size());
+            assert!(
+                !crate::types::page_queue::page_is_in_full(second_ref),
+                "the second member remains in the same ordinary source bin"
+            );
+            let bin = crate::size_class::bin(first_ref.block_size())
+                .expect("the homogeneous non-direct-small pages retain one source bin");
+            let first_memory = first_ref.memid();
+            let second_memory = second_ref.memid();
+            let first_arena_memory = first_memory
+                .arena_memory()
+                .expect("the first non-direct-small page retains arena provenance");
+            let first_slice_start = unsafe { ArenaView::from_ptr(first_arena_memory.arena) }
+                .and_then(|arena| arena.slice_start(first_arena_memory.slice_index as usize))
+                .expect("the first non-direct-small span begins in its published arena");
+            let second_arena_memory = second_memory
+                .arena_memory()
+                .expect("the second non-direct-small page retains arena provenance");
+            let second_slice_start = unsafe { ArenaView::from_ptr(second_arena_memory.arena) }
+                .and_then(|arena| arena.slice_start(second_arena_memory.slice_index as usize))
+                .expect("the second non-direct-small span begins in its published arena");
+            assert_eq!(first_memory.kind(), MemoryKind::Arena);
+            assert_eq!(second_memory.kind(), MemoryKind::Arena);
+            assert_eq!(
+                first_arena_memory.slice_count, 1,
+                "the first aggregate member retains one exact source arena slice"
+            );
+            assert_eq!(
+                second_arena_memory.slice_count, 1,
+                "the second aggregate member retains one exact source arena slice"
+            );
+            assert_eq!(allocator.queue_count(bin), Some(2));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            for index in 0..PAGES_DIRECT {
+                assert_eq!(
+                    allocator.direct_page(index),
+                    Some(crate::types::EMPTY_PAGE.as_ptr()),
+                    "the non-direct-small aggregate has no source direct-cache image"
+                );
+            }
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread exit clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: both vectors retain every live canonical allocation in
+            // the complete same-bin full non-direct-small source queue.
+            let mut route = match unsafe { drain.abandon_full_non_direct_small_pages() } {
+                Ok(route) => route,
+                Err(DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::RetainedDrain {
+                        drain,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(drain);
+                    panic!("same-bin full non-direct-small pages enter the dynamic aggregate route: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 2);
+            assert_eq!(route.test_page_count(), 0);
+            assert_eq!(unsafe { route.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { route.test_page_for_block(second) }, second_page.as_ptr());
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+
+            let unmapped_frees = capacity / 8;
+            assert!(unmapped_frees > 0);
+            for block in first_blocks.iter().copied().take(unmapped_frees) {
+                // SAFETY: each block is still live and belongs to the linear
+                // first aggregate member.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("the mostly-used first non-direct-small page remains live"),
+                    Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(
+                        DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                            route,
+                            error,
+                        },
+                    ) => {
+                        core::mem::forget(route);
+                        panic!("the mostly-used first non-direct-small free remains source-unmapped: {error:?}");
+                    }
+                };
+            }
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+
+            // SAFETY: this exact next free crosses the first member's source
+            // mostly-used threshold and publishes only its dynamic bitmap/count.
+            route = match unsafe {
+                route.remote_free_after_thread_exit(first_blocks[unmapped_frees])
+            } {
+                Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
+                Ok(_) => panic!("the first reabandon boundary leaves live blocks"),
+                Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(route);
+                    panic!("the first non-direct-small reabandon boundary succeeds: {error:?}");
+                }
+            };
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(bin, first_memory));
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+
+            for block in first_blocks
+                .iter()
+                .copied()
+                .skip(unmapped_frees + 1)
+                .take(capacity - unmapped_frees - 2)
+            {
+                // SAFETY: this linear route still owns the selected first-page
+                // allocation through its mapped failed-reclaim tail.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("a nonfinal mapped first-page free remains live"),
+                    Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(
+                        DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                            route,
+                            error,
+                        },
+                    ) => {
+                        core::mem::forget(route);
+                        panic!("a mapped first-page free stays in the aggregate route: {error:?}");
+                    }
+                };
+            }
+            let first_last = *first_blocks.last().expect("the first full page has one final block");
+            // SAFETY: this is the first member's final route-owned allocation.
+            route = match unsafe { route.remote_free_after_thread_exit(first_last) } {
+                Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::ReleasedPage(route)) => route,
+                Ok(_) => panic!("the first final free releases exactly one aggregate member"),
+                Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(route);
+                    panic!("the first final free completes its mapped release: {error:?}");
+                }
+            };
+            assert_eq!(route.test_remaining_pages(), 1);
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(unsafe { route.test_page_for_block(first) }.is_null());
+            assert!(route.test_dynamic_abandoned_page_is_clear(bin, first_memory));
+            assert!(route.test_dynamic_arena_page_is_clear(first_memory));
+
+            for block in second_blocks.iter().copied().take(unmapped_frees) {
+                // SAFETY: the second page remains independently live and
+                // source-unmapped through its own threshold prefix.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("the mostly-used second non-direct-small page remains live"),
+                    Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(
+                        DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                            route,
+                            error,
+                        },
+                    ) => {
+                        core::mem::forget(route);
+                        panic!("the mostly-used second non-direct-small free remains source-unmapped: {error:?}");
+                    }
+                };
+            }
+            // SAFETY: this exact next free crosses only the second member's
+            // source mostly-used threshold.
+            route = match unsafe {
+                route.remote_free_after_thread_exit(second_blocks[unmapped_frees])
+            } {
+                Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
+                Ok(_) => panic!("the second reabandon boundary leaves live blocks"),
+                Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(route);
+                    panic!("the second non-direct-small reabandon boundary succeeds: {error:?}");
+                }
+            };
+            assert_eq!(route.test_dynamic_abandoned_count(bin), Some(1));
+            assert!(route.test_dynamic_abandoned_page_is_set(bin, second_memory));
+
+            for block in second_blocks
+                .iter()
+                .copied()
+                .skip(unmapped_frees + 1)
+                .take(second_capacity - unmapped_frees - 2)
+            {
+                // SAFETY: this linear route still owns the selected second-page
+                // allocation through its mapped failed-reclaim tail.
+                route = match unsafe { route.remote_free_after_thread_exit(block) } {
+                    Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route)) => route,
+                    Ok(_) => panic!("a nonfinal mapped second-page free remains live"),
+                    Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                        route,
+                        error,
+                    })
+                    | Err(
+                        DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                            route,
+                            error,
+                        },
+                    ) => {
+                        core::mem::forget(route);
+                        panic!("a mapped second-page free stays in the aggregate route: {error:?}");
+                    }
+                };
+            }
+            let second_last = *second_blocks.last().expect("the second full page has one final block");
+            // SAFETY: this is the route's final aggregate-owned allocation.
+            let drain = match unsafe { route.remote_free_after_thread_exit(second_last) } {
+                Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::Released(drain)) => drain,
+                Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::StillLive(route))
+                | Ok(DynamicThreadExitFullNonDirectSmallPagesFreeResult::ReleasedPage(route)) => {
+                    core::mem::forget(route);
+                    panic!("the final non-direct-small free releases the complete aggregate route");
+                }
+                Err(DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Rejected {
+                    route,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure::Terminal {
+                        route,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(route);
+                    panic!("the final non-direct-small free releases its dynamic arena page: {error:?}");
+                }
+            };
+            assert!(unsafe { drain.test_page_for_block(second) }.is_null());
+            assert_eq!(drain.test_dynamic_abandoned_count(bin), Some(0));
+            assert!(drain.test_dynamic_abandoned_page_is_clear(bin, second_memory));
+            assert!(drain.test_dynamic_arena_page_is_clear(second_memory));
+            assert_eq!(drain.test_page_count(), 0);
+            assert!(drain.finish());
+            assert!(unsafe { page_map.checked_lookup(first_slice_start) }.is_null());
+            assert!(unsafe { page_map.checked_lookup(second_slice_start) }.is_null());
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_non_direct_small_pages_route_rejects_a_sole_full_page_before_mutation() {
+        with_ordinary_dynamic_page_fixture(|_owner, arena, page_map| {
+            let session = _owner
+                .page_session_for_ordinary_thread_exit_fixture()
+                .expect("the ordinary dynamic fixture admits its exact source page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_SIZE_MAX + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates one dynamic non-direct-small page");
+            let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the non-direct-small page remains PageMap-published before thread exit");
+            let capacity = unsafe { page.as_ref().reserved() as usize };
+            let mut blocks = Vec::with_capacity(capacity);
+            blocks.push(first);
+            while blocks.len() < capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its sole dynamic non-direct-small page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, page.as_ptr());
+                blocks.push(block);
+            }
+            let page_ref = unsafe { page.as_ref() };
+            let bin = crate::size_class::bin(page_ref.block_size())
+                .expect("the sole non-direct-small page retains one source bin");
+            assert!(
+                page_ref.block_size() > SMALL_SIZE_MAX
+                    && page_ref.block_size() <= SMALL_MAX_OBJ_SIZE
+                    && !crate::types::page_queue::page_is_in_full(page_ref),
+                "the sole page has the ordinary non-direct-small source shape"
+            );
+            assert_eq!(allocator.queue_count(bin), Some(1));
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the sole full page is supplied only to prove aggregate
+            // admission rejects before source collection.
+            let drain = match unsafe { drain.abandon_full_non_direct_small_pages() } {
+                Err(DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullNonDirectSmallPagesAbandonError::NotMultiplePages,
+                }) => drain,
+                Err(DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::RetainedDrain {
+                        drain,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(drain);
+                    panic!("the sole-page proof is pre-collection: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("one full non-direct-small page cannot enter the dynamic aggregate route");
+                }
+            };
+            assert_eq!(drain.test_queue_count(bin), Some(1));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, page.as_ptr());
+            assert_eq!(unsafe { page.as_ref().used() as usize }, capacity);
+            for index in 0..PAGES_DIRECT {
+                assert_eq!(
+                    drain.test_direct_page(index),
+                    Some(crate::types::EMPTY_PAGE.as_ptr()),
+                    "the rejected preflight leaves the empty direct-cache image untouched"
+                );
+            }
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_non_direct_small_pages_route_rejects_mixed_full_classes_before_mutation() {
+        with_ordinary_dynamic_page_fixture(|_owner, arena, page_map| {
+            let session = _owner
+                .page_session_for_ordinary_thread_exit_fixture()
+                .expect("the ordinary dynamic fixture admits its exact source page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let non_direct_request = SMALL_SIZE_MAX + WORD_SIZE;
+            let first = allocator
+                .allocate(non_direct_request, false)
+                .expect("the fixture creates its first non-direct-small aggregate member");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first non-direct-small member remains PageMap-published");
+            let capacity = unsafe { first_page.as_ref().reserved() as usize };
+            for _ in 1..capacity {
+                let block = allocator
+                    .allocate(non_direct_request, false)
+                    .expect("the fixture fills its first non-direct-small member");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
+            }
+            let second = allocator
+                .allocate(non_direct_request, false)
+                .expect("the fixture creates its second non-direct-small aggregate member");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second non-direct-small member remains PageMap-published");
+            let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
+            assert_eq!(second_capacity, capacity);
+            for _ in 1..second_capacity {
+                let block = allocator
+                    .allocate(non_direct_request, false)
+                    .expect("the fixture fills its second non-direct-small member");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
+            }
+            let medium = allocator
+                .allocate(SMALL_MAX_OBJ_SIZE + WORD_SIZE, false)
+                .expect("the fixture adds a full medium page to the mixed source image");
+            let medium_page = NonNull::new(unsafe { allocator.page_for_block(medium) })
+                .expect("the medium member remains PageMap-published");
+            let medium_capacity = unsafe { medium_page.as_ref().reserved() as usize };
+            for _ in 1..medium_capacity {
+                let block = allocator
+                    .allocate(SMALL_MAX_OBJ_SIZE + WORD_SIZE, false)
+                    .expect("the fixture fills its mixed medium member");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, medium_page.as_ptr());
+            }
+            let bin = crate::size_class::bin(unsafe { first_page.as_ref().block_size() })
+                .expect("the non-direct-small members retain one ordinary bin");
+            assert_eq!(allocator.queue_count(bin), Some(2));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(1));
+            assert_eq!(
+                crate::size_class::page_kind_for_block_size(unsafe { medium_page.as_ref().block_size() }),
+                Some(crate::types::PageKind::Medium),
+                "the foreign full member gives the aggregate a distinct source class"
+            );
+
+            let drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            // SAFETY: the live ordinary-bin small and `BIN_FULL` medium pages
+            // exist only to prove mixed full classes reject before collection.
+            let drain = match unsafe { drain.abandon_full_non_direct_small_pages() } {
+                Err(DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::Rejected {
+                    drain,
+                    error: DynamicThreadExitFullNonDirectSmallPagesAbandonError::Queue,
+                }) => drain,
+                Err(DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::RetainedDrain {
+                        drain,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(drain);
+                    panic!("the mixed class proof is pre-collection: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("a mixed full source image cannot enter the dynamic non-direct-small aggregate route");
+                }
+            };
+            assert_eq!(drain.test_queue_count(bin), Some(2));
+            assert_eq!(drain.test_queue_count(BIN_FULL), Some(1));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(medium) }, medium_page.as_ptr());
+            assert_eq!(unsafe { first_page.as_ref().used() as usize }, capacity);
+            assert_eq!(unsafe { second_page.as_ref().used() as usize }, second_capacity);
+            assert_eq!(unsafe { medium_page.as_ref().used() as usize }, medium_capacity);
+
+            core::mem::forget(drain);
+            DynamicPageFixtureOutcome::RetainTerminal
+        });
+    }
+
+    #[test]
+    fn dynamic_thread_exit_full_non_direct_small_pages_route_retains_a_collection_failure() {
+        with_ordinary_dynamic_page_fixture(|owner, arena, page_map| {
+            let session = owner
+                .page_session_for_ordinary_thread_exit_fixture()
+                .expect("the ordinary dynamic fixture admits its exact source page session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session,
+                arena,
+                ArenaId::none(),
+                page_map,
+            );
+            let request = SMALL_SIZE_MAX + WORD_SIZE;
+            let first = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its first dynamic non-direct-small page");
+            let first_page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                .expect("the first non-direct-small page remains PageMap-published");
+            let capacity = unsafe { first_page.as_ref().reserved() as usize };
+            for _ in 1..capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its first dynamic non-direct-small page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, first_page.as_ptr());
+            }
+            let second = allocator
+                .allocate(request, false)
+                .expect("the fixture creates its second dynamic non-direct-small page");
+            let second_page = NonNull::new(unsafe { allocator.page_for_block(second) })
+                .expect("the second non-direct-small page remains PageMap-published");
+            let second_capacity = unsafe { second_page.as_ref().reserved() as usize };
+            assert_eq!(second_capacity, capacity);
+            for _ in 1..second_capacity {
+                let block = allocator
+                    .allocate(request, false)
+                    .expect("the fixture fills only its second dynamic non-direct-small page");
+                assert_eq!(unsafe { allocator.page_for_block(block) }, second_page.as_ptr());
+            }
+            let bin = crate::size_class::bin(unsafe { first_page.as_ref().block_size() })
+                .expect("the non-direct-small aggregate has one ordinary source bin");
+
+            let mut drain = match allocator.begin_thread_exit_drain() {
+                Ok(drain) => drain,
+                Err(DynamicThreadExitDrainFailure::Retained { engine, error }) => {
+                    core::mem::forget(engine);
+                    panic!("thread-exit drain clears the dynamic regular TLS slot: {error:?}");
+                }
+            };
+            drain.inject_page_free_collect_failure_once();
+            // SAFETY: the injected force collector fails only after complete
+            // aggregate preflight and before ordinary-bin detachment.
+            let drain = match unsafe { drain.abandon_full_non_direct_small_pages() } {
+                Err(
+                    DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::RetainedDrain {
+                        drain,
+                        error: DynamicThreadExitFullNonDirectSmallPagesAbandonError::Collection,
+                    },
+                ) => drain,
+                Err(DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::Rejected {
+                    drain,
+                    error,
+                })
+                | Err(
+                    DynamicThreadExitFullNonDirectSmallPagesAbandonFailure::RetainedDrain {
+                        drain,
+                        error,
+                    },
+                ) => {
+                    core::mem::forget(drain);
+                    panic!("the injected aggregate collection failure retains the dynamic drain: {error:?}");
+                }
+                Ok(route) => {
+                    core::mem::forget(route);
+                    panic!("the injected collection failure cannot create a dynamic non-direct-small aggregate route");
+                }
+            };
+            assert!(drain.test_has_collection_poison());
+            assert_eq!(drain.test_queue_count(bin), Some(2));
+            assert_eq!(unsafe { drain.test_page_for_block(first) }, first_page.as_ptr());
+            assert_eq!(unsafe { drain.test_page_for_block(second) }, second_page.as_ptr());
+            assert_eq!(unsafe { first_page.as_ref().used() as usize }, capacity);
+            assert_eq!(unsafe { second_page.as_ref().used() as usize }, second_capacity);
+            for index in 0..PAGES_DIRECT {
+                assert_eq!(
+                    drain.test_direct_page(index),
+                    Some(crate::types::EMPTY_PAGE.as_ptr()),
+                    "the retained collection failure leaves the direct-cache image untouched"
+                );
+            }
 
             drop(drain);
             assert_eq!(owner.teardown(), Err(DynamicTheapError::Poisoned));

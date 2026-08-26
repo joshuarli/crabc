@@ -720,6 +720,11 @@ quiescence. This does not implement heap new/delete/destroy, general
 cached-root switching/references, general dynamic routing or remote-free
 concurrency, abandonment, pthread hooks, or process shutdown.
 
+A `cfg(test)`-only ordinary fixture validates the same frozen source `true`/`2`
+image to construct the otherwise sealed `MI_ABANDON` regular-bin aggregate
+state below. It does not alter the production rejection above or grant an
+ordinary dynamic allocation/page-engine API.
+
 After that same attachment clears its regular backing, a distinct
 `DynamicTheapPageDrainSession` retains the cached root, both list memberships,
 the dynamic arena image, and the PageMap until its pages are resolved. The
@@ -800,6 +805,27 @@ for existing root/list/key teardown. Sole, mixed-size/class, non-large,
 OS-backed, malformed-span, preexisting queue/direct state, allocation-time,
 reclaim/adoption/requeue, scan, producer, and concurrent cases reject before
 detach; a collection fault retains the drain.
+
+`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a fourth,
+separately typed post-TLS dynamic aggregate boundary. It is exercised only by
+the exact ordinary dynamic `true`/`2` fixture, while the production ordinary
+page-session boundary remains sealed. It admits exactly two or more full
+`MemoryKind::Arena` `PageKind::Small` members in one ordinary source bin, with
+one rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
+`used == reserved`, zero retirement countdowns, empty local free lists, no
+direct-cache entry, the exact dynamic bitmap/count capability for every member,
+and one exact arena slice/PageMap span per member. It preserves source force ->
+false collection -> ordinary-bin removal with the no-op direct-cache update ->
+page-count decrement -> unmapped abandonment for every member. The returned
+`DynamicThreadExitFullNonDirectSmallPagesRoute` stores no raw former-Theap
+member pointer or per-member mapped state: each sequential canonical free
+re-resolves PageMap, claims its member's abandoned identity, selects the normal
+unmapped or mapped failed-reclaim tail, and releases only that member through
+PageMap -> dynamic ordinary bit -> metadata -> one arena slice. The final
+member returns the empty drain for existing root/list/key teardown. Sole,
+mixed-bin/class, direct-small, `BIN_FULL`, OS-backed, malformed-span,
+allocation-time, reclaim/adoption/requeue, scan, producer, and concurrent cases
+reject before detach; a collection fault retains the drain.
 
 `DynamicThreadExitDrain::abandon_full_medium` is a separate source-unmapped
 dynamic handoff. It accepts only the drain's sole full `MemoryKind::Arena`
