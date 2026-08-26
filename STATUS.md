@@ -1004,6 +1004,19 @@ callback, Rust/private-runtime lifecycle integration, general destructor
 ordering, public `mi_*` behavior, public x86 support, libc integration,
 backend promotion, or AArch64 evidence.
 
+The native x86-only track also has a separate 46-field pinned-C
+cancellation-triggered automatic pthread-destructor probe. Its worker keeps
+cancellation disabled through allocator setup, then enables only deferred
+cancellation before publishing an atomic-ready gate. The consumer issues one
+`pthread_cancel()` and opens that gate; the worker reaches one explicit
+`pthread_testcancel()`, and `pthread_join()` returns `PTHREAD_CANCELED` before
+the same mapped-abandoned, PageMap/arena-bitmap, detached/unowned, and
+two-free terminal observations. This is also C-oracle-only: it does not prove
+crabc pthread cancellation or TLS callback parity, Rust/private-runtime
+lifecycle integration, general cancellation or destructor ordering, public
+`mi_*` behavior, public x86 support, libc integration, backend promotion, or
+AArch64 evidence.
+
 The native x86-only track also has a separate 32-field dynamic full direct-small
 one-remote force-collect-to-mapped differential. A pinned-C worker fills one
 sole full direct-small ordinary regular-bin arena page (request/block size 1024,

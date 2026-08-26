@@ -45,6 +45,9 @@ DYNAMIC_NONFULL_REGULAR_PAGES_DISTINCT_BIN_AGGREGATE_SCHEMA = (
 AUTOMATIC_PTHREAD_DESTRUCTOR_SCHEMA = (
     ROOT / "compat/allocator/x86_64-automatic-pthread-destructor-evidence-v3.5.0.json"
 )
+CANCELLATION_PTHREAD_DESTRUCTOR_SCHEMA = (
+    ROOT / "compat/allocator/x86_64-cancellation-pthread-destructor-evidence-v3.5.0.json"
+)
 UPSTREAMS = ROOT / "compat/upstreams.toml"
 
 
@@ -224,6 +227,13 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "linux-x86_64-private-c-automatic-pthread-destructor",
         )
 
+    def test_cancellation_pthread_destructor_schema_profile_is_exact(self) -> None:
+        schema = json.loads(CANCELLATION_PTHREAD_DESTRUCTOR_SCHEMA.read_text(encoding="utf-8"))
+        self.assertEqual(
+            schema["profile"],
+            "linux-x86_64-private-c-cancel-testcancel-automatic-pthread-destructor",
+        )
+
     def test_native_evidence_gates_are_target_scoped(self) -> None:
         gates = {gate["id"]: gate for gate in self.contract["evidence_gates"]}
         self.assertEqual(
@@ -251,6 +261,7 @@ class X86_64ParityStatusTests(unittest.TestCase):
                 "native-full-non-direct-small-force-collect-post-exit-differential",
                 "native-full-direct-small-force-collect-post-exit-differential",
                 "native-pinned-c-automatic-pthread-destructor",
+                "native-pinned-c-cancel-testcancel-automatic-destructor",
                 "native-mapped-post-theap-teardown-failed-reclaim-differential",
                 "native-retired-page-prepass-before-live-post-exit-differential",
                 "native-two-live-page-aggregate-post-exit-differential",
@@ -441,6 +452,14 @@ class X86_64ParityStatusTests(unittest.TestCase):
         self.assertEqual(
             gates["native-pinned-c-automatic-pthread-destructor"]["report"],
             "compat/reports/allocator/x86_64/automatic-pthread-destructor.json",
+        )
+        self.assertEqual(
+            gates["native-pinned-c-cancel-testcancel-automatic-destructor"]["command"],
+            "./compat/allocator/run-x86_64.sh allocator-cancellation-pthread-destructor",
+        )
+        self.assertEqual(
+            gates["native-pinned-c-cancel-testcancel-automatic-destructor"]["report"],
+            "compat/reports/allocator/x86_64/cancellation-pthread-destructor.json",
         )
         self.assertEqual(
             gates["native-mapped-post-theap-teardown-failed-reclaim-differential"]["command"],
@@ -729,6 +748,24 @@ class X86_64ParityStatusTests(unittest.TestCase):
             "AArch64 evidence",
         ):
             self.assertIn(fragment, automatic_destructor)
+        cancellation_destructor = gates[
+            "native-pinned-c-cancel-testcancel-automatic-destructor"
+        ]["claim"]
+        for fragment in (
+            "46 address-independent values",
+            "disables cancellation",
+            "enables deferred cancellation",
+            "exactly one pthread_cancel",
+            "exactly one explicit pthread_testcancel",
+            "pthread_join returns PTHREAD_CANCELED",
+            "forbids explicit mi_thread_done or pthread_exit",
+            "C-oracle-only evidence",
+            "does not compare Rust",
+            "crabc pthread cancellation or TLS callback parity",
+            "general cancellation/destructor ordering",
+            "AArch64 evidence",
+        ):
+            self.assertIn(fragment, cancellation_destructor)
         retired = gates["native-retired-page-prepass-before-live-post-exit-differential"]["claim"]
         for fragment in (
             "21 address-independent values",
@@ -1407,6 +1444,10 @@ class X86_64ParityStatusTests(unittest.TestCase):
         )
         self.assertIn(
             "37-field pinned-C automatic pthread-destructor probe",
+            lanes["general-thread-lifecycle-and-stress"]["reason"],
+        )
+        self.assertIn(
+            "46-field pinned-C cancellation-triggered automatic pthread-destructor probe",
             lanes["general-thread-lifecycle-and-stress"]["reason"],
         )
         self.assertIn(

@@ -1079,6 +1079,13 @@ aggregate-registry adoption remain absent.
   detached post-exit owner capable of carrying live worker pages across that
   boundary. This C result therefore does not establish Rust callback parity or
   general destructor ordering.
+  The separate cancellation-triggered C oracle preserves that same boundary:
+  it keeps cancellation disabled while allocating, enables only deferred
+  cancellation before a non-cancellation-point atomic gate, and permits one
+  parent `pthread_cancel()` to be delivered at one explicit
+  `pthread_testcancel()`. Its `PTHREAD_CANCELED` join result plus the same
+  post-join page state proves this bounded C path only, not crabc cancellation
+  behavior, Rust parity, or general cancellation ordering.
 - **Evidence:**
   `x86_64_automatic_pthread_destructor_evidence.py`,
   `x86_64-automatic-pthread-destructor-evidence-v3.5.0.json`, its focused
@@ -1086,6 +1093,10 @@ aggregate-registry adoption remain absent.
   `native-pinned-c-automatic-pthread-destructor` parity gate record the
   natural-return source/key boundary, 37 address-independent values, and the
   mapped-abandoned/terminal-release postcondition.
+  `x86_64_cancellation_pthread_destructor_evidence.py`,
+  `x86_64-cancellation-pthread-destructor-evidence-v3.5.0.json`, and the
+  `native-pinned-c-cancel-testcancel-automatic-destructor` gate separately
+  record 46 address-independent values for that deferred-cancellation path.
 - **Decision/removal:** accepted until a real private crabc lifecycle bridge
   invokes the Rust allocator in source order at thread exit and a direct
   Rust/C boundary proof covers that behavior. It does not authorize a fake

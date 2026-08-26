@@ -1777,6 +1777,14 @@ mapped-abandoned detached medium page and its terminal release. It establishes
 the pinned C key-destructor path, not a Rust comparison, crabc pthread/TLS
 callback, Rust/private-runtime lifecycle integration, general destructor
 ordering, public x86 runtime, or AArch64 status.
+The separate 46-field native cancellation-triggered automatic-destructor lane
+is equally C-oracle-only. Its worker disables cancellation during allocator
+setup, enables only deferred cancellation before its atomic-ready gate, and
+reaches one explicit `pthread_testcancel()` after one consumer
+`pthread_cancel()`; `pthread_join()` returns `PTHREAD_CANCELED` before the
+same abandoned-page observations. It does not establish crabc cancellation or
+TLS callback behavior, a Rust comparison, general cancellation/destructor
+ordering, public x86 runtime, or AArch64 status.
 The separate 25-field aggregate post-exit lane is likewise bounded: it starts
 with exactly two distinct live nonfull medium pages in distinct bins: one real
 worker runs `mi_thread_done()` and returns, then the consumer calls
